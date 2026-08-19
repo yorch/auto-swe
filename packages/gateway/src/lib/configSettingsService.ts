@@ -16,6 +16,12 @@ import {
 } from '@auto-swe/shared/config';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
+// NOTE ON CACHE SCOPE: `invalidateSettingsCache()` below clears only THIS
+// process's cache. The worker is a separate process and keeps serving its own
+// cached value until its ~30 s TTL expires — the same eventual consistency the
+// scanner-pattern cache has. An admin's save is therefore immediate in the
+// dashboard and near-immediate in the worker, but not atomic across both.
+
 /**
  * Service for the definition-driven config registry.
  *
@@ -134,6 +140,50 @@ export async function loadGrantsForActor(
       })
   );
   return rows as ConfigGrant[];
+}
+
+/// Membership check for a scoped READ. Writes are authorised by grants, but a
+/// read has no grant to check — and the effective-config view exposes another
+/// tenant's resolved values, including which images their workspaces run and
+/// how their channel assistant is tuned. Platform ADMINs see everything;
+/// everyone else needs a membership on the team or org the scope belongs to.
+export async function canReadScope(
+  prisma: PrismaClient,
+  actor: ConfigActor,
+  selector: ScopeSelector
+): Promise<boolean> {
+  if (actor.role === 'ADMIN') {
+    return true;
+  }
+  // GLOBAL values are the deployment-wide defaults every tenant already runs
+  // under, so any authenticated user may read them.
+  if (selector.scope === 'GLOBAL') {
+    return true;
+  }
+
+  const tenant = await resolveScopeTenant(prisma, selector);
+  // A selector that names an id nothing owns resolves to no tenant. Refuse
+  // rather than fall through to a GLOBAL-only read that would look like success.
+  if (!tenant.teamId && !tenant.orgId) {
+    return false;
+  }
+  if (tenant.teamId) {
+    const membership = await prisma.teamMembership.findUnique({
+      where: { userId_teamId: { teamId: tenant.teamId, userId: actor.id } },
+    });
+    if (membership) {
+      return true;
+    }
+  }
+  if (tenant.orgId) {
+    const membership = await prisma.organizationMembership.findUnique({
+      where: { userId_orgId: { orgId: tenant.orgId, userId: actor.id } },
+    });
+    if (membership) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// The admin form's payload: every definition plus the value currently in

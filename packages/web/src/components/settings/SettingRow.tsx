@@ -44,15 +44,21 @@ function formatValue(value: unknown): string {
 export function SettingRow({
   setting,
   canWriteHere,
+  viewerRole,
   onSave,
   onClear,
   busy,
 }: {
   setting: SettingView;
-  /// False when the current scope is not one this setting may be overridden at.
-  /// The row stays visible — seeing the inherited value is the point — but the
-  /// controls are disabled and the reason is spelled out.
+  /// False when the current scope is not one this setting may be overridden at,
+  /// or when the viewer's role is below the setting's floor. The row stays
+  /// visible — seeing the inherited value is the point — but the controls are
+  /// disabled and the reason is spelled out.
   canWriteHere: boolean;
+  /// Used only to word the disabled reason. Authorisation is the server's; a
+  /// grant can widen what this role alone would allow, so the UI never treats
+  /// role as sufficient — only as enough to know when a write cannot succeed.
+  viewerRole: string;
   onSave: (value: unknown) => void;
   onClear: () => void;
   busy: boolean;
@@ -140,9 +146,11 @@ export function SettingRow({
           </div>
           {!canWriteHere && (
             <p className="font-mono text-[10px] uppercase tracking-wider text-paper-600">
-              {setting.overridableAt.length
-                ? `Set at ${['GLOBAL', ...setting.overridableAt].join(', ')}`
-                : 'Platform-wide only'}
+              {setting.requiredRole !== viewerRole && setting.requiredRole === 'ADMIN'
+                ? 'Requires ADMIN'
+                : setting.overridableAt.length
+                  ? `Set at ${['GLOBAL', ...setting.overridableAt].join(', ')}`
+                  : 'Platform-wide only'}
             </p>
           )}
           {canWriteHere && hasOverrideHere && setting.source !== 'DEFAULT' && (

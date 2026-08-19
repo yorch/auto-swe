@@ -13,6 +13,3 @@
  * Any such reply is treated as the skip sentinel and is NOT posted.
  */
 export const SKIP_SENTINEL = /^skip\b/i;
-
-/** Default cosine-similarity threshold for memory de-duplication / clustering. */
-export const DEFAULT_MEMORY_DEDUP_THRESHOLD = 0.85;

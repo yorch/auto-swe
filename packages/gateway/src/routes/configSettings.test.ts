@@ -19,8 +19,10 @@ vi.mock('@auto-swe/shared/db', () => ({
       findMany: vi.fn(async () => []),
       update: vi.fn(async () => ({})),
     },
+    organizationMembership: { findUnique: vi.fn(async () => null) },
     slackChannel: { findUnique: vi.fn(async () => ({ orgId: 'org-1', teamId: 'team-1' })) },
     team: { findUnique: vi.fn(async () => ({ orgId: 'org-1' })) },
+    teamMembership: { findUnique: vi.fn(async () => null) },
     workflowTemplate: {
       findUnique: vi.fn(async () => ({ team: { orgId: 'org-1' }, teamId: 'team-1' })),
     },
@@ -40,6 +42,8 @@ const configSetting = vi.mocked(prisma.configSetting);
 const configPermission = vi.mocked(prisma.configPermission);
 const team = vi.mocked(prisma.team);
 const slackChannel = vi.mocked(prisma.slackChannel);
+const teamMembership = vi.mocked(prisma.teamMembership);
+const orgMembership = vi.mocked(prisma.organizationMembership);
 
 const TEAM_ID = '11111111-1111-4111-8111-111111111111';
 const ORG_ID = '22222222-2222-4222-8222-222222222222';
@@ -72,6 +76,8 @@ beforeEach(() => {
   configSetting.findFirst.mockResolvedValue(null as never);
   configPermission.findMany.mockResolvedValue([] as never);
   team.findUnique.mockResolvedValue({ orgId: ORG_ID } as never);
+  teamMembership.findUnique.mockResolvedValue(null as never);
+  orgMembership.findUnique.mockResolvedValue(null as never);
 });
 
 describe('GET /config/settings', () => {
@@ -113,6 +119,81 @@ describe('GET /config/settings', () => {
       source: 'TEAM',
       value: 42,
     });
+    await app.close();
+  });
+});
+
+describe('GET /config/settings — scoped reads', () => {
+  it("refuses to show another team's configuration to a non-member", async () => {
+    // Grants authorise writes; a read has no grant to check, and the effective
+    // view exposes which images a team's workspaces run and how its assistant is
+    // tuned. Membership is the only thing standing between the two.
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ENGINEER'),
+      method: 'GET',
+      url: `/api/v1/admin/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('shows it to a member of that team', async () => {
+    teamMembership.findUnique.mockResolvedValue({ role: 'MEMBER' } as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ENGINEER'),
+      method: 'GET',
+      url: `/api/v1/admin/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('lets a platform admin read any scope', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'GET',
+      url: `/api/v1/admin/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('lets anyone read the platform-wide values they already run under', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ENGINEER'),
+      method: 'GET',
+      url: '/api/v1/admin/config/settings',
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('checks a channel read against the team that owns the channel', async () => {
+    slackChannel.findUnique.mockResolvedValue({ orgId: ORG_ID, teamId: TEAM_ID } as never);
+    teamMembership.findUnique.mockResolvedValue({ role: 'MEMBER' } as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ENGINEER'),
+      method: 'GET',
+      url: `/api/v1/admin/config/settings?scope=CHANNEL&channelId=${ORG_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('refuses a scope whose id belongs to nothing rather than silently reading GLOBAL', async () => {
+    slackChannel.findUnique.mockResolvedValue(null as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ENGINEER'),
+      method: 'GET',
+      url: `/api/v1/admin/config/settings?scope=CHANNEL&channelId=${ORG_ID}`,
+    });
+    expect(res.statusCode).toBe(403);
     await app.close();
   });
 });
@@ -172,7 +253,13 @@ describe('PUT /config/settings/:key', () => {
     expect(writeAudit).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ action: 'CREATE', entityType: 'ConfigSetting' })
+      expect.objectContaining({
+        action: 'CREATE',
+        // The shared audit-log table renders `changedFields`; without it the
+        // Fields column is blank for every registry write.
+        afterJson: expect.objectContaining({ changedFields: ['channel.historyMessageLimit'] }),
+        entityType: 'ConfigSetting',
+      })
     );
     await app.close();
   });

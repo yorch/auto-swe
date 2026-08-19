@@ -854,7 +854,7 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
   // the user's message at the bottom (closest to the model's attention).
   const contextLimits = await resolveSettings(
     ['channel.memoryContextItems', 'channel.threadContextMessages'],
-    { channelId: input.channelId }
+    { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
   );
   const withMemory = formatMemoryContext(
     memory,

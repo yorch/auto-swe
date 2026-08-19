@@ -44,12 +44,16 @@ async function db() {
 /// Cache key for one resolution context. Every ctx field that can select a row
 /// appears, so two different teams never share an entry.
 function contextCacheKey(ctx: SettingResolveCtx | undefined): string {
+  // Segments are encoded, not just joined: ids are UUIDs today and the API
+  // validates them as such, but an id containing the separator would make two
+  // different contexts share one entry — which is a cross-tenant read. Encoding
+  // removes the class rather than relying on every future caller's id format.
   return [
     'settings',
-    ctx?.workflowTemplateId ?? '',
-    ctx?.channelId ?? '',
-    ctx?.teamId ?? '',
-    ctx?.orgId ?? '',
+    encodeURIComponent(ctx?.workflowTemplateId ?? ''),
+    encodeURIComponent(ctx?.channelId ?? ''),
+    encodeURIComponent(ctx?.teamId ?? ''),
+    encodeURIComponent(ctx?.orgId ?? ''),
   ].join(':');
 }
 
@@ -113,7 +117,19 @@ function cachedOverrides(
 /// key to its default instead of failing every activity that reads config.
 function accept<T>(definition: SettingDefinition<T>, raw: unknown): T | undefined {
   const parsed = definition.schema.safeParse(raw);
-  return parsed.success ? parsed.data : undefined;
+  if (parsed.success) {
+    return parsed.data;
+  }
+  // Falling through to the next tier keeps one bad row from failing every
+  // activity that reads config — but silently ignoring a value an operator
+  // saved is its own trap: they see their row in the database and "DEFAULT" in
+  // the dashboard, with nothing connecting the two.
+  console.warn(
+    `[config] ignoring stored value for '${definition.key}': ${parsed.error.issues
+      .map((issue) => issue.message)
+      .join('; ')}`
+  );
+  return undefined;
 }
 
 function fromEnv<T>(definition: SettingDefinition<T>): T | undefined {
@@ -137,7 +153,16 @@ function resolveFrom<K extends SettingKey>(
 ): ResolvedSetting<SettingValue<K>> {
   const definition = getSettingDefinition(key) as unknown as SettingDefinition<SettingValue<K>>;
 
-  if (definition.runPinned && ctx?.pinnedSettings && key in ctx.pinnedSettings) {
+  // `pinnedSettings` comes from an untyped Json column, so it may be a string or
+  // a number on a hand-edited row. `in` throws on those, which would break every
+  // activity in the run — the opposite of this module's rule that a malformed
+  // stored value degrades one key.
+  if (
+    definition.runPinned &&
+    typeof ctx?.pinnedSettings === 'object' &&
+    ctx.pinnedSettings !== null &&
+    key in ctx.pinnedSettings
+  ) {
     const pinned = accept(definition, ctx.pinnedSettings[key]);
     if (pinned !== undefined) {
       // Which scope supplied it was decided at run start and is not recorded in
@@ -151,6 +176,15 @@ function resolveFrom<K extends SettingKey>(
   if (scopes) {
     for (const scope of SETTING_SCOPE_ORDER) {
       if (!scopes.has(scope)) {
+        continue;
+      }
+      // A definition that forbids a scope must be honoured on the way OUT as
+      // well as on the way in. The write path checks `overridableAt`, but a row
+      // can exist without passing through it — written by direct SQL, or left
+      // behind when a definition later narrows its scopes — and a
+      // platform-wide security control that a stray TEAM row can switch off is
+      // not a control. `workspace.blockMetadata` is exactly this case.
+      if (scope !== 'GLOBAL' && !definition.overridableAt.includes(scope)) {
         continue;
       }
       const value = accept(definition, scopes.get(scope));

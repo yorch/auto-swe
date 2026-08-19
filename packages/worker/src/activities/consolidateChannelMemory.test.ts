@@ -10,6 +10,9 @@ vi.mock('@auto-swe/shared/db', () => {
     // hold assertions read a write a real database would have rolled back.
     channelBudgetHold: { create: vi.fn(), delete: vi.fn(), findMany: vi.fn() },
     channelMonthlyUsage: { findUnique: vi.fn(), update: vi.fn(), upsert: vi.fn() },
+    // Backs the config registry: no rows means `channel.memoryDedupThreshold`
+    // resolves to its definition default (0.85), the previous constant.
+    configSetting: { findMany: vi.fn(async () => []) },
     memoryItem: { updateMany: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
   };

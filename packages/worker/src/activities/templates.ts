@@ -109,30 +109,59 @@ export async function createWorkflowRun(
     update: {},
     where: { workflowId: input.workflowId },
   });
+
   // Read the pin back off the row rather than trusting the value just computed:
   // on a Temporal retry `update: {}` keeps the *original* snapshot, and the run
   // must keep using that one.
-  const persisted =
+  let persisted =
     run.pinnedSettings && typeof run.pinnedSettings === 'object'
       ? (run.pinnedSettings as Record<string, unknown>)
-      : pinnedSettings;
+      : null;
+
+  if (!persisted) {
+    // The row pre-dates this column. Returning the fresh snapshot without
+    // storing it would leave the workflow reading pinned limits while
+    // `currentRequestContext()` reported none to its activities — a run that is
+    // neither pinned nor consistently live. Backfill so both sides agree.
+    await prisma.workflowRun.update({
+      data: { pinnedSettings: pinnedSettings as Prisma.InputJsonObject },
+      where: { id: run.id },
+    });
+    persisted = pinnedSettings;
+  }
+
   return { pinnedSettings: persisted, runId: run.id, spec };
 }
 
-/// Scope context for the run's pinned-settings snapshot. The template is known
-/// from the input; team and org come from the work request's connection, which
-/// is the same tenant the run's activities resolve against later.
+/// Scope context for the run's pinned-settings snapshot. The template comes from
+/// the input; team and org have to be derived, and they must land on the SAME
+/// tenant `currentRequestContext()` resolves for this run's activities — a
+/// snapshot pinned at GLOBAL while every other setting resolves at TEAM is worse
+/// than no pin at all.
+///
+/// Two sources, because the launch paths disagree: `POST /work-requests` sets
+/// `RunInput.connectionId`, while the Slack slash-command and scheduled-request
+/// paths leave it null and carry the repo on `ActiveWorkflow.repoId` instead.
+/// `currentRequestContext()` reads the latter, so this reads both.
 async function runSettingsContext(input: CreateWorkflowRunInput): Promise<SettingResolveCtx> {
   const ctx: SettingResolveCtx = { workflowTemplateId: input.templateId };
-  if (!input.workRequestId) {
-    return ctx;
-  }
-  const request = await prisma.runInput.findUnique({
-    select: { connection: { select: { team: { select: { orgId: true } }, teamId: true } } },
-    where: { id: input.workRequestId },
-  });
-  ctx.teamId = request?.connection?.teamId;
-  ctx.orgId = request?.connection?.team?.orgId;
+
+  const [request, active] = await Promise.all([
+    input.workRequestId
+      ? prisma.runInput.findUnique({
+          select: { connection: { select: { team: { select: { orgId: true } }, teamId: true } } },
+          where: { id: input.workRequestId },
+        })
+      : null,
+    prisma.activeWorkflow.findFirst({
+      select: { repository: { select: { team: { select: { orgId: true } }, teamId: true } } },
+      where: { temporalWorkflowId: input.workflowId },
+    }),
+  ]);
+
+  const team = request?.connection ?? active?.repository;
+  ctx.teamId = team?.teamId ?? undefined;
+  ctx.orgId = team?.team?.orgId ?? undefined;
   return ctx;
 }
 

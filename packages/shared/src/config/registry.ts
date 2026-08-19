@@ -25,9 +25,22 @@ function defineSetting<T>(def: SettingDefinition<T>): SettingDefinition<T> {
 const positiveInt = z.number().int().positive();
 const ratio = z.number().min(0).max(1);
 
-function parseIntEnv(raw: string): number | undefined {
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+/// Parses a positive-integer env var, clamping to `max` rather than rejecting.
+/// A deployment that has always run `WORKER_MAX_CONCURRENT_ACTIVITIES=2000`
+/// must not silently drop to the built-in 10 on upgrade because the schema caps
+/// lower — that is a 200x throughput cut with no error. Clamp and say so.
+function positiveIntEnv(max: number) {
+  return (raw: string): number | undefined => {
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      return undefined;
+    }
+    if (parsed > max) {
+      console.warn(`[config] clamping env value ${parsed} to the maximum ${max}.`);
+      return max;
+    }
+    return parsed;
+  };
 }
 
 export const SETTING_DEFINITIONS = {
@@ -229,7 +242,7 @@ export const SETTING_DEFINITIONS = {
     key: 'workspace.maxConcurrentActivities',
     label: 'Worker activity concurrency',
     overridableAt: [],
-    parseEnv: parseIntEnv,
+    parseEnv: positiveIntEnv(1000),
     requiredRole: 'ADMIN',
     restartRequired: true,
     runPinned: false,
@@ -260,6 +273,19 @@ export type SettingValue<K extends SettingKey> =
   (typeof SETTING_DEFINITIONS)[K] extends SettingDefinition<infer T> ? T : never;
 
 export const SETTING_KEYS = Object.keys(SETTING_DEFINITIONS) as SettingKey[];
+
+// The property name is what everything else uses — storage rows, the API path
+// param, permission grants, SETTING_KEYS — while the admin form renders
+// `definition.key`. TypeScript cannot tie the two together, so a copy-paste that
+// leaves the wrong `key` on a definition type-checks cleanly and shows operators
+// a key no row is ever written under. Fail at import instead.
+for (const [property, definition] of Object.entries(SETTING_DEFINITIONS)) {
+  if (definition.key !== property) {
+    throw new Error(
+      `Setting registry: '${property}' declares key '${definition.key}'. They must match.`
+    );
+  }
+}
 
 export function isSettingKey(key: string): key is SettingKey {
   return Object.hasOwn(SETTING_DEFINITIONS, key);

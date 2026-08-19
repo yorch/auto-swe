@@ -15,6 +15,7 @@ import {
   useSetConfigSetting,
 } from '@/hooks/useConfigSettings';
 import { useTeams } from '@/hooks/useTeams';
+import { useAuthStore } from '@/stores/authStore';
 
 /**
  * Every configurable knob, rendered from the registry definitions rather than
@@ -33,6 +34,11 @@ const GROUP_TITLES: Record<string, string> = {
   workspace: 'Agent workspace',
 };
 
+/// Seniority order, mirroring the server's `requiredRole` floor. The UI can
+/// check the floor but not a grant, so it disables what the role alone rules
+/// out and lets the server have the last word on the rest.
+const ROLE_RANK: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
+
 const GROUP_BLURBS: Record<string, string> = {
   channel:
     'How proactive the Slack assistant is and how much context it reads per turn. Overridable per channel, so one noisy channel can be tuned without touching the rest.',
@@ -49,6 +55,8 @@ export default function AdminSettingsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const teams = useTeams();
+  const viewerRole = useAuthStore((state) => state.user?.role) ?? 'ENGINEER';
+  const viewerRank = ROLE_RANK[viewerRole] ?? 1;
 
   // A TEAM view needs a team chosen before it means anything; until then keep
   // showing the platform-wide values rather than an empty page.
@@ -137,7 +145,8 @@ export default function AdminSettingsPage() {
             <SettingRow
               busy={busy}
               canWriteHere={
-                selection.scope === 'GLOBAL' || setting.overridableAt.includes(selection.scope)
+                (selection.scope === 'GLOBAL' || setting.overridableAt.includes(selection.scope)) &&
+                viewerRank >= (ROLE_RANK[setting.requiredRole] ?? 3)
               }
               key={setting.key}
               onClear={() => {
@@ -154,6 +163,7 @@ export default function AdminSettingsPage() {
                 );
               }}
               setting={setting}
+              viewerRole={viewerRole}
             />
           ))}
         </Card>

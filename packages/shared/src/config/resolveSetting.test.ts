@@ -98,6 +98,35 @@ describe('resolveSetting', () => {
   });
 });
 
+describe('overridableAt is enforced on read, not only on write', () => {
+  it('ignores a scoped row for a setting the definition says is platform-wide', async () => {
+    // workspace.blockMetadata declares `overridableAt: []` because no team
+    // should be able to switch off metadata blocking for its own runs. The
+    // write path refuses such a row, but a row can exist without passing
+    // through it — direct SQL, or a definition narrowed after the fact. A
+    // security control a stray row can disable is not a control.
+    rows({ key: 'workspace.blockMetadata', scope: 'TEAM', value: false });
+    await expect(resolveSetting('workspace.blockMetadata', TEAM_CTX)).resolves.toBe(true);
+  });
+
+  it('still honours the GLOBAL row for a platform-wide setting', async () => {
+    rows({ key: 'workspace.blockMetadata', scope: 'GLOBAL', value: false });
+    await expect(resolveSetting('workspace.blockMetadata', TEAM_CTX)).resolves.toBe(false);
+  });
+
+  it('skips a disallowed scope and falls through to an allowed broader one', async () => {
+    // channel.historyMessageLimit permits CHANNEL/TEAM/ORGANIZATION but not
+    // WORKFLOW_TEMPLATE.
+    rows(
+      { key: 'channel.historyMessageLimit', scope: 'WORKFLOW_TEMPLATE', value: 99 },
+      { key: 'channel.historyMessageLimit', scope: 'TEAM', value: 21 }
+    );
+    await expect(
+      resolveSetting('channel.historyMessageLimit', { ...TEAM_CTX, workflowTemplateId: 'wt-1' })
+    ).resolves.toBe(21);
+  });
+});
+
 describe('run pinning', () => {
   it('reads a pinned value instead of the live cascade', async () => {
     rows({ key: 'workflow.maxTransitions', scope: 'GLOBAL', value: 900 });
@@ -122,6 +151,17 @@ describe('run pinning', () => {
     await expect(
       resolveSetting('workflow.maxTransitions', {
         pinnedSettings: { 'workflow.maxTransitions': 0 },
+      })
+    ).resolves.toBe(900);
+  });
+
+  it('degrades to the live cascade when the snapshot is not an object at all', async () => {
+    // WorkflowRun.pinnedSettings is an untyped Json column; a hand-edited row
+    // can hold a string. Throwing here would break every activity in the run.
+    rows({ key: 'workflow.maxTransitions', scope: 'GLOBAL', value: 900 });
+    await expect(
+      resolveSetting('workflow.maxTransitions', {
+        pinnedSettings: 'oops' as unknown as Record<string, unknown>,
       })
     ).resolves.toBe(900);
   });
@@ -159,6 +199,16 @@ describe('batching and caching', () => {
   it('keeps separate contexts apart', async () => {
     await resolveSetting('channel.historyMessageLimit', { teamId: 'team-1' });
     await resolveSetting('channel.historyMessageLimit', { teamId: 'team-2' });
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let two contexts collide when an id contains the key separator', async () => {
+    // Ids are UUIDs today and the API validates them as such, so this is not
+    // reachable now — but a raw Slack channel id or a template slug arriving
+    // through another caller would make one tenant's cache entry serve another.
+    rows({ key: 'channel.historyMessageLimit', scope: 'TEAM', value: 42 });
+    await resolveSetting('channel.historyMessageLimit', { channelId: 'b:', teamId: 'c' });
+    await resolveSetting('channel.historyMessageLimit', { channelId: 'b', orgId: 'c:' });
     expect(findMany).toHaveBeenCalledTimes(2);
   });
 

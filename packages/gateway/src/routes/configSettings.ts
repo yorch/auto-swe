@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
+  canReadScope,
   clearSetting,
   listSettings,
   type ScopeSelector,
@@ -74,9 +75,25 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   /// "why is this run behaving that way", which had no answer before.
   f.get(
     '/config/settings',
-    { schema: { querystring: ScopeQuery, response: { 200: z.any() } } },
+    { schema: { querystring: ScopeQuery, response: { 200: z.any(), 403: z.any() } } },
     async (req, reply) => {
       const query = req.query;
+      const actor = requireUser(req);
+      const selector = selectorFrom(query);
+
+      // A scoped read exposes another tenant's resolved configuration, so it
+      // needs the same membership check a scoped write gets — grants only
+      // authorise writes, and there is nothing else guarding the ids in the
+      // query string.
+      if (!(await canReadScope(prisma, { id: actor.sub, role: actor.role }, selector))) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'You are not a member of the team or organization for this scope.',
+          },
+        });
+      }
+
       const settings = await listSettings(
         prisma,
         {
@@ -85,7 +102,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
           teamId: query.teamId,
           workflowTemplateId: query.workflowTemplateId,
         },
-        selectorFrom(query)
+        selector
       );
       return reply.send({ data: settings });
     }
@@ -126,7 +143,12 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       await writeSystemConfigAudit(prisma, fastify.log, {
         action: result.before === undefined ? 'CREATE' : 'UPDATE',
         actorId: actor.sub,
-        afterJson: { key: req.params.key, scope: selector.scope, value: result.after },
+        afterJson: {
+          changedFields: [req.params.key],
+          key: req.params.key,
+          scope: selector.scope,
+          value: result.after,
+        },
         beforeJson: result.before === undefined ? null : { value: result.before },
         entityId: SETTING_AUDIT_ENTITY_ID,
         entityType: 'ConfigSetting',
@@ -168,7 +190,12 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
         await writeSystemConfigAudit(prisma, fastify.log, {
           action: 'UPDATE',
           actorId: actor.sub,
-          afterJson: { cleared: true, key: req.params.key, scope: selector.scope },
+          afterJson: {
+            changedFields: [req.params.key],
+            cleared: true,
+            key: req.params.key,
+            scope: selector.scope,
+          },
           beforeJson: { value: result.before },
           entityId: SETTING_AUDIT_ENTITY_ID,
           entityType: 'ConfigSetting',
@@ -246,7 +273,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       await writeSystemConfigAudit(prisma, fastify.log, {
         action: 'CREATE',
         actorId: actor.sub,
-        afterJson: { ...body },
+        afterJson: { ...body, changedFields: [body.keyPattern] },
         beforeJson: null,
         entityId: grant.id,
         entityType: 'ConfigPermission',
@@ -273,11 +300,16 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       await writeSystemConfigAudit(prisma, fastify.log, {
         action: 'UPDATE',
         actorId: actor.sub,
-        afterJson: { revoked: true },
+        afterJson: { changedFields: [existing.keyPattern], revoked: true },
+        // The full grant, including which team or org the authority covered —
+        // without those ids the entry cannot answer "who could configure team
+        // 42 before today", which is the question a revocation audit is for.
         beforeJson: {
           keyPattern: existing.keyPattern,
+          orgId: existing.orgId,
           role: existing.role,
           scope: existing.scope,
+          teamId: existing.teamId,
           userId: existing.userId,
         },
         entityId: existing.id,
