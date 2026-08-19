@@ -921,7 +921,7 @@ export default function RunDetailPage({ params }: PageProps) {
     return <div className="text-center py-12 text-paper-400">Run not found</div>;
   }
 
-  const traces = (run as WorkflowRunDetail).traces ?? [];
+  const traces = run.traces ?? [];
   const failedStep = getFailedStep(run.steps);
 
   return (
