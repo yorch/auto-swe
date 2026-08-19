@@ -27,7 +27,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
-const writeAudit = vi.fn(async () => {});
+const writeAudit = vi.fn(async (..._args: unknown[]) => {});
 vi.mock('../lib/systemConfigService.js', () => ({
   writeSystemConfigAudit: (...args: unknown[]) => writeAudit(...args),
 }));
