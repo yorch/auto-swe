@@ -1,6 +1,6 @@
 import type { InputHTMLAttributes } from 'react';
 import { cn } from '@/lib/utils';
-import { FieldWrapper } from './FieldWrapper';
+import { FieldWrapper, fieldDescribedBy } from './FieldWrapper';
 
 type InputProps = InputHTMLAttributes<HTMLInputElement> & {
   label?: string;
@@ -13,6 +13,8 @@ export function Input({ label, hint, error, className, id, ...props }: InputProp
   return (
     <FieldWrapper error={error} hint={hint} id={inputId} label={label}>
       <input
+        aria-describedby={fieldDescribedBy(inputId, hint, error)}
+        aria-invalid={error ? true : undefined}
         className={cn(
           'h-10 w-full rounded-[9px] border border-ink-400 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none transition-colors',
           'focus:border-ember-400 focus:bg-ink-900/80',

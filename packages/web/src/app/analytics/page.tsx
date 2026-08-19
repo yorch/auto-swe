@@ -171,6 +171,7 @@ export default function GlobalAnalyticsPage() {
               <div className="flex items-center justify-between">
                 <CardTitle>Templates — ranked by traffic</CardTitle>
                 <input
+                  aria-label="Filter templates by name"
                   className="text-sm border border-ink-600 rounded px-2 py-1 bg-ink-900 w-48"
                   onChange={(e) => handleFilter(e.target.value)}
                   placeholder="Filter templates…"

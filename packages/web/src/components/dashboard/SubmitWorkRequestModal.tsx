@@ -98,6 +98,7 @@ export function SubmitWorkRequestModal({
 
   return (
     <dialog
+      aria-labelledby="submit-work-request-title"
       className="m-auto w-[min(560px,92vw)] rounded-sm border border-ink-500 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/70"
       onClose={handleClose}
       ref={dialogRef}
@@ -107,7 +108,9 @@ export function SubmitWorkRequestModal({
           <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-paper-500">
             § New work request
           </div>
-          <h2 className="font-display text-2xl text-paper-50">Send the agent a ticket.</h2>
+          <h2 className="font-display text-2xl text-paper-50" id="submit-work-request-title">
+            Send the agent a ticket.
+          </h2>
           <p className="text-xs text-paper-500">
             The Implementer agent will clone the repo, write code + tests in a Docker workspace, run
             the review network, and open a pull request for human merge.

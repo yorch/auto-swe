@@ -8,6 +8,26 @@ interface FieldWrapperProps {
   children: ReactNode;
 }
 
+/**
+ * The `aria-describedby` value for a field wrapped by `FieldWrapper`, matching
+ * the ids it gives the hint and error nodes. Kept here so the three field
+ * primitives cannot drift from the markup that provides those ids.
+ */
+export function fieldDescribedBy(
+  id: string | undefined,
+  hint: string | undefined,
+  error: string | undefined
+): string | undefined {
+  if (!id) {
+    return undefined;
+  }
+  return (
+    [hint && !error ? `${id}-hint` : null, error ? `${id}-error` : null]
+      .filter(Boolean)
+      .join(' ') || undefined
+  );
+}
+
 export function FieldWrapper({ id, label, hint, error, children }: FieldWrapperProps) {
   return (
     <div className="space-y-1.5">

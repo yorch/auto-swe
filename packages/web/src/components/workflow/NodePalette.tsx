@@ -215,6 +215,7 @@ export function NodePalette({ steps }: Props) {
             Step registry
           </div>
           <input
+            aria-label="Filter the step registry"
             className="h-7 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter steps…"
