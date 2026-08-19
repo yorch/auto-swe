@@ -178,12 +178,13 @@ Several categories of credentials that were previously env-only are now stored e
 
 ## 3. Database setup
 
-The shipped schema lives in `packages/shared/src/prisma/migrations/` — exactly two migrations (pre-deployment consolidation):
+The shipped schema lives in `packages/shared/src/prisma/migrations/`:
 
 | Migration | What it adds |
 | --------- | ------------ |
-| `00000000000000_init` | The full schema, generated from `schema.prisma` via `prisma migrate diff` (all 52 tables, enums, FKs, Prisma-expressible indexes) |
+| `00000000000000_init` | The consolidated baseline, generated from `schema.prisma` via `prisma migrate diff` — tables, enums, FKs, and every Prisma-expressible index |
 | `00000000000001_custom_constraints_and_indexes` | Everything Prisma's DSL can't express: the HNSW vector index on `memory_items.embedding`, the partial unique indexes for the scope cascade and HITL idempotency, singleton/scope CHECK constraints, array-column `NOT NULL`s, and the embedding-config seed |
+| `00000000000002_config_registry` | `config_settings` and `config_permissions` (see [configuration.md](./configuration.md)), with their scope CHECK constraints and per-scope partial unique indexes, plus `workflow_runs.pinned_settings` |
 
 New schema changes append normal Prisma migrations after these; `prisma migrate deploy` applies whatever is pending.
 

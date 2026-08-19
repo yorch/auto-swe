@@ -312,10 +312,11 @@ model Organization {
   slackChannels       SlackChannel[]
   memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
 
-  @@map("organizations")
-  skills            Skill[]
   configSettings      ConfigSetting[]
   configPermissions   ConfigPermission[]
+
+  @@map("organizations")
+  skills            Skill[]
 }
 
 model Team {

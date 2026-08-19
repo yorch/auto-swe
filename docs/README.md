@@ -31,6 +31,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 
 | Doc | Covers |
 |-----|--------|
+| [configuration.md](./configuration.md) | Where every knob lives — the environment/integration/registry split, the setting registry and its cascade, who may change what, run pinning |
 | [deployment.md](./deployment.md) | Production runbook — environment, database, Temporal, images, service layout, smoke test, day-2 ops, hardening |
 | [model-configuration.md](./model-configuration.md) | DB-backed model selection and provider credentials — the scope cascade, encryption, day-2 operations |
 | [oauth-setup.md](./oauth-setup.md) | GitHub and Google OAuth apps; magic-link email |
