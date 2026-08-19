@@ -58,7 +58,7 @@ services:
   # One-shot: install Temporal schema into postgres-temporal before the server starts.
   # Replaces the schema-setup step that temporalio/auto-setup used to do internally.
   temporal-setup:
-    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.31.0}
+    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.31.2}
     # !! DEV-ONLY DEFAULT CREDENTIALS — POSTGRES_PWD/SQL_PASSWORD fall back to
     # !! "password" for local dev. Production MUST set POSTGRES_PASSWORD.
     depends_on:
@@ -78,7 +78,7 @@ services:
     restart: on-failure:6
 
   temporal:
-    image: temporalio/server:${TEMPORAL_VERSION:-1.31.0}
+    image: temporalio/server:${TEMPORAL_VERSION:-1.31.2}
     # !! DEV-ONLY DEFAULT CREDENTIALS — POSTGRES_PWD falls back to "password"
     # !! for local dev. Production MUST set POSTGRES_PASSWORD.
     depends_on:
@@ -106,7 +106,7 @@ services:
   # One-shot: create the default namespace once Temporal is up.
   # Replaces the namespace-creation step that temporalio/auto-setup used to do.
   temporal-setup-namespace:
-    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.31.0}
+    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.31.2}
     depends_on:
       temporal:
         condition: service_healthy
@@ -123,7 +123,7 @@ services:
   # Container listens on 8080; mapped to host 8233 to keep our existing
   # TEMPORAL_UI_PORT default and avoid colliding with gateway:8080.
   temporal-ui:
-    image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.49.1}
+    image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.53.3}
     depends_on:
       temporal:
         condition: service_healthy
@@ -138,7 +138,7 @@ services:
   # the worker env (see .env.example). The bucket is created by minio-setup
   # below, so the worker can write artifacts on first start.
   minio:
-    image: minio/minio:${MINIO_VERSION:-RELEASE.2025-04-22T22-12-26Z}
+    image: minio/minio:${MINIO_VERSION:-RELEASE.2025-09-07T16-13-09Z}
     command: server /data --console-address ":9001"
     # !! DEV-ONLY DEFAULT CREDENTIALS — MINIO_ROOT_USER/MINIO_ROOT_PASSWORD
     # !! fall back to "minioadmin"/"minioadmin" for local dev only. Production
@@ -163,7 +163,7 @@ services:
   # One-shot: create the artifact bucket once MinIO is up so the worker can
   # use the S3 backend out-of-the-box. Idempotent — re-runs are a no-op.
   minio-setup:
-    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-04-16T18-13-26Z}
+    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-08-13T08-35-41Z}
     # !! DEV-ONLY DEFAULT CREDENTIALS — see the `minio` service note above.
     depends_on:
       minio:

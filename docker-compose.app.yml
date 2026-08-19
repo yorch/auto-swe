@@ -71,7 +71,7 @@ services:
 
   # Observability: Grafana LGTM (Grafana + Tempo + Loki + Prometheus + OTel Collector)
   otel-lgtm:
-    image: grafana/otel-lgtm:0.8.1
+    image: grafana/otel-lgtm:0.30.2
     ports:
       - "3001:3000"   # Grafana UI (3000 taken by Next.js)
       - "4317:4317"   # OTLP gRPC
