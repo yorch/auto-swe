@@ -1,0 +1,69 @@
+{
+  "baseSha": "341a4f7aa011d6a58e2ebad36c0e31e0ef996f32",
+  "batchQueue": [
+    {
+      "category": "dead-code",
+      "files": 1,
+      "findings": ["F-032"],
+      "id": "B1",
+      "sha": "394cdd6",
+      "status": "applied"
+    },
+    {
+      "category": "dry",
+      "files": 1,
+      "findings": ["F-033"],
+      "id": "B2",
+      "sha": "8088e59",
+      "status": "applied"
+    },
+    {
+      "category": "dead-code",
+      "files": 1,
+      "findings": ["F-034"],
+      "id": "B3",
+      "sha": "391a14d",
+      "status": "applied"
+    },
+    {
+      "category": "types",
+      "files": 1,
+      "findings": ["F-035"],
+      "id": "B4",
+      "sha": "a7971e9",
+      "status": "applied"
+    }
+  ],
+  "branch": "claude/frontend-review-remediation-6gv3ue",
+  "branchNote": "The prompt asked for chore/frontend-audit-<date>; the session's branch requirements pin work to claude/frontend-review-remediation-6gv3ue, which was already checked out. Branch requirements win.",
+  "coverage": {
+    "notReached": 0,
+    "reviewed": 191,
+    "skipped": 0,
+    "total": 191
+  },
+  "gates": {
+    "build": {
+      "baseline": "exit 0",
+      "cmd": "yarn build"
+    },
+    "e2e": {
+      "baseline": "UNAVAILABLE \u2014 no E2E harness in the repo",
+      "cmd": null
+    },
+    "lint": {
+      "baseline": "exit 0 \u2014 Checked 677 files, no diagnostics",
+      "cmd": "yarn lint"
+    },
+    "test": {
+      "baseline": "exit 0 \u2014 175 files / 2157 tests passed",
+      "cmd": "yarn test"
+    },
+    "typecheck": {
+      "baseline": "exit 0",
+      "cmd": "yarn typecheck"
+    }
+  },
+  "nextAction": "complete \u2014 REVIEW.md written, all gates green at 2157/2157",
+  "packagesReviewed": ["@auto-swe/web"]
+}
