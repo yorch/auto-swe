@@ -27,6 +27,7 @@ import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useAdminCredentials } from '@/hooks/useModelConfig';
 import { type SkillOption, useSkills } from '@/hooks/useSkills';
 import { useSlackChannels } from '@/hooks/useSlackChannels';
+import { errMsg } from '@/lib/errors';
 
 const ALL_TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash', 'mcp'] as const;
 
@@ -248,7 +249,7 @@ export default function AgentLibraryPage() {
       setCreateOpen(false);
       setCreateForm(EMPTY_CREATE);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Create failed');
+      setError(errMsg(e, 'Create failed'));
     }
   }
 
@@ -282,7 +283,7 @@ export default function AgentLibraryPage() {
       setWarnings(res.scanWarnings ?? []);
       setEditing(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Update failed');
+      setError(errMsg(e, 'Update failed'));
     }
   }
 

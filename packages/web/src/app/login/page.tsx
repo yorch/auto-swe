@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
+import { errMsg } from '@/lib/errors';
 import { useAuthStore } from '@/stores/authStore';
 
 interface ProviderFlags {
@@ -162,7 +163,7 @@ function LoginPageInner() {
       await login(email, password);
       router.push(destination);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      setError(errMsg(err, 'Login failed'));
     } finally {
       setLoading(false);
     }
@@ -184,7 +185,7 @@ function LoginPageInner() {
           : `If an account exists for ${email}, a reset link is on its way.`
       );
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not send reset link');
+      setError(errMsg(err, 'Could not send reset link'));
     } finally {
       setLoading(false);
     }
@@ -201,7 +202,7 @@ function LoginPageInner() {
       // and the second's state cookie would break the first's callback.
       await signInWithProvider(provider);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : `Could not start ${provider} sign-in`);
+      setError(errMsg(err, `Could not start ${provider} sign-in`));
       setLoading(false);
     }
   };
@@ -223,7 +224,7 @@ function LoginPageInner() {
           : `A sign-in link was sent to ${email}.`
       );
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not send magic link');
+      setError(errMsg(err, 'Could not send magic link'));
     } finally {
       setLoading(false);
     }

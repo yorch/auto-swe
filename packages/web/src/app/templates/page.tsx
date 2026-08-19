@@ -25,6 +25,7 @@ import {
   useWorkflowGenerationJob,
   useWorkflowTemplates,
 } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { useTeamStore } from '@/stores/teamStore';
 
@@ -79,7 +80,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
       setDescription('');
       router.push(`/templates/${data.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'create failed');
+      setError(errMsg(err, 'create failed'));
     }
   };
 
@@ -194,7 +195,7 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
       });
       setJobId(result.jobId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'generation failed');
+      setError(errMsg(err, 'generation failed'));
     }
   };
 
@@ -293,7 +294,7 @@ export default function TemplatesPage() {
       const data = (result as { data: { id: string } }).data;
       router.push(`/templates/${data.id}`);
     } catch (err) {
-      setForkError(err instanceof Error ? err.message : 'fork failed');
+      setForkError(errMsg(err, 'fork failed'));
     } finally {
       setForkingId(null);
     }

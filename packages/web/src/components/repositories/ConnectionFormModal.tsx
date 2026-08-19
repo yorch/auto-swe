@@ -8,6 +8,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useCreateRepository, useTeams, useUpdateRepository } from '@/hooks/useWorkflows';
 import { connectionLabel } from '@/lib/connectionDisplay';
+import { errMsg } from '@/lib/errors';
 
 export interface ConnectionPrefill {
   organizationName?: string;
@@ -171,7 +172,7 @@ export function ConnectionFormModal({
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save connection');
+      setError(errMsg(err, 'Failed to save connection'));
     }
   }
 

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useTeamShellAllowlist, useUpdateTeamShellAllowlist } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 
 export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
   const { data, isLoading } = useTeamShellAllowlist(teamId);
@@ -48,7 +49,7 @@ export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
       }
       savedTimerRef.current = setTimeout(() => setSaved(false), 1500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update allowlist');
+      setError(errMsg(err, 'Failed to update allowlist'));
     }
   }
 

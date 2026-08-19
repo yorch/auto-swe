@@ -11,7 +11,8 @@ import {
   useIssueTrackerConfig,
   useUpdateIssueTrackerConfig,
 } from '@/hooks/useAdminConfig';
-import { errMsg, useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { errMsg } from '@/lib/errors';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
 

@@ -21,6 +21,7 @@ import {
   useUpdateSchedule,
 } from '@/hooks/useSchedules';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
+import { errMsg } from '@/lib/errors';
 
 function fmtTime(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString() : '—';
@@ -69,7 +70,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
       onClose();
       setForm(EMPTY_FORM);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create schedule');
+      setError(errMsg(err, 'Failed to create schedule'));
     }
   }
 
@@ -196,7 +197,7 @@ function DeleteConfirmModal({
       await deleteSchedule.mutateAsync(schedule.id);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete schedule');
+      setError(errMsg(err, 'Failed to delete schedule'));
     }
   }
 
@@ -236,7 +237,7 @@ function ScheduleRow({
     try {
       await action();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Action failed');
+      setError(errMsg(err, 'Action failed'));
     }
   }
 

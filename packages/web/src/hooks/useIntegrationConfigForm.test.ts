@@ -2,17 +2,7 @@
 
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { errMsg, useIntegrationConfigForm } from './useIntegrationConfigForm';
-
-describe('errMsg', () => {
-  it('returns the message of an Error', () => {
-    expect(errMsg(new Error('boom'))).toBe('boom');
-  });
-  it('returns the fallback for a non-Error', () => {
-    expect(errMsg('nope', 'Failed to save')).toBe('Failed to save');
-    expect(errMsg(undefined)).toBe('Request failed');
-  });
-});
+import { useIntegrationConfigForm } from './useIntegrationConfigForm';
 
 describe('useIntegrationConfigForm', () => {
   it('starts with clean state', () => {

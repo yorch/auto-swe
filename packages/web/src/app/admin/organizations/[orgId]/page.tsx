@@ -20,6 +20,7 @@ import {
   useUpsertOrgMember,
 } from '@/hooks/useOrg';
 import { useEligibleUsers } from '@/hooks/useUsers';
+import { errMsg } from '@/lib/errors';
 
 export default function OrgAdminPage({ params }: { params: Promise<{ orgId: string }> }) {
   const { orgId } = use(params);
@@ -61,7 +62,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       await upsertMember.mutateAsync({ role: addRole, userId: effectiveUserId });
       setAddUserId('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to add member');
+      setError(errMsg(e, 'Failed to add member'));
     }
   }
 
@@ -70,7 +71,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     try {
       await patchMember.mutateAsync({ role, userId });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to update role');
+      setError(errMsg(e, 'Failed to update role'));
     }
   }
 
@@ -79,7 +80,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     try {
       await removeMember.mutateAsync(userId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to remove member');
+      setError(errMsg(e, 'Failed to remove member'));
     }
   }
 
@@ -95,7 +96,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       await patchBudget.mutateAsync(cents);
       setBudgetInput('');
     } catch (e) {
-      setBudgetError(e instanceof Error ? e.message : 'Failed to update budget');
+      setBudgetError(errMsg(e, 'Failed to update budget'));
     }
   }
 

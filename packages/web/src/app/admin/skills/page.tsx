@@ -12,6 +12,7 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { api } from '@/lib/api';
+import { errMsg } from '@/lib/errors';
 
 interface Skill {
   id: string;
@@ -157,7 +158,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
       setEditing(false);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save skill');
+      setError(errMsg(err, 'Failed to save skill'));
     }
   }
 
@@ -309,7 +310,7 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
       onClose();
       setForm({ description: '', name: '', promptText: '' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create skill');
+      setError(errMsg(err, 'Failed to create skill'));
     }
   }
 
@@ -371,7 +372,7 @@ function DeleteConfirmModal({ skill, onClose }: { skill: Skill | null; onClose: 
       await deleteSkill.mutateAsync(skill.id);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete skill');
+      setError(errMsg(err, 'Failed to delete skill'));
     }
   }
 

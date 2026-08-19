@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useEpic } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 import { formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
@@ -38,9 +39,7 @@ export default function EpicDetailPage({ params }: PageProps) {
     }
     return (
       <Card>
-        <p className="text-sm text-brick-400">
-          {error instanceof Error ? error.message : `Epic ${workflowId} not found`}
-        </p>
+        <p className="text-sm text-brick-400">{errMsg(error, `Epic ${workflowId} not found`)}</p>
         <p className="mt-2 text-xs text-paper-500">
           <Link className="text-ember-400 hover:underline" href="/epics">
             ← Back to epics

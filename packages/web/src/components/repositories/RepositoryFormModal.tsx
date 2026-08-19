@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useCreateRepository, useTeams, useUpdateRepository } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 
 export interface RepoPrefill {
   organizationName?: string;
@@ -111,7 +112,7 @@ export function RepositoryFormModal({
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save repository');
+      setError(errMsg(err, 'Failed to save repository'));
     }
   }
 

@@ -29,6 +29,7 @@ import {
   useUpdateSlackChannel,
 } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
+import { errMsg } from '@/lib/errors';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -169,7 +170,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
       onClose();
       setForm(EMPTY_CREATE);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create channel');
+      setError(errMsg(err, 'Failed to create channel'));
     }
   }
 
@@ -447,7 +448,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       await update.mutateAsync({ id: channel.id, ...body });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update channel');
+      setError(errMsg(err, 'Failed to update channel'));
     }
   }
 
@@ -731,7 +732,7 @@ function MemoryItemEditForm({
       });
       onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update memory item');
+      setError(errMsg(err, 'Failed to update memory item'));
     }
   }
 
@@ -802,7 +803,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
       await deleteMemory.mutateAsync({ channelId: channel.id, memoryId: confirmItem.id });
       setConfirmItem(null);
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Failed to delete memory item');
+      setDeleteError(errMsg(err, 'Failed to delete memory item'));
     }
   }
 
@@ -977,7 +978,7 @@ function OpenItemsModal({
     try {
       await updateItem.mutateAsync({ channelId: channel.id, itemId: item.id, status });
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to update item');
+      setActionError(errMsg(err, 'Failed to update item'));
     }
   }
 
@@ -1302,7 +1303,7 @@ export default function AdminSlackChannelsPage() {
       await deleteChannel.mutateAsync(deleteTarget.id);
       setDeleteTarget(null);
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Failed to delete channel');
+      setDeleteError(errMsg(err, 'Failed to delete channel'));
     }
   }
 

@@ -7,6 +7,7 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 import { cn, formatDate, formatRelativeTime } from '@/lib/utils';
 
 function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
@@ -65,7 +66,7 @@ export default function AdminAccessTokensPage() {
       const res = (await pruneAudit.mutateAsync()) as { data: { deleted: number } };
       setPruneResult(res.data);
     } catch (err) {
-      setPruneError(err instanceof Error ? err.message : 'Prune failed');
+      setPruneError(errMsg(err, 'Prune failed'));
     }
   };
 
@@ -112,8 +113,7 @@ export default function AdminAccessTokensPage() {
 
         {revokeToken.isError && (
           <p className="mb-3 font-mono text-[11px] text-red-400">
-            Revoke failed:{' '}
-            {revokeToken.error instanceof Error ? revokeToken.error.message : 'unknown error'}
+            Revoke failed: {errMsg(revokeToken.error, 'unknown error')}
           </p>
         )}
 

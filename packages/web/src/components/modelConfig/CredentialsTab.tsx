@@ -13,6 +13,7 @@ import {
   useAdminTestCredential,
   useAdminUpdateCredential,
 } from '@/hooks/useModelConfig';
+import { errMsg } from '@/lib/errors';
 
 type ProbeResult = { ok: boolean; status?: number; error?: string };
 
@@ -47,7 +48,7 @@ export function CredentialsTab() {
     } catch (err) {
       setProbeResults((s) => ({
         ...s,
-        [id]: { error: err instanceof Error ? err.message : 'request failed', ok: false },
+        [id]: { error: errMsg(err, 'request failed'), ok: false },
       }));
     } finally {
       setProbePending((s) => ({ ...s, [id]: false }));
@@ -214,7 +215,7 @@ function CredentialModal({
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
+      setError(errMsg(err, 'Failed to save'));
     }
   };
 

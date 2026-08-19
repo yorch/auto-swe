@@ -17,6 +17,7 @@ import {
   useUpdateMcpConnection,
 } from '@/hooks/useMcpConnections';
 import { useTeams } from '@/hooks/useTeams';
+import { errMsg } from '@/lib/errors';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
 /**
@@ -101,7 +102,7 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
       onClose();
       setForm(initialForm);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create connection');
+      setError(errMsg(err, 'Failed to create connection'));
     }
   }
 
@@ -208,7 +209,7 @@ function EditMcpConnectionModal({
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update connection');
+      setError(errMsg(err, 'Failed to update connection'));
     }
   }
 
@@ -277,7 +278,7 @@ function DeleteMcpConnectionModal({
       await del.mutateAsync(connection.id);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete connection');
+      setError(errMsg(err, 'Failed to delete connection'));
     }
   }
 

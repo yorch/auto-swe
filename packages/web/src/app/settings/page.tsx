@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { API_BASE } from '@/lib/config';
+import { errMsg } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -94,7 +95,7 @@ export default function SettingsPage() {
       // page unloads (the button remains disabled).
       await linkProvider(provider);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'link failed');
+      setError(errMsg(err, 'link failed'));
       setBusy(null);
     }
   };
@@ -117,7 +118,7 @@ export default function SettingsPage() {
       setLinked((prev) => prev.filter((a) => a.providerId !== providerId));
       setInfo(`${providerId} unlinked from this account.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'unlink failed');
+      setError(errMsg(err, 'unlink failed'));
     } finally {
       setBusy(null);
     }

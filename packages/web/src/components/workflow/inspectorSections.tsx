@@ -11,6 +11,7 @@ import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { errMsg } from '@/lib/errors';
 import { OnFailSection, type OnFailValue, SchemaAwareForm } from './inspectorFields';
 
 export function StepConfigSection({
@@ -452,7 +453,7 @@ export function SetSection({
               setErr('Must be a JSON object');
             }
           } catch (e) {
-            setErr(e instanceof Error ? e.message : 'invalid JSON');
+            setErr(errMsg(e, 'invalid JSON'));
           }
         }}
         onChange={(e) => setDraft(e.target.value)}

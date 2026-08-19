@@ -17,6 +17,7 @@ import {
   useScannerPatterns,
   useUpdateScannerPattern,
 } from '@/hooks/useAdmin';
+import { errMsg } from '@/lib/errors';
 
 type PatternType =
   | 'INJECTION'
@@ -60,7 +61,7 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
       onClose();
       setForm({ flags: 'i', label: '', pattern: '', type: 'INJECTION' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create pattern');
+      setError(errMsg(err, 'Failed to create pattern'));
     }
   }
 
@@ -169,7 +170,7 @@ function PatternDetailModal({
       setEditing(false);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save pattern');
+      setError(errMsg(err, 'Failed to save pattern'));
     }
   }
 
@@ -310,7 +311,7 @@ function DeletePatternModal({
       await del.mutateAsync(pattern.id);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete pattern');
+      setError(errMsg(err, 'Failed to delete pattern'));
     }
   }
 

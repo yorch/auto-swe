@@ -10,6 +10,7 @@ import {
   useEmbeddingConfig,
   useUpdateEmbeddingConfig,
 } from '@/hooks/useModelConfig';
+import { errMsg } from '@/lib/errors';
 
 /// Singleton embedding-model selector. Output must be 1536-dimensional or
 /// `generateEmbedding` throws (pgvector column is fixed-width); the UI doesn't
@@ -41,7 +42,7 @@ export function EmbeddingsTab() {
       await update.mutateAsync({ credentialId: credentialId || null, modelSpec });
       setDirty(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
+      setError(errMsg(err, 'Failed to save'));
     }
   };
 

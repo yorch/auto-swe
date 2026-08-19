@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useExportBundle, useInstallBundleFromUrl, useInstalledBundles } from '@/hooks/useBundles';
+import { errMsg } from '@/lib/errors';
 
 export default function AdminBundlesPage() {
   const { data: bundles, isLoading } = useInstalledBundles();
@@ -24,7 +25,7 @@ export default function AdminBundlesPage() {
       await installFromUrl.mutateAsync(url);
       setUrl('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Install failed');
+      setError(errMsg(e, 'Install failed'));
     }
   }
 
@@ -45,7 +46,7 @@ export default function AdminBundlesPage() {
       a.click();
       URL.revokeObjectURL(href);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Export failed');
+      setError(errMsg(e, 'Export failed'));
     }
   }
 

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { type CreatedUser, useCreateUser } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
@@ -46,7 +47,7 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
         onClose();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create user');
+      setError(errMsg(err, 'Failed to create user'));
     }
   }
 

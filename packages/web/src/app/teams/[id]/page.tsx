@@ -16,6 +16,7 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { useUpdateTeam } from '@/hooks/useTeams';
 import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 import { useAuthStore } from '@/stores/authStore';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
@@ -50,7 +51,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       await updateTeam.mutateAsync({ defaultPersonaPrompt: personaInput.trim() || null });
       setPersonaInput('');
     } catch (e) {
-      setPersonaError(e instanceof Error ? e.message : 'Failed to update persona');
+      setPersonaError(errMsg(e, 'Failed to update persona'));
     }
   }
 

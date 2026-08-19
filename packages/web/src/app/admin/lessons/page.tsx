@@ -12,6 +12,7 @@ import {
   useDeleteLesson,
   useLessons,
 } from '@/hooks/useLessons';
+import { errMsg } from '@/lib/errors';
 
 function RepoStatsRow({
   repo,
@@ -77,7 +78,7 @@ export default function AdminLessonsPage() {
       await triggerConsolidationNow();
       void refetchStats();
     } catch (err) {
-      setTriggerError(err instanceof Error ? err.message : 'Failed to trigger');
+      setTriggerError(errMsg(err, 'Failed to trigger'));
     } finally {
       setTriggeringAll(false);
     }

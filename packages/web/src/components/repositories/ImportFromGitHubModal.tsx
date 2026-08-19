@@ -7,6 +7,7 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useGitHubAvailableRepos } from '@/hooks/useRepositories';
+import { errMsg } from '@/lib/errors';
 
 export function ImportFromGitHubModal({
   open,
@@ -49,7 +50,7 @@ export function ImportFromGitHubModal({
 
         {error && !isLoading && (
           <p className="text-sm text-brick-400">
-            {error instanceof Error ? error.message : 'Failed to load repositories.'}{' '}
+            {errMsg(error, 'Failed to load repositories.')}{' '}
             <a className="underline" href="/admin/integrations">
               Check GitHub integration.
             </a>

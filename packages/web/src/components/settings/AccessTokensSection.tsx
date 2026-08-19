@@ -11,6 +11,7 @@ import {
   usePersonalAccessTokens,
   useRevokePat,
 } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 import { formatRelativeTime } from '@/lib/utils';
 
 export function AccessTokensSection() {
@@ -39,7 +40,7 @@ export function AccessTokensSection() {
       setExpiresInDays('90');
       setCreating(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create token');
+      setError(errMsg(err, 'Failed to create token'));
     }
   }
 

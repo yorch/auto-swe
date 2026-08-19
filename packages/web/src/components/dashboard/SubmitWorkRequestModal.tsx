@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useCreateWorkRequest, useRepositories } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 
 type BudgetTier = 'STANDARD' | 'LARGE' | 'EPIC';
 
@@ -92,7 +93,7 @@ export function SubmitWorkRequestModal({
         router.push(`/workflows/${newId}`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit work request');
+      setError(errMsg(err, 'Failed to submit work request'));
     }
   }
 

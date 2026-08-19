@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useCreateEpic, useEpics, useRepositories } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 import { formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -50,7 +51,7 @@ export default function EpicsPage() {
       setRepoIds([]);
       router.push(res.data.detailPath ?? `/epics/${encodeURIComponent(res.data.epicWorkflowId)}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create epic');
+      setError(errMsg(err, 'Failed to create epic'));
     }
   }
 
@@ -101,7 +102,7 @@ export default function EpicsPage() {
             {!epicsLoading && epicsError && (
               <tr>
                 <td className="px-4 py-6 text-center text-xs text-brick-400" colSpan={5}>
-                  {epicsError instanceof Error ? epicsError.message : 'Failed to load epics'}
+                  {errMsg(epicsError, 'Failed to load epics')}
                 </td>
               </tr>
             )}

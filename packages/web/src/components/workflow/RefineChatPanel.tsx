@@ -6,6 +6,7 @@ import { SparkleIcon } from '@/components/ui/icons';
 import { Modal } from '@/components/ui/Modal';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRefineWorkflowTemplate } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 
 type ChatMessage = {
   id: number;
@@ -80,7 +81,7 @@ export function RefineChatPanel({
       append({
         isError: true,
         role: 'assistant',
-        text: err instanceof Error ? err.message : 'Refinement failed. Try rephrasing.',
+        text: errMsg(err, 'Refinement failed. Try rephrasing.'),
       });
     }
   };

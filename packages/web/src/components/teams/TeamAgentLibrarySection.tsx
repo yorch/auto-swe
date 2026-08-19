@@ -23,6 +23,7 @@ import {
 } from '@/hooks/useAgentLibrary';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { type SkillOption, useSkills } from '@/hooks/useSkills';
+import { errMsg } from '@/lib/errors';
 
 const ALL_TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash', 'mcp'] as const;
 
@@ -214,7 +215,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       await deleteAgent.mutateAsync(deleteConfirm.id);
       setDeleteConfirm(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed');
+      setError(errMsg(e, 'Delete failed'));
     }
   }
 
@@ -225,7 +226,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       setCreateOpen(false);
       setForm(EMPTY);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Create failed');
+      setError(errMsg(e, 'Create failed'));
     }
   }
 
@@ -256,7 +257,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       });
       setEditing(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Update failed');
+      setError(errMsg(e, 'Update failed'));
     }
   }
 

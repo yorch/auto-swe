@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useAddTeamMember, useEligibleUsers } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
@@ -57,7 +58,7 @@ export function AddMemberModal({
       await add.mutateAsync({ role, userId });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add member');
+      setError(errMsg(err, 'Failed to add member'));
     }
   }
 

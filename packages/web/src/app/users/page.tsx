@@ -9,6 +9,7 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useWorkflows';
+import { errMsg } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
@@ -61,7 +62,7 @@ export default function UsersPage() {
       setInviteEmail('');
       setInviteRole('ENGINEER');
     } catch (err) {
-      setInviteError(err instanceof Error ? err.message : 'invite failed');
+      setInviteError(errMsg(err, 'invite failed'));
     }
   };
 
