@@ -8,7 +8,7 @@
       "id": "F-001",
       "proposed_fix": "Add `costUsdAccrued: number` to `WorkflowRunSummary` in packages/shared/src/types/api.ts, then read `run.costUsdAccrued` with no cast. Delete the `as unknown as Record<string, unknown>` escape hatch.",
       "severity": "high",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "The `Cost` row in the run detail rail never renders. Cost is one of the platform's headline governance signals and it is silently missing from the primary run view."
     },
@@ -20,7 +20,7 @@
       "id": "F-002",
       "proposed_fix": "Move `errMsg` from the `'use client'` hook module into a pure `lib/errors.ts`, then substitute mechanically at every call site. One PR, no behavioural difference (the expressions are exactly equivalent).",
       "severity": "high",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "The team already decided this helper should exist; the codebase just never adopted it. If the API ever throws a structured error type, all 74 sites need the identical change."
     },
@@ -32,7 +32,7 @@
       "id": "F-003",
       "proposed_fix": "A `makeConfigResource<TConfig, TInput>(slug)` factory returning `{ useConfig, useUpdate, test }`. Keep the exported names as thin bindings so no call site changes.",
       "severity": "high",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "Adding an eleventh integration means copy-pasting three functions. A change to cache invalidation or error handling has to be made ten times."
     },
@@ -54,7 +54,7 @@
       "id": "F-004",
       "proposed_fix": "Add a `ConfigTextField` sibling to `SecretInput` in components/integrations/ taking `{ id, label, value, onChange, placeholder, source, current }`. Migrate the 37 sites.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "`SecretInput` already proves the abstraction is right for the secret variant. The plain-text variant has no equivalent, so every new admin field re-copies markup that must stay pixel-consistent by hand."
     },
@@ -72,7 +72,7 @@
       "id": "F-005",
       "proposed_fix": "Recharts and React Flow both accept CSS custom properties in the style props used here \u2014 replace with `var(--color-ember-400)` etc. Where a literal is genuinely required (SVG `stroke` on `<Pie>`), read the value from globals.css and keep one source.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 3,
       "why_it_matters": "Graph edges, axis ticks, tooltips and minimaps render in a palette the app abandoned; `charts/colors.ts` already uses the current values, so two chart surfaces disagree with each other. The comments naming the tokens make the drift invisible in review."
     },
@@ -94,7 +94,7 @@
       "id": "F-006",
       "proposed_fix": "Map to tokens (`emerald-400`\u2192`moss-400`, `red-400`\u2192`brick-400`, `sky-400`\u2192`dust-400`, `blue-600`\u2192`ember-400`, `gray-500`\u2192`paper-500`) and standardise the saved message on `<Alert variant=\"success\">`.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 3,
       "why_it_matters": "`ErrorBoundary` is the worst case \u2014 `text-gray-500` on `bg-blue-600` is a light-theme fragment shown at the app's most visible failure moment, on a dark ground. The success-message split means two conventions for identical semantics."
     },
@@ -106,7 +106,7 @@
       "id": "F-007",
       "proposed_fix": "Copy the `isDirtyRef` guard from EgressAllowlistEditor, set it in the textarea's onChange, clear it after a successful save.",
       "severity": "high",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "TanStack Query v5 enables structural sharing by default, so a refetch returning identical data keeps the same reference and the effect does not fire \u2014 the editor is safe only for as long as the server copy happens not to change. The moment it genuinely does (a second admin, a second tab, a corrected save), the next staleTime- or focus-triggered refetch produces a new reference, the effect fires, and the admin's in-progress edits are silently replaced. That is precisely the race the sibling component's `isDirtyRef` exists to prevent, in a security-relevant editor."
     },
@@ -118,7 +118,7 @@
       "id": "F-008",
       "proposed_fix": "Apply the same previous-value ref guard, or lift the draft into the parent keyed by node id.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "`values` is a fresh object on every parent render of the template editor, so any unrelated spec edit resets the JSON textarea the user is typing into. `FanOutSection` in the same file (lines 130-137) solves the same problem with a `prevExportsRef` guard."
     },
@@ -130,7 +130,7 @@
       "id": "F-009",
       "proposed_fix": "Either add `[node.exports]` as the dep array (the ref check then becomes redundant) or reset the draft with a `key={nodeId}` on the section so React discards the state instead.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "This is a render-phase computation implemented as a post-render effect. It is correct today but fragile \u2014 it is the one effect in the package that opts out of the dependency system entirely, and it costs an extra render whenever exports change."
     },
@@ -142,7 +142,7 @@
       "id": "F-010",
       "proposed_fix": "Compute the window inside each `groupXByDate` call (they already run inside a `useMemo`), and pick one timezone basis for both the arithmetic and the key.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "A dashboard left open across midnight keeps bucketing into a stale window \u2014 new runs land in a key that isn't in the bucket list and vanish from the chart. West-of-UTC users also see the window shifted by a day."
     },
@@ -158,7 +158,7 @@
       "id": "F-011",
       "proposed_fix": "Either wire `useUserPreferences` into `app/runs/[id]/page.tsx` and reconcile the two `RunDetailLayout` unions into one, or delete the hook and the `/me/preferences` endpoint together.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "Per-user layout persistence is a shipped server capability with a written client that was never wired up \u2014 the layout resets on every navigation. Deleting the hook would cement the regression; this needs a product decision, not a cleanup."
     },
@@ -176,7 +176,7 @@
       "id": "F-012",
       "proposed_fix": "Author's call: ship the missing UI or delete. Not a mechanical cleanup.",
       "severity": "low",
-      "status": "proposed",
+      "status": "partially-applied",
       "tier_required": 1,
       "why_it_matters": "Each wraps a live gateway endpoint or a planned control. Deleting them is behaviourally free but throws away someone's next step."
     },
@@ -198,7 +198,7 @@
       "id": "F-013",
       "proposed_fix": "Migrate the nine to `<PageHeader>`. Report-only because it changes typography and spacing on every one of those pages \u2014 a visual change, not a refactor.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 3,
       "why_it_matters": "The nine outliers are the app's most-visited operational pages (Runs, Inbox, Teams, Workflows). They read as a different product from the admin surface."
     },
@@ -223,7 +223,7 @@
       "id": "F-014",
       "proposed_fix": "Standardise on `<LoadingState>`. Report-only: `LoadingState` renders a centred pulse-dot block, so swapping the inline `<p>`s changes layout in every one of those panels.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "Loading is the state users see most on a polling dashboard, and it looks like four different apps depending on which tab you open."
     },
@@ -239,7 +239,7 @@
       "id": "F-015",
       "proposed_fix": "Lift the `describedBy` computation out of Select into FieldWrapper (or a tiny shared helper) and apply it in all three.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "Validation errors on the two most-used field primitives are visible but not announced. `Select` in the same directory shows the intended contract, so this reads as an incomplete rollout rather than a decision."
     },
@@ -254,7 +254,7 @@
       "id": "F-016",
       "proposed_fix": "Add `aria-label` to each (e.g. `aria-label=\"Filter steps\"`). Report-only per the accessibility rule.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "A placeholder is not an accessible name and disappears on first keystroke, so a screen-reader user gets 'edit text, blank'."
     },
@@ -269,7 +269,7 @@
       "id": "F-017",
       "proposed_fix": "Give the `<h2>` an id and reference it from the `<dialog>`.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "The dialog is announced without its name. Everything else about the modal implementation is correct, so this is the one gap."
     },
@@ -287,7 +287,7 @@
       "id": "F-018",
       "proposed_fix": "Extract a `useTransientFlag(ms)` hook and use it at all six sites.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "A setState on an unmounted component is harmless in React 19, but a user who copies and immediately navigates leaves a live timer, and the 'copied' flag can flash on a remounted component. One sibling already does it properly."
     },
@@ -299,7 +299,7 @@
       "id": "F-019",
       "proposed_fix": "`<Link href=\"/templates\">` styled as a button, or `useRouter().push`.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 3,
       "why_it_matters": "Full document reload: the React tree, the TanStack Query cache and the auth store are all thrown away and rebuilt for an in-app navigation."
     },
@@ -311,7 +311,7 @@
       "id": "F-020",
       "proposed_fix": "Use the class `bg-amber-400/15`, or `color-mix(in oklch, var(--color-amber-400) 15%, transparent)`.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "The declaration is dropped, so the badge renders with no background \u2014 amber text on the page ground instead of the intended tinted chip."
     },
@@ -323,7 +323,7 @@
       "id": "F-021",
       "proposed_fix": "Pass the run start into `WaterfallBar` and set `left: ((stepStart - runStart) / totalMs) * 100 + '%'`, mirroring the step-band code.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "The panel is titled 'Step timing' and reads as a Gantt chart; it silently misrepresents when each step ran. The scrubber's step-band strip directly above it computes the offset correctly (line ~730), so the data is available."
     },
@@ -335,7 +335,7 @@
       "id": "F-022",
       "proposed_fix": "Decide the intent, then delete the losing half. If sizes should differ, move 13.5px into `SIZES.md`/`SIZES.lg` as a class and drop the inline style.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "`size=\"sm\"` silently does not shrink its text. Removing the classes would be behaviour-preserving; removing the inline `fontSize` would change every button in the app \u2014 so which half is the bug is the author's call."
     },
@@ -349,7 +349,7 @@
       "id": "F-023",
       "proposed_fix": "Extract `<TracePre>` and `<TraceErrorBanner>` inside the file. Not applied: the file's three tests only exercise node filtering and never render `TraceOutput`, so the extraction would be unverified where it matters.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "Same element, three visual variants, in a single 692-line file. `TruncatedText` already wraps one of the five."
     },
@@ -361,7 +361,7 @@
       "id": "F-024",
       "proposed_fix": "Either drop the barrel and import every hook from its own module, or complete it and forbid direct imports. Renaming it (`hooks/index.ts`) would also remove the name collision. Prevalence Rule: both patterns are established, so this is a decision, not a defect.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "There is no rule for which door to use \u2014 app/page.tsx imports `useInbox` from '@/hooks/useInbox' and `useWorkflows` from '@/hooks/useWorkflows' in adjacent lines. The barrel's name also collides with the `useWorkflows()` function it re-exports from useRuns.ts."
     },
@@ -376,7 +376,7 @@
       "id": "F-025",
       "proposed_fix": "Deliberately not consolidated \u2014 this is two occurrences, not three, and they are not byte-identical, so it fails the DRY bar. The right move is probably to delete `RepositoryFormModal` once `ConnectionFormModal` covers its callers, which is a product decision.",
       "severity": "low",
-      "status": "proposed",
+      "status": "not-applied",
       "tier_required": 2,
       "why_it_matters": "Both are reachable (`/connections` uses ConnectionFormModal; RepositoryFormModal is imported and tested independently). A change to repo-field validation has to land twice."
     },
@@ -391,7 +391,7 @@
       "id": "F-026",
       "proposed_fix": "Switch to `<Modal>`. Not applied: the two render different chrome, so the swap changes the modal's DOM and appearance.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "The shared Modal already provides eyebrow/title/subtitle chrome. Two dialog implementations means an Escape-key or focus fix has to be made twice."
     },
@@ -406,7 +406,7 @@
       "id": "F-027",
       "proposed_fix": "Adopt `useIntegrationConfigForm` in both tabs.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "Two shared hooks exist for exactly this; two components in a third directory ignore both. EmbeddingsTab's `dirty` guard is a third re-implementation of the seed-once problem solved in useConfigForm."
     },
@@ -433,7 +433,7 @@
       "id": "F-029",
       "proposed_fix": "Add `componentDidCatch` with a report hook, and consider per-route `error.tsx` boundaries so one panel's failure does not take the shell down.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "The platform ships OpenTelemetry for the backend; the dashboard drops its own exceptions on the floor. It is also the only boundary in the tree \u2014 a crash anywhere blanks the whole app shell."
     },
@@ -460,7 +460,7 @@
       "id": "F-031",
       "proposed_fix": "Use `next/link` for the doc-internal branch of `docAnchor`. Report-only: swapping `<a>` for `<Link>` changes prefetch, scroll restoration and history behaviour.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 3,
       "why_it_matters": "The docs case is a full page reload on every cross-doc link \u2014 the whole docs surface navigates like a static site inside a SPA. The slack-channels case is `target=\"_blank\"`, so it is defensible."
     },
@@ -532,7 +532,7 @@
       "id": "F-036",
       "proposed_fix": "Route all ten through `formatDate` / `formatRelativeTime`. Report-only because each swap changes the rendered date string.",
       "severity": "high",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "lib/utils.ts carries a comment naming this exact situation as the bug it was written to fix: \"Pinning a locale here is what made a non-US reader see US-ordered dates from formatDate next to browser-ordered ones from the bare toLocaleString() calls elsewhere in the app.\" The centralisation landed in most files and not these. Worse, the two formats differ in shape (formatDate omits the year and uses a short month), so a reader sees two date styles on one screen."
     },
@@ -547,7 +547,7 @@
       "id": "F-037",
       "proposed_fix": "Move both editors plus `ALL_TOOL_KEYS` and `clean` into `components/agents/` and import from both call sites.",
       "severity": "high",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "This is the one DRY candidate in the package that clears the two-occurrence exception: byte-identical, substantial, and unambiguously the same domain concept (editing an Agent's skill refs and tool keys) with a single shared reason to change \u2014 the Agent schema. Adding a sixth tool key today means editing two files that must not diverge."
     },
@@ -562,7 +562,7 @@
       "id": "F-038",
       "proposed_fix": "Move the five hooks into `hooks/useSkills.ts`, keep one query key, and widen `SkillOption` to the full `Skill` shape (or export both).",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "Two cache entries for one resource. `useCreateSkill`/`useUpdateSkill`/`useDeleteSkill` invalidate `['skills']`, which prefix-matches `['skills','all']` but not `['admin-skills']` \u2014 so creating a skill on the admin page leaves the skill pickers in the agent library and team overrides showing a stale list."
     },
@@ -580,7 +580,7 @@
       "id": "F-039",
       "proposed_fix": "Standardise on `<ConfirmModal>`; add one for the lesson delete.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "`window.confirm` renders an OS dialog that ignores the design system entirely and is not stylable or testable; the un-confirmed lesson delete is a one-click irreversible action on stored agent memory. The shared primitive already exists and covers all three cases."
     },
@@ -592,7 +592,7 @@
       "id": "F-040",
       "proposed_fix": "Drive the indicator from `gatewayDown` (dot + label switch to brick/offline), or drop it \u2014 a hardcoded status light is worse than none.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "When the gateway is down the page states both at once, and the decorative claim is the more prominent of the two. It is the first screen a contributor sees when their local stack isn't up."
     },
@@ -604,7 +604,7 @@
       "id": "F-041",
       "proposed_fix": "`suppressHydrationWarning` on the span, or move the year to a build-time constant.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "The year is baked in at build time and can disagree with the client's clock across a New Year boundary, producing a hydration mismatch. The same file already reaches for `suppressHydrationWarning` on `API_BASE` for exactly this class of problem."
     },
@@ -620,7 +620,7 @@
       "id": "F-042",
       "proposed_fix": "Use `<LoadingState message=\"loading users\u2026\">`, and promote `Th` to `components/ui/`.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "The loading block re-implements `<LoadingState>` with different copy; `Th` is a table-header primitive the ui/ directory does not have but clearly needs \u2014 three copies is past the rule of three."
     },
@@ -663,7 +663,7 @@
       "id": "F-045",
       "proposed_fix": "Needs a product call, not a refactor: one handle per option (accurate, but `TemplateEditor.tsx:122` writes `patched[handleKind] = target` on drag-connect, which assumes a handle id is a top-level spec field \u2014 false for `options[i].next`), or one shared `onSubmit` port (cheap, but drag-connect would then write an invalid `onSubmit` field onto a humanDecision node). Either way the handle-id-as-field-name assumption in TemplateEditor has to change first.",
       "severity": "high",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 3,
       "why_it_matters": "Exactly the user-visible symptom F-043 fixed, in a node type F-043 did not touch \u2014 a decision node shows its timeout branch and none of its actual decision branches. It is live today."
     },
@@ -675,7 +675,7 @@
       "id": "F-046",
       "proposed_fix": "Add the missing entry and type the palette as an exhaustive `Record<SpecNode['type'], \u2026>` (the pattern `CATEGORY_RING` and `CATEGORY_LABEL` in dagNode.tsx already use), so the next node type cannot be forgotten.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 2,
       "why_it_matters": "`eval` is a first-class node type with its own docs page; the only route to one is hand-editing the spec JSON. The palette has the same shape of gap as F-043 and for the same reason \u2014 an unguarded hand-maintained enumeration of node types."
     },
@@ -690,7 +690,7 @@
       "id": "F-047",
       "proposed_fix": "Give `subLabelFor` a `never` sentinel, and make the inspector dispatch a `Record<SpecNode['type'], \u2026>` lookup.",
       "severity": "medium",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "Same failure class as F-043, F-046: the compiler cannot help because the return type or control flow tolerates a missing branch. These are the remaining places a new node type degrades silently."
     }

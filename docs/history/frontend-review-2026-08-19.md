@@ -1,8 +1,11 @@
 # Frontend Code Review — 2026-08-19
 
 > **Frozen.** A point-in-time review, kept for rationale. Do not consult it to learn current
-> behaviour — the code wins wherever they diverge. Its findings were accurate against `341a4f7`;
-> eight were fixed on the branch that added this file, and the rest are proposals.
+> behaviour — the code wins wherever they diverge. Its findings were accurate against `341a4f7`.
+> All 47 were resolved on the branch that added this file: 45 fixed, one fixed in part, one
+> deliberately left alone with a recorded reason. The "why not applied" notes below are kept as
+> written, because they are the record of what each fix cost to justify — not because anything
+> is still outstanding.
 
 Scope: `packages/web` (`@auto-swe/web`) — Next.js 16 App Router dashboard: 191 git-tracked
 `.ts`/`.tsx`/`.mjs` files, 32,569 lines.
@@ -30,7 +33,15 @@ Packages reviewed: `@auto-swe/web` · Verification tier: **2** where component t
 (20 files), **1** everywhere else. Tier 3 was unavailable — see Baseline.
 
 Files: **191/191 reviewed** — 0 skipped, 0 not reached.
-Applied: **8** · Proposed: **39** · Blocked: **0**
+Applied: **45** · Partially applied: **1** · Deliberately not applied: **1** · Blocked: **0**
+
+The review landed in two halves. The first pass applied only what Tier 1 permits — eight
+findings, all of them unused-symbol removal, constant extraction, or type-level cleanup — and
+proposed the other 39 with the reasoning below intact. The second pass, on an explicit
+instruction to close the whole review, applied those 39 with a test written for each surface
+that had none: `ConfigField`, `AgentEditorFields`, the `useAdminConfig` factory, `TraceOutput`,
+`palette`, and the node-type coverage guards. Four of them (F-013, F-014, F-026, F-036) change
+what the app renders and are called out as such where they appear.
 
 ### Baseline
 
@@ -47,7 +58,9 @@ re-run in full after every batch:
 | E2E | — | **unavailable** |
 
 **Pre-existing failures: none.** Every gate was green at baseline and green after every batch,
-with the test count never below 2157.
+with the test count never below 2157. It finished at **180 files, 2238 tests** — 81 added by this
+work, all of them covering surfaces the review touched. `yarn docs:check` and the three
+production Docker images (`gateway`, `worker`, `web`) were also built and green at the end.
 
 **Why E2E is unavailable:** there is no E2E harness in the repository. `.github/workflows/ci.yml`
 runs docs-check, typecheck, lint, `vitest run --coverage`, build, and a migrations job — no
@@ -183,15 +196,17 @@ and by `validateSpec`'s reachability analysis, and had all four node types right
 The first attempt at F-043 patched the four missing cases into the duplicate — a bandaid that
 would have let the next node type drift again. The landed fix deletes the duplicate instead.
 
-That pass also surfaced three enumerations of `node.type` that are still unguarded, two of them
-carrying live bugs: **F-045** (a multi-option `humanDecision`'s edges do not render at all — the
-same symptom as F-043, in a node type F-043 did not touch) and **F-046** (`eval` is missing from
-the editor's node palette, so there is no way to create one). Both are reported rather than fixed:
-F-045 needs a product decision about handle topology that breaks an assumption in `TemplateEditor`,
-and F-046 wants the palette retyped as an exhaustive record rather than a one-entry patch.
+That pass also surfaced three enumerations of `node.type` that were still unguarded, two of them
+carrying live bugs: **F-045** (a multi-option `humanDecision`'s edges did not render at all — the
+same symptom as F-043, in a node type F-043 did not touch) and **F-046** (`eval` missing from the
+editor's node palette, so there was no way to create one). Both were reported rather than fixed in
+the first pass and both landed in the second. F-045 needed the handle-id-as-field-name assumption
+in `TemplateEditor` broken first, which became `readNodeEdge` / `setNodeEdge` in shared, beside the
+`nodeEdges` whose grammar they have to match. F-046 retyped the palette as a `Record` over the
+`Node` union rather than patching one entry in.
 
-**Why so few.** Not because there was little to find — there are 37 proposed findings below,
-several of them substantial. The constraint is verification depth. With no E2E harness, the
+**Why so few in the first pass.** Not because there was little to find — 39 findings followed,
+several of them substantial. The constraint was verification depth. With no E2E harness, the
 affected files sit at Tier 1 (build + typecheck + lint) unless a component test covers them, and
 Tier 1 permits only unused-symbol removal, naming, import style, type-level cleanup, constant
 extraction, and moving a symbol between modules. That rules out, by construction:
@@ -211,6 +226,15 @@ Four fixes were applied under those rules: three remove code that cannot be call
 fourth removes a redundant assertion. F-033 is the only one that changes what an importer
 resolves, and both values were already identical.
 
+**What the second pass changed about that calculus.** The instruction to close the whole review
+made the tier rules a constraint on *how* to apply a finding rather than *whether* to. Each of
+the surfaces named above as untested got a test before it was refactored — that is where 81 of
+the 2238 tests came from — so the Tier-2 operations that were out of reach in the first pass
+(`errMsg` across 74 sites, the `useAdminConfig` factory, `ConfigField` across 31 sites, the two
+`TracePre` variants) were verified rather than assumed. The four findings whose fix is a visual
+change (F-013, F-014, F-026, F-036) are the exception: no test makes those safe, and they are
+applied because the instruction was explicit, not because the risk went away.
+
 Two more (F-030, F-043) were applied in a follow-up round after this report was itself reviewed.
 F-030 — hoisting a constant — was in-tier and behaviour-preserving all along and should have been
 in the first batch; leaving it out while claiming the applied set was complete was an error in
@@ -218,9 +242,38 @@ the original draft. F-043 is a genuine behaviour change and would have been repo
 original rules, but it is a real bug in code this branch already touched, so it was fixed with a
 regression test rather than deferred.
 
-## Proposed — Needs Your Decision
+## The Other 39 — Reported First, Then Applied
 
-Ordered by severity, then by leverage. Full evidence for each is in `frontend-review-2026-08-19/findings.json`.
+Everything below was written as a proposal, with the reasoning for *not* applying it under the
+first pass's Tier-1 rules. It is kept verbatim: the "why not applied" note on each is the record
+of what the fix costs and what it risks, which is the part worth reading later. All of it landed
+in the second pass except where this section says otherwise.
+
+Four of these deliberately change what the app renders — **F-013** (nine pages onto
+`PageHeader`), **F-014** (ten loading blocks onto `LoadingState`), **F-026**
+(`SubmitWorkRequestModal` onto `ui/Modal`) and **F-036** (ten dates onto `formatDate`). Each was
+flagged report-only for exactly that reason and applied anyway on an explicit instruction to
+close the review; the commit that carries them says what moves.
+
+Two were not applied as written:
+
+- **F-025** stands as reported. `ConnectionFormModal` and `RepositoryFormModal` are two
+  occurrences, not three, and not byte-identical, so they fail this review's own DRY bar. The
+  right move — deleting `RepositoryFormModal` once `ConnectionFormModal` covers its callers — is
+  a product decision, and both are live and independently tested today.
+- **F-012** is applied in part. `NodeConfigForm` is deleted: it is 153 lines with no references
+  and its replacement (`inspectorFields` / `inspectorSections`) is in the tree. The rest —
+  `relayoutNodes`, `withGatewayDiagnostics`, the five `useTeam*Credential` hooks and
+  `useChannelBudget` — is scaffolding for UI that does not exist, and deleting it or shipping
+  that UI is the author's call, not a remediation.
+
+Two findings from F-039 were also left as reported rather than migrated: the hand-rolled
+`<Modal>` confirms in `TeamAgentLibrarySection` and `/admin/skills` show a save error and disable
+their button while the mutation is in flight, and `ConfirmModal` does neither. Switching them
+would lose behaviour; extending `ConfirmModal` to cover the async case is a change to a shared
+primitive that four other call sites depend on.
+
+Full evidence for each finding is in `frontend-review-2026-08-19/findings.json`.
 
 ### High
 
@@ -398,10 +451,30 @@ here instead.
 | Loading | `<LoadingState>` | 34 vs 18 |
 | Confirmation | `<ConfirmModal>` | 10 vs 5 |
 | Dates / numbers | `lib/utils` formatters, never bare `toLocale*` | 33 vs 11 |
-| Error text | *undecided* — `errMsg` exists but is unused | 3 vs 74 |
+| Error text | `errMsg` from `lib/errors` | now 77 vs 0 |
 | Tests | Co-located `*.test.tsx`, jsdom via a per-file pragma | 20 files |
 
 **Codebase-wide migrations worth considering**, in dependency order: adopt `errMsg` (F-002) →
 finish the `LoadingState` / `ConfirmModal` / `PageHeader` rollouts (F-013, F-014, F-039, F-042)
 → move the remaining hard-coded colours to CSS custom properties (F-005, F-006) → extract
-`ConfigTextField` and collapse `useAdminConfig` behind a factory (F-004, F-003).
+`ConfigTextField` and collapse `useAdminConfig` behind a factory (F-004, F-003). All four landed
+in that order.
+
+## Found While Remediating
+
+Three things the review did not catch, surfaced by the fixes themselves:
+
+- **Nested buttons in the trace viewer.** `EventRow` renders the whole row as a `<button>` and
+  `TraceOutput` renders `CollapsibleSection` toggles inside it. A click on the nested "Request"
+  toggle bubbles to the row and collapses it, so the request body — and the `TruncatedText`
+  inside — is unreachable from the UI. It is also invalid HTML. Pinned by a test in
+  `TracesTab.test.tsx` that documents the current behaviour; unnesting changes the row's a11y
+  semantics, which is a deliberate change rather than part of extracting duplicate markup.
+- **`border-l-` slipped past the palette guard.** The off-palette check added with F-006 matched
+  `text-`/`bg-`/`border-` and missed the side variants, so `border-l-indigo-400` and
+  `border-l-moss-500` in `dagNode.tsx` survived the sweep. Both fixed; the guard now covers them.
+- **`eval` had no inspector section.** Fixing F-046 made an eval node creatable from the palette,
+  which exposed that `NodeInspector` has no fields for it — as it has none for the four `human*`
+  types. A typed coverage map now forces every node type to be classified, and the uncovered ones
+  render a pointer to JSON mode rather than blank space. Building those sections is a feature,
+  not a remediation.
