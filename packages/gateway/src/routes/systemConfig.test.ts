@@ -57,9 +57,13 @@ vi.mock('../lib/systemConfigService.js', () => ({
   getStorageConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   listConfigAuditEntries: vi.fn(async () => []),
   SYSTEM_CONFIG_IDS: {
+    canary: '00000000-0000-0000-0001-000000000012',
+    consolidation: '00000000-0000-0000-0001-000000000009',
+    evalSchedule: '00000000-0000-0000-0001-000000000010',
     github: '00000000-0000-0000-0001-000000000001',
     googleOAuth: '00000000-0000-0000-0001-000000000005',
     knowledgeBase: '00000000-0000-0000-0001-000000000007',
+    revalidation: '00000000-0000-0000-0001-000000000011',
     slack: '00000000-0000-0000-0001-000000000002',
     storage: '00000000-0000-0000-0001-000000000003',
     tracker: '00000000-0000-0000-0001-000000000006',
@@ -71,18 +75,69 @@ vi.mock('../lib/systemConfigService.js', () => ({
   testKnowledgeBaseConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testSlackConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testStorageConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
-  updateCanaryConfig: vi.fn(async () => {}),
-  updateConsolidationConfig: vi.fn(async () => {}),
-  updateEvalScheduleConfig: vi.fn(async () => {}),
-  updateGitHubConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
-  updateGoogleOAuthConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
-  updateIssueTrackerConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
-  updateKnowledgeBaseConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
-  updateRevalidationScheduleConfig: vi.fn(async () => {}),
-  updateSlackConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
-  updateStorageConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
+  updateCanaryConfig: vi.fn(async () => ({
+    auditAfterJson: { changedFields: ['enabled'] },
+    auditBeforeJson: { enabled: false },
+    changedFields: ['enabled'],
+    existed: true,
+  })),
+  updateConsolidationConfig: vi.fn(async () => ({
+    auditAfterJson: { changedFields: ['enabled'] },
+    auditBeforeJson: { enabled: false },
+    changedFields: ['enabled'],
+    existed: true,
+  })),
+  updateEvalScheduleConfig: vi.fn(async () => ({
+    auditAfterJson: { changedFields: ['enabled'] },
+    auditBeforeJson: { enabled: false },
+    changedFields: ['enabled'],
+    existed: true,
+  })),
+  updateGitHubConfig: vi.fn(async () => ({
+    auditBeforeJson: null,
+    changedFields: [],
+    data: {},
+    existed: true,
+  })),
+  updateGoogleOAuthConfig: vi.fn(async () => ({
+    auditBeforeJson: null,
+    changedFields: [],
+    data: {},
+    existed: true,
+  })),
+  updateIssueTrackerConfig: vi.fn(async () => ({
+    auditBeforeJson: null,
+    changedFields: [],
+    data: {},
+    existed: true,
+  })),
+  updateKnowledgeBaseConfig: vi.fn(async () => ({
+    auditBeforeJson: null,
+    changedFields: [],
+    data: {},
+    existed: true,
+  })),
+  updateRevalidationScheduleConfig: vi.fn(async () => ({
+    auditAfterJson: { changedFields: ['enabled'] },
+    auditBeforeJson: { enabled: false },
+    changedFields: ['enabled'],
+    existed: true,
+  })),
+  updateSlackConfig: vi.fn(async () => ({
+    auditBeforeJson: null,
+    changedFields: [],
+    data: {},
+    existed: true,
+  })),
+  updateStorageConfig: vi.fn(async () => ({
+    auditBeforeJson: null,
+    changedFields: [],
+    data: {},
+    existed: true,
+  })),
   updateWorkflowDefaults: vi.fn(async () => ({
     auditAfterJson: { changedFields: ['maxTddIterations'] },
+    auditBeforeJson: { maxTddIterations: 5 },
     changedFields: ['maxTddIterations'],
     data: { branchPrefix: 'auto', maxTddIterations: 7 },
     existed: true,
@@ -95,7 +150,9 @@ import { resolveCanaryConfig } from '@auto-swe/shared/lib/systemConfig';
 import {
   detectJiraFields,
   updateCanaryConfig,
+  updateConsolidationConfig,
   updateWorkflowDefaults,
+  writeSystemConfigAudit,
 } from '../lib/systemConfigService.js';
 import { systemConfigRoutes } from './systemConfig.js';
 
@@ -104,6 +161,8 @@ const findAgentMock = vi.mocked(prisma.agent.findFirst);
 const resolveCanaryConfigMock = vi.mocked(resolveCanaryConfig);
 const updateCanaryConfigMock = vi.mocked(updateCanaryConfig);
 const updateWorkflowDefaultsMock = vi.mocked(updateWorkflowDefaults);
+const updateConsolidationConfigMock = vi.mocked(updateConsolidationConfig);
+const writeSystemConfigAuditMock = vi.mocked(writeSystemConfigAudit);
 
 const AUTH_HEADER = { authorization: 'Bearer fake-admin-token' };
 
@@ -350,6 +409,70 @@ describe('PUT /config/canary', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(updateCanaryConfigMock).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+});
+
+describe('config audit coverage', () => {
+  it('audits a consolidation-schedule change, which previously wrote no entry', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { enabled: true },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/consolidation',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(updateConsolidationConfigMock).toHaveBeenCalledTimes(1);
+    expect(writeSystemConfigAuditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        entityId: '00000000-0000-0000-0001-000000000009',
+        entityType: 'ConsolidationConfig',
+      })
+    );
+    await app.close();
+  });
+
+  it('audits a canary change — the route that silently redirected production traffic', async () => {
+    resolveCanaryConfigMock.mockResolvedValue({
+      agentKey: 'implementer',
+      candidateVersion: 2,
+      enabled: true,
+      percent: 10,
+    });
+    findAgentMock.mockResolvedValue({ id: 'agent-1' } as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { agentKey: 'implementer', candidateVersion: 2, enabled: true, percent: 0.1 },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/canary',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(writeSystemConfigAuditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ entityType: 'CanaryConfig' })
+    );
+    await app.close();
+  });
+
+  it('records the before-state so an audit entry shows what a value changed from', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { maxTddIterations: 7 },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/workflow-defaults',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(writeSystemConfigAuditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ beforeJson: { maxTddIterations: 5 } })
+    );
     await app.close();
   });
 });

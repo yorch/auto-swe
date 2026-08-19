@@ -281,6 +281,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           action: result.existed ? 'UPDATE' : 'CREATE',
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
           entityId: SYSTEM_CONFIG_IDS.github,
           entityType: 'GitHubConfig',
         });
@@ -310,6 +311,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           action: result.existed ? 'UPDATE' : 'CREATE',
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
           entityId: SYSTEM_CONFIG_IDS.slack,
           entityType: 'SlackConfig',
         });
@@ -339,6 +341,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           action: result.existed ? 'UPDATE' : 'CREATE',
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
           entityId: SYSTEM_CONFIG_IDS.storage,
           entityType: 'StorageConfig',
         });
@@ -370,6 +373,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           action: result.existed ? 'UPDATE' : 'CREATE',
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
           entityId: SYSTEM_CONFIG_IDS.workflowDefaults,
           entityType: 'WorkflowDefaults',
         });
@@ -397,6 +401,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           action: result.existed ? 'UPDATE' : 'CREATE',
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
           entityId: SYSTEM_CONFIG_IDS.googleOAuth,
           entityType: 'GoogleOAuthConfig',
         });
@@ -422,6 +427,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           action: result.existed ? 'UPDATE' : 'CREATE',
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
           entityId: SYSTEM_CONFIG_IDS.tracker,
           entityType: 'IssueTrackerConfig',
         });
@@ -471,6 +477,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           action: result.existed ? 'UPDATE' : 'CREATE',
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
           entityId: SYSTEM_CONFIG_IDS.knowledgeBase,
           entityType: 'KnowledgeBaseConfig',
         });
@@ -502,6 +509,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           action: result.existed ? 'UPDATE' : 'CREATE',
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
           entityId: SYSTEM_CONFIG_IDS.figma,
           entityType: 'FigmaConfig',
         });
@@ -538,7 +546,18 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/consolidation',
     { schema: { body: ConsolidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      await updateConsolidationConfig(prisma, req.body);
+      const result = await updateConsolidationConfig(prisma, req.body);
+      if (result.changedFields.length > 0) {
+        const actor = requireUser(req);
+        await writeSystemConfigAudit(prisma, fastify.log, {
+          action: result.existed ? 'UPDATE' : 'CREATE',
+          actorId: actor.sub,
+          afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
+          entityId: SYSTEM_CONFIG_IDS.consolidation,
+          entityType: 'ConsolidationConfig',
+        });
+      }
 
       const config = await resolveConsolidationConfig();
       await fastify.temporal.syncConsolidationSchedule(config);
@@ -572,7 +591,18 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/eval-schedule',
     { schema: { body: EvalSchedulePutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      await updateEvalScheduleConfig(prisma, req.body);
+      const result = await updateEvalScheduleConfig(prisma, req.body);
+      if (result.changedFields.length > 0) {
+        const actor = requireUser(req);
+        await writeSystemConfigAudit(prisma, fastify.log, {
+          action: result.existed ? 'UPDATE' : 'CREATE',
+          actorId: actor.sub,
+          afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
+          entityId: SYSTEM_CONFIG_IDS.evalSchedule,
+          entityType: 'EvalScheduleConfig',
+        });
+      }
 
       const config = await resolveEvalScheduleConfig();
       await fastify.temporal.syncEvalSchedule(config);
@@ -602,7 +632,18 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/revalidation',
     { schema: { body: RevalidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      await updateRevalidationScheduleConfig(prisma, req.body);
+      const result = await updateRevalidationScheduleConfig(prisma, req.body);
+      if (result.changedFields.length > 0) {
+        const actor = requireUser(req);
+        await writeSystemConfigAudit(prisma, fastify.log, {
+          action: result.existed ? 'UPDATE' : 'CREATE',
+          actorId: actor.sub,
+          afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
+          entityId: SYSTEM_CONFIG_IDS.revalidation,
+          entityType: 'RevalidationConfig',
+        });
+      }
 
       const config = await resolveRevalidationConfig();
       await fastify.temporal.syncRevalidationSchedule(config);
@@ -655,7 +696,18 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           });
         }
       }
-      await updateCanaryConfig(prisma, req.body);
+      const result = await updateCanaryConfig(prisma, req.body);
+      if (result.changedFields.length > 0) {
+        const actor = requireUser(req);
+        await writeSystemConfigAudit(prisma, fastify.log, {
+          action: result.existed ? 'UPDATE' : 'CREATE',
+          actorId: actor.sub,
+          afterJson: result.auditAfterJson,
+          beforeJson: result.auditBeforeJson,
+          entityId: SYSTEM_CONFIG_IDS.canary,
+          entityType: 'CanaryConfig',
+        });
+      }
       const config = await resolveCanaryConfig();
       return reply.send({ data: config });
     }

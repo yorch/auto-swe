@@ -12,14 +12,23 @@ const ACTION_COLORS = {
 const ENTITY_LABELS: Record<string, string> = {
   AgentSkillAssignment: 'Agent skill assignment',
   AgentToolConfig: 'Agent tool config',
+  CanaryConfig: 'Canary routing',
+  ConfigSetting: 'Setting',
+  ConsolidationConfig: 'Consolidation schedule',
   EmbeddingConfig: 'Embedding config',
+  EvalScheduleConfig: 'Eval schedule',
+  FigmaConfig: 'Figma',
   GitHubConfig: 'GitHub',
   GoogleOAuthConfig: 'Google OAuth',
+  IssueTrackerConfig: 'Issue tracker',
+  KnowledgeBaseConfig: 'Knowledge base',
   ModelRoleConfig: 'Model config',
   ProviderCredential: 'Provider credential',
+  RevalidationConfig: 'Revalidation schedule',
   Skill: 'Skill',
   SlackConfig: 'Slack',
   StorageConfig: 'Storage',
+  WorkflowDefaults: 'Workflow defaults',
 };
 
 function ChangedFields({ json }: { json: unknown }) {

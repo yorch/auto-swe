@@ -30,10 +30,14 @@ import type { FastifyBaseLogger } from 'fastify';
 // Used as entityId in ConfigAuditLog (which requires a UUID PK) since the
 // config tables use the string 'default' as their PK.
 export const SYSTEM_CONFIG_IDS = {
+  canary: '00000000-0000-0000-0001-000000000012',
+  consolidation: '00000000-0000-0000-0001-000000000009',
+  evalSchedule: '00000000-0000-0000-0001-000000000010',
   figma: '00000000-0000-0000-0001-000000000008',
   github: '00000000-0000-0000-0001-000000000001',
   googleOAuth: '00000000-0000-0000-0001-000000000005',
   knowledgeBase: '00000000-0000-0000-0001-000000000007',
+  revalidation: '00000000-0000-0000-0001-000000000011',
   slack: '00000000-0000-0000-0001-000000000002',
   storage: '00000000-0000-0000-0001-000000000003',
   tracker: '00000000-0000-0000-0001-000000000006',
@@ -86,6 +90,25 @@ function changedKeys(pairs: [string, unknown][]): string[] {
   return pairs.filter(([, v]) => v !== undefined && v !== '').map(([k]) => k);
 }
 
+/// Projects the auditable (non-secret) fields of a config row into a plain
+/// object for the audit log. Secret columns are never included; the matching
+/// `*LastFour` column is, so a rotation still shows up as a before/after
+/// change without ever recording plaintext. Returns null for a row that did
+/// not exist yet, which is what CREATE entries should record as `before`.
+function pickAudit<T extends object>(
+  row: T | null | undefined,
+  fields: readonly (keyof T & string)[]
+): Record<string, unknown> | null {
+  if (!row) {
+    return null;
+  }
+  const out: Record<string, unknown> = {};
+  for (const field of fields) {
+    out[field] = row[field];
+  }
+  return out;
+}
+
 /// Writes a ConfigAuditLog entry for a system-config change. Best-effort —
 /// an audit failure is logged but never fails the config write itself.
 export async function writeSystemConfigAudit(
@@ -95,6 +118,7 @@ export async function writeSystemConfigAudit(
     action: 'CREATE' | 'UPDATE';
     actorId: string;
     afterJson: Record<string, unknown>;
+    beforeJson?: Record<string, unknown> | null;
     entityId: string;
     entityType: string;
   }
@@ -105,6 +129,7 @@ export async function writeSystemConfigAudit(
         action: args.action,
         actorId: args.actorId,
         afterJson: args.afterJson as never,
+        beforeJson: (args.beforeJson ?? null) as never,
         entityId: args.entityId,
         entityType: args.entityType,
       },
@@ -117,6 +142,9 @@ export async function writeSystemConfigAudit(
 type ConfigUpdateResult = {
   /// Audit payload (only meaningful when changedFields is non-empty).
   auditAfterJson: Record<string, unknown>;
+  /// The same projection taken before the write, so the audit log records what
+  /// a value changed *from*. Null when no row existed yet (a CREATE).
+  auditBeforeJson: Record<string, unknown> | null;
   changedFields: string[];
   /// Masked response body for the PUT route.
   data: Record<string, unknown>;
@@ -142,6 +170,23 @@ export type GitHubConfigInput = {
   token?: string;
   webhookSecret?: string;
 };
+
+/// Non-secret columns recorded in the audit log for a GitHub config change.
+/// `*LastFour` stands in for each write-only secret so a rotation is visible.
+const GITHUB_AUDIT_FIELDS = [
+  'apiUrl',
+  'appClientId',
+  'appClientSecretLastFour',
+  'appId',
+  'appInstallationId',
+  'appPrivateKeyLastFour',
+  'authMode',
+  'baseUrl',
+  'oauthClientId',
+  'oauthClientSecretLastFour',
+  'tokenLastFour',
+  'webhookSecretLastFour',
+] as const;
 
 function githubData(row: GitHubConfigRow | null) {
   return {
@@ -253,16 +298,8 @@ export async function updateGitHubConfig(
   ]);
 
   return {
-    auditAfterJson: {
-      apiUrl: row.apiUrl,
-      appClientId: row.appClientId,
-      appId: row.appId,
-      appInstallationId: row.appInstallationId,
-      authMode: row.authMode,
-      baseUrl: row.baseUrl,
-      changedFields,
-      oauthClientId: row.oauthClientId,
-    },
+    auditAfterJson: { ...pickAudit(row, GITHUB_AUDIT_FIELDS), changedFields },
+    auditBeforeJson: pickAudit(existing, GITHUB_AUDIT_FIELDS),
     changedFields,
     data: {
       ...githubData(row),
@@ -326,6 +363,13 @@ export type SlackConfigInput = {
   signingSecret?: string;
 };
 
+const SLACK_AUDIT_FIELDS = [
+  'botTokenLastFour',
+  'clientId',
+  'clientSecretLastFour',
+  'signingSecretLastFour',
+] as const;
+
 function slackData(row: SlackConfigRow | null) {
   return {
     botToken: maskedSecret(row?.botTokenLastFour),
@@ -379,7 +423,8 @@ export async function updateSlackConfig(
   ]);
 
   return {
-    auditAfterJson: { changedFields, clientId: row.clientId },
+    auditAfterJson: { ...pickAudit(row, SLACK_AUDIT_FIELDS), changedFields },
+    auditBeforeJson: pickAudit(existing, SLACK_AUDIT_FIELDS),
     changedFields,
     data: {
       ...slackData(row),
@@ -428,6 +473,17 @@ export type StorageConfigInput = {
   s3Prefix?: string | null;
   s3Region?: string | null;
 };
+
+const STORAGE_AUDIT_FIELDS = [
+  'awsAccessKeyId',
+  'awsSecretAccessKeyLastFour',
+  'backend',
+  's3Bucket',
+  's3Endpoint',
+  's3ForcePathStyle',
+  's3Prefix',
+  's3Region',
+] as const;
 
 function storageData(row: StorageConfigRow | null) {
   return {
@@ -529,16 +585,8 @@ export async function updateStorageConfig(
   ]);
 
   return {
-    auditAfterJson: {
-      awsAccessKeyId: row.awsAccessKeyId,
-      backend: row.backend,
-      changedFields,
-      s3Bucket: row.s3Bucket,
-      s3Endpoint: row.s3Endpoint,
-      s3ForcePathStyle: row.s3ForcePathStyle,
-      s3Prefix: row.s3Prefix,
-      s3Region: row.s3Region,
-    },
+    auditAfterJson: { ...pickAudit(row, STORAGE_AUDIT_FIELDS), changedFields },
+    auditBeforeJson: pickAudit(existing, STORAGE_AUDIT_FIELDS),
     changedFields,
     data: storageData(row),
     existed: !!existing,
@@ -602,6 +650,8 @@ export type GoogleOAuthConfigInput = {
   clientSecret?: string;
 };
 
+const GOOGLE_OAUTH_AUDIT_FIELDS = ['clientId', 'clientSecretLastFour'] as const;
+
 function googleOAuthData(row: GoogleOAuthConfigRow | null) {
   return {
     clientId: row?.clientId ?? null,
@@ -647,7 +697,8 @@ export async function updateGoogleOAuthConfig(
   ]);
 
   return {
-    auditAfterJson: { changedFields, clientId: row.clientId },
+    auditAfterJson: { ...pickAudit(row, GOOGLE_OAUTH_AUDIT_FIELDS), changedFields },
+    auditBeforeJson: pickAudit(existing, GOOGLE_OAUTH_AUDIT_FIELDS),
     changedFields,
     data: { ...googleOAuthData(row), requiresRestart: true },
     existed: !!existing,
@@ -676,6 +727,19 @@ export type IssueTrackerConfigInput = {
   webhookSecret?: string | null;
   webhookTriggerStatus?: string | null;
 };
+
+const ISSUE_TRACKER_AUDIT_FIELDS = [
+  'allowPrivateNetwork',
+  'apiTokenLastFour',
+  'baseUrl',
+  'defaultProjectKey',
+  'email',
+  'epicIssueType',
+  'instanceType',
+  'provider',
+  'storyIssueType',
+  'webhookTriggerStatus',
+] as const;
 
 function issueTrackerData(row: IssueTrackerConfigRow | null) {
   return {
@@ -801,18 +865,8 @@ export async function updateIssueTrackerConfig(
   ]);
 
   return {
-    auditAfterJson: {
-      allowPrivateNetwork: row.allowPrivateNetwork,
-      baseUrl: row.baseUrl,
-      changedFields,
-      defaultProjectKey: row.defaultProjectKey,
-      email: row.email,
-      epicIssueType: row.epicIssueType,
-      instanceType: row.instanceType,
-      provider: row.provider,
-      storyIssueType: row.storyIssueType,
-      webhookTriggerStatus: row.webhookTriggerStatus,
-    },
+    auditAfterJson: { ...pickAudit(row, ISSUE_TRACKER_AUDIT_FIELDS), changedFields },
+    auditBeforeJson: pickAudit(existing, ISSUE_TRACKER_AUDIT_FIELDS),
     changedFields,
     data: issueTrackerData(row),
     existed: !!existing,
@@ -862,6 +916,17 @@ export type KnowledgeBaseConfigInput = {
   provider?: 'confluence' | 'notion' | null;
   spaces?: string[];
 };
+
+const KNOWLEDGE_BASE_AUDIT_FIELDS = [
+  'allowPrivateNetwork',
+  'apiTokenLastFour',
+  'baseUrl',
+  'email',
+  'enabled',
+  'maxPages',
+  'provider',
+  'spaces',
+] as const;
 
 function knowledgeBaseData(row: KnowledgeBaseConfigRow | null) {
   return {
@@ -942,16 +1007,8 @@ export async function updateKnowledgeBaseConfig(
   ]);
 
   return {
-    auditAfterJson: {
-      allowPrivateNetwork: row.allowPrivateNetwork,
-      baseUrl: row.baseUrl,
-      changedFields,
-      email: row.email,
-      enabled: row.enabled,
-      maxPages: row.maxPages,
-      provider: row.provider,
-      spaces: row.spaces,
-    },
+    auditAfterJson: { ...pickAudit(row, KNOWLEDGE_BASE_AUDIT_FIELDS), changedFields },
+    auditBeforeJson: pickAudit(existing, KNOWLEDGE_BASE_AUDIT_FIELDS),
     changedFields,
     data: knowledgeBaseData(row),
     existed: !!existing,
@@ -993,6 +1050,8 @@ export type FigmaConfigInput = {
   enabled?: boolean;
   maxNodes?: number | null;
 };
+
+const FIGMA_AUDIT_FIELDS = ['apiTokenLastFour', 'enabled', 'maxNodes'] as const;
 
 function figmaData(row: FigmaConfigRow | null) {
   return {
@@ -1043,11 +1102,8 @@ export async function updateFigmaConfig(
   ]);
 
   return {
-    auditAfterJson: {
-      changedFields,
-      enabled: row.enabled,
-      maxNodes: row.maxNodes,
-    },
+    auditAfterJson: { ...pickAudit(row, FIGMA_AUDIT_FIELDS), changedFields },
+    auditBeforeJson: pickAudit(existing, FIGMA_AUDIT_FIELDS),
     changedFields,
     data: figmaData(row),
     existed: !!existing,
@@ -1106,6 +1162,13 @@ export type WorkflowDefaultsInput = {
   workspacePidsLimit?: number;
 };
 
+/// A column name on the WorkflowDefaults singleton. Both the general editor and
+/// the schedule/canary slices project through this when building audit payloads.
+type WorkflowDefaultsKey = keyof NonNullable<
+  Awaited<ReturnType<PrismaClient['workflowDefaults']['findUnique']>>
+> &
+  string;
+
 /// The plain (non-secret) scalar columns owned by the general workflow-defaults
 /// editor. Every key maps 1:1 to a `workflow_defaults` column of the same name;
 /// values are written verbatim when provided (`!== undefined`). Schedule/canary
@@ -1133,7 +1196,7 @@ const WORKFLOW_DEFAULTS_KEYS = [
   'workspaceImage',
   'workspaceMemory',
   'workspacePidsLimit',
-] as const satisfies readonly (keyof WorkflowDefaultsInput)[];
+] as const satisfies readonly (keyof WorkflowDefaultsInput & WorkflowDefaultsKey)[];
 
 /// Writes the general (non-secret) fields onto the WorkflowDefaults singleton.
 /// Non-secret plain passthrough — no encryption. `data` is the resolved
@@ -1163,10 +1226,51 @@ export async function updateWorkflowDefaults(
 
   return {
     auditAfterJson: { ...data, changedFields },
+    auditBeforeJson: pickAudit(
+      existing,
+      WORKFLOW_DEFAULTS_KEYS.filter((k) => k in data)
+    ),
     changedFields,
     // Return through the shared resolver so GET and PUT always produce the same
     // shape, including env-var fallbacks for fields not yet set in DB.
     data: { ...(await resolveWorkflowDefaults()) },
+    existed: !!existing,
+  };
+}
+
+/// The schedule and canary groups each own a disjoint slice of the
+/// WorkflowDefaults singleton. They all do the same thing — copy the fields the
+/// caller actually sent onto their columns, upsert, and report what changed —
+/// so one helper serves all four and keeps their audit payloads the same shape
+/// as every other config group's.
+type ScheduleUpdateResult = Omit<ConfigUpdateResult, 'data'>;
+
+async function updateWorkflowDefaultsSlice(
+  prisma: PrismaClient,
+  body: Record<string, unknown>,
+  columnByField: Record<string, string>
+): Promise<ScheduleUpdateResult> {
+  const existing = await prisma.workflowDefaults.findUnique({ where: { id: 'default' } });
+
+  const data: Record<string, unknown> = {};
+  const changedFields: string[] = [];
+  for (const [field, column] of Object.entries(columnByField)) {
+    if (body[field] !== undefined) {
+      data[column] = body[field];
+      changedFields.push(field);
+    }
+  }
+
+  await prisma.workflowDefaults.upsert({
+    create: { id: 'default', ...data },
+    update: data,
+    where: { id: 'default' },
+  });
+
+  return {
+    auditAfterJson: { ...data, changedFields },
+    auditBeforeJson: pickAudit(existing, Object.values(columnByField) as WorkflowDefaultsKey[]),
+    changedFields,
     existed: !!existing,
   };
 }
@@ -1184,27 +1288,12 @@ export type ConsolidationConfigInput = {
 export async function updateConsolidationConfig(
   prisma: PrismaClient,
   body: ConsolidationConfigInput
-): Promise<void> {
-  const { enabled, cronExpression, minClusterSize, similarityThreshold } = body;
-
-  const data: Record<string, unknown> = {};
-  if (enabled !== undefined) {
-    data.consolidationEnabled = enabled;
-  }
-  if (cronExpression !== undefined) {
-    data.consolidationCron = cronExpression;
-  }
-  if (minClusterSize !== undefined) {
-    data.consolidationMinClusterSize = minClusterSize;
-  }
-  if (similarityThreshold !== undefined) {
-    data.consolidationSimilarityThreshold = similarityThreshold;
-  }
-
-  await prisma.workflowDefaults.upsert({
-    create: { id: 'default', ...data },
-    update: data,
-    where: { id: 'default' },
+): Promise<ScheduleUpdateResult> {
+  return updateWorkflowDefaultsSlice(prisma, body, {
+    cronExpression: 'consolidationCron',
+    enabled: 'consolidationEnabled',
+    minClusterSize: 'consolidationMinClusterSize',
+    similarityThreshold: 'consolidationSimilarityThreshold',
   });
 }
 
@@ -1222,30 +1311,13 @@ export type EvalScheduleConfigInput = {
 export async function updateEvalScheduleConfig(
   prisma: PrismaClient,
   body: EvalScheduleConfigInput
-): Promise<void> {
-  const { enabled, cronExpression, datasetSlug, candidateRef, baselineRef } = body;
-
-  const data: Record<string, unknown> = {};
-  if (enabled !== undefined) {
-    data.evalScheduleEnabled = enabled;
-  }
-  if (cronExpression !== undefined) {
-    data.evalScheduleCron = cronExpression;
-  }
-  if (datasetSlug !== undefined) {
-    data.evalScheduleDatasetSlug = datasetSlug;
-  }
-  if (candidateRef !== undefined) {
-    data.evalScheduleCandidateRef = candidateRef;
-  }
-  if (baselineRef !== undefined) {
-    data.evalScheduleBaselineRef = baselineRef;
-  }
-
-  await prisma.workflowDefaults.upsert({
-    create: { id: 'default', ...data },
-    update: data,
-    where: { id: 'default' },
+): Promise<ScheduleUpdateResult> {
+  return updateWorkflowDefaultsSlice(prisma, body, {
+    baselineRef: 'evalScheduleBaselineRef',
+    candidateRef: 'evalScheduleCandidateRef',
+    cronExpression: 'evalScheduleCron',
+    datasetSlug: 'evalScheduleDatasetSlug',
+    enabled: 'evalScheduleEnabled',
   });
 }
 
@@ -1261,24 +1333,11 @@ export type RevalidationConfigInput = {
 export async function updateRevalidationScheduleConfig(
   prisma: PrismaClient,
   body: RevalidationConfigInput
-): Promise<void> {
-  const { enabled, cronExpression, datasetSlug } = body;
-
-  const data: Record<string, unknown> = {};
-  if (enabled !== undefined) {
-    data.revalidationEnabled = enabled;
-  }
-  if (cronExpression !== undefined) {
-    data.revalidationCron = cronExpression;
-  }
-  if (datasetSlug !== undefined) {
-    data.revalidationDatasetSlug = datasetSlug;
-  }
-
-  await prisma.workflowDefaults.upsert({
-    create: { id: 'default', ...data },
-    update: data,
-    where: { id: 'default' },
+): Promise<ScheduleUpdateResult> {
+  return updateWorkflowDefaultsSlice(prisma, body, {
+    cronExpression: 'revalidationCron',
+    datasetSlug: 'revalidationDatasetSlug',
+    enabled: 'revalidationEnabled',
   });
 }
 
@@ -1295,27 +1354,12 @@ export type CanaryConfigInput = {
 export async function updateCanaryConfig(
   prisma: PrismaClient,
   body: CanaryConfigInput
-): Promise<void> {
-  const { enabled, agentKey, candidateVersion, percent } = body;
-
-  const data: Record<string, unknown> = {};
-  if (enabled !== undefined) {
-    data.canaryEnabled = enabled;
-  }
-  if (agentKey !== undefined) {
-    data.canaryAgentKey = agentKey;
-  }
-  if (candidateVersion !== undefined) {
-    data.canaryCandidateVersion = candidateVersion;
-  }
-  if (percent !== undefined) {
-    data.canaryPercent = percent;
-  }
-
-  await prisma.workflowDefaults.upsert({
-    create: { id: 'default', ...data },
-    update: data,
-    where: { id: 'default' },
+): Promise<ScheduleUpdateResult> {
+  return updateWorkflowDefaultsSlice(prisma, body, {
+    agentKey: 'canaryAgentKey',
+    candidateVersion: 'canaryCandidateVersion',
+    enabled: 'canaryEnabled',
+    percent: 'canaryPercent',
   });
 }
 
