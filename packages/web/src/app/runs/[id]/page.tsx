@@ -460,6 +460,9 @@ function LayoutB({
   );
 }
 
+/** Wall-clock seconds a 1× replay takes to scrub the whole run. */
+const PLAY_DURATION_S = 11;
+
 // ── Direction C — Flight Recorder ──────────────────────────────────────────────
 
 function WaterfallBar({
@@ -561,8 +564,6 @@ function LayoutC({
   const feedRef = useRef<HTMLDivElement>(null);
 
   const currentMs = playhead * totalMs;
-
-  const PLAY_DURATION_S = 11; // 1× plays entire run in ~11s
 
   useEffect(() => {
     if (playing) {
