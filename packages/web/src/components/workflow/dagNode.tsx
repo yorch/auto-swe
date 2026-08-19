@@ -14,25 +14,14 @@
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { Handle, type NodeProps, Position } from '@xyflow/react';
 import { cn } from '@/lib/utils';
-import { type DiffKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
+// The card is sized by the same pair dagre is fed when it computes node
+// positions — imported rather than redeclared so the two cannot drift apart
+// and leave the rendered cards overlapping the layout dagre planned.
+import { type DiffKind, type EdgeKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
 
-// The card is sized by the same pair dagre is fed when it computes positions —
-// re-exported rather than redeclared so the two can never drift apart.
-export { NODE_HEIGHT, NODE_WIDTH };
-
-/** Edge "kinds" emitted by collectEdges in workflowLayout — duplicated here
- *  so the node knows which source handle ids it must expose. */
-export type HandleKind =
-  | 'next'
-  | 'onTrue'
-  | 'onFalse'
-  | 'onReceive'
-  | 'onTimeout'
-  | 'subgraph'
-  | 'join'
-  | 'onApprove'
-  | 'onReject'
-  | 'onSubmit';
+/** The source-handle ids a node exposes are exactly the edge kinds the layout
+ *  emits for it — one name, so the two cannot disagree. */
+export type HandleKind = EdgeKind;
 
 export interface DagNodeData {
   node: SpecNode;

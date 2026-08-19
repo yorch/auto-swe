@@ -9,7 +9,7 @@
  * fan-in/out cleanly, so we delegate to it and translate its results into
  * the {nodes, edges, width, height} shape the rest of the app already uses.
  */
-import type { Node, WorkflowSpec } from '@auto-swe/shared/workflow';
+import { type Node, nodeEdges, type WorkflowSpec } from '@auto-swe/shared/workflow';
 import dagre from 'dagre';
 
 export type EdgeKind =
@@ -51,48 +51,25 @@ export interface LayoutResult {
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 88;
 
+/**
+ * Outgoing edges of a node, in the shape this renderer needs.
+ *
+ * Traversal is not re-derived here: `nodeEdges` in the shared spec is the
+ * single source of truth for which fields of which node types are edges, and
+ * already backs the schema's ref validation and `validateSpec`'s reachability
+ * analysis. A second hand-maintained switch here is what let `agent`, `mcp`,
+ * `eval` and `containerStep` lose their outgoing edges in the rendered graph
+ * while shared had them right all along. This only maps field names onto the
+ * `EdgeKind` the renderer colours, labels and ports by.
+ */
 function collectEdges(node: Node, id: string): LayoutEdge[] {
-  const edges: LayoutEdge[] = [];
-  switch (node.type) {
-    case 'step':
-    case 'set':
-    case 'shell':
-      if (node.next) {
-        edges.push({ from: id, kind: 'next', to: node.next });
-      }
-      break;
-    case 'cond':
-      edges.push({ from: id, kind: 'onTrue', to: node.onTrue });
-      edges.push({ from: id, kind: 'onFalse', to: node.onFalse });
-      break;
-    case 'signal':
-      edges.push({ from: id, kind: 'onReceive', to: node.onReceive });
-      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
-      break;
-    case 'fanOut':
-      edges.push({ from: id, kind: 'subgraph', to: node.subgraph });
-      edges.push({ from: id, kind: 'join', to: node.join });
-      break;
-    case 'terminate':
-      break;
-    case 'humanApproval':
-      edges.push({ from: id, kind: 'onApprove', to: node.onApprove });
-      edges.push({ from: id, kind: 'onReject', to: node.onReject });
-      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
-      break;
-    case 'humanDecision':
-      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
-      for (const opt of node.options) {
-        edges.push({ from: id, kind: 'onSubmit', to: opt.next });
-      }
-      break;
-    case 'humanInput':
-    case 'humanReview':
-      edges.push({ from: id, kind: 'onSubmit', to: node.onSubmit });
-      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
-      break;
-  }
-  return edges;
+  return nodeEdges(node).map(([field, to]) => ({
+    from: id,
+    // `humanDecision` labels each option edge `options[i].next`; they all leave
+    // through the one `onSubmit` port. Every other field name is an EdgeKind.
+    kind: (field.startsWith('options[') ? 'onSubmit' : field) as EdgeKind,
+    to,
+  }));
 }
 
 export function layoutSpec(spec: WorkflowSpec): LayoutResult {

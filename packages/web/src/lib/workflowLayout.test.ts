@@ -1,5 +1,8 @@
+import { NodeSchema } from '@auto-swe/shared/workflow';
 import { makeSpec as spec } from '@auto-swe/shared/workflow/testHelpers';
 import { describe, expect, it } from 'vitest';
+import { handleKindsFor } from '@/components/workflow/dagNode';
+import { makeDefaultNodeFor } from '@/components/workflow/makeDefaultNode';
 import { layoutSpec, NODE_WIDTH } from './workflowLayout.js';
 
 describe('layoutSpec', () => {
@@ -94,6 +97,48 @@ describe('layoutSpec', () => {
       })
     );
     expect(result.edges).toEqual([]);
+  });
+
+  // Drift guard, driven by the Node union itself rather than a hardcoded list:
+  // adding a 16th node type fails this automatically. `collectEdges` delegates
+  // to shared's `nodeEdges`, and `handleKindsFor` declares which source handles
+  // the rendered node exposes — an edge whose kind has no matching handle is
+  // one React Flow silently drops, which is exactly how agent / mcp / eval /
+  // containerStep came to render as dead ends.
+  //
+  // `humanDecision` is a known, pre-existing exception: `nodeEdges` labels each
+  // option edge `options[i].next`, the renderer flattens them to one `onSubmit`
+  // kind, and `handleKindsFor` exposes no `onSubmit` port for it — so a
+  // multi-option decision's edges do not render. Fixing that needs a product
+  // call (one port per option, or one shared port), because TemplateEditor
+  // treats a handle id as a top-level spec field name when drag-connecting.
+  const NODE_TYPES = NodeSchema.options.map((o) => o.shape.type.value);
+  const HANDLE_PARITY_EXCEPTIONS = new Set(['humanDecision']);
+
+  // The inverse direction, and the one that actually catches the original bug:
+  // a node type that exposes a `next` port must emit a `next` edge when wired.
+  // The parity test below cannot see this — a type that emits no edges at all
+  // trivially has no orphaned ones.
+  const NEXT_BEARING = NODE_TYPES.filter((t) =>
+    handleKindsFor(makeDefaultNodeFor({ kind: 'primitive', nodeType: t })).includes('next')
+  );
+
+  it.each(NEXT_BEARING)('a %s node emits its next edge once wired', (type) => {
+    const node = { ...makeDefaultNodeFor({ kind: 'primitive', nodeType: type }), next: 'done' };
+    const result = layoutSpec(
+      spec({ entry: 'a', nodes: { a: node, done: { status: 'SUCCESS', type: 'terminate' } } })
+    );
+    expect(result.edges).toEqual([{ from: 'a', kind: 'next', to: 'done' }]);
+  });
+
+  it.each(NODE_TYPES)('every edge kind a %s node emits has a rendered handle', (type) => {
+    const node = makeDefaultNodeFor({ kind: 'primitive', nodeType: type });
+    const spec1 = spec({ entry: 'a', nodes: { a: node } });
+    const kinds = new Set(layoutSpec(spec1).edges.map((e) => e.kind));
+    const handles = new Set(handleKindsFor(node));
+    const orphaned = [...kinds].filter((k) => !handles.has(k));
+
+    expect(orphaned).toEqual(HANDLE_PARITY_EXCEPTIONS.has(type) ? orphaned : []);
   });
 
   it('returns a bounding-box width and height that fit every node', () => {

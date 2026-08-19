@@ -554,6 +554,16 @@ export function nodeEdges(node: Node): Array<[field: string, target: string]> {
       break;
     case 'terminate':
       break;
+    default: {
+      // Exhaustiveness sentinel. This function is the single source of truth for
+      // graph traversal, so a Node variant missing here silently reports zero
+      // outgoing edges to the schema's ref validation and to validateSpec's
+      // reachability analysis — an unreachable-node bug that validation calls
+      // clean. Fail the build instead.
+      const unhandled: never = node;
+      void unhandled;
+      break;
+    }
   }
   return edges;
 }
