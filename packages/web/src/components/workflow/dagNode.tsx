@@ -14,9 +14,6 @@
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { Handle, type NodeProps, Position } from '@xyflow/react';
 import { cn } from '@/lib/utils';
-// The card is sized by the same pair dagre is fed when it computes node
-// positions — imported rather than redeclared so the two cannot drift apart
-// and leave the rendered cards overlapping the layout dagre planned.
 import { type DiffKind, type EdgeKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
 
 /** The source-handle ids a node exposes are exactly the edge kinds the layout
@@ -161,6 +158,9 @@ export function DagNode({ id, data, selected }: NodeProps) {
             ? diffBorder
             : 'border-ink-500'
       )}
+      // Sized from the same constants dagre is fed when it computes positions,
+      // rather than a local copy, so the card cannot drift out of the slot the
+      // layout planned for it.
       style={{ height: NODE_HEIGHT, width: NODE_WIDTH }}
     >
       {/* Target handle — left edge, accepts all incoming edges */}
