@@ -89,7 +89,7 @@
         "packages/web/src/components/integrations/StorageTab.tsx:288",
         "packages/web/src/components/integrations/SlackTab.tsx:168",
         "packages/web/src/components/ErrorBoundary.tsx:30,34",
-        "packages/web/src/components/workflow/NodePalette.tsx:38"
+        "packages/web/src/components/workflow/NodePalette.tsx:41"
       ],
       "id": "F-006",
       "proposed_fix": "Map to tokens (`emerald-400`\u2192`moss-400`, `red-400`\u2192`brick-400`, `sky-400`\u2192`dust-400`, `blue-600`\u2192`ember-400`, `gray-500`\u2192`paper-500`) and standardise the saved message on `<Alert variant=\"success\">`.",
@@ -100,15 +100,15 @@
     },
     {
       "category": "best-practice",
-      "description": "The shell-image allowlist editor re-seeds its textarea from query data on every `data` identity change: `useEffect(() => { if (data) setText(...) }, [data])`. Its sibling `EgressAllowlistEditor.tsx:18-22` guards the identical effect with `isDirtyRef`.",
-      "evidence": "ShellAllowlistEditor.tsx:15-19 vs EgressAllowlistEditor.tsx:18-22 \u2014 same effect, one guard.",
+      "description": "The shell-image allowlist editor re-seeds its textarea from query data whenever the `data` reference changes: `useEffect(() => { if (data) setText(...) }, [data])`. Its sibling `EgressAllowlistEditor.tsx:18-22` guards the identical effect with `isDirtyRef`.",
+      "evidence": "ShellAllowlistEditor.tsx:15-19 vs EgressAllowlistEditor.tsx:18-22 (guard set in onChange:72, cleared after save:42). QueryClient defaults: staleTime 30_000, refetchOnWindowFocus at v5 default true (Providers.tsx:9-17); useTeamShellAllowlist sets no refetchInterval (useTeams.ts:72-82). Structural sharing default confirmed in @tanstack/query-core utils.js:198 (`options.structuralSharing !== false`).",
       "files": ["packages/web/src/components/teams/ShellAllowlistEditor.tsx:15-19"],
       "id": "F-007",
       "proposed_fix": "Copy the `isDirtyRef` guard from EgressAllowlistEditor, set it in the textarea's onChange, clear it after a successful save.",
       "severity": "high",
       "status": "proposed",
       "tier_required": 2,
-      "why_it_matters": "TanStack Query hands back a new `data` reference on any background refetch or window-focus refetch. Mid-edit, the admin's typed allowlist is silently replaced by the server copy. The sibling component proves the team already knows this and fixed it in one place only."
+      "why_it_matters": "TanStack Query v5 enables structural sharing by default, so a refetch returning identical data keeps the same reference and the effect does not fire \u2014 the editor is safe only for as long as the server copy happens not to change. The moment it genuinely does (a second admin, a second tab, a corrected save), the next staleTime- or focus-triggered refetch produces a new reference, the effect fires, and the admin's in-progress edits are silently replaced. That is precisely the race the sibling component's `isDirtyRef` exists to prevent, in a security-relevant editor."
     },
     {
       "category": "best-practice",
@@ -153,7 +153,7 @@
       "files": [
         "packages/web/src/hooks/useUserPreferences.ts",
         "packages/web/src/components/LayoutToggle.tsx:3",
-        "packages/web/src/app/runs/[id]/page.tsx:843"
+        "packages/web/src/app/runs/[id]/page.tsx:838"
       ],
       "id": "F-011",
       "proposed_fix": "Either wire `useUserPreferences` into `app/runs/[id]/page.tsx` and reconcile the two `RunDetailLayout` unions into one, or delete the hook and the `/me/preferences` endpoint together.",
@@ -245,21 +245,18 @@
     },
     {
       "category": "a11y",
-      "description": "Filter and search inputs labelled only by `placeholder`, with no `id`+`<label>`, `aria-label`, or `aria-labelledby`. 24 of 88 raw `<input>` elements lack both an id and an aria-label; most of those are checkboxes correctly wrapped in a `<label>`, but the search/filter boxes are genuinely unlabelled.",
-      "evidence": "Scripted scan of every `<input>` tag in the package.",
+      "description": "Two filter/search inputs are labelled only by `placeholder`, with no `id`+`<label>`, `aria-label`, or `aria-labelledby`: the step-registry filter in the workflow palette and the template filter on the analytics page.",
+      "evidence": "A scripted scan flagged 24 of 88 raw `<input>` elements as having neither an id nor an aria-label, but on inspection 22 of those are checkboxes and radios correctly wrapped in a `<label>` (implicit association), which is fine. Only these two are genuinely unnamed.",
       "files": [
         "packages/web/src/components/workflow/NodePalette.tsx:217",
-        "packages/web/src/app/analytics/page.tsx:173",
-        "packages/web/src/components/workflow/schemaForm.tsx:71",
-        "packages/web/src/components/workflow/InputSchemaBuilder.tsx:186",
-        "packages/web/src/components/inbox/HumanStepCard.tsx:264,286"
+        "packages/web/src/app/analytics/page.tsx:173"
       ],
       "id": "F-016",
       "proposed_fix": "Add `aria-label` to each (e.g. `aria-label=\"Filter steps\"`). Report-only per the accessibility rule.",
       "severity": "medium",
       "status": "proposed",
       "tier_required": 1,
-      "why_it_matters": "A placeholder is not an accessible name and disappears on first keystroke; screen-reader users get 'edit text, blank'."
+      "why_it_matters": "A placeholder is not an accessible name and disappears on first keystroke, so a screen-reader user gets 'edit text, blank'."
     },
     {
       "category": "a11y",
@@ -298,7 +295,7 @@
       "category": "best-practice",
       "description": "`onClick={() => window.location.assign('/templates')}` on the 'Browse workflows' button, in a file that already imports `next/link`.",
       "evidence": "Only `window.location` navigation in the package outside authStore's deliberate OAuth redirects.",
-      "files": ["packages/web/src/app/page.tsx:126"],
+      "files": ["packages/web/src/app/page.tsx:128"],
       "id": "F-019",
       "proposed_fix": "`<Link href=\"/templates\">` styled as a button, or `useRouter().push`.",
       "severity": "low",
@@ -321,8 +318,8 @@
     {
       "category": "best-practice",
       "description": "`WaterfallBar` computes `leftPct = 0` for every bar and renders each at `left: 0`, so the 'Step timing' waterfall in layout C is a stack of left-aligned bars, not a waterfall \u2014 bar start times carry no information.",
-      "evidence": "app/runs/[id]/page.tsx:472 `const leftPct = 0;` vs the correct computation at :725.",
-      "files": ["packages/web/src/app/runs/[id]/page.tsx:460-495"],
+      "evidence": "app/runs/[id]/page.tsx:511 renders the bar fill with a literal `left: 0`, and WaterfallBar is invoked (page.tsx:772) with only currentMs/step/totalMs \u2014 it never receives a run-start reference. The step-band strip above it computes the offset correctly from runStart at page.tsx:~730.",
+      "files": ["packages/web/src/app/runs/[id]/page.tsx:465-529"],
       "id": "F-021",
       "proposed_fix": "Pass the run start into `WaterfallBar` and set `left: ((stepStart - runStart) / totalMs) * 100 + '%'`, mirroring the step-band code.",
       "severity": "low",
@@ -418,13 +415,13 @@
       "description": "`HandleKind` in dagNode.tsx is a character-for-character duplicate of `EdgeKind` in workflowLayout.ts, with a comment stating the duplication is deliberate.",
       "evidence": "dagNode.tsx:21-33 vs workflowLayout.ts:15-25.",
       "files": [
-        "packages/web/src/components/workflow/dagNode.tsx:22-33",
+        "packages/web/src/components/workflow/dagNode.tsx:24-35",
         "packages/web/src/lib/workflowLayout.ts:15-25"
       ],
       "id": "F-028",
-      "proposed_fix": "`export type HandleKind = EdgeKind;`. Left alone because the comment records it as a deliberate decoupling \u2014 the author's call to revisit.",
+      "proposed_fix": "Superseded by F-044: `HandleKind` is now `export type HandleKind = EdgeKind;`. The comment claiming the duplication was deliberate was wrong \u2014 nothing depended on the two being separate.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "React Flow matches source-handle ids against edge kinds by string; if the two unions drift, edges silently fail to attach with no type error."
     },
@@ -444,11 +441,11 @@
       "category": "best-practice",
       "description": "`const PLAY_DURATION_S = 11` is declared inside the `LayoutC` component body and read from inside a `useEffect` that does not list it.",
       "evidence": "app/runs/[id]/page.tsx:570 inside LayoutC, used at :575.",
-      "files": ["packages/web/src/app/runs/[id]/page.tsx:570"],
+      "files": ["packages/web/src/app/runs/[id]/page.tsx:464"],
       "id": "F-030",
-      "proposed_fix": "Move it above the component.",
+      "proposed_fix": "Hoisted to module scope above the Flight Recorder section.",
       "severity": "low",
-      "status": "proposed",
+      "status": "applied",
       "tier_required": 1,
       "why_it_matters": "A per-render allocation of a fixed constant, and a dependency the linter cannot see. Harmless today; hoisting it to module scope is free."
     },
@@ -488,7 +485,7 @@
         "packages/web/src/lib/workflowLayout.ts:51-52"
       ],
       "id": "F-033",
-      "proposed_fix": "Delete dagNode's copies and re-export the workflowLayout constants from it, preserving dagNode's public surface.",
+      "proposed_fix": "Delete dagNode's copies and import the canonical pair from workflowLayout. The initial fix re-exported them for surface compatibility; nothing consumed that export, so the re-export was dropped too.",
       "severity": "medium",
       "status": "applied",
       "tier_required": 1,
@@ -520,8 +517,8 @@
     },
     {
       "category": "consistency",
-      "description": "Ten bare `new Date(x).toLocaleString()` / `.toLocaleDateString()` calls remain across 7 files, against 33 uses of the shared `formatDate` / `formatRelativeTime` helpers.",
-      "evidence": "12 raw toLocale* calls total; 2 are number formatting in TracesTab and out of scope. lib/utils.ts:8-21 is the written convention.",
+      "description": "Eleven bare `new Date(x).toLocaleString()` / `.toLocaleDateString()` calls remain across 7 files, against 33 uses of the shared `formatDate` / `formatRelativeTime` helpers.",
+      "evidence": "11 bare `new Date(...).toLocale*` date calls across 7 files, against 33 uses of the shared helpers. TracesTab.tsx:370's two toLocaleString() calls are excluded \u2014 they format token counts, not dates. lib/utils.ts:8-21 is the written convention.",
       "files": [
         "packages/web/src/lib/utils.ts:8-21",
         "packages/web/src/app/admin/lessons/page.tsx:45,143,224",
@@ -542,7 +539,7 @@
     {
       "category": "dry",
       "description": "`SkillRefEditor` (~85 lines) and `ToolKeysEditor` (~45 lines), plus the `clean()` helper and the `ALL_TOOL_KEYS` constant, are duplicated essentially character-for-character between the GLOBAL agent-library page and the per-team agent overrides section.",
-      "evidence": "Diffing the two SkillRefEditor bodies yields only the `label` prop on the trailing <Select>.",
+      "evidence": "Full diff of the two SkillRefEditor bodies: (1) the trailing <Select> takes `label={refs.length === 0 ? 'Skills' : undefined}` in the library page and no label prop in the team section; (2) the library page renders a 'No skills available.' empty state that the team section omits entirely; (3) `remove()` is formatted across two lines vs one, behaviourally identical. ToolKeysEditor differs only in FieldWrapper hint copy ('Agent inherits all available tools' vs 'Inherits all available tools'). ALL_TOOL_KEYS and clean() are byte-identical.",
       "files": [
         "packages/web/src/app/admin/agents/library/page.tsx:67-205",
         "packages/web/src/components/teams/TeamAgentLibrarySection.tsx:54-190"
@@ -591,7 +588,7 @@
       "category": "best-practice",
       "description": "The login page's left panel renders a green pulse dot and the literal text \"gateway online\", unconditionally \u2014 while the right panel renders a \"Service unavailable / Can't reach the gateway\" banner driven by the real `gatewayDown` probe.",
       "evidence": "app/login/page.tsx:296-301 vs the gatewayDown banner at :340-360.",
-      "files": ["packages/web/src/app/login/page.tsx:296-301"],
+      "files": ["packages/web/src/app/login/page.tsx:309-313"],
       "id": "F-040",
       "proposed_fix": "Drive the indicator from `gatewayDown` (dot + label switch to brick/offline), or drop it \u2014 a hardcoded status light is worse than none.",
       "severity": "low",
@@ -603,7 +600,7 @@
       "category": "best-practice",
       "description": "`\u00a9 {new Date().getFullYear()}` is evaluated during render on a page that is statically prerendered (it is wrapped in Suspense specifically to stay SSG-eligible).",
       "evidence": "app/login/page.tsx:317; compare :345 where suppressHydrationWarning is used.",
-      "files": ["packages/web/src/app/login/page.tsx:317"],
+      "files": ["packages/web/src/app/login/page.tsx:318"],
       "id": "F-041",
       "proposed_fix": "`suppressHydrationWarning` on the span, or move the year to a build-time constant.",
       "severity": "low",
@@ -613,11 +610,12 @@
     },
     {
       "category": "consistency",
-      "description": "`app/users/page.tsx` and `app/admin/sessions/page.tsx` each carry a byte-identical hand-rolled loading block (a pulse dot beside lowercase mono text) and a byte-identical local `Th` table-header component; `app/admin/access-tokens/page.tsx` carries a third copy of `Th`.",
-      "evidence": "3 identical `Th` declarations; 2 identical hand-rolled loading blocks.",
+      "description": "`app/users/page.tsx` and `app/admin/sessions/page.tsx` each carry a byte-identical hand-rolled loading block (a pulse dot beside lowercase mono text) and a byte-identical local `Th` table-header component. `app/admin/access-tokens/page.tsx` carries a third `Th` that differs only in formatting and in declaring `children?` optional.",
+      "evidence": "Th at users/page.tsx:256, admin/sessions/page.tsx:101 (identical), admin/access-tokens/page.tsx:27 (multiline destructure, `children?: React.ReactNode`). Loading blocks at users/page.tsx:43-48 and admin/sessions/page.tsx:13-19.",
       "files": [
-        "packages/web/src/app/users/page.tsx:43-48,1068-1080",
-        "packages/web/src/app/admin/sessions/page.tsx:14-21,110-123"
+        "packages/web/src/app/users/page.tsx:43-48,256-267",
+        "packages/web/src/app/admin/sessions/page.tsx:13-19,101-112",
+        "packages/web/src/app/admin/access-tokens/page.tsx:27-43"
       ],
       "id": "F-042",
       "proposed_fix": "Use `<LoadingState message=\"loading users\u2026\">`, and promote `Th` to `components/ui/`.",
@@ -625,6 +623,76 @@
       "status": "proposed",
       "tier_required": 2,
       "why_it_matters": "The loading block re-implements `<LoadingState>` with different copy; `Th` is a table-header primitive the ui/ directory does not have but clearly needs \u2014 three copies is past the rule of three."
+    },
+    {
+      "category": "best-practice",
+      "description": "`collectEdges` in the web package was a second, hand-maintained switch over `node.type`, duplicating `nodeEdges` in `packages/shared/src/workflow/spec.ts` \u2014 which is documented as \"the single source of truth for graph traversal ... so every node type's edges are enumerated in exactly one place\". The web copy had drifted: it had no case for `agent`, `mcp`, `eval` or `containerStep`, all of which carry `next`, so every outgoing edge from those four types was silently dropped from the rendered graph. Shared had them right the whole time.",
+      "evidence": "nodeEdges is exported from the shared workflow barrel (index.ts:94) and already consumed by spec.ts:492 and validateSpec.ts:51. Surfaced by the reuse and altitude passes of /simplify; the initial fix patched the duplicate instead.",
+      "files": [
+        "packages/web/src/lib/workflowLayout.ts:54-73",
+        "packages/shared/src/workflow/spec.ts:510"
+      ],
+      "id": "F-043",
+      "proposed_fix": "Rewrite `collectEdges` as a thin map over `nodeEdges`, deleting the duplicate switch (~50 lines), and add a `never` exhaustiveness sentinel to `nodeEdges` itself so the source of truth fails to build on a new variant rather than silently reporting zero edges to the schema's ref validation and to `validateSpec`'s reachability analysis.",
+      "severity": "high",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "Four of the fifteen node types drew as dead ends in the workflow canvas, the template diff viewer and the run viewer \u2014 including `agent` and `mcp`, the two the platform's own docs put front and centre. The duplication is the actual defect: patching the four missing cases into the copy would have left the next node type free to drift again."
+    },
+    {
+      "category": "consistency",
+      "description": "`HandleKind` in dagNode.tsx was a character-for-character duplicate of `EdgeKind` in workflowLayout.ts, with a comment recording the duplication as deliberate.",
+      "evidence": "Supersedes F-028, which reported the duplication but accepted the comment's claim that it was intentional.",
+      "files": ["packages/web/src/components/workflow/dagNode.tsx:24"],
+      "id": "F-044",
+      "proposed_fix": "`export type HandleKind = EdgeKind;`",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "React Flow matches an edge's `sourceHandle` against the handle ids a node renders, by string. If the two unions drifted, edges would fail to attach with no type error and no test failure \u2014 the same silent-drop failure mode as F-043."
+    },
+    {
+      "category": "best-practice",
+      "description": "A multi-option `humanDecision` node's edges do not render. `nodeEdges` labels each option edge `options[i].next`; the renderer flattens them all to the `onSubmit` kind; but `handleKindsFor(humanDecision)` returns only `['onTimeout']`, so those edges name a source handle the node never draws and React Flow drops them.",
+      "evidence": "handleKindsFor at dagNode.tsx:112-113 returns ['onTimeout'] for humanDecision; collectEdges maps every options[i].next to kind 'onSubmit'; specToFlow.ts:137 sets sourceHandle from the kind. The new union-driven parity test in workflowLayout.test.ts documents this as its one exception.",
+      "files": [
+        "packages/web/src/components/workflow/dagNode.tsx:112-113",
+        "packages/web/src/lib/workflowLayout.ts:66-72",
+        "packages/web/src/components/workflow/TemplateEditor.tsx:122"
+      ],
+      "id": "F-045",
+      "proposed_fix": "Needs a product call, not a refactor: one handle per option (accurate, but `TemplateEditor.tsx:122` writes `patched[handleKind] = target` on drag-connect, which assumes a handle id is a top-level spec field \u2014 false for `options[i].next`), or one shared `onSubmit` port (cheap, but drag-connect would then write an invalid `onSubmit` field onto a humanDecision node). Either way the handle-id-as-field-name assumption in TemplateEditor has to change first.",
+      "severity": "high",
+      "status": "proposed",
+      "tier_required": 3,
+      "why_it_matters": "Exactly the user-visible symptom F-043 fixed, in a node type F-043 did not touch \u2014 a decision node shows its timeout branch and none of its actual decision branches. It is live today."
+    },
+    {
+      "category": "best-practice",
+      "description": "`PRIMITIVE_GROUPS` in the node palette is typed as a plain array and omits the `eval` node type, so there is no way to create an eval node from the workflow editor.",
+      "evidence": "NodeSchema.options yields 15 node types; the palette enumerates 14. dagNode.tsx:49,67 show the exhaustive-Record pattern that would have caught it.",
+      "files": ["packages/web/src/components/workflow/NodePalette.tsx:34-110"],
+      "id": "F-046",
+      "proposed_fix": "Add the missing entry and type the palette as an exhaustive `Record<SpecNode['type'], \u2026>` (the pattern `CATEGORY_RING` and `CATEGORY_LABEL` in dagNode.tsx already use), so the next node type cannot be forgotten.",
+      "severity": "medium",
+      "status": "proposed",
+      "tier_required": 2,
+      "why_it_matters": "`eval` is a first-class node type with its own docs page; the only route to one is hand-editing the spec JSON. The palette has the same shape of gap as F-043 and for the same reason \u2014 an unguarded hand-maintained enumeration of node types."
+    },
+    {
+      "category": "best-practice",
+      "description": "Two further unguarded enumerations of `node.type`: `subLabelFor` returns `string | undefined`, so a missing case is legal and silently drops the node's sublabel; `NodeInspector` dispatches through a chain of `node.type === \u2026` comparisons, so a new type simply gets no inspector section.",
+      "evidence": "Enumerated during the altitude pass; the guarded counterparts are makeDefaultNodeFor (return type SpecNode) and handleKindsFor (return type HandleKind[]).",
+      "files": [
+        "packages/web/src/components/workflow/specToFlow.ts:39",
+        "packages/web/src/components/workflow/NodeInspector.tsx:123-165"
+      ],
+      "id": "F-047",
+      "proposed_fix": "Give `subLabelFor` a `never` sentinel, and make the inspector dispatch a `Record<SpecNode['type'], \u2026>` lookup.",
+      "severity": "medium",
+      "status": "proposed",
+      "tier_required": 1,
+      "why_it_matters": "Same failure class as F-043, F-046: the compiler cannot help because the return type or control flow tolerates a missing branch. These are the remaining places a new node type degrades silently."
     }
   ],
   "generated": "2026-08-19",

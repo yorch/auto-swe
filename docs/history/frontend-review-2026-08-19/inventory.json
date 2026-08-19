@@ -1338,6 +1338,6 @@
       "untouchable": false
     }
   ],
-  "generatedFrom": "git ls-files packages/web (ts|tsx|js|jsx|mjs|cjs)",
+  "generatedFrom": "git ls-files packages/web, filtered to .ts/.tsx/.mjs (the only source extensions present)",
   "total": 191
 }
