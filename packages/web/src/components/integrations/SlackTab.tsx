@@ -142,7 +142,7 @@ export function SlackTab() {
         </div>
 
         {testResult && (
-          <p className={`mt-2 text-sm ${testResult.ok ? 'text-emerald-400' : 'text-brick-400'}`}>
+          <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
             {testResult.ok ? '✓' : '✗'} {testResult.detail}
           </p>
         )}
@@ -165,7 +165,7 @@ export function SlackTab() {
       </Card>
 
       {requiresRestart && <RestartWarning />}
-      {saved && !requiresRestart && <p className="text-sm text-emerald-400">Settings saved.</p>}
+      {saved && !requiresRestart && <p className="text-sm text-moss-400">Settings saved.</p>}
       {error && <p className="text-sm text-brick-400">{error}</p>}
 
       <div className="flex justify-end">
@@ -203,7 +203,7 @@ function WorkspaceInstallCard() {
       </p>
 
       {installedTeamId && (
-        <p className="mb-4 text-sm text-emerald-400">
+        <p className="mb-4 text-sm text-moss-400">
           ✓ Installed into workspace <span className="font-mono">{installedTeamId}</span>.
         </p>
       )}
@@ -235,7 +235,7 @@ function WorkspaceInstallCard() {
                 </span>
               </div>
               {w.installed ? (
-                <span className="text-emerald-400">
+                <span className="text-moss-400">
                   Installed{w.tokenLastFour ? ` · …${w.tokenLastFour}` : ''}
                 </span>
               ) : (

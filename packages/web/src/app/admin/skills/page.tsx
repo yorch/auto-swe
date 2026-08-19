@@ -241,7 +241,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
               </span>
             )}
             {skill.isVerified && (
-              <span className="rounded bg-green-900/60 px-2 py-0.5 font-mono text-green-400">
+              <span className="rounded bg-moss-400/15 px-2 py-0.5 font-mono text-moss-400">
                 verified
               </span>
             )}
@@ -508,7 +508,7 @@ export default function AdminSkillsPage() {
                       )}
                       {skill.origin && <OriginBadge origin={skill.origin} />}
                       {skill.isVerified && (
-                        <span className="font-mono text-[10px] text-green-400">verified</span>
+                        <span className="font-mono text-[10px] text-moss-400">verified</span>
                       )}
                       {!skill.isVerified && !skill.isBuiltIn && (
                         <span className="font-mono text-[10px] text-amber-400">unverified</span>

@@ -1,9 +1,10 @@
 /** Shared Recharts styling tokens for the Workshop Telemetry palette. */
 import type { ComponentProps } from 'react';
 import { Tooltip } from 'recharts';
+import { TOKEN } from '@/lib/palette';
 
 export const AXIS_TICK = {
-  fill: '#a8a395', // paper-400
+  fill: TOKEN.paper400,
   fontFamily: 'var(--font-mono)',
   fontSize: 10,
   letterSpacing: '0.08em',
@@ -11,10 +12,10 @@ export const AXIS_TICK = {
 };
 
 export const AXIS_LINE = {
-  stroke: '#2a323f', // ink-500
+  stroke: TOKEN.ink500,
 };
 
-export const GRID_STROKE = '#1f2530'; // ink-600
+export const GRID_STROKE = TOKEN.ink600;
 
 /** Shared axisLine/tick/tickLine props for a value (numeric) axis. */
 export const AXIS_COMMON_PROPS = {
@@ -23,7 +24,7 @@ export const AXIS_COMMON_PROPS = {
   tickLine: AXIS_LINE,
 };
 
-export const TOOLTIP_CURSOR_FILL = '#171c26'; // ink-700
+export const TOOLTIP_CURSOR_FILL = TOKEN.ink700;
 
 export const CHART_HEIGHT = 280;
 
@@ -39,10 +40,10 @@ export function formatDateLabel(label: unknown) {
 }
 
 export const TOOLTIP_STYLE: React.CSSProperties = {
-  background: '#0b0e13', // ink-900
-  border: '1px solid #2a323f', // ink-500
+  background: TOKEN.ink900,
+  border: `1px solid ${TOKEN.ink500}`,
   borderRadius: 2,
-  color: '#f2ede2', // paper-200
+  color: TOKEN.paper200,
   fontFamily: 'var(--font-mono)',
   fontSize: 11,
   letterSpacing: '0.04em',
@@ -50,7 +51,7 @@ export const TOOLTIP_STYLE: React.CSSProperties = {
 };
 
 export const TOOLTIP_LABEL_STYLE: React.CSSProperties = {
-  color: '#a8a395', // paper-400
+  color: TOKEN.paper400,
   fontSize: 10,
   letterSpacing: '0.14em',
   marginBottom: 4,
@@ -58,11 +59,11 @@ export const TOOLTIP_LABEL_STYLE: React.CSSProperties = {
 };
 
 export const TOOLTIP_ITEM_STYLE: React.CSSProperties = {
-  color: '#f2ede2', // paper-200
+  color: TOKEN.paper200,
 };
 
 export const LEGEND_STYLE: React.CSSProperties = {
-  color: '#a8a395', // paper-400
+  color: TOKEN.paper400,
   fontFamily: 'var(--font-mono)',
   fontSize: 10,
   letterSpacing: '0.12em',

@@ -35,9 +35,9 @@ export function AuditLogTab() {
                 <span
                   className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
                     r.action === 'CREATE'
-                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                      ? 'bg-moss-400/15 text-moss-400 border-moss-400/30'
                       : r.action === 'UPDATE'
-                        ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                        ? 'bg-dust-400/15 text-dust-400 border-dust-400/30'
                         : 'bg-brick-500/15 text-brick-300 border-brick-500/30'
                   }`}
                 >

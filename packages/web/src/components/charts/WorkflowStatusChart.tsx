@@ -1,6 +1,7 @@
 'use client';
 
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer } from 'recharts';
+import { TOKEN } from '@/lib/palette';
 import { CHART_HEIGHT, ChartTooltip, EmptyChart, LEGEND_STYLE } from './chartChrome';
 import { STATUS_CHART_COLORS } from './colors';
 
@@ -26,11 +27,11 @@ export function WorkflowStatusChart({ data }: Props) {
           nameKey="status"
           outerRadius={102}
           paddingAngle={2}
-          stroke="#0b0e13"
+          stroke={TOKEN.ink900}
           strokeWidth={2}
         >
           {data.map((entry) => (
-            <Cell fill={STATUS_CHART_COLORS[entry.status] ?? '#7a766c'} key={entry.status} />
+            <Cell fill={STATUS_CHART_COLORS[entry.status] ?? TOKEN.paper500} key={entry.status} />
           ))}
         </Pie>
         <ChartTooltip

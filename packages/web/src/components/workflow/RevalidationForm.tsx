@@ -96,7 +96,7 @@ export function RevalidationForm() {
                 </label>
                 {revalidation?.schedule.exists && (
                   <span
-                    className={`ml-auto text-xs ${revalidation.schedule.paused ? 'text-paper-500' : 'text-emerald-400'}`}
+                    className={`ml-auto text-xs ${revalidation.schedule.paused ? 'text-paper-500' : 'text-moss-400'}`}
                   >
                     {revalidation.schedule.paused
                       ? 'Paused in Temporal'
@@ -152,7 +152,7 @@ export function RevalidationForm() {
           </Card>
 
           {saved && (
-            <p className="text-sm text-emerald-400">Re-validation schedule saved and synced.</p>
+            <p className="text-sm text-moss-400">Re-validation schedule saved and synced.</p>
           )}
           {error && <p className="text-sm text-brick-400">{error}</p>}
 

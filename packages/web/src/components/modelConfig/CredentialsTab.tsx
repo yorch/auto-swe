@@ -105,7 +105,7 @@ export function CredentialsTab() {
                 </Button>
                 {probeResults[c.id] && (
                   <span
-                    className={`ml-2 text-[10px] ${probeResults[c.id].ok ? 'text-emerald-400' : 'text-brick-400'}`}
+                    className={`ml-2 text-[10px] ${probeResults[c.id].ok ? 'text-moss-400' : 'text-brick-400'}`}
                   >
                     {probeResults[c.id].ok
                       ? `OK (${probeResults[c.id].status})`

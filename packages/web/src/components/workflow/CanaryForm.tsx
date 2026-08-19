@@ -161,7 +161,7 @@ export function CanaryForm() {
             </div>
           </Card>
 
-          {saved && <p className="text-sm text-emerald-400">Canary configuration saved.</p>}
+          {saved && <p className="text-sm text-moss-400">Canary configuration saved.</p>}
           {error && <p className="text-sm text-brick-400">{error}</p>}
 
           <div className="flex justify-end">

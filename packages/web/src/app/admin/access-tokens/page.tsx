@@ -15,7 +15,7 @@ function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
     <span
       className={cn(
         'font-mono text-[10px] uppercase tracking-[0.14em]',
-        status === 'ACTIVE' && 'text-emerald-400',
+        status === 'ACTIVE' && 'text-moss-400',
         status === 'EXPIRED' && 'text-amber-400',
         status === 'REVOKED' && 'text-paper-500 line-through'
       )}
@@ -94,7 +94,9 @@ export default function AdminAccessTokensPage() {
         <div className="mb-4 flex items-center justify-between">
           <SectionHeader hint="newest first" number="01" title="All tokens" />
           <div className="flex items-center gap-3">
-            {pruneError && <span className="font-mono text-[11px] text-red-400">{pruneError}</span>}
+            {pruneError && (
+              <span className="font-mono text-[11px] text-brick-400">{pruneError}</span>
+            )}
             {pruneResult && !pruneError && (
               <span className="font-mono text-[11px] text-paper-500">
                 pruned {pruneResult.deleted} shell-audit rows
@@ -112,7 +114,7 @@ export default function AdminAccessTokensPage() {
         </div>
 
         {revokeToken.isError && (
-          <p className="mb-3 font-mono text-[11px] text-red-400">
+          <p className="mb-3 font-mono text-[11px] text-brick-400">
             Revoke failed: {errMsg(revokeToken.error, 'unknown error')}
           </p>
         )}

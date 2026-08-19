@@ -133,7 +133,7 @@ export default function AdminLessonsPage() {
                 consolidation.schedule.paused ? (
                   <span className="text-paper-500">Paused</span>
                 ) : (
-                  <span className="text-emerald-400">Active</span>
+                  <span className="text-moss-400">Active</span>
                 )
               ) : (
                 <span className="text-paper-700">Not set</span>

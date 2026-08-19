@@ -38,7 +38,7 @@ const PRIMITIVE_GROUPS: PrimitiveGroup[] = [
       {
         hint: 'Run a library Agent by reference',
         label: 'Agent',
-        swatch: 'bg-indigo-400',
+        swatch: 'bg-ember-300',
         type: 'agent',
       },
       {

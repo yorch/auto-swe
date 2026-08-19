@@ -156,7 +156,7 @@ export function GitHubTab() {
         </div>
 
         {testResult && (
-          <p className={`mt-2 text-sm ${testResult.ok ? 'text-emerald-400' : 'text-brick-400'}`}>
+          <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
             {testResult.ok ? '✓' : '✗'} {testResult.detail}
           </p>
         )}
@@ -400,7 +400,7 @@ export function GitHubTab() {
       </Card>
 
       {requiresRestart && <RestartWarning />}
-      {saved && !requiresRestart && <p className="text-sm text-emerald-400">Settings saved.</p>}
+      {saved && !requiresRestart && <p className="text-sm text-moss-400">Settings saved.</p>}
       {error && <p className="text-sm text-brick-400">{error}</p>}
 
       <div className="flex justify-end">

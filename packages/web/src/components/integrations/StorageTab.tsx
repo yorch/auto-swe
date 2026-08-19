@@ -278,14 +278,14 @@ export function StorageTab() {
           </div>
 
           {testResult && (
-            <p className={`mt-2 text-sm ${testResult.ok ? 'text-emerald-400' : 'text-brick-400'}`}>
+            <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
               {testResult.ok ? '✓' : '✗'} {testResult.detail}
             </p>
           )}
         </Card>
       )}
 
-      {saved && <p className="text-sm text-emerald-400">Settings saved.</p>}
+      {saved && <p className="text-sm text-moss-400">Settings saved.</p>}
       {error && <p className="text-sm text-brick-400">{error}</p>}
 
       <div className="flex justify-end">

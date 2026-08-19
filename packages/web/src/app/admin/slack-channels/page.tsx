@@ -943,7 +943,7 @@ const STATUS_LABELS: Record<ChannelOpenItemStatus, string> = {
 const STATUS_COLORS: Record<ChannelOpenItemStatus, string> = {
   DISMISSED: 'text-paper-600',
   OPEN: 'text-amber-400',
-  RESOLVED: 'text-emerald-400',
+  RESOLVED: 'text-moss-400',
 };
 
 function relativeTime(iso: string): string {
@@ -1008,7 +1008,7 @@ function OpenItemsModal({
         </div>
 
         {actionError && (
-          <div className="rounded bg-red-900/30 px-3 py-2 font-mono text-xs text-red-400">
+          <div className="rounded bg-brick-400/15 px-3 py-2 font-mono text-xs text-brick-400">
             {actionError}
           </div>
         )}
@@ -1079,8 +1079,8 @@ function OpenItemsModal({
 // ── Audit modal (Gap J) ─────────────────────────────────────────────────────────
 
 const AUDIT_KIND_COLORS: Record<ChannelAuditKind, string> = {
-  ambient: 'text-emerald-400',
-  mention: 'text-sky-400',
+  ambient: 'text-moss-400',
+  mention: 'text-dust-400',
   reactive: 'text-amber-400',
 };
 
@@ -1213,8 +1213,8 @@ function ChannelRow({
       <td className="py-3 pr-4 text-center">
         <div className="flex flex-col items-center gap-0.5">
           {channel.ambientEnabled ? (
-            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-moss-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-moss-400" />
               ambient
               {channel.ambientCron && (
                 <span className="text-paper-600"> · {channel.ambientCron}</span>
@@ -1224,8 +1224,8 @@ function ChannelRow({
             <span className="font-mono text-[10px] text-paper-600">ambient off</span>
           )}
           {channel.reactiveEnabled ? (
-            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-sky-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-dust-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-dust-400" />
               reactive
               {channel.reactiveCron && (
                 <span className="text-paper-600"> · {channel.reactiveCron}</span>
@@ -1247,7 +1247,7 @@ function ChannelRow({
         <button
           className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
             channel.isActive
-              ? 'bg-emerald-400/10 text-emerald-400 hover:bg-emerald-400/20'
+              ? 'bg-moss-400/10 text-moss-400 hover:bg-moss-400/20'
               : 'bg-ink-700 text-paper-600 hover:bg-ink-600'
           }`}
           disabled={update.isPending}

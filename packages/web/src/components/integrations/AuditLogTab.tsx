@@ -4,7 +4,7 @@ import { useConfigAuditLog } from '@/hooks/useAdminConfig';
 import { formatDate } from '@/lib/utils';
 
 const ACTION_COLORS = {
-  CREATE: 'text-emerald-400',
+  CREATE: 'text-moss-400',
   DELETE: 'text-brick-400',
   UPDATE: 'text-amber-400',
 } as const;

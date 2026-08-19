@@ -101,7 +101,7 @@ export function ConsolidationForm() {
                 </label>
                 {consolidation?.schedule.exists && (
                   <span
-                    className={`ml-auto text-xs ${consolidation.schedule.paused ? 'text-paper-500' : 'text-emerald-400'}`}
+                    className={`ml-auto text-xs ${consolidation.schedule.paused ? 'text-paper-500' : 'text-moss-400'}`}
                   >
                     {consolidation.schedule.paused
                       ? 'Paused in Temporal'
