@@ -11,6 +11,7 @@ import {
   useUpdateRevalidationConfig,
 } from '@/hooks/useAdminConfig';
 import { useConfigForm } from '@/hooks/useConfigForm';
+import { formatDate } from '@/lib/utils';
 
 interface RevalidationFormState {
   enabled: boolean;
@@ -101,7 +102,7 @@ export function RevalidationForm() {
                     {revalidation.schedule.paused
                       ? 'Paused in Temporal'
                       : revalidation.schedule.nextRunAt
-                        ? `Next run: ${new Date(revalidation.schedule.nextRunAt).toLocaleString()}`
+                        ? `Next run: ${formatDate(revalidation.schedule.nextRunAt)}`
                         : 'Active in Temporal'}
                   </span>
                 )}

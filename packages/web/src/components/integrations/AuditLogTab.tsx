@@ -1,5 +1,6 @@
 'use client';
 
+import { LoadingState } from '@/components/ui/LoadingState';
 import { useConfigAuditLog } from '@/hooks/useAdminConfig';
 import { formatDate } from '@/lib/utils';
 
@@ -38,7 +39,7 @@ export function AuditLogTab() {
   const { data: entries, isLoading, error } = useConfigAuditLog(200);
 
   if (isLoading) {
-    return <p className="text-sm text-paper-400">Loading…</p>;
+    return <LoadingState />;
   }
 
   if (error) {

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { LoadingState } from '@/components/ui/LoadingState';
 import {
   type GitHubConfigInput,
   testGitHubConnection,
@@ -102,7 +103,7 @@ export function GitHubTab() {
   };
 
   if (isLoading) {
-    return <p className="text-sm text-paper-400">Loading…</p>;
+    return <LoadingState />;
   }
 
   return (

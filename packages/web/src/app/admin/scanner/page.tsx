@@ -18,6 +18,7 @@ import {
   useUpdateScannerPattern,
 } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
+import { formatDate } from '@/lib/utils';
 
 type PatternType =
   | 'INJECTION'
@@ -271,8 +272,8 @@ function PatternDetailModal({
 
           <div className="flex items-center justify-between border-t border-ink-700 pt-4">
             <div className="space-y-0.5 text-xs text-paper-500">
-              <div>Created {new Date(pattern.createdAt).toLocaleDateString()}</div>
-              <div>Updated {new Date(pattern.updatedAt).toLocaleDateString()}</div>
+              <div>Created {formatDate(pattern.createdAt)}</div>
+              <div>Updated {formatDate(pattern.updatedAt)}</div>
             </div>
             {!pattern.isBuiltIn && (
               <Button onClick={startEdit} variant="secondary">

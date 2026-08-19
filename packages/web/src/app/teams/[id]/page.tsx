@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRemoveTeamMember, useTeam, useUpdateTeam, useUpdateTeamMember } from '@/hooks/useTeams';
@@ -66,19 +67,22 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <Link className="text-ember-400 hover:underline text-sm" href="/teams">
-            &larr; Teams
-          </Link>
-          <h2 className="text-2xl font-bold">{team.name}</h2>
-        </div>
-        {canManage && (
-          <Button onClick={() => setEditing(true)} size="sm" variant="ghost">
-            Edit team
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        actions={
+          <>
+            <Link className="text-ember-400 hover:underline text-sm" href="/teams">
+              &larr; Teams
+            </Link>
+            {canManage && (
+              <Button onClick={() => setEditing(true)} size="sm" variant="ghost">
+                Edit team
+              </Button>
+            )}
+          </>
+        }
+        chapter="§ Teams"
+        title={team.name}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>

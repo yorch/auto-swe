@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useCreateEpic, useEpics } from '@/hooks/useEpics';
 import { useRepositories } from '@/hooks/useRepositories';
@@ -58,19 +59,22 @@ export default function EpicsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-bold">Epics</h2>
-        {canCreate && (
-          <Button
-            disabled={repos.length < 2}
-            onClick={() => setOpen(true)}
-            title={repos.length < 2 ? 'Connect at least two repositories first' : undefined}
-            variant="primary"
-          >
-            + New epic
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        actions={
+          canCreate && (
+            <Button
+              disabled={repos.length < 2}
+              onClick={() => setOpen(true)}
+              title={repos.length < 2 ? 'Connect at least two repositories first' : undefined}
+              variant="primary"
+            >
+              + New epic
+            </Button>
+          )
+        }
+        chapter="§ Epics"
+        title="Epics"
+      />
 
       <Card>
         <p className="text-sm text-paper-400">

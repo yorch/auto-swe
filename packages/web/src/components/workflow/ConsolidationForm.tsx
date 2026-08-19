@@ -16,6 +16,7 @@ import {
   useUpdateConsolidationConfig,
 } from '@/hooks/useAdminConfig';
 import { useConfigForm } from '@/hooks/useConfigForm';
+import { formatDate } from '@/lib/utils';
 
 interface ConsolidationFormState {
   enabled: boolean;
@@ -106,7 +107,7 @@ export function ConsolidationForm() {
                     {consolidation.schedule.paused
                       ? 'Paused in Temporal'
                       : consolidation.schedule.nextRunAt
-                        ? `Next run: ${new Date(consolidation.schedule.nextRunAt).toLocaleString()}`
+                        ? `Next run: ${formatDate(consolidation.schedule.nextRunAt)}`
                         : 'Active in Temporal'}
                   </span>
                 )}

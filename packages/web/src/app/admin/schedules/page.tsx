@@ -22,9 +22,10 @@ import {
 } from '@/hooks/useSchedules';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { formatDate } from '@/lib/utils';
 
 function fmtTime(iso: string | null | undefined): string {
-  return iso ? new Date(iso).toLocaleString() : '—';
+  return iso ? formatDate(iso) : '—';
 }
 
 type ScheduleForm = {

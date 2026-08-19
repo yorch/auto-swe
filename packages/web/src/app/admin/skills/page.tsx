@@ -19,6 +19,7 @@ import {
   useUpdateSkill,
 } from '@/hooks/useSkills';
 import { errMsg } from '@/lib/errors';
+import { formatDate } from '@/lib/utils';
 
 function pct(v: number | null): string {
   return v == null ? '—' : `${(v * 100).toFixed(0)}%`;
@@ -200,8 +201,8 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           </div>
           <div className="flex items-center justify-between border-t border-ink-700 pt-4">
             <div className="space-y-0.5 text-xs text-paper-500">
-              <div>Created {new Date(skill.createdAt).toLocaleDateString()}</div>
-              <div>Updated {new Date(skill.updatedAt).toLocaleDateString()}</div>
+              <div>Created {formatDate(skill.createdAt)}</div>
+              <div>Updated {formatDate(skill.updatedAt)}</div>
             </div>
             <Button onClick={startEdit} variant="secondary">
               Edit

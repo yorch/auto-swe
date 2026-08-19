@@ -6,6 +6,7 @@ import { LessonsOverTimeChart } from '@/components/charts/LessonsOverTimeChart';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { useLessonSearch, useLessons } from '@/hooks/useLessons';
 import { useRepositories } from '@/hooks/useRepositories';
@@ -34,7 +35,7 @@ export default function LessonsPage() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Agent Lessons</h2>
+      <PageHeader chapter="§ Memory" title="Agent Lessons" />
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

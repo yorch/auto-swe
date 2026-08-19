@@ -5,6 +5,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Th } from '@/components/ui/Th';
@@ -42,12 +43,7 @@ export default function UsersPage() {
   }, [users]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-        <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-        loading users…
-      </div>
-    );
+    return <LoadingState message="loading users…" />;
   }
 
   const handleApprove = (id: string) => updateUser.mutate({ id, patch: { isActive: true } });

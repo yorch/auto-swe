@@ -2,6 +2,7 @@
 
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Th } from '@/components/ui/Th';
 import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useAdmin';
@@ -12,12 +13,7 @@ export default function AdminSessionsPage() {
   const revoke = useAdminRevokeSession();
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-        <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-        loading sessions…
-      </div>
-    );
+    return <LoadingState message="loading sessions…" />;
   }
 
   const rows = sessions ?? [];

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
 import { Button } from '@/components/ui/Button';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar } from '@/components/ui/TabBar';
 import { type InboxFilter, useInbox } from '@/hooks/useInbox';
 
@@ -24,21 +25,22 @@ export default function InboxPage() {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold">Inbox</h2>
-          <p className="text-sm text-paper-400 mt-1">
-            {filter === 'PENDING'
-              ? count === 0
-                ? 'No pending actions'
-                : `${count} pending action${count !== 1 ? 's' : ''}`
-              : `${count} step${count !== 1 ? 's' : ''} total`}
-          </p>
-        </div>
-        <Button disabled={isFetching} onClick={() => refetch()} size="sm" variant="ghost">
-          {isFetching ? 'Refreshing…' : 'Refresh'}
-        </Button>
-      </div>
+      <PageHeader
+        actions={
+          <Button disabled={isFetching} onClick={() => refetch()} size="sm" variant="ghost">
+            {isFetching ? 'Refreshing…' : 'Refresh'}
+          </Button>
+        }
+        chapter="§ Inbox"
+        subtitle={
+          filter === 'PENDING'
+            ? count === 0
+              ? 'No pending actions'
+              : `${count} pending action${count !== 1 ? 's' : ''}`
+            : `${count} step${count !== 1 ? 's' : ''} total`
+        }
+        title="Inbox"
+      />
 
       <TabBar active={filter} onChange={setFilter} tabs={TABS} />
 
