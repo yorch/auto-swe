@@ -461,13 +461,11 @@ flowchart LR
         TMP[temporal\nserver :7233]
         TMPNS[temporal-setup-namespace\none-shot]
         TMPUI[temporal-ui\n:8233]
-        MINIO[minio\n:9000 API / :9001 console]
-        MINIOSETUP[minio-setup\none-shot bucket create]
+        GARAGE[garage\n:9000 S3 API\nprofile: objectstore]
         TMPSETUP --> PGTMP
         TMP --> TMPSETUP
         TMPNS --> TMP
         TMPUI --> TMP
-        MINIOSETUP --> MINIO
     end
 
     subgraph docker-compose.app.yml
@@ -479,7 +477,7 @@ flowchart LR
         WK2 --> PG
         GW2 -->|gRPC| TMP
         WK2 -->|gRPC| TMP
-        WK2 -->|artifacts| MINIO
+        WK2 -->|artifacts| GARAGE
         WK2 -->|/var/run/docker.sock| HOST[Docker daemon]
         GW2 --> OTEL
         WK2 --> OTEL
@@ -488,8 +486,10 @@ flowchart LR
 ```
 
 `docker-compose.app.yml` is an overlay — it references infra services and is not runnable
-standalone. The worker needs `/var/run/docker.sock` mounted to create workspaces. MinIO is optional:
-without an S3 config, artifacts fall back to Postgres inline blobs.
+standalone. The worker needs `/var/run/docker.sock` mounted to create workspaces. The object store
+is optional: without an S3 config, artifacts fall back to Postgres inline blobs. Garage sits behind
+the `objectstore` compose profile, so a deployment using a hosted S3 provider omits it entirely and
+points `ARTIFACT_S3_ENDPOINT` at the provider instead.
 
 ---
 

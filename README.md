@@ -92,7 +92,7 @@ cp .env.example .env
 # dashboard at /admin/model-config after starting the gateway+web. See
 # docs/model-configuration.md for the bootstrap flow.
 
-# 3. Start infrastructure (Postgres, Temporal, MinIO)
+# 3. Start infrastructure (Postgres, Temporal, Garage)
 yarn docker:infra:up
 
 # 4. Set up the database
@@ -197,7 +197,7 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | `GITHUB_URL`                | Optional  | Override for GitHub Enterprise Server                                                          |
 | `GITHUB_API_URL`            | Optional  | Override for GitHub Enterprise Server API                                                      |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional | OTLP/HTTP endpoint for traces + logs (set when running `yarn docker:app:up`)                       |
-| `ARTIFACT_S3_*`             | Optional  | S3-compatible artifact store; falls back to Postgres-inline when unset. `yarn docker:infra:up` ships a MinIO container at `localhost:9000` (console `:9001`) with the bucket pre-created (see `.env.example`) |
+| `ARTIFACT_S3_*`             | Optional  | S3-compatible artifact store; falls back to Postgres-inline when unset. `yarn docker:infra:up` ships a Garage container at `localhost:9000` that provisions its key and bucket on first boot, or point it at AWS S3 / R2 / B2 instead (see `.env.example`) |
 
 ¹ JWT auth has two modes: HS256 (default — set `JWT_SECRET`) or RS256 (set `JWT_PRIVATE_KEY_PATH` + `JWT_PUBLIC_KEY_PATH`).
 ² Required when running the gateway in production — better-auth refuses to start with the dev defaults.
@@ -223,7 +223,7 @@ yarn db:seed             # Seed admin user + sample repository
 yarn dev:gateway         # Gateway in watch mode
 yarn dev:worker          # Worker in watch mode
 yarn dev:web             # Next.js dashboard (port 3000)
-yarn docker:infra:up     # Start infra services (postgres + temporal + minio). Observability (Grafana/OTel) starts with yarn docker:app:up.
+yarn docker:infra:up     # Start infra services (postgres + temporal + garage). Observability (Grafana/OTel) starts with yarn docker:app:up.
 yarn docker:infra:down   # Stop infra services
 yarn docker:app:up           # Start everything (infra + app)
 yarn docker:app:down         # Stop everything

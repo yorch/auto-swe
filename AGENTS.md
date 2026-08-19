@@ -82,7 +82,7 @@ Run `ls packages/<name>/src` for the actual layout — only non-obvious rules li
 
 Top-level files that matter:
 
-- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + MinIO + setup containers
+- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + Garage (`objectstore` profile) + setup containers
 - `docker-compose.app.yml` — gateway + worker + web + otel-lgtm (overlay; not runnable standalone)
 - `infra/` — helper scripts and Temporal dynamic config mounted into the temporal-setup containers
 - `tsconfig.base.json` — shared TS config inherited by every package
@@ -179,7 +179,7 @@ yarn lint:fix             # Auto-fix safe lint issues + format (biome check --wr
 yarn format               # Format only (biome format --write)
 yarn docs:check           # Fail on stale countable claims in the living docs
 
-# Docker (infra = postgres + postgres-temporal + temporal + minio; app = gateway + worker + web + otel-lgtm)
+# Docker (infra = postgres + postgres-temporal + temporal + garage; app = gateway + worker + web + otel-lgtm)
 yarn docker:infra:up      # Start infra services only
 yarn docker:infra:down    # Stop infra services
 yarn docker:app:up        # Start everything (infra + app)
@@ -552,7 +552,7 @@ Dockerfile; it has the specific rules and what has already been tried and does n
 # 1. Install
 corepack enable && yarn install
 
-# 2. Start infrastructure (postgres + postgres-temporal + temporal + minio)
+# 2. Start infrastructure (postgres + postgres-temporal + temporal + garage)
 cp .env.example .env    # Fill in CONFIG_ENCRYPTION_KEY, SEED_ADMIN_PASSWORD, and optionally
                         # GITHUB_TOKEN / GITHUB_WEBHOOK_SECRET as bootstrap fallbacks
 yarn docker:infra:up
