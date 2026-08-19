@@ -12,11 +12,11 @@ Five long-running processes plus one Docker daemon:
 | -------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------- |
 | `postgres`                 | `pgvector/pgvector:pg18`                           | App DB — relational state + pgvector for semantic memory.              |
 | `postgres-temporal`        | `postgres:18-alpine`                               | Separate DB for Temporal history. Do **not** combine with the app DB.  |
-| `temporal` (server+admin+ui) | `temporalio/server:1.31.0` + admin-tools 1.31 + ui 2.49.1 | Workflow orchestration runtime + setup container + web UI on `:8233`.  |
+| `temporal` (server+admin+ui) | `temporalio/server:1.31.2` + admin-tools 1.31 + ui 2.53.3 | Workflow orchestration runtime + setup container + web UI on `:8233`.  |
 | `gateway`                  | built from `packages/gateway/Dockerfile`           | Fastify HTTP API on `:8080`. Stateless, scale horizontally.            |
 | `worker`                   | built from `packages/worker/Dockerfile`            | Temporal worker. Spawns ephemeral Docker workspaces via the host socket. |
 | `web`                      | built from `packages/web/Dockerfile`               | Next.js dashboard on `:3000`. Stateless, scale horizontally.           |
-| `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.8.1`                          | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
+| `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.30.2`                         | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
 | object store (optional)    | AWS S3 / Cloudflare R2 / `minio/minio` / etc.      | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
 
 The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `workspaceImage` Tier-2 default at `/admin/workflow`; an explicit `image` on a node still wins (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
