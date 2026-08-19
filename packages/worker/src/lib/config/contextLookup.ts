@@ -1,6 +1,6 @@
+import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { activityInfo } from '@temporalio/activity';
-import { configCacheTtlMs, withCache } from './cache.js';
 import type { ResolveCtx } from './types.js';
 
 /// Look up `{ teamId, workflowTemplateId }` for the currently-executing

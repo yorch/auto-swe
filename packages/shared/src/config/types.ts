@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import type { Role } from '../generated/prisma/enums.js';
+import type { ConfigScope, Role } from '../generated/prisma/enums.js';
 
 /// The five scope levels of the platform-wide config cascade, most specific
 /// first. `resolveSetting` walks them in this order and takes the first
@@ -11,7 +11,7 @@ export const SETTING_SCOPE_ORDER = [
   'TEAM',
   'ORGANIZATION',
   'GLOBAL',
-] as const;
+] as const satisfies readonly ConfigScope[];
 
 export type SettingScope = (typeof SETTING_SCOPE_ORDER)[number];
 
@@ -29,11 +29,12 @@ export type SettingGroup = (typeof SETTING_GROUPS)[number];
 /// permission check consults, and what the resolver falls back to. Adding a
 /// knob means adding a definition — not a migration, a Zod body schema, a
 /// resolver branch and a hand-written form field.
+/// A setting's identity is the property it is stored under in
+/// `SETTING_DEFINITIONS` — not a field here. That key is the primary key of the
+/// stored override and the subject of permission grants, so renaming one
+/// orphans every row and grant that referenced it; carrying it twice would only
+/// create a way for the two to disagree.
 export interface SettingDefinition<T = unknown> {
-  /// Dotted key, `<group>.<name>`. Stable: it is the primary key of the stored
-  /// override and the subject of permission grants, so renaming one orphans
-  /// every row and grant that referenced it.
-  key: string;
   group: SettingGroup;
   /// Short noun phrase for the admin form.
   label: string;

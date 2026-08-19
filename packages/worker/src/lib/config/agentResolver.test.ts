@@ -6,7 +6,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 }));
 
 // Pass-through cache so resolution isn't memoized across cases.
-vi.mock('./cache.js', () => ({
+vi.mock('@auto-swe/shared/config/cache', () => ({
   configCacheTtlMs: () => 0,
   withCache: (_k: string, _t: number, fn: () => unknown) => fn(),
 }));

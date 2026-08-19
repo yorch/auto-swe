@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import type { SettingSource, SettingView } from '@/hooks/useConfigSettings';
+import type { SettingScope, SettingSource, SettingView } from '@/hooks/useConfigSettings';
 
 /**
  * One editable setting, rendered from its definition rather than hand-written.
@@ -43,22 +43,20 @@ function formatValue(value: unknown): string {
 
 export function SettingRow({
   setting,
+  scope,
   canWriteHere,
-  viewerRole,
   onSave,
   onClear,
   busy,
 }: {
   setting: SettingView;
-  /// False when the current scope is not one this setting may be overridden at,
-  /// or when the viewer's role is below the setting's floor. The row stays
-  /// visible — seeing the inherited value is the point — but the controls are
-  /// disabled and the reason is spelled out.
+  /// The scope currently being viewed, used only to word the disabled reason.
+  scope: SettingScope;
+  /// The server's verdict on whether this actor may write this key at this
+  /// scope — role floor, allowed scopes and grants together. The row stays
+  /// visible when false, because seeing the inherited value is the point of
+  /// scoping the view; only the controls are disabled.
   canWriteHere: boolean;
-  /// Used only to word the disabled reason. Authorisation is the server's; a
-  /// grant can widen what this role alone would allow, so the UI never treats
-  /// role as sufficient — only as enough to know when a write cannot succeed.
-  viewerRole: string;
   onSave: (value: unknown) => void;
   onClear: () => void;
   busy: boolean;
@@ -146,11 +144,11 @@ export function SettingRow({
           </div>
           {!canWriteHere && (
             <p className="font-mono text-[10px] uppercase tracking-wider text-paper-600">
-              {setting.requiredRole !== viewerRole && setting.requiredRole === 'ADMIN'
-                ? 'Requires ADMIN'
-                : setting.overridableAt.length
+              {!setting.overridableAt.includes(scope) && scope !== 'GLOBAL'
+                ? setting.overridableAt.length
                   ? `Set at ${['GLOBAL', ...setting.overridableAt].join(', ')}`
-                  : 'Platform-wide only'}
+                  : 'Platform-wide only'
+                : `Requires ${setting.requiredRole}`}
             </p>
           )}
           {canWriteHere && hasOverrideHere && setting.source !== 'DEFAULT' && (

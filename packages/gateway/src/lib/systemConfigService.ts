@@ -139,9 +139,20 @@ export async function writeSystemConfigAudit(
   }
 }
 
+/// Which config group a write belongs to. Carried on the result so the audit
+/// identity travels with the write rather than being restated at each route —
+/// the four schedule groups going unaudited for as long as they did is what a
+/// per-route copy costs.
+export interface ConfigAuditTarget {
+  entityId: string;
+  entityType: string;
+}
+
 type ConfigUpdateResult = {
   /// Audit payload (only meaningful when changedFields is non-empty).
   auditAfterJson: Record<string, unknown>;
+  /// Identifies the config group for the audit log.
+  auditTarget: ConfigAuditTarget;
   /// The same projection taken before the write, so the audit log records what
   /// a value changed *from*. Null when no row existed yet (a CREATE).
   auditBeforeJson: Record<string, unknown> | null;
@@ -151,6 +162,35 @@ type ConfigUpdateResult = {
   /// Whether a row existed before this write (CREATE vs UPDATE audit action).
   existed: boolean;
 };
+
+/// Writes the audit entry for a config update, if it changed anything.
+///
+/// One writer for every config group, taking its identity from the result
+/// rather than from the call site: the four schedule routes went unaudited
+/// because each route restated the whole block and nothing noticed when one
+/// didn't. Now a group that produces a `ConfigUpdateResult` carries what the
+/// audit needs, and routes cannot describe the write incorrectly.
+export async function auditConfigWrite(
+  prisma: PrismaClient,
+  log: FastifyBaseLogger,
+  actorId: string,
+  result: Pick<
+    ConfigUpdateResult,
+    'auditAfterJson' | 'auditBeforeJson' | 'auditTarget' | 'changedFields' | 'existed'
+  >
+): Promise<void> {
+  if (result.changedFields.length === 0) {
+    return;
+  }
+  await writeSystemConfigAudit(prisma, log, {
+    action: result.existed ? 'UPDATE' : 'CREATE',
+    actorId,
+    afterJson: result.auditAfterJson,
+    beforeJson: result.auditBeforeJson,
+    entityId: result.auditTarget.entityId,
+    entityType: result.auditTarget.entityType,
+  });
+}
 
 // ─── GitHub ───────────────────────────────────────────────────────────────────
 
@@ -300,6 +340,7 @@ export async function updateGitHubConfig(
   return {
     auditAfterJson: { ...pickAudit(row, GITHUB_AUDIT_FIELDS), changedFields },
     auditBeforeJson: pickAudit(existing, GITHUB_AUDIT_FIELDS),
+    auditTarget: { entityId: SYSTEM_CONFIG_IDS.github, entityType: 'GitHubConfig' },
     changedFields,
     data: {
       ...githubData(row),
@@ -425,6 +466,7 @@ export async function updateSlackConfig(
   return {
     auditAfterJson: { ...pickAudit(row, SLACK_AUDIT_FIELDS), changedFields },
     auditBeforeJson: pickAudit(existing, SLACK_AUDIT_FIELDS),
+    auditTarget: { entityId: SYSTEM_CONFIG_IDS.slack, entityType: 'SlackConfig' },
     changedFields,
     data: {
       ...slackData(row),
@@ -587,6 +629,7 @@ export async function updateStorageConfig(
   return {
     auditAfterJson: { ...pickAudit(row, STORAGE_AUDIT_FIELDS), changedFields },
     auditBeforeJson: pickAudit(existing, STORAGE_AUDIT_FIELDS),
+    auditTarget: { entityId: SYSTEM_CONFIG_IDS.storage, entityType: 'StorageConfig' },
     changedFields,
     data: storageData(row),
     existed: !!existing,
@@ -699,6 +742,7 @@ export async function updateGoogleOAuthConfig(
   return {
     auditAfterJson: { ...pickAudit(row, GOOGLE_OAUTH_AUDIT_FIELDS), changedFields },
     auditBeforeJson: pickAudit(existing, GOOGLE_OAUTH_AUDIT_FIELDS),
+    auditTarget: { entityId: SYSTEM_CONFIG_IDS.googleOAuth, entityType: 'GoogleOAuthConfig' },
     changedFields,
     data: { ...googleOAuthData(row), requiresRestart: true },
     existed: !!existing,
@@ -867,6 +911,7 @@ export async function updateIssueTrackerConfig(
   return {
     auditAfterJson: { ...pickAudit(row, ISSUE_TRACKER_AUDIT_FIELDS), changedFields },
     auditBeforeJson: pickAudit(existing, ISSUE_TRACKER_AUDIT_FIELDS),
+    auditTarget: { entityId: SYSTEM_CONFIG_IDS.tracker, entityType: 'IssueTrackerConfig' },
     changedFields,
     data: issueTrackerData(row),
     existed: !!existing,
@@ -1009,6 +1054,7 @@ export async function updateKnowledgeBaseConfig(
   return {
     auditAfterJson: { ...pickAudit(row, KNOWLEDGE_BASE_AUDIT_FIELDS), changedFields },
     auditBeforeJson: pickAudit(existing, KNOWLEDGE_BASE_AUDIT_FIELDS),
+    auditTarget: { entityId: SYSTEM_CONFIG_IDS.knowledgeBase, entityType: 'KnowledgeBaseConfig' },
     changedFields,
     data: knowledgeBaseData(row),
     existed: !!existing,
@@ -1104,6 +1150,7 @@ export async function updateFigmaConfig(
   return {
     auditAfterJson: { ...pickAudit(row, FIGMA_AUDIT_FIELDS), changedFields },
     auditBeforeJson: pickAudit(existing, FIGMA_AUDIT_FIELDS),
+    auditTarget: { entityId: SYSTEM_CONFIG_IDS.figma, entityType: 'FigmaConfig' },
     changedFields,
     data: figmaData(row),
     existed: !!existing,
@@ -1230,6 +1277,10 @@ export async function updateWorkflowDefaults(
       existing,
       WORKFLOW_DEFAULTS_KEYS.filter((k) => k in data)
     ),
+    auditTarget: {
+      entityId: SYSTEM_CONFIG_IDS.workflowDefaults,
+      entityType: 'WorkflowDefaults',
+    },
     changedFields,
     // Return through the shared resolver so GET and PUT always produce the same
     // shape, including env-var fallbacks for fields not yet set in DB.
@@ -1248,7 +1299,8 @@ type ScheduleUpdateResult = Omit<ConfigUpdateResult, 'data'>;
 async function updateWorkflowDefaultsSlice(
   prisma: PrismaClient,
   body: Record<string, unknown>,
-  columnByField: Record<string, string>
+  columnByField: Record<string, string>,
+  auditTarget: ConfigAuditTarget
 ): Promise<ScheduleUpdateResult> {
   const existing = await prisma.workflowDefaults.findUnique({ where: { id: 'default' } });
 
@@ -1270,6 +1322,7 @@ async function updateWorkflowDefaultsSlice(
   return {
     auditAfterJson: { ...data, changedFields },
     auditBeforeJson: pickAudit(existing, Object.values(columnByField) as WorkflowDefaultsKey[]),
+    auditTarget,
     changedFields,
     existed: !!existing,
   };
@@ -1289,12 +1342,20 @@ export async function updateConsolidationConfig(
   prisma: PrismaClient,
   body: ConsolidationConfigInput
 ): Promise<ScheduleUpdateResult> {
-  return updateWorkflowDefaultsSlice(prisma, body, {
-    cronExpression: 'consolidationCron',
-    enabled: 'consolidationEnabled',
-    minClusterSize: 'consolidationMinClusterSize',
-    similarityThreshold: 'consolidationSimilarityThreshold',
-  });
+  return updateWorkflowDefaultsSlice(
+    prisma,
+    body,
+    {
+      cronExpression: 'consolidationCron',
+      enabled: 'consolidationEnabled',
+      minClusterSize: 'consolidationMinClusterSize',
+      similarityThreshold: 'consolidationSimilarityThreshold',
+    },
+    {
+      entityId: SYSTEM_CONFIG_IDS.consolidation,
+      entityType: 'ConsolidationConfig',
+    }
+  );
 }
 
 // ─── Eval regression schedule ─────────────────────────────────────────────────
@@ -1312,13 +1373,21 @@ export async function updateEvalScheduleConfig(
   prisma: PrismaClient,
   body: EvalScheduleConfigInput
 ): Promise<ScheduleUpdateResult> {
-  return updateWorkflowDefaultsSlice(prisma, body, {
-    baselineRef: 'evalScheduleBaselineRef',
-    candidateRef: 'evalScheduleCandidateRef',
-    cronExpression: 'evalScheduleCron',
-    datasetSlug: 'evalScheduleDatasetSlug',
-    enabled: 'evalScheduleEnabled',
-  });
+  return updateWorkflowDefaultsSlice(
+    prisma,
+    body,
+    {
+      baselineRef: 'evalScheduleBaselineRef',
+      candidateRef: 'evalScheduleCandidateRef',
+      cronExpression: 'evalScheduleCron',
+      datasetSlug: 'evalScheduleDatasetSlug',
+      enabled: 'evalScheduleEnabled',
+    },
+    {
+      entityId: SYSTEM_CONFIG_IDS.evalSchedule,
+      entityType: 'EvalScheduleConfig',
+    }
+  );
 }
 
 // ─── Re-validation schedule ───────────────────────────────────────────────────
@@ -1334,11 +1403,19 @@ export async function updateRevalidationScheduleConfig(
   prisma: PrismaClient,
   body: RevalidationConfigInput
 ): Promise<ScheduleUpdateResult> {
-  return updateWorkflowDefaultsSlice(prisma, body, {
-    cronExpression: 'revalidationCron',
-    datasetSlug: 'revalidationDatasetSlug',
-    enabled: 'revalidationEnabled',
-  });
+  return updateWorkflowDefaultsSlice(
+    prisma,
+    body,
+    {
+      cronExpression: 'revalidationCron',
+      datasetSlug: 'revalidationDatasetSlug',
+      enabled: 'revalidationEnabled',
+    },
+    {
+      entityId: SYSTEM_CONFIG_IDS.revalidation,
+      entityType: 'RevalidationConfig',
+    }
+  );
 }
 
 // ─── Canary routing ───────────────────────────────────────────────────────────
@@ -1355,12 +1432,20 @@ export async function updateCanaryConfig(
   prisma: PrismaClient,
   body: CanaryConfigInput
 ): Promise<ScheduleUpdateResult> {
-  return updateWorkflowDefaultsSlice(prisma, body, {
-    agentKey: 'canaryAgentKey',
-    candidateVersion: 'canaryCandidateVersion',
-    enabled: 'canaryEnabled',
-    percent: 'canaryPercent',
-  });
+  return updateWorkflowDefaultsSlice(
+    prisma,
+    body,
+    {
+      agentKey: 'canaryAgentKey',
+      candidateVersion: 'canaryCandidateVersion',
+      enabled: 'canaryEnabled',
+      percent: 'canaryPercent',
+    },
+    {
+      entityId: SYSTEM_CONFIG_IDS.canary,
+      entityType: 'CanaryConfig',
+    }
+  );
 }
 
 // ─── Audit log + decrypt check ────────────────────────────────────────────────

@@ -35,12 +35,15 @@ async function run() {
 
   // Boot-time only: Temporal reads the concurrency cap when the worker is
   // created, so a change to it needs a restart — which is what the setting's
-  // `restartRequired` flag tells an operator in the dashboard.
-  const maxConcurrentActivities = await resolveSetting('workspace.maxConcurrentActivities');
-
-  const connection = await NativeConnection.connect({
-    address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
-  });
+  // `restartRequired` flag tells an operator in the dashboard. Resolved
+  // alongside the connection rather than before it; only `Worker.create` needs
+  // both.
+  const [maxConcurrentActivities, connection] = await Promise.all([
+    resolveSetting('workspace.maxConcurrentActivities'),
+    NativeConnection.connect({
+      address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
+    }),
+  ]);
   await initTemporalClient();
 
   // Resolve workflow path relative to this file (ESM-compatible). Prefer

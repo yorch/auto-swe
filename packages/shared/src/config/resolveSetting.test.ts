@@ -230,8 +230,8 @@ describe('resolveEffectiveSettings', () => {
   it('reports the scope each value came from', async () => {
     process.env.WORKER_MAX_CONCURRENT_ACTIVITIES = '25';
     rows({ key: 'channel.historyMessageLimit', scope: 'TEAM', value: 21 });
-    const effective = await resolveEffectiveSettings(TEAM_CTX);
-    const byKey = new Map(effective.map((e) => [e.key, e]));
+    const { settings } = await resolveEffectiveSettings(TEAM_CTX);
+    const byKey = new Map(settings.map((entry) => [entry.key, entry]));
 
     expect(byKey.get('channel.historyMessageLimit')).toMatchObject({ source: 'TEAM', value: 21 });
     expect(byKey.get('channel.memoryContextItems')).toMatchObject({ source: 'DEFAULT', value: 5 });
@@ -241,11 +241,29 @@ describe('resolveEffectiveSettings', () => {
     });
   });
 
+  it('exposes the row stored at one exact scope from the same batch', async () => {
+    // The admin view needs both the resolved value and "what is set *here*".
+    // Reading the second from the batch is what lets it cost one query rather
+    // than two — and keeps it from needing its own tenant-guard exemption.
+    rows(
+      { key: 'channel.historyMessageLimit', scope: 'GLOBAL', value: 10 },
+      { key: 'channel.historyMessageLimit', scope: 'TEAM', value: 21 }
+    );
+    const { overrideAt, settings } = await resolveEffectiveSettings(TEAM_CTX);
+
+    expect(settings.find((s) => s.key === 'channel.historyMessageLimit')?.value).toBe(21);
+    expect(overrideAt('channel.historyMessageLimit', 'TEAM')).toBe(21);
+    expect(overrideAt('channel.historyMessageLimit', 'GLOBAL')).toBe(10);
+    expect(overrideAt('channel.historyMessageLimit', 'CHANNEL')).toBeUndefined();
+    expect(overrideAt('channel.memoryContextItems', 'TEAM')).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
   it('marks a pinned value as PINNED so a stalled live edit is explainable', async () => {
-    const effective = await resolveEffectiveSettings({
+    const { settings } = await resolveEffectiveSettings({
       pinnedSettings: { 'workflow.maxTransitions': 250 },
     });
-    const pinned = effective.find((e) => e.key === 'workflow.maxTransitions');
+    const pinned = settings.find((entry) => entry.key === 'workflow.maxTransitions');
     expect(pinned).toMatchObject({ source: 'PINNED', value: 250 });
   });
 });

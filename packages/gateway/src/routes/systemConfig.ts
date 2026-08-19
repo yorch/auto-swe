@@ -11,6 +11,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
+  auditConfigWrite,
   detectJiraFields,
   getFigmaConfig,
   getGitHubConfig,
@@ -20,7 +21,6 @@ import {
   getSlackConfig,
   getStorageConfig,
   listConfigAuditEntries,
-  SYSTEM_CONFIG_IDS,
   testDecryptSecrets,
   testFigmaConnection,
   testGitHubConnection,
@@ -40,7 +40,6 @@ import {
   updateSlackConfig,
   updateStorageConfig,
   updateWorkflowDefaults,
-  writeSystemConfigAudit,
 } from '../lib/systemConfigService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -275,17 +274,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: GitHubPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateGitHubConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.github,
-          entityType: 'GitHubConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -305,17 +294,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: SlackPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateSlackConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.slack,
-          entityType: 'SlackConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -335,17 +314,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: StoragePutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateStorageConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.storage,
-          entityType: 'StorageConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -367,17 +336,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: WorkflowDefaultsPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateWorkflowDefaults(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.workflowDefaults,
-          entityType: 'WorkflowDefaults',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       // result.data is the shared resolver's shape so GET and PUT match,
       // including env-var fallbacks for fields not yet set in DB.
       return reply.send({ data: result.data });
@@ -395,17 +354,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: GoogleOAuthPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateGoogleOAuthConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.googleOAuth,
-          entityType: 'GoogleOAuthConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -421,17 +370,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: IssueTrackerPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateIssueTrackerConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.tracker,
-          entityType: 'IssueTrackerConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -471,17 +410,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: KnowledgeBasePutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateKnowledgeBaseConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.knowledgeBase,
-          entityType: 'KnowledgeBaseConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -503,17 +432,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: FigmaPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateFigmaConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.figma,
-          entityType: 'FigmaConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -547,17 +466,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: ConsolidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateConsolidationConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.consolidation,
-          entityType: 'ConsolidationConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
 
       const config = await resolveConsolidationConfig();
       await fastify.temporal.syncConsolidationSchedule(config);
@@ -592,17 +501,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: EvalSchedulePutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateEvalScheduleConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.evalSchedule,
-          entityType: 'EvalScheduleConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
 
       const config = await resolveEvalScheduleConfig();
       await fastify.temporal.syncEvalSchedule(config);
@@ -633,17 +532,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: RevalidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateRevalidationScheduleConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.revalidation,
-          entityType: 'RevalidationConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
 
       const config = await resolveRevalidationConfig();
       await fastify.temporal.syncRevalidationSchedule(config);
@@ -697,17 +586,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         }
       }
       const result = await updateCanaryConfig(prisma, req.body);
-      if (result.changedFields.length > 0) {
-        const actor = requireUser(req);
-        await writeSystemConfigAudit(prisma, fastify.log, {
-          action: result.existed ? 'UPDATE' : 'CREATE',
-          actorId: actor.sub,
-          afterJson: result.auditAfterJson,
-          beforeJson: result.auditBeforeJson,
-          entityId: SYSTEM_CONFIG_IDS.canary,
-          entityType: 'CanaryConfig',
-        });
-      }
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       const config = await resolveCanaryConfig();
       return reply.send({ data: config });
     }

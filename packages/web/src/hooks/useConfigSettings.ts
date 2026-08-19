@@ -1,14 +1,17 @@
+import type { SettingScope, SettingSource } from '@auto-swe/shared/config/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-/** Scope levels an override can be attached to, most specific first. */
-export type SettingScope = 'WORKFLOW_TEMPLATE' | 'CHANNEL' | 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
-
-/** Where a resolved value actually came from. */
-export type SettingSource = SettingScope | 'PINNED' | 'ENV' | 'DEFAULT';
+// Re-exported from the registry itself rather than kept as a second literal
+// union — the web package already takes type-only imports from shared, and a
+// hand-kept copy would silently disagree the day a scope is added.
+export type { SettingScope, SettingSource } from '@auto-swe/shared/config/types';
 
 export interface SettingView {
   key: string;
+  /// Whether the signed-in user may write this key at the requested scope,
+  /// decided server-side so it accounts for grants and not just the role floor.
+  canWrite: boolean;
   group: string;
   label: string;
   description: string;

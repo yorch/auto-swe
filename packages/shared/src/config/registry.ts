@@ -58,7 +58,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'How many recent channel messages the assistant reads for context on a reactive pass. Higher gives better answers on long threads and costs more input tokens per turn.',
     group: 'channel',
-    key: 'channel.historyMessageLimit',
     label: 'History window',
     overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
@@ -72,7 +71,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'How many semantic-memory items are pulled into an assistant turn. Raising it grounds replies in more past context at the cost of prompt size.',
     group: 'channel',
-    key: 'channel.memoryContextItems',
     label: 'Memory items per turn',
     overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
@@ -86,7 +84,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'Cosine similarity above which a new memory is treated as a duplicate of an existing one and dropped. Lower it to store fewer near-identical memories.',
     group: 'channel',
-    key: 'channel.memoryDedupThreshold',
     label: 'Memory dedup threshold',
     overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
@@ -100,7 +97,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'Maximum messages examined per passive-ingest sweep of a channel. Caps the cost of catching up after a quiet period.',
     group: 'channel',
-    key: 'channel.passiveIngestLimit',
     label: 'Passive ingest batch',
     overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
@@ -112,11 +108,14 @@ export const SETTING_DEFINITIONS = {
   'channel.reactiveCooldownMinutes': defineSetting({
     defaultValue: 10,
     description:
-      'Minimum gap between unprompted interjections in one channel. The per-channel override on the Slack channel page wins over this when set.',
+      'Default minimum gap between unprompted interjections. A single channel is tuned on its own page, on the Slack channels admin screen — that per-channel value wins, and this is what a channel without one falls back to.',
     group: 'channel',
-    key: 'channel.reactiveCooldownMinutes',
     label: 'Interjection cooldown',
-    overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+    // Deliberately not CHANNEL: SlackChannel.reactiveCooldownMinutes is the
+    // per-channel override and always outranks a registry row, so offering a
+    // CHANNEL scope here would store a value the worker never reads — and the
+    // effective-config view would report it as winning.
+    overridableAt: ['TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
     restartRequired: false,
     runPinned: false,
@@ -126,11 +125,11 @@ export const SETTING_DEFINITIONS = {
   'channel.reactiveLookbackMinutes': defineSetting({
     defaultValue: 30,
     description:
-      'How far back a reactive pass scans for conversation it has not evaluated yet. The per-channel override wins over this when set.',
+      'Default window a reactive pass scans for conversation it has not evaluated yet. As with the cooldown, a channel tuned on the Slack channels admin screen uses its own value instead.',
     group: 'channel',
-    key: 'channel.reactiveLookbackMinutes',
     label: 'Interjection lookback',
-    overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+    // See the cooldown above: the SlackChannel column is the per-channel override.
+    overridableAt: ['TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
     restartRequired: false,
     runPinned: false,
@@ -142,7 +141,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'How many messages of an existing thread the assistant reads before replying in it.',
     group: 'channel',
-    key: 'channel.threadContextMessages',
     label: 'Thread context window',
     overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
@@ -158,7 +156,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'Cosine similarity a memory from another channel must clear before it is surfaced as an organisation-wide signal. Raise it to flag less, lower it to flag more.',
     group: 'memory',
-    key: 'memory.orgSimilarityThreshold',
     label: 'Org signal threshold',
     overridableAt: ['TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
@@ -178,7 +175,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'Default number of fan-out branches executed in parallel when a node does not set its own concurrency. Raise it to finish wide fan-outs sooner, at the cost of more simultaneous workspaces.',
     group: 'workflow',
-    key: 'workflow.fanoutConcurrency',
     label: 'Fan-out concurrency',
     overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
@@ -192,7 +188,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'Hard ceiling on node transitions in one run — the backstop against a spec that loops forever. A run that hits it fails rather than burning budget indefinitely.',
     group: 'workflow',
-    key: 'workflow.maxTransitions',
     label: 'Max transitions per run',
     overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
     requiredRole: 'LEAD',
@@ -209,7 +204,6 @@ export const SETTING_DEFINITIONS = {
       'Blackhole the cloud metadata IPs (AWS/GCP/Azure IMDS, ECS task metadata) inside every agent workspace. Leave this on unless it misbehaves on your Docker runtime — turning it off exposes instance credentials to agent-run code.',
     envVar: 'WORKSPACE_BLOCK_METADATA',
     group: 'workspace',
-    key: 'workspace.blockMetadata',
     label: 'Block cloud metadata endpoints',
     // A security control, so it is deliberately platform-wide and ADMIN-only:
     // no team should be able to switch off metadata blocking for its own runs.
@@ -225,7 +219,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'Image used for the short-lived container that performs git operations for a shell step. Pin a digest here to stop tracking the upstream tag.',
     group: 'workspace',
-    key: 'workspace.gitHelperImage',
     label: 'Git helper image',
     overridableAt: ['TEAM', 'ORGANIZATION'],
     requiredRole: 'ADMIN',
@@ -239,7 +232,6 @@ export const SETTING_DEFINITIONS = {
       'Cap on Temporal activity tasks one worker runs at once. Most activities hold a Docker workspace, so raise it only if the Docker host can serve more in parallel. Takes effect when the worker restarts.',
     envVar: 'WORKER_MAX_CONCURRENT_ACTIVITIES',
     group: 'workspace',
-    key: 'workspace.maxConcurrentActivities',
     label: 'Worker activity concurrency',
     overridableAt: [],
     parseEnv: positiveIntEnv(1000),
@@ -254,7 +246,6 @@ export const SETTING_DEFINITIONS = {
     description:
       'Image used for the privileged sidecar that installs the metadata blackhole routes. It needs `ip` from busybox and nothing else.',
     group: 'workspace',
-    key: 'workspace.metadataBlockImage',
     label: 'Metadata blocker image',
     overridableAt: [],
     requiredRole: 'ADMIN',
@@ -273,19 +264,6 @@ export type SettingValue<K extends SettingKey> =
   (typeof SETTING_DEFINITIONS)[K] extends SettingDefinition<infer T> ? T : never;
 
 export const SETTING_KEYS = Object.keys(SETTING_DEFINITIONS) as SettingKey[];
-
-// The property name is what everything else uses — storage rows, the API path
-// param, permission grants, SETTING_KEYS — while the admin form renders
-// `definition.key`. TypeScript cannot tie the two together, so a copy-paste that
-// leaves the wrong `key` on a definition type-checks cleanly and shows operators
-// a key no row is ever written under. Fail at import instead.
-for (const [property, definition] of Object.entries(SETTING_DEFINITIONS)) {
-  if (definition.key !== property) {
-    throw new Error(
-      `Setting registry: '${property}' declares key '${definition.key}'. They must match.`
-    );
-  }
-}
 
 export function isSettingKey(key: string): key is SettingKey {
   return Object.hasOwn(SETTING_DEFINITIONS, key);

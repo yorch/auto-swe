@@ -182,17 +182,6 @@ describe('checkSettingWrite', () => {
 });
 
 describe('registry integrity', () => {
-  it('stores every definition under its own key', () => {
-    // The property name is what storage, the API path param and grants use,
-    // while the admin form renders `definition.key`. TypeScript cannot tie the
-    // two together, so a mismatched copy-paste would show operators a key no
-    // row is ever written under. registry.ts asserts this at import; this
-    // records the invariant.
-    for (const [property, definition] of Object.entries(SETTING_DEFINITIONS)) {
-      expect(definition.key).toBe(property);
-    }
-  });
-
   it('gives every definition a default its own schema accepts', () => {
     for (const key of SETTING_KEYS) {
       const definition = SETTING_DEFINITIONS[key];

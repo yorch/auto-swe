@@ -96,6 +96,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
 
       const settings = await listSettings(
         prisma,
+        { id: actor.sub, role: actor.role },
         {
           channelId: query.channelId,
           orgId: query.orgId,

@@ -1,6 +1,6 @@
+import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '../providerUtils.js';
-import { configCacheTtlMs, withCache } from './cache.js';
 import { ConfigMissingError, resolveProviderCredential } from './resolver.js';
 import type { ResolveCtx, ResolvedModelConfig, ResolvedSkill } from './types.js';
 

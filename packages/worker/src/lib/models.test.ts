@@ -5,8 +5,8 @@ vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 // models.ts now resolves through the Agent entity. Mock resolveAgent.
 vi.mock('./config/agentResolver.js', () => ({ resolveAgent: vi.fn() }));
 
+import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { resolveAgent } from './config/agentResolver.js';
-import { _resetConfigCacheForTests } from './config/cache.js';
 import { ConfigMissingError } from './config/resolver.js';
 import {
   _resetModelCacheForTests,

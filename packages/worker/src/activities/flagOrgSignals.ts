@@ -37,7 +37,6 @@ const MAX_INTEREST_ITEMS = 10;
 /** Cap on cross-org candidate signals injected into the prompt. */
 const MAX_ORG_CANDIDATES = 8;
 
-/** Org-wide matches must clear a high similarity bar — flags should be strong, not chatty. */
 /** Org flags are digest-level: at most one per this window keeps them rare + signal-rich. */
 const DEFAULT_ORG_FLAG_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 20 hours
 

@@ -189,6 +189,9 @@ export async function canReadScope(
 /// The admin form's payload: every definition plus the value currently in
 /// effect for the requested scope and where it came from.
 export interface SettingView extends ResolvedSetting {
+  /// Whether THIS actor may write THIS key at the requested scope, decided by
+  /// the same `checkSettingWrite` the write path uses — grants included.
+  canWrite: boolean;
   group: string;
   label: string;
   description: string;
@@ -206,43 +209,78 @@ export interface SettingView extends ResolvedSetting {
 
 export async function listSettings(
   prisma: PrismaClient,
+  actor: ConfigActor,
   ctx: SettingResolveCtx,
   selector: ScopeSelector
 ): Promise<SettingView[]> {
-  const effective = await resolveEffectiveSettings(ctx);
-  const columns = scopeColumns(selector);
-  const overrides = new Map<string, unknown>();
-  if (columns) {
-    const rows = await runUnscoped(
-      'reading the overrides stored at one named scope, which is the scope the caller asked about',
-      ['ConfigSetting'],
-      () =>
-        prisma.configSetting.findMany({
-          select: { key: true, value: true },
-          where: { scope: selector.scope, ...columns },
-        })
-    );
-    for (const row of rows) {
-      overrides.set(row.key, row.value);
-    }
-  }
+  // One query: `resolveEffectiveSettings` already loaded every override visible
+  // from this context, including the row at the exact scope being asked about.
+  const { overrideAt, settings } = await resolveEffectiveSettings(ctx);
+  const grants = actor.role === 'ADMIN' ? [] : await loadGrantsForActor(prisma, actor);
+  const tenant = await resolveScopeTenant(prisma, selector);
 
-  return effective.map((resolved) => {
+  return settings.map((resolved) => {
     const definition = getSettingDefinition(resolved.key as SettingKey);
     return {
       ...resolved,
+      // Computed server-side because only the server knows the grants. A client
+      // that re-derives this from the role alone can only see the floor, so a
+      // lead holding a grant would be shown a disabled control for a key they
+      // are entitled to change — the grant model is the point of the feature.
+      canWrite: checkSettingWrite(
+        actor,
+        {
+          key: resolved.key,
+          scope: selector.scope,
+          targetOrgId: tenant.orgId,
+          targetTeamId: tenant.teamId,
+        },
+        grants
+      ).allowed,
       defaultValue: definition.defaultValue,
       description: definition.description,
       group: definition.group,
       label: definition.label,
       overridableAt: definition.overridableAt,
-      overrideAtScope: overrides.get(resolved.key),
+      overrideAtScope: overrideAt(resolved.key, selector.scope),
       requiredRole: definition.requiredRole,
       restartRequired: definition.restartRequired,
       runPinned: definition.runPinned,
       unit: definition.unit,
     };
   });
+}
+
+/// Resolves a write to the row it addresses: the scope columns plus whatever is
+/// already stored there. Both writers need exactly this, and both need the same
+/// refusal when a scoped selector names no id — keeping one copy stops the two
+/// from drifting.
+///
+/// findFirst-then-create rather than upsert: the uniqueness is a *partial* index
+/// per scope, which Prisma cannot express in an upsert's where clause — the same
+/// constraint Agent and ProviderCredential live with.
+async function resolveWriteTarget(
+  prisma: PrismaClient,
+  key: string,
+  selector: ScopeSelector
+): Promise<
+  | { columns: Record<string, string | null>; existing: { id: string; value: unknown } | null }
+  | { denial: WriteDenial & { allowed: false } }
+> {
+  const columns = scopeColumns(selector);
+  if (!columns) {
+    return {
+      denial: {
+        allowed: false,
+        code: 'SCOPE_NOT_ALLOWED',
+        message: `A ${selector.scope} override needs the matching id.`,
+      },
+    };
+  }
+  const existing = await prisma.configSetting.findFirst({
+    where: { key, scope: selector.scope, ...columns },
+  });
+  return { columns, existing };
 }
 
 export interface SettingWriteResult {
@@ -272,23 +310,11 @@ export async function setSetting(
     return { validationError: parsed.error.issues.map((i) => i.message).join('; ') };
   }
 
-  const columns = scopeColumns(selector);
-  if (!columns) {
-    return {
-      denial: {
-        allowed: false,
-        code: 'SCOPE_NOT_ALLOWED',
-        message: `A ${selector.scope} override needs the matching id.`,
-      },
-    };
+  const target = await resolveWriteTarget(prisma, key, selector);
+  if ('denial' in target) {
+    return target;
   }
-
-  // findFirst-then-create rather than upsert: the uniqueness is a *partial*
-  // index per scope, which Prisma cannot express in an upsert's where clause —
-  // the same constraint Agent and ProviderCredential live with.
-  const existing = await prisma.configSetting.findFirst({
-    where: { key, scope: selector.scope, ...columns },
-  });
+  const { columns, existing } = target;
 
   if (existing) {
     await prisma.configSetting.update({
@@ -324,24 +350,15 @@ export async function clearSetting(
   if (denial) {
     return { denial };
   }
-  const columns = scopeColumns(selector);
-  if (!columns) {
-    return {
-      denial: {
-        allowed: false,
-        code: 'SCOPE_NOT_ALLOWED',
-        message: `A ${selector.scope} override needs the matching id.`,
-      },
-    };
+  const target = await resolveWriteTarget(prisma, key, selector);
+  if ('denial' in target) {
+    return target;
   }
-  const existing = await prisma.configSetting.findFirst({
-    where: { key, scope: selector.scope, ...columns },
-  });
-  if (existing) {
-    await prisma.configSetting.delete({ where: { id: existing.id } });
+  if (target.existing) {
+    await prisma.configSetting.delete({ where: { id: target.existing.id } });
     invalidateSettingsCache();
   }
-  return { before: existing?.value };
+  return { before: target.existing?.value };
 }
 
 async function authorize(

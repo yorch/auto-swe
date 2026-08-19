@@ -236,13 +236,14 @@ interface BranchOutcome {
  * Shared transition counter passed down into nested walks (fanOut branches)
  * so the maxTransitions cap is enforced across the whole run, not per-branch.
  */
+/// Walk state threaded through every frame: the transition counter plus the
+/// run's resolved limits. The limits are nested rather than flattened onto the
+/// counter so the next pinned bound has somewhere obvious to go and the type
+/// keeps meaning what its name says.
 interface Cursor {
   count: number;
   cap: number;
-  /// Fan-out width used when a node does not set its own `concurrency`. Rides
-  /// the cursor because it already reaches every walk frame, including the
-  /// fan-out one, without a second parameter on eight signatures.
-  fanoutConcurrency: number;
+  limits: Required<InterpreterLimits>;
 }
 
 /// Per-run bounds on how far a spec may expand. Resolved from the config
@@ -255,6 +256,41 @@ export interface InterpreterLimits {
   /// Applies only to fan-out nodes that do not set `concurrency` themselves; an
   /// explicit value on the node always wins.
   fanoutConcurrency?: number;
+}
+
+/// Registry keys whose pinned values feed `runSpec`. Declared here, next to the
+/// defaults they fall back to, so the contract lives in one isolate-safe place
+/// rather than split across packages.
+const PINNED_LIMIT_KEYS = {
+  fanoutConcurrency: 'workflow.fanoutConcurrency',
+  maxTransitions: 'workflow.maxTransitions',
+} as const;
+
+/// Reads the interpreter bounds out of a run's pinned-settings snapshot.
+///
+/// Anything missing or malformed falls back to the interpreter's own defaults
+/// rather than failing the run. The whole snapshot is optional: runs created
+/// before the column existed carry NULL, and a workflow that threw on that
+/// would strand every one of them — a workflow-task failure retries forever
+/// rather than surfacing.
+///
+/// This re-validates rather than reusing the registry's Zod schemas because the
+/// caller is workflow code in the Temporal V8 isolate, which may only
+/// `import type` from outside `@temporalio/workflow`.
+export function readInterpreterLimits(
+  pinned: Record<string, unknown> | null | undefined
+): InterpreterLimits {
+  if (!pinned || typeof pinned !== 'object') {
+    return {};
+  }
+  const limits: InterpreterLimits = {};
+  for (const [field, key] of Object.entries(PINNED_LIMIT_KEYS)) {
+    const value = pinned[key];
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+      limits[field as keyof InterpreterLimits] = value;
+    }
+  }
+  return limits;
 }
 
 export async function runSpec(
@@ -274,7 +310,10 @@ export async function runSpec(
   const cursor: Cursor = {
     cap: limits.maxTransitions ?? DEFAULT_MAX_TRANSITIONS,
     count: 0,
-    fanoutConcurrency: limits.fanoutConcurrency ?? DEFAULT_FANOUT_CONCURRENCY,
+    limits: {
+      fanoutConcurrency: limits.fanoutConcurrency ?? DEFAULT_FANOUT_CONCURRENCY,
+      maxTransitions: limits.maxTransitions ?? DEFAULT_MAX_TRANSITIONS,
+    },
   };
   const outcome = await walk(spec, spec.entry, ctx, dispatcher, cursor, '');
 
@@ -958,7 +997,7 @@ async function runFanOut(
   }
   const raw: unknown[] = resolved;
 
-  const concurrency = Math.max(1, node.concurrency ?? cursor.fanoutConcurrency);
+  const concurrency = Math.max(1, node.concurrency ?? cursor.limits.fanoutConcurrency);
 
   await safeRecord(dispatcher, {
     inputs: {

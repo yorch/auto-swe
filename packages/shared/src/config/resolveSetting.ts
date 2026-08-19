@@ -115,7 +115,7 @@ function cachedOverrides(
 /// longer parses — a row written before the schema tightened, a hand-edited
 /// JSON column — is ignored rather than thrown, so a bad row degrades that one
 /// key to its default instead of failing every activity that reads config.
-function accept<T>(definition: SettingDefinition<T>, raw: unknown): T | undefined {
+function accept<T>(key: string, definition: SettingDefinition<T>, raw: unknown): T | undefined {
   const parsed = definition.schema.safeParse(raw);
   if (parsed.success) {
     return parsed.data;
@@ -125,14 +125,14 @@ function accept<T>(definition: SettingDefinition<T>, raw: unknown): T | undefine
   // saved is its own trap: they see their row in the database and "DEFAULT" in
   // the dashboard, with nothing connecting the two.
   console.warn(
-    `[config] ignoring stored value for '${definition.key}': ${parsed.error.issues
+    `[config] ignoring stored value for '${key}': ${parsed.error.issues
       .map((issue) => issue.message)
       .join('; ')}`
   );
   return undefined;
 }
 
-function fromEnv<T>(definition: SettingDefinition<T>): T | undefined {
+function fromEnv<T>(key: string, definition: SettingDefinition<T>): T | undefined {
   if (!definition.envVar) {
     return undefined;
   }
@@ -141,7 +141,7 @@ function fromEnv<T>(definition: SettingDefinition<T>): T | undefined {
     return undefined;
   }
   const parsed = definition.parseEnv ? definition.parseEnv(raw) : (raw as unknown as T);
-  return parsed === undefined ? undefined : accept(definition, parsed);
+  return parsed === undefined ? undefined : accept(key, definition, parsed);
 }
 
 /// Resolves one key against already-loaded overrides. Split out so the batch
@@ -163,7 +163,7 @@ function resolveFrom<K extends SettingKey>(
     ctx.pinnedSettings !== null &&
     key in ctx.pinnedSettings
   ) {
-    const pinned = accept(definition, ctx.pinnedSettings[key]);
+    const pinned = accept(key, definition, ctx.pinnedSettings[key]);
     if (pinned !== undefined) {
       // Which scope supplied it was decided at run start and is not recorded in
       // the snapshot, so the provenance an operator sees is 'PINNED' — which is
@@ -187,14 +187,14 @@ function resolveFrom<K extends SettingKey>(
       if (scope !== 'GLOBAL' && !definition.overridableAt.includes(scope)) {
         continue;
       }
-      const value = accept(definition, scopes.get(scope));
+      const value = accept(key, definition, scopes.get(scope));
       if (value !== undefined) {
         return { key, source: scope, value };
       }
     }
   }
 
-  const envValue = fromEnv(definition);
+  const envValue = fromEnv(key, definition);
   if (envValue !== undefined) {
     return { key, source: 'ENV', value: envValue };
   }
@@ -228,11 +228,20 @@ export async function resolveSettings<K extends SettingKey>(
 /// Every setting with its resolved value and the scope that supplied it. Backs
 /// the effective-config view, which is the diagnostic for "why is this run
 /// behaving that way" — there was no way to answer that before.
-export async function resolveEffectiveSettings(
-  ctx?: SettingResolveCtx
-): Promise<ResolvedSetting[]> {
+///
+/// `overrideAt` reads the row stored at one exact scope out of the same batch,
+/// so a caller that needs both the resolved value and "what is set *here*"
+/// costs one query rather than two — and does not need its own tenant-guard
+/// exemption to ask.
+export async function resolveEffectiveSettings(ctx?: SettingResolveCtx): Promise<{
+  settings: ResolvedSetting[];
+  overrideAt: (key: string, scope: SettingScope) => unknown;
+}> {
   const overrides = await cachedOverrides(ctx);
-  return SETTING_KEYS.map((key) => resolveFrom(key, overrides, ctx) as ResolvedSetting);
+  return {
+    overrideAt: (key, scope) => overrides.get(key)?.get(scope),
+    settings: SETTING_KEYS.map((key) => resolveFrom(key, overrides, ctx) as ResolvedSetting),
+  };
 }
 
 /// Snapshot of every run-pinned setting, taken once at run start and stored on

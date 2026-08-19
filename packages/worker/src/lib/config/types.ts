@@ -5,6 +5,8 @@
 /// below); `ModelBackedAgentKey` is just the narrow convenience set of agents
 /// that carry their own `modelSpec` (so they need a GLOBAL `Agent` at worker boot,
 /// drive cost pricing, and get a model-config UI label).
+import type { SettingResolveCtx } from '@auto-swe/shared/config/types';
+
 export { MODEL_BACKED_AGENT_KEYS, type ModelBackedAgentKey } from '@auto-swe/shared/agentKeys';
 
 /// Any agent key that can have skill/tool assignments. Free-form since the
@@ -17,7 +19,12 @@ export type AnySkillRole = string;
 
 /// Optional scoping context for config resolution. When unset, only the
 /// GLOBAL row is consulted.
-export interface ResolveCtx {
+///
+/// Extends the shared `SettingResolveCtx` rather than restating it: activities
+/// pass this straight into `resolveSettings()`, and before the two were related
+/// by declaration that only compiled by structural luck. The agent-version pin
+/// is the one field the settings resolver has no use for.
+export interface ResolveCtx extends SettingResolveCtx {
   teamId?: string;
   /// P5: the owning Organization (derived from the team's org). Inserts an
   /// ORGANIZATION tier between TEAM and GLOBAL in every config cascade. The tier

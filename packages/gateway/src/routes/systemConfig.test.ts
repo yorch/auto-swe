@@ -45,6 +45,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 
 // Mock the service module so individual functions can be controlled per test.
 vi.mock('../lib/systemConfigService.js', () => ({
+  auditConfigWrite: vi.fn(async () => {}),
   detectJiraFields: vi.fn(async () => ({
     fields: [{ id: 'customfield_10016', name: 'Story Points' }],
     storyPointsFieldId: 'customfield_10016',
@@ -78,41 +79,54 @@ vi.mock('../lib/systemConfigService.js', () => ({
   updateCanaryConfig: vi.fn(async () => ({
     auditAfterJson: { changedFields: ['enabled'] },
     auditBeforeJson: { enabled: false },
+    auditTarget: {
+      entityId: '00000000-0000-0000-0001-000000000012',
+      entityType: 'CanaryConfig',
+    },
     changedFields: ['enabled'],
     existed: true,
   })),
   updateConsolidationConfig: vi.fn(async () => ({
     auditAfterJson: { changedFields: ['enabled'] },
     auditBeforeJson: { enabled: false },
+    auditTarget: {
+      entityId: '00000000-0000-0000-0001-000000000009',
+      entityType: 'ConsolidationConfig',
+    },
     changedFields: ['enabled'],
     existed: true,
   })),
   updateEvalScheduleConfig: vi.fn(async () => ({
     auditAfterJson: { changedFields: ['enabled'] },
     auditBeforeJson: { enabled: false },
+    auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: ['enabled'],
     existed: true,
   })),
   updateGitHubConfig: vi.fn(async () => ({
     auditBeforeJson: null,
+    auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: [],
     data: {},
     existed: true,
   })),
   updateGoogleOAuthConfig: vi.fn(async () => ({
     auditBeforeJson: null,
+    auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: [],
     data: {},
     existed: true,
   })),
   updateIssueTrackerConfig: vi.fn(async () => ({
     auditBeforeJson: null,
+    auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: [],
     data: {},
     existed: true,
   })),
   updateKnowledgeBaseConfig: vi.fn(async () => ({
     auditBeforeJson: null,
+    auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: [],
     data: {},
     existed: true,
@@ -120,17 +134,20 @@ vi.mock('../lib/systemConfigService.js', () => ({
   updateRevalidationScheduleConfig: vi.fn(async () => ({
     auditAfterJson: { changedFields: ['enabled'] },
     auditBeforeJson: { enabled: false },
+    auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: ['enabled'],
     existed: true,
   })),
   updateSlackConfig: vi.fn(async () => ({
     auditBeforeJson: null,
+    auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: [],
     data: {},
     existed: true,
   })),
   updateStorageConfig: vi.fn(async () => ({
     auditBeforeJson: null,
+    auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: [],
     data: {},
     existed: true,
@@ -138,21 +155,21 @@ vi.mock('../lib/systemConfigService.js', () => ({
   updateWorkflowDefaults: vi.fn(async () => ({
     auditAfterJson: { changedFields: ['maxTddIterations'] },
     auditBeforeJson: { maxTddIterations: 5 },
+    auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: ['maxTddIterations'],
     data: { branchPrefix: 'auto', maxTddIterations: 7 },
     existed: true,
   })),
-  writeSystemConfigAudit: vi.fn(async () => {}),
 }));
 
 import { prisma } from '@auto-swe/shared/db';
 import { resolveCanaryConfig } from '@auto-swe/shared/lib/systemConfig';
 import {
+  auditConfigWrite,
   detectJiraFields,
   updateCanaryConfig,
   updateConsolidationConfig,
   updateWorkflowDefaults,
-  writeSystemConfigAudit,
 } from '../lib/systemConfigService.js';
 import { systemConfigRoutes } from './systemConfig.js';
 
@@ -162,7 +179,7 @@ const resolveCanaryConfigMock = vi.mocked(resolveCanaryConfig);
 const updateCanaryConfigMock = vi.mocked(updateCanaryConfig);
 const updateWorkflowDefaultsMock = vi.mocked(updateWorkflowDefaults);
 const updateConsolidationConfigMock = vi.mocked(updateConsolidationConfig);
-const writeSystemConfigAuditMock = vi.mocked(writeSystemConfigAudit);
+const auditConfigWriteMock = vi.mocked(auditConfigWrite);
 
 const AUTH_HEADER = { authorization: 'Bearer fake-admin-token' };
 
@@ -424,12 +441,15 @@ describe('config audit coverage', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(updateConsolidationConfigMock).toHaveBeenCalledTimes(1);
-    expect(writeSystemConfigAuditMock).toHaveBeenCalledWith(
+    expect(auditConfigWriteMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
+      'admin-1',
       expect.objectContaining({
-        entityId: '00000000-0000-0000-0001-000000000009',
-        entityType: 'ConsolidationConfig',
+        auditTarget: {
+          entityId: '00000000-0000-0000-0001-000000000009',
+          entityType: 'ConsolidationConfig',
+        },
       })
     );
     await app.close();
@@ -451,10 +471,13 @@ describe('config audit coverage', () => {
       url: '/api/v1/admin/config/canary',
     });
     expect(res.statusCode).toBe(200);
-    expect(writeSystemConfigAuditMock).toHaveBeenCalledWith(
+    expect(auditConfigWriteMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ entityType: 'CanaryConfig' })
+      'admin-1',
+      expect.objectContaining({
+        auditTarget: expect.objectContaining({ entityType: 'CanaryConfig' }),
+      })
     );
     await app.close();
   });
@@ -468,10 +491,11 @@ describe('config audit coverage', () => {
       url: '/api/v1/admin/config/workflow-defaults',
     });
     expect(res.statusCode).toBe(200);
-    expect(writeSystemConfigAuditMock).toHaveBeenCalledWith(
+    expect(auditConfigWriteMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ beforeJson: { maxTddIterations: 5 } })
+      'admin-1',
+      expect.objectContaining({ auditBeforeJson: { maxTddIterations: 5 } })
     );
     await app.close();
   });
