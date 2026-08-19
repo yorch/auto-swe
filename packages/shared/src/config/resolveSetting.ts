@@ -13,7 +13,6 @@ import {
   type SettingDefinition,
   type SettingResolveCtx,
   type SettingScope,
-  type SettingSource,
 } from './types.js';
 
 // Lazy DB access, matching `lib/systemConfig.ts`: importing the registry in a
