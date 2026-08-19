@@ -26,13 +26,12 @@ A setting is one declaration in `packages/shared/src/config/registry.ts`:
 
 ```ts
 'channel.reactiveCooldownMinutes': defineSetting({
-  key: 'channel.reactiveCooldownMinutes',
   group: 'channel',
   label: 'Interjection cooldown',
   description: 'Minimum gap between unprompted interjections in one channel…',
   schema: z.number().int().positive().max(10_080),
   defaultValue: 10,
-  overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+  overridableAt: ['TEAM', 'ORGANIZATION'],
   requiredRole: 'LEAD',
   runPinned: false,
   restartRequired: false,
@@ -47,9 +46,12 @@ is the point: a knob that costs five files to add stays a `const` instead.
 `defaultValue` is always the constant the setting replaced, so a deployment that configures nothing
 behaves exactly as it did before the setting existed.
 
+A setting's identity is the property it is stored under — `channel.reactiveCooldownMinutes`
+above. That key is the storage key and the subject of permission grants, so renaming one orphans
+every row and grant that referenced it.
+
 | Field | Meaning |
 |---|---|
-| `key` | Dotted `<group>.<name>`. It is the storage key and the subject of permission grants, so renaming one orphans every row and grant that referenced it. |
 | `schema` | Zod schema. Validates writes *and* values read back out of the database. |
 | `overridableAt` | Scopes below GLOBAL where an override may be set. Empty means platform-wide only. |
 | `requiredRole` | A floor. No grant can let an actor below it write the key. |
@@ -78,7 +80,15 @@ Two properties worth knowing:
   agent and credential resolvers use.
 - **A stored value that no longer parses is ignored, not thrown.** A row written before a schema
   tightened degrades that one key to the next tier down, rather than failing every activity that
-  reads configuration.
+  reads configuration. The rejection is logged, so a saved value cannot vanish without a trace.
+- **A row at a scope the definition forbids is ignored too.** `overridableAt` is enforced on the way
+  out as well as on the way in — a platform-wide security control that a stray row can switch off
+  would not be a control.
+
+Where a knob also has its own column on the entity it belongs to — `SlackChannel` carries the
+per-channel interjection cooldown, for instance — that column is the narrow override and always
+wins. Those keys deliberately do **not** offer a `CHANNEL` scope in the registry, because a row
+there would be stored and never read, and the effective-config view would report it as winning.
 
 `resolveEffectiveSettings(ctx)` returns every setting with the tier that supplied it. That is the
 effective-config view behind `/admin/settings`, and the answer to "why is this run behaving that

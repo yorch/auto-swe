@@ -277,6 +277,11 @@ form field.**
   `@auto-swe/shared/config`. **Never re-introduce a module-scope `const` for an operator-tunable
   value.** Pass the fullest scope context available — a lookup missing `teamId` silently resolves a
   broader value.
+- A setting's identity is the property it is stored under in `SETTING_DEFINITIONS`; there is no
+  `key` field to keep in sync.
+- Where the knob also has a nullable column on its own entity (`SlackChannel.reactiveCooldownMinutes`),
+  that column wins and the definition must **not** list that scope in `overridableAt` — otherwise the
+  effective-config view reports an override the worker never reads.
 - Resolution is `run pin → WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → env var →
   default`, behind the same ~30 s cache as the agent resolver. A stored value that fails its schema
   degrades to the next tier rather than throwing.
