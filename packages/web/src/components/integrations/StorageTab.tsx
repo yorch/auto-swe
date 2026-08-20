@@ -127,7 +127,7 @@ export function StorageTab() {
             <span>
               <span className="text-sm text-paper-100">S3-compatible</span>
               <span className="mt-0.5 block text-xs text-paper-500">
-                AWS S3, MinIO, Cloudflare R2, Backblaze B2, etc.
+                Bundled Garage, AWS S3, Cloudflare R2, Backblaze B2, etc.
               </span>
             </span>
           </label>
@@ -222,7 +222,7 @@ export function StorageTab() {
               />
               <span className="text-sm text-paper-300">Force path-style URLs</span>
               <span className="text-xs text-paper-500">
-                (required for MinIO and some S3-compatible APIs)
+                (required for Garage and Backblaze B2; leave off for AWS S3 and R2)
               </span>
               <SourceBadge source={sources.s3ForcePathStyle} />
             </label>

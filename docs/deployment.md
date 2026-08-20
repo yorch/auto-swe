@@ -12,16 +12,16 @@ Five long-running processes plus one Docker daemon:
 | -------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------- |
 | `postgres`                 | `pgvector/pgvector:pg18`                           | App DB — relational state + pgvector for semantic memory.              |
 | `postgres-temporal`        | `postgres:18-alpine`                               | Separate DB for Temporal history. Do **not** combine with the app DB.  |
-| `temporal` (server+admin+ui) | `temporalio/server:1.31.0` + admin-tools 1.31 + ui 2.49.1 | Workflow orchestration runtime + setup container + web UI on `:8233`.  |
+| `temporal` (server+admin+ui) | `temporalio/server:1.31.2` + admin-tools 1.31 + ui 2.53.3 | Workflow orchestration runtime + setup container + web UI on `:8233`.  |
 | `gateway`                  | built from `packages/gateway/Dockerfile`           | Fastify HTTP API on `:8080`. Stateless, scale horizontally.            |
 | `worker`                   | built from `packages/worker/Dockerfile`            | Temporal worker. Spawns ephemeral Docker workspaces via the host socket. |
 | `web`                      | built from `packages/web/Dockerfile`               | Next.js dashboard on `:3000`. Stateless, scale horizontally.           |
-| `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.8.1`                          | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
-| object store (optional)    | AWS S3 / Cloudflare R2 / `minio/minio` / etc.      | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
+| `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.30.2`                         | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
+| object store (optional)    | `dxflrs/garage` (bundled) / AWS S3 / Cloudflare R2 / Backblaze B2 | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
 
 The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `workspaceImage` Tier-2 default at `/admin/workflow`; an explicit `image` on a node still wins (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
 
-> **Local-dev shortcut.** `yarn docker:infra:up` brings up MinIO (the `minio` + `minio-setup` containers in `docker-compose.infra.yml`) and pre-creates the `auto-swe-artifacts` bucket. Uncomment the `ARTIFACT_S3_*` and `AWS_ACCESS_KEY_ID/SECRET_ACCESS_KEY` blocks in `.env.example` (defaults match the MinIO container) to flip the worker onto S3 mode locally. Console at <http://localhost:9001> with `minioadmin`/`minioadmin`.
+> **Local-dev shortcut.** `yarn docker:infra:up` brings up Garage (the `garage` container in `docker-compose.infra.yml`) and provisions the access key and the `auto-swe-artifacts` bucket on first boot — there is no separate bucket-create step. Uncomment the `ARTIFACT_S3_*` block in `.env.example` (defaults match the container) to flip the worker onto S3 mode locally. Garage ships no web console; use `aws s3 ls --endpoint-url http://localhost:9000` or read `./data/garage` directly.
 
 ---
 
@@ -127,13 +127,13 @@ AUTH_FROM_EMAIL=auth@example.com
 # SLACK_BOT_TOKEN=xoxb-...
 #
 # Artifact store (env fallback — prefer /admin/integrations → Storage tab)
-# AWS_ACCESS_KEY_ID=...
-# AWS_SECRET_ACCESS_KEY=...
+# ARTIFACT_S3_ACCESS_KEY=...        # compose maps this to AWS_ACCESS_KEY_ID
+# ARTIFACT_S3_SECRET_KEY=...        # compose maps this to AWS_SECRET_ACCESS_KEY
 # ARTIFACT_S3_BUCKET=auto-swe-artifacts
 # ARTIFACT_S3_REGION=us-east-1
 # ARTIFACT_S3_PREFIX=workflow-artifacts
-# ARTIFACT_S3_ENDPOINT=https://...   # only if non-AWS / R2 / MinIO
-# ARTIFACT_S3_FORCE_PATH_STYLE=true  # required for MinIO + some R2 setups
+# ARTIFACT_S3_ENDPOINT=https://...   # only if not AWS S3 — Garage, R2, B2, …
+# ARTIFACT_S3_FORCE_PATH_STYLE=true  # true for Garage and B2; false for AWS S3 and R2
 
 # Observability
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
@@ -159,7 +159,7 @@ Several categories of credentials that were previously env-only are now stored e
 | `/admin/model-config` | LLM provider credentials and per-role model selection | No — resolved fresh per activity call |
 | `/admin/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs | No for token/webhook; **Yes** for OAuth app creds |
 | `/admin/integrations → Slack` | Slack client ID/secret, signing secret, bot token | **Yes** for client ID/secret; No for bot token/signing secret |
-| `/admin/integrations → Storage` | S3/MinIO bucket, region, endpoint, credentials | No — resolved fresh per artifact write |
+| `/admin/integrations → Storage` | S3-compatible bucket, region, endpoint, credentials | No — resolved fresh per artifact write |
 | `/admin/integrations → OAuth` | Google OAuth client ID/secret | **Yes** — BetterAuth reads these at startup |
 | `/admin/workflow` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
 
@@ -269,7 +269,7 @@ If you'd rather run prebuilt images than build your own, the repo ships three co
 
 | File | What it adds |
 | ---- | ------------ |
-| `docker-compose.prod.yml` | `gateway` / `worker` / `web` from registry images (`pull_policy: always`, `restart: unless-stopped`, `env_file: .env`). Overlays the infra file — it reuses `postgres`, `temporal`, and `minio` from `docker-compose.infra.yml`. |
+| `docker-compose.prod.yml` | `gateway` / `worker` / `web` from registry images (`pull_policy: always`, `restart: unless-stopped`, `env_file: .env`). Overlays the infra file — it reuses `postgres`, `temporal`, and (when the `objectstore` profile is active) `garage` from `docker-compose.infra.yml`. |
 | `docker-compose.traefik.yml` | Fronts gateway + web with Traefik TLS. Strips the published host ports (`ports: !reset []`), attaches both to an external `traefik` network, and adds `websecure` routers with `certResolver=webcert` for `DOMAIN_API` (gateway) and `DOMAIN_APP` (web). Requires a Traefik instance you run separately, with the `traefik` Docker network already created. |
 | `docker-compose.watchtower.yml` | Adds a scoped Watchtower container (`WATCHTOWER_SCOPE`, label-gated, cleanup on) that re-pulls the three app images every `WATCHTOWER_POLL_INTERVAL` seconds (compose default 300; `.env.example` suggests 86400). |
 
@@ -293,6 +293,40 @@ Things to know:
 - **Required secrets.** The gateway and worker images run with `NODE_ENV=production` and refuse the in-source dev fallbacks, so `.env` must contain real values for `JWT_SECRET`, `BETTER_AUTH_SECRET` (≥32 chars), and `CONFIG_ENCRYPTION_KEY`. `docker-compose.prod.yml` enforces the first two with `:?` interpolation errors at `up` time; a missing `CONFIG_ENCRYPTION_KEY` fails at process start instead.
 - **Managed DB.** Set `DATABASE_URL_OVERRIDE` to point gateway + worker at a managed Postgres instead of the compose `postgres` service.
 - **Worker DinD.** Same as everywhere else: the worker mounts `/var/run/docker.sock`; set `DOCKER_GID` to the host's docker group ID.
+- **Object store selection.** `COMPOSE_PROFILES` in `.env` decides whether the bundled Garage service runs. `objectstore` (the `.env.example` default) starts it; an empty value starts nothing, and the worker's `depends_on` is `required: false` so it comes up regardless. See §5c.
+
+---
+
+## 5c. Choosing an object store
+
+The artifact store is S3-compatible, and the worker only ever issues `PutObject` and `GetObject` against it. Anything speaking those two verbs works — the choice is operational, not one of compatibility.
+
+**Bundled Garage (default).** A single-node [Garage](https://garagehq.deuxfleurs.fr/) container, configured by `infra/garage/garage.toml` and started with `--single-node --default-bucket`. It provisions the cluster layout, the access key and the bucket on first boot from `ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` / `ARTIFACT_S3_BUCKET`, and re-running is a no-op, so there is nothing to bootstrap separately. It idles around 5 MB of RAM. Its state is `./data/garage`, which needs backing up alongside the two Postgres volumes (§9).
+
+Two constraints worth knowing before you set credentials:
+
+- **Garage rejects secret keys shorter than 16 characters.** `ARTIFACT_S3_SECRET_KEY` must clear that bar or the container exits on first boot with `Invalid default access key`.
+- **`GARAGE_RPC_SECRET` must be set.** Single-node deployments never put it on the wire, but Garage requires it and the committed config deliberately does not carry one. Generate with `openssl rand -hex 32`.
+
+**Hosted S3 instead.** Set `COMPOSE_PROFILES=` (empty) in `.env` and point the artifact variables at the provider. No compose file changes:
+
+| Provider | `ARTIFACT_S3_ENDPOINT` | `ARTIFACT_S3_REGION` | `ARTIFACT_S3_FORCE_PATH_STYLE` |
+|---|---|---|---|
+| AWS S3 | *(omit)* | your region | `false` |
+| Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `auto` | `false` |
+| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | your region | `true` |
+
+`ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` become the provider's credentials — compose passes them into the container as the standard `AWS_*` names the SDK reads, but keeps them under a distinct name outside so an ambient `AWS_ACCESS_KEY_ID` in the deploying shell cannot silently win over `.env`. **The bucket must already exist** — only the bundled store self-provisions one. These same settings can be managed at `/admin/integrations → Storage` instead, which takes precedence over the environment.
+
+**Migrating an existing MinIO deployment.** Garage's on-disk format is unrelated to MinIO's, so pointing it at `./data/minio` will not work and existing objects will not appear. `ArtifactRef` rows in the app DB hold keys, not blobs, so any object left behind becomes a broken artifact link rather than a visible failure. Copy the objects across before cutting over, with both stores running:
+
+```bash
+# Old MinIO on :9000, new Garage on :9100 (GARAGE_API_PORT=9100 temporarily).
+rclone copy minio:auto-swe-artifacts garage:auto-swe-artifacts --progress
+```
+
+Then swap `GARAGE_API_PORT` back to 9000 and drop the MinIO service. If you would rather not migrate, the artifacts are recoverable output rather than source of truth — leaving them behind costs you the history on already-completed runs, nothing that blocks new ones.
+
 
 ---
 
@@ -384,6 +418,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] OAuth consent screens are published (Google) and homepage URLs filled (GitHub) for prod-grade UX.
 - [ ] Magic-link transport is verified end-to-end against a real inbox (not just SMTP 2xx).
 - [ ] Worker host is isolated — separate VPC subnet, no shared Docker socket, no inbound traffic.
+- [ ] Infra ports are not world-reachable. `docker-compose.infra.yml` publishes Postgres (5432), Temporal (7233/8233) and the object store (9000) on all interfaces so the runbook can reach them from the host. None is meant to be reachable from off-host: bind them to loopback (`POSTGRES_PORT=127.0.0.1:5432`, `GARAGE_API_PORT=127.0.0.1:9000`, `TEMPORAL_GRPC_PORT=127.0.0.1:7233`, `TEMPORAL_UI_PORT=127.0.0.1:8233`) or firewall them.
 - [ ] Reverse proxy enforces HTTPS and forwards `X-Forwarded-For` / `X-Forwarded-Proto`.
 - [ ] Postgres connection uses TLS (`?sslmode=require`).
 - [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).

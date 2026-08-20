@@ -9,7 +9,7 @@ Follow the Local Development Quickstart in [`AGENTS.md` §8](./AGENTS.md#8-local
 ```bash
 corepack enable && yarn install   # Node >= 24, Yarn 4 via corepack
 cp .env.example .env              # fill in CONFIG_ENCRYPTION_KEY + SEED_ADMIN_PASSWORD
-yarn docker:infra:up              # postgres + temporal + minio
+yarn docker:infra:up              # postgres + temporal + garage
 yarn db:migrate && yarn db:generate && yarn db:seed
 ```
 

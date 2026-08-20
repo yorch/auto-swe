@@ -83,15 +83,15 @@
     "@prisma/adapter-pg": "7.9.1",
     "@prisma/client": "7.9.1",
     "bcrypt": "6.0.0",
-    "dotenv-expand": "13.0.0",
-    "pg": "8.22.0",
+    "dotenv-expand": "1000.0.0",
+    "pg": "8.23.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/bcrypt": "6.0.0",
     "@typescript/typescript6": "6.0.2",
     "prisma": "7.9.1",
-    "tsx": "4.23.4",
+    "tsx": "4.23.12",
     "typescript": "7.0.2"
   },
   "prisma": {

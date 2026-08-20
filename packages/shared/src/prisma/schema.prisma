@@ -719,6 +719,11 @@ model Account {
   id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   accountId             String    @map("account_id")
   providerId            String    @map("provider_id")
+  /// Better-auth 1.7 keys an external identity by (issuer, accountId) rather
+  /// than (providerId, accountId). Built-in social providers declare no issuer
+  /// of their own, so they get the synthetic `local:oauth:<providerId>`;
+  /// email+password accounts get `local:credential`.
+  issuer                String
   userId                String    @map("user_id") @db.Uuid
   accessToken           String?   @map("access_token")
   refreshToken          String?   @map("refresh_token")
@@ -733,7 +738,7 @@ model Account {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([providerId, accountId])
+  @@unique([issuer, accountId])
   @@index([userId])
   @@map("accounts")
 }
@@ -1408,7 +1413,8 @@ model SlackConfig {
 
 /// Singleton artifact storage config. One row (id = "default").
 /// backend="inline" stores blobs in Postgres; backend="s3" uses any
-/// S3-compatible endpoint (AWS S3, MinIO, R2). Changes take effect on the
+/// S3-compatible endpoint (the bundled Garage container, AWS S3, R2, B2).
+/// Changes take effect on the
 /// next worker activity call — no restart required.
 model StorageConfig {
   id      String @id @default("default")

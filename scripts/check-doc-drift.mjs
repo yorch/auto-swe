@@ -267,12 +267,20 @@ const VERSION = '(\\d+(?:\\.\\d+)*)';
 const versionsIn = (cell) => cell.match(/\d+(?:\.\d+)*/g) ?? [];
 
 const versionFailures = [];
+// `\b` cannot delimit a pattern that starts or ends on a non-word character:
+// in "| @temporalio/{client,worker} |" there is no word boundary before `@` or
+// after `}`, so a `\b`-wrapped pattern silently matches nothing and the claim
+// goes unchecked — which is how the @temporalio version rotted four minors
+// behind the manifest. These lookarounds delimit on word characters when the
+// pattern ends in one and are inert when it doesn't.
+const LEFT = '(?<![\\w@])';
+const RIGHT = '(?![\\w-])';
 const checkVersions = (file, line, lineNo) => {
   for (const dep of VERSIONED_DEPS) {
-    const inline = new RegExp(`\\b${dep.pattern}\\s+v?${VERSION}`, 'gi');
+    const inline = new RegExp(`${LEFT}${dep.pattern}\\s+v?${VERSION}`, 'gi');
     // A trailing table cell: "| Fastify | 5.11.0 |".
     const cell = new RegExp(
-      `\\|[^|\\n]*?\\b${dep.pattern}\\b[^|\\n]*\\|\\s*(v?\\d[\\d./\\s]*?)\\s*\\|`,
+      `\\|[^|\\n]*?${LEFT}${dep.pattern}${RIGHT}[^|\\n]*\\|\\s*(v?\\d[\\d./\\s]*?)\\s*\\|`,
       'gi'
     );
 

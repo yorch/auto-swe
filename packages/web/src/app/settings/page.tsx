@@ -99,13 +99,17 @@ export default function SettingsPage() {
     }
   };
 
+  // `accountId` is better-auth's own account-row id (`LinkedAccount.id`), not
+  // the provider's subject. Since 1.7 the unlink endpoint selects purely on
+  // that row id — passing `providerId` alongside it is rejected as an unknown
+  // body field.
   const handleUnlink = async (providerId: string, accountId: string) => {
     setBusy(providerId);
     setError(null);
     setInfo(null);
     try {
       const res = await fetch(`${API_BASE}/api/auth/unlink-account`, {
-        body: JSON.stringify({ accountId, providerId }),
+        body: JSON.stringify({ accountId }),
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         method: 'POST',
@@ -210,7 +214,7 @@ export default function SettingsPage() {
                   {isLinked && account ? (
                     <Button
                       disabled={busy === p.id}
-                      onClick={() => handleUnlink(p.id, account.accountId)}
+                      onClick={() => handleUnlink(p.id, account.id)}
                       size="sm"
                       variant="ghost"
                     >

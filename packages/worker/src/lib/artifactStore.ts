@@ -3,10 +3,11 @@
  * the workflow context object so we stay under Temporal's 50MB history cap.
  *
  * Two backends:
- *   - "s3" : any S3-compatible object store (AWS S3, MinIO, R2). Active when
- *            ARTIFACT_S3_BUCKET is set. Loads @aws-sdk/client-s3 lazily.
+ *   - "s3" : any S3-compatible object store — the bundled Garage container,
+ *            AWS S3, R2, B2. Active when ARTIFACT_S3_BUCKET is set. Loads
+ *            @aws-sdk/client-s3 lazily. Only PutObject and GetObject are used.
  *   - "pg" : Postgres BYTEA column on workflow_artifacts. Default for local dev
- *            so contributors don't need MinIO running.
+ *            so contributors need no object store running at all.
  *
  * The interpreter passes artifact IDs through the run context. Activities call
  * getArtifact(id) to materialize the payload on demand.

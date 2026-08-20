@@ -38,6 +38,12 @@ const auth = getAuth();
 
 const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@auto-swe.local';
 
+// `createLocalAccountIssuer('credential')` from @better-auth/core/db. Inlined
+// rather than imported: that entry point is internal to better-auth, and this
+// value is also hard-coded in the 00000000000002 backfill migration, so the two
+// have to be read side by side anyway.
+const CREDENTIAL_ISSUER = 'local:credential';
+
 async function main() {
   // Re-derive the password the same way the shared seed does so the two
   // paths (legacy bcrypt + better-auth scrypt) agree on the value.
@@ -67,13 +73,15 @@ async function main() {
     );
   }
 
-  // Idempotent upsert into the Account table. better-auth keys credential
-  // accounts by (providerId='credential', accountId=<user.id>).
+  // Idempotent upsert into the Account table. Since better-auth 1.7 an account
+  // is keyed by (issuer, accountId); credential accounts carry the synthetic
+  // `local:credential` issuer that `createLocalAccountIssuer('credential')`
+  // produces, and sign-in matches on it exactly.
   // biome-ignore lint/suspicious/noExplicitAny: betterAuth lazy singleton requires any for type deferral
   const existing = await (ctx.adapter.findOne as any)({
     model: 'account',
     where: [
-      { field: 'providerId', operator: 'eq', value: 'credential' },
+      { field: 'issuer', operator: 'eq', value: CREDENTIAL_ISSUER },
       { connector: 'AND', field: 'accountId', operator: 'eq', value: user.id },
     ],
   });
@@ -90,6 +98,7 @@ async function main() {
       data: {
         accountId: user.id,
         createdAt: new Date(),
+        issuer: CREDENTIAL_ISSUER,
         password: hash,
         providerId: 'credential',
         updatedAt: new Date(),

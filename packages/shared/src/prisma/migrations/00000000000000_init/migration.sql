@@ -362,6 +362,7 @@ CREATE TABLE "accounts" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "account_id" TEXT NOT NULL,
     "provider_id" TEXT NOT NULL,
+    "issuer" TEXT NOT NULL,
     "user_id" UUID NOT NULL,
     "access_token" TEXT,
     "refresh_token" TEXT,
@@ -1191,7 +1192,7 @@ CREATE UNIQUE INDEX "users_slack_id_key" ON "users"("slack_id");
 CREATE INDEX "accounts_user_id_idx" ON "accounts"("user_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "accounts_provider_id_account_id_key" ON "accounts"("provider_id", "account_id");
+CREATE UNIQUE INDEX "accounts_issuer_account_id_key" ON "accounts"("issuer", "account_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "sessions_token_key" ON "sessions"("token");

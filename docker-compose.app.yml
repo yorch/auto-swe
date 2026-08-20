@@ -6,7 +6,7 @@
 #
 # SECURITY (SEC-4): this file is the LOCAL DEV overlay (builds images from
 # source) and intentionally keeps the dev-default credential fallbacks
-# (POSTGRES_PASSWORD=password, MINIO_ROOT_USER/PASSWORD=minioadmin) so
+# (POSTGRES_PASSWORD=password, ARTIFACT_S3_ACCESS_KEY/_SECRET_KEY=autoswelocal…) so
 # `yarn docker:app:up` works out of the box. The production path is
 # docker-compose.prod.yml, which makes those variables mandatory via `:?`.
 services:
@@ -55,15 +55,17 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
       # Artifact store — opt in by setting ARTIFACT_S3_BUCKET in your .env.
-      # When set, the worker writes artifacts to the MinIO container started
+      # When set, the worker writes artifacts to the Garage container started
       # by docker-compose.infra.yml using S3-compatible APIs.
       - ARTIFACT_S3_BUCKET=${ARTIFACT_S3_BUCKET:-}
       - ARTIFACT_S3_REGION=${ARTIFACT_S3_REGION:-us-east-1}
-      - ARTIFACT_S3_ENDPOINT=${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      - ARTIFACT_S3_ENDPOINT=${ARTIFACT_S3_ENDPOINT:-http://garage:3900}
       - ARTIFACT_S3_FORCE_PATH_STYLE=${ARTIFACT_S3_FORCE_PATH_STYLE:-true}
       - ARTIFACT_S3_PREFIX=${ARTIFACT_S3_PREFIX:-workflow-artifacts}
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      # Named ARTIFACT_S3_* on the outside so an ambient AWS_ACCESS_KEY_ID in
+      # the developer's shell cannot silently take precedence over `.env`.
+      - AWS_ACCESS_KEY_ID=${ARTIFACT_S3_ACCESS_KEY:-autoswelocal}
+      - AWS_SECRET_ACCESS_KEY=${ARTIFACT_S3_SECRET_KEY:-autoswelocaldevsecret}
     group_add:
       - "${DOCKER_GID:-999}"
     volumes:
@@ -71,7 +73,7 @@ services:
 
   # Observability: Grafana LGTM (Grafana + Tempo + Loki + Prometheus + OTel Collector)
   otel-lgtm:
-    image: grafana/otel-lgtm:0.8.1
+    image: grafana/otel-lgtm:0.30.2
     ports:
       - "3001:3000"   # Grafana UI (3000 taken by Next.js)
       - "4317:4317"   # OTLP gRPC

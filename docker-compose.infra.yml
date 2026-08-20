@@ -2,20 +2,22 @@
 # SECURITY NOTE — DEV-ONLY DEFAULT CREDENTIALS (SEC-4)
 #
 # The `:-` fallbacks in this file (POSTGRES_PASSWORD=password,
-# MINIO_ROOT_USER/MINIO_ROOT_PASSWORD=minioadmin) exist ONLY so the local
+# ARTIFACT_S3_ACCESS_KEY/_SECRET_KEY=autoswelocal…) exist ONLY so the local
 # quickstart (`yarn docker:infra:up`) works out of the box.
 #
 # NEVER run production on these defaults. The production overlay
 # (docker-compose.prod.yml) enforces real values via `${VAR:?...}` — it
-# refuses to start unless POSTGRES_PASSWORD, MINIO_ROOT_USER, and
-# MINIO_ROOT_PASSWORD are set in `.env`, and those same variables feed the
+# refuses to start unless POSTGRES_PASSWORD, ARTIFACT_S3_ACCESS_KEY, and
+# ARTIFACT_S3_SECRET_KEY are set in `.env`, and those same variables feed the
 # services below, so the prod path cannot come up on the dev defaults.
 #
-# Ports for Postgres (5432), Temporal (7233/8233), and MinIO (9000/9001) are
-# published to the host for local development and so the documented runbook
-# can run `psql` / `prisma migrate deploy` from the host. To restrict them to
-# loopback on a shared host, set e.g. POSTGRES_PORT=127.0.0.1:5432,
-# MINIO_API_PORT=127.0.0.1:9000, MINIO_CONSOLE_PORT=127.0.0.1:9001 in `.env`.
+# Ports for Postgres (5432), Temporal (7233/8233), and the object store (9000)
+# are published to the host for local development and so the documented runbook
+# can run `psql` / `prisma migrate deploy` from the host. On any shared or
+# internet-facing host, restrict them to loopback: POSTGRES_PORT=127.0.0.1:5432,
+# GARAGE_API_PORT=127.0.0.1:9000, TEMPORAL_GRPC_PORT=127.0.0.1:7233,
+# TEMPORAL_UI_PORT=127.0.0.1:8233 in `.env`. None of these services is meant to
+# be reachable from outside the host.
 # ============================================================================
 services:
   postgres:
@@ -58,7 +60,7 @@ services:
   # One-shot: install Temporal schema into postgres-temporal before the server starts.
   # Replaces the schema-setup step that temporalio/auto-setup used to do internally.
   temporal-setup:
-    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.31.0}
+    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.31.2}
     # !! DEV-ONLY DEFAULT CREDENTIALS — POSTGRES_PWD/SQL_PASSWORD fall back to
     # !! "password" for local dev. Production MUST set POSTGRES_PASSWORD.
     depends_on:
@@ -78,7 +80,7 @@ services:
     restart: on-failure:6
 
   temporal:
-    image: temporalio/server:${TEMPORAL_VERSION:-1.31.0}
+    image: temporalio/server:${TEMPORAL_VERSION:-1.31.2}
     # !! DEV-ONLY DEFAULT CREDENTIALS — POSTGRES_PWD falls back to "password"
     # !! for local dev. Production MUST set POSTGRES_PASSWORD.
     depends_on:
@@ -106,7 +108,7 @@ services:
   # One-shot: create the default namespace once Temporal is up.
   # Replaces the namespace-creation step that temporalio/auto-setup used to do.
   temporal-setup-namespace:
-    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.31.0}
+    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.31.2}
     depends_on:
       temporal:
         condition: service_healthy
@@ -123,7 +125,7 @@ services:
   # Container listens on 8080; mapped to host 8233 to keep our existing
   # TEMPORAL_UI_PORT default and avoid colliding with gateway:8080.
   temporal-ui:
-    image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.49.1}
+    image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.53.3}
     depends_on:
       temporal:
         condition: service_healthy
@@ -133,48 +135,52 @@ services:
     ports:
       - "${TEMPORAL_UI_PORT:-8233}:8080"
 
-  # MinIO — S3-compatible object store for the artifact backend.
-  # Activated locally by setting ARTIFACT_S3_BUCKET / ARTIFACT_S3_ENDPOINT in
-  # the worker env (see .env.example). The bucket is created by minio-setup
-  # below, so the worker can write artifacts on first start.
-  minio:
-    image: minio/minio:${MINIO_VERSION:-RELEASE.2025-04-22T22-12-26Z}
-    command: server /data --console-address ":9001"
-    # !! DEV-ONLY DEFAULT CREDENTIALS — MINIO_ROOT_USER/MINIO_ROOT_PASSWORD
-    # !! fall back to "minioadmin"/"minioadmin" for local dev only. Production
-    # !! MUST override both in `.env` (docker-compose.prod.yml makes them
-    # !! mandatory via `:?` because the worker derives its AWS_* creds from
-    # !! these same variables).
+  # Garage — S3-compatible object store for the artifact backend.
+  #
+  # Behind the `objectstore` profile so a deployment that uses hosted S3
+  # (AWS/R2/B2/…) can drop the bundled store without editing this file: clear
+  # COMPOSE_PROFILES in `.env` and point ARTIFACT_S3_ENDPOINT at the provider.
+  # The worker's depends_on is `required: false` for the same reason.
+  #
+  # `--single-node --default-bucket` provisions the layout, the access key and
+  # the bucket on first boot, and is a no-op afterwards — which is why there is
+  # no bucket-create sidecar. Replaced MinIO, whose upstream is archived and
+  # carries unfixed unauthenticated-write advisories (CVE-2026-40344 /
+  # CVE-2026-41145) against every published image.
+  garage:
+    image: dxflrs/garage:${GARAGE_VERSION:-v2.3.0}
+    profiles: ["objectstore"]
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    # !! DEV-ONLY DEFAULT CREDENTIALS — ARTIFACT_S3_ACCESS_KEY/_SECRET_KEY fall
+    # !! back to a local placeholder. Production MUST override both in `.env`
+    # !! (docker-compose.prod.yml makes them mandatory via `:?`). The same pair
+    # !! becomes the worker's AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, so
+    # !! setting them once configures both ends — and is all that changes when
+    # !! swapping to a hosted provider.
+    # !!
+    # !! Deliberately NOT named AWS_ACCESS_KEY_ID: Compose resolves `${...}`
+    # !! against the shell environment before `.env`, so on a machine with AWS
+    # !! credentials already exported the bundled store would silently adopt
+    # !! those instead of the configured ones. Garage also rejects secret keys
+    # !! shorter than 16 characters.
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      GARAGE_DEFAULT_ACCESS_KEY: ${ARTIFACT_S3_ACCESS_KEY:-autoswelocal}
+      GARAGE_DEFAULT_SECRET_KEY: ${ARTIFACT_S3_SECRET_KEY:-autoswelocaldevsecret}
+      GARAGE_DEFAULT_BUCKET: ${ARTIFACT_S3_BUCKET:-auto-swe-artifacts}
+      # Node-to-node auth. Single-node deployments never use it on the wire,
+      # but Garage requires it to be set; the fallback keeps the quickstart
+      # zero-config.
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-0000000000000000000000000000000000000000000000000000000000000001}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${GARAGE_API_PORT:-9000}:3900"
     volumes:
-      - ./data/minio:/data
+      - ./infra/garage/garage.toml:/etc/garage.toml:ro
+      - ./data/garage:/var/lib/garage
+    # Exec form with the absolute path: the image ships the bare binary and no
+    # shell, so neither CMD-SHELL nor a bare `garage` would resolve.
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "/garage", "status"]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 10s
-
-  # One-shot: create the artifact bucket once MinIO is up so the worker can
-  # use the S3 backend out-of-the-box. Idempotent — re-runs are a no-op.
-  minio-setup:
-    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-04-16T18-13-26Z}
-    # !! DEV-ONLY DEFAULT CREDENTIALS — see the `minio` service note above.
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - ARTIFACT_S3_BUCKET=${ARTIFACT_S3_BUCKET:-auto-swe-artifacts}
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      "mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" &&
-       mc mb --ignore-existing \"local/$$ARTIFACT_S3_BUCKET\" &&
-       echo \"MinIO bucket ready: $$ARTIFACT_S3_BUCKET\""
-    restart: on-failure:5

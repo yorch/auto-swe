@@ -50,20 +50,20 @@ applies to one file belongs in a skill, not in the context of every session.
 | Runtime               | Node.js                                | >=24.0.0               |
 | Package Manager       | Yarn 4 (Berry, via corepack)           | 4.18.0                 |
 | Language              | TypeScript                             | 7.0.2                  |
-| HTTP Framework        | Fastify                                | 5.11.0                 |
-| Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.0 + admin-tools 1.31 + ui 2.49.1 |
-| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.17.2                 |
-| Agent Framework       | Mastra                                 | 1.55.0                 |
-| LLM SDK               | Vercel AI SDK + provider adapters      | ai 6.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
+| HTTP Framework        | Fastify                                | 5.12.1                 |
+| Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.2 + admin-tools 1.31 + ui 2.53.3 |
+| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.22.0                 |
+| Agent Framework       | Mastra                                 | 1.60.0                 |
+| LLM SDK               | Vercel AI SDK + provider adapters      | ai 7.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
 | ORM                   | Prisma                                 | 7.9.1                  |
 | Database              | PostgreSQL 18 + pgvector               | pgvector/pgvector:pg18 |
-| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.2.12 / 19.2.8 / 4.3.3 |
+| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.3.1 / 19.2.8 / 4.3.3 |
 | Server State          | TanStack Query                         | 5.101.4                |
-| Client State          | Zustand                                | 5.0.14                 |
+| Client State          | Zustand                                | 5.0.15                 |
 | Validation            | Zod                                    | 4.4.3                  |
-| Testing               | Vitest                                 | 4.1.10                  |
-| Lint / Format         | Biome                                  | 2.5.6                 |
-| Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.8.1 |
+| Testing               | Vitest                                 | 4.1.11                  |
+| Lint / Format         | Biome                                  | 2.5.9                 |
+| Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.30.2 |
 
 ---
 
@@ -82,7 +82,7 @@ Run `ls packages/<name>/src` for the actual layout — only non-obvious rules li
 
 Top-level files that matter:
 
-- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + MinIO + setup containers
+- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + Garage (`objectstore` profile) + setup containers
 - `docker-compose.app.yml` — gateway + worker + web + otel-lgtm (overlay; not runnable standalone)
 - `infra/` — helper scripts and Temporal dynamic config mounted into the temporal-setup containers
 - `tsconfig.base.json` — shared TS config inherited by every package
@@ -179,7 +179,7 @@ yarn lint:fix             # Auto-fix safe lint issues + format (biome check --wr
 yarn format               # Format only (biome format --write)
 yarn docs:check           # Fail on stale countable claims in the living docs
 
-# Docker (infra = postgres + postgres-temporal + temporal + minio; app = gateway + worker + web + otel-lgtm)
+# Docker (infra = postgres + postgres-temporal + temporal + garage; app = gateway + worker + web + otel-lgtm)
 yarn docker:infra:up      # Start infra services only
 yarn docker:infra:down    # Stop infra services
 yarn docker:app:up        # Start everything (infra + app)
@@ -344,6 +344,13 @@ and gated by the resolved Agent's `toolKeys`; `null` means all four are enabled.
 MCP tool loading: when an Agent lists `'mcp'` **and** references an active `mcp` Connection via
 `Agent.mcpConnectionId`, that server's tools bind at run time for the implementer activities and
 the generic agent node.
+
+> **Gotcha:** `packages/worker` declares `@modelcontextprotocol/sdk` directly even though it only
+> ever imports `@mastra/mcp`. `@mastra/mcp` moved to the MCP SDK 2.x packages but still depends on
+> `@modelcontextprotocol/ext-apps`, which statically imports `@modelcontextprotocol/sdk/types.js`
+> and only declares it as a peer. Nothing else in the tree provides it, so without the direct
+> dependency every `import '@mastra/mcp'` throws `Cannot find package` — at worker boot, not just
+> in tests. Drop it only once `@mastra/mcp` ships a release whose `ext-apps` no longer needs it.
 
 **Progressive disclosure (implementer only):** the implementer receives a compact menu of skill
 names + descriptions and calls `loadSkill` to fetch full text on demand, so unused skills cost no
@@ -545,7 +552,7 @@ Dockerfile; it has the specific rules and what has already been tried and does n
 # 1. Install
 corepack enable && yarn install
 
-# 2. Start infrastructure (postgres + postgres-temporal + temporal + minio)
+# 2. Start infrastructure (postgres + postgres-temporal + temporal + garage)
 cp .env.example .env    # Fill in CONFIG_ENCRYPTION_KEY, SEED_ADMIN_PASSWORD, and optionally
                         # GITHUB_TOKEN / GITHUB_WEBHOOK_SECRET as bootstrap fallbacks
 yarn docker:infra:up
