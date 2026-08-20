@@ -74,8 +74,10 @@ Biome rather than excluded — no ignore file or lint config was touched.
 
 ## Coverage Gaps
 
-**None on file coverage** (two verification-depth notes follow). Computed from `frontend-review-2026-08-19/inventory.json`: 191 of 191 `.ts`/`.tsx`/`.mjs` files tracked
-by git under `packages/web` are marked `reviewed`, with no `skipped` or `not-reached` entries.
+**None on file coverage** (two verification-depth notes follow). All 191 `.ts`/`.tsx`/`.mjs`
+files tracked by git under `packages/web` were reviewed — none skipped, none unreached. The
+per-file inventory this was computed from was bookkeeping for the review itself and is not kept;
+`findings.json` alongside this file carries the evidence that outlives it.
 Nothing in the package is generated, vendored, or gitignored — there is no `__generated__`
 directory, no `*.gen.*`, and the only excluded file by convention (`next-env.d.ts`) is not
 tracked by git.

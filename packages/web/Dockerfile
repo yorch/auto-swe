@@ -26,7 +26,12 @@ RUN yarn install --immutable
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
 COPY packages/web packages/web
-COPY docs docs
+# Only the top level of `docs/` is served — `lib/docs.ts` reads that one
+# directory and filters to `.md`, and `docLinks.ts` classifies everything else
+# (`history/`, `redesign/`, `slack-app-manifest.json`) as unserved. Copying the
+# whole tree put ~1.4 MB of frozen history and design reference into the traced
+# standalone bundle for nothing.
+COPY docs/*.md docs/
 
 # `tsc` on @auto-swe/shared imports from its generated Prisma client, so
 # generate must precede shared/build. prisma.config.ts eagerly resolves
