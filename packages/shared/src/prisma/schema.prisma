@@ -278,15 +278,63 @@ model Connection {
   /// Resolution order: step config → this field → built-in defaults.
   gateCommands         Json?   @map("gate_commands")
 
+  /// Declared package name(s) this git_repo publishes (e.g. `@acme/payments-sdk`,
+  /// `github.com/acme/payments-sdk`). The resolution key manifest detection matches
+  /// a dependency string against (P1). Null/empty = match on org/repo identity only.
+  packageNames          String[] @default([]) @map("package_names")
+
   activeWorkflows       ActiveWorkflow[]
   pullRequests          PullRequest[]
   memoryItems           MemoryItem[]
   runInputs             RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
   mcpAgents             Agent[]                @relation("AgentMcpConnection")
+  /// Repo dependency graph edges (repo-dependency-graph feature). `dependenciesFrom`
+  /// are edges where this repo is the dependent; `dependenciesTo` where it is depended upon.
+  dependenciesFrom      RepoDependency[]       @relation("RepoDependencyFrom")
+  dependenciesTo        RepoDependency[]       @relation("RepoDependencyTo")
 
   @@index([teamId])
   @@map("connections")
+}
+
+/// A directed edge in the repo dependency graph: `fromRepo` depends on `toRepo`.
+/// Nodes are git_repo Connections. See docs/history/repo-dependency-graph-rfc.md.
+///
+/// A row is either a *resolved edge* (`toRepoId` set) or an *unresolved suggestion*
+/// (`toRepoId` null, `toRef` set) — a detected dependency on a package whose repo is
+/// not onboarded yet. Uniqueness, the no-self-edge rule, the shape guard, and the
+/// status/source enums are partial-index / CHECK constraints in the hand-written
+/// migration `00000000000002_repo_dependencies` (Prisma's DSL can't express them).
+model RepoDependency {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fromRepoId    String      @map("from_repo_id") @db.Uuid
+  fromRepo      Connection  @relation("RepoDependencyFrom", fields: [fromRepoId], references: [id], onDelete: Cascade)
+  /// The dependency repo. Null for an unresolved suggestion (see `toRef`).
+  toRepoId      String?     @map("to_repo_id") @db.Uuid
+  toRepo        Connection? @relation("RepoDependencyTo", fields: [toRepoId], references: [id], onDelete: Cascade)
+  /// Raw unresolved dependency string for a suggestion; null once resolved to a repo.
+  toRef         String?     @map("to_ref")
+  /// Edge semantics: "code" | "runtime" | "build" | "api" | "data".
+  kind          String      @default("code")
+  /// Provenance: "manual" | "manifest" | "git_signal" | "inferred".
+  source        String      @default("manual")
+  /// 1.0 for deterministic sources; <1 for LLM inference.
+  confidence    Float       @default(1)
+  /// "active" | "proposed" | "dismissed" (sticky veto) | "unresolved" (suggestion).
+  status        String      @default("active")
+  /// Provenance detail — matched package name, manifest path, importing file, etc.
+  detail        Json?
+  detectedAt    DateTime    @default(now()) @map("detected_at") @db.Timestamptz
+  confirmedById String?     @map("confirmed_by_id") @db.Uuid
+  confirmedAt   DateTime?   @map("confirmed_at") @db.Timestamptz
+  dismissedById String?     @map("dismissed_by_id") @db.Uuid
+  dismissedAt   DateTime?   @map("dismissed_at") @db.Timestamptz
+  updatedAt     DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([fromRepoId])
+  @@index([toRepoId])
+  @@map("repo_dependencies")
 }
 
 /// Top-level tenant boundary (P5 multi-org). Every Team belongs to exactly one

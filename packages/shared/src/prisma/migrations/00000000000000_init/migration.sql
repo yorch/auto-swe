@@ -156,8 +156,30 @@ CREATE TABLE "connections" (
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "consolidation_enabled" BOOLEAN NOT NULL DEFAULT true,
     "gate_commands" JSONB,
+    "package_names" TEXT[] DEFAULT ARRAY[]::TEXT[],
 
     CONSTRAINT "connections_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "repo_dependencies" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "from_repo_id" UUID NOT NULL,
+    "to_repo_id" UUID,
+    "to_ref" TEXT,
+    "kind" TEXT NOT NULL DEFAULT 'code',
+    "source" TEXT NOT NULL DEFAULT 'manual',
+    "confidence" DOUBLE PRECISION NOT NULL DEFAULT 1,
+    "status" TEXT NOT NULL DEFAULT 'active',
+    "detail" JSONB,
+    "detected_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "confirmed_by_id" UUID,
+    "confirmed_at" TIMESTAMPTZ,
+    "dismissed_by_id" UUID,
+    "dismissed_at" TIMESTAMPTZ,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "repo_dependencies_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -1126,6 +1148,12 @@ CREATE INDEX "personal_access_tokens_user_id_idx" ON "personal_access_tokens"("u
 CREATE INDEX "connections_team_id_idx" ON "connections"("team_id");
 
 -- CreateIndex
+CREATE INDEX "repo_dependencies_from_repo_id_idx" ON "repo_dependencies"("from_repo_id");
+
+-- CreateIndex
+CREATE INDEX "repo_dependencies_to_repo_id_idx" ON "repo_dependencies"("to_repo_id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "organizations_name_key" ON "organizations"("name");
 
 -- CreateIndex
@@ -1451,6 +1479,12 @@ ALTER TABLE "personal_access_tokens" ADD CONSTRAINT "personal_access_tokens_user
 
 -- AddForeignKey
 ALTER TABLE "connections" ADD CONSTRAINT "connections_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "repo_dependencies" ADD CONSTRAINT "repo_dependencies_from_repo_id_fkey" FOREIGN KEY ("from_repo_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "repo_dependencies" ADD CONSTRAINT "repo_dependencies_to_repo_id_fkey" FOREIGN KEY ("to_repo_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "teams" ADD CONSTRAINT "teams_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

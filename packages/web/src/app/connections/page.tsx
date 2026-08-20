@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
+import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -17,6 +18,7 @@ import { useAuthStore } from '@/stores/authStore';
 type ModalMode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
   | { kind: 'edit'; repo: RepositorySummary }
+  | { kind: 'dependencies'; repo: RepositorySummary }
   | { kind: 'import' }
   | null;
 
@@ -90,37 +92,51 @@ export default function ConnectionsPage() {
         title="Connections."
       />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {(repos ?? []).map((r) => (
-          <Card key={r.id}>
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="min-w-0 truncate font-semibold">{connectionLabel(r)}</h3>
-              <ConnectionTypeBadge type={r.type ?? 'git_repo'} />
-            </div>
-            <div className="mt-2 space-y-1 text-sm text-paper-400">
-              {(!r.type || r.type === 'git_repo') && <p>Branch: {r.defaultBranch}</p>}
-              <p>Team: {r.team?.name ?? 'None'}</p>
-              <p>Workflows: {r._count?.activeWorkflows ?? 0}</p>
-              {(!r.type || r.type === 'git_repo') && <p>Image: {r.executorImage ?? 'default'}</p>}
-              {r.description && <p className="truncate text-xs">{r.description}</p>}
-            </div>
-            <div className="mt-3 flex items-center justify-between">
-              <span
-                className={`text-xs font-medium ${r.isActive ? 'text-moss-400' : 'text-brick-400'}`}
-              >
-                {r.isActive ? 'Active' : 'Inactive'}
-              </span>
-              {canManage && (
-                <Button
-                  onClick={() => setMode({ kind: 'edit', repo: r })}
-                  size="sm"
-                  variant="ghost"
+        {(repos ?? []).map((r) => {
+          const isGitRepo = !r.type || r.type === 'git_repo';
+          return (
+            <Card key={r.id}>
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="min-w-0 truncate font-semibold">{connectionLabel(r)}</h3>
+                <ConnectionTypeBadge type={r.type ?? 'git_repo'} />
+              </div>
+              <div className="mt-2 space-y-1 text-sm text-paper-400">
+                {isGitRepo && <p>Branch: {r.defaultBranch}</p>}
+                <p>Team: {r.team?.name ?? 'None'}</p>
+                <p>Workflows: {r._count?.activeWorkflows ?? 0}</p>
+                {isGitRepo && <p>Image: {r.executorImage ?? 'default'}</p>}
+                {r.description && <p className="truncate text-xs">{r.description}</p>}
+              </div>
+              <div className="mt-3 flex items-center justify-between">
+                <span
+                  className={`text-xs font-medium ${r.isActive ? 'text-moss-400' : 'text-brick-400'}`}
                 >
-                  Edit
-                </Button>
-              )}
-            </div>
-          </Card>
-        ))}
+                  {r.isActive ? 'Active' : 'Inactive'}
+                </span>
+                <div className="flex items-center gap-1">
+                  {isGitRepo && (
+                    <Button
+                      onClick={() => setMode({ kind: 'dependencies', repo: r })}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Dependencies
+                    </Button>
+                  )}
+                  {canManage && (
+                    <Button
+                      onClick={() => setMode({ kind: 'edit', repo: r })}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Edit
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </Card>
+          );
+        })}
         {(repos ?? []).length === 0 && (
           <p className="col-span-full py-12 text-center text-sm text-paper-400">
             No connections yet.
@@ -142,6 +158,16 @@ export default function ConnectionsPage() {
       />
 
       {formMode && <ConnectionFormModal mode={formMode} onClose={() => setMode(null)} open />}
+
+      {mode?.kind === 'dependencies' && (
+        <RepoDependenciesModal
+          canManage={canManage}
+          onClose={() => setMode(null)}
+          open
+          repo={mode.repo}
+          repos={repos ?? []}
+        />
+      )}
     </div>
   );
 }

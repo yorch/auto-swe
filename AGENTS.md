@@ -586,10 +586,10 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 
 Monitor at `http://localhost:3000` (dashboard), `/runs` (history), and `http://localhost:8233`
 (Temporal UI). To start over locally,
-`yarn workspace @auto-swe/shared exec prisma migrate reset` is the cleanest path — there are two
-migrations, a generated `init` baseline plus a hand-written `custom_constraints_and_indexes` file
-for DDL the Prisma DSL cannot express (CHECK constraints, partial unique indexes, the pgvector HNSW
-index, array `NOT NULL`).
+`yarn workspace @auto-swe/shared exec prisma migrate reset` is the cleanest path — a generated
+`init` baseline plus hand-written migrations (`custom_constraints_and_indexes`, then
+`repo_dependencies`) for DDL the Prisma DSL cannot express (CHECK constraints, partial unique
+indexes, the pgvector HNSW index, array `NOT NULL`).
 
 Full production runbook: [`docs/deployment.md`](./docs/deployment.md).
 

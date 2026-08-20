@@ -266,6 +266,46 @@ UPDATE "knowledge_base_config" SET "spaces" = ARRAY[]::TEXT[] WHERE "spaces" IS 
 ALTER TABLE "knowledge_base_config"
   ALTER COLUMN "spaces" SET NOT NULL;
 
+-- ── Repo dependency graph ────────────────────────────────────────────────────
+-- The repo_dependencies edge table and connections.package_names live in the
+-- generated baseline; only these constructs need hand-written SQL.
+
+-- Array NOT NULL for the new package_names column (Prisma emits the array column
+-- without NOT NULL).
+UPDATE "connections" SET "package_names" = ARRAY[]::TEXT[] WHERE "package_names" IS NULL;
+ALTER TABLE "connections"
+  ALTER COLUMN "package_names" SET NOT NULL;
+
+-- Resolved edges: one per (from, to, kind, source). Suggestions carry a null
+-- to_repo_id and Postgres treats NULLs as distinct, so a plain unique would let
+-- duplicate suggestions through — scope real-edge uniqueness with a partial index.
+CREATE UNIQUE INDEX "repo_dependencies_resolved_uidx"
+  ON "repo_dependencies" ("from_repo_id", "to_repo_id", "kind", "source")
+  WHERE "to_repo_id" IS NOT NULL;
+
+-- Unresolved suggestions: one per (from, to_ref, kind, source).
+CREATE UNIQUE INDEX "repo_dependencies_suggestion_uidx"
+  ON "repo_dependencies" ("from_repo_id", "to_ref", "kind", "source")
+  WHERE "to_repo_id" IS NULL;
+
+-- A row points at a repo or names an unresolved ref, never neither.
+ALTER TABLE "repo_dependencies"
+  ADD CONSTRAINT "repo_dependencies_target_shape_check"
+  CHECK ("to_repo_id" IS NOT NULL OR "to_ref" IS NOT NULL);
+
+-- No self-edges (holds trivially when to_repo_id is null).
+ALTER TABLE "repo_dependencies"
+  ADD CONSTRAINT "repo_dependencies_no_self_edge_check"
+  CHECK ("to_repo_id" IS NULL OR "from_repo_id" <> "to_repo_id");
+
+-- Status / source enums kept as TEXT with a CHECK, per the enum→string house style.
+ALTER TABLE "repo_dependencies"
+  ADD CONSTRAINT "repo_dependencies_status_check"
+  CHECK ("status" IN ('active', 'proposed', 'dismissed', 'unresolved'));
+ALTER TABLE "repo_dependencies"
+  ADD CONSTRAINT "repo_dependencies_source_check"
+  CHECK ("source" IN ('manual', 'manifest', 'git_signal', 'inferred'));
+
 -- ── Seeds ────────────────────────────────────────────────────────────────────
 -- Default embedding config so the worker can resolve a spec before the admin
 -- visits the dashboard. Overridable via /admin/model-config.
