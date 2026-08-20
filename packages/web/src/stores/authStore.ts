@@ -3,6 +3,15 @@ import { api } from '@/lib/api';
 import { API_BASE, COOKIE_ACCESS_TOKEN, COOKIE_SESSION_MARKER } from '@/lib/config';
 import { gatewayUnreachableMessage } from '@/lib/networkErrors';
 
+/**
+ * Providers driven through better-auth's social routes. `okta` is registered
+ * by the gateway's generic-OAuth plugin rather than a built-in adapter, but the
+ * plugin merges it into the same `socialProviders` list — so sign-in, callback
+ * and account-link all use the identical endpoints and this union is the only
+ * place the distinction would have shown up.
+ */
+export type SocialProviderId = 'github' | 'google' | 'okta';
+
 interface AuthState {
   user: {
     sub: string;
@@ -30,12 +39,12 @@ interface AuthState {
    *  browser to that provider auth URL; the round-trip lands back on
    *  /login?bridge=1 → hydrateFromSession. Throws on failure so the login
    *  page can surface the error. */
-  signInWithProvider: (provider: 'github' | 'google') => Promise<void>;
+  signInWithProvider: (provider: SocialProviderId) => Promise<void>;
   /** Link an additional OAuth provider to the signed-in account. Same
    *  fetch-then-navigate dance as signInWithProvider, against better-auth's
    *  `link-social`; the round-trip lands back on /settings with the new
    *  Account row attached. Throws on failure. */
-  linkProvider: (provider: 'github' | 'google') => Promise<void>;
+  linkProvider: (provider: SocialProviderId) => Promise<void>;
   /** Request a magic link be emailed to `email`. In dev (and on transport
    *  failures) the link is logged to gateway stdout. */
   requestMagicLink: (email: string) => Promise<void>;
@@ -123,7 +132,7 @@ async function betterAuthPost(path: string, body: unknown, fallback: string): Pr
  */
 async function betterAuthRedirect(
   path: string,
-  provider: 'github' | 'google',
+  provider: SocialProviderId,
   callbackPath: string,
   fallback: string
 ): Promise<void> {

@@ -54,6 +54,7 @@ vi.mock('../lib/systemConfigService.js', () => ({
   getGoogleOAuthConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getIssueTrackerConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getKnowledgeBaseConfig: vi.fn(async () => ({ data: {}, sources: {} })),
+  getOktaOAuthConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getSlackConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getStorageConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   listConfigAuditEntries: vi.fn(async () => []),
@@ -64,6 +65,7 @@ vi.mock('../lib/systemConfigService.js', () => ({
     github: '00000000-0000-0000-0001-000000000001',
     googleOAuth: '00000000-0000-0000-0001-000000000005',
     knowledgeBase: '00000000-0000-0000-0001-000000000007',
+    oktaOAuth: '00000000-0000-0000-0001-000000000013',
     revalidation: '00000000-0000-0000-0001-000000000011',
     slack: '00000000-0000-0000-0001-000000000002',
     storage: '00000000-0000-0000-0001-000000000003',
@@ -131,6 +133,16 @@ vi.mock('../lib/systemConfigService.js', () => ({
     data: {},
     existed: true,
   })),
+  updateOktaOAuthConfig: vi.fn(async () => ({
+    auditBeforeJson: null,
+    auditTarget: {
+      entityId: '00000000-0000-0000-0001-000000000013',
+      entityType: 'OktaOAuthConfig',
+    },
+    changedFields: [],
+    data: {},
+    existed: true,
+  })),
   updateRevalidationScheduleConfig: vi.fn(async () => ({
     auditAfterJson: { changedFields: ['enabled'] },
     auditBeforeJson: { enabled: false },
@@ -169,6 +181,7 @@ import {
   detectJiraFields,
   updateCanaryConfig,
   updateConsolidationConfig,
+  updateOktaOAuthConfig,
   updateWorkflowDefaults,
 } from '../lib/systemConfigService.js';
 import { systemConfigRoutes } from './systemConfig.js';
@@ -180,6 +193,7 @@ const updateCanaryConfigMock = vi.mocked(updateCanaryConfig);
 const updateWorkflowDefaultsMock = vi.mocked(updateWorkflowDefaults);
 const updateConsolidationConfigMock = vi.mocked(updateConsolidationConfig);
 const auditConfigWriteMock = vi.mocked(auditConfigWrite);
+const updateOktaOAuthConfigMock = vi.mocked(updateOktaOAuthConfig);
 
 const AUTH_HEADER = { authorization: 'Bearer fake-admin-token' };
 
@@ -426,6 +440,64 @@ describe('PUT /config/canary', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(updateCanaryConfigMock).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+});
+
+describe('PUT /config/oauth/okta', () => {
+  // The issuer is fetched server-side by better-auth's discovery step at
+  // gateway boot, so an admin-supplied value reaches the network. These cases
+  // pin the guard that stops it being pointed at the internal network.
+  it('rejects an issuer on a private address without touching the service', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { issuer: 'https://169.254.169.254/oauth2/default' },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/oauth/okta',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('UNSAFE_URL');
+    expect(updateOktaOAuthConfigMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects a plaintext http issuer', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { issuer: 'http://okta.example.com/oauth2/default' },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/oauth/okta',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('UNSAFE_URL');
+    expect(updateOktaOAuthConfigMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('accepts a public https issuer and audits the write', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: {
+        clientId: '0oaokta123',
+        clientSecret: 'okta-secret',
+        issuer: 'https://dev-12345.okta.com/oauth2/default',
+      },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/oauth/okta',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(updateOktaOAuthConfigMock).toHaveBeenCalledTimes(1);
+    expect(auditConfigWriteMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'admin-1',
+      expect.objectContaining({
+        auditTarget: expect.objectContaining({ entityType: 'OktaOAuthConfig' }),
+      })
+    );
     await app.close();
   });
 });

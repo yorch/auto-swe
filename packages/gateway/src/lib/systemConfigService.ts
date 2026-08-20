@@ -37,6 +37,7 @@ export const SYSTEM_CONFIG_IDS = {
   github: '00000000-0000-0000-0001-000000000001',
   googleOAuth: '00000000-0000-0000-0001-000000000005',
   knowledgeBase: '00000000-0000-0000-0001-000000000007',
+  oktaOAuth: '00000000-0000-0000-0001-000000000013',
   revalidation: '00000000-0000-0000-0001-000000000011',
   slack: '00000000-0000-0000-0001-000000000002',
   storage: '00000000-0000-0000-0001-000000000003',
@@ -745,6 +746,82 @@ export async function updateGoogleOAuthConfig(
     auditTarget: { entityId: SYSTEM_CONFIG_IDS.googleOAuth, entityType: 'GoogleOAuthConfig' },
     changedFields,
     data: { ...googleOAuthData(row), requiresRestart: true },
+    existed: !!existing,
+  };
+}
+
+// ─── Okta (enterprise SSO) ────────────────────────────────────────────────────
+
+type OktaOAuthConfigRow = NonNullable<
+  Awaited<ReturnType<PrismaClient['oktaOAuthConfig']['findUnique']>>
+>;
+
+export type OktaOAuthConfigInput = {
+  clientId?: string | null;
+  clientSecret?: string;
+  issuer?: string | null;
+};
+
+const OKTA_OAUTH_AUDIT_FIELDS = ['issuer', 'clientId', 'clientSecretLastFour'] as const;
+
+function oktaOAuthData(row: OktaOAuthConfigRow | null) {
+  return {
+    clientId: row?.clientId ?? null,
+    clientSecret: maskedSecret(row?.clientSecretLastFour),
+    issuer: row?.issuer ?? null,
+  };
+}
+
+export async function getOktaOAuthConfig(prisma: PrismaClient) {
+  const row = await prisma.oktaOAuthConfig.findUnique({ where: { id: 'default' } });
+  return {
+    data: oktaOAuthData(row),
+    sources: {
+      clientId: src(!!row?.clientId, 'OKTA_CLIENT_ID'),
+      clientSecret: src(!!row?.clientSecretCiphertext, 'OKTA_CLIENT_SECRET'),
+      issuer: src(!!row?.issuer, 'OKTA_ISSUER'),
+    },
+  };
+}
+
+export async function updateOktaOAuthConfig(
+  prisma: PrismaClient,
+  body: OktaOAuthConfigInput
+): Promise<ConfigUpdateResult> {
+  const { clientId, clientSecret, issuer } = body;
+
+  const existing = await prisma.oktaOAuthConfig.findUnique({ where: { id: 'default' } });
+
+  const data: Record<string, unknown> = {};
+  if (clientId !== undefined) {
+    data.clientId = clientId;
+  }
+  if (issuer !== undefined) {
+    // Strip a trailing slash so `{issuer}/.well-known/openid-configuration`
+    // never becomes a double slash — Okta 404s that URL.
+    data.issuer = issuer ? issuer.replace(/\/+$/, '') : issuer;
+  }
+
+  sealInto(data, 'clientSecret', clientSecret);
+
+  const row = await prisma.oktaOAuthConfig.upsert({
+    create: { id: 'default', ...data },
+    update: data,
+    where: { id: 'default' },
+  });
+
+  const changedFields = changedKeys([
+    ['clientId', clientId],
+    ['clientSecret', clientSecret],
+    ['issuer', issuer],
+  ]);
+
+  return {
+    auditAfterJson: { ...pickAudit(row, OKTA_OAUTH_AUDIT_FIELDS), changedFields },
+    auditBeforeJson: pickAudit(existing, OKTA_OAUTH_AUDIT_FIELDS),
+    auditTarget: { entityId: SYSTEM_CONFIG_IDS.oktaOAuth, entityType: 'OktaOAuthConfig' },
+    changedFields,
+    data: { ...oktaOAuthData(row), requiresRestart: true },
     existed: !!existing,
   };
 }

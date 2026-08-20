@@ -78,6 +78,7 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
   googleOAuthConfig: [fieldsFor('clientSecret')],
   issueTrackerConfig: [fieldsFor('apiToken'), fieldsFor('webhookSecret')],
   knowledgeBaseConfig: [fieldsFor('apiToken')],
+  oktaOAuthConfig: [fieldsFor('clientSecret')],
   // The one irregular row: its version and last-four columns are unprefixed.
   providerCredential: [{ ...fieldsFor('apiKey'), keyVersion: 'keyVersion', lastFour: 'lastFour' }],
   slackConfig: [fieldsFor('clientSecret'), fieldsFor('signingSecret'), fieldsFor('botToken')],

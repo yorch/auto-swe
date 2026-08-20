@@ -9,7 +9,7 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { API_BASE } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
 import { cn } from '@/lib/utils';
-import { useAuthStore } from '@/stores/authStore';
+import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
 
 /** Subset of better-auth's list-accounts response shape we actually use. */
 interface LinkedAccount {
@@ -24,10 +24,11 @@ interface ProviderFlags {
   github: boolean;
   google: boolean;
   magicLink: boolean;
+  okta: boolean;
 }
 
 interface Provider {
-  id: 'github' | 'google';
+  id: SocialProviderId;
   label: string;
   description: string;
   tone: 'ember' | 'dust';
@@ -46,6 +47,12 @@ const SOCIAL_PROVIDERS: Provider[] = [
     label: 'Google',
     tone: 'dust',
   },
+  {
+    description: "Sign in with your organization's Okta account.",
+    id: 'okta',
+    label: 'Okta',
+    tone: 'ember',
+  },
 ];
 
 export default function SettingsPage() {
@@ -56,6 +63,7 @@ export default function SettingsPage() {
     github: false,
     google: false,
     magicLink: true,
+    okta: false,
   });
   const [linked, setLinked] = useState<LinkedAccount[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -86,7 +94,7 @@ export default function SettingsPage() {
 
   const linkedIds = new Set(linked.map((a) => a.providerId));
 
-  const handleLink = async (provider: 'github' | 'google') => {
+  const handleLink = async (provider: SocialProviderId) => {
     setBusy(provider);
     setError(null);
     setInfo(null);

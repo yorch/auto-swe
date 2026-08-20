@@ -676,3 +676,46 @@ export async function resolveGoogleOAuthConfig(
     clientSecret,
   };
 }
+
+// ─── Okta (enterprise SSO) ────────────────────────────────────────────────────
+
+export interface ResolvedOktaOAuthConfig {
+  /** Authorization-server issuer, trailing slash stripped. */
+  issuer: string | null;
+  clientId: string | null;
+  clientSecret: string | null;
+}
+
+/**
+ * Okta OIDC credentials for better-auth's generic-OAuth plugin. All three
+ * fields must be present for the provider to register — a partially filled
+ * row leaves Okta sign-in off rather than half-configured, because the
+ * discovery fetch at gateway boot would fail without an issuer and the token
+ * exchange would fail without a secret.
+ */
+export async function resolveOktaOAuthConfig(
+  _opts?: ResolveOpts
+): Promise<ResolvedOktaOAuthConfig> {
+  const row = await (await db()).oktaOAuthConfig.findUnique({ where: { id: 'default' } });
+
+  const clientSecret =
+    decryptOptional({
+      authTag: row?.clientSecretAuthTag ?? null,
+      ciphertext: row?.clientSecretCiphertext ?? null,
+      keyVersion: row?.clientSecretKeyVersion ?? null,
+      nonce: row?.clientSecretNonce ?? null,
+    }) ??
+    process.env.OKTA_CLIENT_SECRET ??
+    null;
+
+  const rawIssuer = row?.issuer ?? process.env.OKTA_ISSUER ?? null;
+
+  return {
+    clientId: row?.clientId ?? process.env.OKTA_CLIENT_ID ?? null,
+    clientSecret,
+    // better-auth's `okta()` helper appends `/.well-known/openid-configuration`
+    // to whatever it is handed; normalise here so a trailing slash saved in the
+    // admin form cannot produce a double slash in the discovery URL.
+    issuer: rawIssuer ? rawIssuer.replace(/\/+$/, '') : null,
+  };
+}

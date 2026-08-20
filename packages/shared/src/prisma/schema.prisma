@@ -1543,6 +1543,31 @@ model GoogleOAuthConfig {
   @@map("google_oauth_config")
 }
 
+/// Singleton Okta OIDC config for BetterAuth enterprise SSO sign-in.
+/// Wired through better-auth's generic-OAuth plugin, which registers Okta as
+/// an ordinary social provider — so the sign-in, callback, and account-link
+/// routes are the same `/api/auth/**` paths GitHub and Google use.
+/// Changes require a gateway restart to take effect.
+model OktaOAuthConfig {
+  id String @id @default("default")
+
+  /// Authorization-server issuer, e.g. https://dev-12345.okta.com/oauth2/default.
+  /// The OIDC discovery document is fetched from `{issuer}/.well-known/openid-configuration`
+  /// at gateway startup, so this must be reachable from the gateway.
+  issuer   String?
+  clientId String? @map("client_id")
+
+  clientSecretCiphertext Bytes?  @map("client_secret_ciphertext")
+  clientSecretNonce      Bytes?  @map("client_secret_nonce")
+  clientSecretAuthTag    Bytes?  @map("client_secret_auth_tag")
+  clientSecretKeyVersion Int?    @map("client_secret_key_version")
+  clientSecretLastFour   String? @map("client_secret_last_four")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("okta_oauth_config")
+}
+
 /// Singleton issue-tracker connector config. One row (id = "default").
 model IssueTrackerConfig {
   id           String  @id @default("default")

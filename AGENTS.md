@@ -139,7 +139,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "54 Prisma models", "28 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "55 Prisma models", "28 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -226,7 +226,7 @@ fallback. **Never read these from `process.env` directly in new code.**
 | `/admin/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveTrackerConfig()` |
 | `/admin/integrations → Knowledge Base` | Confluence / Notion connector | `resolveKnowledgeBaseConfig()` |
 | `/admin/integrations → Figma` | read-only Figma design connector | `resolveFigmaConfig()` |
-| `/admin/integrations → OAuth` | Google OAuth client ID/secret | `resolveGoogleOAuthConfig()` |
+| `/admin/integrations → OAuth` | Google OAuth client ID/secret; Okta SSO issuer + client ID/secret | `resolveGoogleOAuthConfig()`, `resolveOktaOAuthConfig()` |
 | `/admin/workflow` | branch prefix, PR templates, default team slug, consolidation + eval schedules, CI wait strategy, Tier-2 defaults | `resolveWorkflowDefaults()` and friends |
 
 Every config table is a singleton: one row, `id = 'default'`, enforced by a `CHECK` constraint.
@@ -262,7 +262,9 @@ timeouts live on the `mcp` `Connection.config` JSON bag (`listTimeoutMs` / `call
 null = 15 s / 60 s).
 
 **Restart required:** `initAuth()` in `betterAuth.ts` reads OAuth credentials once at startup.
-Changing GitHub or Google OAuth credentials requires a gateway restart.
+Changing GitHub, Google, or Okta OAuth credentials requires a gateway restart. Okta is registered
+through better-auth's `genericOAuth` plugin, whose `init` fetches the OIDC discovery document once
+at startup — so the issuer is read at boot too, not per sign-in.
 
 ### Setting Registry (operator policy)
 

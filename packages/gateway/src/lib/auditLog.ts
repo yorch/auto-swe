@@ -11,6 +11,7 @@ export type AuditEntityType =
   | 'GitHubConfig'
   | 'GoogleOAuthConfig'
   | 'MemoryItem'
+  | 'OktaOAuthConfig'
   | 'ProviderCredential'
   | 'ScannerPattern'
   | 'Skill'
