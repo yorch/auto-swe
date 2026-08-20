@@ -25,7 +25,9 @@ Each edge is one `repo_dependencies` row. Its columns:
 Two partial unique indexes keep the two row shapes distinct — one per `(from, to, kind, source)` for
 resolved edges, one per `(from, toRef, kind, source)` for suggestions. CHECK constraints forbid a
 self-edge, require a row to name either a repo or a `toRef`, and bound the `status`/`source` strings.
-The DDL lives in the `00000000000002_repo_dependencies` migration.
+The `repo_dependencies` table and `connections.package_names` are in the generated `init` baseline;
+their partial unique indexes and CHECK constraints live in the hand-written
+`00000000000001_custom_constraints_and_indexes` migration.
 
 ## Managing edges
 
