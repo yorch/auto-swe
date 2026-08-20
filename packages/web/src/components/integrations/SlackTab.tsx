@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import {
   type SlackConfigInput,
   testSlackConnection,
@@ -12,9 +13,9 @@ import {
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { useSlackWorkspaces } from '@/hooks/useSlackChannels';
 import { API_BASE } from '@/lib/config';
+import { ConfigField } from './ConfigField';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
-import { SourceBadge } from './SourceBadge';
 import { UrlRow } from './UrlRow';
 
 export function SlackTab() {
@@ -67,7 +68,7 @@ export function SlackTab() {
   };
 
   if (isLoading) {
-    return <p className="text-sm text-paper-400">Loading…</p>;
+    return <LoadingState />;
   }
 
   return (
@@ -81,19 +82,12 @@ export function SlackTab() {
           secret apply immediately.
         </p>
         <div className="space-y-4">
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="slack-client-id"
-            >
-              Client ID
-              <SourceBadge source={sources.clientId} />
-              {data?.clientId && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.clientId}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.clientId || undefined}
+            id="slack-client-id"
+            label="Client ID"
+            source={sources.clientId}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="slack-client-id"
@@ -101,7 +95,7 @@ export function SlackTab() {
               placeholder="1234567890.123456789012"
               value={clientId}
             />
-          </div>
+          </ConfigField>
           <SecretInput
             current={data?.clientSecret ?? null}
             id="slack-client-secret"
@@ -142,7 +136,7 @@ export function SlackTab() {
         </div>
 
         {testResult && (
-          <p className={`mt-2 text-sm ${testResult.ok ? 'text-emerald-400' : 'text-brick-400'}`}>
+          <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
             {testResult.ok ? '✓' : '✗'} {testResult.detail}
           </p>
         )}
@@ -165,7 +159,7 @@ export function SlackTab() {
       </Card>
 
       {requiresRestart && <RestartWarning />}
-      {saved && !requiresRestart && <p className="text-sm text-emerald-400">Settings saved.</p>}
+      {saved && !requiresRestart && <p className="text-sm text-moss-400">Settings saved.</p>}
       {error && <p className="text-sm text-brick-400">{error}</p>}
 
       <div className="flex justify-end">
@@ -203,7 +197,7 @@ function WorkspaceInstallCard() {
       </p>
 
       {installedTeamId && (
-        <p className="mb-4 text-sm text-emerald-400">
+        <p className="mb-4 text-sm text-moss-400">
           ✓ Installed into workspace <span className="font-mono">{installedTeamId}</span>.
         </p>
       )}
@@ -235,7 +229,7 @@ function WorkspaceInstallCard() {
                 </span>
               </div>
               {w.installed ? (
-                <span className="text-emerald-400">
+                <span className="text-moss-400">
                   Installed{w.tokenLastFour ? ` · …${w.tokenLastFour}` : ''}
                 </span>
               ) : (

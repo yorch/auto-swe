@@ -1,6 +1,5 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -11,88 +10,19 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { api } from '@/lib/api';
-
-interface Skill {
-  id: string;
-  name: string;
-  description: string | null;
-  promptText: string;
-  origin: string | null;
-  isBuiltIn: boolean;
-  isVerified: boolean;
-  isActive: boolean;
-  usedByCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-function useSkills() {
-  return useQuery({
-    queryFn: () => api.get<{ data: Skill[] }>('/api/v1/admin/skills').then((r) => r.data),
-    queryKey: ['skills', 'all'],
-  });
-}
-
-interface SkillEffectiveness {
-  windowDays: number;
-  totalRuns: number;
-  baselineSuccessRate: number | null;
-  caveat: string;
-  perSkill: Array<{
-    name: string;
-    runs: number;
-    successRate: number | null;
-    avgCostUsd: number | null;
-  }>;
-}
-
-function useSkillEffectiveness() {
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: SkillEffectiveness }>('/api/v1/admin/skills/effectiveness')
-        .then((r) => r.data),
-    queryKey: ['skills', 'effectiveness'],
-  });
-}
+import {
+  type Skill,
+  useCreateSkill,
+  useDeleteSkill,
+  useSkillEffectiveness,
+  useSkills,
+  useUpdateSkill,
+} from '@/hooks/useSkills';
+import { errMsg } from '@/lib/errors';
+import { formatDate } from '@/lib/utils';
 
 function pct(v: number | null): string {
   return v == null ? '—' : `${(v * 100).toFixed(0)}%`;
-}
-
-function useCreateSkill() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { name: string; description?: string; promptText: string }) =>
-      api.post<{ data: Skill }>('/api/v1/admin/skills', body).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
-  });
-}
-
-function useUpdateSkill() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      id,
-      ...body
-    }: {
-      id: string;
-      name?: string;
-      description?: string;
-      promptText?: string;
-      isActive?: boolean;
-    }) => api.put<{ data: Skill }>(`/api/v1/admin/skills/${id}`, body).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
-  });
-}
-
-function useDeleteSkill() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/skills/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
-  });
 }
 
 function OriginBadge({ origin }: { origin: string | null }) {
@@ -157,7 +87,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
       setEditing(false);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save skill');
+      setError(errMsg(err, 'Failed to save skill'));
     }
   }
 
@@ -240,7 +170,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
               </span>
             )}
             {skill.isVerified && (
-              <span className="rounded bg-green-900/60 px-2 py-0.5 font-mono text-green-400">
+              <span className="rounded bg-moss-400/15 px-2 py-0.5 font-mono text-moss-400">
                 verified
               </span>
             )}
@@ -271,8 +201,8 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           </div>
           <div className="flex items-center justify-between border-t border-ink-700 pt-4">
             <div className="space-y-0.5 text-xs text-paper-500">
-              <div>Created {new Date(skill.createdAt).toLocaleDateString()}</div>
-              <div>Updated {new Date(skill.updatedAt).toLocaleDateString()}</div>
+              <div>Created {formatDate(skill.createdAt)}</div>
+              <div>Updated {formatDate(skill.updatedAt)}</div>
             </div>
             <Button onClick={startEdit} variant="secondary">
               Edit
@@ -309,7 +239,7 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
       onClose();
       setForm({ description: '', name: '', promptText: '' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create skill');
+      setError(errMsg(err, 'Failed to create skill'));
     }
   }
 
@@ -371,7 +301,7 @@ function DeleteConfirmModal({ skill, onClose }: { skill: Skill | null; onClose: 
       await deleteSkill.mutateAsync(skill.id);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete skill');
+      setError(errMsg(err, 'Failed to delete skill'));
     }
   }
 
@@ -507,7 +437,7 @@ export default function AdminSkillsPage() {
                       )}
                       {skill.origin && <OriginBadge origin={skill.origin} />}
                       {skill.isVerified && (
-                        <span className="font-mono text-[10px] text-green-400">verified</span>
+                        <span className="font-mono text-[10px] text-moss-400">verified</span>
                       )}
                       {!skill.isVerified && !skill.isBuiltIn && (
                         <span className="font-mono text-[10px] text-amber-400">unverified</span>

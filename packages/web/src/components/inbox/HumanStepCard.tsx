@@ -6,7 +6,7 @@ import { useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
-import { useRespondToHumanStep } from '@/hooks/useWorkflows';
+import { useRespondToHumanStep } from '@/hooks/useInbox';
 import { formatRelativeTime } from '@/lib/utils';
 import { DiffRenderer } from './DiffRenderer';
 

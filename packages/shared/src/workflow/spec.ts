@@ -554,8 +554,72 @@ export function nodeEdges(node: Node): Array<[field: string, target: string]> {
       break;
     case 'terminate':
       break;
+    default: {
+      // Exhaustiveness sentinel. This function is the single source of truth for
+      // graph traversal, so a Node variant missing here silently reports zero
+      // outgoing edges to the schema's ref validation and to validateSpec's
+      // reachability analysis — an unreachable-node bug that validation calls
+      // clean. Fail the build instead.
+      const unhandled: never = node;
+      void unhandled;
+      break;
+    }
   }
   return edges;
+}
+
+/**
+ * The one indexed edge field `nodeEdges` emits: a `humanDecision` option's
+ * `next`. Everything else it emits is a plain top-level field name.
+ */
+const OPTION_EDGE_FIELD = /^options\[(\d+)\]\.next$/;
+
+/**
+ * Read one outgoing edge, addressed by the same field name `nodeEdges` emits.
+ *
+ * Editors index into a node by that field name to show and retarget an edge.
+ * Doing it with `node[field]` works for every node type except `humanDecision`,
+ * whose option edges live inside an array — so it belongs here, beside the
+ * function that defines the grammar, rather than in each consumer.
+ */
+export function readNodeEdge(node: Node, field: string): string | undefined {
+  const option = OPTION_EDGE_FIELD.exec(field);
+  if (option) {
+    return node.type === 'humanDecision' ? node.options[Number(option[1])]?.next : undefined;
+  }
+  const value = (node as unknown as Record<string, unknown>)[field];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Set or clear one outgoing edge, addressed by the same field name `nodeEdges`
+ * emits. Returns a new node; the argument is untouched.
+ *
+ * Clearing an option edge is not expressible — `options[i].next` is required by
+ * the schema — so a null target leaves an option alone.
+ */
+export function setNodeEdge(node: Node, field: string, target: string | null): Node {
+  const option = OPTION_EDGE_FIELD.exec(field);
+  if (option) {
+    if (node.type !== 'humanDecision' || target === null) {
+      return node;
+    }
+    const i = Number(option[1]);
+    if (!node.options[i]) {
+      return node;
+    }
+    return {
+      ...node,
+      options: node.options.map((opt, j) => (j === i ? { ...opt, next: target } : opt)),
+    };
+  }
+  const next = { ...(node as unknown as Record<string, unknown>) };
+  if (target === null) {
+    delete next[field];
+  } else {
+    next[field] = target;
+  }
+  return next as unknown as Node;
 }
 
 export type WorkflowSpec = z.infer<typeof WorkflowSpecSchema>;

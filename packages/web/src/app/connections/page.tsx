@@ -10,7 +10,7 @@ import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
-import { useRepositories } from '@/hooks/useWorkflows';
+import { useRepositories } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { useAuthStore } from '@/stores/authStore';
 

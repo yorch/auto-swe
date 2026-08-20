@@ -1,36 +1,42 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { useTeamShellAllowlist, useUpdateTeamShellAllowlist } from '@/hooks/useWorkflows';
+import { useTeamShellAllowlist, useUpdateTeamShellAllowlist } from '@/hooks/useTeams';
+import { useTransientFlag } from '@/hooks/useTransientFlag';
+import { errMsg } from '@/lib/errors';
 
 export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
   const { data, isLoading } = useTeamShellAllowlist(teamId);
   const update = useUpdateTeamShellAllowlist(teamId);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, markSaved, resetSaved] = useTransientFlag();
+  // True once the admin has typed. Without this, a background refetch that
+  // returns genuinely different data (a second admin, a second tab) replaces
+  // the textarea mid-edit. Mirrors EgressAllowlistEditor.
+  const isDirtyRef = useRef(false);
 
   useEffect(() => {
-    if (data) {
+    if (data && !isDirtyRef.current) {
       setText(data.shellImageAllowlist.join('\n'));
     }
   }, [data]);
 
   async function handleSave() {
     setError(null);
-    setSaved(false);
+    resetSaved();
     const list = text
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean);
     try {
       await update.mutateAsync(list);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
+      isDirtyRef.current = false;
+      markSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update allowlist');
+      setError(errMsg(err, 'Failed to update allowlist'));
     }
   }
 
@@ -51,7 +57,10 @@ export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
         <>
           <textarea
             className="min-h-[120px] w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none transition-colors focus:border-ember-400"
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              isDirtyRef.current = true;
+              setText(e.target.value);
+            }}
             placeholder="ghcr.io/acme/ci-tools:latest"
             value={text}
           />

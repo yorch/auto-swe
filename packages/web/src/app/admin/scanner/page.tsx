@@ -17,6 +17,8 @@ import {
   useScannerPatterns,
   useUpdateScannerPattern,
 } from '@/hooks/useAdmin';
+import { errMsg } from '@/lib/errors';
+import { formatDate } from '@/lib/utils';
 
 type PatternType =
   | 'INJECTION'
@@ -60,7 +62,7 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
       onClose();
       setForm({ flags: 'i', label: '', pattern: '', type: 'INJECTION' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create pattern');
+      setError(errMsg(err, 'Failed to create pattern'));
     }
   }
 
@@ -169,7 +171,7 @@ function PatternDetailModal({
       setEditing(false);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save pattern');
+      setError(errMsg(err, 'Failed to save pattern'));
     }
   }
 
@@ -270,8 +272,8 @@ function PatternDetailModal({
 
           <div className="flex items-center justify-between border-t border-ink-700 pt-4">
             <div className="space-y-0.5 text-xs text-paper-500">
-              <div>Created {new Date(pattern.createdAt).toLocaleDateString()}</div>
-              <div>Updated {new Date(pattern.updatedAt).toLocaleDateString()}</div>
+              <div>Created {formatDate(pattern.createdAt)}</div>
+              <div>Updated {formatDate(pattern.updatedAt)}</div>
             </div>
             {!pattern.isBuiltIn && (
               <Button onClick={startEdit} variant="secondary">
@@ -310,7 +312,7 @@ function DeletePatternModal({
       await del.mutateAsync(pattern.id);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete pattern');
+      setError(errMsg(err, 'Failed to delete pattern'));
     }
   }
 

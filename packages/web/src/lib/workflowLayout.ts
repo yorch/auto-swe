@@ -9,7 +9,7 @@
  * fan-in/out cleanly, so we delegate to it and translate its results into
  * the {nodes, edges, width, height} shape the rest of the app already uses.
  */
-import type { Node, WorkflowSpec } from '@auto-swe/shared/workflow';
+import { type Node, nodeEdges, type WorkflowSpec } from '@auto-swe/shared/workflow';
 import dagre from 'dagre';
 
 export type EdgeKind =
@@ -27,7 +27,12 @@ export type EdgeKind =
 export interface LayoutEdge {
   from: string;
   to: string;
+  /** Styling/labelling bucket. */
   kind: EdgeKind;
+  /** The spec field this edge leaves through, and the source handle id the
+   *  node draws for it. Equal to `kind` except for a `humanDecision` option,
+   *  which is `options[i].next`. */
+  port: string;
 }
 
 export interface LayoutNode {
@@ -50,51 +55,28 @@ export interface LayoutResult {
 
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 88;
-export const RANK_X_SPACING = 240;
-export const NODE_Y_SPACING = 80;
 
+/**
+ * Outgoing edges of a node, in the shape this renderer needs.
+ *
+ * Traversal is not re-derived here: `nodeEdges` in the shared spec is the
+ * single source of truth for which fields of which node types are edges, and
+ * already backs the schema's ref validation and `validateSpec`'s reachability
+ * analysis. A second hand-maintained switch here is what let `agent`, `mcp`,
+ * `eval` and `containerStep` lose their outgoing edges in the rendered graph
+ * while shared had them right all along. This only maps field names onto the
+ * `EdgeKind` the renderer colours, labels and ports by.
+ */
 function collectEdges(node: Node, id: string): LayoutEdge[] {
-  const edges: LayoutEdge[] = [];
-  switch (node.type) {
-    case 'step':
-    case 'set':
-    case 'shell':
-      if (node.next) {
-        edges.push({ from: id, kind: 'next', to: node.next });
-      }
-      break;
-    case 'cond':
-      edges.push({ from: id, kind: 'onTrue', to: node.onTrue });
-      edges.push({ from: id, kind: 'onFalse', to: node.onFalse });
-      break;
-    case 'signal':
-      edges.push({ from: id, kind: 'onReceive', to: node.onReceive });
-      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
-      break;
-    case 'fanOut':
-      edges.push({ from: id, kind: 'subgraph', to: node.subgraph });
-      edges.push({ from: id, kind: 'join', to: node.join });
-      break;
-    case 'terminate':
-      break;
-    case 'humanApproval':
-      edges.push({ from: id, kind: 'onApprove', to: node.onApprove });
-      edges.push({ from: id, kind: 'onReject', to: node.onReject });
-      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
-      break;
-    case 'humanDecision':
-      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
-      for (const opt of node.options) {
-        edges.push({ from: id, kind: 'onSubmit', to: opt.next });
-      }
-      break;
-    case 'humanInput':
-    case 'humanReview':
-      edges.push({ from: id, kind: 'onSubmit', to: node.onSubmit });
-      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
-      break;
-  }
-  return edges;
+  return nodeEdges(node).map(([field, to]) => ({
+    from: id,
+    // `humanDecision` labels each option edge `options[i].next` and draws one
+    // handle per option, so the kind is only the styling bucket there. Every
+    // other field name is itself an EdgeKind and its own port.
+    kind: (field.startsWith('options[') ? 'onSubmit' : field) as EdgeKind,
+    port: field,
+    to,
+  }));
 }
 
 export function layoutSpec(spec: WorkflowSpec): LayoutResult {
@@ -172,72 +154,4 @@ export function layoutSpec(spec: WorkflowSpec): LayoutResult {
   };
 }
 
-export function nodeCategoryColor(node: Node): { fill: string; stroke: string; text: string } {
-  switch (node.type) {
-    case 'step':
-      return { fill: '#dbeafe', stroke: '#2563eb', text: '#1e3a8a' };
-    case 'agent':
-      // Indigo to distinguish the declarative agent node from generic steps.
-      return { fill: '#e0e7ff', stroke: '#4f46e5', text: '#312e81' };
-    case 'mcp':
-      // Cyan/teal for the external MCP tool-call node.
-      return { fill: '#cffafe', stroke: '#0e7490', text: '#164e63' };
-    case 'eval':
-      // Green for the eval/scoring node.
-      return { fill: '#dcfce7', stroke: '#15803d', text: '#14532d' };
-    case 'set':
-      return { fill: '#fef3c7', stroke: '#d97706', text: '#78350f' };
-    case 'cond':
-      return { fill: '#ede9fe', stroke: '#7c3aed', text: '#4c1d95' };
-    case 'signal':
-      return { fill: '#cffafe', stroke: '#0891b2', text: '#155e75' };
-    case 'fanOut':
-      return { fill: '#dcfce7', stroke: '#16a34a', text: '#14532d' };
-    case 'shell':
-    case 'containerStep':
-      // Distinct red-orange to signal the elevated-permissions step type at a glance.
-      return { fill: '#ffe4e6', stroke: '#e11d48', text: '#881337' };
-    case 'terminate':
-      return { fill: '#fee2e2', stroke: '#dc2626', text: '#7f1d1d' };
-    case 'humanApproval':
-    case 'humanDecision':
-    case 'humanInput':
-    case 'humanReview':
-      return { fill: '#fef9c3', stroke: '#ca8a04', text: '#713f12' };
-  }
-}
-
 export type DiffKind = 'added' | 'removed' | 'changed';
-
-export function diffStrokeColor(kind: DiffKind | undefined): string | null {
-  switch (kind) {
-    case 'added':
-      return '#16a34a';
-    case 'removed':
-      return '#dc2626';
-    case 'changed':
-      return '#d97706';
-    default:
-      return null;
-  }
-}
-
-export function statusFill(status: string | undefined): string | undefined {
-  if (!status) {
-    return undefined;
-  }
-  switch (status) {
-    case 'RUNNING':
-      return '#3b82f6';
-    case 'PASSED':
-      return '#16a34a';
-    case 'FAILED':
-      return '#dc2626';
-    case 'SKIPPED':
-      return '#9ca3af';
-    case 'PENDING':
-      return '#a78bfa';
-    default:
-      return undefined;
-  }
-}

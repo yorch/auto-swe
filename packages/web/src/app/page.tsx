@@ -2,6 +2,7 @@
 
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
 import { WorkflowsByRepoChart } from '@/components/charts/WorkflowsByRepoChart';
@@ -15,7 +16,8 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useInbox } from '@/hooks/useInbox';
-import { useRepositories, useWorkflows } from '@/hooks/useWorkflows';
+import { useRepositories } from '@/hooks/useRepositories';
+import { useWorkflows } from '@/hooks/useRuns';
 import {
   groupWorkflowsByDate,
   groupWorkflowsByRepo,
@@ -44,13 +46,7 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
                 href={`/runs/${step.runId}`}
               >
                 <div className="flex min-w-0 items-baseline gap-3">
-                  <span
-                    className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider"
-                    style={{
-                      background: 'var(--color-amber-400)/15',
-                      color: 'var(--color-amber-400)',
-                    }}
-                  >
+                  <span className="shrink-0 rounded bg-amber-400/15 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-amber-400">
                     {step.kind}
                   </span>
                   <span className="truncate text-sm text-paper-200 group-hover:text-ember-400">
@@ -80,6 +76,7 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { data: workflows, isLoading } = useWorkflows();
   const { data: repos, isLoading: reposLoading } = useRepositories();
   const { data: inboxSteps } = useInbox();
@@ -124,11 +121,7 @@ export default function DashboardPage() {
         <PageHeader
           actions={
             <div className="flex items-center gap-2">
-              <Button
-                onClick={() => window.location.assign('/templates')}
-                size="sm"
-                variant="secondary"
-              >
+              <Button onClick={() => router.push('/templates')} size="sm" variant="secondary">
                 Browse workflows
               </Button>
               <Button

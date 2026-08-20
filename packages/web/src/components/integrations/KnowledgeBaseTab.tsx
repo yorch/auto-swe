@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import {
   type KnowledgeBaseConfigInput,
   type KnowledgeBaseProvider,
@@ -11,8 +12,8 @@ import {
   useUpdateKnowledgeBaseConfig,
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { ConfigField } from './ConfigField';
 import { SecretInput } from './SecretInput';
-import { SourceBadge } from './SourceBadge';
 
 const PROVIDER_HINTS: Record<
   KnowledgeBaseProvider,
@@ -104,7 +105,7 @@ export function KnowledgeBaseTab() {
   };
 
   if (isLoading) {
-    return <p className="text-sm text-paper-400">Loading…</p>;
+    return <LoadingState />;
   }
 
   return (
@@ -119,19 +120,12 @@ export function KnowledgeBaseTab() {
           knowledge base.
         </p>
         <div className="space-y-4">
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="kb-provider"
-            >
-              Provider
-              <SourceBadge source={sources.provider} />
-              {data?.provider && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.provider}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.provider || undefined}
+            id="kb-provider"
+            label="Provider"
+            source={sources.provider}
+          >
             <select
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs focus:border-ember-400 focus:outline-none"
               id="kb-provider"
@@ -145,20 +139,13 @@ export function KnowledgeBaseTab() {
               <option value="confluence">Confluence</option>
               <option value="notion">Notion</option>
             </select>
-          </div>
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="kb-enabled"
-            >
-              Enabled
-              <SourceBadge source={sources.enabled} />
-              {data?.enabled !== undefined && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.enabled ? 'yes' : 'no'}
-                </span>
-              )}
-            </label>
+          </ConfigField>
+          <ConfigField
+            current={data?.enabled === undefined ? undefined : data.enabled ? 'yes' : 'no'}
+            id="kb-enabled"
+            label="Enabled"
+            source={sources.enabled}
+          >
             <select
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs focus:border-ember-400 focus:outline-none"
               id="kb-enabled"
@@ -172,20 +159,13 @@ export function KnowledgeBaseTab() {
               <option value="true">Yes</option>
               <option value="false">No</option>
             </select>
-          </div>
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="kb-base-url"
-            >
-              Base URL
-              <SourceBadge source={sources.baseUrl} />
-              {data?.baseUrl && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.baseUrl}
-                </span>
-              )}
-            </label>
+          </ConfigField>
+          <ConfigField
+            current={data?.baseUrl || undefined}
+            id="kb-base-url"
+            label="Base URL"
+            source={sources.baseUrl}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="kb-base-url"
@@ -193,7 +173,7 @@ export function KnowledgeBaseTab() {
               placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
               value={baseUrl}
             />
-          </div>
+          </ConfigField>
           <div>
             <div className="flex items-center gap-3">
               <input
@@ -214,19 +194,12 @@ export function KnowledgeBaseTab() {
             </p>
           </div>
           {effectiveProvider === 'confluence' && (
-            <div>
-              <label
-                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                htmlFor="kb-email"
-              >
-                Email (Confluence only)
-                <SourceBadge source={sources.email} />
-                {data?.email && (
-                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                    current: {data.email}
-                  </span>
-                )}
-              </label>
+            <ConfigField
+              current={data?.email || undefined}
+              id="kb-email"
+              label="Email (Confluence only)"
+              source={sources.email}
+            >
               <input
                 className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                 id="kb-email"
@@ -234,7 +207,7 @@ export function KnowledgeBaseTab() {
                 placeholder="you@example.com (Confluence basic-auth user)"
                 value={email}
               />
-            </div>
+            </ConfigField>
           )}
           <SecretInput
             current={data?.apiToken ?? null}
@@ -245,19 +218,12 @@ export function KnowledgeBaseTab() {
             source={sources.apiToken}
             value={apiToken}
           />
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="kb-spaces"
-            >
-              Spaces
-              <SourceBadge source={sources.spaces} />
-              {data?.spaces && data.spaces.length > 0 && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.spaces.join(', ')}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.spaces?.length ? data.spaces.join(', ') : undefined}
+            id="kb-spaces"
+            label="Spaces"
+            source={sources.spaces}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="kb-spaces"
@@ -265,20 +231,13 @@ export function KnowledgeBaseTab() {
               placeholder={hints?.spaces ?? 'ENG, ARCH'}
               value={spacesRaw}
             />
-          </div>
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="kb-max-pages"
-            >
-              Max pages
-              <SourceBadge source={sources.maxPages} />
-              {data?.maxPages !== null && data?.maxPages !== undefined && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.maxPages}
-                </span>
-              )}
-            </label>
+          </ConfigField>
+          <ConfigField
+            current={data?.maxPages ?? undefined}
+            id="kb-max-pages"
+            label="Max pages"
+            source={sources.maxPages}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="kb-max-pages"
@@ -287,7 +246,7 @@ export function KnowledgeBaseTab() {
               placeholder="50"
               value={maxPages}
             />
-          </div>
+          </ConfigField>
         </div>
       </Card>
 
@@ -322,13 +281,13 @@ export function KnowledgeBaseTab() {
           </Button>
         </div>
         {testResult && (
-          <p className={`mt-2 text-sm ${testResult.ok ? 'text-emerald-400' : 'text-brick-400'}`}>
+          <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
             {testResult.ok ? '✓' : '✗'} {testResult.detail}
           </p>
         )}
       </Card>
 
-      {saved && <p className="text-sm text-emerald-400">Settings saved.</p>}
+      {saved && <p className="text-sm text-moss-400">Settings saved.</p>}
       {error && <p className="text-sm text-brick-400">{error}</p>}
 
       <div className="flex justify-end">

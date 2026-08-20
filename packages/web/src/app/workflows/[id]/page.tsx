@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { use } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useRunsForWorkRequest } from '@/hooks/useRuns';
-import { useWorkflow } from '@/hooks/useWorkflows';
+import { useRunsForWorkRequest, useWorkflow } from '@/hooks/useRuns';
 import { formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
 
 export default function WorkflowDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -30,13 +30,18 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Link className="text-ember-400 hover:underline text-sm" href="/workflows">
-          &larr; Workflows
-        </Link>
-        <h2 className="text-2xl font-bold">{workflow.repository?.repoName ?? 'Workflow'}</h2>
-        <StatusBadge status={workflow.currentStatus} />
-      </div>
+      <PageHeader
+        actions={
+          <>
+            <StatusBadge status={workflow.currentStatus} />
+            <Link className="text-ember-400 hover:underline text-sm" href="/workflows">
+              &larr; Workflows
+            </Link>
+          </>
+        }
+        chapter="§ Workflows"
+        title={workflow.repository?.repoName ?? 'Workflow'}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>

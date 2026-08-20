@@ -5,10 +5,13 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
+import { Th } from '@/components/ui/Th';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
-import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useWorkflows';
+import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
+import { errMsg } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
@@ -40,12 +43,7 @@ export default function UsersPage() {
   }, [users]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-        <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-        loading users…
-      </div>
-    );
+    return <LoadingState message="loading users…" />;
   }
 
   const handleApprove = (id: string) => updateUser.mutate({ id, patch: { isActive: true } });
@@ -61,7 +59,7 @@ export default function UsersPage() {
       setInviteEmail('');
       setInviteRole('ENGINEER');
     } catch (err) {
-      setInviteError(err instanceof Error ? err.message : 'invite failed');
+      setInviteError(errMsg(err, 'invite failed'));
     }
   };
 
@@ -250,18 +248,5 @@ export default function UsersPage() {
 
       <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
     </div>
-  );
-}
-
-function Th({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
-  return (
-    <th
-      className={cn(
-        'px-4 py-3 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500',
-        align === 'right' ? 'text-right' : 'text-left'
-      )}
-    >
-      {children}
-    </th>
   );
 }

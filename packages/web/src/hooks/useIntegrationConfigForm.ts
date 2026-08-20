@@ -1,11 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-
-/** Narrow an unknown thrown value to a message string. Shared by every tab. */
-export function errMsg(err: unknown, fallback = 'Request failed'): string {
-  return err instanceof Error ? err.message : fallback;
-}
+import { errMsg } from '@/lib/errors';
 
 /** The `{ ok, detail }` shape every `test<X>Connection()` helper resolves to. */
 export interface TestResult {

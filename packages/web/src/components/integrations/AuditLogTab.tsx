@@ -1,10 +1,11 @@
 'use client';
 
+import { LoadingState } from '@/components/ui/LoadingState';
 import { useConfigAuditLog } from '@/hooks/useAdminConfig';
 import { formatDate } from '@/lib/utils';
 
 const ACTION_COLORS = {
-  CREATE: 'text-emerald-400',
+  CREATE: 'text-moss-400',
   DELETE: 'text-brick-400',
   UPDATE: 'text-amber-400',
 } as const;
@@ -47,7 +48,7 @@ export function AuditLogTab() {
   const { data: entries, isLoading, error } = useConfigAuditLog(200);
 
   if (isLoading) {
-    return <p className="text-sm text-paper-400">Loading…</p>;
+    return <LoadingState />;
   }
 
   if (error) {

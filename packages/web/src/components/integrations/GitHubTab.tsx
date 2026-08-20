@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { LoadingState } from '@/components/ui/LoadingState';
 import {
   type GitHubConfigInput,
   testGitHubConnection,
@@ -12,9 +13,9 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { API_BASE } from '@/lib/config';
+import { ConfigField } from './ConfigField';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
-import { SourceBadge } from './SourceBadge';
 import { UrlRow } from './UrlRow';
 
 export function GitHubTab() {
@@ -102,7 +103,7 @@ export function GitHubTab() {
   };
 
   if (isLoading) {
-    return <p className="text-sm text-paper-400">Loading…</p>;
+    return <LoadingState />;
   }
 
   return (
@@ -156,7 +157,7 @@ export function GitHubTab() {
         </div>
 
         {testResult && (
-          <p className={`mt-2 text-sm ${testResult.ok ? 'text-emerald-400' : 'text-brick-400'}`}>
+          <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
             {testResult.ok ? '✓' : '✗'} {testResult.detail}
           </p>
         )}
@@ -172,19 +173,12 @@ export function GitHubTab() {
           instructions.
         </p>
         <div className="space-y-4">
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="gh-app-id"
-            >
-              App ID
-              <SourceBadge source={sources.appId} />
-              {data?.appId && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.appId}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.appId || undefined}
+            id="gh-app-id"
+            label="App ID"
+            source={sources.appId}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="gh-app-id"
@@ -192,20 +186,13 @@ export function GitHubTab() {
               placeholder="12345678"
               value={appId}
             />
-          </div>
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="gh-app-client-id"
-            >
-              Client ID
-              <SourceBadge source={sources.appClientId} />
-              {data?.appClientId && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.appClientId}
-                </span>
-              )}
-            </label>
+          </ConfigField>
+          <ConfigField
+            current={data?.appClientId || undefined}
+            id="gh-app-client-id"
+            label="Client ID"
+            source={sources.appClientId}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="gh-app-client-id"
@@ -213,7 +200,7 @@ export function GitHubTab() {
               placeholder="Iv1.abc..."
               value={appClientId}
             />
-          </div>
+          </ConfigField>
           <SecretInput
             current={data?.appClientSecret ?? null}
             id="gh-app-client-secret"
@@ -222,19 +209,12 @@ export function GitHubTab() {
             source={sources.appClientSecret}
             value={appClientSecret}
           />
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="gh-app-private-key"
-            >
-              Private key (PEM)
-              <SourceBadge source={sources.appPrivateKey} />
-              {data?.appPrivateKey && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: ****{data.appPrivateKey.lastFour}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.appPrivateKey ? `****${data.appPrivateKey.lastFour}` : undefined}
+            id="gh-app-private-key"
+            label="Private key (PEM)"
+            source={sources.appPrivateKey}
+          >
             <textarea
               className="w-full resize-none rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="gh-app-private-key"
@@ -243,20 +223,13 @@ export function GitHubTab() {
               rows={4}
               value={appPrivateKey}
             />
-          </div>
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="gh-app-installation-id"
-            >
-              Installation ID
-              <SourceBadge source={sources.appInstallationId} />
-              {data?.appInstallationId && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.appInstallationId}
-                </span>
-              )}
-            </label>
+          </ConfigField>
+          <ConfigField
+            current={data?.appInstallationId || undefined}
+            id="gh-app-installation-id"
+            label="Installation ID"
+            source={sources.appInstallationId}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="gh-app-installation-id"
@@ -264,20 +237,13 @@ export function GitHubTab() {
               placeholder="12345678"
               value={appInstallationId}
             />
-          </div>
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="gh-auth-mode"
-            >
-              Auth mode
-              <SourceBadge source={sources.authMode} />
-              {data?.authMode && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.authMode}
-                </span>
-              )}
-            </label>
+          </ConfigField>
+          <ConfigField
+            current={data?.authMode || undefined}
+            id="gh-auth-mode"
+            label="Auth mode"
+            source={sources.authMode}
+          >
             <select
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs text-paper-200 focus:border-ember-400 focus:outline-none"
               id="gh-auth-mode"
@@ -288,7 +254,7 @@ export function GitHubTab() {
               <option value="pat">pat (always use PAT)</option>
               <option value="app">app (always use App)</option>
             </select>
-          </div>
+          </ConfigField>
         </div>
       </Card>
 
@@ -298,19 +264,12 @@ export function GitHubTab() {
         </CardHeader>
         <p className="mb-4 text-xs text-paper-500">Leave blank to use github.com defaults.</p>
         <div className="space-y-4">
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="gh-base-url"
-            >
-              Base URL
-              <SourceBadge source={sources.baseUrl} />
-              {data?.baseUrl && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.baseUrl}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.baseUrl || undefined}
+            id="gh-base-url"
+            label="Base URL"
+            source={sources.baseUrl}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="gh-base-url"
@@ -318,20 +277,13 @@ export function GitHubTab() {
               placeholder="https://github.example.com"
               value={baseUrl}
             />
-          </div>
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="gh-api-url"
-            >
-              API URL
-              <SourceBadge source={sources.apiUrl} />
-              {data?.apiUrl && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.apiUrl}
-                </span>
-              )}
-            </label>
+          </ConfigField>
+          <ConfigField
+            current={data?.apiUrl || undefined}
+            id="gh-api-url"
+            label="API URL"
+            source={sources.apiUrl}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="gh-api-url"
@@ -339,7 +291,7 @@ export function GitHubTab() {
               placeholder="https://api.github.example.com"
               value={apiUrl}
             />
-          </div>
+          </ConfigField>
         </div>
       </Card>
 
@@ -352,19 +304,12 @@ export function GitHubTab() {
           effect.
         </p>
         <div className="space-y-4">
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="gh-oauth-client-id"
-            >
-              Client ID
-              <SourceBadge source={sources.oauthClientId} />
-              {data?.oauthClientId && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.oauthClientId}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.oauthClientId || undefined}
+            id="gh-oauth-client-id"
+            label="Client ID"
+            source={sources.oauthClientId}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="gh-oauth-client-id"
@@ -372,7 +317,7 @@ export function GitHubTab() {
               placeholder="Iv1.abc..."
               value={oauthClientId}
             />
-          </div>
+          </ConfigField>
           <SecretInput
             current={data?.oauthClientSecret ?? null}
             id="gh-oauth-client-secret"
@@ -400,7 +345,7 @@ export function GitHubTab() {
       </Card>
 
       {requiresRestart && <RestartWarning />}
-      {saved && !requiresRestart && <p className="text-sm text-emerald-400">Settings saved.</p>}
+      {saved && !requiresRestart && <p className="text-sm text-moss-400">Settings saved.</p>}
       {error && <p className="text-sm text-brick-400">{error}</p>}
 
       <div className="flex justify-end">

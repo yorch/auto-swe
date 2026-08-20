@@ -11,6 +11,7 @@ import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { errMsg } from '@/lib/errors';
 import { OnFailSection, type OnFailValue, SchemaAwareForm } from './inspectorFields';
 
 export function StepConfigSection({
@@ -128,13 +129,18 @@ export function FanOutSection({
 }) {
   const overFrom = 'from' in node.over ? (node.over as { from: string }).from : '';
   const [exportsText, setExportsText] = useState<string>(() => (node.exports ?? []).join('\n'));
-  const prevExportsRef = useRef(node.exports);
+  // Re-seed only when the node's own exports actually change. Keyed on the
+  // serialized value rather than the array identity, so a parent re-render that
+  // hands back an equal-but-new array cannot wipe what the user is typing —
+  // and so the effect has a real dependency instead of running every render.
+  const serializedExports = (node.exports ?? []).join('\n');
+  const seededExportsRef = useRef(serializedExports);
   useEffect(() => {
-    if (node.exports !== prevExportsRef.current) {
-      prevExportsRef.current = node.exports;
-      setExportsText((node.exports ?? []).join('\n'));
+    if (seededExportsRef.current !== serializedExports) {
+      seededExportsRef.current = serializedExports;
+      setExportsText(serializedExports);
     }
-  });
+  }, [serializedExports]);
 
   return (
     <div className="space-y-3">
@@ -411,12 +417,20 @@ export function SetSection({
   values: Record<string, unknown>;
   onChange: (v: Record<string, unknown>) => void;
 }) {
-  const [draft, setDraft] = useState(JSON.stringify(values, null, 2));
+  const serialized = JSON.stringify(values, null, 2);
+  const [draft, setDraft] = useState(serialized);
   const [err, setErr] = useState<string | null>(null);
 
+  // `values` is a fresh object on every parent render, so re-seeding on its
+  // identity reset the JSON the user was mid-way through typing. Key on the
+  // serialized value instead: it only changes when the node's values really do.
+  const seededRef = useRef(serialized);
   useEffect(() => {
-    setDraft(JSON.stringify(values, null, 2));
-  }, [values]);
+    if (seededRef.current !== serialized) {
+      seededRef.current = serialized;
+      setDraft(serialized);
+    }
+  }, [serialized]);
 
   return (
     <div>
@@ -439,7 +453,7 @@ export function SetSection({
               setErr('Must be a JSON object');
             }
           } catch (e) {
-            setErr(e instanceof Error ? e.message : 'invalid JSON');
+            setErr(errMsg(e, 'invalid JSON'));
           }
         }}
         onChange={(e) => setDraft(e.target.value)}

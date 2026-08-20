@@ -9,7 +9,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
-import { LayoutToggle, type RunDetailLayout } from '@/components/LayoutToggle';
+import { LayoutToggle } from '@/components/LayoutToggle';
 import { FailureCard } from '@/components/runs/FailureCard';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
@@ -19,12 +19,9 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
-import {
-  useCancelWorkflowRun,
-  useInbox,
-  useRetryWorkRequest,
-  useWorkflowRun,
-} from '@/hooks/useWorkflows';
+import { useInbox } from '@/hooks/useInbox';
+import { useCancelWorkflowRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useRuns';
+import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { cn, formatDuration, formatRelativeTime } from '@/lib/utils';
 import { SplitRunPanel } from './SplitRunPanel';
 import { TracesTab } from './TracesTab';
@@ -460,14 +457,19 @@ function LayoutB({
   );
 }
 
+/** Wall-clock seconds a 1× replay takes to scrub the whole run. */
+const PLAY_DURATION_S = 11;
+
 // ── Direction C — Flight Recorder ──────────────────────────────────────────────
 
 function WaterfallBar({
   currentMs,
+  runStartMs,
   step,
   totalMs,
 }: {
   currentMs: number;
+  runStartMs: number;
   step: WorkflowStepRecord;
   totalMs: number;
 }) {
@@ -476,18 +478,15 @@ function WaterfallBar({
   }
 
   const startMs = new Date(step.startedAt).getTime();
-  const runStartMs = startMs; // relative to first step
-
   const endMs = step.endedAt ? new Date(step.endedAt).getTime() : startMs + totalMs * 0.1;
   const stepDurationMs = endMs - startMs;
 
-  const leftPct = 0;
+  // Offset from the run's start — without it every bar drew flush left and the
+  // panel showed durations stacked on top of each other rather than a timeline.
+  const leftPct = Math.min(Math.max(((startMs - runStartMs) / totalMs) * 100, 0), 100);
   const widthPct = Math.max(2, (stepDurationMs / totalMs) * 100);
   const isFailed = step.status === 'FAILED';
   const isSkipped = step.status === 'SKIPPED';
-
-  void runStartMs;
-  void leftPct;
 
   return (
     <div className="flex items-center gap-3 py-1.5">
@@ -511,9 +510,9 @@ function WaterfallBar({
                 : 'var(--color-dust-400)',
             borderRadius: '4px',
             height: '100%',
-            left: 0,
+            left: `${leftPct}%`,
             position: 'absolute',
-            width: `${Math.min(widthPct, 100)}%`,
+            width: `${Math.min(widthPct, 100 - leftPct)}%`,
           }}
         />
         {/* Playhead indicator */}
@@ -560,6 +559,12 @@ function LayoutC({
     return new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime();
   }, [run.startedAt, run.endedAt]);
 
+  /** Epoch ms of the run's start — the origin every waterfall bar offsets from. */
+  const runStartMs = useMemo(
+    () => (run.startedAt ? new Date(run.startedAt).getTime() : 0),
+    [run.startedAt]
+  );
+
   const [playhead, setPlayhead] = useState(0); // 0–1
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<1 | 4 | 16>(1);
@@ -567,8 +572,6 @@ function LayoutC({
   const feedRef = useRef<HTMLDivElement>(null);
 
   const currentMs = playhead * totalMs;
-
-  const PLAY_DURATION_S = 11; // 1× plays entire run in ~11s
 
   useEffect(() => {
     if (playing) {
@@ -775,7 +778,13 @@ function LayoutC({
             <div className="px-5 py-3 border-b border-ink-600/30 shrink-0">
               <div className="kicker mb-2">Step timing</div>
               {run.steps.map((s: WorkflowStepRecord) => (
-                <WaterfallBar currentMs={currentMs} key={s.id} step={s} totalMs={totalMs} />
+                <WaterfallBar
+                  currentMs={currentMs}
+                  key={s.id}
+                  runStartMs={runStartMs}
+                  step={s}
+                  totalMs={totalMs}
+                />
               ))}
             </div>
           )}
@@ -840,7 +849,7 @@ export default function RunDetailPage({ params }: PageProps) {
   const cancelRun = useCancelWorkflowRun(id);
   const retryRun = useRetryWorkRequest();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [layout, setLayout] = useState<RunDetailLayout>('A');
+  const { layout, setLayout } = useUserPreferences();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const { data: inboxSteps } = useInbox();
 
@@ -927,7 +936,7 @@ export default function RunDetailPage({ params }: PageProps) {
     return <div className="text-center py-12 text-paper-400">Run not found</div>;
   }
 
-  const traces = (run as WorkflowRunDetail).traces ?? [];
+  const traces = run.traces ?? [];
   const failedStep = getFailedStep(run.steps);
 
   return (

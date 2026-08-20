@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
 import {
@@ -12,6 +13,8 @@ import {
   useDeleteLesson,
   useLessons,
 } from '@/hooks/useLessons';
+import { errMsg } from '@/lib/errors';
+import { formatDate } from '@/lib/utils';
 
 function RepoStatsRow({
   repo,
@@ -42,7 +45,7 @@ function RepoStatsRow({
       </td>
       <td className="py-3 pr-4 font-mono text-xs text-paper-500">
         {repo.lastConsolidatedAt ? (
-          new Date(repo.lastConsolidatedAt).toLocaleString()
+          formatDate(repo.lastConsolidatedAt)
         ) : (
           <span className="text-paper-700">never</span>
         )}
@@ -68,6 +71,7 @@ export default function AdminLessonsPage() {
   const deleteLesson = useDeleteLesson();
 
   const [triggeringAll, setTriggeringAll] = useState(false);
+  const [deleting, setDeleting] = useState<{ id: string; summary: string } | null>(null);
   const [triggerError, setTriggerError] = useState<string | null>(null);
 
   const handleTriggerAll = async () => {
@@ -77,7 +81,7 @@ export default function AdminLessonsPage() {
       await triggerConsolidationNow();
       void refetchStats();
     } catch (err) {
-      setTriggerError(err instanceof Error ? err.message : 'Failed to trigger');
+      setTriggerError(errMsg(err, 'Failed to trigger'));
     } finally {
       setTriggeringAll(false);
     }
@@ -86,10 +90,6 @@ export default function AdminLessonsPage() {
   const handleTriggerRepo = async (repoId: string) => {
     await triggerRepoConsolidation(repoId);
     void refetchStats();
-  };
-
-  const handleDelete = async (id: string) => {
-    await deleteLesson.mutateAsync(id);
   };
 
   const totalActive = stats?.reduce((sum, r) => sum + r.activeCount, 0) ?? 0;
@@ -132,7 +132,7 @@ export default function AdminLessonsPage() {
                 consolidation.schedule.paused ? (
                   <span className="text-paper-500">Paused</span>
                 ) : (
-                  <span className="text-emerald-400">Active</span>
+                  <span className="text-moss-400">Active</span>
                 )
               ) : (
                 <span className="text-paper-700">Not set</span>
@@ -140,7 +140,7 @@ export default function AdminLessonsPage() {
             </div>
             {consolidation?.schedule.nextRunAt && (
               <div className="mt-0.5 font-mono text-[10px] text-paper-600">
-                Next: {new Date(consolidation.schedule.nextRunAt).toLocaleString()}
+                Next: {formatDate(consolidation.schedule.nextRunAt)}
               </div>
             )}
           </div>
@@ -221,7 +221,7 @@ export default function AdminLessonsPage() {
                       </span>
                     )}
                     <span className="ml-auto font-mono text-[10px] text-paper-700">
-                      {new Date(lesson.createdAt).toLocaleDateString()}
+                      {formatDate(lesson.createdAt)}
                     </span>
                   </div>
                   <p className="mt-1 text-sm text-paper-200">{lesson.lessonSummary}</p>
@@ -231,7 +231,7 @@ export default function AdminLessonsPage() {
                 </div>
                 <button
                   className="shrink-0 font-mono text-[10px] text-paper-700 hover:text-brick-400"
-                  onClick={() => handleDelete(lesson.id)}
+                  onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
                   type="button"
                 >
                   delete
@@ -241,6 +241,20 @@ export default function AdminLessonsPage() {
           </div>
         )}
       </Card>
+
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message={`Delete "${deleting?.summary}"? This cannot be undone.`}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => {
+          if (deleting) {
+            deleteLesson.mutate(deleting.id);
+          }
+        }}
+        open={deleting !== null}
+        title="Delete lesson"
+      />
     </div>
   );
 }

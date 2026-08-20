@@ -36,6 +36,7 @@ import {
   useMemo,
   useRef,
 } from 'react';
+import { TOKEN } from '@/lib/palette';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
 import { specToFlow } from './specToFlow';
@@ -181,15 +182,15 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
         proOptions={{ hideAttribution: true }}
         zoomOnDoubleClick={false}
       >
-        <Background color="#1f2530" gap={24} size={1.2} variant={BackgroundVariant.Dots} />
+        <Background color={TOKEN.ink600} gap={24} size={1.2} variant={BackgroundVariant.Dots} />
         <MiniMap
-          maskColor="rgba(7,9,12,0.85)"
-          nodeColor={() => '#171c26'}
-          nodeStrokeColor="#2a323f"
+          maskColor="rgba(10, 12, 18, 0.85)"
+          nodeColor={() => TOKEN.ink700}
+          nodeStrokeColor={TOKEN.ink500}
           pannable
           style={{
-            background: '#0b0e13',
-            border: '1px solid #1f2530',
+            background: TOKEN.ink900,
+            border: `1px solid ${TOKEN.ink600}`,
           }}
           zoomable
         />

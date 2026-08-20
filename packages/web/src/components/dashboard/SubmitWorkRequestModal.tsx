@@ -1,11 +1,14 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { useCreateWorkRequest, useRepositories } from '@/hooks/useWorkflows';
+import { useRepositories } from '@/hooks/useRepositories';
+import { useCreateWorkRequest } from '@/hooks/useRuns';
+import { errMsg } from '@/lib/errors';
 
 type BudgetTier = 'STANDARD' | 'LARGE' | 'EPIC';
 
@@ -25,7 +28,6 @@ export function SubmitWorkRequestModal({
   defaultRepoId?: string;
 }) {
   const router = useRouter();
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const { data: allRepos = [] } = useRepositories();
   const repos = useMemo(() => allRepos.filter((r) => !r.type || r.type === 'git_repo'), [allRepos]);
   const mutation = useCreateWorkRequest();
@@ -35,19 +37,6 @@ export function SubmitWorkRequestModal({
   const [repoId, setRepoId] = useState('');
   const [budgetTier, setBudgetTier] = useState<BudgetTier>('STANDARD');
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    if (open && !dialog.open) {
-      dialog.showModal();
-    }
-    if (!open && dialog.open) {
-      dialog.close();
-    }
-  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -92,28 +81,19 @@ export function SubmitWorkRequestModal({
         router.push(`/workflows/${newId}`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit work request');
+      setError(errMsg(err, 'Failed to submit work request'));
     }
   }
 
   return (
-    <dialog
-      className="m-auto w-[min(560px,92vw)] rounded-sm border border-ink-500 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/70"
+    <Modal
+      eyebrow="§ New work request"
       onClose={handleClose}
-      ref={dialogRef}
+      open={open}
+      subtitle="The Implementer agent will clone the repo, write code + tests in a Docker workspace, run the review network, and open a pull request for human merge."
+      title="Send the agent a ticket."
     >
-      <form className="space-y-6 p-6" onSubmit={handleSubmit}>
-        <header className="space-y-1">
-          <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-paper-500">
-            § New work request
-          </div>
-          <h2 className="font-display text-2xl text-paper-50">Send the agent a ticket.</h2>
-          <p className="text-xs text-paper-500">
-            The Implementer agent will clone the repo, write code + tests in a Docker workspace, run
-            the review network, and open a pull request for human merge.
-          </p>
-        </header>
-
+      <form className="space-y-6" onSubmit={handleSubmit}>
         <Input
           autoFocus
           label="External ticket ID"
@@ -228,6 +208,6 @@ export function SubmitWorkRequestModal({
           </Button>
         </div>
       </form>
-    </dialog>
+    </Modal>
   );
 }

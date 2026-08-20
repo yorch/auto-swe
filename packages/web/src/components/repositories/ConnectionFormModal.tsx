@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { useCreateRepository, useTeams, useUpdateRepository } from '@/hooks/useWorkflows';
+import { useCreateRepository, useUpdateRepository } from '@/hooks/useRepositories';
+import { useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
+import { errMsg } from '@/lib/errors';
 
 export interface ConnectionPrefill {
   organizationName?: string;
@@ -171,7 +173,7 @@ export function ConnectionFormModal({
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save connection');
+      setError(errMsg(err, 'Failed to save connection'));
     }
   }
 

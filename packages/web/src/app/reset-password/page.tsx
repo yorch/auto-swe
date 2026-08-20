@@ -6,6 +6,7 @@ import { Suspense, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { errMsg } from '@/lib/errors';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function ResetPasswordPage() {
@@ -52,7 +53,7 @@ function ResetPasswordInner() {
       // Tiny pause so the user sees the success state, then bounce to login.
       setTimeout(() => router.replace('/login'), 1500);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to reset password');
+      setError(errMsg(err, 'Failed to reset password'));
     } finally {
       setLoading(false);
     }

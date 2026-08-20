@@ -1,7 +1,7 @@
 'use client';
 
 import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
-import { useCallback, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { formatDuration } from '@/lib/utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -104,6 +104,68 @@ function CollapsibleSection({
   );
 }
 
+// ── Trace body blocks ─────────────────────────────────────────────────────────
+
+const BODY_LIMIT = 3000;
+
+/**
+ * The mono block every trace body renders into.
+ *
+ * `radius` is a prop only because the call sites disagree: four round to 2px
+ * and the tool_call fallback branch to 6px. That divergence predates this
+ * component; collapsing it changes what the page renders, so it is a design
+ * call rather than part of extracting the duplicate markup.
+ */
+function TracePre({ children, radius }: { children: ReactNode; radius: '2px' | '6px' }) {
+  return (
+    <pre
+      className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
+      style={{
+        background: 'var(--color-ink-900)',
+        border: '1px solid var(--color-ink-500)',
+        borderRadius: radius,
+        fontFamily: 'var(--font-mono)',
+        fontSize: '10px',
+        lineHeight: 1.5,
+      }}
+    >
+      {children}
+    </pre>
+  );
+}
+
+/** Caps a body at `BODY_LIMIT`, marking the cut with a trailing ellipsis line. */
+function capped(text: string): string {
+  return text.length > BODY_LIMIT ? `${text.slice(0, BODY_LIMIT)}\n…` : text;
+}
+
+/**
+ * The red banner carrying `trace.error`.
+ *
+ * `tone` mirrors the same pre-existing divergence as `TracePre`'s `radius`:
+ * the activity_event branch tints with oklch at 2px, the fallback branch with
+ * an rgba brick-400 at 6px, and the two reds are not the same red.
+ */
+function TraceErrorBanner({ children, tone }: { children: ReactNode; tone: 'oklch' | 'brick' }) {
+  const oklch = tone === 'oklch';
+  return (
+    <div
+      className="text-brick-400 px-2 py-1.5"
+      style={{
+        background: oklch ? 'oklch(0.64 0.17 28 / 0.09)' : 'rgba(255, 122, 122, 0.09)',
+        border: oklch
+          ? '1px solid oklch(0.64 0.17 28 / 0.3)'
+          : '1px solid rgba(255, 122, 122, 0.3)',
+        borderRadius: oklch ? '2px' : '6px',
+        fontFamily: 'var(--font-mono)',
+        fontSize: '10px',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 // ── TruncatedText ─────────────────────────────────────────────────────────────
 
 const TRUNCATE_LIMIT = 2000;
@@ -115,20 +177,10 @@ function TruncatedText({ text }: { text: string }) {
 
   return (
     <>
-      <pre
-        className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
-        style={{
-          background: 'var(--color-ink-900)',
-          border: '1px solid var(--color-ink-500)',
-          borderRadius: '2px',
-          fontFamily: 'var(--font-mono)',
-          fontSize: '10px',
-          lineHeight: 1.5,
-        }}
-      >
+      <TracePre radius="2px">
         {displayed}
         {isTruncated && !expanded ? '…' : ''}
-      </pre>
+      </TracePre>
       {isTruncated && (
         <button
           className="text-dust-400 hover:text-dust-300 transition-colors mt-0.5"
@@ -169,20 +221,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
 
     return (
       <div className="mt-2 space-y-2">
-        {trace.error && (
-          <div
-            className="text-brick-400 px-2 py-1.5"
-            style={{
-              background: 'oklch(0.64 0.17 28 / 0.09)',
-              border: '1px solid oklch(0.64 0.17 28 / 0.3)',
-              borderRadius: '2px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '10px',
-            }}
-          >
-            {trace.error}
-          </div>
-        )}
+        {trace.error && <TraceErrorBanner tone="oklch">{trace.error}</TraceErrorBanner>}
         {hasRequest && (
           <CollapsibleSection defaultOpen={false} label="Request">
             <div className="space-y-1.5">
@@ -213,20 +252,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
         )}
         {outputText && (
           <CollapsibleSection defaultOpen={true} label="Response">
-            <pre
-              className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
-              style={{
-                background: 'var(--color-ink-900)',
-                border: '1px solid var(--color-ink-500)',
-                borderRadius: '2px',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10px',
-                lineHeight: 1.5,
-              }}
-            >
-              {outputText.slice(0, 3000)}
-              {outputText.length > 3000 ? '\n…' : ''}
-            </pre>
+            <TracePre radius="2px">{capped(outputText)}</TracePre>
           </CollapsibleSection>
         )}
       </div>
@@ -249,20 +275,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
 
     return (
       <div className="mt-2 space-y-1.5">
-        {trace.error && (
-          <div
-            className="text-brick-400 px-2 py-1.5"
-            style={{
-              background: 'oklch(0.64 0.17 28 / 0.09)',
-              border: '1px solid oklch(0.64 0.17 28 / 0.3)',
-              borderRadius: '2px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '10px',
-            }}
-          >
-            {trace.error}
-          </div>
-        )}
+        {trace.error && <TraceErrorBanner tone="oklch">{trace.error}</TraceErrorBanner>}
         {inputText && (
           <div>
             <div
@@ -271,38 +284,10 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
             >
               INPUT
             </div>
-            <pre
-              className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
-              style={{
-                background: 'var(--color-ink-900)',
-                border: '1px solid var(--color-ink-500)',
-                borderRadius: '2px',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10px',
-                lineHeight: 1.5,
-              }}
-            >
-              {inputText.slice(0, 3000)}
-              {inputText.length > 3000 ? '\n…' : ''}
-            </pre>
+            <TracePre radius="2px">{capped(inputText)}</TracePre>
           </div>
         )}
-        {outputText && (
-          <pre
-            className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
-            style={{
-              background: 'var(--color-ink-900)',
-              border: '1px solid var(--color-ink-500)',
-              borderRadius: '2px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '10px',
-              lineHeight: 1.5,
-            }}
-          >
-            {outputText.slice(0, 3000)}
-            {outputText.length > 3000 ? '\n…' : ''}
-          </pre>
-        )}
+        {outputText && <TracePre radius="2px">{capped(outputText)}</TracePre>}
       </div>
     );
   }
@@ -320,36 +305,8 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
 
   return (
     <div className="mt-2 space-y-1.5">
-      {trace.error && (
-        <div
-          className="text-brick-400 px-2 py-1.5"
-          style={{
-            background: 'rgba(255, 122, 122, 0.09)',
-            border: '1px solid rgba(255, 122, 122, 0.3)',
-            borderRadius: '6px',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '10px',
-          }}
-        >
-          {trace.error}
-        </div>
-      )}
-      {text && (
-        <pre
-          className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
-          style={{
-            background: 'var(--color-ink-900)',
-            border: '1px solid var(--color-ink-500)',
-            borderRadius: '6px',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '10px',
-            lineHeight: 1.5,
-          }}
-        >
-          {text.slice(0, 3000)}
-          {text.length > 3000 ? '\n…' : ''}
-        </pre>
-      )}
+      {trace.error && <TraceErrorBanner tone="brick">{trace.error}</TraceErrorBanner>}
+      {text && <TracePre radius="6px">{capped(text)}</TracePre>}
     </div>
   );
 }

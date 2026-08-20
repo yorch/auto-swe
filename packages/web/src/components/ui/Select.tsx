@@ -1,6 +1,6 @@
 import type { SelectHTMLAttributes } from 'react';
 import { cn } from '@/lib/utils';
-import { FieldWrapper } from './FieldWrapper';
+import { FieldWrapper, fieldDescribedBy } from './FieldWrapper';
 
 type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
   label?: string;
@@ -11,13 +11,7 @@ type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
 export function Select({ label, hint, error, className, id, children, ...props }: SelectProps) {
   const selectId = id ?? props.name ?? label?.toLowerCase().replace(/\s+/g, '-');
 
-  const describedBy =
-    [
-      hint && !error && selectId ? `${selectId}-hint` : null,
-      error && selectId ? `${selectId}-error` : null,
-    ]
-      .filter(Boolean)
-      .join(' ') || undefined;
+  const describedBy = fieldDescribedBy(selectId, hint, error);
 
   const selectEl = (
     <select

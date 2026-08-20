@@ -149,21 +149,25 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/app/page.tsx` | Dashboard home — KPIs, "needs attention" queue, recent activity |
-| `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status; bottom panel toggles between split-panel and inline-accordion layouts, persisted per user |
+| `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status; bottom panel toggles between three layouts (split console, transcript, flight recorder), persisted per user via `/api/v1/me/preferences` |
 | `src/app/templates/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
 | `src/app/inbox/` | HITL inbox — pending human steps with respond forms |
 | `src/app/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
 | `src/app/admin/` | Model config, integrations, workflow defaults, skills, agents + agent library, schedules, access tokens, sessions, memory, scanner patterns, security events, MCP connections, Slack channels, organizations, bundles, evals |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
 | `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team) |
-| `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `LoadingState`, `Stat`, `StatusBadge` |
+| `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `LoadingState`, `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
+| `src/lib/palette.ts` | The theme's colours as checked literals, for the SVG contexts that cannot resolve `var()` |
 | `src/lib/api.ts` | `ApiClient` — all fetches; no direct `fetch` in components |
 
 **Design system.** A custom "Workshop Telemetry" theme defined via Tailwind v4 `@theme` in
 `globals.css`: `ink-*` surfaces, `paper-*` foregrounds, `ember-*` primary accent, with `moss-*`
 (success), `brick-*` (danger), `amber-*` (warning), `dust-*` (neutral), `violet-*` (secondary).
 Legacy `var(--muted-foreground)` style aliases are bridged for compatibility; new code uses tokens
-directly.
+directly. SVG presentation attributes — Recharts axis ticks, React Flow edge strokes and markers —
+do not resolve `var()`, so those read hex literals from `lib/palette.ts`; `palette.test.ts` parses
+`globals.css` and fails if a literal drifts from its token, and a second guard fails the build if a
+component reaches past the theme into a default Tailwind colour scale.
 
 **Data fetching.** All server state lives in TanStack Query (staleTime 30 s, retry 1). Running
 workflows poll on an adaptive 3 s interval; terminal-state queries use 30 s.

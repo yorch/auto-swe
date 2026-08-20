@@ -6,8 +6,10 @@ import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequest
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useRepositories, useWorkflows } from '@/hooks/useWorkflows';
+import { useRepositories } from '@/hooks/useRepositories';
+import { useWorkflows } from '@/hooks/useRuns';
 import { formatCost, formatRelativeTime } from '@/lib/utils';
 
 export default function WorkflowsPage() {
@@ -22,10 +24,8 @@ export default function WorkflowsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-bold">Workflows</h2>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-paper-400">{(workflows ?? []).length} total</span>
+      <PageHeader
+        actions={
           <Button
             disabled={!canSubmit}
             onClick={() => setSubmitOpen(true)}
@@ -34,8 +34,10 @@ export default function WorkflowsPage() {
           >
             + Submit
           </Button>
-        </div>
-      </div>
+        }
+        chapter={`§ Workflows · ${(workflows ?? []).length} total`}
+        title="Workflows"
+      />
       <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
 
       <Card className="p-0 overflow-hidden">

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { LoadingState } from '@/components/ui/LoadingState';
 import {
   type GoogleOAuthConfigInput,
   useGoogleOAuthConfig,
@@ -11,9 +12,9 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { API_BASE } from '@/lib/config';
+import { ConfigField } from './ConfigField';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
-import { SourceBadge } from './SourceBadge';
 
 export function OAuthTab() {
   const { data: resp, isLoading } = useGoogleOAuthConfig();
@@ -44,7 +45,7 @@ export function OAuthTab() {
   };
 
   if (isLoading) {
-    return <p className="text-sm text-paper-400">Loading…</p>;
+    return <LoadingState />;
   }
 
   return (
@@ -58,19 +59,12 @@ export function OAuthTab() {
           after changing these values.
         </p>
         <div className="space-y-4">
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="google-client-id"
-            >
-              Client ID
-              <SourceBadge source={sources.clientId} />
-              {data?.clientId && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.clientId}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.clientId || undefined}
+            id="google-client-id"
+            label="Client ID"
+            source={sources.clientId}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="google-client-id"
@@ -78,7 +72,7 @@ export function OAuthTab() {
               placeholder="123456789012-abcdefgh.apps.googleusercontent.com"
               value={clientId}
             />
-          </div>
+          </ConfigField>
           <SecretInput
             current={data?.clientSecret ?? null}
             id="google-client-secret"
@@ -106,7 +100,7 @@ export function OAuthTab() {
       </Card>
 
       {requiresRestart && <RestartWarning />}
-      {saved && !requiresRestart && <p className="text-sm text-emerald-400">Settings saved.</p>}
+      {saved && !requiresRestart && <p className="text-sm text-moss-400">Settings saved.</p>}
       {error && <p className="text-sm text-brick-400">{error}</p>}
 
       <div className="flex justify-end">

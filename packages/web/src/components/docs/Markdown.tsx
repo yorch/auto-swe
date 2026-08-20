@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -30,14 +31,19 @@ function docAnchor(servedSlugs: ReadonlySet<string>): Components['a'] {
     }
 
     const external = /^[a-z][a-z0-9+.-]*:|^\/\//i.test(resolved.href);
+    if (external) {
+      return (
+        <a href={resolved.href} rel="noopener noreferrer" target="_blank" {...rest}>
+          {children}
+        </a>
+      );
+    }
+    // Doc-to-doc links stay inside the app, so they route client-side rather
+    // than reloading the shell for every cross-reference.
     return (
-      <a
-        href={resolved.href}
-        {...(external ? { rel: 'noopener noreferrer', target: '_blank' } : {})}
-        {...rest}
-      >
+      <Link href={resolved.href} {...rest}>
         {children}
-      </a>
+      </Link>
     );
   };
 }

@@ -3,7 +3,7 @@
 import type { InputSchema, InputSchemaProperty } from '@auto-swe/shared/lib/inputSchema';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { useRepositories } from '@/hooks/useWorkflows';
+import { useRepositories } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
 
 export function ConnectionPicker({

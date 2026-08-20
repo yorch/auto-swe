@@ -1,9 +1,8 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { RunDetailLayout } from '@/components/LayoutToggle';
 import { api } from '@/lib/api';
-
-type RunDetailLayout = 'split' | 'inline';
 
 interface UserPreferences {
   runDetailLayout?: RunDetailLayout;
@@ -14,8 +13,17 @@ interface PreferencesResponse {
 }
 
 const QUERY_KEY = ['me-preferences'] as const;
-const DEFAULT_LAYOUT: RunDetailLayout = 'split';
+const DEFAULT_LAYOUT: RunDetailLayout = 'A';
 
+/**
+ * Server-persisted per-user UI preferences, optimistically updated.
+ *
+ * `runDetailLayout` is the one key so far. It reuses `LayoutToggle`'s union
+ * rather than declaring its own: this hook previously typed the layout as
+ * `'split' | 'inline'` while the toggle and the run page used `'A' | 'B' | 'C'`,
+ * two unrelated unions under the same name, and the hook had no callers to
+ * make the mismatch show up.
+ */
 export function useUserPreferences() {
   const qc = useQueryClient();
 

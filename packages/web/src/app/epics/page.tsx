@@ -7,8 +7,11 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useCreateEpic, useEpics, useRepositories } from '@/hooks/useWorkflows';
+import { useCreateEpic, useEpics } from '@/hooks/useEpics';
+import { useRepositories } from '@/hooks/useRepositories';
+import { errMsg } from '@/lib/errors';
 import { formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -50,25 +53,28 @@ export default function EpicsPage() {
       setRepoIds([]);
       router.push(res.data.detailPath ?? `/epics/${encodeURIComponent(res.data.epicWorkflowId)}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create epic');
+      setError(errMsg(err, 'Failed to create epic'));
     }
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-bold">Epics</h2>
-        {canCreate && (
-          <Button
-            disabled={repos.length < 2}
-            onClick={() => setOpen(true)}
-            title={repos.length < 2 ? 'Connect at least two repositories first' : undefined}
-            variant="primary"
-          >
-            + New epic
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        actions={
+          canCreate && (
+            <Button
+              disabled={repos.length < 2}
+              onClick={() => setOpen(true)}
+              title={repos.length < 2 ? 'Connect at least two repositories first' : undefined}
+              variant="primary"
+            >
+              + New epic
+            </Button>
+          )
+        }
+        chapter="§ Epics"
+        title="Epics"
+      />
 
       <Card>
         <p className="text-sm text-paper-400">
@@ -101,7 +107,7 @@ export default function EpicsPage() {
             {!epicsLoading && epicsError && (
               <tr>
                 <td className="px-4 py-6 text-center text-xs text-brick-400" colSpan={5}>
-                  {epicsError instanceof Error ? epicsError.message : 'Failed to load epics'}
+                  {errMsg(epicsError, 'Failed to load epics')}
                 </td>
               </tr>
             )}

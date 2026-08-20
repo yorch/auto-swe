@@ -93,7 +93,9 @@ export {
   NodeSchema,
   nodeEdges,
   parseWorkflowSpec,
+  readNodeEdge,
   SPEC_SCHEMA_VERSION,
+  setNodeEdge,
   WorkflowSpecSchema,
 } from './spec.js';
 export type { SpecDiff, SpecMetaChange } from './specDiff.js';

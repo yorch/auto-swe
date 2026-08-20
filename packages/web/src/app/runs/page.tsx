@@ -4,10 +4,12 @@ import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useAllWorkflowRuns, useWorkflowTemplates } from '@/hooks/useWorkflows';
+import { useAllWorkflowRuns } from '@/hooks/useRuns';
+import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { formatRelativeTime } from '@/lib/utils';
 
 const PAGE_SIZE = 50;
@@ -33,10 +35,7 @@ export default function WorkflowRunsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-bold">Workflow runs</h2>
-        <span className="text-sm text-paper-400">{total} total</span>
-      </div>
+      <PageHeader chapter={`§ Runs · ${total} total`} title="Workflow runs" />
 
       <Card variant="inset">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

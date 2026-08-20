@@ -405,6 +405,9 @@ export interface AgentTraceRecord {
 
 /** Shape returned by GET /api/v1/workflow-runs/:id (detail) */
 export interface WorkflowRunDetail extends WorkflowRunSummary {
+  /** Denormalized USD spend for this run, populated by `finalizeWorkflowRun`.
+   *  Detail-only — the list projection does not carry it. */
+  costUsdAccrued: number;
   specSnapshot: unknown;
   contextSnapshot: unknown;
   steps: WorkflowStepRecord[];

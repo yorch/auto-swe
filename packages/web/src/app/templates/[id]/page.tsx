@@ -38,7 +38,9 @@ import {
   useWorkflowTemplate,
   useWorkflowTemplateAnalytics,
   useWorkflowTemplateVersion,
-} from '@/hooks/useWorkflows';
+} from '@/hooks/useTemplates';
+import { useTransientFlag } from '@/hooks/useTransientFlag';
+import { errMsg } from '@/lib/errors';
 import { formatPercent, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -62,7 +64,7 @@ function tryParseSpec(
   try {
     return { ok: true, spec: JSON.parse(json) as WorkflowSpec };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'invalid JSON', ok: false };
+    return { error: errMsg(err, 'invalid JSON'), ok: false };
   }
 }
 
@@ -111,7 +113,7 @@ function EditMetadataModal({
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'save failed');
+      setError(errMsg(err, 'save failed'));
     }
   };
 
@@ -181,7 +183,7 @@ function EditSchemaModal({
       await updateTemplate.mutateAsync({ inputSchema: schema ?? null });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'save failed');
+      setError(errMsg(err, 'save failed'));
     }
   };
 
@@ -244,7 +246,7 @@ function ExperimentCard({
   const [expVer, setExpVer] = useState<number | null>(experimentVersion);
   const [split, setSplit] = useState<number>(experimentSplit ?? 10);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, markSaved] = useTransientFlag();
 
   const nonActive = versions.filter((v) => v.version !== activeVersion);
 
@@ -255,10 +257,9 @@ function ExperimentCard({
         experimentSplit: expVer ? split : null,
         experimentVersion: expVer,
       });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
+      markSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'save failed');
+      setError(errMsg(err, 'save failed'));
     }
   };
 
@@ -269,7 +270,7 @@ function ExperimentCard({
     try {
       await updateTemplate.mutateAsync({ experimentSplit: null, experimentVersion: null });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'clear failed');
+      setError(errMsg(err, 'clear failed'));
     }
   };
 
@@ -366,7 +367,7 @@ function ExplainModal({
     <Modal eyebrow="§ Workflow" onClose={onClose} open={open} title="What this workflow does">
       <div className="space-y-4">
         {isPending && <LoadingState />}
-        {error && <Alert>{error instanceof Error ? error.message : 'Could not explain'}</Alert>}
+        {error && <Alert>{errMsg(error, 'Could not explain')}</Alert>}
         {data?.explanation && (
           <div className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-paper-200">
             {data.explanation}
@@ -402,7 +403,7 @@ function WebhookCard({
     try {
       await regenerate.mutateAsync();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'regenerate failed');
+      setError(errMsg(err, 'regenerate failed'));
     }
   };
 
@@ -411,7 +412,7 @@ function WebhookCard({
     try {
       await revoke.mutateAsync();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'revoke failed');
+      setError(errMsg(err, 'revoke failed'));
     }
   };
 
@@ -531,7 +532,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
       setMode('view');
       setSaveError(null);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'save failed');
+      setSaveError(errMsg(err, 'save failed'));
     }
   };
 

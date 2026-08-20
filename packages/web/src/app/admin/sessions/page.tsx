@@ -2,21 +2,18 @@
 
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
-import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useWorkflows';
-import { cn, formatDate, formatRelativeTime } from '@/lib/utils';
+import { Th } from '@/components/ui/Th';
+import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useAdmin';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 export default function AdminSessionsPage() {
   const { data: sessions, isLoading } = useAdminSessions();
   const revoke = useAdminRevokeSession();
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-        <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-        loading sessions…
-      </div>
-    );
+    return <LoadingState message="loading sessions…" />;
   }
 
   const rows = sessions ?? [];
@@ -95,18 +92,5 @@ export default function AdminSessionsPage() {
         </Card>
       </section>
     </div>
-  );
-}
-
-function Th({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
-  return (
-    <th
-      className={cn(
-        'px-4 py-3 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500',
-        align === 'right' ? 'text-right' : 'text-left'
-      )}
-    >
-      {children}
-    </th>
   );
 }

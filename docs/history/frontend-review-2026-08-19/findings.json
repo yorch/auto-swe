@@ -1,0 +1,700 @@
+{
+  "findings": [
+    {
+      "category": "types",
+      "description": "The run meta rail reads `(run as unknown as Record<string, unknown>).cost`, but GET /api/v1/workflow-runs/:id returns the field as `costUsdAccrued` (packages/gateway/src/routes/workflowRuns.ts:244). The double cast defeats type-checking, so the wrong name compiles cleanly and the value is always `undefined`.",
+      "evidence": "gateway returns costUsdAccrued; WorkflowRunDetail/Summary declare no cost field; UI reads `.cost`. app/workflows/page.tsx and app/workflows/[id]/page.tsx already read `costUsdAccrued` correctly off ActiveWorkflow.",
+      "files": ["packages/web/src/components/runs/RunMetaRail.tsx:43"],
+      "id": "F-001",
+      "proposed_fix": "Add `costUsdAccrued: number` to `WorkflowRunSummary` in packages/shared/src/types/api.ts, then read `run.costUsdAccrued` with no cast. Delete the `as unknown as Record<string, unknown>` escape hatch.",
+      "severity": "high",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "The `Cost` row in the run detail rail never renders. Cost is one of the platform's headline governance signals and it is silently missing from the primary run view."
+    },
+    {
+      "category": "dry",
+      "description": "`err instanceof Error ? err.message : '<fallback>'` is written out inline at 74 sites across ~40 files, while a shared `errMsg(err, fallback)` helper already exists \u2014 used at exactly one call site outside its own module.",
+      "evidence": "74 occurrences of `instanceof Error` outside tests; 3 uses of errMsg. Concentrations: app/templates/[id]/page.tsx (8), app/admin/slack-channels/page.tsx (6), app/login/page.tsx (4), app/admin/scanner/page.tsx (3), app/admin/mcp-connections/page.tsx (3), app/admin/organizations/[orgId]/page.tsx (4), app/admin/skills/page.tsx (3), components/teams/TeamAgentLibrarySection.tsx (3).",
+      "files": ["packages/web/src/hooks/useIntegrationConfigForm.ts:6"],
+      "id": "F-002",
+      "proposed_fix": "Move `errMsg` from the `'use client'` hook module into a pure `lib/errors.ts`, then substitute mechanically at every call site. One PR, no behavioural difference (the expressions are exactly equivalent).",
+      "severity": "high",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "The team already decided this helper should exist; the codebase just never adopted it. If the API ever throws a structured error type, all 74 sites need the identical change."
+    },
+    {
+      "category": "dry",
+      "description": "Ten near-identical singleton-config resource triples (`useXConfig` / `useUpdateXConfig` / `testXConnection`) for GitHub, Slack, Storage, WorkflowDefaults, GoogleOAuth, IssueTracker, KnowledgeBase, Figma, Consolidation, Revalidation, Canary \u2014 ~350 lines that differ only in the URL slug, the query key, and the two type parameters.",
+      "evidence": "useAdminConfig.ts lines 56-115, 145-166, 228-248, 260-280, 313-354, 379-402, 416-437, 459-486, 507-533, 549-566.",
+      "files": ["packages/web/src/hooks/useAdminConfig.ts"],
+      "id": "F-003",
+      "proposed_fix": "A `makeConfigResource<TConfig, TInput>(slug)` factory returning `{ useConfig, useUpdate, test }`. Keep the exported names as thin bindings so no call site changes.",
+      "severity": "high",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "Adding an eleventh integration means copy-pasting three functions. A change to cache invalidation or error handling has to be made ten times."
+    },
+    {
+      "category": "dry",
+      "description": "The admin config text-field block \u2014 a `<label>` carrying a `<SourceBadge>` and a `current: \u2026` hint, over a raw `<input>` with a 12-class Tailwind string \u2014 is pasted 37 times. The label's class string alone repeats 32 times verbatim.",
+      "evidence": "37 occurrences of `className=\"w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs`; 32 of the matching label class string.",
+      "files": [
+        "packages/web/src/components/integrations/GitHubTab.tsx",
+        "packages/web/src/components/integrations/IssueTrackerTab.tsx",
+        "packages/web/src/components/integrations/KnowledgeBaseTab.tsx",
+        "packages/web/src/components/integrations/StorageTab.tsx",
+        "packages/web/src/components/integrations/FigmaTab.tsx",
+        "packages/web/src/components/integrations/OAuthTab.tsx",
+        "packages/web/src/components/integrations/SlackTab.tsx",
+        "packages/web/src/components/modelConfig/CredentialsTab.tsx",
+        "packages/web/src/components/modelConfig/EmbeddingsTab.tsx"
+      ],
+      "id": "F-004",
+      "proposed_fix": "Add a `ConfigTextField` sibling to `SecretInput` in components/integrations/ taking `{ id, label, value, onChange, placeholder, source, current }`. Migrate the 37 sites.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "`SecretInput` already proves the abstraction is right for the secret variant. The plain-text variant has no equivalent, so every new admin field re-copies markup that must stay pixel-consistent by hand."
+    },
+    {
+      "category": "consistency",
+      "description": "Hard-coded hexes in the DAG and chart chrome are a stale copy of the design palette. `specToFlow.ts` labels `#e26b3c` as `ember-400` (the token is `#7c6cff`), `#7ea67a` as `moss-400` (`#46d28a`), `#c44a4a` as `brick-400` (`#ff7a7a`), `#85a6c5` as `dust-400` (`#4d8dff`), `#d4a547` as `amber-400` (`#f6b545`), `#9b8bc4` as `violet-400` (`#34d8c0`). `chartChrome.tsx` does the same for `paper-400` (`#a8a395` vs `#aeb6c9`), `ink-500`, `ink-600`, `ink-900`, `paper-200`.",
+      "evidence": "globals.css:14-52 is the token source; every hex above is compared against it.",
+      "files": [
+        "packages/web/src/components/workflow/specToFlow.ts:25-36",
+        "packages/web/src/components/charts/chartChrome.tsx:5-70",
+        "packages/web/src/components/workflow/WorkflowDag.tsx:184-193",
+        "packages/web/src/components/workflow/TemplateEditor.tsx:424,442-449",
+        "packages/web/src/components/charts/WorkflowStatusChart.tsx:29"
+      ],
+      "id": "F-005",
+      "proposed_fix": "Recharts and React Flow both accept CSS custom properties in the style props used here \u2014 replace with `var(--color-ember-400)` etc. Where a literal is genuinely required (SVG `stroke` on `<Pie>`), read the value from globals.css and keep one source.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 3,
+      "why_it_matters": "Graph edges, axis ticks, tooltips and minimaps render in a palette the app abandoned; `charts/colors.ts` already uses the current values, so two chart surfaces disagree with each other. The comments naming the tokens make the drift invisible in review."
+    },
+    {
+      "category": "consistency",
+      "description": "~50 uses of default Tailwind colour scales (`text-emerald-400` \u00d727, `text-red-400`, `text-sky-400`, `bg-blue-600`, `text-gray-500`, `bg-indigo-400`) against 1899 uses of the project's own tokens. `<p className=\"text-sm text-emerald-400\">Settings saved.</p>` appears verbatim in seven integration tabs while the workflow config forms use `<Alert variant=\"success\">` for the same thing.",
+      "evidence": "Counted with a grep over all .tsx: 27 text-emerald-400, 3 bg-emerald-400, 3 text-red-400, 2 text-sky-400, 2 text-green-400, plus singletons.",
+      "files": [
+        "packages/web/src/components/integrations/OAuthTab.tsx:109",
+        "packages/web/src/components/integrations/IssueTrackerTab.tsx:453",
+        "packages/web/src/components/integrations/GitHubTab.tsx:403",
+        "packages/web/src/components/integrations/FigmaTab.tsx:158",
+        "packages/web/src/components/integrations/KnowledgeBaseTab.tsx:331",
+        "packages/web/src/components/integrations/StorageTab.tsx:288",
+        "packages/web/src/components/integrations/SlackTab.tsx:168",
+        "packages/web/src/components/ErrorBoundary.tsx:30,34",
+        "packages/web/src/components/workflow/NodePalette.tsx:41"
+      ],
+      "id": "F-006",
+      "proposed_fix": "Map to tokens (`emerald-400`\u2192`moss-400`, `red-400`\u2192`brick-400`, `sky-400`\u2192`dust-400`, `blue-600`\u2192`ember-400`, `gray-500`\u2192`paper-500`) and standardise the saved message on `<Alert variant=\"success\">`.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 3,
+      "why_it_matters": "`ErrorBoundary` is the worst case \u2014 `text-gray-500` on `bg-blue-600` is a light-theme fragment shown at the app's most visible failure moment, on a dark ground. The success-message split means two conventions for identical semantics."
+    },
+    {
+      "category": "best-practice",
+      "description": "The shell-image allowlist editor re-seeds its textarea from query data whenever the `data` reference changes: `useEffect(() => { if (data) setText(...) }, [data])`. Its sibling `EgressAllowlistEditor.tsx:18-22` guards the identical effect with `isDirtyRef`.",
+      "evidence": "ShellAllowlistEditor.tsx:15-19 vs EgressAllowlistEditor.tsx:18-22 (guard set in onChange:72, cleared after save:42). QueryClient defaults: staleTime 30_000, refetchOnWindowFocus at v5 default true (Providers.tsx:9-17); useTeamShellAllowlist sets no refetchInterval (useTeams.ts:72-82). Structural sharing default confirmed in @tanstack/query-core utils.js:198 (`options.structuralSharing !== false`).",
+      "files": ["packages/web/src/components/teams/ShellAllowlistEditor.tsx:15-19"],
+      "id": "F-007",
+      "proposed_fix": "Copy the `isDirtyRef` guard from EgressAllowlistEditor, set it in the textarea's onChange, clear it after a successful save.",
+      "severity": "high",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "TanStack Query v5 enables structural sharing by default, so a refetch returning identical data keeps the same reference and the effect does not fire \u2014 the editor is safe only for as long as the server copy happens not to change. The moment it genuinely does (a second admin, a second tab, a corrected save), the next staleTime- or focus-triggered refetch produces a new reference, the effect fires, and the admin's in-progress edits are silently replaced. That is precisely the race the sibling component's `isDirtyRef` exists to prevent, in a security-relevant editor."
+    },
+    {
+      "category": "best-practice",
+      "description": "`SetSection` re-seeds its JSON draft with `useEffect(() => setDraft(JSON.stringify(values, null, 2)), [values])`, unguarded.",
+      "evidence": "inspectorSections.tsx:417-419 vs the guarded version at 130-137 in the same file.",
+      "files": ["packages/web/src/components/workflow/inspectorSections.tsx:417-419"],
+      "id": "F-008",
+      "proposed_fix": "Apply the same previous-value ref guard, or lift the draft into the parent keyed by node id.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "`values` is a fresh object on every parent render of the template editor, so any unrelated spec edit resets the JSON textarea the user is typing into. `FanOutSection` in the same file (lines 130-137) solves the same problem with a `prevExportsRef` guard."
+    },
+    {
+      "category": "best-practice",
+      "description": "`FanOutSection`'s effect has no dependency array at all, so it runs after every render and compares `node.exports` against a ref by hand.",
+      "evidence": "inspectorSections.tsx:137 \u2014 `});` with no dep array.",
+      "files": ["packages/web/src/components/workflow/inspectorSections.tsx:132-137"],
+      "id": "F-009",
+      "proposed_fix": "Either add `[node.exports]` as the dep array (the ref check then becomes redundant) or reset the draft with a `key={nodeId}` on the section so React discards the state instead.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "This is a render-phase computation implemented as a post-render effect. It is correct today but fragile \u2014 it is the one effect in the package that opts out of the dependency system entirely, and it costs an extra render whenever exports change."
+    },
+    {
+      "category": "best-practice",
+      "description": "`const LAST_30_DAYS = buildLast30Days()` runs once at module evaluation, and mixes local-time date arithmetic (`d.setDate`) with UTC formatting (`toISOString().slice(0,10)`).",
+      "evidence": "chartUtils.ts:14-25; consumers app/page.tsx:97-99 and app/lessons/page.tsx:29-30.",
+      "files": ["packages/web/src/lib/chartUtils.ts:14-25"],
+      "id": "F-010",
+      "proposed_fix": "Compute the window inside each `groupXByDate` call (they already run inside a `useMemo`), and pick one timezone basis for both the arithmetic and the key.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "A dashboard left open across midnight keeps bucketing into a stale window \u2014 new runs land in a key that isn't in the bucket list and vanish from the chart. West-of-UTC users also see the window shifted by a day."
+    },
+    {
+      "category": "dead-code",
+      "description": "`useUserPreferences` \u2014 a complete optimistic read/write hook against GET|PATCH /api/v1/me/preferences \u2014 has no callers. Its `RunDetailLayout` union is `'split' | 'inline'`; the `RunDetailLayout` the run page actually uses (from LayoutToggle) is `'A' | 'B' | 'C'`, and the page holds the choice in plain `useState('A')`.",
+      "evidence": "Zero references to `useUserPreferences` anywhere in packages/ outside its own file. Two conflicting `RunDetailLayout` type declarations.",
+      "files": [
+        "packages/web/src/hooks/useUserPreferences.ts",
+        "packages/web/src/components/LayoutToggle.tsx:3",
+        "packages/web/src/app/runs/[id]/page.tsx:838"
+      ],
+      "id": "F-011",
+      "proposed_fix": "Either wire `useUserPreferences` into `app/runs/[id]/page.tsx` and reconcile the two `RunDetailLayout` unions into one, or delete the hook and the `/me/preferences` endpoint together.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "Per-user layout persistence is a shipped server capability with a written client that was never wired up \u2014 the layout resets on every navigation. Deleting the hook would cement the regression; this needs a product decision, not a cleanup."
+    },
+    {
+      "category": "dead-code",
+      "description": "Unreferenced exports left in place because each looks like scaffolding for work in flight rather than an accident: the whole 153-line `NodeConfigForm` component (superseded by inspectorFields/inspectorSections); `relayoutNodes`, whose own comment says it backs a 'tidy button in the editor' that does not exist; `withGatewayDiagnostics`; the five `useTeam*Credential` hooks; `useChannelBudget`.",
+      "evidence": "Verified by grep over packages/ and docs/ \u2014 self-references only.",
+      "files": [
+        "packages/web/src/components/workflow/NodeConfigForm.tsx",
+        "packages/web/src/components/workflow/specToFlow.ts:154",
+        "packages/web/src/lib/networkErrors.ts:40",
+        "packages/web/src/hooks/useModelConfig.ts:142,158,169,178,197",
+        "packages/web/src/hooks/useSlackChannels.ts:165"
+      ],
+      "id": "F-012",
+      "proposed_fix": "Author's call: ship the missing UI or delete. Not a mechanical cleanup.",
+      "severity": "low",
+      "status": "partially-applied",
+      "tier_required": 1,
+      "why_it_matters": "Each wraps a live gateway endpoint or a planned control. Deleting them is behaviourally free but throws away someone's next step."
+    },
+    {
+      "category": "consistency",
+      "description": "27 pages use the `<PageHeader>` primitive (chapter kicker, 32px title, subtitle, actions slot); 9 use a bare `<h2 className=\"text-2xl font-bold\">` in an ad-hoc flex row.",
+      "evidence": "27 files match `<PageHeader`; 9 match `className=\"text-2xl font-bold\"`.",
+      "files": [
+        "packages/web/src/app/epics/page.tsx",
+        "packages/web/src/app/epics/[workflowId]/page.tsx",
+        "packages/web/src/app/inbox/page.tsx",
+        "packages/web/src/app/lessons/page.tsx",
+        "packages/web/src/app/runs/page.tsx",
+        "packages/web/src/app/teams/page.tsx",
+        "packages/web/src/app/teams/[id]/page.tsx",
+        "packages/web/src/app/workflows/page.tsx",
+        "packages/web/src/app/workflows/[id]/page.tsx"
+      ],
+      "id": "F-013",
+      "proposed_fix": "Migrate the nine to `<PageHeader>`. Report-only because it changes typography and spacing on every one of those pages \u2014 a visual change, not a refactor.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 3,
+      "why_it_matters": "The nine outliers are the app's most-visited operational pages (Runs, Inbox, Teams, Workflows). They read as a different product from the admin surface."
+    },
+    {
+      "category": "consistency",
+      "description": "Four competing loading treatments: the shared `<LoadingState>` (34 uses), `<p className=\"text-sm text-paper-400\">Loading\u2026</p>` (11 verbatim copies), `<p className=\"text-xs text-paper-500\">Loading\u2026</p>` (3), and one hand-rolled pulse-dot block in app/users/page.tsx that re-implements `LoadingState` with different copy.",
+      "evidence": "Counted across all .tsx outside tests.",
+      "files": [
+        "packages/web/src/components/integrations/OAuthTab.tsx:47",
+        "packages/web/src/components/integrations/IssueTrackerTab.tsx:125",
+        "packages/web/src/components/integrations/GitHubTab.tsx:105",
+        "packages/web/src/components/integrations/FigmaTab.tsx:55",
+        "packages/web/src/components/integrations/KnowledgeBaseTab.tsx:107",
+        "packages/web/src/components/integrations/StorageTab.tsx:85",
+        "packages/web/src/components/integrations/AuditLogTab.tsx:41",
+        "packages/web/src/components/integrations/SlackTab.tsx:70",
+        "packages/web/src/components/modelConfig/CredentialsTab.tsx:74",
+        "packages/web/src/components/modelConfig/EmbeddingsTab.tsx:55",
+        "packages/web/src/components/modelConfig/AuditLogTab.tsx:14",
+        "packages/web/src/app/users/page.tsx:43-48"
+      ],
+      "id": "F-014",
+      "proposed_fix": "Standardise on `<LoadingState>`. Report-only: `LoadingState` renders a centred pulse-dot block, so swapping the inline `<p>`s changes layout in every one of those panels.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "Loading is the state users see most on a polling dashboard, and it looks like four different apps depending on which tab you open."
+    },
+    {
+      "category": "a11y",
+      "description": "`FieldWrapper` renders hint and error text with ids `${id}-hint` / `${id}-error`, and `Select.tsx` wires them up with `aria-describedby` plus `aria-invalid`. `Input` and `Textarea` render the same hint/error nodes but set neither attribute.",
+      "evidence": "Select.tsx:14-25 has it; Input.tsx:13-26 and Textarea.tsx:13-26 do not. Package-wide there is 1 aria-describedby and 1 aria-invalid.",
+      "files": [
+        "packages/web/src/components/ui/Input.tsx",
+        "packages/web/src/components/ui/Textarea.tsx",
+        "packages/web/src/components/ui/FieldWrapper.tsx"
+      ],
+      "id": "F-015",
+      "proposed_fix": "Lift the `describedBy` computation out of Select into FieldWrapper (or a tiny shared helper) and apply it in all three.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "Validation errors on the two most-used field primitives are visible but not announced. `Select` in the same directory shows the intended contract, so this reads as an incomplete rollout rather than a decision."
+    },
+    {
+      "category": "a11y",
+      "description": "Two filter/search inputs are labelled only by `placeholder`, with no `id`+`<label>`, `aria-label`, or `aria-labelledby`: the step-registry filter in the workflow palette and the template filter on the analytics page.",
+      "evidence": "A scripted scan flagged 24 of 88 raw `<input>` elements as having neither an id nor an aria-label, but on inspection 22 of those are checkboxes and radios correctly wrapped in a `<label>` (implicit association), which is fine. Only these two are genuinely unnamed.",
+      "files": [
+        "packages/web/src/components/workflow/NodePalette.tsx:217",
+        "packages/web/src/app/analytics/page.tsx:173"
+      ],
+      "id": "F-016",
+      "proposed_fix": "Add `aria-label` to each (e.g. `aria-label=\"Filter steps\"`). Report-only per the accessibility rule.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "A placeholder is not an accessible name and disappears on first keystroke, so a screen-reader user gets 'edit text, blank'."
+    },
+    {
+      "category": "a11y",
+      "description": "Both dialogs use the native `<dialog>` element with `showModal()`, which gives focus trapping and Escape for free, but neither sets an `aria-labelledby` pointing at its own `<h2>` title.",
+      "evidence": "Modal.tsx:40-55; SubmitWorkRequestModal.tsx:39-50.",
+      "files": [
+        "packages/web/src/components/ui/Modal.tsx",
+        "packages/web/src/components/dashboard/SubmitWorkRequestModal.tsx"
+      ],
+      "id": "F-017",
+      "proposed_fix": "Give the `<h2>` an id and reference it from the `<dialog>`.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "The dialog is announced without its name. Everything else about the modal implementation is correct, so this is the one gap."
+    },
+    {
+      "category": "best-practice",
+      "description": "Five `setTimeout(() => setX(false), 1500)` confirmation timers with no cleanup. `EgressAllowlistEditor.tsx:24-31` is the only site that stores the handle in a ref and clears it on unmount.",
+      "evidence": "6 setTimeout call sites; 1 with cleanup.",
+      "files": [
+        "packages/web/src/components/ui/CopyButton.tsx:16",
+        "packages/web/src/components/users/CreateUserModal.tsx:60",
+        "packages/web/src/components/settings/AccessTokensSection.tsx:53",
+        "packages/web/src/components/teams/ShellAllowlistEditor.tsx:31",
+        "packages/web/src/app/templates/[id]/page.tsx:259"
+      ],
+      "id": "F-018",
+      "proposed_fix": "Extract a `useTransientFlag(ms)` hook and use it at all six sites.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "A setState on an unmounted component is harmless in React 19, but a user who copies and immediately navigates leaves a live timer, and the 'copied' flag can flash on a remounted component. One sibling already does it properly."
+    },
+    {
+      "category": "best-practice",
+      "description": "`onClick={() => window.location.assign('/templates')}` on the 'Browse workflows' button, in a file that already imports `next/link`.",
+      "evidence": "Only `window.location` navigation in the package outside authStore's deliberate OAuth redirects.",
+      "files": ["packages/web/src/app/page.tsx:128"],
+      "id": "F-019",
+      "proposed_fix": "`<Link href=\"/templates\">` styled as a button, or `useRouter().push`.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 3,
+      "why_it_matters": "Full document reload: the React tree, the TanStack Query cache and the auth store are all thrown away and rebuilt for an in-app navigation."
+    },
+    {
+      "category": "best-practice",
+      "description": "`style={{ background: 'var(--color-amber-400)/15' }}` on the inbox-widget kind badge. The `/15` alpha shorthand is Tailwind class syntax; in a plain CSS `background` value it is a parse error.",
+      "evidence": "app/page.tsx:50-53.",
+      "files": ["packages/web/src/app/page.tsx:50"],
+      "id": "F-020",
+      "proposed_fix": "Use the class `bg-amber-400/15`, or `color-mix(in oklch, var(--color-amber-400) 15%, transparent)`.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "The declaration is dropped, so the badge renders with no background \u2014 amber text on the page ground instead of the intended tinted chip."
+    },
+    {
+      "category": "best-practice",
+      "description": "`WaterfallBar` computes `leftPct = 0` for every bar and renders each at `left: 0`, so the 'Step timing' waterfall in layout C is a stack of left-aligned bars, not a waterfall \u2014 bar start times carry no information.",
+      "evidence": "app/runs/[id]/page.tsx:511 renders the bar fill with a literal `left: 0`, and WaterfallBar is invoked (page.tsx:772) with only currentMs/step/totalMs \u2014 it never receives a run-start reference. The step-band strip above it computes the offset correctly from runStart at page.tsx:~730.",
+      "files": ["packages/web/src/app/runs/[id]/page.tsx:465-529"],
+      "id": "F-021",
+      "proposed_fix": "Pass the run start into `WaterfallBar` and set `left: ((stepStart - runStart) / totalMs) * 100 + '%'`, mirroring the step-band code.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "The panel is titled 'Step timing' and reads as a Gantt chart; it silently misrepresents when each step ran. The scrubber's step-band strip directly above it computes the offset correctly (line ~730), so the data is available."
+    },
+    {
+      "category": "best-practice",
+      "description": "`SIZES` sets `text-xs` for `sm` and `text-sm` for `md`/`lg`, but the component also sets `style={{ fontSize: '13.5px' }}`. Inline styles beat every class, so all three sizes render at 13.5px and the size-specific text classes are inert.",
+      "evidence": "Button.tsx:18-20 (`text-xs`/`text-sm`) vs :45 (`fontSize: '13.5px'`).",
+      "files": ["packages/web/src/components/ui/Button.tsx:17-21,43-47"],
+      "id": "F-022",
+      "proposed_fix": "Decide the intent, then delete the losing half. If sizes should differ, move 13.5px into `SIZES.md`/`SIZES.lg` as a class and drop the inline style.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "`size=\"sm\"` silently does not shrink its text. Removing the classes would be behaviour-preserving; removing the inline `fontSize` would change every button in the app \u2014 so which half is the bug is the author's call."
+    },
+    {
+      "category": "consistency",
+      "description": "The trace `<pre>` block (ink-900 ground, ink-500 border, mono 10px, max-h-48) is written out five times in one file. Two copies use `borderRadius: '2px'`, one uses `'6px'`; the error banner is `oklch(0.64 0.17 28 / 0.09)` in two branches and `rgba(255, 122, 122, 0.09)` in a third.",
+      "evidence": "TracesTab.test.tsx covers filterNodeId behaviour only.",
+      "files": [
+        "packages/web/src/app/runs/[id]/TracesTab.tsx:110-131,205-222,241-258,262-279,299-318"
+      ],
+      "id": "F-023",
+      "proposed_fix": "Extract `<TracePre>` and `<TraceErrorBanner>` inside the file. Not applied: the file's three tests only exercise node filtering and never render `TraceOutput`, so the extraction would be unverified where it matters.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "Same element, three visual variants, in a single 692-line file. `TruncatedText` already wraps one of the five."
+    },
+    {
+      "category": "consistency",
+      "description": "`hooks/useWorkflows.ts` is a barrel re-exporting 10 of the 23 hook modules. 35 files import through it; the other 13 modules (useAdminConfig, useModelConfig, useSlackChannels, useSchedules, useMcpConnections, useOrg, useAgentLibrary, useBundles, useSkills, useUserPreferences, useConfigForm, useIntegrationConfigForm, useTemplates-adjacent) are imported directly. Several files import from both.",
+      "evidence": "35 barrel imports vs 52 direct module imports.",
+      "files": ["packages/web/src/hooks/useWorkflows.ts"],
+      "id": "F-024",
+      "proposed_fix": "Either drop the barrel and import every hook from its own module, or complete it and forbid direct imports. Renaming it (`hooks/index.ts`) would also remove the name collision. Prevalence Rule: both patterns are established, so this is a decision, not a defect.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "There is no rule for which door to use \u2014 app/page.tsx imports `useInbox` from '@/hooks/useInbox' and `useWorkflows` from '@/hooks/useWorkflows' in adjacent lines. The barrel's name also collides with the `useWorkflows()` function it re-exports from useRuns.ts."
+    },
+    {
+      "category": "dry",
+      "description": "`ConnectionFormModal` (383 lines) is a superset of `RepositoryFormModal` (225 lines): same eight state fields, same two seeding effects, same submit shape, with connection-type branching added.",
+      "evidence": "RepositoryFormModal.tsx:61-83 and ConnectionFormModal.tsx:82-105 are the same two effects.",
+      "files": [
+        "packages/web/src/components/repositories/RepositoryFormModal.tsx",
+        "packages/web/src/components/repositories/ConnectionFormModal.tsx"
+      ],
+      "id": "F-025",
+      "proposed_fix": "Deliberately not consolidated \u2014 this is two occurrences, not three, and they are not byte-identical, so it fails the DRY bar. The right move is probably to delete `RepositoryFormModal` once `ConnectionFormModal` covers its callers, which is a product decision.",
+      "severity": "low",
+      "status": "not-applied",
+      "tier_required": 2,
+      "why_it_matters": "Both are reachable (`/connections` uses ConnectionFormModal; RepositoryFormModal is imported and tested independently). A change to repo-field validation has to land twice."
+    },
+    {
+      "category": "dry",
+      "description": "`SubmitWorkRequestModal` hand-rolls a `<dialog>` with an open/close effect byte-identical to `components/ui/Modal.tsx`, instead of using the shared `Modal`.",
+      "evidence": "The effect bodies are identical line for line.",
+      "files": [
+        "packages/web/src/components/dashboard/SubmitWorkRequestModal.tsx:39-50",
+        "packages/web/src/components/ui/Modal.tsx:24-35"
+      ],
+      "id": "F-026",
+      "proposed_fix": "Switch to `<Modal>`. Not applied: the two render different chrome, so the swap changes the modal's DOM and appearance.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "The shared Modal already provides eyebrow/title/subtitle chrome. Two dialog implementations means an Escape-key or focus fix has to be made twice."
+    },
+    {
+      "category": "consistency",
+      "description": "The two modelConfig tabs hand-roll the load-query \u2192 seed-form \u2192 submit \u2192 saved/error cycle that `useConfigForm` (workflow forms) and `useIntegrationConfigForm` (integration tabs) already encapsulate.",
+      "evidence": "useConfigForm used by 4 workflow forms; useIntegrationConfigForm by 7 integration tabs; modelConfig by neither.",
+      "files": [
+        "packages/web/src/components/modelConfig/EmbeddingsTab.tsx:30-34",
+        "packages/web/src/components/modelConfig/CredentialsTab.tsx"
+      ],
+      "id": "F-027",
+      "proposed_fix": "Adopt `useIntegrationConfigForm` in both tabs.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "Two shared hooks exist for exactly this; two components in a third directory ignore both. EmbeddingsTab's `dirty` guard is a third re-implementation of the seed-once problem solved in useConfigForm."
+    },
+    {
+      "category": "consistency",
+      "description": "`HandleKind` in dagNode.tsx is a character-for-character duplicate of `EdgeKind` in workflowLayout.ts, with a comment stating the duplication is deliberate.",
+      "evidence": "dagNode.tsx:21-33 vs workflowLayout.ts:15-25.",
+      "files": [
+        "packages/web/src/components/workflow/dagNode.tsx:24-35",
+        "packages/web/src/lib/workflowLayout.ts:15-25"
+      ],
+      "id": "F-028",
+      "proposed_fix": "Superseded by F-044: `HandleKind` is now `export type HandleKind = EdgeKind;`. The comment claiming the duplication was deliberate was wrong \u2014 nothing depended on the two being separate.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "React Flow matches source-handle ids against edge kinds by string; if the two unions drift, edges silently fail to attach with no type error."
+    },
+    {
+      "category": "best-practice",
+      "description": "The single app-wide error boundary implements `getDerivedStateFromError` but not `componentDidCatch`, so a crash is shown to the user and never reported anywhere.",
+      "evidence": "ErrorBoundary.tsx:14-46; no error.tsx exists under app/.",
+      "files": ["packages/web/src/components/ErrorBoundary.tsx"],
+      "id": "F-029",
+      "proposed_fix": "Add `componentDidCatch` with a report hook, and consider per-route `error.tsx` boundaries so one panel's failure does not take the shell down.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "The platform ships OpenTelemetry for the backend; the dashboard drops its own exceptions on the floor. It is also the only boundary in the tree \u2014 a crash anywhere blanks the whole app shell."
+    },
+    {
+      "category": "best-practice",
+      "description": "`const PLAY_DURATION_S = 11` is declared inside the `LayoutC` component body and read from inside a `useEffect` that does not list it.",
+      "evidence": "app/runs/[id]/page.tsx:570 inside LayoutC, used at :575.",
+      "files": ["packages/web/src/app/runs/[id]/page.tsx:464"],
+      "id": "F-030",
+      "proposed_fix": "Hoisted to module scope above the Flight Recorder section.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "A per-render allocation of a fixed constant, and a dependency the linter cannot see. Harmless today; hoisting it to module scope is free."
+    },
+    {
+      "category": "best-practice",
+      "description": "Two internal navigations use a raw `<a href>`: resolved doc links (`/docs/<slug>`) in the Markdown renderer, and the `trace \u2192` link to `/runs/<id>` in the Slack channel audit list.",
+      "evidence": "Markdown.tsx:34-42 renders both external and resolved-internal hrefs through the same `<a>`.",
+      "files": [
+        "packages/web/src/components/docs/Markdown.tsx:34",
+        "packages/web/src/app/admin/slack-channels/page.tsx:1154"
+      ],
+      "id": "F-031",
+      "proposed_fix": "Use `next/link` for the doc-internal branch of `docAnchor`. Report-only: swapping `<a>` for `<Link>` changes prefetch, scroll restoration and history behaviour.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 3,
+      "why_it_matters": "The docs case is a full page reload on every cross-doc link \u2014 the whole docs surface navigates like a static site inside a SPA. The slack-channels case is `target=\"_blank\"`, so it is defensible."
+    },
+    {
+      "category": "dead-code",
+      "description": "`RANK_X_SPACING`, `NODE_Y_SPACING`, `nodeCategoryColor`, `diffStrokeColor` and `statusFill` have no references anywhere in the monorepo. The three colour functions return the pre-redesign light palette (`#dbeafe`, `#2563eb`, `#fef3c7`\u2026); `dagNode.tsx` replaced them with `CATEGORY_RING`, `DIFF_BORDER` and `STATUS_STRIPE` in the dark palette. The two spacing constants were superseded by dagre's own `ranksep`/`nodesep`.",
+      "evidence": "grep over packages/ and docs/ returns only the declarations themselves.",
+      "files": ["packages/web/src/lib/workflowLayout.ts"],
+      "id": "F-032",
+      "proposed_fix": "Delete all five.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "Five exported symbols advertise themselves as the DAG's styling API while the DAG uses something else entirely; a future edit could easily import the wrong one and render light-theme colours."
+    },
+    {
+      "category": "dry",
+      "description": "`NODE_WIDTH = 220` and `NODE_HEIGHT = 88` are declared independently in both files. dagre is fed the workflowLayout pair to compute positions; the rendered card is sized by the dagNode pair.",
+      "evidence": "Both pairs are 220/88 today; nothing imports them from dagNode.",
+      "files": [
+        "packages/web/src/components/workflow/dagNode.tsx:19-20",
+        "packages/web/src/lib/workflowLayout.ts:51-52"
+      ],
+      "id": "F-033",
+      "proposed_fix": "Delete dagNode's copies and import the canonical pair from workflowLayout. The initial fix re-exported them for surface compatibility; nothing consumed that export, so the re-export was dropped too.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "If either pair changes alone, layout and rendering disagree and nodes overlap or leave gaps \u2014 with no type error and no test failure. dagNode already imports `DiffKind` from workflowLayout, so the canonical home is one line away."
+    },
+    {
+      "category": "dead-code",
+      "description": "`WaterfallBar` declares `runStartMs` and `leftPct`, uses neither, and keeps them alive with `void runStartMs; void leftPct;`.",
+      "evidence": "Neither identifier appears anywhere else in the function.",
+      "files": ["packages/web/src/app/runs/[id]/page.tsx:472-473,481-482"],
+      "id": "F-034",
+      "proposed_fix": "Delete both declarations and both `void` statements.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "The `void` statements exist only to silence Biome's unused-variable rule, which hides F-021 (the waterfall's missing offset) behind what looks like intentional code."
+    },
+    {
+      "category": "types",
+      "description": "`const traces = (run as WorkflowRunDetail).traces ?? [];` \u2014 `run` is already narrowed to `WorkflowRunDetail` by the guard four lines above.",
+      "evidence": "`useWorkflowRun` returns `WorkflowRunDetail | undefined`; `if (isError || !run || !spec) return \u2026` narrows it.",
+      "files": ["packages/web/src/app/runs/[id]/page.tsx:930"],
+      "id": "F-035",
+      "proposed_fix": "Drop the cast.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "A redundant assertion on an already-narrowed value trains readers to accept casts in this file; the same habit produced F-001 two files away."
+    },
+    {
+      "category": "consistency",
+      "description": "Eleven bare `new Date(x).toLocaleString()` / `.toLocaleDateString()` calls remain across 7 files, against 33 uses of the shared `formatDate` / `formatRelativeTime` helpers.",
+      "evidence": "11 bare `new Date(...).toLocale*` date calls across 7 files, against 33 uses of the shared helpers. TracesTab.tsx:370's two toLocaleString() calls are excluded \u2014 they format token counts, not dates. lib/utils.ts:8-21 is the written convention.",
+      "files": [
+        "packages/web/src/lib/utils.ts:8-21",
+        "packages/web/src/app/admin/lessons/page.tsx:45,143,224",
+        "packages/web/src/app/admin/skills/page.tsx:274,275",
+        "packages/web/src/app/admin/scanner/page.tsx:273,274",
+        "packages/web/src/app/admin/schedules/page.tsx:26",
+        "packages/web/src/components/workflow/RevalidationForm.tsx:104",
+        "packages/web/src/components/workflow/ConsolidationForm.tsx:109",
+        "packages/web/src/app/admin/slack-channels/page.tsx:681"
+      ],
+      "id": "F-036",
+      "proposed_fix": "Route all ten through `formatDate` / `formatRelativeTime`. Report-only because each swap changes the rendered date string.",
+      "severity": "high",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "lib/utils.ts carries a comment naming this exact situation as the bug it was written to fix: \"Pinning a locale here is what made a non-US reader see US-ordered dates from formatDate next to browser-ordered ones from the bare toLocaleString() calls elsewhere in the app.\" The centralisation landed in most files and not these. Worse, the two formats differ in shape (formatDate omits the year and uses a short month), so a reader sees two date styles on one screen."
+    },
+    {
+      "category": "dry",
+      "description": "`SkillRefEditor` (~85 lines) and `ToolKeysEditor` (~45 lines), plus the `clean()` helper and the `ALL_TOOL_KEYS` constant, are duplicated essentially character-for-character between the GLOBAL agent-library page and the per-team agent overrides section.",
+      "evidence": "Full diff of the two SkillRefEditor bodies: (1) the trailing <Select> takes `label={refs.length === 0 ? 'Skills' : undefined}` in the library page and no label prop in the team section; (2) the library page renders a 'No skills available.' empty state that the team section omits entirely; (3) `remove()` is formatted across two lines vs one, behaviourally identical. ToolKeysEditor differs only in FieldWrapper hint copy ('Agent inherits all available tools' vs 'Inherits all available tools'). ALL_TOOL_KEYS and clean() are byte-identical.",
+      "files": [
+        "packages/web/src/app/admin/agents/library/page.tsx:67-205",
+        "packages/web/src/components/teams/TeamAgentLibrarySection.tsx:54-190"
+      ],
+      "id": "F-037",
+      "proposed_fix": "Move both editors plus `ALL_TOOL_KEYS` and `clean` into `components/agents/` and import from both call sites.",
+      "severity": "high",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "This is the one DRY candidate in the package that clears the two-occurrence exception: byte-identical, substantial, and unambiguously the same domain concept (editing an Agent's skill refs and tool keys) with a single shared reason to change \u2014 the Agent schema. Adding a sixth tool key today means editing two files that must not diverge."
+    },
+    {
+      "category": "consistency",
+      "description": "`app/admin/skills/page.tsx` is the only page in the package that declares its own data hooks \u2014 five of them, inline. `useSkills` there hits `/api/v1/admin/skills` under the query key `['skills','all']`; `hooks/useSkills.ts` hits the same endpoint under `['admin-skills']`.",
+      "evidence": "Only page.tsx file in app/ matching `^function use[A-Z]`.",
+      "files": [
+        "packages/web/src/app/admin/skills/page.tsx:30-95",
+        "packages/web/src/hooks/useSkills.ts"
+      ],
+      "id": "F-038",
+      "proposed_fix": "Move the five hooks into `hooks/useSkills.ts`, keep one query key, and widen `SkillOption` to the full `Skill` shape (or export both).",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "Two cache entries for one resource. `useCreateSkill`/`useUpdateSkill`/`useDeleteSkill` invalidate `['skills']`, which prefix-matches `['skills','all']` but not `['admin-skills']` \u2014 so creating a skill on the admin page leaves the skill pickers in the agent library and team overrides showing a stale list."
+    },
+    {
+      "category": "consistency",
+      "description": "Four different confirmation treatments for destructive actions: the shared `<ConfirmModal>` (used by run-cancel, member removal, token revoke, template archive), a native `window.confirm()` (PAT revoke, credential delete), a hand-rolled `<Modal>` confirm (team agent delete, skill delete), and no confirmation at all (deleting a lesson in `/admin/lessons`).",
+      "evidence": "2 window.confirm sites; 6 ConfirmModal sites; 2 hand-rolled confirm modals; 1 unguarded delete.",
+      "files": [
+        "packages/web/src/components/settings/AccessTokensSection.tsx:60",
+        "packages/web/src/components/modelConfig/CredentialsTab.tsx:129",
+        "packages/web/src/app/admin/lessons/page.tsx:230-238",
+        "packages/web/src/components/teams/TeamAgentLibrarySection.tsx:490-520",
+        "packages/web/src/app/admin/skills/page.tsx:365-400"
+      ],
+      "id": "F-039",
+      "proposed_fix": "Standardise on `<ConfirmModal>`; add one for the lesson delete.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "`window.confirm` renders an OS dialog that ignores the design system entirely and is not stylable or testable; the un-confirmed lesson delete is a one-click irreversible action on stored agent memory. The shared primitive already exists and covers all three cases."
+    },
+    {
+      "category": "best-practice",
+      "description": "The login page's left panel renders a green pulse dot and the literal text \"gateway online\", unconditionally \u2014 while the right panel renders a \"Service unavailable / Can't reach the gateway\" banner driven by the real `gatewayDown` probe.",
+      "evidence": "app/login/page.tsx:296-301 vs the gatewayDown banner at :340-360.",
+      "files": ["packages/web/src/app/login/page.tsx:309-313"],
+      "id": "F-040",
+      "proposed_fix": "Drive the indicator from `gatewayDown` (dot + label switch to brick/offline), or drop it \u2014 a hardcoded status light is worse than none.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "When the gateway is down the page states both at once, and the decorative claim is the more prominent of the two. It is the first screen a contributor sees when their local stack isn't up."
+    },
+    {
+      "category": "best-practice",
+      "description": "`\u00a9 {new Date().getFullYear()}` is evaluated during render on a page that is statically prerendered (it is wrapped in Suspense specifically to stay SSG-eligible).",
+      "evidence": "app/login/page.tsx:317; compare :345 where suppressHydrationWarning is used.",
+      "files": ["packages/web/src/app/login/page.tsx:318"],
+      "id": "F-041",
+      "proposed_fix": "`suppressHydrationWarning` on the span, or move the year to a build-time constant.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "The year is baked in at build time and can disagree with the client's clock across a New Year boundary, producing a hydration mismatch. The same file already reaches for `suppressHydrationWarning` on `API_BASE` for exactly this class of problem."
+    },
+    {
+      "category": "consistency",
+      "description": "`app/users/page.tsx` and `app/admin/sessions/page.tsx` each carry a byte-identical hand-rolled loading block (a pulse dot beside lowercase mono text) and a byte-identical local `Th` table-header component. `app/admin/access-tokens/page.tsx` carries a third `Th` that differs only in formatting and in declaring `children?` optional.",
+      "evidence": "Th at users/page.tsx:256, admin/sessions/page.tsx:101 (identical), admin/access-tokens/page.tsx:27 (multiline destructure, `children?: React.ReactNode`). Loading blocks at users/page.tsx:43-48 and admin/sessions/page.tsx:13-19.",
+      "files": [
+        "packages/web/src/app/users/page.tsx:43-48,256-267",
+        "packages/web/src/app/admin/sessions/page.tsx:13-19,101-112",
+        "packages/web/src/app/admin/access-tokens/page.tsx:27-43"
+      ],
+      "id": "F-042",
+      "proposed_fix": "Use `<LoadingState message=\"loading users\u2026\">`, and promote `Th` to `components/ui/`.",
+      "severity": "low",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "The loading block re-implements `<LoadingState>` with different copy; `Th` is a table-header primitive the ui/ directory does not have but clearly needs \u2014 three copies is past the rule of three."
+    },
+    {
+      "category": "best-practice",
+      "description": "`collectEdges` in the web package was a second, hand-maintained switch over `node.type`, duplicating `nodeEdges` in `packages/shared/src/workflow/spec.ts` \u2014 which is documented as \"the single source of truth for graph traversal ... so every node type's edges are enumerated in exactly one place\". The web copy had drifted: it had no case for `agent`, `mcp`, `eval` or `containerStep`, all of which carry `next`, so every outgoing edge from those four types was silently dropped from the rendered graph. Shared had them right the whole time.",
+      "evidence": "nodeEdges is exported from the shared workflow barrel (index.ts:94) and already consumed by spec.ts:492 and validateSpec.ts:51. Surfaced by the reuse and altitude passes of /simplify; the initial fix patched the duplicate instead.",
+      "files": [
+        "packages/web/src/lib/workflowLayout.ts:54-73",
+        "packages/shared/src/workflow/spec.ts:510"
+      ],
+      "id": "F-043",
+      "proposed_fix": "Rewrite `collectEdges` as a thin map over `nodeEdges`, deleting the duplicate switch (~50 lines), and add a `never` exhaustiveness sentinel to `nodeEdges` itself so the source of truth fails to build on a new variant rather than silently reporting zero edges to the schema's ref validation and to `validateSpec`'s reachability analysis.",
+      "severity": "high",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "Four of the fifteen node types drew as dead ends in the workflow canvas, the template diff viewer and the run viewer \u2014 including `agent` and `mcp`, the two the platform's own docs put front and centre. The duplication is the actual defect: patching the four missing cases into the copy would have left the next node type free to drift again."
+    },
+    {
+      "category": "consistency",
+      "description": "`HandleKind` in dagNode.tsx was a character-for-character duplicate of `EdgeKind` in workflowLayout.ts, with a comment recording the duplication as deliberate.",
+      "evidence": "Supersedes F-028, which reported the duplication but accepted the comment's claim that it was intentional.",
+      "files": ["packages/web/src/components/workflow/dagNode.tsx:24"],
+      "id": "F-044",
+      "proposed_fix": "`export type HandleKind = EdgeKind;`",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "React Flow matches an edge's `sourceHandle` against the handle ids a node renders, by string. If the two unions drifted, edges would fail to attach with no type error and no test failure \u2014 the same silent-drop failure mode as F-043."
+    },
+    {
+      "category": "best-practice",
+      "description": "A multi-option `humanDecision` node's edges do not render. `nodeEdges` labels each option edge `options[i].next`; the renderer flattens them all to the `onSubmit` kind; but `handleKindsFor(humanDecision)` returns only `['onTimeout']`, so those edges name a source handle the node never draws and React Flow drops them.",
+      "evidence": "handleKindsFor at dagNode.tsx:112-113 returns ['onTimeout'] for humanDecision; collectEdges maps every options[i].next to kind 'onSubmit'; specToFlow.ts:137 sets sourceHandle from the kind. The new union-driven parity test in workflowLayout.test.ts documents this as its one exception.",
+      "files": [
+        "packages/web/src/components/workflow/dagNode.tsx:112-113",
+        "packages/web/src/lib/workflowLayout.ts:66-72",
+        "packages/web/src/components/workflow/TemplateEditor.tsx:122"
+      ],
+      "id": "F-045",
+      "proposed_fix": "Needs a product call, not a refactor: one handle per option (accurate, but `TemplateEditor.tsx:122` writes `patched[handleKind] = target` on drag-connect, which assumes a handle id is a top-level spec field \u2014 false for `options[i].next`), or one shared `onSubmit` port (cheap, but drag-connect would then write an invalid `onSubmit` field onto a humanDecision node). Either way the handle-id-as-field-name assumption in TemplateEditor has to change first.",
+      "severity": "high",
+      "status": "applied",
+      "tier_required": 3,
+      "why_it_matters": "Exactly the user-visible symptom F-043 fixed, in a node type F-043 did not touch \u2014 a decision node shows its timeout branch and none of its actual decision branches. It is live today."
+    },
+    {
+      "category": "best-practice",
+      "description": "`PRIMITIVE_GROUPS` in the node palette is typed as a plain array and omits the `eval` node type, so there is no way to create an eval node from the workflow editor.",
+      "evidence": "NodeSchema.options yields 15 node types; the palette enumerates 14. dagNode.tsx:49,67 show the exhaustive-Record pattern that would have caught it.",
+      "files": ["packages/web/src/components/workflow/NodePalette.tsx:34-110"],
+      "id": "F-046",
+      "proposed_fix": "Add the missing entry and type the palette as an exhaustive `Record<SpecNode['type'], \u2026>` (the pattern `CATEGORY_RING` and `CATEGORY_LABEL` in dagNode.tsx already use), so the next node type cannot be forgotten.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 2,
+      "why_it_matters": "`eval` is a first-class node type with its own docs page; the only route to one is hand-editing the spec JSON. The palette has the same shape of gap as F-043 and for the same reason \u2014 an unguarded hand-maintained enumeration of node types."
+    },
+    {
+      "category": "best-practice",
+      "description": "Two further unguarded enumerations of `node.type`: `subLabelFor` returns `string | undefined`, so a missing case is legal and silently drops the node's sublabel; `NodeInspector` dispatches through a chain of `node.type === \u2026` comparisons, so a new type simply gets no inspector section.",
+      "evidence": "Enumerated during the altitude pass; the guarded counterparts are makeDefaultNodeFor (return type SpecNode) and handleKindsFor (return type HandleKind[]).",
+      "files": [
+        "packages/web/src/components/workflow/specToFlow.ts:39",
+        "packages/web/src/components/workflow/NodeInspector.tsx:123-165"
+      ],
+      "id": "F-047",
+      "proposed_fix": "Give `subLabelFor` a `never` sentinel, and make the inspector dispatch a `Record<SpecNode['type'], \u2026>` lookup.",
+      "severity": "medium",
+      "status": "applied",
+      "tier_required": 1,
+      "why_it_matters": "Same failure class as F-043, F-046: the compiler cannot help because the return type or control flow tolerates a missing branch. These are the remaining places a new node type degrades silently."
+    }
+  ],
+  "generated": "2026-08-19",
+  "scope": "packages/web (@auto-swe/web)"
+}

@@ -10,7 +10,7 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { TabBar } from '@/components/ui/TabBar';
 import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
-import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useWorkflows';
+import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useTemplates';
 import { cn } from '@/lib/utils';
 
 interface PageProps {

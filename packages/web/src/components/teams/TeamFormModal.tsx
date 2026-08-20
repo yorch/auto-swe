@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
-import { useCreateTeam, useUpdateTeam } from '@/hooks/useWorkflows';
+import { useCreateTeam, useUpdateTeam } from '@/hooks/useTeams';
+import { errMsg } from '@/lib/errors';
 
 type Mode =
   | { kind: 'create' }
@@ -68,7 +69,7 @@ export function TeamFormModal({
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save team');
+      setError(errMsg(err, 'Failed to save team'));
     }
   }
 

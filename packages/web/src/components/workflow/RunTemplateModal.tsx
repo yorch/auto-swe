@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { useRunTemplate } from '@/hooks/useTemplates';
+import { errMsg } from '@/lib/errors';
 import { buildInitialPayload, SchemaFieldInput } from './schemaForm';
 
 export function RunTemplateModal({
@@ -42,7 +43,7 @@ export function RunTemplateModal({
       const result = await runTemplate.mutateAsync({ label: label.trim() || undefined, payload });
       setLaunchedRunId(result.workflowId);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Run failed';
+      const msg = errMsg(err, 'Run failed');
       setError(msg);
     }
   };

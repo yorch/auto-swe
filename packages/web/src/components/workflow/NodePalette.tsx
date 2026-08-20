@@ -18,107 +18,130 @@ export type PaletteDragKind =
 
 export const PALETTE_MIME = 'application/x-auto-swe-palette';
 
+const GROUP_ORDER = ['Execution', 'Control flow', 'Human-in-loop', 'Advanced'] as const;
+
+type GroupLabel = (typeof GROUP_ORDER)[number];
+
 type PrimitiveDef = {
-  type: SpecNode['type'];
   label: string;
   hint: string;
   swatch: string;
+  group: GroupLabel;
   elevated?: boolean;
 };
 
 type PrimitiveGroup = {
-  label: string;
-  items: PrimitiveDef[];
+  label: GroupLabel;
+  items: (PrimitiveDef & { type: SpecNode['type'] })[];
 };
 
-const PRIMITIVE_GROUPS: PrimitiveGroup[] = [
-  {
-    items: [
-      { hint: 'Run a registered step', label: 'Step', swatch: 'bg-ember-400', type: 'step' },
-      {
-        hint: 'Run a library Agent by reference',
-        label: 'Agent',
-        swatch: 'bg-indigo-400',
-        type: 'agent',
-      },
-      {
-        hint: 'Call one tool on an MCP server',
-        label: 'MCP tool',
-        swatch: 'bg-dust-400',
-        type: 'mcp',
-      },
-    ],
-    label: 'Execution',
+/**
+ * Every primitive node type, in the order the palette lists them.
+ *
+ * Keyed as a `Record` over the `Node` union rather than nested inside the
+ * groups: as a plain array this silently omitted `eval`, so there was no way
+ * to create an eval node from the editor at all. A `Record` makes the next
+ * node type a compile error here instead.
+ */
+const PRIMITIVES: Record<SpecNode['type'], PrimitiveDef> = {
+  agent: {
+    group: 'Execution',
+    hint: 'Run a library Agent by reference',
+    label: 'Agent',
+    swatch: 'bg-ember-300',
   },
-  {
-    items: [
-      {
-        hint: 'Branch on an expression',
-        label: 'Conditional',
-        swatch: 'bg-violet-400',
-        type: 'cond',
-      },
-      {
-        hint: 'Fan out into parallel subtasks',
-        label: 'Fan-out',
-        swatch: 'bg-moss-400',
-        type: 'fanOut',
-      },
-      { hint: 'Set spec values', label: 'Set', swatch: 'bg-amber-400', type: 'set' },
-      {
-        hint: 'Wait for an external signal',
-        label: 'Signal',
-        swatch: 'bg-dust-400',
-        type: 'signal',
-      },
-      { hint: 'End the workflow', label: 'Terminate', swatch: 'bg-paper-500', type: 'terminate' },
-    ],
-    label: 'Control flow',
+  cond: {
+    group: 'Control flow',
+    hint: 'Branch on an expression',
+    label: 'Conditional',
+    swatch: 'bg-violet-400',
   },
-  {
-    items: [
-      {
-        hint: 'Pause for human approval',
-        label: 'Approval',
-        swatch: 'bg-amber-500',
-        type: 'humanApproval',
-      },
-      {
-        hint: 'Pause for human decision',
-        label: 'Decision',
-        swatch: 'bg-amber-500',
-        type: 'humanDecision',
-      },
-      { hint: 'Pause for human input', label: 'Input', swatch: 'bg-amber-500', type: 'humanInput' },
-      {
-        hint: 'Pause for human review',
-        label: 'Review',
-        swatch: 'bg-amber-500',
-        type: 'humanReview',
-      },
-    ],
-    label: 'Human-in-loop',
+  containerStep: {
+    elevated: true,
+    group: 'Advanced',
+    hint: 'Coded capability container — JSON in/out (⚠ elevated)',
+    label: 'Container step',
+    swatch: 'bg-brick-400',
   },
-  {
-    items: [
-      {
-        elevated: true,
-        hint: 'Run a shell command (⚠ elevated)',
-        label: 'Shell',
-        swatch: 'bg-brick-400',
-        type: 'shell',
-      },
-      {
-        elevated: true,
-        hint: 'Coded capability container — JSON in/out (⚠ elevated)',
-        label: 'Container step',
-        swatch: 'bg-brick-400',
-        type: 'containerStep',
-      },
-    ],
-    label: 'Advanced',
+  eval: {
+    group: 'Execution',
+    hint: 'Score a value with a scorer',
+    label: 'Eval',
+    swatch: 'bg-moss-400',
   },
-];
+  fanOut: {
+    group: 'Control flow',
+    hint: 'Fan out into parallel subtasks',
+    label: 'Fan-out',
+    swatch: 'bg-moss-400',
+  },
+  humanApproval: {
+    group: 'Human-in-loop',
+    hint: 'Pause for human approval',
+    label: 'Approval',
+    swatch: 'bg-amber-500',
+  },
+  humanDecision: {
+    group: 'Human-in-loop',
+    hint: 'Pause for human decision',
+    label: 'Decision',
+    swatch: 'bg-amber-500',
+  },
+  humanInput: {
+    group: 'Human-in-loop',
+    hint: 'Pause for human input',
+    label: 'Input',
+    swatch: 'bg-amber-500',
+  },
+  humanReview: {
+    group: 'Human-in-loop',
+    hint: 'Pause for human review',
+    label: 'Review',
+    swatch: 'bg-amber-500',
+  },
+  mcp: {
+    group: 'Execution',
+    hint: 'Call one tool on an MCP server',
+    label: 'MCP tool',
+    swatch: 'bg-dust-400',
+  },
+  set: { group: 'Control flow', hint: 'Set spec values', label: 'Set', swatch: 'bg-amber-400' },
+  shell: {
+    elevated: true,
+    group: 'Advanced',
+    hint: 'Run a shell command (⚠ elevated)',
+    label: 'Shell',
+    swatch: 'bg-brick-400',
+  },
+  signal: {
+    group: 'Control flow',
+    hint: 'Wait for an external signal',
+    label: 'Signal',
+    swatch: 'bg-dust-400',
+  },
+  step: {
+    group: 'Execution',
+    hint: 'Run a registered step',
+    label: 'Step',
+    swatch: 'bg-ember-400',
+  },
+  terminate: {
+    group: 'Control flow',
+    hint: 'End the workflow',
+    label: 'Terminate',
+    swatch: 'bg-paper-500',
+  },
+};
+
+const PRIMITIVE_TYPES = Object.keys(PRIMITIVES) as SpecNode['type'][];
+
+export const PRIMITIVE_GROUPS: PrimitiveGroup[] = GROUP_ORDER.map((label) => ({
+  items: PRIMITIVE_TYPES.filter((type) => PRIMITIVES[type].group === label).map((type) => ({
+    ...PRIMITIVES[type],
+    type,
+  })),
+  label,
+}));
 
 interface StepEntry {
   name: string;
@@ -215,6 +238,7 @@ export function NodePalette({ steps }: Props) {
             Step registry
           </div>
           <input
+            aria-label="Filter the step registry"
             className="h-7 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter steps…"

@@ -35,9 +35,13 @@ export function Modal({
   }, [open]);
 
   const width = size === 'lg' ? 'w-[min(720px,92vw)]' : 'w-[min(560px,92vw)]';
+  // Names the dialog from its own heading, so it is announced as more than
+  // "dialog". Derived from the title so callers cannot forget it.
+  const titleId = `modal-title-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
   return (
     <dialog
+      aria-labelledby={titleId}
       className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/80`}
       onClose={onClose}
       ref={dialogRef}
@@ -50,7 +54,9 @@ export function Modal({
               {eyebrow}
             </div>
           )}
-          <h2 className="font-display text-2xl text-paper-50">{title}</h2>
+          <h2 className="font-display text-2xl text-paper-50" id={titleId}>
+            {title}
+          </h2>
           {subtitle && <div className="text-xs text-paper-500">{subtitle}</div>}
         </header>
         {children}

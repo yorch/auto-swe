@@ -6,7 +6,8 @@ import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
-import { useTeams } from '@/hooks/useWorkflows';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { useTeams } from '@/hooks/useTeams';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function TeamsPage() {
@@ -21,14 +22,17 @@ export default function TeamsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-bold">Teams</h2>
-        {canCreate && (
-          <Button onClick={() => setCreating(true)} variant="primary">
-            + New team
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        actions={
+          canCreate && (
+            <Button onClick={() => setCreating(true)} variant="primary">
+              + New team
+            </Button>
+          )
+        }
+        chapter="§ Teams"
+        title="Teams"
+      />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {(teams ?? []).map((t) => (
           <Link href={`/teams/${t.id}`} key={t.id}>

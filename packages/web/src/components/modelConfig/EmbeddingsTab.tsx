@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
+import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   SUGGESTED_MODEL_SPECS,
   useAdminCredentials,
@@ -21,8 +22,8 @@ export function EmbeddingsTab() {
 
   const [modelSpec, setModelSpec] = useState<string>('');
   const [credentialId, setCredentialId] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const { error, submit } = useIntegrationConfigForm();
 
   // Sync form state to the query result. Re-keys on the row's updatedAt so a
   // server-side change (e.g. another admin saving) refreshes the form while
@@ -34,15 +35,12 @@ export function EmbeddingsTab() {
     }
   }, [config, dirty]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    try {
-      await update.mutateAsync({ credentialId: credentialId || null, modelSpec });
-      setDirty(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    }
+    void submit(
+      () => update.mutateAsync({ credentialId: credentialId || null, modelSpec }),
+      () => setDirty(false)
+    );
   };
 
   const suggestions = SUGGESTED_MODEL_SPECS.flatMap((p) => p.specs);

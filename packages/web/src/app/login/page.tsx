@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
+import { errMsg } from '@/lib/errors';
 import { useAuthStore } from '@/stores/authStore';
 
 interface ProviderFlags {
@@ -162,7 +163,7 @@ function LoginPageInner() {
       await login(email, password);
       router.push(destination);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      setError(errMsg(err, 'Login failed'));
     } finally {
       setLoading(false);
     }
@@ -184,7 +185,7 @@ function LoginPageInner() {
           : `If an account exists for ${email}, a reset link is on its way.`
       );
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not send reset link');
+      setError(errMsg(err, 'Could not send reset link'));
     } finally {
       setLoading(false);
     }
@@ -201,7 +202,7 @@ function LoginPageInner() {
       // and the second's state cookie would break the first's callback.
       await signInWithProvider(provider);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : `Could not start ${provider} sign-in`);
+      setError(errMsg(err, `Could not start ${provider} sign-in`));
       setLoading(false);
     }
   };
@@ -223,7 +224,7 @@ function LoginPageInner() {
           : `A sign-in link was sent to ${email}.`
       );
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not send magic link');
+      setError(errMsg(err, 'Could not send magic link'));
     } finally {
       setLoading(false);
     }
@@ -306,16 +307,25 @@ function LoginPageInner() {
               autonomous workflows
             </div>
           </div>
+          {/* Driven by the provider probe, which doubles as the reachability
+              check — a status light that always reads "online" is worse than
+              no status light. */}
           <div className="flex items-center gap-2">
-            <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
+            <span
+              className={`pulse-dot inline-block h-1.5 w-1.5 rounded-full ${
+                gatewayDown ? 'bg-brick-400' : 'bg-moss-400'
+              }`}
+            />
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-400">
-              gateway online
+              {gatewayDown ? 'gateway offline' : 'gateway online'}
             </span>
           </div>
         </header>
 
         <footer className="relative z-10 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-          <span>© {new Date().getFullYear()} · brnby</span>
+          {/* Prerendered at build time, so the baked-in year can disagree with the
+              client's clock across a New Year boundary. */}
+          <span suppressHydrationWarning>© {new Date().getFullYear()} · brnby</span>
           <span>v{APP_VERSION} · oauth + magic link + password</span>
         </footer>
       </aside>

@@ -3,17 +3,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { useTeamEgressAllowlist, useUpdateTeamEgressAllowlist } from '@/hooks/useWorkflows';
+import { useTeamEgressAllowlist, useUpdateTeamEgressAllowlist } from '@/hooks/useTeams';
+import { useTransientFlag } from '@/hooks/useTransientFlag';
+import { errMsg } from '@/lib/errors';
 
 export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
   const { data, isLoading } = useTeamEgressAllowlist(teamId);
   const update = useUpdateTeamEgressAllowlist(teamId);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, markSaved, resetSaved] = useTransientFlag();
   // true while the user has unsaved edits; prevents server refetch from overwriting the textarea
   const isDirtyRef = useRef(false);
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (data && !isDirtyRef.current) {
@@ -21,18 +22,9 @@ export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
     }
   }, [data]);
 
-  useEffect(
-    () => () => {
-      if (savedTimerRef.current !== null) {
-        clearTimeout(savedTimerRef.current);
-      }
-    },
-    []
-  );
-
   async function handleSave() {
     setError(null);
-    setSaved(false);
+    resetSaved();
     const list = text
       .split('\n')
       .map((s) => s.trim())
@@ -40,13 +32,9 @@ export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
     try {
       await update.mutateAsync(list);
       isDirtyRef.current = false;
-      setSaved(true);
-      if (savedTimerRef.current !== null) {
-        clearTimeout(savedTimerRef.current);
-      }
-      savedTimerRef.current = setTimeout(() => setSaved(false), 1500);
+      markSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update allowlist');
+      setError(errMsg(err, 'Failed to update allowlist'));
     }
   }
 

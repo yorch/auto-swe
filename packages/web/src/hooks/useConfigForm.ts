@@ -2,6 +2,7 @@
 
 import type { Dispatch, FormEvent, SetStateAction } from 'react';
 import { useEffect, useRef, useState } from 'react';
+import { errMsg } from '@/lib/errors';
 
 // Factors out the repeated "load query -> seed local form state -> submit ->
 // saved/error" cycle shared by the workflow config forms (consolidation,
@@ -65,7 +66,7 @@ export function useConfigForm<TData, TForm, TBody>(
       await mutateAsync(toBody(form));
       setSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
+      setError(errMsg(err, 'Failed to save'));
     }
   };
 

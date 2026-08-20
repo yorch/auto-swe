@@ -14,24 +14,11 @@
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { Handle, type NodeProps, Position } from '@xyflow/react';
 import { cn } from '@/lib/utils';
-import type { DiffKind } from '@/lib/workflowLayout';
+import { type DiffKind, type EdgeKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
 
-export const NODE_WIDTH = 220;
-export const NODE_HEIGHT = 88;
-
-/** Edge "kinds" emitted by collectEdges in workflowLayout — duplicated here
- *  so the node knows which source handle ids it must expose. */
-export type HandleKind =
-  | 'next'
-  | 'onTrue'
-  | 'onFalse'
-  | 'onReceive'
-  | 'onTimeout'
-  | 'subgraph'
-  | 'join'
-  | 'onApprove'
-  | 'onReject'
-  | 'onSubmit';
+/** The source-handle ids a node exposes are exactly the edge kinds the layout
+ *  emits for it — one name, so the two cannot disagree. */
+export type HandleKind = EdgeKind;
 
 export interface DagNodeData {
   node: SpecNode;
@@ -47,10 +34,10 @@ export interface DagNodeData {
 }
 
 const CATEGORY_RING: Record<SpecNode['type'], string> = {
-  agent: 'border-l-indigo-400',
+  agent: 'border-l-ember-300',
   cond: 'border-l-violet-400',
   containerStep: 'border-l-brick-400',
-  eval: 'border-l-moss-500',
+  eval: 'border-l-moss-400',
   fanOut: 'border-l-moss-400',
   humanApproval: 'border-l-amber-500',
   humanDecision: 'border-l-amber-500',
@@ -97,8 +84,47 @@ const DIFF_BORDER: Record<DiffKind, string> = {
   removed: 'border-brick-400 border-dashed',
 };
 
-/** Which handle ids does a given node type emit? */
-export function handleKindsFor(node: SpecNode): HandleKind[] {
+/**
+ * One source port per outgoing edge a node can have.
+ *
+ * `id` is the spec field `nodeEdges` emits for that edge, and doubles as the
+ * React Flow handle id — a `humanDecision` therefore draws one port per option
+ * (`options[0].next`, …) rather than a single `onSubmit`. It used to expose
+ * only `onTimeout`, so every option edge named a handle the node never drew
+ * and React Flow silently dropped it: a decision node rendered its timeout
+ * branch and none of its actual decisions.
+ *
+ * `kind` stays an `EdgeKind` for colour and default label, so the option
+ * ports read as the submit-coloured ports they are.
+ */
+export interface HandlePort {
+  id: string;
+  kind: HandleKind;
+  label: string;
+}
+
+export function handlePortsFor(node: SpecNode): HandlePort[] {
+  if (node.type === 'humanDecision') {
+    return [
+      port('onTimeout'),
+      ...node.options.map((opt, i) => ({
+        id: `options[${i}].next`,
+        kind: 'onSubmit' as const,
+        label: opt.label,
+      })),
+    ];
+  }
+  return handleKindsFor(node).map(port);
+}
+
+const port = (kind: HandleKind): HandlePort => ({
+  id: kind,
+  kind,
+  label: HANDLE_LABEL[kind],
+});
+
+/** Which edge kinds does a given node type emit? */
+function handleKindsFor(node: SpecNode): HandleKind[] {
   switch (node.type) {
     case 'step':
     case 'agent':
@@ -119,6 +145,7 @@ export function handleKindsFor(node: SpecNode): HandleKind[] {
     case 'humanApproval':
       return ['onApprove', 'onReject', 'onTimeout'];
     case 'humanDecision':
+      // Option edges are not `EdgeKind`s; `handlePortsFor` adds them.
       return ['onTimeout'];
     case 'humanInput':
     case 'humanReview':
@@ -154,7 +181,7 @@ const HANDLE_LABEL: Record<HandleKind, string> = {
 
 export function DagNode({ id, data, selected }: NodeProps) {
   const d = data as DagNodeData;
-  const handles = handleKindsFor(d.node);
+  const handles = handlePortsFor(d.node);
   const stripeClass = d.status ? STATUS_STRIPE[d.status.status] : null;
   const diffBorder = d.diff ? DIFF_BORDER[d.diff] : null;
   const isLive = d.status?.status === 'RUNNING' || d.status?.status === 'PENDING';
@@ -171,6 +198,9 @@ export function DagNode({ id, data, selected }: NodeProps) {
             ? diffBorder
             : 'border-ink-500'
       )}
+      // Sized from the same constants dagre is fed when it computes positions,
+      // rather than a local copy, so the card cannot drift out of the slot the
+      // layout planned for it.
       style={{ height: NODE_HEIGHT, width: NODE_WIDTH }}
     >
       {/* Target handle — left edge, accepts all incoming edges */}
@@ -215,23 +245,26 @@ export function DagNode({ id, data, selected }: NodeProps) {
         )}
       </div>
 
-      {/* Source handles — one per outgoing edge kind, stacked on the right */}
+      {/* Source handles — one per outgoing edge, stacked on the right */}
       {handles.length === 1 && (
         <Handle
-          className={cn('!h-2 !w-2 !rounded-full !border-2 !border-ink-900', HANDLE_BG[handles[0]])}
-          id={handles[0]}
+          className={cn(
+            '!h-2 !w-2 !rounded-full !border-2 !border-ink-900',
+            HANDLE_BG[handles[0].kind]
+          )}
+          id={handles[0].id}
           position={Position.Right}
           type="source"
         />
       )}
       {handles.length > 1 &&
-        handles.map((kind, i) => {
+        handles.map((h, i) => {
           const top = `${((i + 1) * 100) / (handles.length + 1)}%`;
           return (
             <Handle
-              className={cn('!h-2 !w-2 !rounded-full !border-2 !border-ink-900', HANDLE_BG[kind])}
-              id={kind}
-              key={kind}
+              className={cn('!h-2 !w-2 !rounded-full !border-2 !border-ink-900', HANDLE_BG[h.kind])}
+              id={h.id}
+              key={h.id}
               position={Position.Right}
               style={{ top }}
               type="source"
@@ -243,12 +276,12 @@ export function DagNode({ id, data, selected }: NodeProps) {
           user something to aim for when drag-connecting from a specific port. */}
       {selected && handles.length > 1 && (
         <div className="pointer-events-none absolute -right-1 top-0 bottom-0 flex flex-col justify-evenly pr-3 text-right">
-          {handles.map((kind) => (
+          {handles.map((h) => (
             <span
               className="translate-x-full pl-2 font-mono text-[9px] uppercase tracking-[0.14em] text-paper-500"
-              key={kind}
+              key={h.id}
             >
-              {HANDLE_LABEL[kind]}
+              {h.label}
             </span>
           ))}
         </div>

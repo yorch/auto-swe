@@ -16,6 +16,7 @@
  */
 
 import type { Node as SpecNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
+import { setNodeEdge } from '@auto-swe/shared/workflow';
 import {
   Background,
   BackgroundVariant,
@@ -32,8 +33,9 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { TOKEN } from '@/lib/palette';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
-import { DagNode, type DagNodeData, type HandleKind, handleKindsFor } from './dagNode';
+import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
 import { makeDefaultNodeFor } from './makeDefaultNode';
 import { NodeInspector } from './NodeInspector';
 import { NodePalette, PALETTE_MIME, type PaletteDragKind } from './NodePalette';
@@ -111,24 +113,22 @@ function EditorInner({
       if (!c.source || !c.target || !c.sourceHandle) {
         return;
       }
-      const handleKind = c.sourceHandle as HandleKind;
       const sourceNode = spec.nodes[c.source];
       if (!sourceNode) {
         return;
       }
-      const valid = handleKindsFor(sourceNode);
-      if (!valid.includes(handleKind)) {
+      // A handle id is the spec field the edge leaves through — but not always
+      // a top-level one, so the write goes through `setNodeEdge` rather than an
+      // index assignment.
+      const field = c.sourceHandle;
+      if (!handlePortsFor(sourceNode).some((p) => p.id === field)) {
         return;
       }
-      const patched = {
-        ...(sourceNode as unknown as Record<string, unknown>),
-        [handleKind]: c.target,
-      };
       onChange({
         ...spec,
         nodes: {
           ...spec.nodes,
-          [c.source]: patched as WorkflowSpec['nodes'][string],
+          [c.source]: setNodeEdge(sourceNode, field, c.target),
         },
       });
     },
@@ -421,7 +421,7 @@ function EditorInner({
           role="application"
         >
           <ReactFlow
-            connectionLineStyle={{ stroke: '#e26b3c', strokeWidth: 2 }}
+            connectionLineStyle={{ stroke: TOKEN.ember400, strokeWidth: 2 }}
             edges={edges}
             fitView
             fitViewOptions={{ maxZoom: 1.2, minZoom: 0.55, padding: 0.18 }}
@@ -439,13 +439,13 @@ function EditorInner({
             proOptions={{ hideAttribution: true }}
             zoomOnDoubleClick={false}
           >
-            <Background color="#1f2530" gap={24} size={1.2} variant={BackgroundVariant.Dots} />
+            <Background color={TOKEN.ink600} gap={24} size={1.2} variant={BackgroundVariant.Dots} />
             <MiniMap
-              maskColor="rgba(7,9,12,0.85)"
-              nodeColor={() => '#171c26'}
-              nodeStrokeColor="#2a323f"
+              maskColor="rgba(10, 12, 18, 0.85)"
+              nodeColor={() => TOKEN.ink700}
+              nodeStrokeColor={TOKEN.ink500}
               pannable
-              style={{ background: '#0b0e13', border: '1px solid #1f2530' }}
+              style={{ background: TOKEN.ink900, border: `1px solid ${TOKEN.ink600}` }}
               zoomable
             />
             <Controls showInteractive={false} />

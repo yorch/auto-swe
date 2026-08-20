@@ -6,7 +6,9 @@ import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
-import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useWorkflows';
+import { Th } from '@/components/ui/Th';
+import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useAdmin';
+import { errMsg } from '@/lib/errors';
 import { cn, formatDate, formatRelativeTime } from '@/lib/utils';
 
 function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
@@ -14,32 +16,13 @@ function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
     <span
       className={cn(
         'font-mono text-[10px] uppercase tracking-[0.14em]',
-        status === 'ACTIVE' && 'text-emerald-400',
+        status === 'ACTIVE' && 'text-moss-400',
         status === 'EXPIRED' && 'text-amber-400',
         status === 'REVOKED' && 'text-paper-500 line-through'
       )}
     >
       {status}
     </span>
-  );
-}
-
-function Th({
-  children,
-  align = 'left',
-}: {
-  children?: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      className={cn(
-        'px-4 py-3 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500',
-        align === 'right' ? 'text-right' : 'text-left'
-      )}
-    >
-      {children}
-    </th>
   );
 }
 
@@ -65,7 +48,7 @@ export default function AdminAccessTokensPage() {
       const res = (await pruneAudit.mutateAsync()) as { data: { deleted: number } };
       setPruneResult(res.data);
     } catch (err) {
-      setPruneError(err instanceof Error ? err.message : 'Prune failed');
+      setPruneError(errMsg(err, 'Prune failed'));
     }
   };
 
@@ -93,7 +76,9 @@ export default function AdminAccessTokensPage() {
         <div className="mb-4 flex items-center justify-between">
           <SectionHeader hint="newest first" number="01" title="All tokens" />
           <div className="flex items-center gap-3">
-            {pruneError && <span className="font-mono text-[11px] text-red-400">{pruneError}</span>}
+            {pruneError && (
+              <span className="font-mono text-[11px] text-brick-400">{pruneError}</span>
+            )}
             {pruneResult && !pruneError && (
               <span className="font-mono text-[11px] text-paper-500">
                 pruned {pruneResult.deleted} shell-audit rows
@@ -111,9 +96,8 @@ export default function AdminAccessTokensPage() {
         </div>
 
         {revokeToken.isError && (
-          <p className="mb-3 font-mono text-[11px] text-red-400">
-            Revoke failed:{' '}
-            {revokeToken.error instanceof Error ? revokeToken.error.message : 'unknown error'}
+          <p className="mb-3 font-mono text-[11px] text-brick-400">
+            Revoke failed: {errMsg(revokeToken.error, 'unknown error')}
           </p>
         )}
 

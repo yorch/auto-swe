@@ -16,6 +16,7 @@ import {
   useUpdateConsolidationConfig,
 } from '@/hooks/useAdminConfig';
 import { useConfigForm } from '@/hooks/useConfigForm';
+import { formatDate } from '@/lib/utils';
 
 interface ConsolidationFormState {
   enabled: boolean;
@@ -101,12 +102,12 @@ export function ConsolidationForm() {
                 </label>
                 {consolidation?.schedule.exists && (
                   <span
-                    className={`ml-auto text-xs ${consolidation.schedule.paused ? 'text-paper-500' : 'text-emerald-400'}`}
+                    className={`ml-auto text-xs ${consolidation.schedule.paused ? 'text-paper-500' : 'text-moss-400'}`}
                   >
                     {consolidation.schedule.paused
                       ? 'Paused in Temporal'
                       : consolidation.schedule.nextRunAt
-                        ? `Next run: ${new Date(consolidation.schedule.nextRunAt).toLocaleString()}`
+                        ? `Next run: ${formatDate(consolidation.schedule.nextRunAt)}`
                         : 'Active in Temporal'}
                   </span>
                 )}

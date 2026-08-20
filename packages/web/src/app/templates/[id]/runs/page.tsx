@@ -9,7 +9,7 @@ import { Pagination } from '@/components/ui/Pagination';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TabBar } from '@/components/ui/TabBar';
-import { useTemplateRuns, useWorkflowTemplate } from '@/hooks/useWorkflows';
+import { useTemplateRuns, useWorkflowTemplate } from '@/hooks/useTemplates';
 import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
