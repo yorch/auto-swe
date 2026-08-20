@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
   resolveCanaryConfig,
   resolveConsolidationConfig,
@@ -18,6 +19,7 @@ import {
   getGoogleOAuthConfig,
   getIssueTrackerConfig,
   getKnowledgeBaseConfig,
+  getOktaOAuthConfig,
   getSlackConfig,
   getStorageConfig,
   listConfigAuditEntries,
@@ -36,6 +38,7 @@ import {
   updateGoogleOAuthConfig,
   updateIssueTrackerConfig,
   updateKnowledgeBaseConfig,
+  updateOktaOAuthConfig,
   updateRevalidationScheduleConfig,
   updateSlackConfig,
   updateStorageConfig,
@@ -49,6 +52,7 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 ///   GET/PUT /api/v1/admin/config/storage
 ///   GET/PUT /api/v1/admin/config/workflow-defaults
 ///   GET/PUT /api/v1/admin/config/oauth/google
+///   GET/PUT /api/v1/admin/config/oauth/okta
 ///   GET/PUT /api/v1/admin/config/issue-tracker
 ///   GET/PUT /api/v1/admin/config/knowledge-base
 ///
@@ -215,6 +219,12 @@ const GoogleOAuthPutBody = z.object({
   clientSecret: z.string().min(1).max(500).optional(),
 });
 
+const OktaOAuthPutBody = z.object({
+  clientId: z.string().max(200).nullable().optional(),
+  clientSecret: z.string().min(1).max(500).optional(),
+  issuer: z.string().url().max(500).nullable().optional(),
+});
+
 const IssueTrackerPutBody = z.object({
   allowPrivateNetwork: z.boolean().optional(),
   apiToken: z.string().min(1).max(500).optional(),
@@ -354,6 +364,43 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: GoogleOAuthPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateGoogleOAuthConfig(prisma, req.body);
+      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      return reply.send({ data: result.data });
+    }
+  );
+
+  // ── Okta (enterprise SSO) ────────────────────────────────────────────────────
+
+  f.get('/config/oauth/okta', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
+    reply.send(await getOktaOAuthConfig(prisma))
+  );
+
+  f.put(
+    '/config/oauth/okta',
+    // 400 is declared alongside 200 because this is the one config route that
+    // rejects its body after Zod parsing — the SSRF guard below.
+    { schema: { body: OktaOAuthPutBody, response: { 200: z.any(), 400: z.any() } } },
+    async (req, reply) => {
+      // The issuer is fetched server-side at gateway boot (the OIDC discovery
+      // document), so an admin-supplied value is an SSRF vector exactly like an
+      // `apiBase` probe — run it through the same guard. Okta issuers are always
+      // public HTTPS, so unlike the tracker/KB connectors there is no
+      // private-network opt-in to honour here.
+      const { issuer } = req.body;
+      if (issuer) {
+        const safety = isSafeProbeUrl(issuer);
+        if (!safety.ok) {
+          return reply
+            .status(400)
+            .send({ error: { code: 'UNSAFE_URL', message: `issuer rejected: ${safety.reason}` } });
+        }
+        if (safety.url.protocol !== 'https:') {
+          return reply.status(400).send({
+            error: { code: 'UNSAFE_URL', message: 'issuer rejected: must use https' },
+          });
+        }
+      }
+      const result = await updateOktaOAuthConfig(prisma, req.body);
       await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }

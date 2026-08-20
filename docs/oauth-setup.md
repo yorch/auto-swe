@@ -1,10 +1,10 @@
-# OAuth setup — GitHub & Google
+# OAuth setup — GitHub, Google & Okta
 
-Step-by-step for wiring **GitHub** and **Google** sign-in via better-auth. Magic-link works out of the box and needs no provider registration.
+Step-by-step for wiring **GitHub**, **Google**, and **Okta** (enterprise SSO) sign-in via better-auth. Magic-link works out of the box and needs no provider registration.
 
-Both providers follow the same shape: register an OAuth app on the provider's developer console, copy the client id + secret into the admin dashboard at `/admin/integrations` (GitHub credentials on the **GitHub tab**, Google credentials on the **OAuth tab**), restart the gateway, and the buttons appear on `/login` automatically. The login page reads `GET /api/v1/auth/providers` at load time and only renders buttons for providers whose credentials are present (in the DB or env).
+All three providers follow the same shape: register an OAuth app on the provider's developer console, copy the client id + secret into the admin dashboard at `/admin/integrations` (GitHub credentials on the **GitHub tab**, Google and Okta credentials on the **OAuth tab**), restart the gateway, and the buttons appear on `/login` automatically. The login page reads `GET /api/v1/auth/providers` at load time and only renders buttons for providers whose credentials are present (in the DB or env).
 
-> **Env var fallback.** `GITHUB_CLIENT_ID/SECRET` and `GOOGLE_CLIENT_ID/SECRET` are still accepted as environment variables for backwards compatibility, but the admin UI is the preferred path. If both are set, the DB row wins.
+> **Env var fallback.** `GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`, and `OKTA_ISSUER` / `OKTA_CLIENT_ID` / `OKTA_CLIENT_SECRET` are still accepted as environment variables for backwards compatibility, but the admin UI is the preferred path. If both are set, the DB row wins.
 
 > **Gateway base URL.** Throughout this doc, `{BETTER_AUTH_URL}` is the URL the gateway is reachable at — typically `http://localhost:8080` in dev and your real domain in production. Set `BETTER_AUTH_URL` in `.env` accordingly; the OAuth callback URLs you register with the providers must match this base.
 
@@ -122,6 +122,72 @@ The **Continue with Google** button now appears on `/login`.
 
 ---
 
+## Okta (enterprise SSO)
+
+Okta is wired through better-auth's **generic-OAuth plugin**, using OIDC discovery rather than a hand-written endpoint list. The plugin registers Okta into the same provider list the built-ins live in, so sign-in, the callback, and account linking all use the ordinary `/api/auth/**` routes — `okta` is just another provider id.
+
+### 1. Create an app integration in Okta
+
+1. Sign in to the **Okta Admin Console** and open **Applications → Applications → Create App Integration**.
+2. Choose **OIDC — OpenID Connect** as the sign-in method and **Web Application** as the application type, then **Next**.
+3. Fill in the form:
+
+   | Field                       | Value                                                                 |
+   | --------------------------- | --------------------------------------------------------------------- |
+   | App integration name        | `auto-swe`                                                            |
+   | Grant type                  | **Authorization Code** (leave the default; refresh token is optional) |
+   | Sign-in redirect URIs       | `{BETTER_AUTH_URL}/api/auth/callback/okta`                            |
+   | Sign-out redirect URIs      | your web app origin, e.g. `http://localhost:3000` — optional          |
+   | Assignments                 | the groups or users who should be able to sign in                     |
+
+4. Click **Save**, then copy the **Client ID** and **Client secret** from the app's **General** tab.
+
+### 2. Find the issuer URL
+
+The issuer is the **authorization server**, not the org URL. In the Admin Console go to **Security → API → Authorization Servers** and copy the **Issuer URI** of the server you want to use — the built-in one is named `default`:
+
+```
+https://dev-12345.okta.com/oauth2/default
+```
+
+Confirm it is right by opening its discovery document in a browser — it must return JSON:
+
+```
+https://dev-12345.okta.com/oauth2/default/.well-known/openid-configuration
+```
+
+> **Org authorization server.** If your tenant uses the org-level server instead of a custom one, the issuer is the bare org URL (`https://dev-12345.okta.com`) and the discovery path is `/.well-known/openid-configuration` off that. Both forms work — paste whichever one the console shows.
+
+### 3. Add credentials via the admin UI
+
+1. Sign in as admin and go to `/admin/integrations → OAuth tab`.
+2. In the **Sign in with Okta** card, enter the **Issuer URL**, **Client ID**, and **Client secret**.
+3. Click **Save**. The card echoes back the discovery URL the gateway will fetch and the callback URL to register, each with a copy button.
+
+All three fields are required — the login button stays hidden until every one is present, because a partially configured provider would fail at the callback rather than at save time.
+
+> **Issuer must be public HTTPS.** The gateway fetches the discovery document server-side, so the issuer goes through the same SSRF guard as every other operator-supplied URL: `http://`, loopback, RFC1918, link-local and cloud-metadata addresses are rejected with a 400.
+
+> **Alternative (env var).** `OKTA_ISSUER`, `OKTA_CLIENT_ID`, and `OKTA_CLIENT_SECRET` in `.env` work as a fallback when no DB row exists.
+
+### 4. Restart the gateway
+
+```sh
+yarn dev:gateway
+```
+
+The restart matters more here than for GitHub/Google: the OIDC discovery document is fetched **once at startup**, and that is when the authorization, token, userinfo and JWKS endpoints get resolved. The **Continue with Okta** button then appears on `/login`.
+
+If Okta is unreachable at that moment, the gateway still boots — the discovery failure is logged, not thrown — but Okta sign-in stays broken until the gateway is restarted against a reachable issuer.
+
+### Notes
+
+- **Account linking.** Okta joins GitHub and Google in better-auth's trusted-provider set when configured, so a user who already exists under the same verified email is linked to that existing account rather than duplicated. Email+password deliberately stays untrusted.
+- **Approval queue.** Okta sign-ups land with `isActive=false` like every other new user and wait for an admin to approve them at `/admin/users`. Group-based auto-approval is not implemented — Okta group claims are not read.
+- **SAML.** Only OIDC is supported. Okta's SAML app type will not work; create an **OIDC — Web Application** integration.
+
+---
+
 ## Production checklist
 
 Before flipping a deployment from dev to prod, confirm:
@@ -133,8 +199,10 @@ Before flipping a deployment from dev to prod, confirm:
 | `JWT_SECRET` (or key pair) set             | Required — gateway throws at boot otherwise                              |
 | GitHub OAuth credentials configured        | Optional — button hides when absent. Set via `/admin/integrations → GitHub` or env var. |
 | Google OAuth credentials configured        | Optional — button hides when absent. Set via `/admin/integrations → OAuth` or env var. |
+| Okta issuer + credentials configured       | Optional — button hides unless all three are present. Set via `/admin/integrations → OAuth` or env var. |
 | `RESEND_API_KEY` + `AUTH_FROM_EMAIL`       | Required if you want magic-link emails sent for real (else stdout-only)  |
-| OAuth callbacks point at the prod URL      | GitHub + Google consoles must list the right callback URL                |
+| OAuth callbacks point at the prod URL      | GitHub, Google, and Okta consoles must list the right callback URL       |
+| Okta discovery URL reachable from the gateway | Fetched at boot; an unreachable issuer leaves Okta sign-in broken until the next restart |
 | Google consent screen published            | Else sign-ins are limited to the test-user list                          |
 
 ---
@@ -154,10 +222,19 @@ Hit `GET /api/v1/auth/providers` directly:
 curl http://localhost:8080/api/v1/auth/providers
 ```
 
-You should see `{"github":true,"google":true,"magicLink":true}` for the providers whose credentials are configured. If a provider shows `false`, the gateway didn't pick up its credentials — confirm they're saved in `/admin/integrations` (GitHub tab for GitHub, OAuth tab for Google), then restart `yarn dev:gateway` (a restart is always required for OAuth credential changes to take effect).
+You should see `{"github":true,"google":true,"magicLink":true,"okta":true}` for the providers whose credentials are configured. If a provider shows `false`, the gateway didn't pick up its credentials — confirm they're saved in `/admin/integrations` (GitHub tab for GitHub, OAuth tab for Google and Okta), then restart `yarn dev:gateway` (a restart is always required for OAuth credential changes to take effect). `okta` reports `false` unless the issuer, client id **and** client secret are all set.
 
 **"Access blocked: this app's request is invalid" (Google)**
 Usually the consent screen is incomplete (missing support email, missing scopes, etc.) — finish the OAuth consent screen flow in step 2 above.
+
+**Okta button missing even though credentials are saved**
+All three Okta fields must be present. Check `GET /api/v1/auth/providers` — if `okta` is `false`, one of issuer / client id / client secret is blank, or the gateway hasn't been restarted since the save.
+
+**Okta sign-in fails right after a gateway restart**
+Look for a discovery error in the gateway log at boot. The most common causes are a typo'd issuer (use the Issuer URI from **Security → API → Authorization Servers**, not the org URL with a path guessed onto it) and the gateway being unable to reach Okta at startup. Confirm by opening `{issuer}/.well-known/openid-configuration` — it must return JSON.
+
+**"The 'redirect_uri' parameter must be a Login redirect URI" (Okta)**
+The Sign-in redirect URI registered on the Okta app doesn't match `{BETTER_AUTH_URL}/api/auth/callback/okta` exactly — scheme, host, port and path all have to match.
 
 **"Sign in completed but no session was found"**
 The OAuth callback succeeded but the gateway couldn't validate the resulting session cookie. Most common cause: the browser blocked the cookie because `BETTER_AUTH_URL` and the page origin don't match the cookie's SameSite policy. Check that `BETTER_AUTH_URL` in `.env` is exactly what the browser sees in the URL bar when it hits the gateway.

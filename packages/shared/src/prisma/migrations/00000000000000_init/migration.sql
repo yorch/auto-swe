@@ -844,6 +844,21 @@ CREATE TABLE "google_oauth_config" (
 );
 
 -- CreateTable
+CREATE TABLE "okta_oauth_config" (
+    "id" TEXT NOT NULL DEFAULT 'default',
+    "issuer" TEXT,
+    "client_id" TEXT,
+    "client_secret_ciphertext" BYTEA,
+    "client_secret_nonce" BYTEA,
+    "client_secret_auth_tag" BYTEA,
+    "client_secret_key_version" INTEGER,
+    "client_secret_last_four" TEXT,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "okta_oauth_config_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "issue_tracker_config" (
     "id" TEXT NOT NULL DEFAULT 'default',
     "provider" TEXT,

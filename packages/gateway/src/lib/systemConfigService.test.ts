@@ -64,6 +64,7 @@ import {
   getGoogleOAuthConfig,
   getIssueTrackerConfig,
   getKnowledgeBaseConfig,
+  getOktaOAuthConfig,
   getSlackConfig,
   getStorageConfig,
   listConfigAuditEntries,
@@ -82,6 +83,7 @@ import {
   updateGoogleOAuthConfig,
   updateIssueTrackerConfig,
   updateKnowledgeBaseConfig,
+  updateOktaOAuthConfig,
   updateRevalidationScheduleConfig,
   updateSlackConfig,
   updateStorageConfig,
@@ -153,6 +155,10 @@ function makeMockPrisma() {
       upsert: echoUpsert(),
     },
     knowledgeBaseConfig: {
+      findUnique: vi.fn(),
+      upsert: echoUpsert(),
+    },
+    oktaOAuthConfig: {
       findUnique: vi.fn(),
       upsert: echoUpsert(),
     },
@@ -532,6 +538,53 @@ describe('systemConfigService', () => {
       const result = await getGoogleOAuthConfig(prisma);
       expect(result.data.clientSecret).toEqual({ lastFour: 'able' });
       expect(result.data.clientId).toBe('g-client');
+    });
+  });
+
+  // ─── Okta OAuth config ──────────────────────────────────────────────────
+
+  describe('Okta OAuth config', () => {
+    it('encrypts on write, redacts on read, and always flags requiresRestart', async () => {
+      mockPrisma.oktaOAuthConfig.findUnique.mockResolvedValueOnce(null);
+      const result = await updateOktaOAuthConfig(prisma, {
+        clientId: '0oaokta123',
+        clientSecret: 'okta-super-secret',
+        issuer: 'https://dev-12345.okta.com/oauth2/default',
+      });
+      const sentData = mockPrisma.oktaOAuthConfig.upsert.mock.calls[0][0].update as Record<
+        string,
+        unknown
+      >;
+      expect(sentData.clientSecretCiphertext).toBeInstanceOf(Uint8Array);
+      expect(result.data.clientSecret).toEqual({ lastFour: 'cret' });
+      expect(result.data.issuer).toBe('https://dev-12345.okta.com/oauth2/default');
+      expect(result.data.requiresRestart).toBe(true);
+    });
+
+    // `{issuer}//.well-known/openid-configuration` 404s on Okta, and the failure
+    // surfaces only as a boot-time discovery log — so normalise at the boundary.
+    it('strips a trailing slash from the issuer before storing it', async () => {
+      mockPrisma.oktaOAuthConfig.findUnique.mockResolvedValueOnce(null);
+      const result = await updateOktaOAuthConfig(prisma, {
+        issuer: 'https://dev-12345.okta.com/oauth2/default//',
+      });
+      expect(result.data.issuer).toBe('https://dev-12345.okta.com/oauth2/default');
+    });
+
+    it('getOktaOAuthConfig redacts the secret and reports the value source', async () => {
+      mockPrisma.oktaOAuthConfig.findUnique.mockResolvedValueOnce({
+        clientId: 'okta-client',
+        issuer: 'https://dev-12345.okta.com/oauth2/default',
+        ...sealedColumns('clientSecret', 'okta-readable-secret'),
+      });
+      const result = await getOktaOAuthConfig(prisma);
+      expect(result.data.clientSecret).toEqual({ lastFour: 'cret' });
+      expect(result.data.clientId).toBe('okta-client');
+      expect(result.data.issuer).toBe('https://dev-12345.okta.com/oauth2/default');
+      // Every field is DB-backed here, so none report as env-sourced.
+      expect(result.sources.issuer).toBe('db');
+      expect(result.sources.clientId).toBe('db');
+      expect(result.sources.clientSecret).toBe('db');
     });
   });
 

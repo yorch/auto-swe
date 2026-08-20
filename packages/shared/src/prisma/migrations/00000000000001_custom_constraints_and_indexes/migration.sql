@@ -145,6 +145,8 @@ ALTER TABLE "workflow_defaults"
     );
 ALTER TABLE "google_oauth_config"
     ADD CONSTRAINT "google_oauth_config_singleton" CHECK ("id" = 'default');
+ALTER TABLE "okta_oauth_config"
+    ADD CONSTRAINT "okta_oauth_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "embedding_configs"
     ADD CONSTRAINT "embedding_configs_singleton_check" CHECK ("id" = 'default');
 ALTER TABLE "issue_tracker_config"

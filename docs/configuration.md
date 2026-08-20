@@ -7,7 +7,7 @@ everything else is data an operator can change without a deploy.**
 | Tier | Lives in | Contents | Changed by |
 |---|---|---|---|
 | Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*` | The deploy pipeline |
-| Integrations | Singleton config tables | GitHub, Slack, storage, issue tracker, knowledge base, Figma, Google OAuth, workflow defaults | Admins, at `/admin/integrations` and `/admin/workflow` |
+| Integrations | Singleton config tables | GitHub, Slack, storage, issue tracker, knowledge base, Figma, Google OAuth, Okta SSO, workflow defaults | Admins, at `/admin/integrations` and `/admin/workflow` |
 | Policy | The setting registry | Operator knobs that used to be constants in the worker | Admins and grant holders, at `/admin/settings` |
 
 The bootstrap tier is deliberately not DB-backed. `CONFIG_ENCRYPTION_KEY` decrypts every other

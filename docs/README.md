@@ -34,7 +34,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [configuration.md](./configuration.md) | Where every knob lives — the environment/integration/registry split, the setting registry and its cascade, who may change what, run pinning |
 | [deployment.md](./deployment.md) | Production runbook — environment, database, Temporal, images, service layout, smoke test, day-2 ops, hardening |
 | [model-configuration.md](./model-configuration.md) | DB-backed model selection and provider credentials — the scope cascade, encryption, day-2 operations |
-| [oauth-setup.md](./oauth-setup.md) | GitHub and Google OAuth apps; magic-link email |
+| [oauth-setup.md](./oauth-setup.md) | GitHub, Google, and Okta sign-in; magic-link email |
 | [github-app-setup.md](./github-app-setup.md) | GitHub App creation, permissions, installation, auth modes |
 | [slack-app-setup.md](./slack-app-setup.md) | Slack app manifest import and admin configuration |
 

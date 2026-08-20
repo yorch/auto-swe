@@ -112,7 +112,7 @@ flowchart TB
 | **Memory** | pgvector (HNSW) semantic lessons; per-repo cosine retrieval at run start; weekly consolidation ("dreaming") of similar lessons |
 | **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 58 built-in admin-extensible regex patterns; locked-down ephemeral shell containers |
 | **HITL** | 4 node types (approval / decision / input / review); inbox UI + Slack buttons; atomic resolution, timeout routing, cancellation cleanup. See [hitl-workflows.md](./hitl-workflows.md). |
-| **Auth / RBAC** | 3 auth paths (JWT, PAT, better-auth sessions); 3 platform roles + team-scoped roles; OAuth (GitHub/Google), magic-link, account linking, new-user approval |
+| **Auth / RBAC** | 3 auth paths (JWT, PAT, better-auth sessions); 3 platform roles + team-scoped roles; OAuth (GitHub/Google), Okta OIDC SSO, magic-link, account linking, new-user approval |
 | **Integrations** | GitHub (PAT *or* GitHub App), Slack (slash command + interactive), issue trackers (Jira / Linear / GitHub Issues), S3-compatible object storage, email (SMTP/Resend) — all DB-configured, encrypted, with connection tests + audit log |
 | **Observability** | AgentTracer (tool calls / LLM responses / events per attempt); OTel → Grafana LGTM; 3-mode run viewer (split / transcript / flight-recorder replay) |
 | **Surfaces** | Web dashboard, full CLI, REST API, Slack |

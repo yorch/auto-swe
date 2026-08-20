@@ -261,6 +261,27 @@ export const useUpdateGoogleOAuthConfig = configMutation<GoogleOAuthConfig, Goog
   'oauth/google'
 );
 
+// ── Okta (enterprise SSO) config ──
+
+export interface OktaOAuthConfig {
+  issuer: string | null;
+  clientId: string | null;
+  clientSecret: MaskedField | null;
+  requiresRestart?: boolean;
+}
+
+export interface OktaOAuthConfigInput {
+  issuer?: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+
+export const useOktaOAuthConfig = sourcedConfigQuery<OktaOAuthConfig>('oauth/okta');
+
+export const useUpdateOktaOAuthConfig = configMutation<OktaOAuthConfig, OktaOAuthConfigInput>(
+  'oauth/okta'
+);
+
 // ── Issue tracker config ──
 
 export type IssueTrackerProvider = 'jira' | 'linear' | 'github';

@@ -2,7 +2,8 @@
  * Better Auth configuration.
  *
  * Replaces the bcrypt-password-only sign-in flow with a multi-provider
- * setup: email+password, GitHub OAuth, Google OAuth, and email magic links.
+ * setup: email+password, GitHub OAuth, Google OAuth, Okta (enterprise SSO,
+ * via better-auth's generic-OAuth plugin) and email magic links.
  * The existing PAT + JWT bearer paths in `plugins/auth.ts` remain unchanged
  * — those are for programmatic / CLI access. Browser sessions go through
  * better-auth's cookie-based session model.
@@ -17,12 +18,14 @@ import { PrismaClient } from '@auto-swe/shared/db';
 import {
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
+  resolveOktaOAuthConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { magicLink } from 'better-auth/plugins';
+import { genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import nodemailer, { type Transporter } from 'nodemailer';
 
 // Reuse the same Prisma client wiring the rest of the gateway uses so we
@@ -58,6 +61,9 @@ let _githubClientId: string | null = null;
 let _githubClientSecret: string | null = null;
 let _googleClientId: string | null = null;
 let _googleClientSecret: string | null = null;
+let _oktaIssuer: string | null = null;
+let _oktaClientId: string | null = null;
+let _oktaClientSecret: string | null = null;
 
 const resendApiKey = process.env.RESEND_API_KEY;
 const fromEmail = process.env.AUTH_FROM_EMAIL;
@@ -283,15 +289,19 @@ export async function initAuth(): Promise<void> {
     return;
   }
 
-  const [ghConfig, googleConfig] = await Promise.all([
+  const [ghConfig, googleConfig, oktaConfig] = await Promise.all([
     resolveGitHubConfig(),
     resolveGoogleOAuthConfig(),
+    resolveOktaOAuthConfig(),
   ]);
 
   _githubClientId = ghConfig.oauthClientId;
   _githubClientSecret = ghConfig.oauthClientSecret;
   _googleClientId = googleConfig.clientId;
   _googleClientSecret = googleConfig.clientSecret;
+  _oktaIssuer = oktaConfig.issuer;
+  _oktaClientId = oktaConfig.clientId;
+  _oktaClientSecret = oktaConfig.clientSecret;
 
   _auth = buildAuth();
 }
@@ -308,6 +318,18 @@ export function getAuth(): AuthInstance {
 /** Alias so scripts can still do `const { auth } = await import('../lib/betterAuth.js')`.
  * Note: `auth` is a function — call `auth()` to get the BetterAuth instance. */
 export { getAuth as auth };
+
+/** Okta needs all three values before the provider can be registered: the
+ *  issuer drives OIDC discovery, and the client id + secret drive the code
+ *  exchange. A partially-filled row leaves SSO off rather than registering a
+ *  provider whose sign-in would fail at the callback.
+ *
+ *  The registration site in `buildAuth` repeats this condition inline rather
+ *  than calling here, because only the inline form narrows the three
+ *  `string | null` module-level values to `string` for `okta()`. */
+function oktaConfigured(): boolean {
+  return Boolean(_oktaIssuer && _oktaClientId && _oktaClientSecret);
+}
 
 function buildAuth() {
   return betterAuth({
@@ -326,7 +348,11 @@ function buildAuth() {
     account: {
       accountLinking: {
         enabled: true,
-        trustedProviders: ['github', 'google'],
+        // Okta joins the OAuth-verified set when configured: an enterprise IdP
+        // asserts the email it returns, same as GitHub/Google, so linking onto
+        // an existing User row by verified email is safe. `email-password`
+        // stays out for the reason above.
+        trustedProviders: oktaConfigured() ? ['github', 'google', 'okta'] : ['github', 'google'],
       },
     },
     // Cookies on the gateway need to be readable by the browser running on
@@ -408,6 +434,31 @@ function buildAuth() {
         expiresIn: 60 * 10, // 10 minutes
         sendMagicLink: async ({ email, url }) => deliverMagicLink({ email, url }),
       }),
+      // Okta / enterprise SSO. `genericOAuth` registers its providers into the
+      // same `socialProviders` list the built-ins live in, so `okta` is driven
+      // by the ordinary `/api/auth/sign-in/social`, `/api/auth/callback/okta`
+      // and `/api/auth/link-social` routes — no client-side plugin needed.
+      //
+      // Registered only when fully configured: the plugin's `init` fetches the
+      // OIDC discovery document at gateway startup, and a half-filled row would
+      // spend a boot-time round-trip to log a failure. A discovery fetch that
+      // fails for a *configured* provider is logged and does not throw, so an
+      // Okta outage cannot stop the gateway from booting — but Okta sign-in
+      // stays broken until the gateway is restarted against a reachable
+      // issuer.
+      ...(_oktaIssuer && _oktaClientId && _oktaClientSecret
+        ? [
+            genericOAuth({
+              config: [
+                okta({
+                  clientId: _oktaClientId,
+                  clientSecret: _oktaClientSecret,
+                  issuer: _oktaIssuer,
+                }),
+              ],
+            }),
+          ]
+        : []),
     ],
     // Strict origins for browser-initiated calls. The Slack OAuth flow keeps
     // its own server-side redirect handling so it doesn't need to appear here.
@@ -446,10 +497,16 @@ function buildAuth() {
 /** Helper for the Fastify handler — exposes the auth-list of providers
  *  currently configured (used by the front-end to know which buttons to
  *  show). Read after initAuth() has been called. */
-export function configuredProviders(): { github: boolean; google: boolean; magicLink: boolean } {
+export function configuredProviders(): {
+  github: boolean;
+  google: boolean;
+  magicLink: boolean;
+  okta: boolean;
+} {
   return {
     github: Boolean(_githubClientId && _githubClientSecret),
     google: Boolean(_googleClientId && _googleClientSecret),
     magicLink: true,
+    okta: oktaConfigured(),
   };
 }

@@ -7,13 +7,19 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
-import { useAuthStore } from '@/stores/authStore';
+import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
 
 interface ProviderFlags {
   github: boolean;
   google: boolean;
   magicLink: boolean;
+  okta: boolean;
 }
+
+/** What the probe may actually return: a gateway that predates Okta support
+ *  omits that flag entirely, so it is optional on the wire and defaulted to
+ *  false before it reaches state. */
+type ProviderProbe = Omit<ProviderFlags, 'okta'> & { okta?: boolean };
 
 /**
  * Structural validation for the /api/v1/auth/providers response. Used to
@@ -21,15 +27,20 @@ interface ProviderFlags {
  * else is on the port and returned a different shape" (e.g. an adminer
  * container or a misconfigured reverse proxy).
  */
-function looksLikeProviderResponse(data: unknown): data is ProviderFlags {
+function looksLikeProviderResponse(data: unknown): data is ProviderProbe {
   if (typeof data !== 'object' || data === null) {
     return false;
   }
   const o = data as Record<string, unknown>;
+  // `okta` is checked loosely: a gateway that predates Okta support answers
+  // without the key, and that is a valid response — not a wrong server on the
+  // port. Treating a missing flag as a shape mismatch would black out the
+  // login page against an older gateway.
   return (
     typeof o.github === 'boolean' &&
     typeof o.google === 'boolean' &&
-    typeof o.magicLink === 'boolean'
+    typeof o.magicLink === 'boolean' &&
+    (o.okta === undefined || typeof o.okta === 'boolean')
   );
 }
 
@@ -69,6 +80,7 @@ function LoginPageInner() {
     github: false,
     google: false,
     magicLink: true,
+    okta: false,
   });
   /**
    * The first thing the login page does is probe `/api/v1/auth/providers` to
@@ -120,7 +132,7 @@ function LoginPageInner() {
   // the gateway-reachability check (see gatewayDown above). "Gateway is up"
   // means three things in this context: (1) the request didn't fail at the
   // network/CORS layer, (2) the response was 2xx, AND (3) the body is the
-  // shape we expect — a JSON object with the three provider flags. The third
+  // shape we expect — a JSON object carrying the provider flags. The third
   // check matters because a port collision on 8080 (e.g. an unrelated adminer
   // / PHP container) can answer 200 with HTML, which would otherwise leave
   // the page in a quiet "no providers" state instead of telling the user
@@ -142,7 +154,7 @@ function LoginPageInner() {
           setGatewayDown(true);
           return;
         }
-        setProviders(data);
+        setProviders({ okta: false, ...data });
         setGatewayDown(false);
       } catch (err) {
         // TypeError: network failure (DNS, server down, CORS rejected).
@@ -191,7 +203,7 @@ function LoginPageInner() {
     }
   };
 
-  const handleSocialSignIn = async (provider: 'github' | 'google') => {
+  const handleSocialSignIn = async (provider: SocialProviderId) => {
     setError('');
     setInfo('');
     setLoading(true);
@@ -230,7 +242,7 @@ function LoginPageInner() {
     }
   };
 
-  const hasSocial = providers.github || providers.google;
+  const hasSocial = providers.github || providers.google || providers.okta;
 
   // Pending-approval short-circuit: the user authenticated successfully via
   // better-auth but their User row is isActive=false. Show an explanatory
@@ -392,6 +404,17 @@ function LoginPageInner() {
                 >
                   <span aria-hidden>◑</span>
                   <span>continue with google</span>
+                </button>
+              )}
+              {providers.okta && (
+                <button
+                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400 disabled:pointer-events-none disabled:opacity-50"
+                  disabled={loading}
+                  onClick={() => handleSocialSignIn('okta')}
+                  type="button"
+                >
+                  <span aria-hidden>◒</span>
+                  <span>continue with okta</span>
                 </button>
               )}
               <div className="my-6 flex items-center gap-4">

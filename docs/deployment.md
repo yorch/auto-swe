@@ -34,7 +34,7 @@ Before touching infrastructure, gather these:
 - **GitHub webhook secret** — any strong random string; you'll add it to GitHub repo webhooks pointing at `https://api.example.com/api/v1/webhooks/git`.
 - **LLM provider key(s)** — configured via the admin UI (`/admin/model-config`) after first boot. There is no env-var fallback for LLM credentials: model + credential config is fully DB-driven (see [`model-configuration.md`](./model-configuration.md)).
 - **Email transport** — pick one of SMTP (`SMTP_HOST/PORT/USER/PASS` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Required if you want magic-link and password-reset emails actually delivered — without one the gateway only logs the link to stdout.
-- **OAuth credentials** (optional but recommended) — register a GitHub OAuth app and/or a Google OAuth client, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google}`. Credentials are configured via `/admin/integrations` after first boot (GitHub tab for GitHub, OAuth tab for Google). See [`oauth-setup.md`](./oauth-setup.md).
+- **OAuth credentials** (optional but recommended) — register a GitHub OAuth app, a Google OAuth client, and/or an Okta OIDC app, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google,okta}`. Credentials are configured via `/admin/integrations` after first boot (GitHub tab for GitHub, OAuth tab for Google and Okta). See [`oauth-setup.md`](./oauth-setup.md).
 - **Slack credentials** (optional) — configured via `/admin/integrations` (Slack tab) after first boot.
 - **S3-compatible artifact store** (optional but recommended in prod) — configured via `/admin/integrations` (Storage tab) after first boot. Without it, large step outputs are stored inline in Postgres.
 
@@ -160,7 +160,7 @@ Several categories of credentials that were previously env-only are now stored e
 | `/admin/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs | No for token/webhook; **Yes** for OAuth app creds |
 | `/admin/integrations → Slack` | Slack client ID/secret, signing secret, bot token | **Yes** for client ID/secret; No for bot token/signing secret |
 | `/admin/integrations → Storage` | S3-compatible bucket, region, endpoint, credentials | No — resolved fresh per artifact write |
-| `/admin/integrations → OAuth` | Google OAuth client ID/secret | **Yes** — BetterAuth reads these at startup |
+| `/admin/integrations → OAuth` | Google OAuth client ID/secret; Okta issuer + client ID/secret | **Yes** — BetterAuth reads these at startup, and discovers Okta's OIDC endpoints once at boot |
 | `/admin/workflow` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
 
 **Bootstrap order** (first deployment):
