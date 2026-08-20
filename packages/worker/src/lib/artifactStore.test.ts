@@ -133,5 +133,5 @@ describe('getArtifact / getArtifactText (postgres backend)', () => {
 // The "SDK is optional" contract this file used to assert (with a test that
 // verified the helpful error message when @aws-sdk/client-s3 was missing) was
 // retired when the SDK became a hard dependency of the worker — needed by the
-// MinIO local-dev flow added in PR #25. The error path in artifactStore.ts is
+// bundled object-store local-dev flow. The error path in artifactStore.ts is
 // kept as a defensive fallback but is no longer reachable in normal use.
