@@ -60,6 +60,50 @@ repos — so edge management has its own rules, asymmetric by intent:
 - Edges may cross teams within an organization but never cross an organization boundary; the write
   path rejects a cross-org edge, and reads filter neighbours to the caller's organization.
 
+## Detection
+
+Edges are mostly not entered by hand. A detector activity reads a repo's own files over the SCM API
+(no clone) and records what it finds:
+
+| Source | Read from | Confidence |
+|---|---|---|
+| `manifest` | `package.json`, `go.mod`, `requirements.txt`, `pom.xml`, `Cargo.toml` | 1.0 |
+| `git_signal` | `.gitmodules`, `CODEOWNERS` | 1.0 |
+| `inferred` | An LLM reading repo metadata (see below) | model-reported |
+| `manual` | An operator declaring the edge | 1.0 |
+
+A raw dependency string is resolved to a registered repo by, in order: an exact match against the
+repo's declared `packageNames`; an `org/repo` match in any git-URL spelling; then an unambiguous bare
+repo name. Deterministic sources are treated as evidence and land `active` — they record a fact
+already true in the code, so the depended-upon team holds a **dismiss veto** rather than a
+pre-approval gate, and a dismissal is never undone by a later scan.
+
+Detection is idempotent: re-running finds the existing row and refreshes it rather than duplicating.
+
+**Unresolved dependencies become onboarding suggestions.** A dependency on a package whose repo
+nobody has onboarded is recorded with `toRepoId` null and the raw string in `toRef`. The Connections
+page lists these grouped by ref, so the graph tells you which repo is worth onboarding next and who is
+waiting on it. When that repo is later onboarded, the next scan resolves the dependency and closes the
+suggestion out.
+
+A Temporal Schedule sweeps every active git repo (`repoDependency.scanCron` /
+`repoDependency.scanEnabled`), and an ADMIN can run the sweep on demand from the Connections page.
+Per-repo failures are contained, so one unreachable repo cannot abort the sweep.
+
+### Inference
+
+`POST /api/v1/repositories/:id/dependencies/infer` (LEAD on that repo's team) asks the seeded
+`repoDependencyInferrer` agent for relationships no manifest states. It is per-repo and opt-in rather
+than part of the scheduled sweep, because it costs a model call while the deterministic detectors are
+free.
+
+A model can invent a relationship, so its output is treated as a claim: every returned edge is checked
+against the candidate set, rejected if it is a self-edge, an unknown kind, or an out-of-range
+confidence, and the accepted set is capped. Survivors land `proposed` — excluded from agent context —
+until a human confirms them, or until they clear `repoDependency.autoPromoteThreshold` (default 0.9).
+Auto-promotion applies only within a team: skipping the confirmation step is only ever skipping one
+the promoting team was entitled to give.
+
 ## Resolving a repo's neighbours
 
 `resolveRepoDependencyContext(prisma, repoId, { orgId })`
@@ -70,22 +114,47 @@ highest confidence (carrying the distinct kinds and sources), and returns the vi
 given no repo id, so a run with no connection resolves to no context. Only `active` edges surface, so
 a `dismissed` veto and an unconfirmed `proposed` edge both stay out of the result.
 
+## What the agents see
+
+The graph reaches three agent paths, each best-effort — a graph failure degrades to no context rather
+than failing a run:
+
+- **The review network.** All three reviewers get a bounded block naming the repo's upstream contracts
+  and its downstream consumers, framed differently per direction: upstream is a constraint to honour,
+  downstream is blast radius for a breaking change.
+- **The implementer.** The same block joins its system prompt before it writes code, so contracts are
+  honoured up front rather than caught at review.
+- **The epic planner.** Stored edges are merged into the planner's proposed ordering, so a known
+  dependency is authoritative rather than guessed. A stored edge that would close a cycle is dropped,
+  since the orchestrator's ready-queue would never drain.
+
+Repo names are flattened and length-capped before they enter a prompt: names are operator-supplied, and
+a name containing newlines and headings would otherwise be able to append instructions of its own.
+
+Two per-step config flags control this on a workflow node: `crossRepoContext` (the prompt block, on by
+default) and `crossRepoCheckout` (off by default). The checkout tier additionally clones upstream repos
+read-only beside the workspace so an agent can read their real source. It is deliberately narrower than
+the prompt block: another team's repo is cloned only when a human on both teams agreed the edge, since
+handing an agent a repo's full source is not the same as naming it.
+
 ## Limitations
 
-- **Detection is manual.** The only `source` populated is `manual` — an operator declaring an edge.
-  Nothing parses manifests (`package.json`, `go.mod`, …), reads git signals (submodules, CODEOWNERS),
-  or infers relationships from code. The `manifest` / `git_signal` / `inferred` sources, the
-  `confidence` gradient, the `proposed` and `unresolved` statuses, and the `Connection.packageNames`
-  resolution key exist in the schema but no detector writes them, so the graph is only as complete as
-  what people enter by hand.
-- **No agent consumes it.** `resolveRepoDependencyContext` returns neighbours, but nothing injects
-  them into an agent. The review network still sees only the diff, the implementer receives no
-  dependency contracts, and the epic planner still derives its own dependency ordering rather than
-  reading this graph.
 - **One hop, no transitivity.** The resolver walks direct neighbours only; it does not follow a
-  dependency chain further, and it does not rank or cap neighbours for a hub repo depended on by many.
+  dependency chain further. Neighbours are capped per direction, so a hub repo depended on by dozens
+  shows only its highest-confidence edges.
+- **Manifest parsing is name-based, not resolution-accurate.** A dependency is matched by string
+  against registered repos; it does not consult a registry, lockfile, or workspace protocol, so a
+  renamed package, a fork, or two repos publishing the same name can mismatch. Unmatched strings become
+  suggestions rather than silent drops, but a wrong match is possible and is corrected by dismissing.
+- **A retired repo leaves a stale edge.** Deactivating a repo does not invalidate edges pointing at it;
+  the next scan records the dependency as unresolved again alongside the existing edge until someone
+  removes it.
 - **Graph coverage tracks onboarding.** A repo becomes a node only when a `LEAD`/`ADMIN` onboards it;
-  no webhook or scan auto-registers repos. An edge can only point at an onboarded repo.
+  no webhook auto-registers repos. An edge can only point at an onboarded repo, and the suggestions
+  list is the prompt to close that gap.
+- **Inference sees metadata, not code.** The inferrer reads repo names, descriptions, languages and
+  declared package names — not README or source content — so it is a weak signal by construction, which
+  is why its output needs confirmation.
 
-The design rationale and the shape of the unbuilt detection and injection layers are recorded in
+The design rationale is recorded in
 [`history/repo-dependency-graph-rfc.md`](./history/repo-dependency-graph-rfc.md).

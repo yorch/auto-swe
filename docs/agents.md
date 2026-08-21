@@ -36,6 +36,7 @@ library at `/admin/agents/library`.
 | `evalJudge` | `runEvalNode` judge scorer | `anthropic/claude-haiku-4-5-20251001` |
 | `workflowAuthor` | NL workflow generation | `anthropic/claude-opus-4-8` |
 | `workflowExplainer` | NL workflow explanation | `anthropic/claude-sonnet-4-6` |
+| `repoDependencyInferrer` | `inferRepoDependencies` — proposes repo dependency edges for human confirmation | `anthropic/claude-haiku-4-5-20251001` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`
