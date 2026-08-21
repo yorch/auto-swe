@@ -8,7 +8,7 @@
  */
 
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
-import { readNodeEdge } from '@auto-swe/shared/workflow';
+import { readNodeEdge, setNodeEdge } from '@auto-swe/shared/workflow';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
@@ -28,6 +28,7 @@ import {
   StepConfigSection,
   TerminateSection,
 } from './inspectorSections';
+import { isEdgeFieldRequired } from './specEdits';
 
 interface InspectorProps {
   nodeId: string | null;
@@ -214,15 +215,14 @@ export function NodeInspector({
           allNodeIds={allNodeIds}
           node={node}
           nodeId={nodeId}
-          onSetEdge={(field, target) => {
-            const patched = { ...(node as unknown as Record<string, unknown>) };
-            if (target) {
-              patched[field] = target;
-            } else {
-              delete patched[field];
-            }
-            onChangeNode(patched as unknown as SpecNode);
-          }}
+          // A handle id is the spec field the edge leaves through, and a
+          // decision option's is `options[i].next` — an indexed path, not a
+          // top-level key. Assigning it directly wrote a literal
+          // `"options[0].next"` property onto the node and left the real
+          // routing untouched, so the write goes through `setNodeEdge`.
+          // `— none —` is only offered for fields the schema lets us clear
+          // (see EdgeConnectionsSection), so a null here is always safe.
+          onSetEdge={(field, target) => onChangeNode(setNodeEdge(node, field, target))}
         />
 
         {/* Raw JSON escape hatch */}
@@ -268,6 +268,12 @@ function EdgeConnectionsSection({
         // An option port has no entry in HANDLE_LABEL_FULL — its label is the
         // option's own text, which says more than "submit" would anyway.
         const label = h.id === h.kind ? HANDLE_LABEL_FULL[h.kind] : h.label;
+        // Most edge fields are required by the schema (every `human*` edge, a
+        // decision option's `next`, both `cond` branches, …). Offering `— none —`
+        // for one of those offers a choice the spec cannot represent: it would
+        // save a node that no longer parses. Don't render the option rather than
+        // let the user pick it and hit a schema error on save.
+        const clearable = !isEdgeFieldRequired(node, h.id);
         return (
           <Select
             className="h-9 px-2 font-mono text-xs"
@@ -277,7 +283,7 @@ function EdgeConnectionsSection({
             onChange={(e) => onSetEdge(h.id, e.target.value || null)}
             value={readNodeEdge(node, h.id) ?? ''}
           >
-            <option value="">— none —</option>
+            {clearable && <option value="">— none —</option>}
             {otherIds.map((id) => (
               <option key={id} value={id}>
                 {id}
