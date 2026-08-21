@@ -624,6 +624,10 @@ Writes cut a new immutable `version`.
   offloaded file — `safePath()` rejects the absolute path it lives at — so `bash` is the only way
   back to the full output. An agent configured with `bash` excluded from `toolKeys` can never see
   past the head + tail excerpt.
+- **An offloaded `readFile` splices a notice into what reads as file content.** `readFile` is
+  offloaded like any other tool, so for a large file the excerpt carries the elision marker in the
+  middle of the file's own text. The marker says it is not part of the content, but a model that
+  edits from the excerpt rather than re-reading the range can still carry it into a `writeFile`.
 - **Tool-output offload budgets characters, not tokens.** `workspace.maxToolOutputChars` bounds
   string length, which only approximates what a model actually spends on context; two outputs of
   the same character count can tokenize very differently.

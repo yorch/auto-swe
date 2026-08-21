@@ -59,7 +59,15 @@ const TRACE_FIELD_CAP = 4_000;
  */
 function trimTraceJson(value: unknown): unknown {
   if (typeof value === 'string' && value.length > TRACE_FIELD_CAP) {
-    return `${value.slice(0, TRACE_FIELD_CAP)}…[truncated ${value.length - TRACE_FIELD_CAP} chars — refetch with ?fullTraces=true]`;
+    // Head *and* tail. A head-only cut drops precisely what the reader came
+    // for: an offloaded tool result carries the failing line and its
+    // `/workspace/.tool-output/` path at the end, and an LLM response's verdict
+    // is at the end too. The cap is what bounds the polled payload; which end
+    // it keeps is free.
+    const head = Math.floor(TRACE_FIELD_CAP * 0.7);
+    const tail = TRACE_FIELD_CAP - head;
+    const elided = value.length - head - tail;
+    return `${value.slice(0, head)}…[truncated ${elided} chars — refetch with ?fullTraces=true]…${value.slice(value.length - tail)}`;
   }
   if (Array.isArray(value)) {
     return value.map(trimTraceJson);

@@ -492,7 +492,9 @@ const checkSettingKeys = (file, line, lineNo) => {
   // a style problem, not a correctness one, and matching bare words here would
   // flag every sentence containing a period.
   for (const m of line.matchAll(/`([a-z][a-zA-Z0-9]*)\.([a-zA-Z][a-zA-Z0-9]*)`/g)) {
-    const [token, group, suffix] = [`${m[1]}.${m[2]}`, m[1], m[2]];
+    const group = m[1];
+    const suffix = m[2];
+    const token = `${group}.${suffix}`;
     if (settingKeys.has(token)) {
       continue;
     }

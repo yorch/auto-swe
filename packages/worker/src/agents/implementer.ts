@@ -25,7 +25,7 @@ import {
   SECURITY_WARNINGS_PREFIX,
   wrapWriteToolWithSecurityCheck,
 } from './preWriteSecurityCheck.js';
-import { offloadIfLarge } from './toolOutputOffload.js';
+import { offloadIfLarge, packOffload } from './toolOutputOffload.js';
 
 /**
  * Validates that a relative file path stays within the workspace root.
@@ -75,8 +75,9 @@ export interface ImplementerAgentOptions {
    * caller. Threaded in rather than resolved here so it's a single settings
    * read per agent construction, not one per `bash`/`readFile`/`listDirectory`
    * call — `buildImplementerForActivity` resolves it alongside the tool/skill
-   * config it already loads. Callers that build the agent directly (evals) may
-   * omit it and get the registry default.
+   * config it already loads, and `evalHarness` resolves it for the same reason
+   * an eval resolves the model. Omitting it falls back to the registry default,
+   * which is only right for a caller with no scope to resolve against.
    */
   maxToolOutputChars?: number;
 }
@@ -120,11 +121,11 @@ export async function createImplementerAgent(
           toolName: 'readFile',
           workspace,
         });
-        const result = { content: offloaded.text };
+        const { result, outputJson } = packOffload('content', offloaded);
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           inputJson: { path },
-          outputJson: offloaded.offload ? { ...result, offload: offloaded.offload } : result,
+          outputJson,
           toolName: 'readFile',
         });
         return result;
@@ -228,11 +229,11 @@ export async function createImplementerAgent(
           toolName: 'listDirectory',
           workspace,
         });
-        const result = { listing: offloaded.text };
+        const { result, outputJson } = packOffload('listing', offloaded);
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           inputJson: { path: p },
-          outputJson: offloaded.offload ? { ...result, offload: offloaded.offload } : result,
+          outputJson,
           toolName: 'listDirectory',
         });
         return result;
@@ -294,16 +295,16 @@ export async function createImplementerAgent(
           toolName: 'bash',
           workspace,
         });
-        const output = offloaded.text;
+        const { result, outputJson } = packOffload('output', offloaded);
         const error = exitCode === 0 ? undefined : `exit code ${exitCode}`;
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           error,
           inputJson: { command: auditCommand },
-          outputJson: offloaded.offload ? { output, offload: offloaded.offload } : { output },
+          outputJson,
           toolName: 'bash',
         });
-        return { output };
+        return result;
       } catch (err: unknown) {
         const error = getErrorMessage(err);
         const output = `Command failed: ${error}`;
@@ -314,7 +315,7 @@ export async function createImplementerAgent(
           outputJson: { output },
           toolName: 'bash',
         });
-        return result;
+        return { output };
       }
     },
     id: 'bash',

@@ -49,6 +49,11 @@ vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({ maxEvalIterations: 3 })),
 }));
+// The harness resolves the implementer's tool-output budget the same way it
+// resolves the model; without this the registry resolver reaches for Prisma.
+vi.mock('@auto-swe/shared/config', () => ({
+  resolveSettings: vi.fn(async () => ({ 'workspace.maxToolOutputChars': 20_000 })),
+}));
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import {

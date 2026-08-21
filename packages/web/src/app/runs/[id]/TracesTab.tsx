@@ -138,9 +138,22 @@ function TracePre({ children, radius }: { children: ReactNode; radius: '2px' | '
   );
 }
 
-/** Caps a body at `BODY_LIMIT`, marking the cut with a trailing ellipsis line. */
+/**
+ * Caps a body at `BODY_LIMIT`, keeping the head *and* the tail and marking the
+ * cut between them.
+ *
+ * Head-only lost the part worth reading: a tool result that was offloaded to
+ * the workspace ends with the failing line and the path its full output was
+ * saved to, and a truncated LLM response ends with its conclusion. The limit
+ * bounds how much is rendered; it does not have to decide which end survives.
+ */
 function capped(text: string): string {
-  return text.length > BODY_LIMIT ? `${text.slice(0, BODY_LIMIT)}\n…` : text;
+  if (text.length <= BODY_LIMIT) {
+    return text;
+  }
+  const head = Math.floor(BODY_LIMIT * 0.7);
+  const tail = BODY_LIMIT - head;
+  return `${text.slice(0, head)}\n… ${text.length - head - tail} characters hidden …\n${text.slice(text.length - tail)}`;
 }
 
 /**
