@@ -86,9 +86,10 @@ Writing docs? Two rules:
 2. **`yarn docs:check` enforces both.** It derives countable facts (node types, Prisma models,
    built-in skills, scanner patterns, seeded agents) and dependency versions from source, rejects
    the status prose rule 1 bans, requires every capability doc to carry a `## Limitations` section,
-   and fails on broken relative links. It runs as its own CI job with no install step. Run it after
-   changing the schema, the node-type union, the skills, the scanner patterns, the seeded agents,
-   or any dependency a doc names by version.
+   rejects a setting key no longer defined in the registry, and fails on broken relative links. It
+   runs as its own CI job with no install step. Run it after changing the schema, the node-type
+   union, the skills, the scanner patterns, the seeded agents, a setting key, or any dependency a
+   doc names by version.
 
 ## history/
 

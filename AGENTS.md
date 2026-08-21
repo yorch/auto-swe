@@ -147,6 +147,7 @@ prose has no compiler and status prose rots silently.
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
+  | A setting key named in prose that the registry does not define | `config/registry.ts` (a key carries its own group as a prefix, so regrouping a knob renames it) |
   | Broken relative `.md` links, `docs/history/` included | the filesystem |
 
   Run it after changing the schema, the node-type union, the built-in skills, the scanner patterns,
@@ -363,6 +364,14 @@ names + descriptions and calls `loadSkill` to fetch full text on demand, so unus
 tokens. Reviewer sub-agents, planner, and decomposer receive their fragments inline instead — they
 have no tools.
 
+**Large tool output offload:** `bash`, `readFile`, and `listDirectory` write output over
+`workspace.maxToolOutputChars` (setting registry, default 20,000 chars) to
+`/workspace/.tool-output/` — outside `/workspace/target-repo`, so it can never be swept into
+`git add -A` — and return a head+tail excerpt plus the file path and elided-character count instead
+of the full blob. `readFile` cannot retrieve an offloaded file back (`safePath()` rejects the
+absolute path); only `bash` can. See [`docs/agents.md` §3.6](./docs/agents.md#36-large-tool-output-offload)
+for the full behaviour and its limitations.
+
 **Scope cascade** — every per-key config resolves through five levels, most specific first:
 
 ```
@@ -384,6 +393,20 @@ Key files: `lib/config/agentResolver.ts` (`resolveAgent`), `lib/config/agentSpec
 `lib/config/mcpConnection.ts`, `agents/mcpTools.ts`, `activities/runAgent.ts` +
 `runAgentNode.ts`, gateway `lib/agentLibraryService.ts`, `shared/lib/skillScanner.ts`.
 Full reference: [`docs/agents.md`](./docs/agents.md).
+
+### Sub-Agent Delegation Boundary
+
+All multi-agent fan-out in this codebase is **workflow-driven with structured results**: the
+interpreter (not an LLM) decides to run the review network or a channel-assistant composite run,
+and each sub-agent it spawns returns a typed result (`CodeResult`, `ReviewVerdict`, `Subtask[]`)
+that fixed code consumes. No agent dynamically decides at run time to spawn another agent.
+
+This is a standing constraint on any mechanism that changes that, not a description of one that
+exists: **if an agent is ever allowed to dynamically delegate to a sub-agent, that sub-agent is
+stateless and returns exactly one structured final result to its caller.** Its tool calls, retries,
+and intermediate reasoning are never spliced into the parent's context — only the one result
+crosses the boundary. Getting this wrong is cheap to avoid up front and expensive to retrofit once
+callers depend on seeing a sub-agent's raw transcript.
 
 ### Runtime Security Scanners
 

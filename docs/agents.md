@@ -235,6 +235,39 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
   `/repositories`, Slack picker, epics, scheduled requests) and rejected by the shared
   `isGitRepoConnection` guard (`@auto-swe/shared/lib/connectionGuards`) on the submit paths.
 
+### 3.6 Large Tool Output Offload
+
+`bash`, `readFile`, and `listDirectory` bound how much of a tool's output reaches the model.
+`writeFile` and `loadSkill` are not covered — their return values are already small. Once a result
+exceeds `workspace.maxToolOutputChars` (setting registry; default `20 000`
+characters — see [configuration.md](./configuration.md)), the full output is written to a file under
+`/workspace/.tool-output/` inside the workspace container, and the model instead receives a
+**head + tail excerpt** bounded around that limit, the file's absolute path, and the count of elided
+characters. For `bash`, offload applies on both the success and the non-zero-exit path, so a failing
+command is covered the same as a passing one.
+
+- **Head + tail, not head-only.** For test and build output the decisive information — a failure, a
+  summary line — is usually at the *end*. A head-only preview would systematically hide it.
+- **Outside the repo, not inside it.** `/workspace/.tool-output/` sits alongside `/workspace/target-repo`,
+  not under it, because an offload file inside the repo could be swept up by `git add -A` and end up
+  committed into the PR.
+- **Retrieval is a `bash` round-trip.** The offload path is absolute, and `safePath()` (§3.3) rejects
+  absolute paths on principle, so `readFile` cannot fetch an offloaded file back. The agent retrieves
+  more of it with `bash` (`sed -n` and similar). An agent whose `toolKeys` disables `bash` never gets
+  more than the excerpt — see Limitations (§11).
+- **Resolved once per agent construction.** Unlike the rest of the setting-registry cascade, which
+  re-resolves on every call (see [configuration.md §4](./configuration.md#4-run-pinned-settings)),
+  `workspace.maxToolOutputChars` is read once when the implementer agent is built. A change to the
+  setting takes effect on the next implementer build, not the next tool call within one already
+  running.
+- **Traced faithfully, not fully.** The `AgentTrace` row for an offloaded call records the excerpt
+  the model actually saw, plus the offload path and the original character count — never the full
+  blob — so a trace stays an honest record of what the model saw, and `agent_traces` does not grow
+  unbounded on one noisy command.
+- **Fails closed to truncation, never to the unbounded blob.** If the offload write itself fails,
+  the tool falls back to a bounded truncation of the output. It never throws on a failed offload and
+  never hands the model the full, unbounded result.
+
 ---
 
 ## 4. The Review Network
@@ -587,3 +620,13 @@ Writes cut a new immutable `version`.
   characters and takes minutes at 20 k) or one whose blow-up needs input the corpus does not
   contain, and it does not run at bundle install, which is pure and synchronous. Runtime bounding
   is what covers those.
+- **Tool-output offload retrieval depends on `bash` being enabled.** `readFile` cannot fetch an
+  offloaded file — `safePath()` rejects the absolute path it lives at — so `bash` is the only way
+  back to the full output. An agent configured with `bash` excluded from `toolKeys` can never see
+  past the head + tail excerpt.
+- **Tool-output offload budgets characters, not tokens.** `workspace.maxToolOutputChars` bounds
+  string length, which only approximates what a model actually spends on context; two outputs of
+  the same character count can tokenize very differently.
+- **Offloaded files are ephemeral.** They live on the workspace container's filesystem, not in the
+  repo and not in the database, so they do not outlive that container's teardown — nothing later in
+  a run, or after it, can retrieve one once the workspace is gone.

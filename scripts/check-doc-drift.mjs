@@ -443,6 +443,72 @@ const checkProse = (file, line, lineNo) => {
 // ---------------------------------------------------------------------------
 
 /** Living docs only — `docs/history/` is frozen by definition and exempt. */
+// ---------------------------------------------------------------------------
+// Setting-registry keys named in prose
+//
+// A doc that names a setting is quoting an identifier the code owns, and the
+// registry enforces that a key is prefixed with its own group — so a doc can
+// state a plausible-looking key that no `resolveSetting` call will ever match.
+// Nothing else here catches that: the key is not a count, not a version, and
+// not a link, so every other rule in this file waves it through.
+//
+// Two shapes are rejected, chosen to stay quiet on ordinary prose:
+//
+//   1. right suffix, wrong group — `implementer.maxToolOutputChars` for a key
+//      registered as `workspace.maxToolOutputChars`. This is the likely failure
+//      whenever a knob is renamed to satisfy the group-prefix invariant.
+//   2. real group, unknown suffix — `workspace.maxToolOutput`, i.e. a typo or a
+//      key that has since been removed.
+//
+// A dotted token that matches neither is not treated as a setting reference at
+// all, so `package.json` and `schema.prisma` pass through untouched.
+// ---------------------------------------------------------------------------
+
+const registrySrc = read('packages/shared/src/config/registry.ts');
+
+/** Keys of `SETTING_DEFINITIONS`, e.g. `workspace.maxToolOutputChars`. */
+const settingKeys = new Set(
+  [...registrySrc.matchAll(/^\s*'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9]+)':\s*defineSetting\(/gm)].map(
+    (m) => m[1]
+  )
+);
+if (settingKeys.size === 0) {
+  throw new Error('could not locate any SETTING_DEFINITIONS keys');
+}
+
+/** suffix → the real key(s) carrying it, for "did you mean" on a wrong group. */
+const settingKeysBySuffix = new Map();
+for (const key of settingKeys) {
+  const suffix = key.slice(key.indexOf('.') + 1);
+  settingKeysBySuffix.set(suffix, [...(settingKeysBySuffix.get(suffix) ?? []), key]);
+}
+
+/** Group prefixes actually in use — `channel`, `memory`, `workflow`, `workspace`. */
+const settingGroups = new Set([...settingKeys].map((k) => k.slice(0, k.indexOf('.'))));
+
+const settingFailures = [];
+const checkSettingKeys = (file, line, lineNo) => {
+  // Backticked only: a setting named in running prose without code formatting is
+  // a style problem, not a correctness one, and matching bare words here would
+  // flag every sentence containing a period.
+  for (const m of line.matchAll(/`([a-z][a-zA-Z0-9]*)\.([a-zA-Z][a-zA-Z0-9]*)`/g)) {
+    const [token, group, suffix] = [`${m[1]}.${m[2]}`, m[1], m[2]];
+    if (settingKeys.has(token)) {
+      continue;
+    }
+    const bySuffix = settingKeysBySuffix.get(suffix);
+    if (bySuffix) {
+      settingFailures.push({ file, line: lineNo, suggest: bySuffix.join(' / '), token });
+      // Every registered suffix is camelCase, so requiring an interior capital
+      // keeps `workspace.ts` and `channel.json` out of the "real group, unknown
+      // suffix" branch — a filename that happens to lead with a group name is
+      // not a setting reference.
+    } else if (settingGroups.has(group) && /[A-Z]/.test(suffix)) {
+      settingFailures.push({ file, line: lineNo, suggest: '(no such key in the registry)', token });
+    }
+  }
+};
+
 const targets = [
   'AGENTS.md',
   'README.md',
@@ -460,6 +526,7 @@ for (const file of targets) {
     checkVersions(relative('.', file), line, i + 1);
     checkImageVersions(relative('.', file), line, i + 1);
     checkProse(relative('.', file), line, i + 1);
+    checkSettingKeys(relative('.', file), line, i + 1);
     for (const check of CHECKS) {
       if (check.skipLine?.test(line)) {
         continue;
@@ -642,7 +709,8 @@ const clean =
   missingGaps.length === 0 &&
   staleExemptions.length === 0 &&
   versionFailures.length === 0 &&
-  proseFailures.length === 0;
+  proseFailures.length === 0 &&
+  settingFailures.length === 0;
 
 if (clean) {
   console.log(
@@ -655,6 +723,7 @@ if (clean) {
       `(${GAP_EXEMPT_DOCS.size} runbooks exempt).`
   );
   console.log(`  no forbidden status prose (${FORBIDDEN_PROSE.length} rules).`);
+  console.log(`  every setting key named in prose resolves (${settingKeys.size} registered).`);
   for (const [label, value] of facts) {
     console.log(`  ${String(value).padStart(3)}  ${label}`);
   }
@@ -715,6 +784,18 @@ if (proseFailures.length > 0) {
   console.error('PR numbers, and roadmap promises belong in git history and the pull request.');
   console.error('A promise nothing recompiles on is a promise that rots. Backticks and quotes are');
   console.error('stripped before matching, so the convention can still quote what it bans.\n');
+}
+
+if (settingFailures.length > 0) {
+  console.error(`Unknown setting keys — ${settingFailures.length} in the living docs.\n`);
+  for (const s of settingFailures) {
+    console.error(`  ${s.file}:${s.line}`);
+    console.error(`    names \`${s.token}\`, which the registry does not define`);
+    console.error(`    did you mean: ${s.suggest}\n`);
+  }
+  console.error('A setting key is prefixed with its own group, so renaming the group renames the');
+  console.error('key. Fix the doc, or the definition, so the two agree.');
+  console.error('Source of truth: packages/shared/src/config/registry.ts\n');
 }
 
 if (brokenLinks.length > 0) {
