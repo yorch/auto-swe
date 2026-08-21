@@ -474,6 +474,28 @@ describe('repoDependencyRoutes', () => {
       expect(ctx.mockTemporal.startRepoDependencyInference).not.toHaveBeenCalled();
     });
 
+    it('409s when inference is already running for the repo', async () => {
+      // The workflow id is repo-derived, so a second start while one is in
+      // flight is rejected by Temporal. That is intended, but it must not reach
+      // the caller as a 500 when someone double-clicks.
+      ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
+      leadOf(ctx.mockPrisma, [TEAM_FROM]);
+      ctx.mockTemporal.startRepoDependencyInference.mockRejectedValueOnce(
+        Object.assign(new Error('already started'), {
+          name: 'WorkflowExecutionAlreadyStartedError',
+        })
+      );
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${FROM}/dependencies/infer`,
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('INFERENCE_IN_PROGRESS');
+    });
+
     it('404s for a non-git connection', async () => {
       ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(
         repoRow(FROM, TEAM_FROM, ORG, 'mcp')

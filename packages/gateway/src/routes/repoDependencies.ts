@@ -5,7 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 import { canManageTeamRepos } from './repositories.js';
 
 /**
@@ -164,12 +164,15 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/dependencies/scan',
     { onRequest: requireAuth({ requiredRole: 'ADMIN' }) },
-    async (_request, reply) => {
+    async (request, reply) => {
       try {
         await fastify.temporal.triggerRepoDependencyScanNow();
         return { triggered: true };
-      } catch {
-        // The handle only exists once the schedule has been synced.
+      } catch (err) {
+        // The handle only exists once the schedule has been synced. A Temporal
+        // outage lands here too, and the two are not the same problem for an
+        // operator — log the reason rather than flattening both into the message.
+        request.log.warn({ err }, 'repo dependency scan trigger failed');
         return reply.status(503).send({
           error: {
             code: 'SCHEDULE_UNAVAILABLE',
@@ -201,7 +204,23 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'FORBIDDEN', message: 'Requires LEAD on this repository’s team' },
         });
       }
-      await fastify.temporal.startRepoDependencyInference(`repo-dep-infer-${repo.id}`, repo.id);
+      // The workflow id is derived from the repo, so Temporal rejects a second
+      // start while one is already running. That is the desired behaviour — one
+      // inference per repo at a time — but it arrives as a thrown error, and
+      // left unhandled it would surface as a 500 on an impatient double-click.
+      try {
+        await fastify.temporal.startRepoDependencyInference(`repo-dep-infer-${repo.id}`, repo.id);
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+          return reply.status(409).send({
+            error: {
+              code: 'INFERENCE_IN_PROGRESS',
+              message: 'Inference is already running for this repository.',
+            },
+          });
+        }
+        throw err;
+      }
       return reply.status(202).send({ started: true });
     }
   );
