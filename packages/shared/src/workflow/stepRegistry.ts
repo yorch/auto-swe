@@ -45,6 +45,28 @@ export const MCP_TOOL_KEY = 'mcp' as const;
 export const AGENT_TOOL_KEYS = [...IMPLEMENTER_TOOL_IDS, MCP_TOOL_KEY] as const;
 export type AgentToolKey = (typeof AGENT_TOOL_KEYS)[number];
 
+/**
+ * Cross-repo context injection (repo dependency graph, P2). The cheap tier
+ * injects a bounded prompt block describing the repo's active 1-hop neighbours,
+ * so it is on unless a template turns it off; the checkout tier clones those
+ * upstream repos into the workspace, so it is opt-in.
+ */
+const CROSS_REPO_CONTEXT_FIELD = {
+  description:
+    'Inject the repo dependency graph (upstream contracts + downstream consumers) into the agent prompt. On by default; uncheck to omit it for this step.',
+  key: 'crossRepoContext',
+  label: 'Cross-repo dependency context',
+  type: 'boolean' as const,
+} as const;
+
+const CROSS_REPO_CHECKOUT_FIELD = {
+  description:
+    'Also clone this repo\'s upstream dependencies read-only into /workspace/deps so the agent can read their source. Slower and more expensive — off by default. Requires "Cross-repo dependency context".',
+  key: 'crossRepoCheckout',
+  label: 'Check out upstream repos',
+  type: 'boolean' as const,
+} as const;
+
 const IMPLEMENTER_TOOLS_FIELD = {
   description:
     'Tools available to the implementer agent. Leave empty to enable all tools (default). Uncheck a tool to restrict the agent from using it.',
@@ -85,7 +107,12 @@ register({
 
 register({
   category: 'agent',
-  configFields: [SYSTEM_PROMPT_FIELD, IMPLEMENTER_TOOLS_FIELD],
+  configFields: [
+    SYSTEM_PROMPT_FIELD,
+    IMPLEMENTER_TOOLS_FIELD,
+    CROSS_REPO_CONTEXT_FIELD,
+    CROSS_REPO_CHECKOUT_FIELD,
+  ],
   costHint: { role: 'implementer', tokensIn: 20000, tokensOut: 8000 },
   description: 'Run the implementer agent inside a fresh Docker workspace.',
   label: 'Execute implementation',
@@ -94,7 +121,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [SYSTEM_PROMPT_FIELD],
+  configFields: [SYSTEM_PROMPT_FIELD, CROSS_REPO_CONTEXT_FIELD],
   costHint: { role: 'reviewer', tokensIn: 15000, tokensOut: 3000 },
   description: 'Run the security / domain / performance reviewer agents in parallel.',
   label: 'Run review network',

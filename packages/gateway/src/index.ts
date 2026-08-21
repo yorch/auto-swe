@@ -3,6 +3,7 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
 const otel = initTelemetry('auto-swe-gateway');
 
+import { resolveSettings } from '@auto-swe/shared/config';
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import {
   resolveConsolidationConfig,
@@ -113,6 +114,17 @@ async function start() {
   resolveConsolidationConfig()
     .then((cfg) => app.temporal.syncConsolidationSchedule(cfg))
     .catch((err) => app.log.warn({ err }, 'consolidation schedule sync failed at startup'));
+
+  // Same for the repo-dependency scan Schedule. Without this the schedule never
+  // exists, so the on-demand "re-scan" trigger has no handle to fire.
+  resolveSettings(['repoDependency.scanCron', 'repoDependency.scanEnabled'], {})
+    .then((cfg) =>
+      app.temporal.syncRepoDependencyScanSchedule({
+        cronExpression: cfg['repoDependency.scanCron'],
+        enabled: cfg['repoDependency.scanEnabled'],
+      })
+    )
+    .catch((err) => app.log.warn({ err }, 'repo dependency scan schedule sync failed at startup'));
 
   // Same for the eval-regression Temporal Schedule (the nightly benchmark).
   // Off by default — needs a seeded dataset + a worker that can reach Docker.

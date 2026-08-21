@@ -41,10 +41,23 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/** `92% confidence` for an LLM-inferred edge; nothing for a deterministic one. */
+function ConfidenceNote({ edge }: { edge: DepEdgeView }) {
+  if (edge.source !== 'inferred') {
+    return null;
+  }
+  return (
+    <span className="ml-2 text-paper-400 text-xs">
+      {Math.round(edge.confidence * 100)}% confidence
+    </span>
+  );
+}
+
 function EdgeRow({
   edge,
   canManage,
   canVeto,
+  onConfirm,
   onDismiss,
   onReactivate,
   onRemove,
@@ -52,12 +65,15 @@ function EdgeRow({
   edge: DepEdgeView;
   canManage: boolean;
   /**
-   * Whether the dismiss/reactivate veto applies here. The veto belongs to the
-   * depended-upon team, so it is offered only in the "Depended on by" section
-   * (where the subject repo is the one being depended on). In "Depends on" the
-   * subject is the dependent, whose managers can only Remove.
+   * Whether the confirm/dismiss/reactivate veto applies here. The veto
+   * belongs to the depended-upon team, so it is offered only in the
+   * "Depended on by" section (where the subject repo is the one being
+   * depended on). In "Depends on" the subject is the dependent, whose
+   * managers can only Remove.
    */
   canVeto: boolean;
+  /** Confirm a `proposed` edge (an LLM-inferred suggestion awaiting review) straight to active. */
+  onConfirm: () => void;
   onDismiss: () => void;
   onReactivate: () => void;
   onRemove: () => void;
@@ -69,6 +85,7 @@ function EdgeRow({
         <span className="ml-2 text-paper-400 text-xs">
           {edge.kind} · {edge.source}
         </span>
+        <ConfidenceNote edge={edge} />
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <StatusBadge status={edge.status} />
@@ -81,6 +98,16 @@ function EdgeRow({
           <Button onClick={onReactivate} size="sm" variant="ghost">
             Reactivate
           </Button>
+        )}
+        {canManage && canVeto && edge.status === 'proposed' && (
+          <>
+            <Button onClick={onConfirm} size="sm" variant="ghost">
+              Confirm
+            </Button>
+            <Button onClick={onDismiss} size="sm" variant="ghost">
+              Dismiss
+            </Button>
+          </>
         )}
         {canManage && (
           <Button onClick={onRemove} size="sm" variant="ghost">
@@ -125,6 +152,10 @@ function DepSection({
               canVeto={canVeto}
               edge={e}
               key={e.id}
+              // Confirming a `proposed` suggestion PATCHes the same
+              // status:'active' as reactivating a dismissed edge — one hook,
+              // one gate (both-teams LEAD, enforced server-side).
+              onConfirm={() => onReactivate(e.id)}
               onDismiss={() => onDismiss(e.id)}
               onReactivate={() => onReactivate(e.id)}
               onRemove={() => onRemove(e)}

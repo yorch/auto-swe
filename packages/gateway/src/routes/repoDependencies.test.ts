@@ -53,11 +53,17 @@ async function buildApp() {
     }),
   };
 
+  const mockTemporal = {
+    startRepoDependencyInference: vi.fn(async () => {}),
+    triggerRepoDependencyScanNow: vi.fn(async () => {}),
+  };
+
   app.decorate('prisma', mockPrisma as unknown as never);
   app.decorate('auth', mockAuth as unknown as never);
+  app.decorate('temporal', mockTemporal as unknown as never);
   await app.register(repoDependencyRoutes, { prefix: '/api/v1/repositories' });
   await app.ready();
-  return { app, authState, mockPrisma };
+  return { app, authState, mockPrisma, mockTemporal };
 }
 
 const AUTH = { authorization: 'Bearer fake' };
@@ -86,6 +92,10 @@ describe('repoDependencyRoutes', () => {
       for (const fn of Object.values(model)) {
         (fn as ReturnType<typeof vi.fn>).mockReset();
       }
+    }
+    for (const fn of Object.values(ctx.mockTemporal)) {
+      fn.mockReset();
+      fn.mockResolvedValue(undefined);
     }
   });
 
@@ -330,6 +340,174 @@ describe('repoDependencyRoutes', () => {
       expect(body.dependsOn).toHaveLength(1);
       expect(body.dependsOn[0].repo.repoName).toBe('sdk');
       expect(body.dependedOnBy).toEqual([]);
+    });
+  });
+  describe('GET /dependencies/unresolved', () => {
+    it('scopes a non-admin to rows raised by repos on their own teams', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.repoDependency.findMany.mockResolvedValueOnce([]);
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/repositories/dependencies/unresolved',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const where = ctx.mockPrisma.repoDependency.findMany.mock.calls[0][0].where;
+      expect(where.status).toBe('unresolved');
+      // The membership predicate is what stops one team seeing another's backlog.
+      expect(where.fromRepo).toEqual({
+        team: { memberships: { some: { userId: 'user-1' } } },
+      });
+    });
+
+    it('does not scope an ADMIN to any team', async () => {
+      ctx.authState.role = 'ADMIN';
+      ctx.mockPrisma.repoDependency.findMany.mockResolvedValueOnce([]);
+
+      await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/repositories/dependencies/unresolved',
+      });
+
+      const where = ctx.mockPrisma.repoDependency.findMany.mock.calls[0][0].where;
+      expect(where.fromRepo).toBeUndefined();
+    });
+
+    it('returns the rows flat for the client to group', async () => {
+      ctx.authState.role = 'ADMIN';
+      ctx.mockPrisma.repoDependency.findMany.mockResolvedValueOnce([
+        {
+          confidence: 1,
+          fromRepo: { id: FROM },
+          id: 'e1',
+          kind: 'code',
+          source: 'manifest',
+          toRef: '@acme/sdk',
+        },
+      ]);
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/repositories/dependencies/unresolved',
+      });
+
+      expect(JSON.parse(res.payload).data).toHaveLength(1);
+      expect(JSON.parse(res.payload).data[0].toRef).toBe('@acme/sdk');
+    });
+  });
+
+  describe('POST /dependencies/scan', () => {
+    it('triggers the sweep for an ADMIN', async () => {
+      ctx.authState.role = 'ADMIN';
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/repositories/dependencies/scan',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockTemporal.triggerRepoDependencyScanNow).toHaveBeenCalled();
+    });
+
+    it('forbids a LEAD — the sweep spans every team, not just theirs', async () => {
+      ctx.authState.role = 'LEAD';
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/repositories/dependencies/scan',
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(ctx.mockTemporal.triggerRepoDependencyScanNow).not.toHaveBeenCalled();
+    });
+
+    it('reports 503 when the schedule has not been registered yet', async () => {
+      ctx.authState.role = 'ADMIN';
+      ctx.mockTemporal.triggerRepoDependencyScanNow.mockRejectedValueOnce(new Error('no handle'));
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/repositories/dependencies/scan',
+      });
+
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(res.payload).error.code).toBe('SCHEDULE_UNAVAILABLE');
+    });
+  });
+
+  describe('POST /:id/dependencies/infer', () => {
+    it('starts inference for a LEAD of the repo own team', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
+      leadOf(ctx.mockPrisma, [TEAM_FROM]);
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${FROM}/dependencies/infer`,
+      });
+
+      expect(res.statusCode).toBe(202);
+      expect(ctx.mockTemporal.startRepoDependencyInference).toHaveBeenCalledWith(
+        `repo-dep-infer-${FROM}`,
+        FROM
+      );
+    });
+
+    it('forbids a LEAD of some other team — inference costs a model call', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
+      leadOf(ctx.mockPrisma, [TEAM_TO]);
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${FROM}/dependencies/infer`,
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(ctx.mockTemporal.startRepoDependencyInference).not.toHaveBeenCalled();
+    });
+
+    it('409s when inference is already running for the repo', async () => {
+      // The workflow id is repo-derived, so a second start while one is in
+      // flight is rejected by Temporal. That is intended, but it must not reach
+      // the caller as a 500 when someone double-clicks.
+      ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
+      leadOf(ctx.mockPrisma, [TEAM_FROM]);
+      ctx.mockTemporal.startRepoDependencyInference.mockRejectedValueOnce(
+        Object.assign(new Error('already started'), {
+          name: 'WorkflowExecutionAlreadyStartedError',
+        })
+      );
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${FROM}/dependencies/infer`,
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('INFERENCE_IN_PROGRESS');
+    });
+
+    it('404s for a non-git connection', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(
+        repoRow(FROM, TEAM_FROM, ORG, 'mcp')
+      );
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${FROM}/dependencies/infer`,
+      });
+
+      expect(res.statusCode).toBe(404);
     });
   });
 });

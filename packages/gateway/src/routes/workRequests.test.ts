@@ -151,6 +151,12 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
+      getRepoDependencyScanScheduleStatus: async () => ({
+        exists: false,
+        lastRunAt: null,
+        nextRunAt: null,
+        paused: false,
+      }),
       getRevalidationScheduleStatus: async () => ({
         exists: false,
         lastRunAt: null,
@@ -170,6 +176,7 @@ describe('POST /api/v1/work-requests', () => {
       startEpicWorkflow: async () => {},
       startEvalRunWorkflow: async () => {},
       startReembedMemory: async () => {},
+      startRepoDependencyInference: async () => {},
       startRunnableWorkflow: async (id: string) => {
         startedWorkflowIds.push(id);
       },
@@ -178,10 +185,12 @@ describe('POST /api/v1/work-requests', () => {
       syncChannelReactiveSchedule: async () => {},
       syncConsolidationSchedule: async () => {},
       syncEvalSchedule: async () => {},
+      syncRepoDependencyScanSchedule: async () => {},
       syncRevalidationSchedule: async () => {},
       syncWorkRequestSchedule: async () => {},
       triggerConsolidationNow: async () => {},
       triggerEvalNow: async () => {},
+      triggerRepoDependencyScanNow: async () => {},
       triggerRevalidationNow: async () => {},
       triggerWorkRequestSchedule: async () => {},
     });

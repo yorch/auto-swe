@@ -49,28 +49,48 @@ export interface SplitCloneCredential {
  * into a scrubbed URL plus a per-call `http.extraheader` value.
  *
  * This is the single source of truth for "never persist the token in
- * `.git/config`": `createWorkspace` (agent workspaces) and `runShellStep`
- * (ephemeral shell-step volumes) both clone into a filesystem that untrusted
- * code later reads, so both set `origin` to `cleanUrl` right after clone and
- * inject `gitAuthHeader` only on the network calls that need it.
+ * `.git/config`": `createWorkspace` (agent workspaces), `runShellStep`
+ * (ephemeral shell-step volumes) and `cloneDependencyRepos` (cross-repo
+ * checkouts) all clone into a filesystem that untrusted code later reads, so
+ * each sets `origin` to `cleanUrl` right after clone and injects
+ * `gitAuthHeader` only on the network calls that need it.
  *
  * Backward compatible: a plain (unauthenticated) or non-URL string falls
  * through unchanged with no auth header.
  */
 export function splitCloneCredential(authedRepoUrl: string): SplitCloneCredential {
+  let parsed: URL | undefined;
   try {
-    const u = new URL(authedRepoUrl);
-    if (u.password) {
-      const token = decodeURIComponent(u.password);
-      const gitAuthHeader = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
-      u.username = '';
-      u.password = '';
-      return { cleanUrl: u.toString(), gitAuthHeader };
-    }
+    parsed = new URL(authedRepoUrl);
   } catch {
-    /* non-URL — leave as-is, no auth header */
+    // Not a URL at all (e.g. an scp-style git@host:org/repo). There is no
+    // embedded credential to strip, so it passes through unchanged.
+    return { cleanUrl: authedRepoUrl };
   }
-  return { cleanUrl: authedRepoUrl };
+
+  if (!parsed.password) {
+    return { cleanUrl: authedRepoUrl };
+  }
+
+  // Strip the credential FIRST and unconditionally. Decoding can throw — a token
+  // containing a bare `%` is not valid percent-encoding — and if that throw
+  // escaped before the strip, the "scrubbed" URL would still carry the token and
+  // `git remote set-url` would write the secret to disk where untrusted code
+  // later reads it. Failing closed costs the auth header, not the secret.
+  const rawPassword = parsed.password;
+  parsed.username = '';
+  parsed.password = '';
+  const cleanUrl = parsed.toString();
+
+  let token: string;
+  try {
+    token = decodeURIComponent(rawPassword);
+  } catch {
+    // Undecodable token: use it verbatim rather than dropping auth entirely.
+    token = rawPassword;
+  }
+  const gitAuthHeader = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
+  return { cleanUrl, gitAuthHeader };
 }
 
 /**
@@ -145,6 +165,89 @@ export function buildMetadataBlockArgs(containerName: string, image: string): st
   return `docker run --rm --network container:${containerName} --cap-add=NET_ADMIN -- ${shellQuote(image)} sh -c ${shellQuote(routeCmd)}`;
 }
 
+/** Hard cap on `full_checkout` dependency clones per workspace. */
+export const MAX_DEPENDENCY_CHECKOUTS = 4;
+
+export interface DependencyCheckout {
+  /** Clone URL carrying the credential, from `ScmProvider.cloneCredentials()`. */
+  authedCloneUrl: string;
+  /** Branch to clone; omitted means the remote's default branch. */
+  branch?: string;
+  /** Human name for the checkout directory — sanitized before use. */
+  name: string;
+}
+
+/**
+ * Reduce an arbitrary repo name to a safe single path segment. Belt-and-braces:
+ * every interpolated path is shell-quoted as well, but a name that cannot
+ * contain a separator or a leading dash cannot escape `/workspace/deps` even if
+ * a future caller forgets to quote.
+ */
+export function safeDepDirName(name: string): string {
+  const cleaned = name
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^[-.]+/, '')
+    .slice(0, 64);
+  return cleaned.length > 0 ? cleaned : 'dep';
+}
+
+/**
+ * Optional `full_checkout` tier: clone dependency repos read-only into
+ * `/workspace/deps/<name>` alongside the target repo.
+ *
+ * Runs *after* `createWorkspace` has cloned and scrubbed the target repo, and
+ * applies the same scrub to every dependency clone — the credential is used for
+ * the clone itself and then removed from `origin`, so no token survives in the
+ * container. Dependency credentials are never attached to the returned
+ * `Workspace`: these checkouts are read-only reference material, and nothing in
+ * the workspace can push to them.
+ *
+ * Best-effort per dependency and capped at {@link MAX_DEPENDENCY_CHECKOUTS} —
+ * one repo that fails to clone does not fail the run or the other clones.
+ */
+export async function cloneDependencyRepos(
+  workspace: Pick<Workspace, 'exec'>,
+  deps: DependencyCheckout[]
+): Promise<{ label: string; path: string }[]> {
+  const cloned: { label: string; path: string }[] = [];
+  const used = new Set<string>();
+
+  for (const dep of deps.slice(0, MAX_DEPENDENCY_CHECKOUTS)) {
+    let dir = safeDepDirName(dep.name);
+    while (used.has(dir)) {
+      dir = `${dir}-x`;
+    }
+    used.add(dir);
+    const path = `/workspace/deps/${dir}`;
+    const { cleanUrl } = splitCloneCredential(dep.authedCloneUrl);
+    const branchArg = dep.branch ? `-b ${shellQuote(dep.branch)} ` : '';
+    try {
+      // `--` terminates option parsing: a URL that begins with a dash is then
+      // a path, not a git flag (`--upload-pack=…` and friends).
+      await workspace.exec(
+        `git clone --depth=1 ${branchArg}-- ${shellQuote(dep.authedCloneUrl)} ${shellQuote(path)}`
+      );
+      // Same scrub as the target repo: `git clone` bakes the credential into
+      // `.git/config`, where an agent could read it back out.
+      await workspace.exec(
+        `cd ${shellQuote(path)} && git remote set-url origin ${shellQuote(cleanUrl)}`
+      );
+      // Label with the sanitized directory, not the raw name: the caller renders
+      // this into an agent prompt, and the sanitized form is also what is on disk.
+      cloned.push({ label: dir, path });
+    } catch {
+      // Remove a half-cloned directory so the agent never sees a partial repo.
+      try {
+        await workspace.exec(`rm -rf ${shellQuote(path)}`);
+      } catch {
+        /* nothing to clean up */
+      }
+    }
+  }
+
+  return cloned;
+}
+
 /**
  * Provision an ephemeral Docker workspace with the repo cloned at the default
  * branch and a fresh local branch checked out. `authedRepoUrl` must already
@@ -207,7 +310,8 @@ export async function createWorkspace(
   // can be injected per-call via `git -c http.extraheader` instead of being
   // persisted in the cloned repo's `.git/config` as the `origin` remote URL —
   // see the `git remote set-url` scrub below and `gitAuthed` on the returned
-  // Workspace.
+  // Workspace. Backward compatible: a plain (unauthenticated) URL just falls
+  // through with no auth header.
   const { cleanUrl, gitAuthHeader } = splitCloneCredential(authedRepoUrl);
 
   const id = crypto.randomBytes(8).toString('hex');

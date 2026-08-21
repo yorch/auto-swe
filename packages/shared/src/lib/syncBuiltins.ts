@@ -296,6 +296,33 @@ interface SweAgentDef {
 
 const IMPLEMENTER_TOOLS = ['readFile', 'writeFile', 'listDirectory', 'bash'];
 
+/**
+ * P3 repo-dependency-graph: infers likely cross-repo edges from repo metadata
+ * (names, descriptions, languages, package names, manifest hints) so an
+ * operator can review/confirm them instead of hand-declaring every edge.
+ * Structured-output coupling — `inferRepoDependencies` parses the result with
+ * a Zod schema, and separately re-validates candidate membership, self-edges,
+ * confidence range, and edge kind before writing anything — so a stray or
+ * malformed edge here is dropped downstream rather than trusted outright.
+ */
+const REPO_DEPENDENCY_INFERRER_PROMPT = `You are a Repo Dependency Inferrer. You receive metadata for one "subject" repository plus a fixed CANDIDATE LIST of other repositories in the same organization — names, descriptions, languages, declared package names, and any manifest hints available. Your job is to propose likely dependency relationships between the subject repo and repos in the candidate list, so an operator can review and confirm them.
+
+RULES (read carefully — violating any of these makes your output unusable):
+1. Only propose edges where the other endpoint is a repo id taken verbatim from the supplied CANDIDATE LIST. Never invent a repo, and never reference a repo id you were not given.
+2. Never propose a self-edge (the subject repo depending on itself).
+3. Be conservative. A relationship must be reasonably inferable from the given metadata — a shared naming convention, a description that names the other repo or its package, a language/ecosystem pairing that strongly implies a client/server or library/consumer relationship, or an explicit mention. When in doubt, omit the edge rather than guess.
+4. Assign each edge a "kind" — one of: code, runtime, build, api, data — describing the nature of the dependency (code: imports/shares code; runtime: calls it at runtime, e.g. a service dependency; build: needed to build/compile; api: consumes its API/contract; data: reads/writes its data).
+5. Assign a confidence between 0 and 1 reflecting how certain you are: 0.9+ only for near-certain, clearly evidenced relationships; 0.5-0.8 for a plausible but not fully confirmed relationship; below 0.5 for a weak guess (prefer omitting these unless the signal is still worth surfacing to a human).
+6. Give a short, concrete one- or two-sentence rationale for each edge, citing the specific evidence (e.g. "subject repo's description names this package as a dependency").
+7. Return an empty edges array if nothing in the candidate list is plausibly related to the subject repo — do not force a relationship just to have something to report.
+
+You MUST respond with valid JSON matching this schema:
+{
+  "edges": [
+    { "toRepoId": "<a repo id taken from the CANDIDATE LIST>", "kind": "code" | "runtime" | "build" | "api" | "data", "confidence": 0..1, "rationale": "short evidence-based explanation" }
+  ]
+}`;
+
 const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     description: 'Writes code in the workspace via the TDD loop.',
@@ -384,6 +411,20 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Workflow Explainer',
     systemPrompt: WORKFLOW_EXPLAINER_PROMPT,
+  },
+  {
+    // P3 repo-dependency-graph: proposes LLM-inferred cross-repo edges for
+    // human review. Cheap/fast model — same as evalJudge — since this is a
+    // structured-classification task over a bounded candidate list, not
+    // open-ended reasoning. Not in MODEL_BACKED_AGENT_KEYS: no workflow STEP
+    // resolves it (it's called directly from the `inferRepoDependencies`
+    // activity), so it must not gate worker boot — resolved on demand, like
+    // evalJudge and workflowAuthor/workflowExplainer above.
+    description: 'Infers likely cross-repo dependency edges from repo metadata for human review.',
+    key: 'repoDependencyInferrer',
+    modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+    name: 'Repo Dependency Inferrer',
+    systemPrompt: REPO_DEPENDENCY_INFERRER_PROMPT,
   },
   {
     description: 'Security-focused sub-reviewer in the review network.',

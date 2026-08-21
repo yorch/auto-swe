@@ -6,13 +6,19 @@ import type { ConnectionPrefill } from '@/components/repositories/ConnectionForm
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
+import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import {
+  useRepoDependencySuggestions,
+  useTriggerRepoDependencyScan,
+} from '@/hooks/useRepoDependencies';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useRepositories } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
+import { errMsg } from '@/lib/errors';
 import { useAuthStore } from '@/stores/authStore';
 
 type ModalMode =
@@ -47,6 +53,8 @@ function ConnectionTypeBadge({ type }: { type: string }) {
 
 export default function ConnectionsPage() {
   const { data: repos, isLoading } = useRepositories();
+  const suggestions = useRepoDependencySuggestions();
+  const scan = useTriggerRepoDependencyScan();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const canManage = role === 'ADMIN' || role === 'LEAD';
   const [mode, setMode] = useState<ModalMode>(null);
@@ -146,6 +154,40 @@ export default function ConnectionsPage() {
           </p>
         )}
       </div>
+
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold text-sm">Suggested repositories to onboard</h2>
+          {role === 'ADMIN' && (
+            <Button
+              disabled={scan.isPending}
+              onClick={() => scan.mutate()}
+              size="sm"
+              variant="secondary"
+            >
+              {scan.isPending ? 'Starting…' : 'Re-scan dependencies'}
+            </Button>
+          )}
+        </div>
+        {scan.isError && (
+          <p className="text-brick-400 text-xs">
+            {errMsg(scan.error, 'Could not start the scan — the schedule may not be registered.')}
+          </p>
+        )}
+        {scan.isSuccess && !scan.isError && (
+          // The POST only *starts* the sweep, so the list below is still
+          // pre-scan; say so rather than letting it read as "nothing changed".
+          <p className="text-paper-500 text-xs">
+            Scan started. Suggestions update as it works through the repositories.
+          </p>
+        )}
+        <RepoDependencySuggestions
+          error={suggestions.error}
+          isError={suggestions.isError}
+          isLoading={suggestions.isLoading}
+          suggestions={suggestions.data}
+        />
+      </section>
 
       <ImportFromGitHubModal
         onClose={() =>

@@ -29,6 +29,7 @@ import { useTeams } from '@/hooks/useTeams';
 const GROUP_TITLES: Record<string, string> = {
   channel: 'Channel assistant',
   memory: 'Semantic memory',
+  repoDependency: 'Repo dependency graph',
   workflow: 'Workflow interpreter',
   workspace: 'Agent workspace',
 };
@@ -37,6 +38,8 @@ const GROUP_BLURBS: Record<string, string> = {
   channel:
     'How proactive the Slack assistant is and how much context it reads per turn. Overridable per channel, so one noisy channel can be tuned without touching the rest.',
   memory: 'Relevance thresholds for what semantic memory surfaces.',
+  repoDependency:
+    'How confidently an LLM-inferred repo-to-repo dependency edge must be evidenced before it is promoted straight to active instead of waiting for a human confirm.',
   workflow:
     'Bounds on how far one run may expand. Frozen when a run starts, so changing them affects new runs only.',
   workspace:

@@ -9,7 +9,7 @@
 Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
 `AnySkillRole = string`. New agents are added as data, not code.
 
-`syncBuiltins` seeds 21 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
+`syncBuiltins` seeds 22 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
 are seed content for the flagship software-engineering use case, not a fixed roster. An agent a team
 adds resolves through exactly the same cascade as `implementer`, and nothing in the engine privileges
 the seeded set — `assertConfigReady` gates boot on what the deployment has *installed*, not on the
@@ -36,6 +36,7 @@ library at `/admin/agents/library`.
 | `evalJudge` | `runEvalNode` judge scorer | `anthropic/claude-haiku-4-5-20251001` |
 | `workflowAuthor` | NL workflow generation | `anthropic/claude-opus-4-8` |
 | `workflowExplainer` | NL workflow explanation | `anthropic/claude-sonnet-4-6` |
+| `repoDependencyInferrer` | `inferRepoDependencies` — proposes repo dependency edges for human confirmation | `anthropic/claude-haiku-4-5-20251001` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`

@@ -75,11 +75,19 @@ export default defineConfig({
         find: '@auto-swe/shared/lib/connectionGuards',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionGuards.ts'),
       },
-      // Order matters: 'repoDependency' is a prefix of 'repoDependencyResolver',
-      // so the longer, more-specific find MUST come first.
+      {
+        find: '@auto-swe/shared/lib/manifestParsers',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/manifestParsers.ts'),
+      },
+      // Order matters: 'repoDependency' is a prefix of both 'repoDependencyMatch'
+      // and 'repoDependencyResolver', so the longer finds MUST come first.
       {
         find: '@auto-swe/shared/lib/repoDependencyResolver',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoDependencyResolver.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/repoDependencyMatch',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoDependencyMatch.ts'),
       },
       {
         find: '@auto-swe/shared/lib/repoDependency',

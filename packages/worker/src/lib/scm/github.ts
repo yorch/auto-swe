@@ -23,6 +23,23 @@ import type {
   ScmProvider,
 } from './types.js';
 
+/**
+ * Build an authenticated Octokit for `repo`.
+ *
+ * The token and the GHE base URL both come from DB-backed config, so every API
+ * call resolves them the same way; this is the one place that knows how. The
+ * import is dynamic because `@octokit/rest` is ESM-heavy and only a subset of
+ * worker activities ever reach GitHub.
+ */
+async function octokitFor(repo: RepoRef) {
+  const { Octokit } = await import('@octokit/rest');
+  const ghConfig = await resolveGitHubConfig();
+  const token = await requireGitHubToken(ghConfig);
+  const apiUrl =
+    repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
+  return new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
+}
+
 export class GitHubScmProvider implements ScmProvider {
   async cloneCredentials(repo: RepoRef): Promise<CloneCredentials> {
     const ghConfig = await resolveGitHubConfig();
@@ -37,17 +54,8 @@ export class GitHubScmProvider implements ScmProvider {
   }
 
   async createOrUpdatePullRequest(input: CreatePullRequestInput): Promise<PullRequestRef> {
-    const { Octokit } = await import('@octokit/rest');
     const { repo } = input;
-
-    const ghConfig = await resolveGitHubConfig();
-    const token = await requireGitHubToken(ghConfig);
-    const apiUrl =
-      repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
-    const octokit = new Octokit({
-      auth: token,
-      ...(apiUrl && { baseUrl: apiUrl }),
-    });
+    const octokit = await octokitFor(repo);
 
     // Reuse an already-open PR for this head branch if GitHub has one. This
     // makes the operation idempotent across retries: if a prior attempt
@@ -91,12 +99,7 @@ export class GitHubScmProvider implements ScmProvider {
   }
 
   async fetchCiStatus(repo: RepoRef, ref: string): Promise<CiStatusResult> {
-    const { Octokit } = await import('@octokit/rest');
-    const ghConfig = await resolveGitHubConfig();
-    const token = await requireGitHubToken(ghConfig);
-    const apiUrl =
-      repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
-    const octokit = new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
+    const octokit = await octokitFor(repo);
 
     const owner = repo.organizationName;
     const repoName = repo.repoName;
@@ -152,5 +155,30 @@ export class GitHubScmProvider implements ScmProvider {
     const fullLog = await response.text();
     // Truncate to last 50KB to fit in LLM context
     return fullLog.slice(-50_000);
+  }
+
+  async fetchFileContent(repo: RepoRef, path: string, ref?: string): Promise<string | null> {
+    const octokit = await octokitFor(repo);
+
+    try {
+      const { data } = await octokit.repos.getContent({
+        owner: repo.organizationName,
+        path,
+        repo: repo.repoName,
+        ...(ref && { ref }),
+      });
+      // `data` is an array for a directory, or an object for a file/symlink/
+      // submodule. Only a plain file has content to decode.
+      if (Array.isArray(data) || data.type !== 'file' || !data.content) {
+        return null;
+      }
+      return Buffer.from(data.content, 'base64').toString('utf-8');
+    } catch (err) {
+      // A missing manifest is the normal case, not a failure — swallow 404s.
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
   }
 }

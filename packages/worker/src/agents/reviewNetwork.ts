@@ -117,15 +117,41 @@ async function runReviewerAgent(
 
 // ── Review Network Orchestrator ──
 
+/**
+ * Everything the reviewers need beyond the diff itself. An options object
+ * rather than positional parameters: these are five same-typed optional
+ * strings, and callers were already threading `undefined, undefined, …` past
+ * the ones they did not set to reach the ones they did.
+ */
+export interface ReviewNetworkOptions {
+  /**
+   * Cross-repo dependency block (repo dependency graph, P2) — appended to every
+   * reviewer's system prompt. All three benefit: a breaking-change judgement
+   * needs the consumer list, a security judgement needs to know who is exposed,
+   * and a performance judgement needs to know who calls this code.
+   */
+  crossRepoContext?: string;
+  domainSkillSuffix?: string;
+  performanceSkillSuffix?: string;
+  securitySkillSuffix?: string;
+  successCriteria?: string[];
+  systemPromptOverride?: string;
+  tracer?: AgentTracer;
+}
+
 export async function runReviewNetwork(
   codeResult: CodeResult,
-  successCriteria?: string[],
-  tracer?: AgentTracer,
-  systemPromptOverride?: string,
-  securitySkillSuffix?: string,
-  domainSkillSuffix?: string,
-  performanceSkillSuffix?: string
+  options: ReviewNetworkOptions = {}
 ): Promise<AggregatedReviewResult> {
+  const {
+    crossRepoContext,
+    domainSkillSuffix,
+    performanceSkillSuffix,
+    securitySkillSuffix,
+    successCriteria,
+    systemPromptOverride,
+    tracer,
+  } = options;
   // Append success criteria to the domain logic prompt so it validates against original intent
   let domainLogicPrompt = systemPromptOverride ?? DOMAIN_LOGIC_REVIEWER_PROMPT;
   if (successCriteria && successCriteria.length > 0) {
@@ -137,14 +163,26 @@ export async function runReviewNetwork(
     domainLogicPrompt += `\n\n${domainSkillSuffix}`;
   }
 
+  // The dependency block already carries its own `\n\n## …` heading (see
+  // `lib/repoDependencyContext.ts`); normalize anyway so a hand-built block
+  // cannot run into the preceding paragraph.
+  const crossRepoSuffix = crossRepoContext
+    ? crossRepoContext.startsWith('\n')
+      ? crossRepoContext
+      : `\n\n${crossRepoContext}`
+    : '';
+  domainLogicPrompt += crossRepoSuffix;
+
   const staticScanSuffix = formatCodeSecurityFindings(codeResult.codeSecurityFindings ?? []);
   const securityPrompt =
     (systemPromptOverride ?? SECURITY_AUDITOR_PROMPT) +
     (securitySkillSuffix ? `\n\n${securitySkillSuffix}` : '') +
-    (staticScanSuffix ? `\n\n${staticScanSuffix}` : '');
+    (staticScanSuffix ? `\n\n${staticScanSuffix}` : '') +
+    crossRepoSuffix;
   const performancePrompt =
     (systemPromptOverride ?? PERFORMANCE_REVIEWER_PROMPT) +
-    (performanceSkillSuffix ? `\n\n${performanceSkillSuffix}` : '');
+    (performanceSkillSuffix ? `\n\n${performanceSkillSuffix}` : '') +
+    crossRepoSuffix;
 
   // Run all three reviewers in parallel
   // One gate for the fan-out, not one per reviewer. All three start at the same

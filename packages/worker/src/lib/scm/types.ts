@@ -87,4 +87,12 @@ export interface ScmProvider {
    * no webhook is available. Returns `none` when the repo has no CI at all.
    */
   fetchCiStatus(repo: RepoRef, ref: string): Promise<CiStatusResult>;
+  /**
+   * Fetch a single file's content from the repo at `ref` (default branch when
+   * omitted). Used by the repo dependency graph's manifest/git-signal
+   * detectors (P1). Returns `null` when the path doesn't exist as a plain
+   * file — missing, a directory/symlink, or any other non-file entry — so a
+   * repo without a given manifest is a normal, non-throwing outcome.
+   */
+  fetchFileContent(repo: RepoRef, path: string, ref?: string): Promise<string | null>;
 }
