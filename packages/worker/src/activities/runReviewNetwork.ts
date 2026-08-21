@@ -7,6 +7,11 @@ import { resolveAgent } from '../lib/config/agentResolver.js';
 import { skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordReviewEval } from '../lib/evalCapture.js';
+import {
+  type CrossRepoStepOptions,
+  loadRepoDependencyContext,
+  wantsCrossRepoContext,
+} from '../lib/repoDependencyContext.js';
 
 /**
  * Runs the review network (Security Auditor, Domain Logic, Performance Reviewer)
@@ -15,7 +20,8 @@ import { recordReviewEval } from '../lib/evalCapture.js';
 export async function runReviewNetwork(
   codeResult: CodeResult,
   successCriteria?: string[],
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  options?: CrossRepoStepOptions
 ): Promise<AggregatedReviewResult> {
   heartbeat('starting review network');
   const tracer = new AgentTracer();
@@ -34,6 +40,19 @@ export async function runReviewNetwork(
   ]);
   const dbPrompt = reviewerAgent.model.systemPrompt ?? undefined;
 
+  // Cross-repo dependency context (repo dependency graph, P2) — the reviewers'
+  // primary consumer: a breaking-change verdict needs the downstream list.
+  // Best-effort by construction; `loadRepoDependencyContext` never throws.
+  const crossRepoContext = wantsCrossRepoContext(options)
+    ? await loadRepoDependencyContext(codeResult.repoId, ctx.orgId)
+    : '';
+  if (crossRepoContext) {
+    tracer.addActivityEvent({
+      name: 'crossRepo.context_loaded',
+      outputJson: { chars: crossRepoContext.length },
+    });
+  }
+
   try {
     const result = await runReview(
       codeResult,
@@ -42,7 +61,8 @@ export async function runReviewNetwork(
       systemPromptOverride ?? dbPrompt,
       skillsToPromptSuffix(securityAgent.skills),
       skillsToPromptSuffix(domainAgent.skills),
-      skillsToPromptSuffix(performanceAgent.skills)
+      skillsToPromptSuffix(performanceAgent.skills),
+      crossRepoContext || undefined
     );
 
     heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);

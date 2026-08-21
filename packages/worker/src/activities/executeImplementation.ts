@@ -25,6 +25,13 @@ import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import {
+  type CrossRepoStepOptions,
+  checkoutUpstreamRepos,
+  loadRepoDependencyContext,
+  wantsCrossRepoCheckout,
+  wantsCrossRepoContext,
+} from '../lib/repoDependencyContext.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
@@ -85,7 +92,8 @@ function formatDesignContext(rawDesign: unknown): string {
 export async function executeImplementation(
   request: RepoWorkRequest,
   subtask?: Subtask,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  crossRepoOptions?: CrossRepoStepOptions
 ): Promise<CodeResult> {
   const repo = await prisma.connection.findUniqueOrThrow({
     where: { id: requireRepoId(request, 'executeImplementation') },
@@ -190,6 +198,32 @@ export async function executeImplementation(
       // Design context is optional — never block implementation on it.
     }
 
+    // Cross-repo dependency context (repo dependency graph, P2): the active
+    // 1-hop graph around this repo — upstream contracts to honour, downstream
+    // consumers to avoid breaking. Best-effort exactly like design context; the
+    // loader swallows its own failures. The optional `full_checkout` tier
+    // additionally clones the upstream repos into /workspace/deps (opt-in, off
+    // by default) and appends the paths to the same block.
+    let crossRepoContext = '';
+    if (wantsCrossRepoContext(crossRepoOptions)) {
+      try {
+        crossRepoContext = await loadRepoDependencyContext(repo.id, activityCtx.orgId);
+        if (crossRepoContext && wantsCrossRepoCheckout(crossRepoOptions)) {
+          crossRepoContext += await checkoutUpstreamRepos(workspace, repo.id, activityCtx.orgId);
+        }
+        if (crossRepoContext) {
+          tracer.addActivityEvent({
+            name: 'crossRepo.context_loaded',
+            outputJson: { chars: crossRepoContext.length },
+          });
+        }
+      } catch {
+        // Both helpers already swallow their own failures; this is the outer
+        // belt — cross-repo context must never block implementation.
+        crossRepoContext = '';
+      }
+    }
+
     // Fire-and-forget tracker sync — never blocks implementation
     resolveIssueTrackerConfig()
       .then((trackerConfig) =>
@@ -216,7 +250,11 @@ export async function executeImplementation(
     );
 
     const llmSystemPrompt =
-      systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext + designContext;
+      systemPrompt +
+      (promptSuffix ? `\n\n${promptSuffix}` : '') +
+      lessonsContext +
+      designContext +
+      crossRepoContext;
 
     // TDD loop — bound by the DB-backed workflow default (falls back to 5).
     const maxTddIterations = workflowDefaults.maxTddIterations;

@@ -34,7 +34,15 @@ vi.mock('../lib/config/contextLookup.js', () => ({
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { execShellAsync } from '../lib/execUtils.js';
-import { buildMetadataBlockArgs, createWorkspace, shellQuote } from './workspace.js';
+import {
+  buildMetadataBlockArgs,
+  cloneDependencyRepos,
+  createWorkspace,
+  MAX_DEPENDENCY_CHECKOUTS,
+  safeDepDirName,
+  shellQuote,
+  splitCloneCredential,
+} from './workspace.js';
 
 describe('shellQuote', () => {
   it('wraps a plain string', () => expect(shellQuote('abc')).toBe("'abc'"));
@@ -187,5 +195,131 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
 
     warnSpy.mockRestore();
     await ws.destroy();
+  });
+});
+
+describe('splitCloneCredential', () => {
+  it('strips an embedded token and builds the per-call auth header', () => {
+    const { cleanUrl, gitAuthHeader } = splitCloneCredential(
+      'https://x-access-token:ghp_secret@github.com/acme/repo.git'
+    );
+    expect(cleanUrl).toBe('https://github.com/acme/repo.git');
+    expect(cleanUrl).not.toContain('ghp_secret');
+    expect(gitAuthHeader).toContain('AUTHORIZATION: basic ');
+    expect(Buffer.from(gitAuthHeader?.split('basic ')[1] ?? '', 'base64').toString()).toBe(
+      'x-access-token:ghp_secret'
+    );
+  });
+
+  it('passes an unauthenticated URL through with no header', () => {
+    expect(splitCloneCredential('https://github.com/acme/repo.git')).toEqual({
+      cleanUrl: 'https://github.com/acme/repo.git',
+    });
+  });
+
+  it('passes a non-URL through untouched', () => {
+    expect(splitCloneCredential('git@github.com:acme/repo.git')).toEqual({
+      cleanUrl: 'git@github.com:acme/repo.git',
+    });
+  });
+});
+
+describe('safeDepDirName', () => {
+  it('keeps a normal name', () => expect(safeDepDirName('acme-api')).toBe('acme-api'));
+  it('collapses path separators', () =>
+    expect(safeDepDirName('../../etc/passwd')).toBe('etc-passwd'));
+  it('strips a leading dash so the name cannot become a flag', () =>
+    expect(safeDepDirName('--upload-pack=evil')).toBe('upload-pack-evil'));
+  it('neutralizes shell metacharacters', () =>
+    expect(safeDepDirName('a;rm -rf /')).toBe('a-rm--rf-'));
+  it('bounds the length', () => expect(safeDepDirName('x'.repeat(200))).toHaveLength(64));
+  it('falls back when nothing survives', () => expect(safeDepDirName('///')).toBe('dep'));
+});
+
+describe('cloneDependencyRepos', () => {
+  const exec = vi.fn();
+  const ws = { exec };
+
+  beforeEach(() => {
+    exec.mockReset();
+    exec.mockResolvedValue('');
+  });
+
+  it('shallow-clones each dependency into /workspace/deps and scrubs the credential', async () => {
+    const cloned = await cloneDependencyRepos(ws, [
+      {
+        authedCloneUrl: 'https://x-access-token:ghp_secret@github.com/acme/api.git',
+        branch: 'main',
+        name: 'acme-api',
+      },
+    ]);
+
+    expect(cloned).toEqual([{ label: 'acme-api', path: '/workspace/deps/acme-api' }]);
+    const [cloneCmd, scrubCmd] = exec.mock.calls.map((c) => c[0] as string);
+    expect(cloneCmd).toContain('git clone --depth=1');
+    expect(cloneCmd).toContain(`-b ${shellQuote('main')}`);
+    expect(cloneCmd).toContain(shellQuote('/workspace/deps/acme-api'));
+    expect(scrubCmd).toContain('git remote set-url origin');
+    expect(scrubCmd).toContain(shellQuote('https://github.com/acme/api.git'));
+    expect(scrubCmd).not.toContain('ghp_secret');
+  });
+
+  it('omits the branch flag when no branch is given', async () => {
+    await cloneDependencyRepos(ws, [{ authedCloneUrl: 'https://h/a.git', name: 'a' }]);
+    expect(exec.mock.calls[0][0]).not.toContain('-b ');
+  });
+
+  it('shell-quotes every interpolated argument', async () => {
+    await cloneDependencyRepos(ws, [
+      { authedCloneUrl: 'https://h/a.git;id', branch: 'a;id', name: 'a;id' },
+    ]);
+    const cloneCmd = exec.mock.calls[0][0] as string;
+    expect(cloneCmd).toContain(shellQuote('https://h/a.git;id'));
+    expect(cloneCmd).toContain(shellQuote('a;id'));
+    // The directory name is sanitized before it is quoted.
+    expect(cloneCmd).toContain(shellQuote('/workspace/deps/a-id'));
+  });
+
+  it('caps the number of clones', async () => {
+    const deps = Array.from({ length: MAX_DEPENDENCY_CHECKOUTS + 3 }, (_, i) => ({
+      authedCloneUrl: `https://h/${i}.git`,
+      name: `dep-${i}`,
+    }));
+    const cloned = await cloneDependencyRepos(ws, deps);
+    expect(cloned).toHaveLength(MAX_DEPENDENCY_CHECKOUTS);
+  });
+
+  it('disambiguates two dependencies that sanitize to the same directory', async () => {
+    const cloned = await cloneDependencyRepos(ws, [
+      { authedCloneUrl: 'https://h/a.git', name: 'a/b' },
+      { authedCloneUrl: 'https://h/b.git', name: 'a;b' },
+    ]);
+    expect(cloned.map((c) => c.path)).toEqual(['/workspace/deps/a-b', '/workspace/deps/a-b-x']);
+  });
+
+  it('is best-effort: one failed clone is cleaned up and the rest still land', async () => {
+    exec.mockImplementation(async (cmd: string) => {
+      if (cmd.includes('/workspace/deps/bad')) {
+        if (cmd.startsWith('git clone')) {
+          throw new Error('clone failed');
+        }
+      }
+      return '';
+    });
+
+    const cloned = await cloneDependencyRepos(ws, [
+      { authedCloneUrl: 'https://h/bad.git', name: 'bad' },
+      { authedCloneUrl: 'https://h/good.git', name: 'good' },
+    ]);
+
+    expect(cloned).toEqual([{ label: 'good', path: '/workspace/deps/good' }]);
+    expect(exec.mock.calls.map((c) => c[0] as string)).toContainEqual(
+      `rm -rf ${shellQuote('/workspace/deps/bad')}`
+    );
+  });
+
+  it('returns an empty list when there are no dependencies', async () => {
+    expect(await cloneDependencyRepos(ws, [])).toEqual([]);
+    expect(exec).not.toHaveBeenCalled();
   });
 });

@@ -124,7 +124,14 @@ export async function runReviewNetwork(
   systemPromptOverride?: string,
   securitySkillSuffix?: string,
   domainSkillSuffix?: string,
-  performanceSkillSuffix?: string
+  performanceSkillSuffix?: string,
+  /**
+   * Cross-repo dependency block (repo dependency graph, P2) — appended to every
+   * reviewer's system prompt. All three benefit: a breaking-change judgement
+   * needs the consumer list, a security judgement needs to know who is exposed,
+   * and a performance judgement needs to know who calls this code.
+   */
+  crossRepoContext?: string
 ): Promise<AggregatedReviewResult> {
   // Append success criteria to the domain logic prompt so it validates against original intent
   let domainLogicPrompt = systemPromptOverride ?? DOMAIN_LOGIC_REVIEWER_PROMPT;
@@ -137,14 +144,26 @@ export async function runReviewNetwork(
     domainLogicPrompt += `\n\n${domainSkillSuffix}`;
   }
 
+  // The dependency block already carries its own `\n\n## …` heading (see
+  // `lib/repoDependencyContext.ts`); normalize anyway so a hand-built block
+  // cannot run into the preceding paragraph.
+  const crossRepoSuffix = crossRepoContext
+    ? crossRepoContext.startsWith('\n')
+      ? crossRepoContext
+      : `\n\n${crossRepoContext}`
+    : '';
+  domainLogicPrompt += crossRepoSuffix;
+
   const staticScanSuffix = formatCodeSecurityFindings(codeResult.codeSecurityFindings ?? []);
   const securityPrompt =
     (systemPromptOverride ?? SECURITY_AUDITOR_PROMPT) +
     (securitySkillSuffix ? `\n\n${securitySkillSuffix}` : '') +
-    (staticScanSuffix ? `\n\n${staticScanSuffix}` : '');
+    (staticScanSuffix ? `\n\n${staticScanSuffix}` : '') +
+    crossRepoSuffix;
   const performancePrompt =
     (systemPromptOverride ?? PERFORMANCE_REVIEWER_PROMPT) +
-    (performanceSkillSuffix ? `\n\n${performanceSkillSuffix}` : '');
+    (performanceSkillSuffix ? `\n\n${performanceSkillSuffix}` : '') +
+    crossRepoSuffix;
 
   // Run all three reviewers in parallel
   // One gate for the fan-out, not one per reviewer. All three start at the same

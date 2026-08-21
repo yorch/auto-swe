@@ -419,6 +419,30 @@ interface StepExecutorArgs {
 
 type StepExecutor = (args: StepExecutorArgs) => Promise<unknown>;
 
+/**
+ * Read the two cross-repo step opt-ins off a step's config (repo dependency
+ * graph, P2) and hand them to the activity as a plain object.
+ *
+ * `crossRepoContext` defaults ON — it is a bounded prompt block, and an
+ * unconfigured template should still get the graph. `crossRepoCheckout` defaults
+ * OFF — it clones repos into the workspace. Only explicit booleans are passed
+ * through, so `undefined` reaches the activity as "unset" and the activity's own
+ * default applies.
+ */
+function crossRepoOptions(config: Record<string, unknown>): {
+  crossRepoCheckout?: boolean;
+  crossRepoContext?: boolean;
+} {
+  return {
+    ...(typeof config.crossRepoCheckout === 'boolean'
+      ? { crossRepoCheckout: config.crossRepoCheckout }
+      : {}),
+    ...(typeof config.crossRepoContext === 'boolean'
+      ? { crossRepoContext: config.crossRepoContext }
+      : {}),
+  };
+}
+
 // Shared executor for the six shell-bound quality gates — they differ only by
 // the activity name, which is the step name itself.
 const gateExecutor: StepExecutor = ({ step, ctx, request, config, inputs }) => {
@@ -515,13 +539,19 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     'executeImplementation',
     ({ ctx, request, config, inputs }) => {
       const systemPromptOverride = config.systemPrompt as string | undefined;
+      const crossRepo = crossRepoOptions(config);
       // Inside a fanOut, the per-branch element is bound at `ctx[itemKey]`.
       const subtask =
         (inputs.subtask as Subtask | undefined) ??
         (lookupPath(ctx, 'subtask') as Subtask | undefined);
       return subtask
-        ? agentActivities.executeImplementation(request, subtask, systemPromptOverride)
-        : agentActivities.executeImplementation(request, undefined, systemPromptOverride);
+        ? agentActivities.executeImplementation(request, subtask, systemPromptOverride, crossRepo)
+        : agentActivities.executeImplementation(
+            request,
+            undefined,
+            systemPromptOverride,
+            crossRepo
+          );
     },
   ],
   [
@@ -534,7 +564,8 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       return agentActivities.runReviewNetwork(
         codeResult,
         successCriteria,
-        config.systemPrompt as string | undefined
+        config.systemPrompt as string | undefined,
+        crossRepoOptions(config)
       );
     },
   ],
