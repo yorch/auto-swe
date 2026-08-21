@@ -303,17 +303,7 @@ async function finalizeWorkspaceVolume(
   // parse) — pass the token through so `runDocker`'s catch redacts it before
   // it ever reaches the caller. Defense in depth on top of the scrub.
   const out = await runDocker(
-    [
-      'run',
-      '--rm',
-      '-v',
-      `${volumeName}:/workspace:rw`,
-      '--entrypoint',
-      'sh',
-      image,
-      '-c',
-      script,
-    ],
+    ['run', '--rm', '-v', `${volumeName}:/workspace:rw`, '--entrypoint', 'sh', image, '-c', script],
     token
   );
   if (out.includes('NO_CHANGES')) {
