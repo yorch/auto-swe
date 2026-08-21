@@ -3,7 +3,11 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {},
 }));
 
-import { BUNDLE_SCHEMA_VERSION, computeContentHash } from '@auto-swe/shared/bundle';
+import {
+  BUNDLE_SCHEMA_VERSION,
+  type BundleEntities,
+  computeContentHash,
+} from '@auto-swe/shared/bundle';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -120,18 +124,86 @@ describe('bundleRoutes', () => {
     await app.close();
   });
 
-  it('installs a valid empty bundle', async () => {
+  it('400s on a bundle carrying an uncompilable scanner pattern', async () => {
+    // Compile / flags / length only. Bundle validation makes no execution-cost
+    // claim — a catastrophic pattern installs and is bounded (and quarantined)
+    // at run time by the scanners' wall-clock budget instead.
     const app = await buildApp();
-    const entities = { agents: [], scannerPatterns: [], skills: [], templates: [] };
+    const entities = {
+      agents: [],
+      scannerPatterns: [{ flags: 'i', label: 'evil', pattern: '(unclosed', type: 'INJECTION' }],
+      skills: [],
+      templates: [],
+    } as unknown as BundleEntities;
+    const metadata = { createdAt: 'now', name: 'n', version: '1' };
     const bundle = {
       bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
       dependencies: [],
       entities,
       metadata: {
-        contentHash: computeContentHash({ dependencies: [], entities }),
-        createdAt: 'now',
-        name: 'n',
-        version: '1',
+        ...metadata,
+        contentHash: computeContentHash({
+          bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+          dependencies: [],
+          entities,
+          metadata,
+        }),
+      },
+    };
+    const res = await app.inject({
+      body: { bundle },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/bundles/install',
+    });
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.payload);
+    expect(body.error.code).toBe('INVALID_BUNDLE');
+    expect(body.error.message).toMatch(/INVALID_REGEX/);
+    await app.close();
+  });
+
+  it('400s on a bundle built under the old (v1) trust format', async () => {
+    // Regression test: installBundle's parseBundle throws BundleSchemaVersionError
+    // for this shape, which bundleService must catch and rewrap as
+    // BundleIntegrityError. The route only maps BundleIntegrityError /
+    // BundleDependencyError / ZodError to 400 — an unwrapped
+    // BundleSchemaVersionError falls through to a generic 500.
+    const app = await buildApp();
+    const entities = { agents: [], scannerPatterns: [], skills: [], templates: [] };
+    const bundle = {
+      bundleSchemaVersion: 1,
+      dependencies: [],
+      entities,
+      metadata: { contentHash: 'irrelevant', createdAt: 'now', name: 'n', version: '1' },
+    };
+    const res = await app.inject({
+      body: { bundle },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/bundles/install',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('INVALID_BUNDLE');
+    await app.close();
+  });
+
+  it('installs a valid empty bundle', async () => {
+    const app = await buildApp();
+    const entities = { agents: [], scannerPatterns: [], skills: [], templates: [] };
+    const metadata = { createdAt: 'now', name: 'n', version: '1' };
+    const bundle = {
+      bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+      dependencies: [],
+      entities,
+      metadata: {
+        ...metadata,
+        contentHash: computeContentHash({
+          bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+          dependencies: [],
+          entities,
+          metadata,
+        }),
       },
     };
     const res = await app.inject({

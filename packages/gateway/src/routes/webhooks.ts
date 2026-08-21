@@ -13,6 +13,11 @@ import { z } from 'zod';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { postSlackMessage } from '../lib/slack.js';
+// The webhook handlers below undo their DB write and answer non-2xx when a
+// signal fails, so the delivery can be sent again — only ever useful for a
+// TRANSIENT failure. See `lib/temporalErrors.ts` for why a terminal one keeps
+// the write and answers 2xx instead.
+import { isTerminalSignalError } from '../lib/temporalErrors.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 
 // GitHub payloads are HMAC-verified before we get here, but a shape change or a
@@ -276,18 +281,73 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: { ignored: true, reason: 'No tracked workflow for this PR' } };
       }
 
-      // Update PR status
-      await fastify.prisma.pullRequest.update({
+      // Atomic OPEN→MERGED guard, then signal, rolling back on failure — the
+      // same shape as `resolveHitlStep` in `lib/hitlResolve.ts`, for the same
+      // reason. The `status: 'OPEN'` predicate is the real concurrency guard
+      // (the lookup above is an optimistic fast-path): two concurrent
+      // deliveries of the same merge race here and only one updates a row.
+      const merged = await fastify.prisma.pullRequest.updateMany({
         data: { status: 'MERGED' },
-        where: { id: pullRequest.id },
+        where: { id: pullRequest.id, status: 'OPEN' },
       });
+      if (merged.count === 0) {
+        // Someone else won the race and is delivering the signal; a genuine
+        // duplicate delivery no-ops here instead of signaling twice.
+        return { data: { ignored: true, reason: 'PR already merged (duplicate delivery)' } };
+      }
 
-      // Signal the Temporal workflow
-      await fastify.temporal.signalWorkflow(
-        pullRequest.workflow.temporalWorkflowId,
-        'humanMergeSignal',
-        [true]
-      );
+      // Signal the Temporal workflow. The workflow's merge wait only unblocks
+      // via this signal, so a TRANSIENT failure after the row moved to MERGED
+      // would strand it: a later delivery would no longer match the
+      // `status: 'OPEN'` lookup and would be ignored. Roll the row back to OPEN
+      // and answer non-2xx, which marks the delivery failed in GitHub's webhook
+      // UI. GitHub does NOT retry a failed delivery on its own — recovery is a
+      // human pressing "Redeliver" (or the CI/merge state being re-observed);
+      // the rollback is what makes that redelivery able to work.
+      //
+      // A TERMINAL failure is the opposite case: the execution is gone (never
+      // started, already completed, or terminated), so no redelivery can ever
+      // land the signal and there is no run left to strand. Rolling back would
+      // then record OPEN for a PR that IS merged on GitHub and invite an
+      // endless redeliver-fail-redeliver loop that can never succeed. Keep
+      // MERGED — recording the merge is the correct outcome — and answer 200.
+      let signalSent = true;
+      try {
+        await fastify.temporal.signalWorkflow(
+          pullRequest.workflow.temporalWorkflowId,
+          'humanMergeSignal',
+          [true]
+        );
+      } catch (err: unknown) {
+        if (!isTerminalSignalError(err)) {
+          request.log.error(
+            { err, prNumber, prRowId: pullRequest.id },
+            'Merge Temporal signal failed; rolling PR back to OPEN'
+          );
+          await fastify.prisma.pullRequest
+            .updateMany({
+              data: { status: 'OPEN' },
+              where: { id: pullRequest.id, status: 'MERGED' },
+            })
+            .catch((rollbackErr: unknown) => {
+              request.log.error(
+                { err: rollbackErr, prRowId: pullRequest.id },
+                'Merge rollback failed — PR stuck MERGED without a delivered signal'
+              );
+            });
+          return reply.status(503).send({
+            error: {
+              code: 'SIGNAL_FAILED',
+              message: 'Could not deliver the merge signal to the workflow — retry the delivery',
+            },
+          });
+        }
+        signalSent = false;
+        request.log.warn(
+          { err, prNumber, prRowId: pullRequest.id },
+          'Merge signal target workflow no longer exists; keeping PR MERGED'
+        );
+      }
 
       // P0 evals: capture the human merge label as a normalized signal,
       // resolving the WorkflowRun by workflowId (there is no direct PR→Run FK).
@@ -350,7 +410,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         ).catch(() => null);
       }
 
-      return { data: { signalSent: true, workflowId: pullRequest.workflow.temporalWorkflowId } };
+      return {
+        data: {
+          signalSent,
+          workflowId: pullRequest.workflow.temporalWorkflowId,
+          ...(signalSent ? {} : { reason: 'Workflow no longer running; merge recorded only' }),
+        },
+      };
     }
   );
 
@@ -423,49 +489,141 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Batch-update CI status in a single transaction to avoid N+1 queries.
-      // The `ciStatus: { not: newStatus }` predicate is an idempotency guard:
-      // a redelivered webhook for a status the PR already has updates zero
-      // rows, so it can't re-signal a workflow that has already moved past
-      // its CI-wait step.
+      //
+      // The guard is a FRESHNESS check, not a change detector. A row only
+      // transitions while it is still `PENDING` *at the head SHA this delivery
+      // describes*:
+      //
+      //   • `ciStatus: 'PENDING'` means no verdict has been delivered for the
+      //     current head yet. `createOrUpdatePullRequest` re-arms it to PENDING
+      //     every time the worker pushes a new head, so exactly one verdict is
+      //     signaled per CI wait.
+      //   • `headSha` pins the write to the commit this delivery is about,
+      //     closing the read-then-write race where the worker advances the PR
+      //     to a new head between the lookup above and this update.
+      //
+      // A `ciStatus: { not: newStatus }` predicate would only detect *change*,
+      // which lets a stale delivery replay over a newer verdict: a `failure`
+      // whose signal failed, redelivered by hand after a later `success`
+      // already resolved the wait, would flip PASSED back to FAILED and
+      // re-signal `passed:false` (with stale logs) into a run that moved on.
       const newStatus = passed ? 'PASSED' : 'FAILED';
       const updateCounts = await fastify.prisma.$transaction(
         pullRequests.map((pr: (typeof pullRequests)[number]) =>
           fastify.prisma.pullRequest.updateMany({
             data: { ciStatus: newStatus },
-            where: { ciStatus: { not: newStatus }, id: pr.id },
+            where: { ciStatus: 'PENDING', headSha, id: pr.id },
           })
         )
       );
       const transitioned = pullRequests.filter((_, i) => updateCounts[i].count === 1);
 
       if (transitioned.length === 0) {
+        // Nothing was waiting on this commit's CI: the verdict for this head
+        // was already delivered (or the PR has moved to a newer head). This
+        // covers both a redelivery of an event already handled and a genuinely
+        // new check-run event that concluded after the wait was resolved —
+        // neither may signal, so both are dropped, but they are logged rather
+        // than silently discarded.
+        request.log.info(
+          { conclusion, headSha, prRowIds: pullRequests.map((pr) => pr.id) },
+          'CI check-run event dropped: no PR is awaiting a verdict at this commit'
+        );
         return {
-          data: { conclusion, ignored: true, reason: 'CI status unchanged (duplicate delivery)' },
+          data: {
+            conclusion,
+            ignored: true,
+            reason: 'CI verdict already recorded for this commit',
+          },
         };
       }
 
-      // Signal all affected Temporal workflows in parallel
-      const signaled: string[] = [];
-      const signalPromises: Promise<unknown>[] = [];
+      // Signal all affected Temporal workflows in parallel.
+      //
+      // Partial-failure semantics (one check_run event can fan out to several
+      // workflows): recovery is decided PER PR, not per delivery. A PR whose
+      // signal failed TRANSIENTLY has its `ciStatus` rolled back to PENDING —
+      // the value the guard above proved it held — so a redelivery of this
+      // event transitions it again and re-signals. A PR whose signal succeeded
+      // keeps the new status, so the same redelivery finds count 0 for it and
+      // does NOT signal it a second time — the CI-wait step is not idempotent
+      // on the workflow side, and a duplicate `ciPipelineSignal` could resume a
+      // run that has already moved on. The handler then answers non-2xx, which
+      // marks the delivery failed in GitHub's webhook UI; GitHub does NOT retry
+      // it automatically, so recovery is a human pressing "Redeliver" — the
+      // rollback is what makes that redelivery work. Retrying inline would
+      // block the webhook.
+      //
+      // A PR whose signal failed TERMINALLY (execution gone: completed,
+      // terminated, or never started) is neither rolled back nor counted
+      // towards the non-2xx: no redelivery could ever land that signal, so
+      // inviting one would only produce a loop that repeatedly rewrites
+      // `ciStatus` for a run that no longer exists.
+      type TrackedPr = (typeof transitioned)[number];
+      const toSignal: Array<{ pr: TrackedPr; workflowId: string }> = [];
       for (const pr of transitioned) {
         if (pr.workflow) {
-          const wfId = pr.workflow.temporalWorkflowId;
-          signaled.push(wfId);
-          signalPromises.push(
-            fastify.temporal.signalWorkflow(wfId, 'ciPipelineSignal', [{ logsUrl, passed }])
-          );
+          toSignal.push({ pr, workflowId: pr.workflow.temporalWorkflowId });
         }
       }
-      const results = await Promise.allSettled(signalPromises);
-      for (const r of results) {
+      const results = await Promise.allSettled(
+        toSignal.map((t) =>
+          fastify.temporal.signalWorkflow(t.workflowId, 'ciPipelineSignal', [{ logsUrl, passed }])
+        )
+      );
+
+      const signaled: string[] = [];
+      const succeeded: TrackedPr[] = [];
+      const failed: TrackedPr[] = [];
+      results.forEach((r, i) => {
+        const { pr, workflowId } = toSignal[i];
         if (r.status === 'rejected') {
-          request.log.error({ err: r.reason }, 'Failed to signal workflow');
+          if (isTerminalSignalError(r.reason)) {
+            request.log.warn(
+              { err: r.reason, prRowId: pr.id, workflowId },
+              'CI signal target workflow no longer exists; keeping the recorded ciStatus'
+            );
+            return;
+          }
+          request.log.error(
+            { err: r.reason, prRowId: pr.id, workflowId },
+            'Failed to signal workflow; rolling ciStatus back for redelivery'
+          );
+          failed.push(pr);
+        } else {
+          succeeded.push(pr);
+          signaled.push(workflowId);
         }
+      });
+
+      if (failed.length > 0) {
+        // Revert only the rows whose signal failed transiently, guarded on the
+        // status AND the head SHA this delivery wrote, so a concurrent CI event
+        // or a worker push to a new head is never clobbered. The restored value
+        // is PENDING rather than the row read at the top of the handler: the
+        // transition guard already proved the row was PENDING, while the read
+        // may be stale.
+        await Promise.all(
+          failed.map((pr) =>
+            fastify.prisma.pullRequest
+              .updateMany({
+                data: { ciStatus: 'PENDING' },
+                where: { ciStatus: newStatus, headSha, id: pr.id },
+              })
+              .catch((rollbackErr: unknown) => {
+                request.log.error(
+                  { err: rollbackErr, prRowId: pr.id },
+                  'CI status rollback failed — PR stuck without a delivered signal'
+                );
+              })
+          )
+        );
       }
 
-      // Best-effort tracker sync on CI result.
+      // Best-effort tracker sync on CI result — only for PRs whose signal
+      // landed; a rolled-back PR syncs on its redelivery instead.
       const trackerConfig = await resolveIssueTrackerConfig();
-      for (const pr of transitioned) {
+      for (const pr of succeeded) {
         const ticketId = pr.workflow?.workRequest?.externalTicketId;
         if (ticketId) {
           await syncTrackerOnEvent(
@@ -475,6 +633,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             trackerConfig
           ).catch(() => null);
         }
+      }
+
+      if (failed.length > 0) {
+        return reply.status(503).send({
+          error: {
+            code: 'SIGNAL_FAILED',
+            message: `Could not deliver the CI signal to ${failed.length} of ${toSignal.length} workflow(s) — retry the delivery`,
+          },
+        });
       }
 
       return { data: { conclusion, signaled } };

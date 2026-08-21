@@ -1,3 +1,5 @@
+import { resolveRegexBudgetMs, runRegexBatch, toRegexSpecs } from '@auto-swe/shared/lib/regexExec';
+import { capScanText } from '@auto-swe/shared/lib/regexSafety';
 import type { CodeSecurityFinding } from '@auto-swe/shared/types/workflow';
 import { makePatternLoader } from './scannerPatternLoader.js';
 
@@ -43,6 +45,11 @@ function parseDiffAddedLines(diff: string): Array<{ content: string; file: strin
  * Scans the added lines of a git diff against active CODE_SECURITY patterns.
  * Returns advisory findings — the caller passes them to the security reviewer
  * agent as structured context. This does not block; the review network decides.
+ *
+ * Advisory, so both bounds here degrade rather than fail closed: a single added
+ * line can be a minified bundle, which {@link capScanText} truncates, and a
+ * pattern that exceeds the executor's budget costs its findings and a loud log
+ * rather than the whole scan.
  */
 export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityFinding[]> {
   const patterns = await loadCodeSecurityPatterns();
@@ -51,19 +58,38 @@ export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityF
   }
 
   const addedLines = parseDiffAddedLines(diff);
-  const findings: CodeSecurityFinding[] = [];
-
-  for (const { content, file, line } of addedLines) {
-    for (const { label, re } of patterns) {
-      re.lastIndex = 0;
-      const m = re.exec(content);
-      if (m) {
-        findings.push({ file, label, line, match: m[0].slice(0, 120) });
-      }
-    }
+  if (addedLines.length === 0) {
+    return [];
   }
 
-  return findings;
+  const budgetMs = await resolveRegexBudgetMs();
+  const { hits, incomplete } = await runRegexBatch(
+    toRegexSpecs(patterns),
+    addedLines.map((l, i) => ({ key: String(i), text: capScanText(l.content) })),
+    { budgetMs, label: 'codeSecurityScanner' }
+  );
+  if (incomplete) {
+    console.error(
+      '[codeSecurityScanner] the diff scan did not complete; findings below are partial'
+    );
+  }
+
+  const order = new Map(patterns.map((p, i) => [p.label, i]));
+  return hits
+    .map((h) => ({ hit: h, index: Number(h.targetKey) }))
+    .sort(
+      (a, b) =>
+        a.index - b.index || (order.get(a.hit.patternKey) ?? 0) - (order.get(b.hit.patternKey) ?? 0)
+    )
+    .map(({ hit, index }) => {
+      const source = addedLines[index] as { file: string; line: number };
+      return {
+        file: source.file,
+        label: hit.patternKey,
+        line: source.line,
+        match: hit.match.slice(0, 120),
+      };
+    });
 }
 
 /**

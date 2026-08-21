@@ -16,7 +16,7 @@
  */
 
 import type { Node as SpecNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
-import { setNodeEdge } from '@auto-swe/shared/workflow';
+import { readNodeEdge, setNodeEdge } from '@auto-swe/shared/workflow';
 import {
   Background,
   BackgroundVariant,
@@ -39,6 +39,7 @@ import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
 import { makeDefaultNodeFor } from './makeDefaultNode';
 import { NodeInspector } from './NodeInspector';
 import { NodePalette, PALETTE_MIME, type PaletteDragKind } from './NodePalette';
+import { deleteNodeFromSpec, renameNodeInSpec, setSpecEdge } from './specEdits';
 import { specToFlow } from './specToFlow';
 
 const NODE_TYPES = { dag: DagNode };
@@ -200,26 +201,25 @@ function EditorInner({
       if (removed.length === 0) {
         return;
       }
-      const nextNodes = { ...spec.nodes };
-      let mutated = false;
+      // Same grammar as every other edit: the handle id is a spec field name,
+      // which for a decision option is not a top-level one. `setSpecEdge` also
+      // decides what "cleared" means for a field the schema requires — such a
+      // branch reappears pointing at the unresolved-branch placeholder rather
+      // than leaving a node that no longer parses.
+      let next = spec;
       for (const r of removed) {
         const edge = edges.find((e) => e.id === r.id);
         if (!edge?.sourceHandle) {
           continue;
         }
-        const source = nextNodes[edge.source];
-        if (!source) {
+        const source = next.nodes[edge.source];
+        if (!source || readNodeEdge(source, edge.sourceHandle) !== edge.target) {
           continue;
         }
-        const patched = { ...(source as unknown as Record<string, unknown>) };
-        if (patched[edge.sourceHandle] === edge.target) {
-          delete patched[edge.sourceHandle];
-          nextNodes[edge.source] = patched as WorkflowSpec['nodes'][string];
-          mutated = true;
-        }
+        next = setSpecEdge(next, edge.source, edge.sourceHandle, null);
       }
-      if (mutated) {
-        onChange({ ...spec, nodes: nextNodes });
+      if (next !== spec) {
+        onChange(next);
       }
     },
     [onEdgesChange, edges, spec, onChange]
@@ -229,28 +229,10 @@ function EditorInner({
     if (!selectedNodeId || selectedNodeId === spec.entry) {
       return;
     }
-    const { [selectedNodeId]: _removed, ...rest } = spec.nodes;
-    // Clear any references pointing at the deleted node.
-    const cleaned = Object.fromEntries(
-      Object.entries(rest).map(([nid, node]) => {
-        const patched = { ...(node as unknown as Record<string, unknown>) };
-        for (const k of [
-          'next',
-          'onTrue',
-          'onFalse',
-          'onReceive',
-          'onTimeout',
-          'subgraph',
-          'join',
-        ] as const) {
-          if (patched[k] === selectedNodeId) {
-            delete patched[k];
-          }
-        }
-        return [nid, patched];
-      })
-    ) as WorkflowSpec['nodes'];
-    onChange({ ...spec, nodes: cleaned });
+    // Reference repair lives in `specEdits`, driven by the spec's own edge
+    // grammar — see that module for why a required edge is retargeted to a
+    // placeholder instead of being dropped.
+    onChange(deleteNodeFromSpec(spec, selectedNodeId));
     onSelect(null);
   }, [selectedNodeId, spec, onChange, onSelect]);
 
@@ -338,32 +320,11 @@ function EditorInner({
 
   const handleRename = useCallback(
     (oldId: string, newId: string) => {
-      if (!newId || oldId === newId || spec.nodes[newId]) {
+      const next = renameNodeInSpec(spec, oldId, newId);
+      if (next === spec) {
         return;
       }
-      const renamed: WorkflowSpec['nodes'] = {};
-      for (const [k, v] of Object.entries(spec.nodes)) {
-        const patched = { ...(v as unknown as Record<string, unknown>) };
-        for (const f of [
-          'next',
-          'onTrue',
-          'onFalse',
-          'onReceive',
-          'onTimeout',
-          'subgraph',
-          'join',
-        ] as const) {
-          if (patched[f] === oldId) {
-            patched[f] = newId;
-          }
-        }
-        renamed[k === oldId ? newId : k] = patched as WorkflowSpec['nodes'][string];
-      }
-      onChange({
-        ...spec,
-        entry: spec.entry === oldId ? newId : spec.entry,
-        nodes: renamed,
-      });
+      onChange(next);
       onSelect(newId);
     },
     [spec, onChange, onSelect]

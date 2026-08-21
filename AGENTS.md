@@ -101,6 +101,9 @@ Top-level files that matter:
 - Use `import type` for type-only imports — **critical** for Temporal workflow files (V8 isolate)
 - Fastify plugin pattern (`fastify-plugin`) for all gateway extensions
 - Zod schemas for request validation via `fastify-type-provider-zod`
+- Boolean query params go through `booleanQueryParam()` (`gateway/src/lib/queryParams.ts`), never
+  `z.coerce.boolean()` — coercion is `Boolean(input)`, so the string `false` arrives as `true` and
+  the parameter silently means its opposite
 - Prisma for all DB access — raw SQL (`$queryRawUnsafe`) only for pgvector operations (embeddings)
 - Prefer explicit error handling over silent failures
 - **Biome** is the single source of truth for lint + format — config at root `biome.json` (single quotes, lineWidth 100, indent 2, organizeImports on). Run `yarn lint:fix` before committing.
@@ -414,10 +417,54 @@ raises the floor and is not a containment boundary.
 
 **Pattern cache:** `shellCommandScanner`, `codeSecurityScanner`, and `sensitiveFileScanner` share
 `makePatternLoader()` — a per-instance 60 s TTL cache. Gateway and worker are separate processes,
-so a pattern edit propagates only via TTL expiry; there is no cross-process invalidation.
+so a pattern edit propagates only via TTL expiry; there is no cross-process invalidation. The
+loader's only filter is "does it compile" — it makes **no** judgement about how expensive a row is
+to run, because a wrong guess silently stops an admin's block rule from applying.
 
 **Safe regex flag subset:** `i`, `m`, `s`, `u`, `v`. `g` and `y` are rejected at the API to prevent
-stateful `lastIndex` bugs in cached RegExp objects.
+stateful `lastIndex` bugs in cached RegExp objects. `SAFE_FLAGS_RE` in
+`shared/lib/regexSafety.ts` is the one definition; the gateway's Zod schema imports it.
+
+**Scanner patterns are DATA, so their execution is bounded, not analysed.** Admin- and
+bundle-supplied bodies run in-process against agent text on every `bash` call, every `writeFile`
+path, every skill save and every TDD iteration. JavaScript's backtracking engine has no execution
+budget and a running regex cannot be interrupted from the thread executing it, so containment is
+structural in the runtime sense: `shared/lib/regexExec.ts` owns a single pooled `worker_thread`
+that executes every scanner pattern and is `terminate()`d when a batch overruns its wall-clock
+budget. That budget is the `workspace.regexScanBudgetMs` setting (default 250 ms, ADMIN-only,
+platform-wide — see the Setting Registry section above) resolved once per scan call and passed
+through `runRegexBatch`'s `opts.budgetMs`; a resolution failure falls back to the default rather
+than throwing, since a scan must never abort its caller. On an overrun the batch is bisected against
+a fresh thread to attribute the hang to a specific pattern; the well-behaved patterns' results are
+kept. Warm round trips cost ~0.1 ms.
+
+- **Blocking scanners fail closed.** `scanShellCommand` and `checkSensitiveFilePath` return a block
+  message when the scan cannot complete — they cannot say the input is clean, so they do not.
+- **Advisory scanners degrade.** `scanSkillContent` returns `incomplete: true` alongside whatever
+  it did find; `scanDiffForCodeIssues` logs and returns partial findings. No scanner throws — per
+  the observability rules a scan must never abort the calling activity.
+- **Blocking scanners never truncate.** Truncation in a blocking scanner is a bypass (20k of
+  leading `# ` comment pushes a real command past a cap). They use `chunkScanText`, which covers
+  the whole input in overlapping windows. `capScanText` (20 k) remains, restricted to the advisory
+  scanners where a missed match past the cap costs only a warning.
+- **Write time is empirical, not structural.** `POST`/`PUT /admin/scanner-patterns` runs the
+  candidate through `probeRegexBacktracking`, which executes it under the same budget against
+  repetition-heavy input built from its own alphabet, and rejects with `REDOS_RISK` if it overruns.
+  This is sound but incomplete — it misses polynomial blow-ups and blow-ups needing input it cannot
+  synthesise (`\p{Script=Greek}`) — and it is an early error for the admin, not the containment.
+  `checkRegexSafety`, which bundle install and the SDK share, is pure and synchronous: compile,
+  flags, and length only, with **no** claim about execution cost.
+
+Limitations of this arrangement, stated so nothing above reads as more than it is:
+
+- A pattern that overruns is **quarantined per process** and skipped by later scans, which report
+  themselves complete — fail-open for that one rule. The alternative, refusing every scan forever,
+  turns one bad admin row into a total outage. It is logged loudly on every skip; the quarantine is
+  per-process and per-lifetime, so gateway and worker quarantine independently and forget on restart.
+- The scan during which a pattern overran fails closed, so an agent can see one spurious block
+  before the quarantine takes effect.
+- N distinct pathological patterns cost N budgets before they are all quarantined. The budget
+  bounds a hang; it does not make scanning free.
 
 **Security events:** blocks tag `AgentTrace.error` with the prefixes above; advisory events write
 named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The

@@ -9,6 +9,7 @@ import { listSteps } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import {
   projectEvalResult,
@@ -19,8 +20,8 @@ import {
 const RunIdParam = z.object({ id: z.string().uuid() });
 const RunDetailQuery = z.object({
   /** Skip server-side trace payload trimming (forensic deep-dive only). */
-  fullTraces: z.coerce.boolean().optional().default(false),
-  includeTraces: z.coerce.boolean().optional().default(false),
+  fullTraces: booleanQueryParam(false),
+  includeTraces: booleanQueryParam(false),
 });
 
 /** Max chars per string field in trace payloads returned by the polled run view. */
@@ -62,7 +63,7 @@ const ListRunsQuery = RunListPaginationQuery.extend({
    * are excluded from the list by default so a busy channel can't bury
    * engineering runs. Opt in with `?includeChannel=true`.
    */
-  includeChannel: z.coerce.boolean().optional().default(false),
+  includeChannel: booleanQueryParam(false),
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
   templateId: z.string().uuid().optional(),
   workRequestId: z.string().uuid().optional(),

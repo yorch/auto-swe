@@ -1,9 +1,15 @@
 import { prisma } from '@auto-swe/shared/db';
 import { SCANNER_PATTERN_CACHE_TTL_MS as CACHE_TTL_MS } from '@auto-swe/shared/lib/scannerCache';
 
-interface CachedEntry {
+/**
+ * A stored pattern, kept as source + flags rather than a compiled `RegExp`:
+ * execution happens inside the bounded executor thread (`regexExec.ts`), which
+ * compiles its own copy, so nothing here needs a live RegExp object.
+ */
+export interface CachedEntry {
   label: string;
-  re: RegExp;
+  source: string;
+  flags: string;
 }
 
 /**
@@ -35,11 +41,19 @@ export function makePatternLoader(type: PatternType, logPrefix: string) {
     });
     const entries: CachedEntry[] = [];
     for (const r of rows) {
+      // The only load-time filter is "does it compile" — a row that cannot be
+      // turned into a RegExp would just be skipped inside the executor with no
+      // way to report which one it was. Everything about how EXPENSIVE a row is
+      // to run is handled by the executor's wall-clock budget, not here: a
+      // load-time cost judgement can only ever be a guess, and a wrong guess
+      // silently stops an admin's block rule from applying.
       try {
-        entries.push({ label: r.label, re: new RegExp(r.pattern, r.flags) });
+        new RegExp(r.pattern, r.flags);
       } catch {
         console.error(`[${logPrefix}] skipping invalid pattern '${r.label}': invalid regex`);
+        continue;
       }
+      entries.push({ flags: r.flags, label: r.label, source: r.pattern });
     }
     cache = { entries, fetchedAt: now };
     return entries;

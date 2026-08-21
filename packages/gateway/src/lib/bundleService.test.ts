@@ -22,17 +22,26 @@ import {
 
 function manifestFor(
   entities: BundleEntities,
-  dependencies: { connectionType: string }[] = []
+  dependencies: { connectionType: string }[] = [],
+  metaOver: { name?: string; version?: string } = {}
 ): BundleManifest {
+  const metadata = {
+    createdAt: 'now',
+    name: metaOver.name ?? 'test',
+    version: metaOver.version ?? '1.0.0',
+  };
   return {
     bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
     dependencies,
     entities,
     metadata: {
-      contentHash: computeContentHash({ dependencies, entities }),
-      createdAt: 'now',
-      name: 'test',
-      version: '1.0.0',
+      ...metadata,
+      contentHash: computeContentHash({
+        bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+        dependencies,
+        entities,
+        metadata,
+      }),
     },
   };
 }
@@ -80,9 +89,7 @@ describe('exportBundle', () => {
       },
     ]);
     expect(m.dependencies).toEqual([{ connectionType: 'mcp' }]);
-    expect(m.metadata.contentHash).toBe(
-      computeContentHash({ dependencies: m.dependencies, entities: m.entities })
-    );
+    expect(m.metadata.contentHash).toBe(computeContentHash(m));
   });
 });
 
@@ -188,5 +195,93 @@ describe('installBundle', () => {
     const unsigned = await installBundle(asArg(), manifestFor({ ...EMPTY }), { trustedKeys: [] });
     expect(unsigned.trustState).toBe('UNVERIFIED');
     expect(unsigned.signedBy).toBeNull();
+  });
+
+  it('refuses to install a signed bundle that was relabelled or version-bumped', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const privPem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+    const trustedKeys = [
+      {
+        id: 'first-party',
+        publicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }).toString(),
+      },
+    ];
+
+    const honest = manifestFor({ ...EMPTY }, [], { name: 'vendor-pack', version: '1.0.0' });
+    honest.metadata.signature = signContentHash(privPem, honest.metadata.contentHash);
+    honest.metadata.signedBy = 'first-party';
+    await expect(installBundle(asArg(), honest, { trustedKeys })).resolves.toMatchObject({
+      trustState: 'VERIFIED',
+    });
+
+    // Relabelled to shadow another bundle's registry row: the hash no longer
+    // describes the manifest, so install fails outright (not merely UNVERIFIED).
+    const relabelled = { ...honest, metadata: { ...honest.metadata, name: 'victim-pack' } };
+    await expect(installBundle(asArg(), relabelled, { trustedKeys })).rejects.toBeInstanceOf(
+      BundleIntegrityError
+    );
+
+    // Re-hashed after the edit: install proceeds, but the old signature no
+    // longer covers the new identity, so it can never claim VERIFIED.
+    const rehashed = manifestFor({ ...EMPTY }, [], { name: 'victim-pack', version: '1.0.0' });
+    rehashed.metadata.signature = honest.metadata.signature;
+    rehashed.metadata.signedBy = 'first-party';
+    const res = await installBundle(asArg(), rehashed, { trustedKeys });
+    expect(res.trustState).toBe('UNVERIFIED');
+    expect(res.signedBy).toBeNull();
+
+    // Same content replayed under a bumped version is likewise not VERIFIED.
+    const bumped = manifestFor({ ...EMPTY }, [], { name: 'vendor-pack', version: '2.0.0' });
+    bumped.metadata.signature = honest.metadata.signature;
+    await expect(installBundle(asArg(), bumped, { trustedKeys })).resolves.toMatchObject({
+      trustState: 'UNVERIFIED',
+    });
+  });
+
+  it('rejects a bundle built under the old (v1) trust format', async () => {
+    const legacy = { ...manifestFor({ ...EMPTY }), bundleSchemaVersion: 1 };
+    // Must come back wrapped as BundleIntegrityError specifically (not just any
+    // rejection with a matching message) — the route only maps
+    // BundleIntegrityError/BundleDependencyError/ZodError to a 400; an unwrapped
+    // BundleSchemaVersionError would fall through to a generic 500.
+    await expect(installBundle(asArg(), legacy)).rejects.toBeInstanceOf(BundleIntegrityError);
+    await expect(installBundle(asArg(), legacy)).rejects.toThrow(/unsupported bundleSchemaVersion/);
+    expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects an uncompilable scanner pattern before any write, even unsigned', async () => {
+    const m = manifestFor({
+      ...EMPTY,
+      scannerPatterns: [{ flags: 'i', label: 'broken', pattern: '(unclosed', type: 'INJECTION' }],
+    } as unknown as BundleEntities);
+    await expect(installBundle(asArg(), m)).rejects.toBeInstanceOf(BundleIntegrityError);
+    await expect(installBundle(asArg(), m)).rejects.toThrow(/INVALID_REGEX/);
+    expect(prisma.scannerPattern.upsert).not.toHaveBeenCalled();
+    expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+  });
+
+  it('installs a catastrophic scanner pattern — bounding it is a run-time job', async () => {
+    // Bundle validation is pure and synchronous by contract, so it makes no
+    // execution-cost claim. A pattern like this installs, and every scanner then
+    // runs it under a wall-clock budget that terminates and quarantines it. The
+    // honest posture is documented in AGENTS.md §6.
+    const m = manifestFor({
+      ...EMPTY,
+      scannerPatterns: [{ flags: 'i', label: 'redos', pattern: '(a+)+$', type: 'INJECTION' }],
+    } as unknown as BundleEntities);
+    await expect(installBundle(asArg(), m)).resolves.toBeDefined();
+    expect(prisma.scannerPattern.upsert).toHaveBeenCalled();
+  });
+
+  it('still installs an ordinary scanner pattern', async () => {
+    const m = manifestFor({
+      ...EMPTY,
+      scannerPatterns: [
+        { flags: 'i', label: 'ok', pattern: 'ignore\\s+previous', type: 'INJECTION' },
+      ],
+    } as unknown as BundleEntities);
+    const res = await installBundle(asArg(), m);
+    expect(res.counts.scannerPatterns).toBe(1);
+    expect(prisma.scannerPattern.upsert).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,16 +1,17 @@
 import { Prisma, type PrismaClient } from '@auto-swe/shared';
 import {
-  BUNDLE_SCHEMA_VERSION,
   type BundleAgent,
   type BundleDependency,
   type BundleEntities,
   type BundleManifest,
   type BundleScannerPattern,
+  BundleSchemaVersionError,
   type BundleSkill,
   type BundleTemplate,
-  computeContentHash,
+  buildBundleManifest,
   parseBundle,
   type TrustedKey,
+  validateBundleScannerPatterns,
   verifyBundleSignature,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
@@ -195,19 +196,16 @@ export async function exportBundle(
   }
 
   const entities: BundleEntities = { agents, scannerPatterns, skills, templates };
-  const dependencies = deriveDependencies(entities);
-  return {
-    bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
-    dependencies,
+  // Assembly + hashing live in `@auto-swe/shared/bundle` (`buildBundleManifest`)
+  // so this and the SDK's `defineBundle` cannot drift over what the v2 hash
+  // covers — identity included.
+  return buildBundleManifest({
+    dependencies: deriveDependencies(entities),
     entities,
-    metadata: {
-      contentHash: computeContentHash({ dependencies, entities }),
-      createdAt: new Date().toISOString(),
-      name: opts.name,
-      source: opts.origin,
-      version: opts.version,
-    },
-  };
+    name: opts.name,
+    version: opts.version,
+    ...(opts.origin !== undefined ? { source: opts.origin } : {}),
+  });
 }
 
 /**
@@ -226,12 +224,36 @@ export async function installBundle(
   raw: unknown,
   opts: InstallOptions = {}
 ): Promise<InstallResult> {
-  const manifest = parseBundle(raw); // throws ZodError on malformed input
+  let manifest: BundleManifest;
+  try {
+    manifest = parseBundle(raw); // throws ZodError on malformed input
+  } catch (err) {
+    // A bundle built under an older trust format (v1 signed only entities +
+    // dependencies, leaving name/version unsigned) is rejected outright rather
+    // than reinterpreted — surfaced as a 400 with the re-sign instructions.
+    if (err instanceof BundleSchemaVersionError) {
+      throw new BundleIntegrityError(err.message);
+    }
+    throw err;
+  }
 
+  // Covers the manifest's identity (name/version) as well as its content, so a
+  // relabelled copy of a signed bundle fails here before trust is evaluated.
   const hash = verifyContentHash(manifest);
   if (!hash.ok) {
     throw new BundleIntegrityError(
       `bundle content hash mismatch (declared ${manifest.metadata.contentHash}, computed ${hash.expected})`
+    );
+  }
+
+  // Scanner patterns are executable content: apply the same ReDoS/compile gate
+  // the admin API applies, BEFORE any write and regardless of trust state — an
+  // UNVERIFIED bundle is installable, so this is the only thing standing between
+  // a bundle-supplied `(a+)+$` and the worker's scan loop.
+  const patternErrors = validateBundleScannerPatterns(manifest);
+  if (patternErrors.length > 0) {
+    throw new BundleIntegrityError(
+      `bundle contains unsafe scanner pattern(s):\n  - ${patternErrors.join('\n  - ')}`
     );
   }
 
@@ -261,7 +283,16 @@ export async function installBundle(
         const existing = await tx.skill.findFirst({ where: { name: s.name } });
         if (existing) {
           await tx.skill.update({
-            data: { description: s.description ?? null, origin, promptText: s.promptText },
+            data: {
+              description: s.description ?? null,
+              // Never trust the bundle's verification flag — installing new content
+              // over an existing skill must reset isVerified, matching the create
+              // branch below; otherwise an UNVERIFIED bundle can silently overwrite a
+              // human-verified skill's prompt while it keeps its verified badge.
+              isVerified: false,
+              origin,
+              promptText: s.promptText,
+            },
             where: { id: existing.id },
           });
         } else {

@@ -7,6 +7,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { CRON_5_FIELD_RE } from './scheduledWorkRequests.js';
 
@@ -33,7 +34,7 @@ const MemoryParams = z.object({
 });
 
 const MemoryQuery = z.object({
-  includeConsolidated: z.enum(['true', 'false']).optional(),
+  includeConsolidated: booleanQueryParam(false),
 });
 
 const CreateChannelSchema = z.object({
@@ -485,7 +486,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
         return reply;
       }
-      const showConsolidated = request.query.includeConsolidated === 'true';
+      const showConsolidated = request.query.includeConsolidated;
       // Bounded to the single channel the caller was just authorised for. An
       // added `teamId` predicate would look stronger and is not: `MemoryItem`
       // denormalises the team at write time, so re-parenting a channel would

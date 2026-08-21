@@ -22,6 +22,7 @@ import {
   publishAppHome,
   verifySlackSignature,
 } from '../lib/slack.js';
+import { isTerminalSignalError } from '../lib/temporalErrors.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
@@ -980,7 +981,7 @@ async function trySteerThreadTask(
     await fastify.temporal.signalWorkflow(workflowId, CHANNEL_TASK_STEER_SIGNAL, [userText]);
   } catch (err) {
     // No active task run in this thread (or it already closed) — fall through.
-    if (getErrorName(err) === 'WorkflowNotFoundError') {
+    if (isTerminalSignalError(err)) {
       return false;
     }
     throw err;
@@ -1230,12 +1231,20 @@ async function handleHitlResolveAction(
 
   if (result.ok) {
     const who = payload.user?.id ? `<@${payload.user.id}>` : 'someone';
-    await respondToInteraction(
-      payload,
-      `:white_check_mark: *${result.title}* — resolved with \`${parsed.action}\` by ${who}.`,
-      { ephemeral: false }
-    );
-    return { data: { action: 'hitl_resolve', ok: true, stepId: result.stepId } };
+    // The step is RESOLVED either way; `signalSent: false` only means the run it
+    // belonged to is already gone, so say so rather than implying it was steered.
+    const text = result.signalSent
+      ? `:white_check_mark: *${result.title}* — resolved with \`${parsed.action}\` by ${who}.`
+      : `:white_check_mark: *${result.title}* — recorded as \`${parsed.action}\` by ${who}, but the workflow run had already finished, so nothing was signalled.`;
+    await respondToInteraction(payload, text, { ephemeral: false });
+    return {
+      data: {
+        action: 'hitl_resolve',
+        ok: true,
+        signalSent: result.signalSent,
+        stepId: result.stepId,
+      },
+    };
   }
 
   await respondToInteraction(payload, hitlErrorText(result.code, result.message), {

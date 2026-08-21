@@ -100,6 +100,54 @@ describe('agentLibraryRoutes — admin', () => {
     await app.close();
   });
 
+  // Regression: z.coerce.boolean() treats the *string* "false" as truthy
+  // (Boolean("false") === true), so ?all=false used to behave like ?all=true
+  // and return every version instead of just the latest.
+  it('lists only the latest version per lineage when all=false is explicit', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { id: 'a2', key: 'a', scope: 'GLOBAL', teamId: null, version: 2, workflowTemplateId: null },
+      { id: 'a1', key: 'a', scope: 'GLOBAL', teamId: null, version: 1, workflowTemplateId: null },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/admin/agent-library?all=false',
+    });
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.payload).data;
+    expect(data.map((r: { id: string }) => r.id)).toEqual(['a2']);
+    await app.close();
+  });
+
+  it('lists every version per lineage when all=true', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { id: 'a2', key: 'a', scope: 'GLOBAL', teamId: null, version: 2, workflowTemplateId: null },
+      { id: 'a1', key: 'a', scope: 'GLOBAL', teamId: null, version: 1, workflowTemplateId: null },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/admin/agent-library?all=true',
+    });
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.payload).data;
+    expect(data.map((r: { id: string }) => r.id)).toEqual(['a2', 'a1']);
+    await app.close();
+  });
+
+  it('rejects an all value other than true/false', async () => {
+    const { app } = await buildAdminApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/admin/agent-library?all=1',
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('creates a new GLOBAL agent (v1) and audits it', async () => {
     const { app, mockPrisma } = await buildAdminApp();
     mockPrisma.agent.findFirst.mockResolvedValue(null); // maxVersion = 0

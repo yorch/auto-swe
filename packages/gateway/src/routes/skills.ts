@@ -1,3 +1,4 @@
+import { MAX_SKILL_PROMPT_TEXT_LENGTH } from '@auto-swe/shared/lib/regexSafety';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -35,14 +36,14 @@ const SkillIdParams = z.object({ id: z.string().uuid() });
 const CreateSkillSchema = z.object({
   description: z.string().max(1000).optional(),
   name: z.string().min(1).max(200),
-  promptText: z.string().min(1).max(50_000),
+  promptText: z.string().min(1).max(MAX_SKILL_PROMPT_TEXT_LENGTH),
 });
 
 const UpdateSkillSchema = z.object({
   description: z.string().max(1000).optional(),
   isActive: z.boolean().optional(),
   name: z.string().min(1).max(200).optional(),
-  promptText: z.string().min(1).max(50_000).optional(),
+  promptText: z.string().min(1).max(MAX_SKILL_PROMPT_TEXT_LENGTH).optional(),
 });
 
 const ListSkillsQuery = z.object({});

@@ -5,6 +5,9 @@ import { workflowRunRoutes } from './workflowRuns.js';
 
 function newMockPrisma() {
   return {
+    agentTrace: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     workflowRun: {
       count: vi.fn().mockResolvedValue(0),
       findFirst: vi.fn().mockResolvedValue(null),
@@ -71,6 +74,152 @@ describe('workflowRunRoutes GET / (list)', () => {
     const where = lastListWhere(prisma);
     expect(where.template).toBeUndefined();
     expect(where.templateId).toBe(templateId);
+  });
+
+  // Regression: z.coerce.boolean() treats the *string* "false" as truthy
+  // (Boolean("false") === true), so an explicit ?includeChannel=false used to
+  // silently opt IN to channel chatter runs instead of respecting the caller.
+  it('excludes channel chatter runs when includeChannel=false is explicit', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/workflow-runs?includeChannel=false',
+    });
+    expect(res.statusCode).toBe(200);
+    const where = lastListWhere(prisma);
+    expect(where.template).toEqual({ name: { notIn: ['Channel Assistant', 'Channel Task'] } });
+  });
+
+  it('rejects an includeChannel value other than true/false', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/workflow-runs?includeChannel=1',
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('workflowRunRoutes GET /:id (detail)', () => {
+  const runId = '6f9619ff-8b86-4a08-8b86-3e6f9619ffd1';
+  const LONG_STRING = 'x'.repeat(5_000);
+
+  function mockRun(prisma: ReturnType<typeof newMockPrisma>) {
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      contextSnapshot: null,
+      costUsdAccrued: 0,
+      endedAt: null,
+      id: runId,
+      specSnapshot: {},
+      startedAt: new Date(),
+      status: 'RUNNING',
+      steps: [],
+      template: { name: 'Some Template' },
+      templateId: 't-1',
+      templateVersion: 1,
+      tokensInputTotal: 0,
+      tokensOutputTotal: 0,
+      workflowId: 'wf-1',
+      workRequest: { description: 'd', externalTicketId: 'JIRA-1', id: 'wr-1' },
+    });
+  }
+
+  function mockTraces(prisma: ReturnType<typeof newMockPrisma>) {
+    prisma.agentTrace.findMany.mockResolvedValue([
+      {
+        agentKey: 'implementer',
+        attempt: 1,
+        costUsd: 0,
+        createdAt: new Date(),
+        durationMs: 1,
+        error: null,
+        id: 'trace-1',
+        inputJson: { text: LONG_STRING },
+        inputTokens: 1,
+        model: 'anthropic/claude-opus-4-8',
+        nodeId: 'n-1',
+        otelSpanId: null,
+        otelTraceId: null,
+        outputJson: { text: LONG_STRING },
+        outputTokens: 1,
+        seq: 1,
+        toolName: null,
+        type: 'llm_response',
+      },
+    ]);
+  }
+
+  it('omits traces and skips the agentTrace query by default', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.traces).toEqual([]);
+    expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
+  });
+
+  it('omits traces when includeTraces=false is explicit', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}?includeTraces=false`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.traces).toEqual([]);
+    expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
+  });
+
+  it('returns traces when includeTraces=true', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    mockTraces(prisma);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}?includeTraces=true`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.traces).toHaveLength(1);
+    expect(prisma.agentTrace.findMany).toHaveBeenCalled();
+  });
+
+  // Regression: ?fullTraces=false used to coerce to `true` and return
+  // untrimmed trace payloads (a forensic-only escape hatch) by default.
+  it('trims large trace fields when fullTraces=false is explicit', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    mockTraces(prisma);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}?includeTraces=true&fullTraces=false`,
+    });
+    expect(res.statusCode).toBe(200);
+    const [trace] = res.json().data.traces;
+    expect(trace.inputJson.text.length).toBeLessThan(LONG_STRING.length);
+    expect(trace.inputJson.text).toContain('[truncated');
+  });
+
+  it('returns untrimmed trace fields when fullTraces=true', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    mockTraces(prisma);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}?includeTraces=true&fullTraces=true`,
+    });
+    expect(res.statusCode).toBe(200);
+    const [trace] = res.json().data.traces;
+    expect(trace.inputJson.text).toBe(LONG_STRING);
   });
 });
 

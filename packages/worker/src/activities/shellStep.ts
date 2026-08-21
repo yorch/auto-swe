@@ -14,6 +14,11 @@
  *   - No Docker socket mount, no privileges, CPU/memory/PID caps, --read-only
  *     root filesystem, /tmp on a small tmpfs.
  *   - `--network=none` by default. Authors opt in to outbound via `network: 'egress'`.
+ *   - No SCM credential at rest in the workspace volume: `origin` is scrubbed
+ *     immediately after clone and the finalize push authenticates per-call via
+ *     `http.extraheader`. An author command therefore cannot read the token,
+ *     and equally cannot run its own authenticated `git fetch`/`push` — see
+ *     `cloneIntoVolume`.
  *
  * Return shape mirrors the phase-2 GateResult so the interpreter's
  * gate-failure path (`passed === false` → onFail policy) fires uniformly for
@@ -36,7 +41,7 @@ import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
-import { shellQuote } from './workspace.js';
+import { gitWithAuthHeader, shellQuote, splitCloneCredential } from './workspace.js';
 
 export interface ShellStepInput {
   request: RepoWorkRequest;
@@ -106,12 +111,20 @@ async function runDocker(args: string[], tokenForRedact?: string | null): Promis
     if (err instanceof Error) {
       err.message = redactToken(err.message, tokenForRedact);
     }
-    const e = err as { stdout?: unknown; stderr?: unknown };
+    const e = err as { stdout?: unknown; stderr?: unknown; cmd?: unknown };
     if (typeof e.stdout === 'string') {
       e.stdout = redactToken(e.stdout, tokenForRedact);
     }
     if (typeof e.stderr === 'string') {
       e.stderr = redactToken(e.stderr, tokenForRedact);
+    }
+    // `promisify(exec)`'s rejection also carries the raw command string on
+    // `.cmd` (own enumerable property, alongside code/killed/signal). It
+    // never reaches Temporal history (the failure converter only takes
+    // message/stack/type), but a `log.error({ err })` call would serialize
+    // it verbatim — redact it too.
+    if (typeof e.cmd === 'string') {
+      e.cmd = redactToken(e.cmd, tokenForRedact);
     }
     throw err;
   }
@@ -128,6 +141,18 @@ async function safeRunDocker(args: string[]): Promise<void> {
 interface RepoMeta {
   /** Credential-embedded clone URL from ScmProvider.cloneCredentials. */
   cloneUrl: string;
+  /**
+   * `cloneUrl` with the credential stripped — what `origin` is reset to right
+   * after clone, so the token never sits at rest in the workspace volume the
+   * author-supplied command can read.
+   */
+  cleanUrl: string;
+  /**
+   * `AUTHORIZATION: basic …` header used to authenticate the finalize push via
+   * `git -c http.extraheader`, instead of a credential-bearing `origin`.
+   * Undefined when the provider handed back an unauthenticated URL.
+   */
+  gitAuthHeader?: string;
   defaultBranch: string;
   teamId: string;
   teamAllowlist: string[];
@@ -144,9 +169,15 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
   });
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl, token } = await getScmProvider(repoRef).cloneCredentials(repoRef);
+  // Shared with the agent workspace (`activities/workspace.ts`): split the
+  // credential out of the clone URL so it can be injected per network call
+  // rather than persisted in `.git/config`.
+  const { cleanUrl, gitAuthHeader } = splitCloneCredential(authedCloneUrl);
   return {
+    cleanUrl,
     cloneUrl: authedCloneUrl,
     defaultBranch: repo.defaultBranch,
+    ...(gitAuthHeader ? { gitAuthHeader } : {}),
     teamAllowlist: (repo.team?.shellImageAllowlist as string[] | null) ?? [],
     teamEgressAllowlist: (repo.team?.egressAllowlist as string[] | null) ?? [],
     teamId: repo.team?.id ?? '',
@@ -160,6 +191,23 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
  * runs before the implementer's first push). Auth / network / docker
  * failures are surfaced unchanged so they're not masked by a confusing
  * default-branch retry. Caller owns volume lifecycle.
+ *
+ * The credential is scrubbed out of `origin` in the same `sh -c` script as the
+ * clone (same approach as `createWorkspace` in `workspace.ts`): this volume is
+ * bind-mounted into the container that runs the *author-supplied* command with
+ * `/workspace/repo` as cwd, so a token baked into `.git/config` would be live
+ * data inside the sandbox — readable with `cat .git/config` or `git remote -v`
+ * and, on a `network: 'egress'` step, exfiltratable. Output redaction cannot
+ * contain that: `redactToken` matches the exact substring, so any transform
+ * (`base64`, `rev`, `tr`, `fold`) defeats it. Removing the credential at rest
+ * is the actual fix; the redaction below it stays as defense in depth.
+ *
+ * DELIBERATE BEHAVIOR CHANGE: with `origin` scrubbed, an author command doing
+ * its own `git fetch` / `git pull` / `git push` against a private repo now
+ * fails to authenticate. That is intended — an author-supplied shell command
+ * should not hold the org's push credential. The supported way to persist work
+ * is to leave changes in the working tree: `finalizeWorkspaceVolume` commits
+ * and pushes them, authenticating per-call via `http.extraheader`.
  */
 async function cloneIntoVolume(
   volumeName: string,
@@ -178,7 +226,9 @@ async function cloneIntoVolume(
         'sh',
         image,
         '-c',
-        `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
+        // Every interpolated value stays `shellQuote`d — this string is the
+        // injection boundary for the branch name and the remote URL.
+        `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git remote set-url origin ${shellQuote(meta.cleanUrl)} && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
       ],
       meta.token
     );
@@ -219,12 +269,20 @@ interface FinalizeResult {
  * If the shell command modified the working tree, commit and push the result
  * back to origin on the same branch. Returns the auto-commit SHA + the list
  * of changed files. Skips silently when no changes are present.
+ *
+ * This runs in a *separate* container from the author's command, after it has
+ * exited, so it is the only place the credential is legitimately needed. It is
+ * injected for the push call alone via `git -c http.extraheader` (shared with
+ * the agent workspace's `gitAuthed`), because `origin` was scrubbed by
+ * `cloneIntoVolume` and no longer carries it.
  */
 async function finalizeWorkspaceVolume(
   volumeName: string,
   branch: string,
   commandSummary: string,
-  image: string
+  image: string,
+  token: string,
+  gitAuthHeader?: string
 ): Promise<FinalizeResult> {
   const script = [
     'set -e',
@@ -235,21 +293,19 @@ async function finalizeWorkspaceVolume(
     'fi',
     'git add -A',
     `git commit -m ${shellQuote(`auto: shell step ${commandSummary}`)}`,
-    `git push origin HEAD:${shellQuote(branch)}`,
+    // `gitWithAuthHeader` shell-quotes the header; the branch is quoted here.
+    gitWithAuthHeader(`push origin HEAD:${shellQuote(branch)}`, gitAuthHeader),
     'git rev-parse HEAD',
     'git diff --name-only HEAD~1 HEAD',
   ].join('\n');
-  const out = await runDocker([
-    'run',
-    '--rm',
-    '-v',
-    `${volumeName}:/workspace:rw`,
-    '--entrypoint',
-    'sh',
-    image,
-    '-c',
-    script,
-  ]);
+  // `git push` failures can still echo credential material (e.g. a git build
+  // that logs the extraheader, or an operator-supplied URL we failed to
+  // parse) — pass the token through so `runDocker`'s catch redacts it before
+  // it ever reaches the caller. Defense in depth on top of the scrub.
+  const out = await runDocker(
+    ['run', '--rm', '-v', `${volumeName}:/workspace:rw`, '--entrypoint', 'sh', image, '-c', script],
+    token
+  );
   if (out.includes('NO_CHANGES')) {
     return { filesChanged: [] };
   }
@@ -315,7 +371,19 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       workspaceMount: volumeName,
     });
 
-    const fullLog = `$ ${input.command}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`;
+    // Defense in depth. `cloneIntoVolume` now scrubs the credential out of
+    // `origin`, so `/workspace/repo/.git/config` no longer holds it and a
+    // `git remote -v` / `cat .git/config` from the author's command has
+    // nothing to print. This redaction stays anyway: it costs nothing, and it
+    // still catches a token that reaches stdout by some other route (an
+    // operator-supplied clone URL shape `splitCloneCredential` failed to
+    // parse, or a future caller that reintroduces one). Every downstream use
+    // (artifact body, truncated summary tail) reads from these redacted
+    // copies, never from `result.stdout`/`result.stderr` directly.
+    const redactedStdout = redactToken(result.stdout, meta.token);
+    const redactedStderr = redactToken(result.stderr, meta.token);
+
+    const fullLog = `$ ${input.command}\n--- stdout ---\n${redactedStdout}\n--- stderr ---\n${redactedStderr}`;
     const runId = await currentWorkflowRunId();
     const artifact = await putArtifact({
       body: fullLog,
@@ -335,7 +403,9 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
           volumeName,
           branch,
           input.command.slice(0, 80),
-          helperImage
+          helperImage,
+          meta.token,
+          meta.gitAuthHeader
         );
       } catch (err) {
         // A push failure shouldn't mask a successful command run, but the
@@ -346,11 +416,15 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
           (typeof e.stderr === 'string' && e.stderr) ||
           (typeof e.message === 'string' && e.message) ||
           String(err);
-        pushError = redactToken(raw).slice(0, 500);
+        pushError = redactToken(raw, meta.token).slice(0, 500);
       }
     }
 
-    const tail = truncate(`${result.stderr || result.stdout}`.trim(), 4000);
+    // Redact before truncating, not after: a token straddling the truncation
+    // cut would otherwise leave an unredacted fragment in the summary (and in
+    // Temporal history) because the split-token halves no longer match the
+    // full token string.
+    const tail = truncate(`${redactedStderr || redactedStdout}`.trim(), 4000);
     const passSummary = pushError
       ? `shell step ran (exit 0) but git push failed — changes NOT persisted: ${pushError}`
       : `shell step passed (exit 0; ${finalize.filesChanged.length} files changed)`;
@@ -375,6 +449,10 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       });
     }
 
+    const summary = passed
+      ? passSummary
+      : `shell step failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`;
+
     return {
       artifactId: artifact?.id,
       exitCode: result.exitCode,
@@ -382,9 +460,14 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       passed,
       ...(result.signal ? { signal: result.signal } : {}),
       ...(finalize.committedSha ? { committedSha: finalize.committedSha } : {}),
-      summary: passed
-        ? passSummary
-        : `shell step failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`,
+      // Defense in depth: every summary built from `tail`/`passSummary` below
+      // this point is redacted again here, not just the pushError branch
+      // above — so a future code path that forgets to thread the token
+      // through still can't leak it. (The `ShellImageNotAllowedError` early
+      // return above this point is a separate return statement and skips
+      // this redaction entirely — safe today because that path never touches
+      // repo/git output, only `assertShellImageAllowed`'s own message.)
+      summary: redactToken(summary, meta.token),
     };
   } finally {
     await safeRunDocker(['volume', 'rm', '-f', volumeName]);

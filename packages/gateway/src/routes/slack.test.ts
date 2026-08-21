@@ -70,6 +70,8 @@ interface FakeState {
   humanStepUpdateCount: number;
   humanStepUpdateCalls: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
   signalCalls: Array<{ workflowId: string; signalName: string; args: unknown[] }>;
+  /** When set, `signalWorkflow` rejects with this instead of recording a call. */
+  signalError: Error | null;
   channelAssistantStarts: Array<{ workflowId: string; input: Record<string, unknown> }>;
   /** When set, `startChannelAssistant` throws this instead of recording a start. */
   channelAssistantStartError: Error | null;
@@ -106,6 +108,9 @@ function buildApp(state: FakeState): FastifyInstance {
   app.decorate('temporal', {
     cancelWorkflow: async () => undefined,
     signalWorkflow: async (workflowId: string, signalName: string, args: unknown[] = []) => {
+      if (state.signalError) {
+        throw state.signalError;
+      }
       state.signalCalls.push({ args, signalName, workflowId });
     },
     startChannelAssistant: async (workflowId: string, input: Record<string, unknown>) => {
@@ -277,6 +282,7 @@ beforeEach(async () => {
     runnableStartError: null,
     runnableStarts: [],
     signalCalls: [],
+    signalError: null,
     templates: [
       {
         activeVersion: 1,
@@ -539,7 +545,7 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     const res = await injectInteractive(interactivePayload());
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      data: { action: 'hitl_resolve', ok: true, stepId: STEP_ID },
+      data: { action: 'hitl_resolve', ok: true, signalSent: true, stepId: STEP_ID },
     });
 
     // Atomic PENDING→RESOLVED guard preserved (same core as the inbox route).
@@ -612,6 +618,37 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
       data: { action: 'hitl_resolve', code: 'NOT_FOUND', ok: false },
     });
     expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('terminal signal failure → step stays RESOLVED, confirmation says nothing was signalled', async () => {
+    state.humanStep = pendingHumanStep();
+    const gone = new Error('workflow execution not found');
+    gone.name = 'WorkflowNotFoundError';
+    state.signalError = gone;
+
+    const res = await injectInteractive(interactivePayload());
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      data: { action: 'hitl_resolve', ok: true, signalSent: false, stepId: STEP_ID },
+    });
+    // Resolve only — no rollback write.
+    expect(state.humanStepUpdateCalls).toHaveLength(1);
+
+    const confirm = fetchCalls.find((c) => c.url.includes('chat.postMessage'));
+    expect((confirm?.body as { text: string } | undefined)?.text).toMatch(/already finished/i);
+  });
+
+  it('transient signal failure → rolls back to PENDING and reports SIGNAL_FAILED', async () => {
+    state.humanStep = pendingHumanStep();
+    state.signalError = new Error('Temporal unreachable');
+
+    const res = await injectInteractive(interactivePayload());
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      data: { action: 'hitl_resolve', code: 'SIGNAL_FAILED', ok: false },
+    });
+    expect(state.humanStepUpdateCalls).toHaveLength(2);
+    expect(state.humanStepUpdateCalls[1]?.data).toMatchObject({ status: 'PENDING' });
   });
 
   it('malformed button value → ignored ack with ephemeral warning', async () => {

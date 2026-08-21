@@ -178,7 +178,11 @@ describe('human step routes', () => {
       stepRow = pendingStep();
       const res = await respond({ action: 'approve', value: { note: 'lgtm' } });
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).data).toEqual({ id: STEP_ID, status: 'RESOLVED' });
+      expect(JSON.parse(res.payload).data).toEqual({
+        id: STEP_ID,
+        signalSent: true,
+        status: 'RESOLVED',
+      });
 
       expect(updateManyCalls).toHaveLength(1);
       const resolveCall = updateManyCalls[0] as UpdateManyCall;
@@ -206,6 +210,32 @@ describe('human step routes', () => {
       stepRow = pendingStep({ kind: 'REVIEW', signalName: 'hitl_review' });
       res = await respond({ action: 'submit' });
       expect(res.statusCode).toBe(200);
+    });
+
+    it('keeps the step RESOLVED when the workflow is already gone (terminal signal failure)', async () => {
+      // A WorkflowNotFoundError can never succeed on retry: the execution has
+      // completed or been terminated. Rolling back would return the step to the
+      // inbox permanently unclearable — every retry re-fails identically — and
+      // would discard a decision the human legitimately made. The resolution
+      // stands and the response carries `signalSent: false`, matching what the
+      // merge webhook does with the same class of failure.
+      stepRow = pendingStep();
+      const gone = new Error('workflow execution not found');
+      gone.name = 'WorkflowNotFoundError';
+      signalError = gone;
+
+      const res = await respond({ action: 'approve' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data).toEqual({
+        id: STEP_ID,
+        signalSent: false,
+        status: 'RESOLVED',
+      });
+
+      // Exactly one write — the PENDING→RESOLVED resolve. No rollback.
+      expect(updateManyCalls).toHaveLength(1);
+      expect(updateManyCalls[0]?.data).toMatchObject({ resolvedBy: USER_ID, status: 'RESOLVED' });
+      expect(updateManyCalls.some((c) => c.data.status === 'PENDING')).toBe(false);
     });
 
     it('rolls the row back to PENDING and returns 502 when the Temporal signal fails', async () => {

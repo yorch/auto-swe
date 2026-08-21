@@ -231,6 +231,16 @@ sequenceDiagram
     Worker->>DB: finalizeWorkflowRun (cost, tokens, org billing)
 ```
 
+**CI verdicts are matched to a commit, not just to a PR.** The `/webhooks/ci` handler only signals a
+run when the tracked pull request is awaiting a verdict *at the head the event describes*
+(`ciStatus = PENDING` at that `headSha`). That pairing is what stops a redelivered verdict for an
+older commit from resuming a run that has already moved on. `createOrUpdatePullRequest` arms it by
+resetting `ciStatus` whenever it moves the head, so a template that waits on `ciPipelineSignal`
+**must reach that wait through a `createOrUpdatePullRequest` step**. Every built-in template does.
+A hand-authored template that pushes by some other route and then waits on `ciPipelineSignal` gets
+its first verdict and silently ignores every later one, failing at the wait's own timeout rather
+than at the point of the mistake.
+
 **Multi-repo epics.** `POST /api/v1/epics` starts `EpicOrchestratorWorkflow` instead: the planner
 agent decomposes the brief into per-repo subtasks, a dependency graph is built, child
 `RunnableWorkflow`s fan out in dependency order, and the parent reports
@@ -546,6 +556,21 @@ bypasses it, as security-critical.
 > The metadata blackhole needs a real-Docker smoke test — it is exercised by unit tests against
 > argument construction, not against a live daemon.
 
+**Shell and container steps get the same credential treatment.** `runShellStep`
+(`activities/shellStep.ts`) clones the branch into a Docker volume that is then bind-mounted into
+the container running the author-supplied command, so a token left in `.git/config` would be
+readable by that command — and, on a `network: 'egress'` step, exfiltratable. `origin` is therefore
+reset to the credential-free URL in the same script as the clone, and the post-command commit/push
+(a separate container, after the command has exited) authenticates per-call through
+`http.extraheader`. Both paths share `splitCloneCredential()` / `gitWithAuthHeader()` with
+`createWorkspace`. Output redaction of the token remains on every sink as defense in depth, but it
+is not the containment: it matches the exact substring, so any transform (`base64`, `rev`, `tr`)
+would defeat it.
+
+> **Consequence for authors:** a shell-step command cannot run its own authenticated `git fetch`,
+> `pull`, or `push` against a private repo — it holds no credential. Leave changes in the working
+> tree instead; the step commits and pushes them to the run's branch after the command exits.
+
 **Security scanners.** Six run during agent execution at distinct stages, five backed by DB regex
 patterns with a 60 s cache. Table and rules in
 [AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/admin/security` and the
@@ -626,6 +651,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Scanner pattern edits propagate by TTL, not invalidation.** Gateway and worker are separate
   processes with independent 60 s caches, so a pattern change can take up to a minute to reach the
   worker and the two can briefly disagree.
+- **Scanner regex execution is bounded, not proven safe.** Patterns run in a pooled worker thread
+  killed at the `workspace.regexScanBudgetMs` setting (default 250 ms), so a catastrophic one cannot
+  wedge the process — but it is then quarantined per process and no longer enforced, and the scan it
+  overran costs one spurious block on a blocking scanner. See [agents.md §11](./agents.md#11-limitations).
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a
