@@ -1,9 +1,16 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const findMany = vi.fn(async (_args?: unknown) => [] as unknown[]);
+vi.mock('../db.js', () => ({ prisma: { configSetting: { findMany } } }));
+
+import { invalidateSettingsCache } from '../config/resolveSetting.js';
 import { BUILTIN_SCANNER_PATTERNS } from '../scannerPatterns/index.js';
 import {
+  DEFAULT_REGEX_BUDGET_MS,
   isRegexQuarantined,
   probeRegexBacktracking,
   resetRegexExecutor,
+  resolveRegexBudgetMs,
   runRegexBatch,
 } from './regexExec.js';
 
@@ -13,6 +20,13 @@ const EVIL_INPUT = `${'a'.repeat(40)}!`;
 
 afterEach(() => {
   resetRegexExecutor();
+});
+
+beforeEach(() => {
+  findMany.mockReset();
+  findMany.mockResolvedValue([]);
+  invalidateSettingsCache();
+  delete process.env.SCANNER_REGEX_BUDGET_MS;
 });
 
 describe('runRegexBatch — ordinary matching', () => {
@@ -209,6 +223,41 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
     expect(bad.timedOutPatternKeys).toEqual(['evil']);
     expect(good.incomplete).toBe(false);
     expect(good.hits.map((h) => h.patternKey)).toEqual(['ok']);
+  });
+});
+
+describe('resolveRegexBudgetMs — operator-tunable via the setting registry', () => {
+  it('falls back to the default when nothing overrides it', async () => {
+    await expect(resolveRegexBudgetMs()).resolves.toBe(DEFAULT_REGEX_BUDGET_MS);
+  });
+
+  it('reflects a GLOBAL override, proving the effective budget comes from the setting', async () => {
+    findMany.mockResolvedValue([
+      { key: 'workspace.regexScanBudgetMs', scope: 'GLOBAL', value: 5_000 },
+    ]);
+    await expect(resolveRegexBudgetMs()).resolves.toBe(5_000);
+  });
+
+  it('honours the env var fallback between the cascade and the default', async () => {
+    process.env.SCANNER_REGEX_BUDGET_MS = '9000';
+    await expect(resolveRegexBudgetMs()).resolves.toBe(9_000);
+  });
+
+  it('falls back to the default, and never throws, when resolution fails', async () => {
+    findMany.mockRejectedValue(new Error('database is unreachable'));
+    await expect(resolveRegexBudgetMs()).resolves.toBe(DEFAULT_REGEX_BUDGET_MS);
+  });
+
+  it('an overridden budget actually changes what runRegexBatch enforces', async () => {
+    findMany.mockResolvedValue([
+      { key: 'workspace.regexScanBudgetMs', scope: 'GLOBAL', value: 150 },
+    ]);
+    const budgetMs = await resolveRegexBudgetMs();
+    const started = Date.now();
+    const result = await runRegexBatch([EVIL], [{ key: 't', text: EVIL_INPUT }], { budgetMs });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result.incomplete).toBe(true);
+    expect(result.timedOutPatternKeys).toEqual(['evil']);
   });
 });
 

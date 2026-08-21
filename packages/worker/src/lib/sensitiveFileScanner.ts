@@ -1,4 +1,9 @@
-import { type RegexTarget, runRegexBatch, toRegexSpecs } from '@auto-swe/shared/lib/regexExec';
+import {
+  type RegexTarget,
+  resolveRegexBudgetMs,
+  runRegexBatch,
+  toRegexSpecs,
+} from '@auto-swe/shared/lib/regexExec';
 import { chunkScanText } from '@auto-swe/shared/lib/regexSafety';
 import { makePatternLoader } from './scannerPatternLoader.js';
 
@@ -38,7 +43,9 @@ async function scanSensitiveFilePaths(filePaths: string[]): Promise<SensitiveFil
     }
   });
 
+  const budgetMs = await resolveRegexBudgetMs();
   const { hits, incomplete } = await runRegexBatch(toRegexSpecs(patterns), targets, {
+    budgetMs,
     label: 'sensitiveFileScanner',
   });
 

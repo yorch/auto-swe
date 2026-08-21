@@ -550,8 +550,9 @@ Writes cut a new immutable `version`.
   self-correct against; a model that ignores it is not stopped. Only the sensitive-file scanner —
   now on both the `writeFile` and `bash` paths — and CRITICAL pre-write findings hard-block.
 - **A catastrophic scanner pattern is bounded, then dropped.** Scanner regexes execute in a pooled
-  worker thread under a 250 ms wall-clock budget (`shared/lib/regexExec.ts`), so a pattern that
-  backtracks catastrophically is terminated instead of wedging the process. The scan it overran
+  worker thread under a wall-clock budget (`shared/lib/regexExec.ts`) resolved from the
+  `workspace.regexScanBudgetMs` setting (default 250 ms; ADMIN-only, platform-wide), so a pattern
+  that backtracks catastrophically is terminated instead of wedging the process. The scan it overran
   fails closed for a blocking scanner and degrades for an advisory one; the pattern is then
   quarantined for the life of that process and **skipped** by later scans, which report themselves
   complete. That is fail-open for the quarantined rule, chosen so one bad admin row cannot deny

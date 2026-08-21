@@ -1,4 +1,4 @@
-import { runRegexBatch, toRegexSpecs } from '@auto-swe/shared/lib/regexExec';
+import { resolveRegexBudgetMs, runRegexBatch, toRegexSpecs } from '@auto-swe/shared/lib/regexExec';
 import { chunkScanText } from '@auto-swe/shared/lib/regexSafety';
 import {
   checkContentSecurity,
@@ -158,10 +158,11 @@ export async function scanShellCommand(command: string): Promise<string | null> 
   const patterns = await loadShellPatterns();
   const truncate = () => (command.length > 200 ? `${command.slice(0, 200)}…` : command);
 
+  const budgetMs = await resolveRegexBudgetMs();
   const { hits, incomplete } = await runRegexBatch(
     toRegexSpecs(patterns),
     chunkScanText(command).map((text, i) => ({ key: String(i), text })),
-    { label: 'shellCommandScanner' }
+    { budgetMs, label: 'shellCommandScanner' }
   );
   const hit = hits[0];
   if (hit) {

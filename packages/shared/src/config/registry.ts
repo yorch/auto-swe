@@ -253,6 +253,24 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
   }),
+  'workspace.regexScanBudgetMs': defineSetting({
+    defaultValue: 250,
+    description:
+      'Wall-clock budget, in milliseconds, a scanner pattern gets before its pooled worker thread is killed and the pattern quarantined for this process. Every admin- or bundle-supplied scanner pattern runs against agent text under this bound — every `bash` command, every `writeFile` path, every skill save, every TDD iteration. Too low and an ordinary pattern trips it on a loaded host: a blocking scanner (shell command, sensitive file) spuriously blocks the agent, and a pattern that was never actually pathological gets quarantined and silently stops being enforced. Too high and one genuinely catastrophic pattern stalls that scan — and everything waiting behind it in the shared executor queue — for longer before the executor gives up and kills it.',
+    envVar: 'SCANNER_REGEX_BUDGET_MS',
+    group: 'workspace',
+    label: 'Scanner regex execution budget',
+    // A security control, so it is deliberately platform-wide and ADMIN-only:
+    // no team should be able to loosen the bound that keeps a bad admin- or
+    // bundle-supplied pattern from wedging the shared scanner executor.
+    overridableAt: [],
+    parseEnv: positiveIntEnv(60_000),
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.min(10).max(60_000),
+    unit: 'ms',
+  }),
 } as const satisfies Record<string, SettingDefinition<unknown>>;
 
 /// Every registry key. Used to type `resolveSetting` and to validate an

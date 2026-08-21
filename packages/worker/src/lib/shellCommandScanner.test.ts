@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    configSetting: {
+      findMany: vi.fn(),
+    },
     scannerPattern: {
       findMany: vi.fn(),
     },
@@ -16,8 +19,13 @@ vi.mock('@auto-swe/shared/lib/regexExec', async (importOriginal) => {
   return { ...actual, runRegexBatch: vi.fn(actual.runRegexBatch) };
 });
 
+import { invalidateSettingsCache } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { resetRegexExecutor, runRegexBatch } from '@auto-swe/shared/lib/regexExec';
+import {
+  DEFAULT_REGEX_BUDGET_MS,
+  resetRegexExecutor,
+  runRegexBatch,
+} from '@auto-swe/shared/lib/regexExec';
 import { MAX_SCAN_TEXT_LENGTH } from '@auto-swe/shared/lib/regexSafety';
 import { invalidateSensitiveFilePatternCache } from './sensitiveFileScanner.js';
 import {
@@ -28,6 +36,7 @@ import {
 } from './shellCommandScanner.js';
 
 const findMany = vi.mocked(prisma.scannerPattern.findMany);
+const configFindMany = vi.mocked(prisma.configSetting.findMany);
 const runRegexBatchSpy = vi.mocked(runRegexBatch);
 
 // Verbatim copy of the built-in SHELL_COMMAND patterns from
@@ -187,6 +196,9 @@ beforeEach(() => {
   findMany.mockReset();
   mockPatternRows(BUILTIN_SHELL_PATTERNS);
   runRegexBatchSpy.mockClear();
+  configFindMany.mockReset();
+  configFindMany.mockResolvedValue([]);
+  invalidateSettingsCache();
 });
 
 describe('scanShellCommand — commands that must be blocked', () => {
@@ -315,6 +327,34 @@ describe('scanShellCommand — a scan that cannot complete fails CLOSED', () => 
     findMany.mockReset();
     mockPatternRows([{ flags: '', label: 'redos', pattern: '(a+)+$' }], []);
     await expect(scanShellCommand(`echo ${'a'.repeat(40)}!`)).resolves.toEqual(expect.any(String));
+  });
+});
+
+describe('scanShellCommand — the regex execution budget is the operator-tunable setting', () => {
+  afterEach(() => {
+    resetRegexExecutor();
+  });
+
+  it('threads the resolved workspace.regexScanBudgetMs value into runRegexBatch', async () => {
+    configFindMany.mockResolvedValue([
+      { key: 'workspace.regexScanBudgetMs', scope: 'GLOBAL', value: 5_000 },
+    ] as never);
+    await scanShellCommand('ls');
+    expect(runRegexBatchSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ budgetMs: 5_000 })
+    );
+  });
+
+  it('falls back to the default budget, without throwing, when the setting cannot be resolved', async () => {
+    configFindMany.mockRejectedValue(new Error('database is unreachable'));
+    await expect(scanShellCommand('ls')).resolves.toBeNull();
+    expect(runRegexBatchSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ budgetMs: DEFAULT_REGEX_BUDGET_MS })
+    );
   });
 });
 

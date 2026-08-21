@@ -430,9 +430,13 @@ bundle-supplied bodies run in-process against agent text on every `bash` call, e
 path, every skill save and every TDD iteration. JavaScript's backtracking engine has no execution
 budget and a running regex cannot be interrupted from the thread executing it, so containment is
 structural in the runtime sense: `shared/lib/regexExec.ts` owns a single pooled `worker_thread`
-that executes every scanner pattern and is `terminate()`d when a batch overruns its 250 ms
-wall-clock budget. On an overrun the batch is bisected against a fresh thread to attribute the hang
-to a specific pattern; the well-behaved patterns' results are kept. Warm round trips cost ~0.1 ms.
+that executes every scanner pattern and is `terminate()`d when a batch overruns its wall-clock
+budget. That budget is the `workspace.regexScanBudgetMs` setting (default 250 ms, ADMIN-only,
+platform-wide — see the Setting Registry section above) resolved once per scan call and passed
+through `runRegexBatch`'s `opts.budgetMs`; a resolution failure falls back to the default rather
+than throwing, since a scan must never abort its caller. On an overrun the batch is bisected against
+a fresh thread to attribute the hang to a specific pattern; the well-behaved patterns' results are
+kept. Warm round trips cost ~0.1 ms.
 
 - **Blocking scanners fail closed.** `scanShellCommand` and `checkSensitiveFilePath` return a block
   message when the scan cannot complete — they cannot say the input is clean, so they do not.
