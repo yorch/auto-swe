@@ -164,8 +164,6 @@ export const SETTING_DEFINITIONS = {
     schema: ratio,
     unit: '0–1',
   }),
-
-  // ── Repo dependency graph ──────────────────────────────────────────────────
   'repoDependency.autoPromoteThreshold': defineSetting({
     defaultValue: 0.9,
     description:
@@ -178,6 +176,34 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: ratio,
     unit: '0–1',
+  }),
+
+  // ── Repo dependency graph ──────────────────────────────────────────────────
+  'repoDependency.scanCron': defineSetting({
+    defaultValue: '0 4 * * *',
+    description:
+      'Cron expression (UTC) for the deterministic manifest/git-signal sweep that refreshes the repo dependency graph.',
+    group: 'repoDependency',
+    label: 'Dependency scan schedule',
+    // Deployment-wide: the sweep spans every team's repos, so a per-team
+    // override would have nothing to act on.
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.string().min(9),
+  }),
+  'repoDependency.scanEnabled': defineSetting({
+    defaultValue: true,
+    description:
+      'Whether the scheduled repo-dependency sweep runs. Turning this off leaves the graph to manual edits and on-demand scans.',
+    group: 'repoDependency',
+    label: 'Run the dependency scan on a schedule',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
   }),
 
   // ── Workflow interpreter ───────────────────────────────────────────────────

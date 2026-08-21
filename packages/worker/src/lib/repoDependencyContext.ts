@@ -47,12 +47,39 @@ export function wantsCrossRepoCheckout(options?: CrossRepoStepOptions): boolean 
   return options?.crossRepoCheckout === true;
 }
 
+/** Longest rendered label. Repo names are unbounded `text` in the DB. */
+const MAX_LABEL_CHARS = 80;
+
+/**
+ * Flatten a repo-supplied name into one short, inert line.
+ *
+ * These labels are interpolated into agent SYSTEM prompts, and org/repo names
+ * are operator-supplied with no charset or length limit at the API. Left raw, a
+ * repo named with newlines and markdown headings can close the context block and
+ * append instructions of its own — a prompt-injection payload that reaches the
+ * reviewer with the authority of the system message. Collapsing whitespace kills
+ * the line breaks the payload needs, and the cap keeps one repo from crowding out
+ * the prompt (paid on every TDD iteration and every reviewer).
+ */
+function sanitizeLabel(raw: string): string {
+  const flattened = raw
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: removing them is the point.
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (flattened.length <= MAX_LABEL_CHARS) {
+    return flattened;
+  }
+  return `${flattened.slice(0, MAX_LABEL_CHARS - 1)}…`;
+}
+
 /** `org/repo` when both halves are known, else the connection's display name. */
 export function repoLabel(repo: RepoDependencyNeighbor['repo']): string {
-  if (repo.organizationName && repo.repoName) {
-    return `${repo.organizationName}/${repo.repoName}`;
-  }
-  return repo.repoName ?? repo.name ?? repo.id;
+  const raw =
+    repo.organizationName && repo.repoName
+      ? `${repo.organizationName}/${repo.repoName}`
+      : (repo.repoName ?? repo.name ?? repo.id);
+  return sanitizeLabel(raw);
 }
 
 /**
@@ -172,11 +199,29 @@ export async function checkoutUpstreamRepos(
       return '';
     }
 
+    // Consent gate. Reading a *name* in a prompt is not the same as copying
+    // another team's source onto disk where this run's agent can read all of it,
+    // so the checkout tier is narrower than the context block: a repo owned by
+    // another team is only cloned when a human on both teams agreed to the edge.
+    // A `manual` edge is exactly that agreement (the API requires LEAD on both
+    // teams to create or confirm one); a detector- or inference-created edge
+    // needs no such consent and must not unlock a cross-team checkout.
+    const subject = await prisma.connection.findUnique({
+      select: { teamId: true },
+      where: { id: repoId },
+    });
+    const consented = upstream.filter(
+      (n) => n.repo.teamId === subject?.teamId || n.sources.includes('manual')
+    );
+    if (consented.length === 0) {
+      return '';
+    }
+
     // Re-read the neighbour connections for the clone URL fields the resolver's
     // neighbour projection does not carry (GHE base/api URL, default branch).
     // The `team: { orgId }` predicate is the tenant filter *and* the visibility
     // boundary — kept literal per tenantGuard.coverage.test.ts.
-    const neighborIds = ordered(upstream)
+    const neighborIds = ordered(consented)
       .slice(0, MAX_CROSS_REPO_NEIGHBORS)
       .map((n) => n.repo.id);
     const rows = await prisma.connection.findMany({

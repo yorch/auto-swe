@@ -5,6 +5,7 @@ const connectionFindMany = vi.fn();
 const repoDependencyFindFirst = vi.fn();
 const repoDependencyCreate = vi.fn();
 const repoDependencyUpdate = vi.fn();
+const repoDependencyDelete = vi.fn();
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
@@ -14,6 +15,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     repoDependency: {
       create: (...args: unknown[]) => repoDependencyCreate(...args),
+      delete: (...args: unknown[]) => repoDependencyDelete(...args),
       findFirst: (...args: unknown[]) => repoDependencyFindFirst(...args),
       update: (...args: unknown[]) => repoDependencyUpdate(...args),
     },
@@ -57,6 +59,7 @@ beforeEach(() => {
   repoDependencyFindFirst.mockResolvedValue(null);
   repoDependencyCreate.mockResolvedValue({ id: 'edge-new' });
   repoDependencyUpdate.mockResolvedValue({ id: 'edge-existing' });
+  repoDependencyDelete.mockResolvedValue({ id: 'edge-stale' });
   fetchFileContent.mockResolvedValue(null);
 });
 
@@ -276,5 +279,60 @@ describe('detectRepoDependencies', () => {
     const result = await detectRepoDependencies({ repoId: 'repo-self' });
 
     expect(result.scanned).toEqual(['CODEOWNERS']);
+  });
+  it('closes out an unresolved suggestion once its repo is onboarded', async () => {
+    // First sweep recorded `@acme/shared-lib` as unresolved. The repo has since
+    // been onboarded, so this sweep resolves it — the suggestion must not be
+    // left stranded in the onboarding list alongside the new edge.
+    connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+    stubFiles({
+      'package.json': JSON.stringify({ dependencies: { '@acme/shared-lib': '1.0.0' } }),
+    });
+    connectionFindMany.mockResolvedValue([
+      {
+        id: 'repo-shared',
+        organizationName: 'acme',
+        packageNames: ['@acme/shared-lib'],
+        repoName: 'shared-lib',
+      },
+    ]);
+    repoDependencyFindFirst
+      // the stale-suggestion lookup
+      .mockResolvedValueOnce({ id: 'edge-stale', status: 'unresolved', toRef: '@acme/shared-lib' })
+      // the resolved-edge lookup inside upsertEdge
+      .mockResolvedValueOnce(null);
+
+    const result = await detectRepoDependencies({ repoId: 'repo-self' });
+
+    expect(result.edgesUpserted).toBe(1);
+    expect(repoDependencyDelete).toHaveBeenCalledWith({ where: { id: 'edge-stale' } });
+  });
+
+  it('carries a dismissed suggestion forward instead of resurrecting it as an edge', async () => {
+    // The team already said no to `@acme/shared-lib`; onboarding the repo must
+    // not quietly convert that rejection into an active dependency.
+    connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+    stubFiles({
+      'package.json': JSON.stringify({ dependencies: { '@acme/shared-lib': '1.0.0' } }),
+    });
+    connectionFindMany.mockResolvedValue([
+      {
+        id: 'repo-shared',
+        organizationName: 'acme',
+        packageNames: ['@acme/shared-lib'],
+        repoName: 'shared-lib',
+      },
+    ]);
+    repoDependencyFindFirst.mockResolvedValueOnce({
+      id: 'edge-stale',
+      status: 'dismissed',
+      toRef: '@acme/shared-lib',
+    });
+
+    const result = await detectRepoDependencies({ repoId: 'repo-self' });
+
+    expect(result.edgesUpserted).toBe(0);
+    expect(repoDependencyCreate).not.toHaveBeenCalled();
+    expect(repoDependencyDelete).not.toHaveBeenCalled();
   });
 });

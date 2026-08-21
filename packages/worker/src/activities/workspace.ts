@@ -158,19 +158,38 @@ export function splitCloneCredential(authedRepoUrl: string): {
   cleanUrl: string;
   gitAuthHeader?: string;
 } {
+  let parsed: URL | undefined;
   try {
-    const u = new URL(authedRepoUrl);
-    if (u.password) {
-      const token = decodeURIComponent(u.password);
-      const gitAuthHeader = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
-      u.username = '';
-      u.password = '';
-      return { cleanUrl: u.toString(), gitAuthHeader };
-    }
+    parsed = new URL(authedRepoUrl);
   } catch {
-    /* non-URL — leave as-is, no auth header */
+    // Not a URL at all (e.g. an scp-style git@host:org/repo). There is no
+    // embedded credential to strip, so it passes through unchanged.
+    return { cleanUrl: authedRepoUrl };
   }
-  return { cleanUrl: authedRepoUrl };
+
+  if (!parsed.password) {
+    return { cleanUrl: authedRepoUrl };
+  }
+
+  // Strip the credential FIRST and unconditionally. Decoding can throw — a token
+  // containing a bare `%` is not valid percent-encoding — and if that throw
+  // escaped before the strip, the "scrubbed" URL would still carry the token and
+  // `git remote set-url` would write the secret to disk in the workspace the
+  // agent can read. Failing closed costs us the auth header, not the secret.
+  const rawPassword = parsed.password;
+  parsed.username = '';
+  parsed.password = '';
+  const cleanUrl = parsed.toString();
+
+  let token: string;
+  try {
+    token = decodeURIComponent(rawPassword);
+  } catch {
+    // Undecodable token: use it verbatim rather than dropping auth entirely.
+    token = rawPassword;
+  }
+  const gitAuthHeader = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
+  return { cleanUrl, gitAuthHeader };
 }
 
 /** Hard cap on `full_checkout` dependency clones per workspace. */

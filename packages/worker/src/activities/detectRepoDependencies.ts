@@ -235,6 +235,27 @@ export async function detectRepoDependencies(
     seen.add(dedupeKey);
 
     const detail = { manifestPath: dep.manifestPath, raw: dep.raw };
+    // A raw ref that resolves now may have been recorded as an unresolved
+    // suggestion on an earlier sweep, before its repo was onboarded. That row is
+    // keyed on `toRef` and the resolved edge is keyed on `toRepoId`, so writing
+    // the edge alone would strand the suggestion in the onboarding list forever.
+    // Close it out here, and carry a dismissal forward: a team that rejected the
+    // suggestion has already answered for the edge it becomes.
+    const staleSuggestion = matchedRepoId
+      ? await prisma.repoDependency.findFirst({
+          where: {
+            fromRepoId: connection.id,
+            kind: EDGE_KIND,
+            source: dep.source,
+            toRef: dep.raw,
+            toRepoId: null,
+          },
+        })
+      : null;
+    if (staleSuggestion?.status === 'dismissed') {
+      continue;
+    }
+
     const upserted = matchedRepoId
       ? await upsertEdge(
           {
@@ -256,6 +277,12 @@ export async function detectRepoDependencies(
           },
           { detail, status: 'unresolved' }
         );
+
+    if (staleSuggestion) {
+      // The resolved edge now carries this dependency; drop the superseded
+      // suggestion so it stops showing as "waiting to be onboarded".
+      await prisma.repoDependency.delete({ where: { id: staleSuggestion.id } });
+    }
 
     if (upserted) {
       if (matchedRepoId) {

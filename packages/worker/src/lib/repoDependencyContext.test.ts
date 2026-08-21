@@ -5,7 +5,7 @@ const { cloneMock, credentialsMock, prismaMock } = vi.hoisted(() => ({
   cloneMock: vi.fn(),
   credentialsMock: vi.fn(),
   prismaMock: {
-    connection: { findMany: vi.fn() },
+    connection: { findMany: vi.fn(), findUnique: vi.fn() },
     repoDependency: { findMany: vi.fn() },
   },
 }));
@@ -57,6 +57,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   cloneMock.mockResolvedValue([]);
   credentialsMock.mockResolvedValue({ authedCloneUrl: 'https://x:tok@github.com/acme/api.git' });
+  // The checkout tier reads the subject repo's team to decide whether a
+  // neighbour needs both-teams consent before its source may be cloned.
+  prismaMock.connection.findUnique.mockResolvedValue({ teamId: 't1' });
 });
 
 describe('repoLabel', () => {
@@ -259,6 +262,35 @@ describe('checkoutUpstreamRepos', () => {
       team: { orgId: 'org-1' },
       type: 'git_repo',
     });
+  });
+
+  it("will not clone another team's repo on a detector-created edge", async () => {
+    // Reading a neighbour's *name* in a prompt is cheap and consented-by-org;
+    // copying its source onto disk is not. A manifest edge needs no sign-off
+    // from the depended-upon team, so it must not unlock a cross-team checkout.
+    prismaMock.repoDependency.findMany.mockImplementation(
+      async ({ where }: { where: Record<string, unknown> }) =>
+        where.fromRepoId
+          ? [{ confidence: 1, id: 'e0', kind: 'code', source: 'manifest', toRepoId: 'up-0' }]
+          : []
+    );
+    prismaMock.connection.findMany.mockResolvedValue([
+      { id: 'up-0', name: null, organizationName: 'acme', repoName: 'svc-0', teamId: 'other-team' },
+    ]);
+
+    expect(await checkoutUpstreamRepos(workspace, 'repo-1', 'org-1')).toBe('');
+    expect(cloneMock).not.toHaveBeenCalled();
+  });
+
+  it("clones another team's repo when a human agreed the edge (manual source)", async () => {
+    stubUpstream(1);
+    prismaMock.connection.findUnique.mockResolvedValue({ teamId: 'subject-team' });
+    cloneMock.mockResolvedValue([{ label: 'acme-svc-0', path: '/workspace/deps/acme-svc-0' }]);
+
+    const out = await checkoutUpstreamRepos(workspace, 'repo-1', 'org-1');
+
+    expect(cloneMock).toHaveBeenCalled();
+    expect(out).toContain('/workspace/deps/acme-svc-0');
   });
 
   it('clones the upstream repos and names the paths in the returned block', async () => {

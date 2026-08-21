@@ -3,6 +3,7 @@ import { NEIGHBOR_SELECT } from '@auto-swe/shared/lib/repoDependencyResolver';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { canManageTeamRepos } from './repositories.js';
@@ -118,27 +119,37 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
     async (request) => {
       const user = requireUser(request);
-      const rows = await fastify.prisma.repoDependency.findMany({
-        orderBy: { detectedAt: 'desc' },
-        select: {
-          confidence: true,
-          fromRepo: { select: NEIGHBOR_SELECT },
-          id: true,
-          kind: true,
-          source: true,
-          toRef: true,
-        },
-        // Suggestions are only actionable to someone who can see the repo that
-        // raised them, so non-admins see their own teams' rows only.
-        take: 500,
-        where: {
-          status: 'unresolved',
-          toRef: { not: null },
-          ...(user.role !== 'ADMIN' && {
-            fromRepo: { team: { memberships: { some: { userId: user.sub } } } },
-          }),
-        },
-      });
+      // The ADMIN branch below drops the membership predicate deliberately.
+      // Written bare it would read as a forgotten filter — the exact bug the
+      // tenant guard exists to catch — so mark it as an intentional
+      // cross-tenant read instead.
+      const rows = await asPlatformAdmin(
+        user,
+        'an admin triages onboarding suggestions across every team',
+        ['RepoDependency', 'Connection'],
+        () =>
+          fastify.prisma.repoDependency.findMany({
+            orderBy: { detectedAt: 'desc' },
+            select: {
+              confidence: true,
+              fromRepo: { select: NEIGHBOR_SELECT },
+              id: true,
+              kind: true,
+              source: true,
+              toRef: true,
+            },
+            // Suggestions are only actionable to someone who can see the repo that
+            // raised them, so non-admins see their own teams' rows only.
+            take: 500,
+            where: {
+              status: 'unresolved',
+              toRef: { not: null },
+              ...(user.role !== 'ADMIN' && {
+                fromRepo: { team: { memberships: { some: { userId: user.sub } } } },
+              }),
+            },
+          })
+      );
 
       // Returned flat, one row per unresolved edge: the client component owns the
       // grouping by `toRef` (and is unit-tested on it), so duplicating that here

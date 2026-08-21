@@ -51,6 +51,7 @@ const SUBJECT = {
   packageNames: ['@acme/subject'],
   repoName: 'subject',
   team: { orgId: 'org-1' },
+  teamId: 'team-1',
   type: 'git_repo',
 };
 
@@ -61,6 +62,7 @@ const CANDIDATE = {
   organizationName: 'acme',
   packageNames: ['@acme/candidate'],
   repoName: 'candidate',
+  teamId: 'team-1',
 };
 
 function edge(overrides: Partial<Record<string, unknown>> = {}) {
@@ -96,7 +98,6 @@ describe('inferRepoDependencies', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           confidence: 0.6,
-          confirmedAt: undefined,
           fromRepoId: SUBJECT.id,
           kind: 'code',
           source: 'inferred',
@@ -105,6 +106,26 @@ describe('inferRepoDependencies', () => {
         }),
       })
     );
+  });
+
+  it('auto-promotes an edge whose confidence is exactly the threshold', async () => {
+    // Pins the boundary: the setting reads "at or above", so `>=` is the
+    // contract and a silent flip to `>` would route this to human review.
+    resolveSettingMock.mockResolvedValue(0.8);
+    runAgentMock.mockResolvedValue({ object: { edges: [edge({ confidence: 0.8 })] } });
+
+    const result = await inferRepoDependencies({ repoId: SUBJECT.id });
+
+    expect(result).toEqual({ autoPromoted: 1, proposed: 0 });
+  });
+
+  it('leaves an edge just below the threshold as proposed', async () => {
+    resolveSettingMock.mockResolvedValue(0.8);
+    runAgentMock.mockResolvedValue({ object: { edges: [edge({ confidence: 0.79 })] } });
+
+    const result = await inferRepoDependencies({ repoId: SUBJECT.id });
+
+    expect(result).toEqual({ autoPromoted: 0, proposed: 1 });
   });
 
   it('auto-promotes an edge at/above the threshold, marking detail + confirmedAt', async () => {
@@ -116,7 +137,9 @@ describe('inferRepoDependencies', () => {
     expect(result).toEqual({ autoPromoted: 1, proposed: 0 });
     const call = depCreateMock.mock.calls[0][0];
     expect(call.data.status).toBe('active');
-    expect(call.data.confirmedAt).toBeInstanceOf(Date);
+    // No confirmedAt: nothing confirmed it, and a timestamp without a
+    // confirmer would make an unreviewed edge read as human-approved.
+    expect(call.data.confirmedAt).toBeUndefined();
     expect(call.data.detail).toEqual({ autoPromoted: true, rationale: 'shares a package' });
   });
 
@@ -277,5 +300,18 @@ describe('inferRepoDependencies', () => {
 
     expect(result).toEqual({ autoPromoted: 0, proposed: 20 });
     expect(depCreateMock).toHaveBeenCalledTimes(20);
+  });
+  it('never auto-promotes across teams, however confident the model is', async () => {
+    // Auto-promotion skips a human confirm. It may only skip one this team was
+    // entitled to give — an edge into another team's repo still needs the
+    // both-teams consent the API enforces.
+    findManyMock.mockResolvedValue([{ ...CANDIDATE, teamId: 'team-2' }]);
+    resolveSettingMock.mockResolvedValue(0.5);
+    runAgentMock.mockResolvedValue({ object: { edges: [edge({ confidence: 0.99 })] } });
+
+    const result = await inferRepoDependencies({ repoId: SUBJECT.id });
+
+    expect(result).toEqual({ autoPromoted: 0, proposed: 1 });
+    expect(depCreateMock.mock.calls[0][0].data.status).toBe('proposed');
   });
 });

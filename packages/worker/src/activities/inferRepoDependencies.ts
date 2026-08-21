@@ -106,7 +106,8 @@ type UpsertOutcome = 'proposed' | 'active' | 'skipped';
 async function upsertInferredEdge(
   fromRepoId: string,
   edge: InferredEdge,
-  threshold: number
+  threshold: number,
+  allowAutoPromote: boolean
 ): Promise<UpsertOutcome> {
   const existing = await prisma.repoDependency.findFirst({
     where: {
@@ -131,11 +132,16 @@ async function upsertInferredEdge(
     return 'skipped';
   }
 
-  const autoPromote = edge.confidence >= threshold;
+  // Auto-promotion skips the human confirm, so it may only skip a confirmation
+  // that was this team's to give. A cross-team edge still needs the both-teams
+  // consent the API enforces, and stays `proposed` however confident the model is.
+  const autoPromote = allowAutoPromote && edge.confidence >= threshold;
   await prisma.repoDependency.create({
     data: {
       confidence: edge.confidence,
-      confirmedAt: autoPromote ? new Date() : undefined,
+      // Deliberately no `confirmedAt`: nobody confirmed this. Every other write
+      // path sets `confirmedAt` and `confirmedById` together, and stamping a
+      // time with no confirmer would make an unreviewed edge read as approved.
       detail: {
         rationale: edge.rationale,
         ...(autoPromote ? { autoPromoted: true } : {}),
@@ -174,6 +180,7 @@ export async function inferRepoDependencies(
       packageNames: true,
       repoName: true,
       team: { select: { orgId: true } },
+      teamId: true,
       type: true,
     },
     where: { id: input.repoId },
@@ -196,6 +203,7 @@ export async function inferRepoDependencies(
       organizationName: true,
       packageNames: true,
       repoName: true,
+      teamId: true,
     },
     where: { id: { not: connection.id }, isActive: true, team: { orgId }, type: 'git_repo' },
   });
@@ -260,11 +268,19 @@ export async function inferRepoDependencies(
 
     const accepted = acceptEdges(rawEdges, connection.id, candidateIds);
     const threshold = await resolveSetting('repoDependency.autoPromoteThreshold', ctx);
+    const sameTeam = new Set(
+      candidateRows.filter((c) => c.teamId === connection.teamId).map((c) => c.id)
+    );
 
     let proposed = 0;
     let autoPromoted = 0;
     for (const edge of accepted) {
-      const outcome = await upsertInferredEdge(connection.id, edge, threshold);
+      const outcome = await upsertInferredEdge(
+        connection.id,
+        edge,
+        threshold,
+        sameTeam.has(edge.toRepoId)
+      );
       if (outcome === 'proposed') {
         proposed++;
       } else if (outcome === 'active') {
