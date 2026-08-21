@@ -117,22 +117,41 @@ async function runReviewerAgent(
 
 // ── Review Network Orchestrator ──
 
-export async function runReviewNetwork(
-  codeResult: CodeResult,
-  successCriteria?: string[],
-  tracer?: AgentTracer,
-  systemPromptOverride?: string,
-  securitySkillSuffix?: string,
-  domainSkillSuffix?: string,
-  performanceSkillSuffix?: string,
+/**
+ * Everything the reviewers need beyond the diff itself. An options object
+ * rather than positional parameters: these are five same-typed optional
+ * strings, and callers were already threading `undefined, undefined, …` past
+ * the ones they did not set to reach the ones they did.
+ */
+export interface ReviewNetworkOptions {
   /**
    * Cross-repo dependency block (repo dependency graph, P2) — appended to every
    * reviewer's system prompt. All three benefit: a breaking-change judgement
    * needs the consumer list, a security judgement needs to know who is exposed,
    * and a performance judgement needs to know who calls this code.
    */
-  crossRepoContext?: string
+  crossRepoContext?: string;
+  domainSkillSuffix?: string;
+  performanceSkillSuffix?: string;
+  securitySkillSuffix?: string;
+  successCriteria?: string[];
+  systemPromptOverride?: string;
+  tracer?: AgentTracer;
+}
+
+export async function runReviewNetwork(
+  codeResult: CodeResult,
+  options: ReviewNetworkOptions = {}
 ): Promise<AggregatedReviewResult> {
+  const {
+    crossRepoContext,
+    domainSkillSuffix,
+    performanceSkillSuffix,
+    securitySkillSuffix,
+    successCriteria,
+    systemPromptOverride,
+    tracer,
+  } = options;
   // Append success criteria to the domain logic prompt so it validates against original intent
   let domainLogicPrompt = systemPromptOverride ?? DOMAIN_LOGIC_REVIEWER_PROMPT;
   if (successCriteria && successCriteria.length > 0) {

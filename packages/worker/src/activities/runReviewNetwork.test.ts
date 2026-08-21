@@ -71,12 +71,14 @@ describe('runReviewNetwork activity', () => {
   it('passes the block to the review network as the trailing argument', async () => {
     loadMock.mockResolvedValue('\n\n## Cross-Repo Dependency Context\n- acme/api');
     await runReviewNetwork(CODE_RESULT);
-    expect(runReviewMock.mock.calls[0][7]).toContain('## Cross-Repo Dependency Context');
+    expect(runReviewMock.mock.calls[0][1].crossRepoContext).toContain(
+      '## Cross-Repo Dependency Context'
+    );
   });
 
   it('passes undefined rather than an empty string when the graph is empty', async () => {
     await runReviewNetwork(CODE_RESULT);
-    expect(runReviewMock.mock.calls[0][7]).toBeUndefined();
+    expect(runReviewMock.mock.calls[0][1].crossRepoContext).toBeUndefined();
   });
 
   it('records a tracer event when a block is injected', async () => {
@@ -93,6 +95,6 @@ describe('runReviewNetwork activity', () => {
   it('skips the graph read entirely when the step opts out', async () => {
     await runReviewNetwork(CODE_RESULT, undefined, undefined, { crossRepoContext: false });
     expect(loadMock).not.toHaveBeenCalled();
-    expect(runReviewMock.mock.calls[0][7]).toBeUndefined();
+    expect(runReviewMock.mock.calls[0][1].crossRepoContext).toBeUndefined();
   });
 });

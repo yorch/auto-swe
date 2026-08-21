@@ -1,13 +1,14 @@
 import type { ModelBackedAgentKey } from '@auto-swe/shared/agentKeys';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { EDGE_KINDS } from '@auto-swe/shared/lib/repoDependency';
+import { EDGE_KINDS, repoLabel } from '@auto-swe/shared/lib/repoDependency';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { findEdgeWriteTarget } from '../lib/repoDependencyEdgeWrite.js';
 import { runAgent } from './runAgent.js';
 
 /**
@@ -60,18 +61,6 @@ export interface InferRepoDependenciesResult {
 /** Hard cap on edges accepted from one inference call, regardless of what the model returns. */
 const MAX_INFERRED_EDGES = 20;
 
-/** `org/repo` when both halves are known, else the bare repo name or id. */
-function repoLabel(c: {
-  organizationName: string | null;
-  repoName: string | null;
-  id: string;
-}): string {
-  if (c.organizationName && c.repoName) {
-    return `${c.organizationName}/${c.repoName}`;
-  }
-  return c.repoName ?? c.id;
-}
-
 const EDGE_KIND_SET: ReadonlySet<string> = new Set(EDGE_KINDS);
 
 /** Candidate membership, self-edge, confidence range, kind — never trusts the model's output. */
@@ -109,25 +98,25 @@ async function upsertInferredEdge(
   threshold: number,
   allowAutoPromote: boolean
 ): Promise<UpsertOutcome> {
-  const existing = await prisma.repoDependency.findFirst({
-    where: {
-      fromRepoId,
-      kind: edge.kind,
-      source: 'inferred',
-      toRepoId: edge.toRepoId,
-    },
+  const target = await findEdgeWriteTarget({
+    fromRepoId,
+    kind: edge.kind,
+    source: 'inferred',
+    toRef: null,
+    toRepoId: edge.toRepoId,
   });
-
-  if (existing) {
-    if (existing.status === 'dismissed') {
-      return 'skipped';
-    }
+  if (target.kind === 'vetoed') {
+    return 'skipped';
+  }
+  if (target.kind === 'existing') {
+    // Refresh the model's confidence/rationale but never its `status`: a human
+    // confirm or dismiss, or a prior auto-promotion, is not ours to revisit.
     await prisma.repoDependency.update({
       data: {
         confidence: edge.confidence,
         detail: { rationale: edge.rationale } as never,
       },
-      where: { id: existing.id },
+      where: { id: target.id },
     });
     return 'skipped';
   }

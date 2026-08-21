@@ -9,6 +9,7 @@ import {
   matchRepoDependency,
   type RepoDependencyCandidate,
 } from '@auto-swe/shared/lib/repoDependencyMatch';
+import { findEdgeWriteTarget } from '../lib/repoDependencyEdgeWrite.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { RepoRef, ScmProvider } from '../lib/scm/types.js';
 
@@ -79,23 +80,14 @@ async function upsertEdge(
   },
   data: { detail: Record<string, unknown>; status: 'active' | 'unresolved' }
 ): Promise<boolean> {
-  const existing = await prisma.repoDependency.findFirst({
-    where: {
-      fromRepoId: where.fromRepoId,
-      kind: where.kind,
-      source: where.source,
-      toRef: where.toRef,
-      toRepoId: where.toRepoId,
-    },
-  });
-
-  if (existing) {
-    if (existing.status === 'dismissed') {
-      return false;
-    }
+  const target = await findEdgeWriteTarget(where);
+  if (target.kind === 'vetoed') {
+    return false;
+  }
+  if (target.kind === 'existing') {
     await prisma.repoDependency.update({
       data: { detail: data.detail as never },
-      where: { id: existing.id },
+      where: { id: target.id },
     });
     return true;
   }

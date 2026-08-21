@@ -68,16 +68,7 @@ describe('runReviewNetwork cross-repo context', () => {
   const BLOCK = '\n\n## Cross-Repo Dependency Context\n- acme/api — kinds: code';
 
   it('appends the block to all three reviewer system prompts', async () => {
-    await runReviewNetwork(
-      CODE_RESULT,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      BLOCK
-    );
+    await runReviewNetwork(CODE_RESULT, { crossRepoContext: BLOCK });
 
     const prompts = instructionsById();
     expect(Object.keys(prompts).sort()).toEqual([
@@ -99,16 +90,13 @@ describe('runReviewNetwork cross-repo context', () => {
   });
 
   it('keeps the block after the success criteria and skill suffixes', async () => {
-    await runReviewNetwork(
-      CODE_RESULT,
-      ['criterion one'],
-      undefined,
-      undefined,
-      'SEC_SKILL',
-      'DOMAIN_SKILL',
-      'PERF_SKILL',
-      BLOCK
-    );
+    await runReviewNetwork(CODE_RESULT, {
+      crossRepoContext: BLOCK,
+      domainSkillSuffix: 'DOMAIN_SKILL',
+      performanceSkillSuffix: 'PERF_SKILL',
+      securitySkillSuffix: 'SEC_SKILL',
+      successCriteria: ['criterion one'],
+    });
 
     const prompts = instructionsById();
     const domain = prompts['domain_logic-reviewer'];
@@ -123,16 +111,9 @@ describe('runReviewNetwork cross-repo context', () => {
   });
 
   it('separates a block that carries no leading blank line', async () => {
-    await runReviewNetwork(
-      CODE_RESULT,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      '## Cross-Repo Dependency Context'
-    );
+    await runReviewNetwork(CODE_RESULT, {
+      crossRepoContext: '## Cross-Repo Dependency Context',
+    });
     for (const prompt of Object.values(instructionsById())) {
       expect(prompt).toContain('\n\n## Cross-Repo Dependency Context');
     }

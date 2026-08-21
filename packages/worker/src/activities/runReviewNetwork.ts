@@ -54,16 +54,15 @@ export async function runReviewNetwork(
   }
 
   try {
-    const result = await runReview(
-      codeResult,
+    const result = await runReview(codeResult, {
+      crossRepoContext: crossRepoContext || undefined,
+      domainSkillSuffix: skillsToPromptSuffix(domainAgent.skills),
+      performanceSkillSuffix: skillsToPromptSuffix(performanceAgent.skills),
+      securitySkillSuffix: skillsToPromptSuffix(securityAgent.skills),
       successCriteria,
+      systemPromptOverride: systemPromptOverride ?? dbPrompt,
       tracer,
-      systemPromptOverride ?? dbPrompt,
-      skillsToPromptSuffix(securityAgent.skills),
-      skillsToPromptSuffix(domainAgent.skills),
-      skillsToPromptSuffix(performanceAgent.skills),
-      crossRepoContext || undefined
-    );
+    });
 
     heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);
 

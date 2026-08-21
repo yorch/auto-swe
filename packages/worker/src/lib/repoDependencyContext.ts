@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { repoLabel } from '@auto-swe/shared/lib/repoDependency';
 import {
   type RepoDependencyContext,
   type RepoDependencyNeighbor,
@@ -47,40 +48,7 @@ export function wantsCrossRepoCheckout(options?: CrossRepoStepOptions): boolean 
   return options?.crossRepoCheckout === true;
 }
 
-/** Longest rendered label. Repo names are unbounded `text` in the DB. */
-const MAX_LABEL_CHARS = 80;
-
-/**
- * Flatten a repo-supplied name into one short, inert line.
- *
- * These labels are interpolated into agent SYSTEM prompts, and org/repo names
- * are operator-supplied with no charset or length limit at the API. Left raw, a
- * repo named with newlines and markdown headings can close the context block and
- * append instructions of its own — a prompt-injection payload that reaches the
- * reviewer with the authority of the system message. Collapsing whitespace kills
- * the line breaks the payload needs, and the cap keeps one repo from crowding out
- * the prompt (paid on every TDD iteration and every reviewer).
- */
-function sanitizeLabel(raw: string): string {
-  const flattened = raw
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: removing them is the point.
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (flattened.length <= MAX_LABEL_CHARS) {
-    return flattened;
-  }
-  return `${flattened.slice(0, MAX_LABEL_CHARS - 1)}…`;
-}
-
-/** `org/repo` when both halves are known, else the connection's display name. */
-export function repoLabel(repo: RepoDependencyNeighbor['repo']): string {
-  const raw =
-    repo.organizationName && repo.repoName
-      ? `${repo.organizationName}/${repo.repoName}`
-      : (repo.repoName ?? repo.name ?? repo.id);
-  return sanitizeLabel(raw);
-}
+export { repoLabel };
 
 /**
  * Highest-confidence neighbours first, then alphabetical — so truncation drops

@@ -68,15 +68,9 @@ describe('repoLabel', () => {
   });
 
   it('falls back through repoName, name, then id', () => {
-    expect(
-      repoLabel({ id: 'i', name: 'n', organizationName: null, repoName: 'r', teamId: 't' })
-    ).toBe('r');
-    expect(
-      repoLabel({ id: 'i', name: 'n', organizationName: null, repoName: null, teamId: 't' })
-    ).toBe('n');
-    expect(
-      repoLabel({ id: 'i', name: null, organizationName: null, repoName: null, teamId: 't' })
-    ).toBe('i');
+    expect(repoLabel({ id: 'i', name: 'n', organizationName: null, repoName: 'r' })).toBe('r');
+    expect(repoLabel({ id: 'i', name: 'n', organizationName: null, repoName: null })).toBe('n');
+    expect(repoLabel({ id: 'i', name: null, organizationName: null, repoName: null })).toBe('i');
   });
 });
 

@@ -544,14 +544,14 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       const subtask =
         (inputs.subtask as Subtask | undefined) ??
         (lookupPath(ctx, 'subtask') as Subtask | undefined);
-      return subtask
-        ? agentActivities.executeImplementation(request, subtask, systemPromptOverride, crossRepo)
-        : agentActivities.executeImplementation(
-            request,
-            undefined,
-            systemPromptOverride,
-            crossRepo
-          );
+      // `subtask` is already `Subtask | undefined`, so both arms of the ternary
+      // this replaced passed the same thing.
+      return agentActivities.executeImplementation(
+        request,
+        subtask,
+        systemPromptOverride,
+        crossRepo
+      );
     },
   ],
   [
