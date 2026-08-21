@@ -107,6 +107,94 @@ async function canViewRepo(
 export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
+  // GET /dependencies/unresolved — onboarding suggestions.
+  //
+  // A detector records a dependency it could not resolve to a registered repo as
+  // an `unresolved` row carrying the raw ref. Grouping those by ref answers "which
+  // repo should we onboard next, and who is waiting on it". Declared before the
+  // `/:id/...` routes so the literal path is unambiguous.
+  app.get(
+    '/dependencies/unresolved',
+    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+    async (request) => {
+      const user = requireUser(request);
+      const rows = await fastify.prisma.repoDependency.findMany({
+        orderBy: { detectedAt: 'desc' },
+        select: {
+          confidence: true,
+          fromRepo: { select: NEIGHBOR_SELECT },
+          id: true,
+          kind: true,
+          source: true,
+          toRef: true,
+        },
+        // Suggestions are only actionable to someone who can see the repo that
+        // raised them, so non-admins see their own teams' rows only.
+        take: 500,
+        where: {
+          status: 'unresolved',
+          toRef: { not: null },
+          ...(user.role !== 'ADMIN' && {
+            fromRepo: { team: { memberships: { some: { userId: user.sub } } } },
+          }),
+        },
+      });
+
+      // Returned flat, one row per unresolved edge: the client component owns the
+      // grouping by `toRef` (and is unit-tested on it), so duplicating that here
+      // would be two implementations of the same rule.
+      return { data: rows };
+    }
+  );
+
+  // POST /dependencies/scan — run the detector sweep now, out of schedule band.
+  // Restricted to ADMIN: the sweep spans every team's repos, not just the
+  // caller's, and writes edges across the whole deployment.
+  app.post(
+    '/dependencies/scan',
+    { onRequest: requireAuth({ requiredRole: 'ADMIN' }) },
+    async (_request, reply) => {
+      try {
+        await fastify.temporal.triggerRepoDependencyScanNow();
+        return { triggered: true };
+      } catch {
+        // The handle only exists once the schedule has been synced.
+        return reply.status(503).send({
+          error: {
+            code: 'SCHEDULE_UNAVAILABLE',
+            message: 'The repo dependency scan schedule is not registered yet.',
+          },
+        });
+      }
+    }
+  );
+
+  // POST /:id/dependencies/infer — ask the inference agent for likely edges.
+  //
+  // Costs a model call, so it is per-repo and opt-in rather than part of the free
+  // scheduled sweep. Findings land as `proposed` (or auto-promoted above the
+  // configured confidence threshold), never straight into agent context.
+  app.post(
+    '/:id/dependencies/infer',
+    { onRequest: requireAuth({ requiredRole: 'LEAD' }), schema: { params: RepoParams } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await loadRepo(fastify.prisma, request.params.id);
+      if (!repo || repo.type !== 'git_repo') {
+        return reply.status(404).send({
+          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
+        });
+      }
+      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: 'Requires LEAD on this repository’s team' },
+        });
+      }
+      await fastify.temporal.startRepoDependencyInference(`repo-dep-infer-${repo.id}`, repo.id);
+      return reply.status(202).send({ started: true });
+    }
+  );
+
   // GET /:id/dependencies — management view: this repo's outgoing edges
   // (depends on) and incoming edges (depended on by), neighbours hydrated and
   // filtered to the caller's org.

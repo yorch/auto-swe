@@ -32,7 +32,39 @@ export interface CreateDependencyBody {
   kind?: string;
 }
 
+/** One unresolved detector finding — a dependency on a repo nobody has onboarded. */
+export interface UnresolvedSuggestion {
+  id: string;
+  toRef: string;
+  kind: string;
+  source: string;
+  confidence: number;
+  fromRepo: DepNeighbor;
+}
+
 const key = (repoId: string) => ['repo-dependencies', repoId];
+const suggestionsKey = ['repo-dependency-suggestions'];
+
+/** Org-wide unresolved suggestions, for the "repos worth onboarding" surface. */
+export function useRepoDependencySuggestions(enabled = true) {
+  return useQuery({
+    enabled,
+    queryFn: () =>
+      api
+        .get<{ data: UnresolvedSuggestion[] }>('/api/v1/repositories/dependencies/unresolved')
+        .then((r) => r.data),
+    queryKey: suggestionsKey,
+  });
+}
+
+/** Kick the detector sweep out of schedule band (ADMIN only, server-enforced). */
+export function useTriggerRepoDependencyScan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post('/api/v1/repositories/dependencies/scan', {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: suggestionsKey }),
+  });
+}
 
 export function useRepoDependencies(repoId: string | null, enabled = true) {
   return useQuery({

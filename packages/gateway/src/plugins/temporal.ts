@@ -22,6 +22,7 @@ import fp from 'fastify-plugin';
 export const CONSOLIDATION_SCHEDULE_ID = 'auto-swe-lesson-consolidation';
 export const EVAL_SCHEDULE_ID = 'auto-swe-eval-regression';
 export const REVALIDATION_SCHEDULE_ID = 'auto-swe-eval-revalidation';
+export const REPO_DEPENDENCY_SCAN_SCHEDULE_ID = 'auto-swe-repo-dependency-scan';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -134,6 +135,24 @@ export interface RevalidationScheduleStatus {
   lastRunAt: string | null;
 }
 
+/**
+ * Repo dependency graph — the periodic re-scan that catches manifest drift and
+ * repos newly onboarded since the last sweep (an unresolved suggestion becomes a
+ * real edge once its repo exists). The workflow takes no arguments: it fans out
+ * over every active git_repo itself.
+ */
+export interface RepoDependencyScanScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+export interface RepoDependencyScanScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     temporal: {
@@ -172,6 +191,7 @@ declare module 'fastify' {
         input: ChannelAssistantTurnInput
       ) => Promise<void>;
       startReembedMemory: (workflowId: string, memoryId: string) => Promise<void>;
+      startRepoDependencyInference: (workflowId: string, repoId: string) => Promise<void>;
       startEvalRunWorkflow: (
         workflowId: string,
         input: {
@@ -196,6 +216,9 @@ declare module 'fastify' {
       syncRevalidationSchedule: (config: RevalidationScheduleConfig) => Promise<void>;
       getRevalidationScheduleStatus: () => Promise<RevalidationScheduleStatus>;
       triggerRevalidationNow: () => Promise<void>;
+      syncRepoDependencyScanSchedule: (config: RepoDependencyScanScheduleConfig) => Promise<void>;
+      getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
+      triggerRepoDependencyScanNow: () => Promise<void>;
       syncWorkRequestSchedule: (input: WorkRequestScheduleInput) => Promise<void>;
       deleteWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
       triggerWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
@@ -233,6 +256,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledRevalidationWorkflow',
+    };
+  }
+
+  // Repo-dependency re-scan action. The workflow discovers its own repo set, so
+  // the schedule carries no arguments.
+  function makeRepoDependencyScanScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledRepoDependencyScanWorkflow',
     };
   }
 
@@ -444,6 +478,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       }
     },
 
+    async getRepoDependencyScanScheduleStatus(): Promise<RepoDependencyScanScheduleStatus> {
+      try {
+        const handle = schedules.getHandle(REPO_DEPENDENCY_SCAN_SCHEDULE_ID);
+        const desc = await handle.describe();
+        const nextTimes = desc.info.nextActionTimes;
+        const lastAction = desc.info.recentActions.at(-1);
+        return {
+          exists: true,
+          lastRunAt: lastAction ? lastAction.takenAt.toISOString() : null,
+          nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
+          paused: desc.state.paused,
+        };
+      } catch {
+        return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
+      }
+    },
+
     async getRevalidationScheduleStatus(): Promise<RevalidationScheduleStatus> {
       try {
         const handle = schedules.getHandle(REVALIDATION_SCHEDULE_ID);
@@ -624,6 +675,16 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
+    // One-shot LLM inference for a single repo. The workflow id is caller-supplied
+    // and repo-derived, so Temporal's dedup collapses a double-click into one run.
+    async startRepoDependencyInference(workflowId: string, repoId: string): Promise<void> {
+      await client.workflow.start('InferRepoDependenciesWorkflow', {
+        args: [{ repoId }],
+        taskQueue: 'engineering-workflow',
+        workflowId,
+      });
+    },
+
     async startRunnableWorkflow(
       workflowId: string,
       input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
@@ -696,6 +757,16 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
+    // ── Repo-dependency re-scan schedule (one system-wide Temporal Schedule) ──
+
+    async syncRepoDependencyScanSchedule(config: RepoDependencyScanScheduleConfig): Promise<void> {
+      await upsertSchedule(REPO_DEPENDENCY_SCAN_SCHEDULE_ID, {
+        action: makeRepoDependencyScanScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
     // ── Re-validation schedule (one system-wide Temporal Schedule) ──
 
     async syncRevalidationSchedule(config: RevalidationScheduleConfig): Promise<void> {
@@ -724,6 +795,13 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
 
     async triggerEvalNow(): Promise<void> {
       const handle = schedules.getHandle(EVAL_SCHEDULE_ID);
+      await handle.trigger(ScheduleOverlapPolicy.SKIP);
+    },
+
+    // SKIP, not ALLOW_ALL: a scan sweeps every repo and writes edges, so
+    // overlapping fires would race each other's find-then-write on the same rows.
+    async triggerRepoDependencyScanNow(): Promise<void> {
+      const handle = schedules.getHandle(REPO_DEPENDENCY_SCAN_SCHEDULE_ID);
       await handle.trigger(ScheduleOverlapPolicy.SKIP);
     },
 

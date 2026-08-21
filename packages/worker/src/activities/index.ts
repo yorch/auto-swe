@@ -86,6 +86,12 @@ export {
   resolveMergeConflict,
   subtaskBranchName,
 } from './decomposition.js';
+// Repo dependency graph — deterministic manifest/git-signal detection
+export type {
+  DetectRepoDependenciesInput,
+  DetectRepoDependenciesResult,
+} from './detectRepoDependencies.js';
+export { detectRepoDependencies } from './detectRepoDependencies.js';
 export { runEvalHarnessActivity } from './evalHarness.js';
 export { revalidateDatasetActivity } from './evalRevalidate.js';
 export { executeImplementation } from './executeImplementation.js';
@@ -108,6 +114,14 @@ export type { DatasetForRevalidation } from './getDatasetsForRevalidation.js';
 export { getDatasetsForRevalidation } from './getDatasetsForRevalidation.js';
 export type { RepoForConsolidation } from './getReposForConsolidation.js';
 export { getReposForConsolidation } from './getReposForConsolidation.js';
+export type { RepoForDependencyScan } from './getReposForDependencyScan.js';
+export { getReposForDependencyScan } from './getReposForDependencyScan.js';
+// Repo dependency graph — LLM inference of likely edges (proposed, not active)
+export type {
+  InferRepoDependenciesInput,
+  InferRepoDependenciesResult,
+} from './inferRepoDependencies.js';
+export { inferRepoDependencies } from './inferRepoDependencies.js';
 export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';
 // P2/WS4 — declarative mcp node (single MCP tool call)
 export { mcpCallTool } from './mcpCallTool.js';

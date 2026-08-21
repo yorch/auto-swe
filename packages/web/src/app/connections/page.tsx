@@ -6,10 +6,15 @@ import type { ConnectionPrefill } from '@/components/repositories/ConnectionForm
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
+import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import {
+  useRepoDependencySuggestions,
+  useTriggerRepoDependencyScan,
+} from '@/hooks/useRepoDependencies';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useRepositories } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
@@ -47,6 +52,8 @@ function ConnectionTypeBadge({ type }: { type: string }) {
 
 export default function ConnectionsPage() {
   const { data: repos, isLoading } = useRepositories();
+  const suggestions = useRepoDependencySuggestions();
+  const scan = useTriggerRepoDependencyScan();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const canManage = role === 'ADMIN' || role === 'LEAD';
   const [mode, setMode] = useState<ModalMode>(null);
@@ -146,6 +153,28 @@ export default function ConnectionsPage() {
           </p>
         )}
       </div>
+
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold text-sm">Suggested repositories to onboard</h2>
+          {role === 'ADMIN' && (
+            <Button
+              disabled={scan.isPending}
+              onClick={() => scan.mutate()}
+              size="sm"
+              variant="secondary"
+            >
+              {scan.isPending ? 'Scanning…' : 'Re-scan dependencies'}
+            </Button>
+          )}
+        </div>
+        <RepoDependencySuggestions
+          error={suggestions.error}
+          isError={suggestions.isError}
+          isLoading={suggestions.isLoading}
+          suggestions={suggestions.data}
+        />
+      </section>
 
       <ImportFromGitHubModal
         onClose={() =>
