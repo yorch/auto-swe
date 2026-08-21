@@ -165,6 +165,21 @@ export const SETTING_DEFINITIONS = {
     unit: '0–1',
   }),
 
+  // ── Repo dependency graph ──────────────────────────────────────────────────
+  'repoDependency.autoPromoteThreshold': defineSetting({
+    defaultValue: 0.9,
+    description:
+      'Confidence at or above which an LLM-inferred repo-dependency edge is promoted straight to active instead of waiting for a human confirm.',
+    group: 'repoDependency',
+    label: 'Auto-promote confidence threshold',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: ratio,
+    unit: '0–1',
+  }),
+
   // ── Workflow interpreter ───────────────────────────────────────────────────
   // These bound how a single run may expand. They are run-pinned: the
   // interpreter runs inside the Temporal V8 isolate and cannot read the

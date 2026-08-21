@@ -21,7 +21,13 @@ export type OverridableScope = Exclude<SettingScope, 'GLOBAL'>;
 
 /// Groups exist so the admin UI can render one form per subsystem and so a
 /// permission grant can name a whole area (`channel.*`) instead of every key.
-export const SETTING_GROUPS = ['channel', 'memory', 'workflow', 'workspace'] as const;
+export const SETTING_GROUPS = [
+  'channel',
+  'memory',
+  'repoDependency',
+  'workflow',
+  'workspace',
+] as const;
 export type SettingGroup = (typeof SETTING_GROUPS)[number];
 
 /// One configurable knob, declared once and used everywhere: the definition is
