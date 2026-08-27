@@ -31,8 +31,44 @@ export interface ChannelAssistantTurnInput {
   followup?: boolean;
 }
 
-export interface RepoWorkRequest {
+/**
+ * Domain-agnostic request passed into a workflow run. This is the contract
+ * between the gateway submission surface and the worker activities; concrete
+ * shapes like {@link RepoWorkRequest} extend it for their domain.
+ */
+export interface RunRequest {
   workRequestId: string;
+  /**
+   * Target `Connection` id, or null when the run is not scoped to one.
+   * Generic runs that only use agent/shell/container/API steps set this to null.
+   */
+  connectionId?: string | null;
+  /**
+   * Structured request payload for generic workflows. The template's input
+   * schema validates this at submission time; activities receive it as an
+   * object. SWE runs keep their legacy scalar fields and leave this unset.
+   */
+  payload?: unknown;
+  budgetTier?: BudgetTier;
+  // Phase 2+ fields
+  contextSnapshotId?: string;
+  planOverride?: string;
+  // Phase 3+ fields
+  slackChannel?: string;
+  parentWorkflowId?: string;
+  /// Channel assistant (Phase A): SlackChannel.id (our row) the run originated
+  /// from. When set, the run's `agent` nodes resolve the CHANNEL config tier
+  /// (per-channel tools/MCP/model) and the run's cost accrues to that channel's
+  /// monthly budget. Only set for channel-launched task runs.
+  channelId?: string;
+  /// Evals P2 canary routing: when set, the named agent key is pinned to this
+  /// candidate version for the life of the run. Set by the gateway work-request
+  /// submit path when canary config is enabled and the run hashes into the arm.
+  canaryAgentKey?: string;
+  canaryVersion?: number;
+}
+
+export interface RepoWorkRequest extends RunRequest {
   /**
    * Target `Connection` id, or null when the run is not scoped to one.
    *
@@ -52,23 +88,6 @@ export interface RepoWorkRequest {
   externalTicketId: string;
   description: string;
   requestPayload: string;
-  budgetTier?: BudgetTier;
-  // Phase 2+ fields
-  contextSnapshotId?: string;
-  planOverride?: string;
-  // Phase 3+ fields
-  slackChannel?: string;
-  parentWorkflowId?: string;
-  /// Channel assistant (Phase A): SlackChannel.id (our row) the run originated
-  /// from. When set, the run's `agent` nodes resolve the CHANNEL config tier
-  /// (per-channel tools/MCP/model) and the run's cost accrues to that channel's
-  /// monthly budget. Only set for channel-launched task runs.
-  channelId?: string;
-  /// Evals P2 canary routing: when set, the named agent key is pinned to this
-  /// candidate version for the life of the run. Set by the gateway work-request
-  /// submit path when canary config is enabled and the run hashes into the arm.
-  canaryAgentKey?: string;
-  canaryVersion?: number;
 }
 
 export interface CodeSecurityFinding {

@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import type { RepoWorkRequest, RunRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
@@ -22,8 +22,22 @@ const ContextValidationSchema = z.object({
  * and the graceful-degradation behavior (an LLM failure yields empty criteria
  * so the workflow can still proceed).
  */
+export function buildValidationUserMessage(request: RunRequest): string {
+  // Generic workflows supply a structured payload; SWE workflows keep the
+  // legacy scalar fields. Prefer the payload when present.
+  if (request.payload != null) {
+    return JSON.stringify({ payload: request.payload });
+  }
+  const legacy = request as RepoWorkRequest;
+  return JSON.stringify({
+    description: legacy.description,
+    requestPayload: legacy.requestPayload,
+    title: legacy.externalTicketId,
+  });
+}
+
 export async function validateContext(
-  workRequest: RepoWorkRequest,
+  workRequest: RunRequest,
   systemPromptOverride?: string
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   heartbeat('extracting success criteria');
@@ -38,11 +52,7 @@ export async function validateContext(
     ctx
   );
 
-  const userMessage = JSON.stringify({
-    description: workRequest.description,
-    requestPayload: workRequest.requestPayload,
-    title: workRequest.externalTicketId,
-  });
+  const userMessage = buildValidationUserMessage(workRequest);
 
   let successCriteria: string[] = [];
   try {
