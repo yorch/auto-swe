@@ -1,0 +1,106 @@
+import { z } from 'zod';
+
+/**
+ * Runtime registry of supported connection types.
+ *
+ * The discriminator lives in `Connection.type` as a plain string so new
+ * connectors can be added without a schema migration. This module provides
+ * the typed union, metadata, and validation helpers that gateway and worker
+ * code use to reason about connections consistently.
+ */
+
+export const CONNECTION_TYPES = [
+  'git_repo',
+  'notion',
+  'zendesk',
+  'hubspot',
+  'slack_workspace',
+  'http_api',
+  'mcp',
+] as const;
+
+export type ConnectionType = (typeof CONNECTION_TYPES)[number];
+
+export interface ConnectionTypeMetadata {
+  key: ConnectionType;
+  label: string;
+  description: string;
+  /** Whether the connection can be the target workspace of a workflow run. */
+  isWorkspaceTarget: boolean;
+  /** Whether the connection stores type-specific configuration in `Connection.config`. */
+  supportsConfig: boolean;
+}
+
+const METADATA: Record<ConnectionType, ConnectionTypeMetadata> = {
+  git_repo: {
+    description: 'A git repository hosted on GitHub or another Git provider.',
+    isWorkspaceTarget: true,
+    key: 'git_repo',
+    label: 'Git repository',
+    supportsConfig: false,
+  },
+  http_api: {
+    description: 'Generic HTTP API endpoint with configurable headers and auth.',
+    isWorkspaceTarget: false,
+    key: 'http_api',
+    label: 'HTTP API',
+    supportsConfig: true,
+  },
+  hubspot: {
+    description: 'HubSpot CRM for contact, ticket, and object operations.',
+    isWorkspaceTarget: true,
+    key: 'hubspot',
+    label: 'HubSpot',
+    supportsConfig: true,
+  },
+  mcp: {
+    description: 'Model Context Protocol server exposing tools to agents.',
+    isWorkspaceTarget: false,
+    key: 'mcp',
+    label: 'MCP server',
+    supportsConfig: true,
+  },
+  notion: {
+    description: 'Notion workspace connection for reading and writing pages and databases.',
+    isWorkspaceTarget: true,
+    key: 'notion',
+    label: 'Notion',
+    supportsConfig: true,
+  },
+  slack_workspace: {
+    description: 'Slack workspace-level connection for posting messages and reading channels.',
+    isWorkspaceTarget: false,
+    key: 'slack_workspace',
+    label: 'Slack workspace',
+    supportsConfig: true,
+  },
+  zendesk: {
+    description: 'Zendesk Support instance for ticket and comment operations.',
+    isWorkspaceTarget: true,
+    key: 'zendesk',
+    label: 'Zendesk',
+    supportsConfig: true,
+  },
+};
+
+export const ConnectionTypeSchema = z.enum(CONNECTION_TYPES);
+
+export function isConnectionType(value: unknown): value is ConnectionType {
+  return typeof value === 'string' && (CONNECTION_TYPES as readonly string[]).includes(value);
+}
+
+export function getConnectionTypeMetadata(type: ConnectionType): ConnectionTypeMetadata {
+  return METADATA[type];
+}
+
+export function listConnectionTypes(): ConnectionTypeMetadata[] {
+  return CONNECTION_TYPES.map((key) => METADATA[key]);
+}
+
+export function getWorkspaceTargetTypes(): ConnectionType[] {
+  return CONNECTION_TYPES.filter((key) => METADATA[key].isWorkspaceTarget);
+}
+
+export function isWorkspaceTargetType(type: ConnectionType): boolean {
+  return METADATA[type]?.isWorkspaceTarget ?? false;
+}
