@@ -109,6 +109,53 @@ export async function searchMemoryItemsByVector(opts: {
 }
 
 /**
+ * Entity-scoped cosine-similarity search over `memory_items`. This is the generic
+ * counterpart to {@link searchMemoryItemsByVector}: instead of hardcoding a
+ * `repo_id` or `channel_id` scope column, callers pass an `entityType`/
+ * `entityId` pair that the platform uses for cross-domain memory retrieval.
+ *
+ * `entityType` is a hardcoded literal from {@link MemoryEntityType} and is
+ * interpolated into the SQL as a column filter (not a bind parameter). It is
+ * validated against the allowlist before execution.
+ */
+export async function searchMemoryItemsByEntity(opts: {
+  queryText: string;
+  entityType: MemoryEntityType;
+  entityId: string;
+  selectColumns: string[];
+  limit: number;
+  similarityThreshold: number;
+  precomputed?: QueryEmbedding;
+}): Promise<Record<string, unknown>[]> {
+  const { embedding: queryEmbedding, spec: embeddingSpec } =
+    opts.precomputed ?? (await generateEmbeddingWithSpec(opts.queryText));
+
+  const projection = [...opts.selectColumns, '1 - (embedding <=> $1::vector) AS similarity'].join(
+    ',\n      '
+  );
+
+  return prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+    `SELECT
+      ${projection}
+    FROM memory_items
+    WHERE entity_type = $2
+      AND entity_id = $3
+      AND embedding IS NOT NULL
+      AND consolidated_at IS NULL
+      AND (embedding_model IS NULL OR embedding_model = $6)
+      AND 1 - (embedding <=> $1::vector) >= $4
+    ORDER BY embedding <=> $1::vector ASC
+    LIMIT $5`,
+    JSON.stringify(queryEmbedding),
+    opts.entityType,
+    opts.entityId,
+    opts.similarityThreshold,
+    opts.limit,
+    embeddingSpec
+  );
+}
+
+/**
  * Insert one `memory_items` row with a vector embedding for the `lessonSummary`
  * text, RETURNING its id. Every scope column (`repo_id`, `channel_id`, `team_id`,
  * `org_id`, …) is nullable, so a single statement serves both the repo-scoped
@@ -119,6 +166,8 @@ export async function searchMemoryItemsByVector(opts: {
  * caller omits it; `metadata` defaults to `{}` and `skillsActive` to `[]`,
  * mirroring the two original inserts byte-for-byte.
  */
+export type MemoryEntityType = 'connection' | 'channel' | 'document' | 'project' | 'record';
+
 export async function insertMemoryItem(input: {
   repoId?: string | null;
   channelId?: string | null;
@@ -135,18 +184,28 @@ export async function insertMemoryItem(input: {
   failureType?: string | null;
   metadata?: Record<string, unknown> | null;
   skillsActive?: string[];
+  entityType?: MemoryEntityType | null;
+  entityId?: string | null;
 }): Promise<string> {
   const { embedding, spec } = await generateEmbeddingWithSpec(input.lessonSummary);
+
+  // For callers that have not yet adopted explicit entity scoping, derive the
+  // entity pair from the legacy repo/channel columns so retrieval by entity
+  // works for existing flows without forcing every call site to change.
+  const entityType =
+    input.entityType ??
+    (input.repoId != null ? 'connection' : input.channelId != null ? 'channel' : null);
+  const entityId = input.entityId ?? input.repoId ?? input.channelId ?? null;
 
   const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
     `INSERT INTO memory_items
        (id, workflow_id, repo_id, channel_id, team_id, org_id, rationale, lesson_summary,
         embedding, embedding_model, failure_type, scope, metadata, skills_active,
-        workflow_run_id, agent_key, model, cost_usd, created_at)
+        workflow_run_id, agent_key, model, cost_usd, entity_type, entity_id, created_at)
      VALUES
        (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7,
         $8::vector, $9, $10, $11, $12::jsonb, $13::text[],
-        $14::uuid, $15, $16, $17, now())
+        $14::uuid, $15, $16, $17, $18, $19, now())
      RETURNING id`,
     input.workflowId ?? null,
     input.repoId ?? null,
@@ -164,7 +223,9 @@ export async function insertMemoryItem(input: {
     input.workflowRunId ?? null,
     input.agentKey ?? null,
     input.model ?? null,
-    input.costUsd ?? null
+    input.costUsd ?? null,
+    entityType,
+    entityId
   );
 
   return rows[0]?.id ?? '';

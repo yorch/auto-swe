@@ -269,6 +269,8 @@ export async function writeChannelMemory(input: {
   return insertMemoryItem({
     agentKey: 'channelAssistant',
     channelId: input.channelId,
+    entityId: input.channelId,
+    entityType: 'channel',
     lessonSummary: input.summary,
     metadata,
     orgId: input.orgId,

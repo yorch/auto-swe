@@ -89,6 +89,8 @@ CREATE TABLE "memory_items" (
     "embedding" vector(1536),
     "embedding_model" TEXT,
     "failure_type" TEXT,
+    "entity_type" TEXT,
+    "entity_id" TEXT,
     "metadata" JSONB,
     "skills_active" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1122,6 +1124,9 @@ CREATE INDEX "memory_items_team_id_consolidated_at_idx" ON "memory_items"("team_
 
 -- CreateIndex
 CREATE INDEX "memory_items_org_id_consolidated_at_idx" ON "memory_items"("org_id", "consolidated_at");
+
+-- CreateIndex
+CREATE INDEX "memory_items_entity_type_entity_id_consolidated_at_idx" ON "memory_items"("entity_type", "entity_id", "consolidated_at");
 
 -- CreateIndex
 CREATE INDEX "memory_items_workflow_id_idx" ON "memory_items"("workflow_id");

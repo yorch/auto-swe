@@ -45,6 +45,8 @@ async function writeMemoryItemRow(input: {
   return insertMemoryItem({
     agentKey: input.agentKey,
     costUsd: input.costUsd,
+    entityId: input.repoId,
+    entityType: 'connection',
     failureType: input.failureType,
     lessonSummary: input.lessonSummary,
     metadata: input.metadata,

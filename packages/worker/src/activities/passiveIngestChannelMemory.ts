@@ -235,6 +235,8 @@ export async function passiveIngestChannelMemory(
           await insertMemoryItem({
             agentKey: 'channelAssistant',
             channelId,
+            entityId: channelId,
+            entityType: 'channel',
             lessonSummary: fact.summary,
             metadata: { source: 'passive-ingest' },
             orgId: channel.orgId,

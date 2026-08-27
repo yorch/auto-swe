@@ -166,6 +166,13 @@ model MemoryItem {
   /// of whatever model was configured at the time (single-model deployments).
   embeddingModel String?                      @map("embedding_model")
   failureType    String?                      @map("failure_type")
+  /// Generic entity scoping (P3). `entityType` names the kind of object this
+  /// memory is about (e.g. 'connection', 'channel', 'document', 'project');
+  /// `entityId` is its id in the same namespace. Replaces repo-centric-only
+  /// retrieval while the legacy `repoId`/`channelId` columns remain populated
+  /// for backwards compatibility with existing callers.
+  entityType     String?                      @map("entity_type")
+  entityId       String?                      @map("entity_id")
   metadata       Json?
   skillsActive   String[]                     @default([]) @map("skills_active")
   createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz
@@ -178,6 +185,7 @@ model MemoryItem {
   @@index([channelId, consolidatedAt])
   @@index([teamId, consolidatedAt])
   @@index([orgId, consolidatedAt])
+  @@index([entityType, entityId, consolidatedAt])
   @@index([workflowId])
   @@index([workflowRunId])
   @@map("memory_items")
