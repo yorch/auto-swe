@@ -87,6 +87,9 @@ packages/
 | `src/lib/crypto.ts` | AES-256-GCM helpers for encrypted credential columns |
 | `src/lib/systemConfig.ts` | `resolveXxxConfig()` resolvers for every singleton config table |
 | `src/lib/billing.ts` | `currentYearMonth()` — the month-bucket key shared by the worker writer and gateway reader |
+| `src/lib/connectionTypes.ts` | Typed registry of supported `Connection.type` values and their metadata |
+| `src/lib/outcomePublishers.ts` | Typed registry of outcome publishers (`openPullRequest`, `updateRecord`, `sendMessage`, etc.) |
+| `src/lib/workspaceProviders.ts` | Typed registry of workspace provider types (`git_repo`, `document`, `record`, `api_only`) |
 | `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — the node-type union |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects go through `Dispatcher` |
 | `src/workflow/expr.ts` | Expression evaluator for `cond` predicates (jsonpath + comparison, no JS sandbox) |
@@ -438,12 +441,12 @@ erDiagram
 | Identity | `User`, `Account`, `Session`, `Verification` | better-auth sessions, PATs, the JWT bridge; `User.preferences` JSONB holds per-user UI settings |
 | Auth tokens | `PersonalAccessToken` | `ats_*` bearer tokens; only the hash is stored |
 | Tenancy & RBAC | `Organization`, `Team`, `TeamMembership`, `OrganizationMembership` | `Organization` is the top-level tenant; every `Team` nests under one. `OrgRole` is `ORG_ADMIN` / `ORG_MEMBER` |
-| Connections | `Connection` | Typed binding to an external system. `type='git_repo'` carries repo coordinates, default branch, and gate commands; `type='mcp'` carries a server URL in `config`. Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
-| Work | `RunInput`, `ContextSnapshot` | `RunInput.payload` is validated against the template's `inputSchema`; `ContextSnapshot` is an SWE satellite keyed by run |
+| Connections | `Connection` | Typed binding to an external system. `type` is validated against the runtime registry in `@auto-swe/shared/lib/connectionTypes` (`git_repo`, `notion`, `zendesk`, `hubspot`, `slack_workspace`, `http_api`, `mcp`). `type='git_repo'` carries repo coordinates, default branch, and gate commands; other types store type-specific settings in `config`. Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
+| Work | `RunInput`, `ContextSnapshot` | `RunInput.payload` is the generic request body, validated against the template's `inputSchema`. The in-memory `RunRequest` type is the base for domain-specific requests such as `RepoWorkRequest`; `ContextSnapshot` is an SWE satellite keyed by run |
 | Execution state | `ActiveWorkflow`, `PullRequest` | Temporal ↔ DB state sync |
 | Workflow engine | `WorkflowTemplate`, `WorkflowTemplateVersion`, `WorkflowRun`, `WorkflowStep`, `WorkflowArtifact`, `WorkflowShellAudit` | Versioning, run tracking, artifact storage, shell audit |
 | Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows |
-| Memory | `MemoryItem` | pgvector semantic memory, 1536-dim with an HNSW index; `scope` partitions domains |
+| Memory | `MemoryItem` | pgvector semantic memory, 1536-dim with an HNSW index; `scope` partitions domains and `entityType`/`entityId` support generic entity scoping beyond repos and channels |
 | Agent config | `Agent`, `AgentSkillRef`, `Skill` | Versioned agents scoped GLOBAL / ORGANIZATION / TEAM / CHANNEL / WORKFLOW_TEMPLATE, joined to skills via `AgentSkillRef` |
 | Model config | `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | Encrypted keys, embedding singleton, config audit trail |
 | System config | `GitHubConfig`, `SlackConfig`, `StorageConfig`, `WorkflowDefaults`, `GoogleOAuthConfig`, `OktaOAuthConfig`, `IssueTrackerConfig`, `KnowledgeBaseConfig`, `FigmaConfig` | Singletons (`id='default'`) with encrypted secrets and env-var fallback |
@@ -675,3 +678,8 @@ Current constraints of the system as built. Deliberate product boundaries are in
   clean either way. Replay also only guards paths a *recorded* history walked, so a new node type
   needs a new fixture; `runnable.replay.test.ts` asserts the fixture list explicitly so losing one
   fails loudly rather than quietly narrowing the guard.
+- **Generic platform abstractions are catalogued but not fully wired.** `Connection.type`,
+  `RunRequest`, `MemoryItem.entityType`/`entityId`, workspace providers, and outcome publishers are
+  typed and registered, but runtime dispatch still assumes a git repository and a pull request for
+  the workspace and publish stages. Non-SWE providers need their own activity bindings before
+  templates can use them end-to-end.
