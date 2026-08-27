@@ -37,6 +37,15 @@ export type {
   SearchOptions,
   TrackerSyncEvent,
 } from './lib/integrations/types.js';
+export {
+  getOutcomePublisherMetadata,
+  isOutcomePublisherType,
+  listOutcomePublishers,
+  OUTCOME_PUBLISHER_TYPES,
+  type OutcomePublisherMetadata,
+  type OutcomePublisherType,
+  OutcomePublisherTypeSchema,
+} from './lib/outcomePublishers.js';
 export type {
   ResolvedGitHubConfig,
   ResolvedGoogleOAuthConfig,
@@ -58,5 +67,14 @@ export {
   resolveWorkflowDefaults,
 } from './lib/systemConfig.js';
 export { generateBranchName, generateWorkflowId } from './lib/workflowId.js';
+export {
+  getWorkspaceProviderMetadata,
+  isWorkspaceProviderType,
+  listWorkspaceProviderTypes,
+  WORKSPACE_PROVIDER_TYPES,
+  type WorkspaceProviderMetadata,
+  type WorkspaceProviderType,
+  WorkspaceProviderTypeSchema,
+} from './lib/workspaceProviders.js';
 export type * from './types/api.js';
 export type * from './types/workflow.js';

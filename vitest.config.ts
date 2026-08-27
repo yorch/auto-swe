@@ -80,6 +80,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionTypes.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/outcomePublishers',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/outcomePublishers.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/workspaceProviders',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/workspaceProviders.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/manifestParsers',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/manifestParsers.ts'),
       },
