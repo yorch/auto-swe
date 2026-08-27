@@ -1,3 +1,6 @@
+// Import the real schema from the subpath so it is not intercepted by the
+// barrel mock below (the subpath has no PrismaClient dependency).
+import { ConnectionTypeSchema } from '@auto-swe/shared/lib/connectionTypes';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -5,7 +8,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // The route file imports `canManageTeamRepos` from repositories.ts, which pulls
 // `Prisma.DbNull` from the barrel; mock the barrel to avoid instantiating the
 // real PrismaClient singleton (needs DATABASE_URL at import).
-vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: { __sentinel: 'DbNull' } } }));
+const DB_NULL = vi.hoisted(() => ({ __sentinel: 'DbNull' }));
+vi.mock('@auto-swe/shared', () => ({
+  ConnectionTypeSchema,
+  Prisma: { DbNull: DB_NULL },
+}));
 
 import { repoDependencyRoutes } from './repoDependencies.js';
 
