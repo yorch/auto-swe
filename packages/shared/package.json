@@ -25,6 +25,7 @@
     "./lib/regexSafety": "./dist/lib/regexSafety.js",
     "./lib/regexExec": "./dist/lib/regexExec.js",
     "./lib/connectionGuards": "./dist/lib/connectionGuards.js",
+    "./lib/connectionTypes": "./dist/lib/connectionTypes.js",
     "./lib/manifestParsers": "./dist/lib/manifestParsers.js",
     "./lib/repoDependency": "./dist/lib/repoDependency.js",
     "./lib/repoDependencyMatch": "./dist/lib/repoDependencyMatch.js",

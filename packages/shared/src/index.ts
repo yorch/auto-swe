@@ -3,6 +3,17 @@ export { PrismaClient, prisma } from './db.js';
 export { Prisma } from './generated/prisma/client.js';
 export { ConfigAuditAction, ConfigScope, Role } from './generated/prisma/enums.js';
 export {
+  CONNECTION_TYPES,
+  type ConnectionType,
+  type ConnectionTypeMetadata,
+  ConnectionTypeSchema,
+  getConnectionTypeMetadata,
+  getWorkspaceTargetTypes,
+  isConnectionType,
+  isWorkspaceTargetType,
+  listConnectionTypes,
+} from './lib/connectionTypes.js';
+export {
   assertCredentialScope,
   type CredentialScope,
   isCredentialScope,

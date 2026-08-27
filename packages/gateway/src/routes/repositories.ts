@@ -1,4 +1,4 @@
-import { Prisma } from '@auto-swe/shared';
+import { ConnectionTypeSchema, Prisma } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -22,7 +22,7 @@ const CreateRepoSchema = z.object({
   organizationName: z.string().min(1).optional(),
   repoName: z.string().min(1).optional(),
   teamId: z.string().uuid(),
-  type: z.string().default('git_repo'),
+  type: ConnectionTypeSchema.default('git_repo'),
 });
 
 const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 });

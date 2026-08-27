@@ -76,6 +76,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionGuards.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/connectionTypes',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionTypes.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/manifestParsers',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/manifestParsers.ts'),
       },

@@ -1,3 +1,6 @@
+// Import the real schema from the subpath so it is not intercepted by the
+// barrel mock below (the subpath has no PrismaClient dependency).
+import { ConnectionTypeSchema } from '@auto-swe/shared/lib/connectionTypes';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +10,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // PrismaClient singleton (which requires DATABASE_URL at import) — same
 // pattern as humanSteps.test.ts / slack.test.ts.
 const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
-vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: DB_NULL } }));
+vi.mock('@auto-swe/shared', () => ({
+  ConnectionTypeSchema,
+  Prisma: { DbNull: DB_NULL },
+}));
 
 import { repositoryRoutes } from './repositories.js';
 
