@@ -20,6 +20,9 @@ export {
   type NotionConnectionConfig,
   NotionConnectionConfigSchema,
   parseNotionConnectionConfig,
+  parseZendeskConnectionConfig,
+  type ZendeskConnectionConfig,
+  ZendeskConnectionConfigSchema,
 } from './lib/connectionTypes.js';
 export {
   assertCredentialScope,

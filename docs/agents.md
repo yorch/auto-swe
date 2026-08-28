@@ -9,7 +9,7 @@
 Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
 `AnySkillRole = string`. New agents are added as data, not code.
 
-`syncBuiltins` seeds 23 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
+`syncBuiltins` seeds 24 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
 are seed content for the flagship software-engineering use case, not a fixed roster. An agent a team
 adds resolves through exactly the same cascade as `implementer`, and nothing in the engine privileges
 the seeded set — `assertConfigReady` gates boot on what the deployment has *installed*, not on the

@@ -121,3 +121,15 @@ export function parseNotionConnectionConfig(config: unknown): NotionConnectionCo
   const parsed = NotionConnectionConfigSchema.safeParse(config ?? {});
   return parsed.success ? parsed.data : {};
 }
+
+export const ZendeskConnectionConfigSchema = z.object({
+  email: z.string().email().optional(),
+  subdomain: z.string().min(1).optional(),
+});
+
+export type ZendeskConnectionConfig = z.infer<typeof ZendeskConnectionConfigSchema>;
+
+export function parseZendeskConnectionConfig(config: unknown): ZendeskConnectionConfig {
+  const parsed = ZendeskConnectionConfigSchema.safeParse(config ?? {});
+  return parsed.success ? parsed.data : {};
+}

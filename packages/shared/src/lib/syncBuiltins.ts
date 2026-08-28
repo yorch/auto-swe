@@ -21,6 +21,7 @@ import {
   REVIEW_FIX_SYSTEM_PROMPT,
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
+  SUPPORT_RESPONDER_PROMPT,
   WORKFLOW_AUTHOR_PROMPT,
   WORKFLOW_EXPLAINER_PROMPT,
 } from './agentPrompts.js';
@@ -423,6 +424,16 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Content Writer',
     systemPrompt: CONTENT_WRITER_PROMPT,
+  },
+  {
+    // Support/Ops pack (Phase 2): drafts responses to support tickets.
+    // Resolved on demand by the generic `agent` node, so it is not in
+    // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description: 'Drafts empathetic, policy-aware responses to support tickets.',
+    key: 'supportResponder',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
+    name: 'Support Responder',
+    systemPrompt: SUPPORT_RESPONDER_PROMPT,
   },
   {
     // P3 repo-dependency-graph: proposes LLM-inferred cross-repo edges for
