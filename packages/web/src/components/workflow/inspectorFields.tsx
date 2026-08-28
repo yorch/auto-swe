@@ -7,10 +7,10 @@
  * spec-level state.
  */
 
-import type { StepFieldDef } from '@auto-swe/shared/workflow';
+import type { OnFailMode, StepFieldDef } from '@auto-swe/shared/workflow';
 import { Select } from '@/components/ui/Select';
 
-export type OnFailValue = 'block' | 'warn' | { retry: number };
+export type OnFailValue = OnFailMode;
 export type Binding = { from: string } | string | number | boolean | null;
 
 export function SchemaAwareForm({

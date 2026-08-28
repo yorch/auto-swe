@@ -1,6 +1,6 @@
 'use client';
 
-import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
@@ -21,7 +21,9 @@ export function RunTemplateModal({
   onClose: () => void;
 }) {
   const runTemplate = useRunTemplate(template.id);
-  const schema = template.inputSchema as InputSchema | null | undefined;
+  const schema: InputSchema | null = isInputSchema(template.inputSchema)
+    ? template.inputSchema
+    : null;
 
   const [payload, setPayload] = useState<Record<string, unknown>>(
     schema ? buildInitialPayload(schema) : {}

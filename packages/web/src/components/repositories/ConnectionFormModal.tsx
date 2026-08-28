@@ -33,6 +33,14 @@ const CONNECTION_TYPES = [
 
 type ConnectionType = (typeof CONNECTION_TYPES)[number]['value'];
 
+function isConnectionType(value: unknown): value is ConnectionType {
+  return CONNECTION_TYPES.some((t) => t.value === value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function ConnectionFormModal({
   open,
   onClose,
@@ -50,7 +58,7 @@ export function ConnectionFormModal({
   const prefill = mode.kind === 'create' ? mode.prefill : undefined;
 
   const [connType, setConnType] = useState<ConnectionType>(
-    (initial?.type as ConnectionType) ?? 'git_repo'
+    isConnectionType(initial?.type) ? initial.type : 'git_repo'
   );
 
   // git_repo fields
@@ -85,7 +93,7 @@ export function ConnectionFormModal({
     if (!open) {
       return;
     }
-    const t = (initial?.type as ConnectionType) ?? 'git_repo';
+    const t = isConnectionType(initial?.type) ? initial.type : 'git_repo';
     setConnType(t);
     setOrganizationName(initial?.organizationName ?? prefill?.organizationName ?? '');
     setRepoName(initial?.repoName ?? prefill?.repoName ?? '');
@@ -120,11 +128,11 @@ export function ConnectionFormModal({
         setError('Config JSON is invalid');
         return;
       }
-      if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+      if (!isRecord(parsed)) {
         setError('Config must be a JSON object (e.g. {"key": "value"})');
         return;
       }
-      parsedConfig = parsed as Record<string, unknown>;
+      parsedConfig = parsed;
     }
 
     try {
@@ -215,7 +223,12 @@ export function ConnectionFormModal({
           <Select
             id="conn-type"
             label="Connection type"
-            onChange={(e) => setConnType(e.target.value as ConnectionType)}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (isConnectionType(v)) {
+                setConnType(v);
+              }
+            }}
             value={connType}
           >
             {CONNECTION_TYPES.map(({ label, value }) => (

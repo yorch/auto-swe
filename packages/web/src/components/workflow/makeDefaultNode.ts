@@ -8,25 +8,25 @@ import type { PaletteDragKind } from './NodePalette';
 
 export function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
   if (payload.kind === 'step') {
-    return { step: payload.step, type: 'step' } as SpecNode;
+    return { step: payload.step, type: 'step' };
   }
   switch (payload.nodeType) {
     case 'step':
-      return { step: '', type: 'step' } as SpecNode;
+      return { step: '', type: 'step' };
     case 'agent':
-      return { agentRef: '', type: 'agent' } as SpecNode;
+      return { agentRef: '', type: 'agent' };
     case 'mcp':
-      return { connectionRef: '', tool: '', type: 'mcp' } as SpecNode;
+      return { connectionRef: '', tool: '', type: 'mcp' };
     case 'eval':
       return {
         scorers: [{ gate: 'runTests', kind: 'gate' }],
         target: { from: '' },
         type: 'eval',
-      } as SpecNode;
+      };
     case 'containerStep':
-      return { command: '', image: 'node:24-alpine', type: 'containerStep' } as SpecNode;
+      return { command: '', image: 'node:24-alpine', type: 'containerStep' };
     case 'cond':
-      return { expr: 'true', onFalse: '', onTrue: '', type: 'cond' } as SpecNode;
+      return { expr: 'true', onFalse: '', onTrue: '', type: 'cond' };
     case 'signal':
       return {
         name: '',
@@ -34,7 +34,7 @@ export function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
         onTimeout: '',
         timeout: '1h',
         type: 'signal',
-      } as SpecNode;
+      };
     case 'fanOut':
       return {
         itemKey: 'subtask',
@@ -43,13 +43,13 @@ export function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
         over: { from: '' },
         subgraph: '',
         type: 'fanOut',
-      } as SpecNode;
+      };
     case 'set':
-      return { type: 'set', values: {} } as SpecNode;
+      return { type: 'set', values: {} };
     case 'shell':
-      return { command: '', image: 'node:24-alpine', type: 'shell' } as SpecNode;
+      return { command: '', image: 'node:24-alpine', type: 'shell' };
     case 'terminate':
-      return { status: 'SUCCESS', type: 'terminate' } as SpecNode;
+      return { status: 'SUCCESS', type: 'terminate' };
     case 'humanApproval':
       return {
         onApprove: '',
@@ -58,7 +58,7 @@ export function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
         timeout: '24h',
         title: '',
         type: 'humanApproval',
-      } as SpecNode;
+      };
     case 'humanDecision':
       return {
         onTimeout: '',
@@ -69,7 +69,7 @@ export function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
         timeout: '24h',
         title: '',
         type: 'humanDecision',
-      } as SpecNode;
+      };
     case 'humanInput':
       return {
         fields: [{ key: 'value', label: 'Value', type: 'text' }],
@@ -78,7 +78,7 @@ export function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
         timeout: '24h',
         title: '',
         type: 'humanInput',
-      } as SpecNode;
+      };
     case 'humanReview':
       return {
         contentFrom: '',
@@ -87,7 +87,7 @@ export function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
         timeout: '24h',
         title: '',
         type: 'humanReview',
-      } as SpecNode;
+      };
     default:
       throw new Error(`Unknown node type: ${payload.nodeType}`);
   }

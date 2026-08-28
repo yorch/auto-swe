@@ -14,7 +14,11 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
-import { OnFailSection, type OnFailValue, SchemaAwareForm } from './inspectorFields';
+import { OnFailSection, SchemaAwareForm } from './inspectorFields';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 export function StepConfigSection({
   node,
@@ -40,7 +44,7 @@ export function StepConfigSection({
         hint={stepMeta?.label ?? 'type or pick a step from the registry'}
         label="Step"
         list="step-registry-datalist"
-        onChange={(e) => onChange({ ...node, step: e.target.value } as SpecNode)}
+        onChange={(e) => onChange({ ...node, step: e.target.value })}
         value={node.step}
       />
       {stepMeta?.description && (
@@ -57,9 +61,9 @@ export function StepConfigSection({
             } else {
               next[k] = v;
             }
-            onChange({ ...node, config: next } as SpecNode);
+            onChange({ ...node, config: next });
           }}
-          values={(node.config ?? {}) as Record<string, unknown>}
+          values={node.config ?? {}}
         />
       )}
       {stepMeta && stepMeta.configFields.length === 0 && (
@@ -72,10 +76,7 @@ export function StepConfigSection({
           ! Step not in registry — config schema unknown
         </p>
       )}
-      <OnFailSection
-        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
-        value={node.onFail as OnFailValue | undefined}
-      />
+      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
   );
 }
@@ -149,14 +150,14 @@ export function FanOutSection({
       <Input
         hint="Context path that yields the parallel items (array)"
         label="Over (from path)"
-        onChange={(e) => onChange({ ...node, over: { from: e.target.value } } as SpecNode)}
+        onChange={(e) => onChange({ ...node, over: { from: e.target.value } })}
         placeholder="ctx.targets"
         value={overFrom}
       />
       <Input
         hint="Name each element is bound under inside the per-branch context"
         label="Item key"
-        onChange={(e) => onChange({ ...node, itemKey: e.target.value } as SpecNode)}
+        onChange={(e) => onChange({ ...node, itemKey: e.target.value })}
         placeholder="subtask"
         value={node.itemKey ?? 'subtask'}
       />
@@ -164,9 +165,12 @@ export function FanOutSection({
         className="h-9 px-2 font-mono text-xs"
         id="fanout-branch-fail"
         label="On branch fail"
-        onChange={(e) =>
-          onChange({ ...node, onBranchFail: e.target.value as 'block' | 'continue' } as SpecNode)
-        }
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === 'block' || v === 'continue') {
+            onChange({ ...node, onBranchFail: v });
+          }
+        }}
         value={node.onBranchFail ?? 'block'}
       >
         <option value="block">Block (default) — stop on first failure</option>
@@ -187,7 +191,7 @@ export function FanOutSection({
           onChange={(e) => {
             const v =
               e.target.value === '' ? undefined : Math.max(1, Math.min(20, Number(e.target.value)));
-            onChange({ ...node, concurrency: v } as SpecNode);
+            onChange({ ...node, concurrency: v });
           }}
           placeholder="4 (default)"
           type="number"
@@ -197,7 +201,7 @@ export function FanOutSection({
       <Input
         hint="Dot-path projected from each branch result into output.plucked — e.g. result.branch"
         label="Pluck path"
-        onChange={(e) => onChange({ ...node, pluck: e.target.value || undefined } as SpecNode)}
+        onChange={(e) => onChange({ ...node, pluck: e.target.value || undefined })}
         placeholder="result.branch"
         value={node.pluck ?? ''}
       />
@@ -219,7 +223,7 @@ export function FanOutSection({
               .split('\n')
               .map((s) => s.trim())
               .filter(Boolean);
-            onChange({ ...node, exports: exports.length > 0 ? exports : undefined } as SpecNode);
+            onChange({ ...node, exports: exports.length > 0 ? exports : undefined });
           }}
           onChange={(e) => setExportsText(e.target.value)}
           placeholder="ctx.result"
@@ -246,7 +250,7 @@ export function ShellSection({
       <Input
         hint="Must be on the team's image allowlist"
         label="Container image"
-        onChange={(e) => onChange({ ...node, image: e.target.value } as SpecNode)}
+        onChange={(e) => onChange({ ...node, image: e.target.value })}
         placeholder="node:24-alpine"
         value={node.image ?? ''}
       />
@@ -260,7 +264,7 @@ export function ShellSection({
         <textarea
           className="mt-1.5 h-24 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
           id="shell-command"
-          onChange={(e) => onChange({ ...node, command: e.target.value } as SpecNode)}
+          onChange={(e) => onChange({ ...node, command: e.target.value })}
           placeholder="echo hello"
           spellCheck={false}
           value={node.command ?? ''}
@@ -271,8 +275,10 @@ export function ShellSection({
         id="shell-network"
         label="Network"
         onChange={(e) => {
-          const v = e.target.value as 'none' | 'egress';
-          onChange({ ...node, network: v === 'none' ? undefined : v } as SpecNode);
+          const v = e.target.value;
+          if (v === 'none' || v === 'egress') {
+            onChange({ ...node, network: v === 'none' ? undefined : v });
+          }
         }}
         value={node.network ?? 'none'}
       >
@@ -290,7 +296,7 @@ export function ShellSection({
           <input
             className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
             id="shell-memory"
-            onChange={(e) => onChange({ ...node, memory: e.target.value || undefined } as SpecNode)}
+            onChange={(e) => onChange({ ...node, memory: e.target.value || undefined })}
             placeholder="512m"
             value={node.memory ?? ''}
           />
@@ -311,7 +317,7 @@ export function ShellSection({
               onChange({
                 ...node,
                 cpus: e.target.value === '' ? undefined : Number(e.target.value),
-              } as SpecNode)
+              })
             }
             placeholder="1"
             step={0.1}
@@ -320,10 +326,7 @@ export function ShellSection({
           />
         </div>
       </div>
-      <OnFailSection
-        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
-        value={node.onFail as OnFailValue | undefined}
-      />
+      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
   );
 }
@@ -343,7 +346,7 @@ export function ContainerStepSection({
       <Input
         hint="Must be on the team's image allowlist"
         label="Container image"
-        onChange={(e) => onChange({ ...node, image: e.target.value } as SpecNode)}
+        onChange={(e) => onChange({ ...node, image: e.target.value })}
         placeholder="ghcr.io/acme/my-capability:1.0"
         value={node.image ?? ''}
       />
@@ -360,7 +363,7 @@ export function ContainerStepSection({
         <textarea
           className="mt-1.5 h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
           id="container-command"
-          onChange={(e) => onChange({ ...node, command: e.target.value || undefined } as SpecNode)}
+          onChange={(e) => onChange({ ...node, command: e.target.value || undefined })}
           placeholder="node /app/run.js"
           spellCheck={false}
           value={node.command ?? ''}
@@ -371,23 +374,24 @@ export function ContainerStepSection({
         id="container-network"
         label="Network"
         onChange={(e) => {
-          const v = e.target.value as 'none' | 'egress';
-          onChange({ ...node, network: v === 'none' ? undefined : v } as SpecNode);
+          const v = e.target.value;
+          if (v === 'none' || v === 'egress') {
+            onChange({ ...node, network: v === 'none' ? undefined : v });
+          }
         }}
         value={node.network ?? 'none'}
       >
         <option value="none">None (default) — no outbound access</option>
         <option value="egress">Egress — outbound via team allowlist</option>
       </Select>
-      <OnFailSection
-        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
-        value={node.onFail as OnFailValue | undefined}
-      />
+      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
   );
 }
 
 type TerminateStatus = 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED';
+
+const TERMINATE_STATUSES = ['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED'] as const;
 
 export function TerminateSection({
   status,
@@ -400,10 +404,15 @@ export function TerminateSection({
     <Select
       id="terminate-status"
       label="Status"
-      onChange={(e) => onChange(e.target.value as TerminateStatus)}
+      onChange={(e) => {
+        const v = e.target.value;
+        if ((TERMINATE_STATUSES as readonly string[]).includes(v)) {
+          onChange(v as TerminateStatus);
+        }
+      }}
       value={status}
     >
-      {(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED'] satisfies TerminateStatus[]).map((s) => (
+      {TERMINATE_STATUSES.map((s) => (
         <option key={s} value={s}>
           {s}
         </option>
@@ -447,10 +456,10 @@ export function SetSection({
         id="set-values"
         onBlur={() => {
           try {
-            const parsed = JSON.parse(draft);
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const parsed: unknown = JSON.parse(draft);
+            if (isRecord(parsed)) {
               setErr(null);
-              onChange(parsed as Record<string, unknown>);
+              onChange(parsed);
             } else {
               setErr('Must be a JSON object');
             }
@@ -485,7 +494,7 @@ export function AgentSection({
       <Input
         hint="library agent: <key> or <key>@<version>"
         label="Agent reference"
-        onChange={(e) => onChange({ ...node, agentRef: e.target.value } as SpecNode)}
+        onChange={(e) => onChange({ ...node, agentRef: e.target.value })}
         value={node.agentRef}
       />
       <div className="space-y-1">
@@ -499,9 +508,7 @@ export function AgentSection({
         <textarea
           className={textarea}
           id="agent-user-message"
-          onChange={(e) =>
-            onChange({ ...node, userMessage: e.target.value || undefined } as SpecNode)
-          }
+          onChange={(e) => onChange({ ...node, userMessage: e.target.value || undefined })}
           spellCheck={false}
           value={node.userMessage ?? ''}
         />
@@ -517,17 +524,12 @@ export function AgentSection({
         <textarea
           className={textarea}
           id="agent-system-prompt"
-          onChange={(e) =>
-            onChange({ ...node, systemPrompt: e.target.value || undefined } as SpecNode)
-          }
+          onChange={(e) => onChange({ ...node, systemPrompt: e.target.value || undefined })}
           spellCheck={false}
           value={node.systemPrompt ?? ''}
         />
       </div>
-      <OnFailSection
-        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
-        value={node.onFail as OnFailValue | undefined}
-      />
+      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
   );
 }
@@ -552,7 +554,7 @@ export function McpSection({
       <Select
         hint="Choose an active MCP connection (managed at /admin/mcp-connections)"
         label="Connection"
-        onChange={(e) => onChange({ ...node, connectionRef: e.target.value } as SpecNode)}
+        onChange={(e) => onChange({ ...node, connectionRef: e.target.value })}
         value={node.connectionRef}
       >
         <option disabled value="">
@@ -570,13 +572,10 @@ export function McpSection({
       <Input
         hint="tool name exposed by the MCP server; its args come from Inputs below"
         label="Tool"
-        onChange={(e) => onChange({ ...node, tool: e.target.value } as SpecNode)}
+        onChange={(e) => onChange({ ...node, tool: e.target.value })}
         value={node.tool}
       />
-      <OnFailSection
-        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
-        value={node.onFail as OnFailValue | undefined}
-      />
+      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
   );
 }

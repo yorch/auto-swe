@@ -17,6 +17,46 @@ const KIND_LABEL: Record<string, string> = {
   REVIEW: 'Review',
 };
 
+interface DecisionOption {
+  label: string;
+  value: string;
+}
+
+function isDecisionOptions(value: unknown): value is DecisionOption[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (o) =>
+        typeof o === 'object' &&
+        o !== null &&
+        typeof (o as Record<string, unknown>).label === 'string' &&
+        typeof (o as Record<string, unknown>).value === 'string'
+    )
+  );
+}
+
+interface InputField {
+  key: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  options?: string[];
+}
+
+function isInputFields(value: unknown): value is InputField[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (f) =>
+        typeof f === 'object' &&
+        f !== null &&
+        typeof (f as Record<string, unknown>).key === 'string' &&
+        typeof (f as Record<string, unknown>).label === 'string' &&
+        typeof (f as Record<string, unknown>).type === 'string'
+    )
+  );
+}
+
 const KIND_COLOR: Record<string, string> = {
   APPROVAL: 'bg-amber-400/20 text-amber-400',
   DECISION: 'bg-dust-400/20 text-dust-400',
@@ -80,6 +120,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   const [expanded, setExpanded] = useState(false);
   const [showContext, setShowContext] = useState(false);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
+  const [inputError, setInputError] = useState<string | null>(null);
   const [reviewText, setReviewText] = useState(() => String(step.context ?? ''));
   // Guard against double-submit: isPending from TanStack Query updates asynchronously
   // (after the next render), so a rapid second click reaches this handler before
@@ -227,9 +268,9 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             </div>
           )}
 
-          {step.kind === 'DECISION' && (
+          {step.kind === 'DECISION' && isDecisionOptions(step.options) && (
             <div className="flex flex-wrap gap-2">
-              {(step.options as Array<{ label: string; value: string }> | null)?.map((opt) => (
+              {step.options.map((opt) => (
                 <Button
                   disabled={respond.isPending}
                   key={opt.value}
@@ -243,17 +284,14 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             </div>
           )}
 
-          {step.kind === 'INPUT' && (
+          {step.kind === 'INPUT' && isInputFields(step.fields) && (
             <div className="space-y-2">
-              {(
-                step.fields as Array<{
-                  key: string;
-                  label: string;
-                  type: string;
-                  required?: boolean;
-                  options?: string[];
-                }> | null
-              )?.map((field) => (
+              {inputError && (
+                <Alert className="text-xs" variant="error">
+                  {inputError}
+                </Alert>
+              )}
+              {step.fields.map((field) => (
                 // biome-ignore lint/a11y/noLabelWithoutControl: label wraps a conditional input/select/checkbox — biome can't statically trace through the ternary
                 <label className="block space-y-0.5" key={field.key}>
                   <span className="text-xs font-medium block">
@@ -289,7 +327,11 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                         setInputValues((p) => ({
                           ...p,
                           [field.key]:
-                            field.type === 'number' ? Number(e.target.value) : e.target.value,
+                            field.type === 'number'
+                              ? e.target.value === ''
+                                ? ''
+                                : Number(e.target.value)
+                              : e.target.value,
                         }))
                       }
                       type={field.type === 'number' ? 'number' : 'text'}
@@ -301,14 +343,28 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
               <Button
                 disabled={respond.isPending}
                 onClick={() => {
-                  const fields = step.fields as Array<{ key: string; type: string }> | null;
+                  setInputError(null);
+                  if (!isInputFields(step.fields)) {
+                    return;
+                  }
+                  const missing = step.fields
+                    .filter(
+                      (f) => f.required && (inputValues[f.key] === '' || inputValues[f.key] == null)
+                    )
+                    .map((f) => f.label || f.key);
+                  if (missing.length > 0) {
+                    setInputError(`Required: ${missing.join(', ')}`);
+                    return;
+                  }
                   const value = Object.fromEntries(
-                    (fields ?? []).map((f) => [
-                      f.key,
-                      f.type === 'number'
-                        ? (inputValues[f.key] ?? null)
-                        : (inputValues[f.key] ?? ''),
-                    ])
+                    step.fields.map((f) => {
+                      const raw = inputValues[f.key];
+                      if (f.type === 'number') {
+                        const num = typeof raw === 'string' && raw !== '' ? Number(raw) : raw;
+                        return [f.key, typeof num === 'number' && !Number.isNaN(num) ? num : null];
+                      }
+                      return [f.key, raw ?? ''];
+                    })
                   );
                   handleRespond('submit', value);
                 }}
