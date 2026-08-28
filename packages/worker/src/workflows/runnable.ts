@@ -73,7 +73,10 @@ const stateActivities = proxyActivities<
 });
 
 const genericActivities = proxyActivities<
-  Pick<typeof activitiesType, 'resolveWorkspace' | 'readSource' | 'writeOutcome' | 'runTool'>
+  Pick<
+    typeof activitiesType,
+    'resolveWorkspace' | 'readSource' | 'writeOutcome' | 'publishOutcome' | 'runTool'
+  >
 >({
   retry: RETRY_STANDARD,
   startToCloseTimeout: T_1M,
@@ -789,7 +792,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     ({ inputs }) =>
       genericActivities.readSource({
         connectionId: inputs.connectionId as string,
-        query: inputs.pageId !== undefined ? { pageId: inputs.pageId as string } : inputs.query,
+        query:
+          inputs.pageId !== undefined
+            ? { pageId: inputs.pageId as string }
+            : inputs.ticketId !== undefined
+              ? { ticketId: inputs.ticketId as string }
+              : inputs.query,
       }),
   ],
   [
@@ -811,11 +819,40 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
           pageId: inputs.pageId,
         };
       }
+      // Convenience for Zendesk: build a comment payload from `body`, `ticketId`,
+      // and the optional `public` flag.
+      if (
+        data === undefined &&
+        typeof inputs.body === 'string' &&
+        typeof inputs.ticketId === 'string'
+      ) {
+        data = {
+          body: inputs.body,
+          public: inputs.public === true,
+          ticketId: inputs.ticketId,
+        };
+      }
+      // Convenience for Zendesk: pass through the public/private flag.
+      if (typeof inputs.public === 'boolean' && typeof data === 'object' && data != null) {
+        data = { ...(data as object), public: inputs.public };
+      }
       return genericActivities.writeOutcome({
         connectionId: inputs.connectionId as string,
         data,
       });
     },
+  ],
+  [
+    'publishOutcome',
+    ({ config, ctx, inputs }) =>
+      genericActivities.publishOutcome({
+        action:
+          (inputs.action as string | undefined) ??
+          (config.action as string | undefined) ??
+          'external_communication',
+        description: inputs.description as string | undefined,
+        workflowId: (ctx.workflow as { id: string }).id,
+      }),
   ],
   [
     'runTool',

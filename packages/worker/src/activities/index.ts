@@ -161,6 +161,11 @@ export {
   submitPrdWorkRequests,
 } from './prdWorkflow.js';
 export { prepareScheduledEvalRun } from './prepareScheduledEvalRun.js';
+export type {
+  PublishOutcomeInput,
+  PublishOutcomeResult,
+} from './publishOutcome.js';
+export { publishOutcome } from './publishOutcome.js';
 // Phase 2 quality gates
 export type { GateFixInput, GateInput, GateName, GateResult } from './qualityGates.js';
 export {
