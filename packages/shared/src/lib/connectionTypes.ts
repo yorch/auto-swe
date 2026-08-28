@@ -104,3 +104,20 @@ export function getWorkspaceTargetTypes(): ConnectionType[] {
 export function isWorkspaceTargetType(type: ConnectionType): boolean {
   return METADATA[type]?.isWorkspaceTarget ?? false;
 }
+
+/**
+ * Notion-specific config stored in `Connection.config`.
+ *
+ * `sourcePageId` is optional: runs may pass a page/page_id in the payload, or a
+ * team may set a default page on the connection.
+ */
+export const NotionConnectionConfigSchema = z.object({
+  sourcePageId: z.string().optional(),
+});
+
+export type NotionConnectionConfig = z.infer<typeof NotionConnectionConfigSchema>;
+
+export function parseNotionConnectionConfig(config: unknown): NotionConnectionConfig {
+  const parsed = NotionConnectionConfigSchema.safeParse(config ?? {});
+  return parsed.success ? parsed.data : {};
+}

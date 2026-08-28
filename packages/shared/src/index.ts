@@ -17,6 +17,9 @@ export {
   isConnectionType,
   isWorkspaceTargetType,
   listConnectionTypes,
+  type NotionConnectionConfig,
+  NotionConnectionConfigSchema,
+  parseNotionConnectionConfig,
 } from './lib/connectionTypes.js';
 export {
   assertCredentialScope,

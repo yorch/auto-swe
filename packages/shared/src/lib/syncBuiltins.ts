@@ -5,6 +5,7 @@ import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import {
   CHANNEL_ASSISTANT_PROMPT,
   CI_FIX_SYSTEM_PROMPT,
+  CONTENT_WRITER_PROMPT,
   CONTEXT_VALIDATOR_PROMPT,
   DECOMPOSER_AGENT_PROMPT,
   DOMAIN_LOGIC_REVIEWER_PROMPT,
@@ -411,6 +412,17 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Workflow Explainer',
     systemPrompt: WORKFLOW_EXPLAINER_PROMPT,
+  },
+  {
+    // Content/Comms pack (Phase 2): drafts prose for document workspaces such as Notion.
+    // Resolved on demand by the generic `agent` node, so it is not in
+    // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description:
+      'Drafts concise prose for a document workspace from source material and instructions.',
+    key: 'contentWriter',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
+    name: 'Content Writer',
+    systemPrompt: CONTENT_WRITER_PROMPT,
   },
   {
     // P3 repo-dependency-graph: proposes LLM-inferred cross-repo edges for
