@@ -45,4 +45,20 @@ describe('RunOutcomeCard', () => {
     expect(screen.getByText(/posted/)).toBeTruthy();
     expect(screen.getByText(/Hello channel/)).toBeTruthy();
   });
+
+  it('renders an issue tracker outcome with issue link', () => {
+    render(
+      <RunOutcomeCard
+        result={{
+          description: 'Something is broken',
+          issueUrl: 'https://linear.app/issue/TEAM-1',
+          title: 'Bug',
+        }}
+        templateName="create-issue"
+      />
+    );
+    const link = screen.getByRole('link');
+    expect(link.getAttribute('href')).toBe('https://linear.app/issue/TEAM-1');
+    expect(screen.getByText(/Something is broken/)).toBeTruthy();
+  });
 });

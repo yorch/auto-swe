@@ -13,6 +13,7 @@ describe('connectionTypes', () => {
   it('exports the expected connection types', () => {
     expect(CONNECTION_TYPES).toEqual([
       'git_repo',
+      'issue_tracker',
       'notion',
       'zendesk',
       'hubspot',
@@ -49,6 +50,7 @@ describe('connectionTypes', () => {
   it('classifies workspace targets', () => {
     const targets = getWorkspaceTargetTypes();
     expect(targets).toContain('git_repo');
+    expect(targets).toContain('issue_tracker');
     expect(targets).toContain('notion');
     expect(targets).toContain('zendesk');
     expect(targets).toContain('hubspot');

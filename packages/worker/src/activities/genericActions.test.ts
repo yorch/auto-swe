@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
 import { appendNotionBlocks, createNotionPage, readNotionPage } from '../connectors/notion.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 import { readSource, runTool, writeOutcome } from './genericActions.js';
@@ -26,6 +27,11 @@ vi.mock('../connectors/notion.js', () => ({
 vi.mock('../connectors/zendesk.js', () => ({
   fetchZendeskTicket: vi.fn(),
   postZendeskComment: vi.fn(),
+}));
+
+vi.mock('../connectors/issueTracker.js', () => ({
+  createIssue: vi.fn(),
+  fetchIssue: vi.fn(),
 }));
 
 const { prisma } = await import('@auto-swe/shared/db');
@@ -276,5 +282,73 @@ describe('writeOutcome', () => {
     expect(result.ok).toBe(true);
     expect(result.connectionType).toBe('zendesk');
     expect(result.reference).toBe('42');
+  });
+
+  it('creates an issue_tracker issue', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('issue_tracker', { config: { provider: 'linear' }, token: true })
+    );
+    (createIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'issue-1',
+      url: 'https://linear.app/issue/TEAM-1',
+    });
+
+    const result = await writeOutcome({
+      connectionId: 'conn-4',
+      data: { description: 'A bug', projectKey: 'team-uuid', title: 'Bug' },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.connectionType).toBe('issue_tracker');
+    expect(result.reference).toBe('https://linear.app/issue/TEAM-1');
+  });
+});
+
+describe('readSource', () => {
+  it('fetches an issue_tracker issue', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('issue_tracker', { config: { provider: 'linear' }, token: true })
+    );
+    (fetchIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'issue-1',
+      identifier: 'TEAM-1',
+      title: 'Bug',
+      url: 'https://linear.app/issue/TEAM-1',
+    });
+
+    const result = await readSource({ connectionId: 'conn-4', query: { issueId: 'TEAM-1' } });
+    expect(result.ok).toBe(true);
+    expect(result.connectionType).toBe('issue_tracker');
+    expect(result.data).toEqual({
+      id: 'issue-1',
+      identifier: 'TEAM-1',
+      title: 'Bug',
+      url: 'https://linear.app/issue/TEAM-1',
+    });
+  });
+});
+
+describe('runTool', () => {
+  it('creates an issue via the issue_tracker createIssue tool', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('issue_tracker', { config: { provider: 'jira' }, token: true })
+    );
+    (createIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001',
+      identifier: 'PROJ-42',
+      url: 'https://x.atlassian.net/browse/PROJ-42',
+    });
+
+    const result = await runTool({
+      connectionId: 'conn-4',
+      inputs: { description: 'A task', projectKey: 'PROJ', title: 'Task' },
+      tool: 'createIssue',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.connectionType).toBe('issue_tracker');
+    expect(result.output).toEqual({
+      id: '10001',
+      identifier: 'PROJ-42',
+      url: 'https://x.atlassian.net/browse/PROJ-42',
+    });
   });
 });

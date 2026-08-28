@@ -9,7 +9,13 @@ import {
 
 describe('workspaceProviders', () => {
   it('lists the expected provider types', () => {
-    expect(WORKSPACE_PROVIDER_TYPES).toEqual(['git_repo', 'document', 'record', 'api_only']);
+    expect(WORKSPACE_PROVIDER_TYPES).toEqual([
+      'git_repo',
+      'document',
+      'issue_tracker',
+      'record',
+      'api_only',
+    ]);
   });
 
   it('validates known provider types', () => {

@@ -113,5 +113,23 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
     );
   }
 
+  if (name === 'create-issue') {
+    const issueUrl = typeof result.issueUrl === 'string' ? result.issueUrl : undefined;
+    const title = typeof result.title === 'string' ? result.title : undefined;
+    return (
+      <div className="border border-ink-600/40 rounded-md p-3 bg-ink-900/40">
+        <div className="kicker mb-2 text-paper-500">Outcome</div>
+        {issueUrl ? (
+          <div className="mb-2">
+            <OutcomeLink href={issueUrl} label={title ?? issueUrl} />
+          </div>
+        ) : null}
+        <p className="text-paper-300 text-[12px] leading-relaxed whitespace-pre-wrap">
+          {truncate(result.description)}
+        </p>
+      </div>
+    );
+  }
+
   return null;
 }

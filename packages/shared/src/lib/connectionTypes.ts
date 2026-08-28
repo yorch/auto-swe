@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 export const CONNECTION_TYPES = [
   'git_repo',
+  'issue_tracker',
   'notion',
   'zendesk',
   'hubspot',
@@ -51,6 +52,13 @@ const METADATA: Record<ConnectionType, ConnectionTypeMetadata> = {
     isWorkspaceTarget: true,
     key: 'hubspot',
     label: 'HubSpot',
+    supportsConfig: true,
+  },
+  issue_tracker: {
+    description: 'Linear or Jira issue tracker for fetching and creating issues.',
+    isWorkspaceTarget: true,
+    key: 'issue_tracker',
+    label: 'Issue tracker',
     supportsConfig: true,
   },
   mcp: {
@@ -142,5 +150,19 @@ export type SlackConnectionConfig = z.infer<typeof SlackConnectionConfigSchema>;
 
 export function parseSlackConnectionConfig(config: unknown): SlackConnectionConfig {
   const parsed = SlackConnectionConfigSchema.safeParse(config ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+export const IssueTrackerConnectionConfigSchema = z.object({
+  baseUrl: z.string().url().optional(),
+  defaultProjectKey: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  provider: z.enum(['linear', 'jira']).optional(),
+});
+
+export type IssueTrackerConnectionConfig = z.infer<typeof IssueTrackerConnectionConfigSchema>;
+
+export function parseIssueTrackerConnectionConfig(config: unknown): IssueTrackerConnectionConfig {
+  const parsed = IssueTrackerConnectionConfigSchema.safeParse(config ?? {});
   return parsed.success ? parsed.data : {};
 }

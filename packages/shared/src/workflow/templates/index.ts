@@ -5,6 +5,7 @@ import type { WorkflowSpec } from '../spec.js';
 import { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
 import { CODE_AND_CI_SPEC } from './codeAndCi.js';
 import { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
+import { CREATE_ISSUE_SPEC } from './createIssue.js';
 import { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
 import { FOUR_EYES_SPEC } from './fourEyes.js';
 import { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
@@ -228,6 +229,24 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     workspaceProvider: 'api_only',
   },
 
+  // ── Issue tracker pack (Linear / Jira) ───────────────────────────────────
+  {
+    description: CREATE_ISSUE_SPEC.description,
+    inputSchema: {
+      properties: {
+        connectionId: { format: 'uuid', type: 'string' },
+        description: { type: 'string' },
+        projectKey: { type: 'string' },
+        title: { type: 'string' },
+      },
+      required: ['connectionId', 'title'],
+      type: 'object',
+    },
+    name: CREATE_ISSUE_SPEC.name,
+    spec: CREATE_ISSUE_SPEC,
+    workspaceProvider: 'issue_tracker',
+  },
+
   // ── PRD workflow ─────────────────────────────────────────────────────────
   {
     description: PRD_DECOMPOSITION_SPEC.description,
@@ -251,6 +270,7 @@ export { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
 export { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
 export { CODE_AND_CI_SPEC } from './codeAndCi.js';
 export { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
+export { CREATE_ISSUE_SPEC } from './createIssue.js';
 export { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
 export { FOUR_EYES_SPEC } from './fourEyes.js';
 export { FULL_SUPERVISED_SPEC } from './fullSupervised.js';

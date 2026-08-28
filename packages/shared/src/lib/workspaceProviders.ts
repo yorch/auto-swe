@@ -8,7 +8,13 @@ import { z } from 'zod';
  * implementation; the others are the placeholders for the horizontal expansion.
  */
 
-export const WORKSPACE_PROVIDER_TYPES = ['git_repo', 'document', 'record', 'api_only'] as const;
+export const WORKSPACE_PROVIDER_TYPES = [
+  'git_repo',
+  'document',
+  'issue_tracker',
+  'record',
+  'api_only',
+] as const;
 
 export type WorkspaceProviderType = (typeof WORKSPACE_PROVIDER_TYPES)[number];
 
@@ -17,7 +23,7 @@ export interface WorkspaceProviderMetadata {
   label: string;
   description: string;
   /** Connection type this provider consumes, when the workspace is backed by one. */
-  connectionType?: 'git_repo' | 'notion' | 'zendesk' | 'hubspot';
+  connectionType?: 'git_repo' | 'issue_tracker' | 'notion' | 'zendesk' | 'hubspot';
 }
 
 const METADATA: Record<WorkspaceProviderType, WorkspaceProviderMetadata> = {
@@ -39,6 +45,12 @@ const METADATA: Record<WorkspaceProviderType, WorkspaceProviderMetadata> = {
     description: 'Clone a branch, run tests and builds, and open a pull request.',
     key: 'git_repo',
     label: 'Git repository',
+  },
+  issue_tracker: {
+    connectionType: 'issue_tracker',
+    description: 'Fetch and create issues in Linear or Jira.',
+    key: 'issue_tracker',
+    label: 'Issue tracker',
   },
   record: {
     connectionType: 'zendesk',

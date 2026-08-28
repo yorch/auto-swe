@@ -1,12 +1,14 @@
 import {
   type ConnectionType,
   decryptConnectionApiToken,
+  parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
   parseSlackConnectionConfig,
   parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { ApplicationFailure } from '@temporalio/activity';
+import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
 import {
   appendNotionBlocks,
   createNotionPage,
@@ -147,6 +149,25 @@ async function zendeskReadSource(
   return { connectionType: 'zendesk', data: result, ok: true };
 }
 
+async function issueTrackerReadSource(
+  connection: { config: unknown },
+  token: string | null,
+  query: unknown
+): Promise<ReadSourceResult> {
+  const requestedIssueId =
+    typeof query === 'object' && query != null
+      ? (query as Record<string, unknown>).issueId
+      : undefined;
+  if (typeof requestedIssueId !== 'string') {
+    throw ApplicationFailure.nonRetryable('issue_tracker readSource requires an issueId in query');
+  }
+  const result = await fetchIssue(
+    { apiToken: requireToken(token), config: parseIssueTrackerConnectionConfig(connection.config) },
+    requestedIssueId
+  );
+  return { connectionType: 'issue_tracker', data: result, ok: true };
+}
+
 async function genericReadSource(
   connectionType: ConnectionType,
   _connection: unknown,
@@ -174,6 +195,8 @@ export async function readSource(input: ReadSourceInput): Promise<ReadSourceResu
       return notionReadSource(connection, token, input.query);
     case 'zendesk':
       return zendeskReadSource(connection, token, input.query);
+    case 'issue_tracker':
+      return issueTrackerReadSource(connection, token, input.query);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
@@ -295,6 +318,29 @@ async function zendeskWriteOutcome(
   return { connectionType: 'zendesk', ok: true, reference: result.ticketId };
 }
 
+async function issueTrackerWriteOutcome(
+  connection: { config: unknown },
+  token: string | null,
+  data: unknown
+): Promise<WriteOutcomeResult> {
+  if (typeof data !== 'object' || data == null) {
+    throw ApplicationFailure.nonRetryable('issue_tracker writeOutcome data must be an object');
+  }
+  const d = data as Record<string, unknown>;
+  const title = d.title;
+  const description = d.description;
+  if (typeof title !== 'string') {
+    throw ApplicationFailure.nonRetryable('issue_tracker writeOutcome requires a title string');
+  }
+  const config = parseIssueTrackerConnectionConfig(connection.config);
+  const projectKey = typeof d.projectKey === 'string' ? d.projectKey : config.defaultProjectKey;
+  const result = await createIssue(
+    { apiToken: requireToken(token), config },
+    { description: typeof description === 'string' ? description : undefined, projectKey, title }
+  );
+  return { connectionType: 'issue_tracker', ok: true, reference: result.url };
+}
+
 async function slackWriteOutcome(
   connection: { config: unknown },
   token: string | null,
@@ -356,6 +402,8 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
       return zendeskWriteOutcome(connection, token, input.data);
     case 'slack_workspace':
       return slackWriteOutcome(connection, token, input.data);
+    case 'issue_tracker':
+      return issueTrackerWriteOutcome(connection, token, input.data);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
@@ -439,6 +487,41 @@ async function slackRunTool(
   throw ApplicationFailure.nonRetryable(`Unsupported Slack tool: ${tool}`);
 }
 
+async function issueTrackerRunTool(
+  connection: { config: unknown },
+  token: string | null,
+  tool: string,
+  inputs: unknown
+): Promise<RunToolResult> {
+  const apiToken = requireToken(token);
+  const config = parseIssueTrackerConnectionConfig(connection.config);
+  const data = typeof inputs === 'object' && inputs != null ? inputs : {};
+  if (tool === 'createIssue') {
+    const title = (data as Record<string, unknown>).title;
+    const description = (data as Record<string, unknown>).description;
+    if (typeof title !== 'string') {
+      throw ApplicationFailure.nonRetryable('createIssue requires a title string');
+    }
+    const inputProjectKey = (data as Record<string, unknown>).projectKey;
+    const projectKey =
+      typeof inputProjectKey === 'string' ? inputProjectKey : config.defaultProjectKey;
+    const result = await createIssue(
+      { apiToken, config },
+      { description: typeof description === 'string' ? description : undefined, projectKey, title }
+    );
+    return { connectionType: 'issue_tracker', ok: true, output: result };
+  }
+  if (tool === 'fetchIssue') {
+    const issueId = (data as Record<string, unknown>).issueId;
+    if (typeof issueId !== 'string') {
+      throw ApplicationFailure.nonRetryable('fetchIssue requires an issueId string');
+    }
+    const result = await fetchIssue({ apiToken, config }, issueId);
+    return { connectionType: 'issue_tracker', ok: true, output: result };
+  }
+  throw ApplicationFailure.nonRetryable(`Unsupported issue_tracker tool: ${tool}`);
+}
+
 async function genericRunTool(
   connectionType: ConnectionType,
   _connection: unknown,
@@ -461,6 +544,8 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
       return zendeskRunTool(connection, token, input.tool, input.inputs);
     case 'slack_workspace':
       return slackRunTool(connection, token, input.tool, input.inputs);
+    case 'issue_tracker':
+      return issueTrackerRunTool(connection, token, input.tool, input.inputs);
     case 'http_api':
     case 'hubspot':
     case 'mcp':

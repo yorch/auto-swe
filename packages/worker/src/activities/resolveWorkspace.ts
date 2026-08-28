@@ -1,11 +1,13 @@
 import {
   decryptConnectionApiToken,
+  parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
   parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { WorkspaceProviderType } from '@auto-swe/shared/lib/workspaceProviders';
 import { ApplicationFailure } from '@temporalio/activity';
+import { fetchIssue } from '../connectors/issueTracker.js';
 import { readNotionPage } from '../connectors/notion.js';
 import { fetchZendeskTicket } from '../connectors/zendesk.js';
 
@@ -32,6 +34,12 @@ export type WorkspaceContext =
       connectionId: string;
       provider: 'document';
       sourceId?: string;
+      workspaceName?: string;
+    }
+  | {
+      connectionId: string;
+      issueId?: string;
+      provider: 'issue_tracker';
       workspaceName?: string;
     }
   | {
@@ -171,6 +179,53 @@ async function resolveRecordWorkspace(
   };
 }
 
+async function resolveIssueTrackerWorkspace(
+  connectionId: string,
+  payload?: unknown
+): Promise<WorkspaceContext> {
+  const connection = await prisma.connection.findUnique({
+    where: { id: connectionId },
+  });
+  if (!connection?.isActive || connection.type !== 'issue_tracker') {
+    throw ApplicationFailure.nonRetryable(
+      `Connection ${connectionId} is not an active issue_tracker connection`
+    );
+  }
+  const config = parseIssueTrackerConnectionConfig(connection.config);
+  const payloadIssueId =
+    typeof payload === 'object' && payload != null
+      ? (payload as Record<string, unknown>).issueId
+      : undefined;
+  const issueId: string | null =
+    (typeof payloadIssueId === 'string'
+      ? payloadIssueId
+      : typeof config.defaultProjectKey === 'string'
+        ? null
+        : null) ?? null;
+
+  if (
+    issueId &&
+    connection.apiKeyCiphertext &&
+    connection.apiKeyNonce &&
+    connection.apiKeyAuthTag
+  ) {
+    const apiToken = decryptConnectionApiToken({
+      apiKeyAuthTag: connection.apiKeyAuthTag,
+      apiKeyCiphertext: connection.apiKeyCiphertext,
+      apiKeyNonce: connection.apiKeyNonce,
+      apiKeyVersion: connection.apiKeyVersion,
+    });
+    await fetchIssue({ apiToken, config }, issueId);
+  }
+
+  return {
+    connectionId,
+    issueId: issueId ?? undefined,
+    provider: 'issue_tracker',
+    workspaceName: connection.name ?? undefined,
+  };
+}
+
 function resolveApiOnlyWorkspace(): WorkspaceContext {
   return { provider: 'api_only' };
 }
@@ -194,6 +249,12 @@ export async function resolveWorkspace(input: ResolveWorkspaceInput): Promise<Wo
         throw ApplicationFailure.nonRetryable('git_repo workspace requires a connectionId');
       }
       return resolveGitRepoWorkspace(input.connectionId);
+    }
+    case 'issue_tracker': {
+      if (!input.connectionId) {
+        throw ApplicationFailure.nonRetryable('issue_tracker workspace requires a connectionId');
+      }
+      return resolveIssueTrackerWorkspace(input.connectionId, input.payload);
     }
     case 'record': {
       if (!input.connectionId) {
