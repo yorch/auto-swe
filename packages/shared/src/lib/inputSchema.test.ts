@@ -94,6 +94,24 @@ describe('validateInputPayload', () => {
     expect(validateInputPayload(schema, { quantity: 3, sku: 'ABC' })).toEqual({ ok: true });
     expect(validateInputPayload(schema, { quantity: 3 }).ok).toBe(false);
   });
+
+  it('treats connection-typed fields as UUID strings', () => {
+    const schema: InputSchema = {
+      properties: {
+        connectionId: { connectionType: 'notion', type: 'connection' },
+      },
+      required: ['connectionId'],
+      type: 'object',
+    };
+    expect(validateInputPayload(schema, { connectionId: VALID.connectionId })).toEqual({
+      ok: true,
+    });
+    const bad = validateInputPayload(schema, { connectionId: 'not-a-uuid' });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) {
+      expect(bad.errors).toContain("'connectionId' must be a valid connection ID (UUID)");
+    }
+  });
 });
 
 describe('isInputSchema', () => {

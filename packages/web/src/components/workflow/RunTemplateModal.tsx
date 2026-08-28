@@ -72,7 +72,7 @@ export function RunTemplateModal({
             <Button onClick={handleClose} variant="secondary">
               Close
             </Button>
-            <Link href={`/workflows/${launchedRunId}`} onClick={handleClose}>
+            <Link href={`/runs/${launchedRunId}`} onClick={handleClose}>
               <Button variant="primary">View run →</Button>
             </Link>
           </div>

@@ -147,7 +147,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: ZENDESK_TICKET_REPLY_SPEC.description,
     inputSchema: {
       properties: {
-        connectionId: { format: 'uuid', type: 'string' },
+        connectionId: { connectionType: 'zendesk', type: 'connection' },
         instructions: { type: 'string' },
         public: { type: 'boolean' },
         ticketId: { type: 'string' },
@@ -165,7 +165,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: NOTION_CONTENT_DRAFT_SPEC.description,
     inputSchema: {
       properties: {
-        connectionId: { format: 'uuid', type: 'string' },
+        connectionId: { connectionType: 'notion', type: 'connection' },
         instructions: { type: 'string' },
         sourcePageId: { type: 'string' },
         targetPageId: { type: 'string' },
@@ -181,7 +181,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: NOTION_CONTENT_BRAND_REVIEW_SPEC.description,
     inputSchema: {
       properties: {
-        connectionId: { format: 'uuid', type: 'string' },
+        connectionId: { connectionType: 'notion', type: 'connection' },
         instructions: { type: 'string' },
         sourcePageId: { type: 'string' },
         targetPageId: { type: 'string' },
@@ -200,7 +200,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     inputSchema: {
       properties: {
         brief: { type: 'string' },
-        connectionId: { format: 'uuid', type: 'string' },
+        connectionId: { connectionType: 'notion', type: 'connection' },
         instructions: { type: 'string' },
         sourcePageId: { type: 'string' },
         targetPageId: { type: 'string' },
@@ -219,7 +219,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     inputSchema: {
       properties: {
         channelId: { type: 'string' },
-        connectionId: { format: 'uuid', type: 'string' },
+        connectionId: { connectionType: 'slack_workspace', type: 'connection' },
         message: { type: 'string' },
       },
       required: ['channelId', 'connectionId', 'message'],
@@ -235,7 +235,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: CREATE_ISSUE_SPEC.description,
     inputSchema: {
       properties: {
-        connectionId: { format: 'uuid', type: 'string' },
+        connectionId: { connectionType: 'issue_tracker', type: 'connection' },
         description: { type: 'string' },
         projectKey: { type: 'string' },
         title: { type: 'string' },
@@ -252,7 +252,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     inputSchema: {
       properties: {
         brief: { type: 'string' },
-        connectionId: { format: 'uuid', type: 'string' },
+        connectionId: { connectionType: 'issue_tracker', type: 'connection' },
         instructions: { type: 'string' },
         projectKey: { type: 'string' },
         title: { type: 'string' },
