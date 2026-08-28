@@ -2,7 +2,7 @@
 
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { formatCost, formatDate, formatDuration } from '@/lib/utils';
+import { formatCost, formatDate, formatDuration, formatTokens } from '@/lib/utils';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
 import { FailureCard } from './FailureCard';
 import { RunOutcomeCard } from './RunOutcomeCard';
@@ -42,6 +42,7 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
 
   const totalTraces = run.traces?.length ?? 0;
   const cost = run.costUsdAccrued;
+  const totalTokens = run.tokensInputTotal + run.tokensOutputTotal;
 
   return (
     <aside
@@ -80,6 +81,16 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
           {cost > 0 && (
             <MetaRow label="Cost">
               <MonoValue>{formatCost(cost)}</MonoValue>
+            </MetaRow>
+          )}
+          {totalTokens > 0 && (
+            <MetaRow label="Tokens">
+              <span
+                className="text-paper-300"
+                title={`${run.tokensInputTotal.toLocaleString()} in / ${run.tokensOutputTotal.toLocaleString()} out`}
+              >
+                <MonoValue>{formatTokens(totalTokens)} total</MonoValue>
+              </span>
             </MetaRow>
           )}
           <MetaRow label="Template">

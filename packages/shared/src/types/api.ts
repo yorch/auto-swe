@@ -412,6 +412,9 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   /** Denormalized USD spend for this run, populated by `finalizeWorkflowRun`.
    *  Detail-only — the list projection does not carry it. */
   costUsdAccrued: number;
+  /** Denormalized token totals for this run, populated by `finalizeWorkflowRun`. */
+  tokensInputTotal: number;
+  tokensOutputTotal: number;
   specSnapshot: unknown;
   contextSnapshot: unknown;
   /** Parsed terminate-node result surfaced from `contextSnapshot.result`. */
