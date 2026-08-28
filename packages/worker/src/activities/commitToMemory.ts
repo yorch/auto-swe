@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { Agent } from '@mastra/core/agent';
+import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
 import { MEMORY_SUMMARIZER_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowRunId, persistActivityTrace } from '../lib/activityContext.js';
@@ -9,7 +10,6 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
 import { getModel, resolveSystemPrompt } from '../lib/models.js';
-import { requireRepoId } from '../lib/requireRepoId.js';
 
 const LessonOutputSchema = z.object({
   failureType: z
@@ -31,7 +31,7 @@ type FailureType = z.infer<typeof LessonOutputSchema>['failureType'];
  */
 async function writeMemoryItemRow(input: {
   workflowId: string;
-  repoId: string;
+  repoId: string | null;
   rationale: string;
   lessonSummary: string;
   failureType: FailureType;
@@ -65,11 +65,10 @@ async function writeMemoryItemRow(input: {
  */
 export async function commitToMemory(
   temporalWorkflowId: string,
-  /** Lessons are repo-scoped, so a run with no connection cannot write one. */
+  /** Optional connection id. When omitted, the activity uses the run's ActiveWorkflow.repoId. */
   repoId: string | null,
   systemPromptOverride?: string
 ): Promise<string> {
-  const scopedRepoId = requireRepoId({ repoId }, 'commitToMemory');
   const workflow = await prisma.activeWorkflow.findFirst({
     include: {
       pullRequests: true,
@@ -80,6 +79,15 @@ export async function commitToMemory(
 
   if (!workflow) {
     throw new Error(`Workflow not found: ${temporalWorkflowId}`);
+  }
+
+  const scopedRepoId = repoId ?? workflow.repoId;
+  if (!scopedRepoId) {
+    throw ApplicationFailure.nonRetryable(
+      `commitToMemory needs a workspace connection, but this run is not scoped to one.`,
+      'NO_CONNECTION',
+      { step: 'commitToMemory' }
+    );
   }
 
   const workflowRunId = await currentWorkflowRunId();
