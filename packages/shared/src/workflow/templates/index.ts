@@ -11,6 +11,7 @@ import { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
 import { HOTFIX_SPEC } from './hotfix.js';
 import { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 import { MIGRATION_SPEC } from './migration.js';
+import { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 import { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 import { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
 import { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
@@ -135,6 +136,24 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     spec: FULL_SUPERVISED_SPEC,
   },
 
+  // ── Document workspace (Notion) ──────────────────────────────────────────
+  {
+    description: NOTION_CONTENT_DRAFT_SPEC.description,
+    inputSchema: {
+      properties: {
+        connectionId: { format: 'uuid', type: 'string' },
+        instructions: { type: 'string' },
+        sourcePageId: { type: 'string' },
+        targetPageId: { type: 'string' },
+      },
+      required: ['connectionId', 'sourcePageId', 'targetPageId'],
+      type: 'object',
+    },
+    name: NOTION_CONTENT_DRAFT_SPEC.name,
+    spec: NOTION_CONTENT_DRAFT_SPEC,
+    workspaceProvider: 'document',
+  },
+
   // ── PRD workflow ─────────────────────────────────────────────────────────
   {
     description: PRD_DECOMPOSITION_SPEC.description,
@@ -164,6 +183,7 @@ export { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
 export { HOTFIX_SPEC } from './hotfix.js';
 export { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 export { MIGRATION_SPEC } from './migration.js';
+export { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 export { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 export { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
 export { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';

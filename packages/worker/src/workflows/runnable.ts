@@ -1,4 +1,5 @@
 import { CHANNEL_TASK_STEER_SIGNAL } from '@auto-swe/shared/lib/channelTask';
+import type { WorkspaceProviderType } from '@auto-swe/shared/lib/workspaceProviders';
 import type {
   CodeResult,
   RepoWorkRequest,
@@ -69,6 +70,13 @@ const stateActivities = proxyActivities<
 >({
   retry: RETRY_STATE,
   startToCloseTimeout: T_30S,
+});
+
+const genericActivities = proxyActivities<
+  Pick<typeof activitiesType, 'resolveWorkspace' | 'readSource' | 'writeOutcome' | 'runTool'>
+>({
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_1M,
 });
 
 const agentActivities = proxyActivities<
@@ -765,6 +773,58 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         systemPromptOverride: config.systemPrompt as string | undefined,
       });
     },
+  ],
+  [
+    'resolveWorkspace',
+    ({ request, config, inputs }) =>
+      genericActivities.resolveWorkspace({
+        connectionId:
+          (inputs.connectionId as string | null | undefined) ?? request.connectionId ?? null,
+        payload: (inputs.payload as unknown) ?? request.payload,
+        workspaceProvider: (config.workspaceProvider as WorkspaceProviderType) ?? 'document',
+      }),
+  ],
+  [
+    'readSource',
+    ({ inputs }) =>
+      genericActivities.readSource({
+        connectionId: inputs.connectionId as string,
+        query: inputs.pageId !== undefined ? { pageId: inputs.pageId as string } : inputs.query,
+      }),
+  ],
+  [
+    'writeOutcome',
+    ({ inputs }) => {
+      let data = inputs.data;
+      // Convenience for Notion: a template can pass `text` + `pageId` and the
+      // step wraps it into a single paragraph block.
+      if (data === undefined && inputs.text && inputs.pageId) {
+        data = {
+          blocks: [
+            {
+              paragraph: {
+                rich_text: [{ text: { content: inputs.text as string } }],
+              },
+              type: 'paragraph',
+            },
+          ],
+          pageId: inputs.pageId,
+        };
+      }
+      return genericActivities.writeOutcome({
+        connectionId: inputs.connectionId as string,
+        data,
+      });
+    },
+  ],
+  [
+    'runTool',
+    ({ inputs }) =>
+      genericActivities.runTool({
+        connectionId: inputs.connectionId as string,
+        inputs: inputs.inputs,
+        tool: inputs.tool as string,
+      }),
   ],
 ]);
 
