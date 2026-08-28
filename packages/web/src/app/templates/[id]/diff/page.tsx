@@ -1,9 +1,10 @@
 'use client';
 
-import type { WorkflowSpec } from '@auto-swe/shared/workflow';
+import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -11,6 +12,7 @@ import { Select } from '@/components/ui/Select';
 import { TabBar } from '@/components/ui/TabBar';
 import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useTemplates';
+import { errMsg } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 
 interface PageProps {
@@ -120,7 +122,28 @@ export default function TemplateDiffPage({ params }: PageProps) {
     }
   }, [template, sortedVersions, a, b]);
 
-  const { data: diffPayload, isLoading } = useWorkflowSpecDiff(id, a, b);
+  const {
+    data: diffPayload,
+    isLoading,
+    isError: isDiffError,
+    error: diffError,
+  } = useWorkflowSpecDiff(id, a, b);
+  const [parseError, setParseError] = useState<string | null>(null);
+
+  const specPair = useMemo(() => {
+    setParseError(null);
+    if (!diffPayload) {
+      return null;
+    }
+    try {
+      const specA = parseWorkflowSpec(diffPayload.a.spec);
+      const specB = parseWorkflowSpec(diffPayload.b.spec);
+      return { specA, specB };
+    } catch (err) {
+      setParseError(errMsg(err, 'Failed to parse one of the workflow specs'));
+      return null;
+    }
+  }, [diffPayload]);
 
   const handleTabChange = (tab: SubTab) => {
     if (tab === 'editor') {
@@ -133,17 +156,15 @@ export default function TemplateDiffPage({ params }: PageProps) {
   };
 
   const changedNodeDiffs = useMemo(() => {
-    if (!diffPayload) {
+    if (!diffPayload || !specPair) {
       return [];
     }
-    const specA = diffPayload.a.spec as WorkflowSpec;
-    const specB = diffPayload.b.spec as WorkflowSpec;
     return diffPayload.diff.changedNodes.map((nodeId) => ({
-      after: specB.nodes[nodeId],
-      before: specA.nodes[nodeId],
+      after: specPair.specB.nodes[nodeId],
+      before: specPair.specA.nodes[nodeId],
       nodeId,
     }));
-  }, [diffPayload]);
+  }, [diffPayload, specPair]);
 
   return (
     <div className="space-y-10">
@@ -195,7 +216,11 @@ export default function TemplateDiffPage({ params }: PageProps) {
         </div>
       )}
 
-      {diffPayload && (
+      {(isDiffError || parseError) && (
+        <Alert>{parseError ?? errMsg(diffError, 'Failed to load diff')}</Alert>
+      )}
+
+      {diffPayload && !parseError && specPair && (
         <>
           <section className="fade-up stagger-1">
             <SectionHeader hint="changes" number="01" title="Summary" />
@@ -271,7 +296,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
                 <WorkflowDag
                   diffMarkers={diffMarkers(diffPayload.diff, 'a')}
                   height={520}
-                  spec={diffPayload.a.spec as WorkflowSpec}
+                  spec={specPair.specA}
                 />
               </Card>
               <Card>
@@ -281,7 +306,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
                 <WorkflowDag
                   diffMarkers={diffMarkers(diffPayload.diff, 'b')}
                   height={520}
-                  spec={diffPayload.b.spec as WorkflowSpec}
+                  spec={specPair.specB}
                 />
               </Card>
             </div>

@@ -1,9 +1,9 @@
 'use client';
 
-import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
-import { estimateSpecCost } from '@auto-swe/shared/workflow';
+import { estimateSpecCost, parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
@@ -58,13 +58,28 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: 'compare', label: 'Compare versions' },
 ];
 
+function formatSpecError(err: unknown): string {
+  if (err instanceof Error && 'issues' in err) {
+    const issues = (err as { issues?: Array<{ message?: string }> }).issues ?? [];
+    const first = issues[0]?.message ?? err.message;
+    return issues.length > 1 ? `${first} (+${issues.length - 1} more issues)` : first;
+  }
+  return errMsg(err, 'invalid spec');
+}
+
 function tryParseSpec(
   json: string
 ): { ok: true; spec: WorkflowSpec } | { ok: false; error: string } {
+  let parsed: unknown;
   try {
-    return { ok: true, spec: JSON.parse(json) as WorkflowSpec };
+    parsed = JSON.parse(json);
   } catch (err) {
     return { error: errMsg(err, 'invalid JSON'), ok: false };
+  }
+  try {
+    return { ok: true, spec: parseWorkflowSpec(parsed) };
+  } catch (err) {
+    return { error: formatSpecError(err), ok: false };
   }
 }
 
@@ -471,7 +486,7 @@ function WebhookCard({
 export default function TemplateDetailPage({ params }: PageProps) {
   const router = useRouter();
   const { id } = use(params);
-  const { data: template, isLoading } = useWorkflowTemplate(id);
+  const { data: template, isLoading, isError, error } = useWorkflowTemplate(id);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
   const { data: versionDetail } = useWorkflowTemplateVersion(id, effectiveVersion);
@@ -496,9 +511,14 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
   useEffect(() => {
     if (versionDetail) {
-      setEditorSpec(versionDetail.spec as WorkflowSpec);
+      try {
+        setEditorSpec(parseWorkflowSpec(versionDetail.spec));
+        setSaveError(null);
+      } catch (err) {
+        setEditorSpec(null);
+        setSaveError(formatSpecError(err));
+      }
       setEditorJson(JSON.stringify(versionDetail.spec, null, 2));
-      setSaveError(null);
     }
   }, [versionDetail]);
 
@@ -520,15 +540,21 @@ export default function TemplateDetailPage({ params }: PageProps) {
     return estimateSpecCost(visualSpec, { stepLookup: (name) => stepRegistryByName.get(name) });
   }, [visualSpec, stepRegistryByName]);
 
-  if (isLoading || !template) {
+  if (isLoading) {
     return <LoadingState message="loading template…" />;
+  }
+  if (isError || !template) {
+    return (
+      <div className="p-8">
+        <Alert>{errMsg(error, 'Failed to load template')}</Alert>
+      </div>
+    );
   }
 
   const commitSave = async (spec: WorkflowSpec) => {
     try {
       const result = await createVersion.mutateAsync(spec);
-      const newVersion = (result as { data: { version: number } }).data.version;
-      setSelectedVersion(newVersion);
+      setSelectedVersion(result.data.version);
       setMode('view');
       setSaveError(null);
     } catch (err) {
@@ -551,12 +577,17 @@ export default function TemplateDetailPage({ params }: PageProps) {
   };
 
   const handleCancel = () => {
+    setSaveError(null);
     if (versionDetail) {
-      setEditorSpec(versionDetail.spec as WorkflowSpec);
+      try {
+        setEditorSpec(parseWorkflowSpec(versionDetail.spec));
+      } catch (err) {
+        setEditorSpec(null);
+        setSaveError(formatSpecError(err));
+      }
       setEditorJson(JSON.stringify(versionDetail.spec, null, 2));
     }
     setMode('view');
-    setSaveError(null);
   };
 
   const handlePromote = async () => {
@@ -871,25 +902,27 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   Edit
                 </Button>
               </div>
-              {template.inputSchema &&
-              typeof template.inputSchema === 'object' &&
-              'properties' in (template.inputSchema as object) ? (
-                <ul className="mt-2 space-y-1">
-                  {Object.entries((template.inputSchema as InputSchema).properties).map(
-                    ([key, prop]) => (
+              {(() => {
+                const inputSchema = template.inputSchema;
+                if (!isInputSchema(inputSchema)) {
+                  return (
+                    <p className="mt-1 text-xs text-paper-500">No schema — runs accept any input</p>
+                  );
+                }
+                return (
+                  <ul className="mt-2 space-y-1">
+                    {Object.entries(inputSchema.properties).map(([key, prop]) => (
                       <li className="flex items-baseline gap-2 text-xs" key={key}>
                         <span className="font-mono text-paper-200">{key}</span>
                         <span className="text-paper-500">{prop.type}</span>
-                        {(template.inputSchema as InputSchema).required?.includes(key) && (
+                        {inputSchema.required?.includes(key) && (
                           <span className="text-brick-400">required</span>
                         )}
                       </li>
-                    )
-                  )}
-                </ul>
-              ) : (
-                <p className="mt-1 text-xs text-paper-500">No schema — runs accept any input</p>
-              )}
+                    ))}
+                  </ul>
+                );
+              })()}
             </Card>
 
             {/* A/B experiment config */}
@@ -919,7 +952,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
       />
 
       <EditSchemaModal
-        initialSchema={template.inputSchema as InputSchema | null | undefined}
+        initialSchema={template.inputSchema}
         onClose={() => setEditSchemaOpen(false)}
         open={editSchemaOpen}
         templateId={id}
