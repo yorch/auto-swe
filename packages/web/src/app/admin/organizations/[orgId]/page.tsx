@@ -35,6 +35,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const [addUserId, setAddUserId] = useState('');
   const [addRole, setAddRole] = useState<OrgRole>('ORG_MEMBER');
   const [budgetInput, setBudgetInput] = useState('');
+  const [thresholdInput, setThresholdInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [budgetError, setBudgetError] = useState<string | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<{ userId: string; email: string } | null>(
@@ -92,9 +93,19 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       setBudgetError('Enter a non-negative integer (USD cents), or leave blank to remove the cap');
       return;
     }
+    const tval = thresholdInput.trim();
+    const threshold = tval === '' ? null : Number(tval);
+    if (threshold !== null && (Number.isNaN(threshold) || threshold < 0 || threshold > 100)) {
+      setBudgetError('Alert threshold must be an integer between 0 and 100');
+      return;
+    }
     try {
-      await patchBudget.mutateAsync(cents);
+      await patchBudget.mutateAsync({
+        budgetAlertThresholdPercent: threshold,
+        monthlyBudgetUsdCents: cents,
+      });
       setBudgetInput('');
+      setThresholdInput('');
     } catch (e) {
       setBudgetError(errMsg(e, 'Failed to update budget'));
     }
@@ -197,7 +208,20 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         ) : (
           <div className="space-y-4">
             {budgetError ? <Alert variant="error">{budgetError}</Alert> : null}
-            <div className="grid grid-cols-2 gap-6 text-sm">
+            {(() => {
+              const cap = budget?.monthlyBudgetUsdCents ?? null;
+              const threshold = budget?.budgetAlertThresholdPercent ?? null;
+              const spent = budget?.currentMonthUsage?.costUsdAccrued ?? 0;
+              const alert =
+                cap != null && cap > 0 && threshold != null && (spent * 10000) / cap >= threshold;
+              return alert ? (
+                <Alert variant="warning">
+                  Monthly spend is ${spent.toFixed(2)} ({((spent * 100) / (cap / 100)).toFixed(1)}%
+                  of ${(cap / 100).toFixed(2)} cap) — above the {threshold}% alert threshold.
+                </Alert>
+              ) : null;
+            })()}
+            <div className="grid grid-cols-3 gap-6 text-sm">
               <div>
                 <p className="text-paper-500">Current cap</p>
                 <p className="mt-1 text-lg font-semibold">
@@ -227,8 +251,16 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                   </p>
                 )}
               </div>
+              <div>
+                <p className="text-paper-500">Alert threshold</p>
+                <p className="mt-1 text-lg font-semibold">
+                  {budget?.budgetAlertThresholdPercent != null
+                    ? `${budget.budgetAlertThresholdPercent}%`
+                    : 'Not set'}
+                </p>
+              </div>
             </div>
-            <div className="flex items-end gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <Input
                 hint="Monthly cap in USD cents (e.g. 10000 = $100). Leave blank to remove the cap."
                 label="Set new cap (USD cents)"
@@ -237,6 +269,16 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 type="number"
                 value={budgetInput}
               />
+              <Input
+                hint="Warn when spend crosses this percent of the cap. 0-100, or blank to disable."
+                label="Alert threshold (%)"
+                onChange={(e) => setThresholdInput(e.target.value)}
+                placeholder={String(budget?.budgetAlertThresholdPercent ?? '')}
+                type="number"
+                value={thresholdInput}
+              />
+            </div>
+            <div className="flex justify-end">
               <Button disabled={patchBudget.isPending} onClick={handleSaveBudget} variant="primary">
                 Save
               </Button>

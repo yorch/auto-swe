@@ -12,6 +12,8 @@ import { requireAuth } from '../plugins/auth.js';
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
 
 const PatchBudgetSchema = z.object({
+  /** Alert threshold as a percentage of the monthly cap (0-100). Null disables the alert. */
+  budgetAlertThresholdPercent: z.number().int().min(0).max(100).nullable(),
   /** Monthly cap in USD cents. Null removes the cap entirely. */
   monthlyBudgetUsdCents: z.number().int().min(0).nullable(),
 });
@@ -28,7 +30,12 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
 
       const [org, usage] = await Promise.all([
         fastify.prisma.organization.findUnique({
-          select: { id: true, monthlyBudgetUsdCents: true, name: true },
+          select: {
+            budgetAlertThresholdPercent: true,
+            id: true,
+            monthlyBudgetUsdCents: true,
+            name: true,
+          },
           where: { id: orgId },
         }),
         fastify.prisma.orgMonthlyUsage.findUnique({
@@ -42,6 +49,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       return {
+        budgetAlertThresholdPercent: org.budgetAlertThresholdPercent,
         currentMonthUsage: usage
           ? {
               costUsdAccrued: Number(usage.costUsdAccrued),
@@ -67,7 +75,9 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { orgId } = OrgParamsSchema.parse(request.params);
-      const { monthlyBudgetUsdCents } = PatchBudgetSchema.parse(request.body);
+      const { budgetAlertThresholdPercent, monthlyBudgetUsdCents } = PatchBudgetSchema.parse(
+        request.body
+      );
 
       const org = await fastify.prisma.organization.findUnique({ where: { id: orgId } });
       if (!org) {
@@ -77,8 +87,13 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       const updated = await fastify.prisma.organization.update({
-        data: { monthlyBudgetUsdCents },
-        select: { id: true, monthlyBudgetUsdCents: true, name: true },
+        data: { budgetAlertThresholdPercent, monthlyBudgetUsdCents },
+        select: {
+          budgetAlertThresholdPercent: true,
+          id: true,
+          monthlyBudgetUsdCents: true,
+          name: true,
+        },
         where: { id: orgId },
       });
       return updated;

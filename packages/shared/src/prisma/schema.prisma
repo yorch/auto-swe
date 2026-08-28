@@ -362,8 +362,10 @@ model Organization {
   slug                   String   @unique
   isActive               Boolean  @default(true) @map("is_active")
   /// Optional monthly spend cap in USD cents. Null = no cap enforced.
-  monthlyBudgetUsdCents  Int?     @map("monthly_budget_usd_cents")
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+  monthlyBudgetUsdCents       Int?     @map("monthly_budget_usd_cents")
+  /// Percent of monthly cap at which to start warning (0-100). Null = no alert.
+  budgetAlertThresholdPercent Int?     @map("budget_alert_threshold_percent")
+  createdAt                   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt              DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   teams               Team[]

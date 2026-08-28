@@ -6,6 +6,7 @@ const ORG_ID = '00000000-0000-4000-8000-000000000001';
 const USER_ID = '00000000-0000-4000-8000-0000000000aa';
 
 const ORG_ROW = {
+  budgetAlertThresholdPercent: 80,
   id: ORG_ID,
   monthlyBudgetUsdCents: 10000,
   name: 'Test Org',
@@ -50,6 +51,7 @@ describe('GET /:orgId/budget', () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.monthlyBudgetUsdCents).toBe(10000);
+    expect(body.budgetAlertThresholdPercent).toBe(80);
     expect(body.currentMonthUsage).not.toBeNull();
     expect(body.currentMonthUsage.runsCompleted).toBe(5);
   });
@@ -69,7 +71,7 @@ describe('PATCH /:orgId/budget', () => {
     const app = buildApp('ADMIN');
     await app.ready();
     const res = await app.inject({
-      body: JSON.stringify({ monthlyBudgetUsdCents: 5000 }),
+      body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 5000 }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
       url: `/${ORG_ID}/budget`,
@@ -83,7 +85,7 @@ describe('PATCH /:orgId/budget', () => {
     const app = buildApp('ADMIN');
     await app.ready();
     const res = await app.inject({
-      body: JSON.stringify({ monthlyBudgetUsdCents: null }),
+      body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: null }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
       url: `/${ORG_ID}/budget`,
@@ -95,7 +97,7 @@ describe('PATCH /:orgId/budget', () => {
     const app = buildApp('ENGINEER', 'ORG_ADMIN');
     await app.ready();
     const res = await app.inject({
-      body: JSON.stringify({ monthlyBudgetUsdCents: 5000 }),
+      body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 5000 }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
       url: `/${ORG_ID}/budget`,
@@ -107,11 +109,29 @@ describe('PATCH /:orgId/budget', () => {
     const app = buildApp('ENGINEER', 'ORG_MEMBER');
     await app.ready();
     const res = await app.inject({
-      body: JSON.stringify({ monthlyBudgetUsdCents: 5000 }),
+      body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 5000 }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
       url: `/${ORG_ID}/budget`,
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  it('updates the budget alert threshold', async () => {
+    const app = buildApp('ADMIN');
+    await app.ready();
+    const res = await app.inject({
+      body: JSON.stringify({ budgetAlertThresholdPercent: 90, monthlyBudgetUsdCents: 10000 }),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+      url: `/${ORG_ID}/budget`,
+    });
+    expect(res.statusCode).toBe(200);
+    const update = app.prisma.organization.update as ReturnType<typeof vi.fn>;
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ budgetAlertThresholdPercent: 90 }),
+      })
+    );
   });
 });

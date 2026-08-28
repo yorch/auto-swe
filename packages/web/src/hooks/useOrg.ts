@@ -23,6 +23,7 @@ export interface OrgBudgetRow {
   orgId: string;
   orgName: string;
   monthlyBudgetUsdCents: number | null;
+  budgetAlertThresholdPercent: number | null;
   currentMonthUsage: {
     yearMonth: string;
     costUsdAccrued: number;
@@ -79,14 +80,21 @@ export function useOrgBudget(orgId: string) {
   });
 }
 
+export interface PatchOrgBudgetBody {
+  monthlyBudgetUsdCents: number | null;
+  budgetAlertThresholdPercent: number | null;
+}
+
 export function usePatchOrgBudget(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (monthlyBudgetUsdCents: number | null) =>
-      api.patch<{ id: string; monthlyBudgetUsdCents: number | null; name: string }>(
-        `/api/v1/admin/organizations/${orgId}/budget`,
-        { monthlyBudgetUsdCents }
-      ),
+    mutationFn: (body: PatchOrgBudgetBody) =>
+      api.patch<{
+        budgetAlertThresholdPercent: number | null;
+        id: string;
+        monthlyBudgetUsdCents: number | null;
+        name: string;
+      }>(`/api/v1/admin/organizations/${orgId}/budget`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org-budget', orgId] }),
   });
 }
