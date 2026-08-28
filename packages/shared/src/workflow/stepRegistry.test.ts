@@ -74,4 +74,31 @@ describe('stepRegistry', () => {
       expect(field?.multiline).toBe(true);
     }
   });
+
+  it('registers generic workspace/outcome steps for non-SWE workflows', () => {
+    for (const name of [
+      'resolveWorkspace',
+      'readSource',
+      'writeOutcome',
+      'publishOutcome',
+      'runTool',
+    ]) {
+      expect(hasStep(name)).toBe(true);
+      expect(getStepMetadata(name).category).toBe('control');
+    }
+  });
+
+  it('resolveWorkspace exposes the workspace provider enum', () => {
+    const fields = getStepMetadata('resolveWorkspace').configFields;
+    const provider = fields.find((f) => f.key === 'workspaceProvider');
+    expect(provider?.type).toBe('enum');
+    expect(provider?.enumValues).toContain('git_repo');
+    expect(provider?.enumValues).toContain('document');
+  });
+
+  it('publishOutcome exposes the action risk class config field', () => {
+    const fields = getStepMetadata('publishOutcome').configFields;
+    const action = fields.find((f) => f.key === 'action');
+    expect(action?.type).toBe('string');
+  });
 });

@@ -76,5 +76,11 @@ export const BUILTIN_STEPS = [
   'decomposePrd',
   'createTrackerItems',
   'submitPrdWorkRequests',
+  // Generic workspace / source / outcome / tool steps for non-SWE workflows
+  'resolveWorkspace',
+  'readSource',
+  'writeOutcome',
+  'publishOutcome',
+  'runTool',
 ] as const;
 export type BuiltinStepName = (typeof BUILTIN_STEPS)[number];

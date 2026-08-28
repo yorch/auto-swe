@@ -15,6 +15,7 @@
  *   5. Add a dispatch case to dispatchStep() in workflows/runnable.ts.
  */
 
+import { WORKSPACE_PROVIDER_TYPES } from '../lib/workspaceProviders.js';
 import { BUILTIN_STEPS, type StepMetadata } from './registry-types.js';
 
 const REGISTRY = new Map<string, StepMetadata>();
@@ -169,6 +170,67 @@ register({
   description: 'Summarize the run and store a lesson in pgvector memory.',
   label: 'Commit to memory',
   name: 'commitToMemory',
+});
+
+// ── Generic workspace / source / outcome / tool steps (non-SWE workflows) ──
+
+register({
+  category: 'control',
+  configFields: [
+    {
+      description: 'Workspace provider this run targets. Defaults to the template provider.',
+      enumValues: WORKSPACE_PROVIDER_TYPES,
+      key: 'workspaceProvider',
+      label: 'Workspace provider',
+      type: 'enum',
+    },
+  ],
+  description:
+    'Materialise the workspace context (git repo, Notion page, Zendesk ticket, etc.) for a run.',
+  label: 'Resolve workspace',
+  name: 'resolveWorkspace',
+});
+
+register({
+  category: 'control',
+  configFields: [],
+  description: 'Read a source object from the target connection (page, ticket, record, issue).',
+  label: 'Read source',
+  name: 'readSource',
+});
+
+register({
+  category: 'control',
+  configFields: [],
+  description:
+    'Write a validated outcome to the target connection (page, ticket, record, issue tracker, Slack).',
+  label: 'Write outcome',
+  name: 'writeOutcome',
+});
+
+register({
+  category: 'control',
+  configFields: [
+    {
+      description:
+        'Risk class of the action being attempted (e.g. external_communication, external_write, internal_read).',
+      key: 'action',
+      label: 'Action risk class',
+      type: 'string',
+    },
+  ],
+  description:
+    'Evaluate the autonomy policy for an external-facing action and decide whether to auto-publish or require approval.',
+  label: 'Publish outcome',
+  name: 'publishOutcome',
+});
+
+register({
+  category: 'control',
+  configFields: [],
+  description: 'Run a named tool on a connection (e.g. fetchTicket, postMessage, createIssue).',
+  label: 'Run connection tool',
+  name: 'runTool',
 });
 
 // ── Phase 2 — Quality gates ─────────────────────────────────────────────────
