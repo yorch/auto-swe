@@ -343,6 +343,22 @@ describe('requireAuth — requiredTeamRole', () => {
     expect(reply.statusCode).toBe(403);
   });
 
+  it('rejects with 400 INVALID_ID when the team id param is not a UUID', async () => {
+    const findUnique = vi.fn();
+    const request = makeRequest({
+      authorization: 'Bearer jwt',
+      params: { id: 'not-a-uuid' },
+      prisma: { teamMembership: { findUnique } },
+      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
+    });
+    const reply = makeReply();
+    await requireAuth({ requiredTeamRole: 'LEAD' })(request, reply as unknown as FastifyReply);
+
+    expect(reply.statusCode).toBe(400);
+    expect(errorCode(reply)).toBe('INVALID_ID');
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
   it('honors a custom teamIdParam name', async () => {
     const findUnique = vi.fn().mockResolvedValue({ role: 'ADMIN' });
     const request = makeRequest({
@@ -452,6 +468,22 @@ describe('requireAuth — requiredOrgRole', () => {
     await requireAuth({ requiredOrgRole: 'ORG_MEMBER' })(request, reply as unknown as FastifyReply);
 
     expect(reply.statusCode).toBe(403);
+  });
+
+  it('rejects with 400 INVALID_ID when the org id param is not a UUID', async () => {
+    const findUnique = vi.fn();
+    const request = makeRequest({
+      authorization: 'Bearer jwt',
+      params: { orgId: 'not-a-uuid' },
+      prisma: { organizationMembership: { findUnique } },
+      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
+    });
+    const reply = makeReply();
+    await requireAuth({ requiredOrgRole: 'ORG_MEMBER' })(request, reply as unknown as FastifyReply);
+
+    expect(reply.statusCode).toBe(400);
+    expect(errorCode(reply)).toBe('INVALID_ID');
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it('honors a custom orgIdParam name', async () => {

@@ -52,6 +52,24 @@ beforeEach(() => {
   vi.resetAllMocks();
 });
 
+describe('input validation', () => {
+  it('rejects a non-UUID connectionId for readSource', async () => {
+    await expect(readSource({ connectionId: 'not-a-uuid' })).rejects.toThrow('Invalid input');
+  });
+
+  it('rejects an empty tool name for runTool', async () => {
+    await expect(
+      runTool({ connectionId: '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5', inputs: {}, tool: '' })
+    ).rejects.toThrow('Invalid input');
+  });
+
+  it('rejects a non-UUID connectionId for writeOutcome', async () => {
+    await expect(writeOutcome({ connectionId: 'not-a-uuid', data: { ok: true } })).rejects.toThrow(
+      'Invalid input'
+    );
+  });
+});
+
 describe('readSource', () => {
   it('reads from an http_api connection (placeholder)', async () => {
     (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
