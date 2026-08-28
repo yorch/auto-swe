@@ -415,8 +415,11 @@ function EventRow({
     <li>
       {/* biome-ignore lint/a11y/useSemanticElements: row contains nested interactive controls (links, collapse buttons) that cannot live inside a <button> */}
       <div
+        aria-controls={`trace-row-${trace.id}`}
         aria-expanded={isExpanded}
+        aria-label={isExpanded ? 'Collapse trace row' : 'Expand trace row'}
         className="w-full text-left transition-colors hover:bg-ink-600/20 px-3 py-1.5 cursor-pointer"
+        id={`trace-row-${trace.id}`}
         onClick={onToggle}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {

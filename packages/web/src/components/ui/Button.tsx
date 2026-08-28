@@ -33,6 +33,7 @@ export function Button({
   className,
   variant = 'secondary',
   size = 'md',
+  type = 'button',
   children,
   ...props
 }: ButtonProps) {
@@ -49,6 +50,7 @@ export function Button({
         fontSize: '13.5px',
         letterSpacing: '0.01em',
       }}
+      type={type}
       {...props}
     >
       {children}

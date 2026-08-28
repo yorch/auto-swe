@@ -298,10 +298,12 @@ function PaletteItem({
 }) {
   return (
     <li>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: HTML5 drag source needs to be a div with draggable + onDragStart; <button draggable> doesn't fire the drag events reliably across browsers. */}
+      {/* biome-ignore lint/a11y/useSemanticElements: <button draggable> does not reliably fire drag events across browsers; div uses role="button" for accessibility. */}
       <div
+        aria-label={`Add ${label} node`}
+        aria-roledescription="draggable palette item"
         className={cn(
-          'group flex cursor-grab items-center gap-2 rounded-sm border px-2 py-1.5 text-xs transition-colors hover:border-ember-400 hover:bg-ink-700 active:cursor-grabbing',
+          'group flex cursor-grab items-center gap-2 rounded-sm border px-2 py-1.5 text-xs transition-colors hover:border-ember-400 hover:bg-ink-700 focus:border-ember-400 focus:bg-ink-700 focus:outline-none active:cursor-grabbing',
           elevated ? 'border-brick-400/40 bg-brick-400/5' : 'border-ink-600 bg-ink-800/50'
         )}
         draggable
@@ -309,6 +311,15 @@ function PaletteItem({
           e.dataTransfer.setData(PALETTE_MIME, JSON.stringify(dragPayload));
           e.dataTransfer.effectAllowed = 'copy';
         }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            // Keep the element keyboard-focusable even though DnD itself is
+            // pointer-driven; screen-reader users can discover the purpose.
+          }
+        }}
+        role="button"
+        tabIndex={0}
         title={title}
       >
         <span aria-hidden className={cn('h-2 w-2 shrink-0 rounded-full', swatch)} />
