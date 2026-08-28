@@ -1,4 +1,3 @@
-import { Context } from '@temporalio/activity';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
 import { appendNotionBlocks, createNotionPage, readNotionPage } from '../connectors/notion.js';

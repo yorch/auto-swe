@@ -1670,3 +1670,72 @@ ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_template
 -- AddForeignKey
 ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
+-- ----------------------------------------------------------------------------
+-- Merged from 00000000000002_autonomy_policy, 00000000000003_org_budget_alert_threshold,
+-- 00000000000004_workflow_step_unique, and 00000000000005_workflow_outcome_references.
+-- These were separate migrations during development but have been folded into the
+-- baseline because this branch has not been deployed to an environment yet.
+-- ----------------------------------------------------------------------------
+
+-- 00000000000002_autonomy_policy
+CREATE TABLE IF NOT EXISTS "autonomy_policies" (
+    "id"          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    "team_id"     UUID NULL REFERENCES "teams"("id") ON DELETE CASCADE,
+    "template_id" UUID NULL REFERENCES "workflow_templates"("id") ON DELETE CASCADE,
+    "name"        TEXT NOT NULL,
+    "description" TEXT,
+    "is_default"  BOOLEAN NOT NULL DEFAULT FALSE,
+    "rules"       JSONB NOT NULL,
+    "created_at"  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at"  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS "idx_autonomy_policies_team_id" ON "autonomy_policies"("team_id");
+CREATE INDEX IF NOT EXISTS "idx_autonomy_policies_template_id" ON "autonomy_policies"("template_id");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "autonomy_policies_team_default_uidx"
+    ON "autonomy_policies"("team_id")
+    WHERE "is_default" = TRUE AND "template_id" IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "autonomy_policies_global_default_uidx"
+    ON "autonomy_policies"("is_default")
+    WHERE "is_default" = TRUE AND "team_id" IS NULL AND "template_id" IS NULL;
+
+-- 00000000000003_org_budget_alert_threshold
+ALTER TABLE "organizations"
+    ADD COLUMN IF NOT EXISTS "budget_alert_threshold_percent" INTEGER NULL,
+    ADD CONSTRAINT "chk_organizations_budget_alert_threshold_percent"
+        CHECK ("budget_alert_threshold_percent" IS NULL
+               OR ("budget_alert_threshold_percent" >= 0 AND "budget_alert_threshold_percent" <= 100));
+
+-- 00000000000004_workflow_step_unique
+CREATE UNIQUE INDEX IF NOT EXISTS "workflow_steps_run_node_attempt_uidx"
+    ON "workflow_steps" ("run_id", "node_id", "attempt");
+
+ALTER TABLE "workflow_steps"
+    ADD CONSTRAINT IF NOT EXISTS "workflow_steps_run_node_attempt_uidx"
+        UNIQUE USING INDEX "workflow_steps_run_node_attempt_uidx";
+
+-- 00000000000005_workflow_outcome_references
+CREATE TABLE IF NOT EXISTS "workflow_outcome_references" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "run_id" UUID NOT NULL,
+    "node_id" TEXT NOT NULL,
+    "connection_id" UUID NOT NULL,
+    "attempt" INTEGER NOT NULL,
+    "result" JSONB NOT NULL,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "workflow_outcome_references_pkey" PRIMARY KEY ("id")
+);
+
+CREATE INDEX IF NOT EXISTS "workflow_outcome_references_run_id_idx"
+    ON "workflow_outcome_references" ("run_id");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "workflow_outcome_references_run_node_conn_attempt_uidx"
+    ON "workflow_outcome_references" ("run_id", "node_id", "connection_id", "attempt");
+
+ALTER TABLE "workflow_outcome_references"
+    ADD CONSTRAINT IF NOT EXISTS "workflow_outcome_references_run_id_fkey"
+        FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
