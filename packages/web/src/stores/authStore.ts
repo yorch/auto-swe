@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { create } from 'zustand';
 import { api } from '@/lib/api';
 import { API_BASE, COOKIE_ACCESS_TOKEN, COOKIE_SESSION_MARKER } from '@/lib/config';
@@ -84,17 +85,31 @@ function clearAllAuthCookies(): void {
   document.cookie = `${COOKIE_SESSION_MARKER}=; path=/; max-age=0`;
 }
 
-/** Shape of the relevant subset of better-auth's get-session response. */
-interface BetterAuthSessionResponse {
-  session?: { id: string; expiresAt: string };
-  user?: {
-    id: string;
-    email?: string;
-    role?: string;
-    slackId?: string | null;
-    isActive?: boolean;
-  };
-}
+const BetterAuthErrorSchema = z.object({
+  message: z.string().optional(),
+});
+
+const BetterAuthSessionResponseSchema = z.object({
+  session: z
+    .object({
+      expiresAt: z.string(),
+      id: z.string(),
+    })
+    .optional(),
+  user: z
+    .object({
+      email: z.string().optional(),
+      id: z.string(),
+      isActive: z.boolean().optional(),
+      role: z.string().optional(),
+      slackId: z.string().nullable().optional(),
+    })
+    .optional(),
+});
+
+const BetterAuthRedirectSchema = z.object({
+  url: z.string().optional(),
+});
 
 /**
  * Wrapper around `fetch` for better-auth POST endpoints. Folds three layers of
@@ -117,8 +132,9 @@ async function betterAuthPost(path: string, body: unknown, fallback: string): Pr
     throw new Error(friendly ?? fallback);
   }
   if (!res.ok) {
-    const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(errBody?.message ?? fallback);
+    const errBody: unknown = await res.json().catch(() => null);
+    const parsed = BetterAuthErrorSchema.safeParse(errBody);
+    throw new Error(parsed.success && parsed.data.message ? parsed.data.message : fallback);
   }
   return res.json().catch(() => null);
 }
@@ -140,11 +156,12 @@ async function betterAuthRedirect(
     return;
   }
   const body = { callbackURL: `${window.location.origin}${callbackPath}`, provider };
-  const data = (await betterAuthPost(path, body, fallback)) as { url?: string } | null;
-  if (!data?.url) {
+  const raw = await betterAuthPost(path, body, fallback);
+  const parsed = BetterAuthRedirectSchema.safeParse(raw);
+  if (!parsed.success || !parsed.data.url) {
     throw new Error(fallback);
   }
-  window.location.href = data.url;
+  window.location.href = parsed.data.url;
 }
 
 async function fetchBetterAuthSession(): Promise<AuthState['user']> {
@@ -162,18 +179,20 @@ async function fetchBetterAuthSession(): Promise<AuthState['user']> {
   if (!res.ok) {
     return null;
   }
-  const body = (await res.json().catch(() => null)) as BetterAuthSessionResponse | null;
-  if (!body?.user) {
+  const raw: unknown = await res.json().catch(() => null);
+  const parsed = BetterAuthSessionResponseSchema.safeParse(raw);
+  if (!parsed.success || !parsed.data.user) {
     return null;
   }
+  const { user } = parsed.data;
   return {
     // Default to true so a stale cache / pre-better-auth user (where
     // isActive may be missing from the response) renders as active.
-    isActive: body.user.isActive ?? true,
-    role: body.user.role ?? 'ENGINEER',
-    sub: body.user.id,
-    ...(body.user.email ? { email: body.user.email } : {}),
-    ...(body.user.slackId ? { slackId: body.user.slackId } : {}),
+    isActive: user.isActive ?? true,
+    role: user.role ?? 'ENGINEER',
+    sub: user.id,
+    ...(user.email ? { email: user.email } : {}),
+    ...(user.slackId ? { slackId: user.slackId } : {}),
   };
 }
 
@@ -231,8 +250,11 @@ export const useAuthStore = create<AuthState>((set) => ({
       );
     }
     if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { message?: string } | null;
-      throw new Error(body?.message ?? 'Invalid email or password');
+      const raw: unknown = await res.json().catch(() => null);
+      const parsed = BetterAuthErrorSchema.safeParse(raw);
+      throw new Error(
+        parsed.success && parsed.data.message ? parsed.data.message : 'Invalid email or password'
+      );
     }
     const user = await fetchBetterAuthSession();
     if (!user) {

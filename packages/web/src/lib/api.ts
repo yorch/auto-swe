@@ -1,13 +1,8 @@
 import { API_BASE, COOKIE_ACCESS_TOKEN } from './config';
 import { gatewayUnreachableMessage } from './networkErrors';
 
-interface ApiError {
-  code: string;
-  message: string;
-}
-
-interface ApiErrorBody {
-  error?: ApiError;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export class ApiClient {
@@ -107,8 +102,16 @@ export class ApiClient {
   }
 
   private async extractErrorMessage(res: Response): Promise<string> {
-    const body = await res.json().catch(() => ({}));
-    return (body as ApiErrorBody).error?.message ?? `HTTP ${res.status}`;
+    const body: unknown = await res.json().catch(() => ({}));
+    if (
+      isRecord(body) &&
+      isRecord(body.error) &&
+      typeof body.error.message === 'string' &&
+      body.error.message.length > 0
+    ) {
+      return body.error.message;
+    }
+    return `HTTP ${res.status}`;
   }
 
   private tryRefresh(): Promise<boolean> {
@@ -135,16 +138,22 @@ export class ApiClient {
         return false;
       }
 
-      const { data } = await response.json();
-      if (!data?.accessToken) {
+      const payload: unknown = await response.json();
+      if (
+        !isRecord(payload) ||
+        !isRecord(payload.data) ||
+        typeof payload.data.accessToken !== 'string' ||
+        payload.data.accessToken.length === 0
+      ) {
         return false;
       }
+      const accessToken = payload.data.accessToken;
       // Guard against any token change (logout or fresh login) that raced this
       // in-flight request — don't overwrite a token that's newer than ours.
       if (this.tokenGeneration !== generation) {
         return false;
       }
-      this.setToken(data.accessToken);
+      this.setToken(accessToken);
       return true;
     } catch {
       return false;

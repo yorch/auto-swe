@@ -105,7 +105,7 @@ export function useStartWorkflowGenerationJob() {
 }
 
 export function useWorkflowGenerationJob(jobId: string | null) {
-  return useQuery({
+  return useQuery<WorkflowGenerationJobStatus>({
     enabled: !!jobId,
     queryFn: () =>
       api
@@ -116,7 +116,7 @@ export function useWorkflowGenerationJob(jobId: string | null) {
     queryKey: ['workflow-generation-job', jobId],
     // Poll while the job is running; stop once it reaches a terminal state.
     refetchInterval: (query) => {
-      const data = query.state.data as WorkflowGenerationJobStatus | undefined;
+      const data = query.state.data;
       return data && data.status !== 'running' ? false : 1500;
     },
   });

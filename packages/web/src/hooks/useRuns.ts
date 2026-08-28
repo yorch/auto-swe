@@ -39,7 +39,7 @@ export function useWorkflow(id: string) {
 }
 
 export function useWorkflowRun(id: string, includeTraces = true) {
-  return useQuery({
+  return useQuery<WorkflowRunDetail>({
     enabled: !!id,
     queryFn: () =>
       api
@@ -49,7 +49,7 @@ export function useWorkflowRun(id: string, includeTraces = true) {
         .then((r) => r.data),
     queryKey: ['workflow-run', id, includeTraces],
     refetchInterval: (q) => {
-      const data = q.state.data as WorkflowRunDetail | undefined;
+      const data = q.state.data;
       return data?.status === 'RUNNING' ? 3_000 : 30_000;
     },
   });

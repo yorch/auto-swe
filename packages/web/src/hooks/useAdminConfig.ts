@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { z } from 'zod';
 import { api } from '@/lib/api';
 
 // ── Masked field shape ──
@@ -326,13 +327,20 @@ export const useUpdateIssueTrackerConfig = configMutation<
 export const testIssueTrackerConnection = (ticketId: string) =>
   postConfigTest('issue-tracker', { ticketId });
 
+const DetectJiraFieldsResponseSchema = z.object({
+  fields: z.array(z.object({ id: z.string(), name: z.string() })),
+  storyPointsFieldId: z.string().nullable(),
+});
+
 export function useDetectJiraFields() {
   return useMutation({
-    mutationFn: async () =>
-      api.post<{
+    mutationFn: async () => {
+      const res = await api.post<{
         fields: { id: string; name: string }[];
         storyPointsFieldId: string | null;
-      }>('/api/v1/admin/config/issue-tracker/detect-fields', {}),
+      }>('/api/v1/admin/config/issue-tracker/detect-fields', {});
+      return DetectJiraFieldsResponseSchema.parse(res);
+    },
   });
 }
 
