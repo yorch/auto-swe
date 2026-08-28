@@ -4,8 +4,9 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
+import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { paginationQuery } from '../lib/pagination.js';
-import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateEpicSchema = z.object({
   description: z
@@ -156,40 +157,49 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       const workRequestId = crypto.randomUUID();
       const epicWorkflowId = `${EPIC_ID_PREFIX}${externalTicketId}`;
 
-      // Start Temporal epic workflow FIRST (idempotency gate)
-      try {
-        await fastify.temporal.startEpicWorkflow(epicWorkflowId, {
-          description,
-          epicWorkflowId,
-          externalTicketId,
-          repoIds,
-          repos: [], // Empty — Planner Agent will decompose
-          requestPayload: JSON.stringify(request.body),
-          workRequestId,
-        });
-      } catch (err: unknown) {
-        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-          return reply.status(409).send({
-            error: {
-              code: 'EPIC_ALREADY_EXISTS',
-              message: `Epic workflow already running for ${externalTicketId}`,
-            },
-          });
-        }
-        throw err;
-      }
-
-      // Persist work request to DB
-      await fastify.prisma.runInput.create({
-        data: {
-          description,
-          externalTicketId,
-          id: workRequestId,
-          isCrossRepo: true,
-          requestedById: user.sub,
-          requestPayload: JSON.stringify(request.body),
+      // Ledger first, workflow second: write RunInput + ActiveWorkflow rows, then
+      // start the epic workflow, compensating if Temporal never starts. The unique
+      // index on ActiveWorkflow.temporalWorkflowId is the atomic dedup gate.
+      const launch = await launchTrackedWorkflow(
+        fastify.prisma,
+        {
+          activeWorkflow: {
+            budgetTier: 'STANDARD',
+            currentStatus: 'STARTING',
+            repoId: null,
+            temporalWorkflowId: epicWorkflowId,
+            workRequestId,
+          },
+          runInput: {
+            description,
+            externalTicketId,
+            id: workRequestId,
+            isCrossRepo: true,
+            requestedById: user.sub,
+            requestPayload: JSON.stringify(request.body),
+          },
         },
-      });
+        () =>
+          fastify.temporal.startEpicWorkflow(epicWorkflowId, {
+            description,
+            epicWorkflowId,
+            externalTicketId,
+            repoIds,
+            repos: [], // Empty — Planner Agent will decompose
+            requestPayload: JSON.stringify(request.body),
+            workRequestId,
+          }),
+        { log: fastify.log }
+      );
+
+      if (!launch.ok) {
+        return reply.status(409).send({
+          error: {
+            code: 'EPIC_ALREADY_EXISTS',
+            message: `Epic workflow already running for ${externalTicketId}`,
+          },
+        });
+      }
 
       return reply.status(201).send({
         data: {

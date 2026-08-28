@@ -104,7 +104,25 @@ describe('epic routes', () => {
     } as unknown as never);
 
     app.decorate('prisma', {
+      $transaction: async (queries: Array<Promise<unknown>>) => Promise.all(queries),
       activeWorkflow: {
+        create: async (args: { data: Record<string, unknown> }) => {
+          const row = {
+            assignedBranch: null,
+            currentStatus: 'STARTING',
+            id: `aw-${activeWorkflowFixtures.length + 1}`,
+            parentWorkflowId: null,
+            repoId: null,
+            temporalWorkflowId: args.data.temporalWorkflowId,
+            updatedAt: new Date(),
+            ...args.data,
+          } as ActiveWorkflowFixture;
+          activeWorkflowFixtures.push(row);
+          return row;
+        },
+        delete: async (args: { where: { id: string } }) => {
+          activeWorkflowFixtures = activeWorkflowFixtures.filter((w) => w.id !== args.where.id);
+        },
         findMany: async (args: {
           where: {
             temporalWorkflowId?: { in?: string[]; startsWith?: string };
@@ -180,6 +198,9 @@ describe('epic routes', () => {
         create: async (args: { data: Record<string, unknown> }) => {
           createdWorkRequests.push(args.data);
           return { ...args.data };
+        },
+        delete: async () => {
+          createdWorkRequests.length = 0;
         },
         findFirst: async (args: { where: { externalTicketId: string } }) =>
           workRequestFixtures.find((wr) => wr.externalTicketId === args.where.externalTicketId) ??

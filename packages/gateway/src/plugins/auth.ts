@@ -74,6 +74,7 @@ function getErrorName(err: unknown): string | undefined {
 export { getErrorMessage, getErrorName };
 
 const ACCESS_TOKEN_TTL = '1h';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Audience claims keep token classes from being swapped: an API access token
 // can't be presented as OAuth `state`, and an OAuth-state token can't be used
@@ -403,12 +404,11 @@ export function requireAuth(options: RBACOptions = {}) {
       }
 
       const teamId = (request.params as Record<string, string>)?.[options.teamIdParam ?? 'id'];
-      if (!teamId) {
-        // requiredTeamRole was set but the param is absent — this is a server-side
-        // misconfiguration (wrong teamIdParam value). Fail loudly rather than
-        // silently granting access.
-        return reply.status(500).send({
-          error: { code: 'SERVER_ERROR', message: 'Team ID param misconfigured on this route' },
+      if (!teamId || !UUID_RE.test(teamId)) {
+        // requiredTeamRole was set but the param is absent or malformed. Returning
+        // 400 here avoids a Prisma P2023/P2025 when onRequest runs before validation.
+        return reply.status(400).send({
+          error: { code: 'INVALID_ID', message: 'Team ID must be a valid UUID' },
         });
       }
 
@@ -437,11 +437,11 @@ export function requireAuth(options: RBACOptions = {}) {
       }
 
       const orgId = (request.params as Record<string, string>)?.[options.orgIdParam ?? 'orgId'];
-      if (!orgId) {
-        // requiredOrgRole was set but the param is absent — a server-side
-        // misconfiguration. Fail loudly rather than silently granting access.
-        return reply.status(500).send({
-          error: { code: 'SERVER_ERROR', message: 'Org ID param misconfigured on this route' },
+      if (!orgId || !UUID_RE.test(orgId)) {
+        // requiredOrgRole was set but the param is absent or malformed. Returning 400
+        // here avoids a Prisma P2023/P2025 when onRequest runs before validation.
+        return reply.status(400).send({
+          error: { code: 'INVALID_ID', message: 'Organization ID must be a valid UUID' },
         });
       }
 

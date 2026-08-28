@@ -484,6 +484,27 @@ function specValidationWarnings(spec: WorkflowSpec): string[] {
   return [...report.errors, ...report.warnings].map(formatValidationIssue);
 }
 
+/** Visibility filter for workflow runs: mirrors the logic in workflowRuns.ts so that
+ *  per-template run lists never leak cross-org work for global templates. */
+function runVisibilityFilter(user: { sub: string; role: string }): Prisma.WorkflowRunWhereInput {
+  if (user.role === 'ADMIN') {
+    return {};
+  }
+  return {
+    OR: [
+      { template: { teamId: null } },
+      { template: { team: { memberships: { some: { userId: user.sub } } } } },
+      {
+        workRequest: {
+          activeWorkflows: {
+            some: { repository: { team: { memberships: { some: { userId: user.sub } } } } },
+          },
+        },
+      },
+    ],
+  };
+}
+
 export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -1448,19 +1469,23 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         tpl.workspaceProvider && isWorkspaceProviderType(tpl.workspaceProvider)
           ? getWorkspaceProviderMetadata(tpl.workspaceProvider)
           : null;
-      if (providerMeta?.connectionType) {
-        if (!connectionId) {
-          return reply.status(400).send({
-            error: {
-              code: 'CONNECTION_REQUIRED',
-              message: `Template requires a ${providerMeta.connectionType} connection`,
-            },
-          });
-        }
+
+      // Org monthly budget gate (P5): gate on the connection's organization when
+      // one is supplied; otherwise fall back to the template's owning team org.
+      // This prevents a template in org A from spending against org B's cap when
+      // a connection from org B is used.
+      let budgetOrgId = tpl.team?.organization?.id;
+      let budgetCap = tpl.team?.organization?.monthlyBudgetUsdCents;
+
+      if (connectionId) {
         const connection = await fastify.prisma.connection.findUnique({
           include: {
             team: {
-              select: { memberships: { select: { userId: true }, where: { userId: user.sub } } },
+              select: {
+                memberships: { select: { userId: true }, where: { userId: user.sub } },
+                organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+                orgId: true,
+              },
             },
           },
           where: { id: connectionId },
@@ -1475,7 +1500,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             error: { code: 'FORBIDDEN', message: 'You do not have access to this connection' },
           });
         }
-        if (connection.type !== providerMeta.connectionType) {
+        if (providerMeta?.connectionType && connection.type !== providerMeta.connectionType) {
           return reply.status(400).send({
             error: {
               code: 'CONNECTION_TYPE_MISMATCH',
@@ -1483,13 +1508,18 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             },
           });
         }
+        budgetOrgId = connection.team.organization?.id ?? budgetOrgId;
+        budgetCap = connection.team.organization?.monthlyBudgetUsdCents ?? budgetCap;
+      } else if (providerMeta?.connectionType) {
+        return reply.status(400).send({
+          error: {
+            code: 'CONNECTION_REQUIRED',
+            message: `Template requires a ${providerMeta.connectionType} connection`,
+          },
+        });
       }
 
-      // Org monthly budget gate (P5): a team-scoped template inherits the owning
-      // team's organization cap; global templates without a team are not capped here.
-      const orgId = tpl.team?.organization?.id;
-      const budgetCap = tpl.team?.organization?.monthlyBudgetUsdCents;
-      if (orgId && !(await assertOrgBudget(fastify.prisma, orgId, budgetCap, reply))) {
+      if (budgetOrgId && !(await assertOrgBudget(fastify.prisma, budgetOrgId, budgetCap, reply))) {
         return;
       }
 
@@ -1584,9 +1614,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           orderBy: { startedAt: 'desc' },
           skip: offset,
           take: limit,
-          where: { templateId: tpl.id },
+          where: { templateId: tpl.id, ...runVisibilityFilter(user) },
         }),
-        fastify.prisma.workflowRun.count({ where: { templateId: tpl.id } }),
+        fastify.prisma.workflowRun.count({
+          where: { templateId: tpl.id, ...runVisibilityFilter(user) },
+        }),
       ]);
       return {
         data: rows.map(projectRunSummary),
