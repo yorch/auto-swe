@@ -9,6 +9,7 @@
 
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
 import { useEffect, useRef, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
@@ -538,9 +539,16 @@ export function McpSection({
   node: Extract<SpecNode, { type: 'mcp' }>;
   onChange: (next: SpecNode) => void;
 }) {
-  const { data: connections, isLoading: connectionsLoading } = useMcpConnections();
+  const {
+    data: connections,
+    error: connectionsError,
+    isLoading: connectionsLoading,
+  } = useMcpConnections();
   return (
     <div className="space-y-4">
+      {connectionsError && (
+        <Alert>{errMsg(connectionsError, 'Failed to load MCP connections')}</Alert>
+      )}
       <Select
         hint="Choose an active MCP connection (managed at /admin/mcp-connections)"
         label="Connection"
@@ -556,6 +564,9 @@ export function McpSection({
           </option>
         ))}
       </Select>
+      {!connectionsLoading && !connectionsError && (connections ?? []).length === 0 && (
+        <p className="text-sm text-paper-500">No MCP connections configured.</p>
+      )}
       <Input
         hint="tool name exposed by the MCP server; its args come from Inputs below"
         label="Tool"

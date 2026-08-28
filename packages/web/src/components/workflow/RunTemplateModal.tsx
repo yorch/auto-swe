@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { useRunTemplate } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
-import { buildInitialPayload, SchemaFieldInput } from './schemaForm';
+import { buildInitialPayload, SchemaFieldInput, validatePayload } from './schemaForm';
 
 export function RunTemplateModal({
   template,
@@ -30,15 +30,26 @@ export function RunTemplateModal({
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [launchedRunId, setLaunchedRunId] = useState<string | null>(null);
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
   const handleClose = () => {
     onClose();
     setError(null);
     setLaunchedRunId(null);
+    setAttemptedSubmit(false);
+    setLabel('');
+    setPayload(schema ? buildInitialPayload(schema) : {});
   };
 
+  const fieldErrors = schema ? validatePayload(schema, payload) : {};
+  const isValid = Object.keys(fieldErrors).length === 0;
+
   const handleRun = async () => {
+    setAttemptedSubmit(true);
     setError(null);
+    if (!isValid) {
+      return;
+    }
     try {
       const result = await runTemplate.mutateAsync({ label: label.trim() || undefined, payload });
       setLaunchedRunId(result.workflowId);
@@ -105,6 +116,7 @@ export function RunTemplateModal({
         {hasSchema &&
           Object.entries(schema.properties).map(([key, prop]) => (
             <SchemaFieldInput
+              error={attemptedSubmit ? fieldErrors[key] : undefined}
               key={key}
               name={key}
               onChange={(v) => setField(key, v)}
@@ -118,7 +130,11 @@ export function RunTemplateModal({
           <Button onClick={handleClose} variant="secondary">
             Cancel
           </Button>
-          <Button disabled={runTemplate.isPending} onClick={handleRun} variant="primary">
+          <Button
+            disabled={!isValid || runTemplate.isPending}
+            onClick={handleRun}
+            variant="primary"
+          >
             {runTemplate.isPending ? 'Starting…' : 'Run →'}
           </Button>
         </div>

@@ -395,10 +395,19 @@ function EventRow({
 
   return (
     <li>
-      <button
-        className="w-full text-left transition-colors hover:bg-ink-600/20 px-3 py-1.5"
+      {/* biome-ignore lint/a11y/useSemanticElements: row contains nested interactive controls (links, collapse buttons) that cannot live inside a <button> */}
+      <div
+        aria-expanded={isExpanded}
+        className="w-full text-left transition-colors hover:bg-ink-600/20 px-3 py-1.5 cursor-pointer"
         onClick={onToggle}
-        type="button"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        role="button"
+        tabIndex={0}
       >
         <div className="flex items-center gap-2">
           {/* Disclosure caret */}
@@ -464,7 +473,7 @@ function EventRow({
         </div>
 
         {isExpanded && <TraceOutput trace={trace} />}
-      </button>
+      </div>
     </li>
   );
 }

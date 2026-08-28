@@ -22,6 +22,7 @@ import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useInbox } from '@/hooks/useInbox';
 import { useCancelWorkflowRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
+import { errMsg } from '@/lib/errors';
 import { cn, formatDuration, formatRelativeTime } from '@/lib/utils';
 import { SplitRunPanel } from './SplitRunPanel';
 import { TracesTab } from './TracesTab';
@@ -1099,11 +1100,20 @@ export default function RunDetailPage({ params }: PageProps) {
       </div>
 
       <ConfirmModal
+        closeOnConfirm={false}
         confirmLabel="Cancel run"
         dangerous
+        error={cancelRun.error ? errMsg(cancelRun.error) : undefined}
         message="Cancel this run? In-flight steps will be aborted."
-        onClose={() => setShowCancelConfirm(false)}
-        onConfirm={() => cancelRun.mutate()}
+        onClose={() => {
+          cancelRun.reset();
+          setShowCancelConfirm(false);
+        }}
+        onConfirm={() =>
+          cancelRun.mutate(undefined, {
+            onSuccess: () => setShowCancelConfirm(false),
+          })
+        }
         open={showCancelConfirm}
         title="Cancel run"
       />

@@ -12,19 +12,30 @@ export function ConnectionPicker({
   value,
   onChange,
   connectionType,
+  required,
+  error,
 }: {
   label: string;
   hint?: string;
   value: string;
   onChange: (v: string) => void;
   connectionType?: string;
+  required?: boolean;
+  error?: string;
 }) {
   const { data: connections = [] } = useRepositories();
   const visible = connectionType
     ? connections.filter((c) => (c.type ?? 'git_repo') === connectionType)
     : connections;
   return (
-    <Select hint={hint} label={label} onChange={(e) => onChange(e.target.value)} value={value}>
+    <Select
+      error={error}
+      hint={hint}
+      label={label}
+      onChange={(e) => onChange(e.target.value)}
+      required={required}
+      value={value}
+    >
       <option value="">— select connection —</option>
       {visible.map((c) => (
         <option key={c.id} value={c.id}>
@@ -42,12 +53,14 @@ export function SchemaFieldInput({
   value,
   onChange,
   required,
+  error,
 }: {
   name: string;
   prop: InputSchemaProperty;
   value: unknown;
   onChange: (v: unknown) => void;
   required?: boolean;
+  error?: string;
 }) {
   const base = name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
   const label = required ? `${base} *` : base;
@@ -57,9 +70,11 @@ export function SchemaFieldInput({
     return (
       <ConnectionPicker
         connectionType={prop.connectionType}
+        error={error}
         hint={hint}
         label={label}
         onChange={onChange}
+        required={required}
         value={typeof value === 'string' ? value : ''}
       />
     );
@@ -69,6 +84,8 @@ export function SchemaFieldInput({
     return (
       <label className="flex cursor-pointer items-center gap-3">
         <input
+          aria-errormessage={error ? `${name}-error` : undefined}
+          aria-invalid={error ? true : undefined}
           checked={Boolean(value)}
           className="h-4 w-4 accent-ember-400"
           onChange={(e) => onChange(e.target.checked)}
@@ -78,6 +95,11 @@ export function SchemaFieldInput({
           {label}
           {hint && <span className="ml-1 text-paper-500">— {hint}</span>}
         </span>
+        {error && (
+          <span className="text-xs text-brick-400" id={`${name}-error`}>
+            {error}
+          </span>
+        )}
       </label>
     );
   }
@@ -85,9 +107,11 @@ export function SchemaFieldInput({
   if (prop.enum) {
     return (
       <Select
+        error={error}
         hint={hint}
         label={label}
         onChange={(e) => onChange(e.target.value)}
+        required={required}
         value={typeof value === 'string' ? value : ''}
       >
         <option value="">— select —</option>
@@ -103,9 +127,11 @@ export function SchemaFieldInput({
   if (prop.type === 'number') {
     return (
       <Input
+        error={error}
         hint={hint}
         label={label}
         onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
+        required={required}
         type="number"
         value={typeof value === 'number' ? String(value) : ''}
       />
@@ -115,10 +141,13 @@ export function SchemaFieldInput({
   // string (including uuid format) and fallback
   return (
     <Input
+      error={error}
       hint={prop.format === 'uuid' ? `${hint ?? ''} (UUID)`.trim() : hint}
       label={label}
       onChange={(e) => onChange(e.target.value)}
       placeholder={prop.format === 'uuid' ? 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' : undefined}
+      required={required}
+      type={prop.format === 'uuid' ? 'text' : 'text'}
       value={typeof value === 'string' ? value : ''}
     />
   );
@@ -130,10 +159,63 @@ export function buildInitialPayload(schema: InputSchema): Record<string, unknown
     if (prop.type === 'boolean') {
       payload[key] = false;
     } else if (prop.enum && prop.enum.length > 0) {
-      payload[key] = prop.enum[0];
+      // Keep enum fields unselected initially so the user makes an explicit choice.
+      payload[key] = '';
     } else {
       payload[key] = '';
     }
   }
   return payload;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function validateField(
+  prop: InputSchemaProperty,
+  value: unknown,
+  required?: boolean
+): string | undefined {
+  if (required && (value === '' || value === undefined || value === null)) {
+    return 'This field is required';
+  }
+  if (prop.type === 'number') {
+    if (
+      value !== undefined &&
+      value !== '' &&
+      (typeof value !== 'number' || !Number.isFinite(value))
+    ) {
+      return 'Must be a valid number';
+    }
+  }
+  if (prop.type === 'string' && prop.format === 'uuid' && value !== '' && value !== undefined) {
+    if (typeof value !== 'string' || !UUID_RE.test(value)) {
+      return 'Must be a valid UUID';
+    }
+  }
+  if (prop.enum && value !== '' && value !== undefined) {
+    if (!prop.enum.some((opt) => String(opt) === value)) {
+      return `Must be one of: ${prop.enum.join(', ')}`;
+    }
+  }
+  if (prop.type === 'connection' && value !== '' && value !== undefined) {
+    if (typeof value !== 'string' || !UUID_RE.test(value)) {
+      return 'Select a valid connection';
+    }
+  }
+  return undefined;
+}
+
+export function validatePayload(
+  schema: InputSchema,
+  payload: Record<string, unknown>
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const required = new Set(schema.required ?? []);
+  for (const [key, prop] of Object.entries(schema.properties)) {
+    const error = validateField(prop, payload[key], required.has(key));
+    if (error) {
+      errors[key] = error;
+    }
+  }
+  return errors;
 }
