@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatCost, formatDate, formatDuration } from '@/lib/utils';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
 import { FailureCard } from './FailureCard';
+import { RunOutcomeCard } from './RunOutcomeCard';
 
 interface RunMetaRailProps {
   run: WorkflowRunDetail;
@@ -117,6 +118,25 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
 
       {/* Eval signals (P0) */}
       <EvalSignalsPanel runId={run.id} />
+
+      {/* Non-SWE outcome card */}
+      {(() => {
+        const hasResult =
+          run.result != null &&
+          typeof run.result === 'object' &&
+          Object.keys(run.result as Record<string, unknown>).length > 0;
+        if (!hasResult) {
+          return null;
+        }
+        return (
+          <>
+            <div className="h-px mx-5 bg-ink-500/40" />
+            <div className="px-5 py-4">
+              <RunOutcomeCard result={run.result} templateName={run.templateName} />
+            </div>
+          </>
+        );
+      })()}
 
       {/* Failure card */}
       {failedStep && (

@@ -414,6 +414,8 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   costUsdAccrued: number;
   specSnapshot: unknown;
   contextSnapshot: unknown;
+  /** Parsed terminate-node result surfaced from `contextSnapshot.result`. */
+  result: unknown;
   steps: WorkflowStepRecord[];
   traces: AgentTraceRecord[];
   templateName: string;

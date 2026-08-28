@@ -245,6 +245,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           costUsdAccrued: run.costUsdAccrued,
           endedAt: run.endedAt,
           id: run.id,
+          result: (run.contextSnapshot as { result?: unknown })?.result ?? null,
           specSnapshot: run.specSnapshot,
           startedAt: run.startedAt,
           status: run.status,

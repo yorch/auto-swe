@@ -381,6 +381,11 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   const finalStatus: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED' = outcome
     ? (outcome.status as 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED')
     : 'FAILED';
+  // Persist the terminate-node result so the run detail page can surface it
+  // without re-deriving it from the spec and step traces.
+  if (outcome) {
+    outcome.finalContext.result = outcome.result;
+  }
   const finalContext = outcome
     ? await snapshotContext(outcome.finalContext, runId)
     : { error: String(runError) };
