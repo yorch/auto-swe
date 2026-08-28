@@ -9,7 +9,7 @@
  * Platform ADMINs bypass the check; non-admins need an `OrganizationMembership`
  * row for the org.
  */
-import type { PrismaClient } from '@auto-swe/shared';
+import { Prisma, type PrismaClient } from '@auto-swe/shared';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import type { FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
@@ -45,10 +45,25 @@ export async function assertOrgAccess(
 }
 
 /**
+ * Serialize budget-cap checks for a single org with a PostgreSQL advisory
+ * xact lock. The check is read-only, but concurrent launches read the same
+ * `org_monthly_usage` row and could each pass before any finalize writes —
+ * the lock turns that into one allowed launch at a time.
+ */
+async function lockOrgBudget(prisma: PrismaClient, orgId: string): Promise<void> {
+  await prisma.$queryRaw(Prisma.sql`
+    SELECT pg_advisory_xact_lock(hashtextextended(${orgId}, 0))
+  `);
+}
+
+/**
  * Assert that `orgId` has not exceeded its monthly budget cap. Sends a 402
  * reply and returns `false` if the current month's accrued cost meets or
  * exceeds `budgetCap`; returns `true` otherwise (including when `budgetCap`
  * is `null`/`undefined`, meaning no cap is configured).
+ *
+ * The check is performed under a per-org advisory lock so concurrent launches
+ * see the latest committed spend.
  */
 export async function assertOrgBudget(
   prisma: PrismaClient,
@@ -59,10 +74,13 @@ export async function assertOrgBudget(
   if (budgetCap == null) {
     return true;
   }
+  await lockOrgBudget(prisma, orgId);
   const usage = await prisma.orgMonthlyUsage.findUnique({
     where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
   });
-  const spentCents = Math.round(Number(usage?.costUsdAccrued ?? 0) * 100);
+  // costUsdAccrued is stored with micro-dollar precision (1e-6). Convert to
+  // cents with a small epsilon so values like 9.9999999e-05 round correctly.
+  const spentCents = Math.round(Number(usage?.costUsdAccrued ?? 0) * 100 + 1e-9);
   if (spentCents >= budgetCap) {
     await reply.status(402).send({
       error: {

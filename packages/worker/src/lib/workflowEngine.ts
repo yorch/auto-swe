@@ -8,7 +8,12 @@
  * workflow files import from `../lib/workflowEngine.js` while still sharing
  * the implementation in `@auto-swe/shared`.
  */
-export { BranchCancelledError, readInterpreterLimits, runSpec } from '@auto-swe/shared/workflow/interpreter';
-export { lookupPath } from '@auto-swe/shared/workflow/expr';
-export { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';
+
 export { CHANNEL_TASK_STEER_SIGNAL } from '@auto-swe/shared/lib/channelTask';
+export { lookupPath } from '@auto-swe/shared/workflow/expr';
+export {
+  BranchCancelledError,
+  readInterpreterLimits,
+  runSpec,
+} from '@auto-swe/shared/workflow/interpreter';
+export { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';

@@ -6,7 +6,9 @@ import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { type AuditEntityType, writeAuditLog } from '../lib/auditLog.js';
 import { currentYearMonth } from '../lib/orgAccess.js';
+import type { JwtPayload } from '../plugins/auth.js';
 import { requireAuth } from '../plugins/auth.js';
 
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
@@ -18,13 +20,36 @@ const PatchBudgetSchema = z.object({
   monthlyBudgetUsdCents: z.number().int().min(0).nullable(),
 });
 
+const CurrentMonthUsageSchema = z.object({
+  costUsdAccrued: z.number(),
+  runsCompleted: z.number().int(),
+  tokensInput: z.number(),
+  tokensOutput: z.number(),
+  yearMonth: z.string(),
+});
+
+const BudgetResponseSchema = z.object({
+  budgetAlertThresholdPercent: z.number().int().min(0).max(100).nullable(),
+  currentMonthUsage: CurrentMonthUsageSchema.nullable(),
+  monthlyBudgetUsdCents: z.number().int().min(0).nullable(),
+  orgId: z.string().uuid(),
+  orgName: z.string(),
+});
+
+const ErrorResponseSchema = z.object({
+  error: z.object({ code: z.string(), message: z.string() }),
+});
+
 const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
   // GET /api/v1/admin/organizations/:orgId/budget — any org member may read.
   f.get(
     '/:orgId/budget',
-    { onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }) },
+    {
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }),
+      schema: { response: { 200: BudgetResponseSchema, 404: ErrorResponseSchema } },
+    },
     async (request, reply) => {
       const { orgId } = OrgParamsSchema.parse(request.params);
 
@@ -71,7 +96,11 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
     '/:orgId/budget',
     {
       onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
-      schema: { body: PatchBudgetSchema, params: OrgParamsSchema },
+      schema: {
+        body: PatchBudgetSchema,
+        params: OrgParamsSchema,
+        response: { 200: BudgetResponseSchema, 404: ErrorResponseSchema },
+      },
     },
     async (request, reply) => {
       const { orgId } = OrgParamsSchema.parse(request.params);
@@ -79,12 +108,25 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
         request.body
       );
 
-      const org = await fastify.prisma.organization.findUnique({ where: { id: orgId } });
+      const org = await fastify.prisma.organization.findUnique({
+        select: {
+          budgetAlertThresholdPercent: true,
+          monthlyBudgetUsdCents: true,
+          name: true,
+        },
+        where: { id: orgId },
+      });
       if (!org) {
         return reply
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
       }
+
+      const before = {
+        budgetAlertThresholdPercent: org.budgetAlertThresholdPercent,
+        monthlyBudgetUsdCents: org.monthlyBudgetUsdCents,
+      };
+      const after = { budgetAlertThresholdPercent, monthlyBudgetUsdCents };
 
       const updated = await fastify.prisma.organization.update({
         data: { budgetAlertThresholdPercent, monthlyBudgetUsdCents },
@@ -96,7 +138,39 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
         },
         where: { id: orgId },
       });
-      return updated;
+
+      const usage = await fastify.prisma.orgMonthlyUsage.findUnique({
+        where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
+      });
+
+      try {
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: request.user as JwtPayload,
+          after,
+          before,
+          entityId: orgId,
+          entityType: 'Organization' as AuditEntityType,
+        });
+      } catch (auditErr) {
+        request.log.warn({ auditErr, orgId }, 'failed to write organization budget audit log');
+      }
+
+      return {
+        budgetAlertThresholdPercent: updated.budgetAlertThresholdPercent,
+        currentMonthUsage: usage
+          ? {
+              costUsdAccrued: Number(usage.costUsdAccrued),
+              runsCompleted: usage.runsCompleted,
+              tokensInput: Number(usage.tokensInput),
+              tokensOutput: Number(usage.tokensOutput),
+              yearMonth: usage.yearMonth,
+            }
+          : null,
+        monthlyBudgetUsdCents: updated.monthlyBudgetUsdCents,
+        orgId: updated.id,
+        orgName: updated.name,
+      };
     }
   );
 };

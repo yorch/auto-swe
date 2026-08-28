@@ -23,7 +23,7 @@ import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
 import type { Tool } from '@mastra/core/tools';
 import { MCPClient } from '@mastra/mcp';
-import { redactString, type AgentTracer } from '../lib/agentTracer.js';
+import { type AgentTracer, redactString } from '../lib/agentTracer.js';
 import { getErrorMessage } from '../lib/errors.js';
 
 /**

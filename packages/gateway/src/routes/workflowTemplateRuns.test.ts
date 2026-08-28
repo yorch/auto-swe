@@ -30,6 +30,7 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
     const activeWorkflowCreates: Array<Record<string, unknown>> = [];
 
     app.decorate('prisma', {
+      $queryRaw: async () => [],
       $transaction: async (writes: Array<Promise<{ id: string }>>) => {
         const results: Array<{ id: string }> = [];
         for (const write of writes) {

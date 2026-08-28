@@ -1,5 +1,4 @@
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { CHANNEL_TASK_STEER_SIGNAL } from '../lib/workflowEngine.js';
 import {
   type ChildWorkflowHandle,
   defineSignal,
@@ -9,6 +8,7 @@ import {
   type Workflow,
   workflowInfo,
 } from '@temporalio/workflow';
+import { CHANNEL_TASK_STEER_SIGNAL } from '../lib/workflowEngine.js';
 import { startThreadTaskChild } from './taskChild.js';
 
 /**

@@ -7,14 +7,6 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
-import {
-  BranchCancelledError,
-  CHANNEL_TASK_STEER_SIGNAL,
-  lookupPath,
-  readInterpreterLimits,
-  runSpec,
-  SignalSlots,
-} from '../lib/workflowEngine.js';
 import type { Duration } from '@temporalio/common';
 import { CancelledFailure } from '@temporalio/common';
 import {
@@ -28,6 +20,14 @@ import {
   workflowInfo,
 } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
+import {
+  BranchCancelledError,
+  CHANNEL_TASK_STEER_SIGNAL,
+  lookupPath,
+  readInterpreterLimits,
+  runSpec,
+  SignalSlots,
+} from '../lib/workflowEngine.js';
 import {
   RETRY_AGENT,
   RETRY_LLM_LIGHT,

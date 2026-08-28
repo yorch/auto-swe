@@ -104,6 +104,7 @@ describe('epic routes', () => {
     } as unknown as never);
 
     app.decorate('prisma', {
+      $queryRaw: async () => [],
       $transaction: async (queries: Array<Promise<unknown>>) => Promise.all(queries),
       activeWorkflow: {
         create: async (args: { data: Record<string, unknown> }) => {

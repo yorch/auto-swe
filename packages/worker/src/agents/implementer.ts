@@ -6,7 +6,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
-import { redactString, type AgentTracer } from '../lib/agentTracer.js';
+import { type AgentTracer, redactString } from '../lib/agentTracer.js';
 import {
   loadAgentSkills,
   loadAgentToolConfig,
@@ -226,7 +226,9 @@ export async function createImplementerAgent(
     execute: async ({ command }) => {
       // Redact likely tokens/secrets before they reach stdout/logs.
       const auditCommand = redactString(command);
-      console.log(`[bash:audit] container=${workspace.containerId} cmd=${JSON.stringify(auditCommand)}`);
+      console.log(
+        `[bash:audit] container=${workspace.containerId} cmd=${JSON.stringify(auditCommand)}`
+      );
       const start = Date.now();
 
       const blocked = await scanShellCommand(command);
