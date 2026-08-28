@@ -134,6 +134,8 @@ packages/
 | `src/activities/validateContext.ts` | Context validator → `ContextSnapshot` |
 | `src/activities/commitToMemory.ts` | Memory summarization → `MemoryItem` + embedding |
 | `src/activities/createOrUpdatePullRequest.ts` | PR create/update via Octokit; idempotent on branch |
+|| `src/activities/resolveWorkspace.ts` | Materialise workspace context for a declared `workspaceProvider` |
+|| `src/activities/genericActions.ts` | Generic `readSource`/`writeOutcome`/`runTool` activities dispatched by `Connection.type` |
 | `src/activities/templates.ts` | Resolves the run's `WorkflowSpec` (cascade + A/B routing); `finalizeWorkflowRun` |
 | `src/activities/state.ts` | `updateDomainState`, `createWorkflowRun`, `recordWorkflowStep` |
 | `src/activities/shellStep.ts` | `runShellStep` — ephemeral container, image allowlist, audit write |
@@ -441,7 +443,7 @@ erDiagram
 | Identity | `User`, `Account`, `Session`, `Verification` | better-auth sessions, PATs, the JWT bridge; `User.preferences` JSONB holds per-user UI settings |
 | Auth tokens | `PersonalAccessToken` | `ats_*` bearer tokens; only the hash is stored |
 | Tenancy & RBAC | `Organization`, `Team`, `TeamMembership`, `OrganizationMembership` | `Organization` is the top-level tenant; every `Team` nests under one. `OrgRole` is `ORG_ADMIN` / `ORG_MEMBER` |
-| Connections | `Connection` | Typed binding to an external system. `type` is validated against the runtime registry in `@auto-swe/shared/lib/connectionTypes` (`git_repo`, `notion`, `zendesk`, `hubspot`, `slack_workspace`, `http_api`, `mcp`). `type='git_repo'` carries repo coordinates, default branch, and gate commands; other types store type-specific settings in `config`. Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
+| Connections | `Connection` | Typed binding to an external system. `type` is validated against the runtime registry in `@auto-swe/shared/lib/connectionTypes` (`git_repo`, `notion`, `zendesk`, `hubspot`, `slack_workspace`, `http_api`, `mcp`). `type='git_repo'` carries repo coordinates, default branch, and gate commands; other types store type-specific settings in `config`. Token-based connection types may store an AES-256-GCM encrypted API token (`apiKeyCiphertext`/`Nonce`/`AuthTag`/`Version`). Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
 | Work | `RunInput`, `ContextSnapshot` | `RunInput.payload` is the generic request body, validated against the template's `inputSchema`. The in-memory `RunRequest` type is the base for domain-specific requests such as `RepoWorkRequest`; `ContextSnapshot` is an SWE satellite keyed by run |
 | Execution state | `ActiveWorkflow`, `PullRequest` | Temporal ↔ DB state sync |
 | Workflow engine | `WorkflowTemplate`, `WorkflowTemplateVersion`, `WorkflowRun`, `WorkflowStep`, `WorkflowArtifact`, `WorkflowShellAudit` | Versioning, run tracking, artifact storage, shell audit |
@@ -678,8 +680,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   clean either way. Replay also only guards paths a *recorded* history walked, so a new node type
   needs a new fixture; `runnable.replay.test.ts` asserts the fixture list explicitly so losing one
   fails loudly rather than quietly narrowing the guard.
-- **Generic platform abstractions are catalogued but not fully wired.** `Connection.type`,
-  `RunRequest`, `MemoryItem.entityType`/`entityId`, workspace providers, and outcome publishers are
-  typed and registered, but runtime dispatch still assumes a git repository and a pull request for
-  the workspace and publish stages. Non-SWE providers need their own activity bindings before
-  templates can use them end-to-end.
+- **Generic platform abstractions have first-class schema and routing support, but concrete
+  dispatch for non-git workspaces is still scaffolded.** `Connection.type`, `RunRequest`,
+  `MemoryItem.entityType`/`entityId`, `workspaceProvider` on `WorkflowTemplate`, and outcome
+  publishers are typed and registered. The generic trigger endpoint validates the requested
+  connection against the template provider, and `resolveWorkspace`, `readSource`, `writeOutcome`,
+  and `runTool` activities exist for non-SWE providers. They are not yet wired into the default
+  interpreter flow; templates that want to use them must invoke them explicitly as `agent` or
+  custom step nodes until Phase 2 lands generic workspace/outcome bindings.
