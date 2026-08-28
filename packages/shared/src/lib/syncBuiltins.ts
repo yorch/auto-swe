@@ -18,6 +18,8 @@ import {
   PLANNER_AGENT_PROMPT,
   PRD_ANALYST_PROMPT,
   PRD_DECOMPOSER_PROMPT,
+  PRD_WRITER_PROMPT,
+  PRODUCT_ANALYST_PROMPT,
   REVIEW_FIX_SYSTEM_PROMPT,
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
@@ -435,6 +437,26 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Support Responder',
     systemPrompt: SUPPORT_RESPONDER_PROMPT,
+  },
+  {
+    // Product pack (Phase 2): turns a brief into structured product analysis.
+    // Resolved on demand by the generic `agent` node, so it is not in
+    // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description: 'Analyzes a problem brief and produces structured product thinking.',
+    key: 'productAnalyst',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
+    name: 'Product Analyst',
+    systemPrompt: PRODUCT_ANALYST_PROMPT,
+  },
+  {
+    // Product pack (Phase 2): drafts a lightweight PRD with acceptance criteria.
+    // Resolved on demand by the generic `agent` node, so it is not in
+    // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description: 'Drafts a focused PRD with testable acceptance criteria from product analysis.',
+    key: 'prdWriter',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
+    name: 'PRD Writer',
+    systemPrompt: PRD_WRITER_PROMPT,
   },
   {
     // P3 repo-dependency-graph: proposes LLM-inferred cross-repo edges for

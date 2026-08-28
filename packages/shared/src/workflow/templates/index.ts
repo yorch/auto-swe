@@ -15,6 +15,7 @@ import { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 import { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 import { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
 import { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
+import { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
 import { REVIEW_AND_MERGE_SPEC } from './reviewAndMerge.js';
 import { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 import { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
@@ -173,6 +174,25 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     workspaceProvider: 'document',
   },
 
+  // ── Product pack (PRD draft) ───────────────────────────────────────────────
+  {
+    description: PRODUCT_PRD_DRAFT_SPEC.description,
+    inputSchema: {
+      properties: {
+        brief: { type: 'string' },
+        connectionId: { format: 'uuid', type: 'string' },
+        instructions: { type: 'string' },
+        sourcePageId: { type: 'string' },
+        targetPageId: { type: 'string' },
+      },
+      required: ['brief', 'connectionId', 'targetPageId'],
+      type: 'object',
+    },
+    name: PRODUCT_PRD_DRAFT_SPEC.name,
+    spec: PRODUCT_PRD_DRAFT_SPEC,
+    workspaceProvider: 'document',
+  },
+
   // ── PRD workflow ─────────────────────────────────────────────────────────
   {
     description: PRD_DECOMPOSITION_SPEC.description,
@@ -206,6 +226,7 @@ export { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 export { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 export { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
 export { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
+export { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
 export { REVIEW_AND_MERGE_SPEC } from './reviewAndMerge.js';
 export { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 export { SECURITY_TRIAGE_SPEC } from './securityTriage.js';

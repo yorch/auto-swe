@@ -104,7 +104,7 @@ flowchart TB
 
 | Domain | Capabilities |
 |---|---|
-| **Agent system** | 24 seeded agents (13 model-backed + 11 sub-role personas); multi-agent review network; TDD implementation loop; channel-resident assistant with ambient, reactive, and persona modes. See [agents.md](./agents.md). |
+| **Agent system** | 26 seeded agents (15 model-backed + 11 sub-role personas); multi-agent review network; TDD implementation loop; channel-resident assistant with ambient, reactive, and persona modes. See [agents.md](./agents.md). |
 | **Skills** | 28 built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
 | **Multi-model** | DB-driven model selection per role per scope; Anthropic / OpenAI / Google + any OpenAI-compatible provider; AES-256-GCM encrypted credentials. See [model-configuration.md](./model-configuration.md). |
 | **Workflow engine** | 15 node types (incl. the declarative `agent` node and the `eval` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
