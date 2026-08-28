@@ -1,8 +1,13 @@
-import { decryptConnectionApiToken, parseNotionConnectionConfig } from '@auto-swe/shared';
+import {
+  decryptConnectionApiToken,
+  parseNotionConnectionConfig,
+  parseZendeskConnectionConfig,
+} from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { WorkspaceProviderType } from '@auto-swe/shared/lib/workspaceProviders';
 import { ApplicationFailure } from '@temporalio/activity';
 import { readNotionPage } from '../connectors/notion.js';
+import { fetchZendeskTicket } from '../connectors/zendesk.js';
 
 /**
  * Generic workspace context materialised before a run's work stage.
@@ -114,7 +119,10 @@ async function resolveDocumentWorkspace(
   };
 }
 
-async function resolveRecordWorkspace(connectionId: string): Promise<WorkspaceContext> {
+async function resolveRecordWorkspace(
+  connectionId: string,
+  payload?: unknown
+): Promise<WorkspaceContext> {
   const connection = await prisma.connection.findUnique({
     where: { id: connectionId },
   });
@@ -124,10 +132,40 @@ async function resolveRecordWorkspace(connectionId: string): Promise<WorkspaceCo
     );
   }
   const config = (connection.config as Record<string, unknown> | undefined) ?? {};
+  const payloadRecordId =
+    typeof payload === 'object' && payload != null
+      ? (payload as Record<string, unknown>).ticketId
+      : undefined;
+  const recordId: string | null =
+    (typeof payloadRecordId === 'string'
+      ? payloadRecordId
+      : typeof config.recordId === 'string'
+        ? config.recordId
+        : null) ?? null;
+
+  if (
+    recordId &&
+    connection.type === 'zendesk' &&
+    connection.apiKeyCiphertext &&
+    connection.apiKeyNonce &&
+    connection.apiKeyAuthTag
+  ) {
+    const apiToken = decryptConnectionApiToken({
+      apiKeyAuthTag: connection.apiKeyAuthTag,
+      apiKeyCiphertext: connection.apiKeyCiphertext,
+      apiKeyNonce: connection.apiKeyNonce,
+      apiKeyVersion: connection.apiKeyVersion,
+    });
+    await fetchZendeskTicket(
+      { apiToken, config: parseZendeskConnectionConfig(connection.config) },
+      recordId
+    );
+  }
+
   return {
     connectionId,
     provider: 'record',
-    recordId: typeof config.recordId === 'string' ? config.recordId : undefined,
+    recordId: recordId ?? undefined,
     recordType: typeof config.recordType === 'string' ? config.recordType : undefined,
     workspaceName: connection.name ?? undefined,
   };
@@ -161,7 +199,7 @@ export async function resolveWorkspace(input: ResolveWorkspaceInput): Promise<Wo
       if (!input.connectionId) {
         throw ApplicationFailure.nonRetryable('record workspace requires a connectionId');
       }
-      return resolveRecordWorkspace(input.connectionId);
+      return resolveRecordWorkspace(input.connectionId, input.payload);
     }
     default:
       throw ApplicationFailure.nonRetryable(

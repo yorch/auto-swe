@@ -2,6 +2,7 @@ import {
   type ConnectionType,
   decryptConnectionApiToken,
   parseNotionConnectionConfig,
+  parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -11,6 +12,7 @@ import {
   type NotionBlock,
   readNotionPage,
 } from '../connectors/notion.js';
+import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 
 /**
  * Generic read/write/tool activities parameterised by connection type.
@@ -124,6 +126,25 @@ async function notionReadSource(
   return { connectionType: 'notion', data: content, ok: true };
 }
 
+async function zendeskReadSource(
+  connection: { config: unknown },
+  token: string | null,
+  query: unknown
+): Promise<ReadSourceResult> {
+  const requestedTicketId =
+    typeof query === 'object' && query != null
+      ? (query as Record<string, unknown>).ticketId
+      : undefined;
+  if (typeof requestedTicketId !== 'string') {
+    throw ApplicationFailure.nonRetryable('Zendesk readSource requires a ticketId in query');
+  }
+  const result = await fetchZendeskTicket(
+    { apiToken: requireToken(token), config: parseZendeskConnectionConfig(connection.config) },
+    requestedTicketId
+  );
+  return { connectionType: 'zendesk', data: result, ok: true };
+}
+
 async function genericReadSource(
   connectionType: ConnectionType,
   _connection: unknown,
@@ -149,11 +170,12 @@ export async function readSource(input: ReadSourceInput): Promise<ReadSourceResu
       return gitRepoReadSource(connection, input.query);
     case 'notion':
       return notionReadSource(connection, token, input.query);
+    case 'zendesk':
+      return zendeskReadSource(connection, token, input.query);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
     case 'slack_workspace':
-    case 'zendesk':
       return genericReadSource(connection.type, connection, token);
     default:
       throw ApplicationFailure.nonRetryable(
@@ -221,6 +243,31 @@ async function notionWriteOutcome(
   return { connectionType: 'notion', ok: true, reference: created.url };
 }
 
+async function zendeskWriteOutcome(
+  connection: { config: unknown },
+  token: string | null,
+  data: unknown
+): Promise<WriteOutcomeResult> {
+  if (typeof data !== 'object' || data == null) {
+    throw ApplicationFailure.nonRetryable('Zendesk writeOutcome data must be an object');
+  }
+  const d = data as Record<string, unknown>;
+  const ticketId = d.ticketId;
+  const body = d.body;
+  if (typeof ticketId !== 'string' || typeof body !== 'string') {
+    throw ApplicationFailure.nonRetryable(
+      'Zendesk writeOutcome requires ticketId and body strings'
+    );
+  }
+  const isPublic = d.public === true;
+  const result = await postZendeskComment(
+    { apiToken: requireToken(token), config: parseZendeskConnectionConfig(connection.config) },
+    ticketId,
+    { body, public: isPublic }
+  );
+  return { connectionType: 'zendesk', ok: true, reference: result.ticketId };
+}
+
 function isCreatePageData(d: Record<string, unknown>): boolean {
   return (
     typeof d.databaseId === 'string' ||
@@ -250,11 +297,12 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
       return gitRepoWriteOutcome(connection, input.data);
     case 'notion':
       return notionWriteOutcome(connection, token, input.data);
+    case 'zendesk':
+      return zendeskWriteOutcome(connection, token, input.data);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
     case 'slack_workspace':
-    case 'zendesk':
       return genericWriteOutcome(connection.type, connection, token);
     default:
       throw ApplicationFailure.nonRetryable(
@@ -276,6 +324,42 @@ async function gitRepoRunTool(
   };
 }
 
+async function zendeskRunTool(
+  connection: { config: unknown },
+  token: string | null,
+  tool: string,
+  inputs: unknown
+): Promise<RunToolResult> {
+  const apiToken = requireToken(token);
+  const config = parseZendeskConnectionConfig(connection.config);
+  if (tool === 'fetchTicket') {
+    const ticketId =
+      typeof inputs === 'object' && inputs != null
+        ? (inputs as Record<string, unknown>).ticketId
+        : undefined;
+    if (typeof ticketId !== 'string') {
+      throw ApplicationFailure.nonRetryable('fetchTicket requires a string ticketId input');
+    }
+    const result = await fetchZendeskTicket({ apiToken, config }, ticketId);
+    return { connectionType: 'zendesk', ok: true, output: result };
+  }
+  if (tool === 'postComment') {
+    const data = typeof inputs === 'object' && inputs != null ? inputs : {};
+    const ticketId = (data as Record<string, unknown>).ticketId;
+    const body = (data as Record<string, unknown>).body;
+    if (typeof ticketId !== 'string' || typeof body !== 'string') {
+      throw ApplicationFailure.nonRetryable('postComment requires string ticketId and body inputs');
+    }
+    const isPublic = (data as Record<string, unknown>).public === true;
+    const result = await postZendeskComment({ apiToken, config }, ticketId, {
+      body,
+      public: isPublic,
+    });
+    return { connectionType: 'zendesk', ok: true, output: result };
+  }
+  throw ApplicationFailure.nonRetryable(`Unsupported Zendesk tool: ${tool}`);
+}
+
 async function genericRunTool(
   connectionType: ConnectionType,
   _connection: unknown,
@@ -294,12 +378,13 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
   switch (connection.type) {
     case 'git_repo':
       return gitRepoRunTool(connection, input.tool, input.inputs);
+    case 'zendesk':
+      return zendeskRunTool(connection, token, input.tool, input.inputs);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
     case 'notion':
     case 'slack_workspace':
-    case 'zendesk':
       return genericRunTool(connection.type, connection, token);
     default:
       throw ApplicationFailure.nonRetryable(
