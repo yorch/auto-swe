@@ -66,6 +66,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     workflowStep: {
       create: vi.fn(),
+      findFirst: vi.fn(async () => null),
     },
     workflowTemplate: {
       findFirst: vi.fn(),
@@ -215,6 +216,13 @@ describe('recordWorkflowStep', () => {
     const args = createStep.mock.calls[0]?.[0]?.data as Record<string, unknown>;
     expect(args.attempt).toBe(3);
   });
+
+  it('does not create duplicate rows for the same runId + nodeId + attempt', async () => {
+    const findStep = vi.mocked(prisma.workflowStep.findFirst);
+    findStep.mockResolvedValue({ id: 'existing' } as never);
+    await recordWorkflowStep({ attempt: 1, nodeId: 'a', runId: 'r1', status: 'PASSED' });
+    expect(createStep).not.toHaveBeenCalled();
+  });
 });
 
 describe('finalizeWorkflowRun', () => {
@@ -343,7 +351,7 @@ describe('finalizeWorkflowRun', () => {
     orgUpsert.mockReset();
   });
 
-  it('skips org billing on retry when the run was already finalized (idempotency)', async () => {
+  it('is a no-op on retry when the run was already finalized (idempotency)', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const tx = vi.mocked(prisma.$transaction);
     const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
@@ -363,7 +371,7 @@ describe('finalizeWorkflowRun', () => {
 
     expect(tx).not.toHaveBeenCalled();
     expect(orgUpsert).not.toHaveBeenCalled();
-    expect(updateRun).toHaveBeenCalled(); // denormalize still runs
+    expect(updateRun).not.toHaveBeenCalled();
 
     findRun.mockReset();
     tx.mockReset();
@@ -392,8 +400,8 @@ describe('finalizeWorkflowRun', () => {
 
     await finalizeWorkflowRun('run-already-done', 'SUCCESS');
 
-    // Denormalize + activeWorkflow update still run
-    expect(updateRun).toHaveBeenCalled();
+    // No side effects run on retry; the prior finalization is the source of truth.
+    expect(updateRun).not.toHaveBeenCalled();
     // But the three side effects do NOT fire on retry
     expect(mockNotifySlack).not.toHaveBeenCalled();
     expect(mockTrackerSync).not.toHaveBeenCalled();

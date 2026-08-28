@@ -1,4 +1,3 @@
-import { CHANNEL_TASK_STEER_SIGNAL } from '@auto-swe/shared/lib/channelTask';
 import type { WorkspaceProviderType } from '@auto-swe/shared/lib/workspaceProviders';
 import type {
   CodeResult,
@@ -7,14 +6,15 @@ import type {
   WorkflowResult,
 } from '@auto-swe/shared/types/workflow';
 import type { Context } from '@auto-swe/shared/workflow/expr';
-import { lookupPath } from '@auto-swe/shared/workflow/expr';
 import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
 import {
   BranchCancelledError,
+  CHANNEL_TASK_STEER_SIGNAL,
+  lookupPath,
   readInterpreterLimits,
   runSpec,
-} from '@auto-swe/shared/workflow/interpreter';
-import { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';
+  SignalSlots,
+} from '../lib/workflowEngine.js';
 import type { Duration } from '@temporalio/common';
 import { CancelledFailure } from '@temporalio/common';
 import {

@@ -177,9 +177,20 @@ export interface RecordStepInput {
 
 export async function recordWorkflowStep(input: RecordStepInput): Promise<void> {
   const now = new Date();
+  const attempt = input.attempt ?? 1;
+
+  // Temporal can retry an activity within the same attempt number under some
+  // failure modes; avoid writing duplicate step rows.
+  const existing = await prisma.workflowStep.findFirst({
+    where: { attempt, nodeId: input.nodeId, runId: input.runId },
+  });
+  if (existing) {
+    return;
+  }
+
   await prisma.workflowStep.create({
     data: {
-      attempt: input.attempt ?? 1,
+      attempt,
       endedAt: input.status === 'RUNNING' || input.status === 'PENDING' ? null : now,
       error: input.error,
       inputs: input.inputs as object | undefined,
@@ -269,6 +280,10 @@ export async function finalizeWorkflowRun(
   // both — no double-count and no under-count. runsCompleted counts only
   // SUCCESS; cost/tokens accrue for every terminal status (real spend).
   const alreadyFinalized = run?.endedAt != null;
+  if (alreadyFinalized) {
+    return;
+  }
+
   const orgId = run?.workRequest?.connection?.team?.orgId;
   const runsIncrement = status === 'SUCCESS' ? 1 : 0;
 
@@ -284,7 +299,7 @@ export async function finalizeWorkflowRun(
     where: { id: runId },
   });
 
-  if (orgId && !alreadyFinalized) {
+  if (orgId) {
     const yearMonth = currentYearMonth();
     await prisma.$transaction([
       denormalizeUpdate,

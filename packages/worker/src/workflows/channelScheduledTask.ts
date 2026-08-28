@@ -1,5 +1,5 @@
-import { CHANNEL_TASK_STEER_SIGNAL } from '@auto-swe/shared/lib/channelTask';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import { CHANNEL_TASK_STEER_SIGNAL } from '../lib/workflowEngine.js';
 import {
   type ChildWorkflowHandle,
   defineSignal,
