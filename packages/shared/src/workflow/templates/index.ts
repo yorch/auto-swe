@@ -20,6 +20,7 @@ import { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 import { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 import { SIGNAL_GATED_ROLLOUT_SPEC } from './signalGatedRollout.js';
 import { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
+import { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
 
 export interface BuiltinTemplate {
   name: string;
@@ -136,6 +137,24 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     spec: FULL_SUPERVISED_SPEC,
   },
 
+  // ── Record workspace (Zendesk) ───────────────────────────────────────────
+  {
+    description: ZENDESK_TICKET_REPLY_SPEC.description,
+    inputSchema: {
+      properties: {
+        connectionId: { format: 'uuid', type: 'string' },
+        instructions: { type: 'string' },
+        public: { type: 'boolean' },
+        ticketId: { type: 'string' },
+      },
+      required: ['connectionId', 'ticketId'],
+      type: 'object',
+    },
+    name: ZENDESK_TICKET_REPLY_SPEC.name,
+    spec: ZENDESK_TICKET_REPLY_SPEC,
+    workspaceProvider: 'record',
+  },
+
   // ── Document workspace (Notion) ──────────────────────────────────────────
   {
     description: NOTION_CONTENT_DRAFT_SPEC.description,
@@ -192,3 +211,4 @@ export { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 export { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 export { SIGNAL_GATED_ROLLOUT_SPEC } from './signalGatedRollout.js';
 export { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
+export { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
