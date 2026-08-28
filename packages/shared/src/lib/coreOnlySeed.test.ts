@@ -39,14 +39,6 @@ function makeMockPrisma() {
     templateOrigins: [],
   };
   const prisma = {
-    autonomyPolicy: {
-      create: vi.fn(async () => {
-        cap.policyCreates += 1;
-        return { id: 'policy-id' };
-      }),
-      findFirst: vi.fn(async () => null),
-      update: vi.fn(async () => ({ id: 'policy-id' })),
-    },
     agent: {
       create: vi.fn(async ({ data }: { data: { origin: string | null } }) => {
         cap.agentCreates += 1;
@@ -58,6 +50,14 @@ function makeMockPrisma() {
     agentSkillRef: {
       create: vi.fn(async () => ({ id: 'ref-id' })),
       findFirst: vi.fn(async () => null),
+    },
+    autonomyPolicy: {
+      create: vi.fn(async () => {
+        cap.policyCreates += 1;
+        return { id: 'policy-id' };
+      }),
+      findFirst: vi.fn(async () => null),
+      update: vi.fn(async () => ({ id: 'policy-id' })),
     },
     evalRubric: {
       create: vi.fn(async () => ({ id: 'rubric-id' })),
