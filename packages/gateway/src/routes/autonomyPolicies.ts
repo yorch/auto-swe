@@ -30,6 +30,14 @@ const UpdateSchema = z.object({
 
 const IdParams = z.object({ id: z.string().uuid() });
 
+const ErrorResponseSchema = z.object({
+  error: z.object({ code: z.string(), message: z.string() }),
+});
+
+const PolicyListResponseSchema = z.object({ data: z.array(z.unknown()) });
+const PolicyDetailResponseSchema = z.object({ data: z.unknown() });
+const DeletePolicyResponseSchema = z.object({ data: z.object({ deleted: z.boolean() }) });
+
 function scopeError(): { code: string; message: string } {
   return {
     code: 'INVALID_SCOPE',
@@ -62,22 +70,36 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
 
-  app.get('/autonomy-policies', { onRequest: adminOnly }, async () => {
-    const rows = await runUnscoped('admin lists all autonomy policies', ['AutonomyPolicy'], () =>
-      fastify.prisma.autonomyPolicy.findMany({
-        include: {
-          team: { select: { id: true, name: true, slug: true } },
-          template: { select: { id: true, name: true } },
-        },
-        orderBy: { name: 'asc' },
-      })
-    );
-    return { data: rows };
-  });
+  app.get(
+    '/autonomy-policies',
+    { onRequest: adminOnly, schema: { response: { 200: PolicyListResponseSchema } } },
+    async () => {
+      const rows = await runUnscoped('admin lists all autonomy policies', ['AutonomyPolicy'], () =>
+        fastify.prisma.autonomyPolicy.findMany({
+          include: {
+            team: { select: { id: true, name: true, slug: true } },
+            template: { select: { id: true, name: true } },
+          },
+          orderBy: { name: 'asc' },
+        })
+      );
+      return { data: rows };
+    }
+  );
 
   app.post(
     '/autonomy-policies',
-    { onRequest: adminOnly, schema: { body: CreateSchema } },
+    {
+      onRequest: adminOnly,
+      schema: {
+        body: CreateSchema,
+        response: {
+          201: PolicyDetailResponseSchema,
+          400: ErrorResponseSchema,
+          409: ErrorResponseSchema,
+        },
+      },
+    },
     async (request, reply) => {
       const actor = requireUser(request);
       if (!validateScope(request.body)) {
@@ -124,7 +146,13 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/autonomy-policies/:id',
-    { onRequest: adminOnly, schema: { params: IdParams } },
+    {
+      onRequest: adminOnly,
+      schema: {
+        params: IdParams,
+        response: { 200: PolicyDetailResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
     async (request, reply) => {
       const row = await fastify.prisma.autonomyPolicy.findUnique({
         include: {
@@ -144,7 +172,14 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.patch(
     '/autonomy-policies/:id',
-    { onRequest: adminOnly, schema: { body: UpdateSchema, params: IdParams } },
+    {
+      onRequest: adminOnly,
+      schema: {
+        body: UpdateSchema,
+        params: IdParams,
+        response: { 200: PolicyDetailResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
     async (request, reply) => {
       const actor = requireUser(request);
       const existing = await fastify.prisma.autonomyPolicy.findUnique({
@@ -178,7 +213,13 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.delete(
     '/autonomy-policies/:id',
-    { onRequest: adminOnly, schema: { params: IdParams } },
+    {
+      onRequest: adminOnly,
+      schema: {
+        params: IdParams,
+        response: { 200: DeletePolicyResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
     async (request, reply) => {
       const actor = requireUser(request);
       const existing = await fastify.prisma.autonomyPolicy.findUnique({

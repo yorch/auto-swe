@@ -121,8 +121,11 @@ function EditorInner({
       // A handle id is the spec field the edge leaves through — but not always
       // a top-level one, so the write goes through `setNodeEdge` rather than an
       // index assignment.
-      const field = c.sourceHandle;
-      if (!handlePortsFor(sourceNode).some((p) => p.id === field)) {
+      const field =
+        c.sourceHandle && handlePortsFor(sourceNode).some((p) => p.id === c.sourceHandle)
+          ? c.sourceHandle
+          : handlePortsFor(sourceNode)[0]?.id;
+      if (!field) {
         return;
       }
       onChange({
@@ -383,6 +386,7 @@ function EditorInner({
         >
           <ReactFlow
             connectionLineStyle={{ stroke: TOKEN.ember400, strokeWidth: 2 }}
+            deleteKeyCode="Delete"
             edges={edges}
             fitView
             fitViewOptions={{ maxZoom: 1.2, minZoom: 0.55, padding: 0.18 }}

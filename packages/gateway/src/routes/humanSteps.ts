@@ -18,12 +18,22 @@ const RespondBody = z.object({
   value: z.unknown().optional(),
 });
 
+const ErrorResponseSchema = z.object({
+  error: z.object({ code: z.string(), message: z.string() }),
+});
+
+const StepListResponseSchema = z.object({ data: z.array(z.unknown()) });
+const StepDetailResponseSchema = z.object({ data: z.unknown() });
+const RespondResponseSchema = z.object({
+  data: z.object({ id: z.string().uuid(), signalSent: z.boolean(), status: z.string() }),
+});
+
 /**
  * HTTP status per resolve-core error code. The resolve logic itself lives in
  * `lib/hitlResolve.ts` so the Slack interactivity handler can share it — this
  * map preserves the inbox route's original wire contract exactly.
  */
-const STATUS_BY_CODE: Record<HitlResolveErrorCode, number> = {
+const STATUS_BY_CODE: Record<HitlResolveErrorCode, 200 | 400 | 404 | 409 | 502> = {
   ALREADY_RESOLVED: 409,
   INVALID_ACTION: 400,
   NOT_FOUND: 404,
@@ -38,7 +48,10 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
   // List pending (or all) human steps for current user
   app.get(
     '/',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { querystring: ListQuery } },
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: ListQuery, response: { 200: StepListResponseSchema } },
+    },
     async (request) => {
       const user = requireUser(request);
       const { status } = request.query;
@@ -151,7 +164,13 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
   // Get one step
   app.get(
     '/:id',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: StepIdParam } },
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: {
+        params: StepIdParam,
+        response: { 200: StepDetailResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
     async (request, reply) => {
       const user = requireUser(request);
       const step = await fastify.prisma.workflowHumanStep.findFirst({
@@ -183,7 +202,17 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/respond',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { body: RespondBody, params: StepIdParam },
+      schema: {
+        body: RespondBody,
+        params: StepIdParam,
+        response: {
+          200: RespondResponseSchema,
+          400: ErrorResponseSchema,
+          404: ErrorResponseSchema,
+          409: ErrorResponseSchema,
+          502: ErrorResponseSchema,
+        },
+      },
     },
     async (request, reply) => {
       const user = requireUser(request);

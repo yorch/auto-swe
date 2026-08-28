@@ -25,6 +25,23 @@ const RunDetailQuery = z.object({
   includeTraces: booleanQueryParam(false),
 });
 
+const ErrorResponseSchema = z.object({
+  error: z.object({ code: z.string(), message: z.string() }),
+});
+
+const RunListResponseSchema = z.object({
+  data: z.array(z.unknown()),
+  meta: z.object({ limit: z.number(), offset: z.number(), total: z.number() }),
+});
+
+const RunDetailResponseSchema = z.object({ data: z.unknown() });
+
+const CancelRunResponseSchema = z.object({
+  data: z.object({ id: z.string().uuid(), status: z.string() }),
+});
+
+const EvalResultsResponseSchema = z.object({ data: z.array(z.unknown()) });
+
 /** Max chars per string field in trace payloads returned by the polled run view. */
 const TRACE_FIELD_CAP = 4_000;
 
@@ -99,7 +116,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { querystring: ListRunsQuery },
+      schema: { querystring: ListRunsQuery, response: { 200: RunListResponseSchema } },
     },
     async (request) => {
       const user = requireUser(request);
@@ -143,7 +160,14 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/cancel',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: RunIdParam },
+      schema: {
+        params: RunIdParam,
+        response: {
+          200: CancelRunResponseSchema,
+          404: ErrorResponseSchema,
+          409: ErrorResponseSchema,
+        },
+      },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -195,7 +219,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/eval-results',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: RunIdParam },
+      schema: {
+        params: RunIdParam,
+        response: { 200: EvalResultsResponseSchema, 404: ErrorResponseSchema },
+      },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -222,7 +249,11 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: RunIdParam, querystring: RunDetailQuery },
+      schema: {
+        params: RunIdParam,
+        querystring: RunDetailQuery,
+        response: { 200: RunDetailResponseSchema, 404: ErrorResponseSchema },
+      },
     },
     async (request, reply) => {
       const user = requireUser(request);
