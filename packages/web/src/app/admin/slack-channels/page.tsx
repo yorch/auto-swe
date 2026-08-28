@@ -1145,7 +1145,9 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
                       <span>·</span>
                       <span>{e.status}</span>
                       <span>·</span>
-                      <span>${e.costUsd.toFixed(4)}</span>
+                      <span>
+                        {typeof e.costUsd === 'number' ? `$${e.costUsd.toFixed(4)}` : '—'}
+                      </span>
                       <span>·</span>
                       <span>
                         {e.tokensInput}/{e.tokensOutput} tok

@@ -191,8 +191,8 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                     )}
                   >
                     {stats.significanceHint.isSignificant
-                      ? `Winner detected · p=${stats.significanceHint.pValue.toFixed(3)}`
-                      : `Not yet significant · p=${stats.significanceHint.pValue.toFixed(3)}`}
+                      ? `Winner detected · p=${typeof stats.significanceHint.pValue === 'number' ? stats.significanceHint.pValue.toFixed(3) : '—'}`
+                      : `Not yet significant · p=${typeof stats.significanceHint.pValue === 'number' ? stats.significanceHint.pValue.toFixed(3) : '—'}`}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-x-8 gap-y-4 border-t border-ink-600 pt-4">

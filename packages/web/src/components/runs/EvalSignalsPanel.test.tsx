@@ -57,4 +57,20 @@ describe('EvalSignalsPanel', () => {
     await waitFor(() => expect(container.querySelector('.kicker')).toBeNull());
     expect(screen.queryByText('Eval signals')).toBeNull();
   });
+
+  it('does not crash on non-numeric values', async () => {
+    setupFetchMock({
+      'GET /api/v1/workflow-runs/run-1/eval-results': () => ({
+        data: [
+          row({ id: 'bad-bool', scorer: 'gate:runTests', scoreType: 'BOOLEAN', value: 'yes' }),
+          row({ id: 'bad-num', scorer: 'review:SECURITY', scoreType: 'NUMERIC', value: null }),
+        ],
+      }),
+    });
+
+    render(withQuery(<EvalSignalsPanel runId="run-1" />));
+    await waitFor(() => expect(screen.getByText('gate:runTests')).toBeTruthy());
+    expect(screen.getByText('yes')).toBeTruthy();
+    expect(screen.getByText('—')).toBeTruthy();
+  });
 });

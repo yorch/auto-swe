@@ -32,7 +32,13 @@ function SignalRow({ row }: { row: EvalResultDto }) {
           fontSize: '11px',
         }}
       >
-        {row.scoreType === 'BOOLEAN' ? (row.value >= 1 ? 'pass' : 'fail') : row.value.toFixed(2)}
+        {row.scoreType === 'BOOLEAN' && typeof row.value === 'number'
+          ? row.value >= 1
+            ? 'pass'
+            : 'fail'
+          : typeof row.value === 'number'
+            ? row.value.toFixed(2)
+            : String(row.value ?? '—')}
       </span>
     </div>
   );
