@@ -47,6 +47,9 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
       connection: {
         findUnique: async () => null,
       },
+      orgMonthlyUsage: {
+        findUnique: async () => null,
+      },
       runInput: {
         create: async ({ data }: { data: Record<string, unknown> }) => {
           runInputCreates.push(data);
@@ -62,6 +65,10 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
             activeVersion: 1,
             id: TEMPLATE_ID,
             inputSchema: null,
+            team: {
+              id: 'team-1',
+              organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+            },
             teamId: 'team-1',
             workspaceProvider: 'api_only',
           };
@@ -108,5 +115,46 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
     expect(response.statusCode).toBe(404);
     const body = JSON.parse(response.payload);
     expect(body.error.code).toBe('TEMPLATE_NOT_FOUND');
+  });
+
+  it('returns 402 when the organization is over its monthly budget cap', async () => {
+    startedWorkflows.length = 0;
+    (
+      app.prisma as unknown as { orgMonthlyUsage: { findUnique: () => Promise<unknown> } }
+    ).orgMonthlyUsage.findUnique = async () => ({ costUsdAccrued: 100 });
+    (
+      app.prisma as unknown as {
+        workflowTemplate: {
+          findFirst: (args: { where: Record<string, unknown> }) => Promise<unknown>;
+        };
+      }
+    ).workflowTemplate.findFirst = async ({ where }: { where: Record<string, unknown> }) => {
+      if (where.id !== TEMPLATE_ID) {
+        return null;
+      }
+      return {
+        activeVersion: 1,
+        id: TEMPLATE_ID,
+        inputSchema: null,
+        team: {
+          id: 'team-1',
+          organization: { id: 'org-1', monthlyBudgetUsdCents: 5000 },
+        },
+        teamId: 'team-1',
+        workspaceProvider: 'api_only',
+      };
+    };
+
+    const response = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: { label: 'test-run', payload: { budget: 'STANDARD' } },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+
+    expect(response.statusCode).toBe(402);
+    const body = JSON.parse(response.payload);
+    expect(body.error.code).toBe('ORG_BUDGET_EXCEEDED');
+    expect(startedWorkflows).toHaveLength(0);
   });
 });

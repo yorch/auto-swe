@@ -25,6 +25,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { assertOrgBudget } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -1377,6 +1378,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           activeVersion: true,
           id: true,
           inputSchema: true,
+          team: {
+            select: {
+              id: true,
+              organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+            },
+          },
           teamId: true,
           workspaceProvider: true,
         },
@@ -1476,6 +1483,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             },
           });
         }
+      }
+
+      // Org monthly budget gate (P5): a team-scoped template inherits the owning
+      // team's organization cap; global templates without a team are not capped here.
+      const orgId = tpl.team?.organization?.id;
+      const budgetCap = tpl.team?.organization?.monthlyBudgetUsdCents;
+      if (orgId && !(await assertOrgBudget(fastify.prisma, orgId, budgetCap, reply))) {
+        return;
       }
 
       const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);
