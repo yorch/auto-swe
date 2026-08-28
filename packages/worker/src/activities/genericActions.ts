@@ -8,6 +8,7 @@ import {
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { ApplicationFailure } from '@temporalio/activity';
+import { z } from 'zod';
 import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
 import {
   appendNotionBlocks,
@@ -17,6 +18,19 @@ import {
 } from '../connectors/notion.js';
 import { postSlackMessage } from '../connectors/slack.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
+
+const ConnectionIdSchema = z.string().uuid();
+const ToolNameSchema = z.string().min(1);
+
+function validateInput<T>(schema: z.ZodType<T>, value: unknown): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    throw ApplicationFailure.nonRetryable(
+      `Invalid input: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ')}`
+    );
+  }
+  return parsed.data;
+}
 
 /**
  * Generic read/write/tool activities parameterised by connection type.
@@ -186,17 +200,21 @@ async function genericReadSource(
  * placeholder awaiting the domain-specific activity pack.
  */
 export async function readSource(input: ReadSourceInput): Promise<ReadSourceResult> {
-  const connection = await loadConnection(input.connectionId);
+  const { connectionId, query } = validateInput(
+    z.object({ connectionId: ConnectionIdSchema, query: z.unknown().optional() }),
+    input
+  );
+  const connection = await loadConnection(connectionId);
   const token = getApiToken(connection);
   switch (connection.type) {
     case 'git_repo':
-      return gitRepoReadSource(connection, input.query);
+      return gitRepoReadSource(connection, query);
     case 'notion':
-      return notionReadSource(connection, token, input.query);
+      return notionReadSource(connection, token, query);
     case 'zendesk':
-      return zendeskReadSource(connection, token, input.query);
+      return zendeskReadSource(connection, token, query);
     case 'issue_tracker':
-      return issueTrackerReadSource(connection, token, input.query);
+      return issueTrackerReadSource(connection, token, query);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
@@ -391,19 +409,23 @@ async function genericWriteOutcome(
  * types pending the domain-specific activity packs.
  */
 export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutcomeResult> {
-  const connection = await loadConnection(input.connectionId);
+  const { connectionId, data } = validateInput(
+    z.object({ connectionId: ConnectionIdSchema, data: z.unknown() }),
+    input
+  );
+  const connection = await loadConnection(connectionId);
   const token = getApiToken(connection);
   switch (connection.type) {
     case 'git_repo':
-      return gitRepoWriteOutcome(connection, input.data);
+      return gitRepoWriteOutcome(connection, data);
     case 'notion':
-      return notionWriteOutcome(connection, token, input.data);
+      return notionWriteOutcome(connection, token, data);
     case 'zendesk':
-      return zendeskWriteOutcome(connection, token, input.data);
+      return zendeskWriteOutcome(connection, token, data);
     case 'slack_workspace':
-      return slackWriteOutcome(connection, token, input.data);
+      return slackWriteOutcome(connection, token, data);
     case 'issue_tracker':
-      return issueTrackerWriteOutcome(connection, token, input.data);
+      return issueTrackerWriteOutcome(connection, token, data);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
@@ -535,17 +557,25 @@ async function genericRunTool(
  * types pending the domain-specific activity packs.
  */
 export async function runTool(input: RunToolInput): Promise<RunToolResult> {
-  const connection = await loadConnection(input.connectionId);
+  const { connectionId, tool, inputs } = validateInput(
+    z.object({
+      connectionId: ConnectionIdSchema,
+      inputs: z.unknown().optional(),
+      tool: ToolNameSchema,
+    }),
+    input
+  );
+  const connection = await loadConnection(connectionId);
   const token = getApiToken(connection);
   switch (connection.type) {
     case 'git_repo':
-      return gitRepoRunTool(connection, input.tool, input.inputs);
+      return gitRepoRunTool(connection, tool, inputs);
     case 'zendesk':
-      return zendeskRunTool(connection, token, input.tool, input.inputs);
+      return zendeskRunTool(connection, token, tool, inputs);
     case 'slack_workspace':
-      return slackRunTool(connection, token, input.tool, input.inputs);
+      return slackRunTool(connection, token, tool, inputs);
     case 'issue_tracker':
-      return issueTrackerRunTool(connection, token, input.tool, input.inputs);
+      return issueTrackerRunTool(connection, token, tool, inputs);
     case 'http_api':
     case 'hubspot':
     case 'mcp':

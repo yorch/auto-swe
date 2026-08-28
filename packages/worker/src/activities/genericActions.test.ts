@@ -58,7 +58,7 @@ describe('readSource', () => {
       makeConnection('http_api')
     );
 
-    const result = await readSource({ connectionId: 'conn-1' });
+    const result = await readSource({ connectionId: '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5' });
     expect(result.ok).toBe(true);
     expect(result.connectionType).toBe('http_api');
     expect(result.placeholder).toBe(true);
@@ -73,7 +73,10 @@ describe('readSource', () => {
       page: { id: 'page-1', object: 'page', properties: {}, url: 'https://notion.so/page-1' },
     });
 
-    const result = await readSource({ connectionId: 'conn-1', query: { pageId: 'page-1' } });
+    const result = await readSource({
+      connectionId: '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5',
+      query: { pageId: 'page-1' },
+    });
     expect(result.ok).toBe(true);
     expect(result.connectionType).toBe('notion');
     expect(result.data).toEqual({
@@ -87,9 +90,9 @@ describe('readSource', () => {
       makeConnection('notion', { token: true })
     );
 
-    await expect(readSource({ connectionId: 'conn-1' })).rejects.toThrow(
-      'Notion readSource requires a pageId'
-    );
+    await expect(
+      readSource({ connectionId: '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5' })
+    ).rejects.toThrow('Notion readSource requires a pageId');
   });
 
   it('throws when the connection is inactive', async () => {
@@ -98,7 +101,9 @@ describe('readSource', () => {
       type: 'http_api',
     });
 
-    await expect(readSource({ connectionId: 'conn-1' })).rejects.toThrow('not found or inactive');
+    await expect(
+      readSource({ connectionId: '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5' })
+    ).rejects.toThrow('not found or inactive');
   });
 });
 
@@ -109,7 +114,10 @@ describe('writeOutcome', () => {
     );
 
     await expect(
-      writeOutcome({ connectionId: 'conn-2', data: { page: { title: 'Q3' } } })
+      writeOutcome({
+        connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
+        data: { page: { title: 'Q3' } },
+      })
     ).rejects.toThrow('Connection API token is required');
   });
 
@@ -123,7 +131,7 @@ describe('writeOutcome', () => {
     });
 
     const result = await writeOutcome({
-      connectionId: 'conn-2',
+      connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
       data: {
         blocks: [{ type: 'paragraph' }],
         pageId: 'page-1',
@@ -144,7 +152,7 @@ describe('writeOutcome', () => {
     });
 
     const result = await writeOutcome({
-      connectionId: 'conn-2',
+      connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
       data: {
         pageId: 'parent-1',
         title: 'Draft',
@@ -165,7 +173,7 @@ describe('writeOutcome', () => {
     });
 
     const result = await writeOutcome({
-      connectionId: 'conn-2',
+      connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
       data: { pageId: 'page-1', text: 'Line one\nLine two' },
     });
     expect(result.ok).toBe(true);
@@ -189,7 +197,10 @@ describe('writeOutcome', () => {
     );
 
     await expect(
-      writeOutcome({ connectionId: 'conn-2', data: { unknown: 'field' } })
+      writeOutcome({
+        connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
+        data: { unknown: 'field' },
+      })
     ).rejects.toThrow(
       'Notion writeOutcome data must include text, blocks, or a create-page request'
     );
@@ -206,7 +217,7 @@ describe('runTool', () => {
     });
 
     const result = await runTool({
-      connectionId: 'conn-3',
+      connectionId: 'e9108636-3b75-440c-a4f9-987449669502',
       inputs: { ticketId: '42' },
       tool: 'fetchTicket',
     });
@@ -227,7 +238,7 @@ describe('runTool', () => {
     });
 
     const result = await runTool({
-      connectionId: 'conn-3',
+      connectionId: 'e9108636-3b75-440c-a4f9-987449669502',
       inputs: { body: 'reply', public: false, ticketId: '42' },
       tool: 'postComment',
     });
@@ -242,7 +253,11 @@ describe('runTool', () => {
     );
 
     await expect(
-      runTool({ connectionId: 'conn-3', inputs: {}, tool: 'deleteTicket' })
+      runTool({
+        connectionId: 'e9108636-3b75-440c-a4f9-987449669502',
+        inputs: {},
+        tool: 'deleteTicket',
+      })
     ).rejects.toThrow('Unsupported Zendesk tool: deleteTicket');
   });
 });
@@ -256,7 +271,10 @@ describe('readSource', () => {
       ticket: { description: 'Help', id: 42, status: 'open', subject: 'Problem' },
     });
 
-    const result = await readSource({ connectionId: 'conn-3', query: { ticketId: '42' } });
+    const result = await readSource({
+      connectionId: 'e9108636-3b75-440c-a4f9-987449669502',
+      query: { ticketId: '42' },
+    });
     expect(result.ok).toBe(true);
     expect(result.connectionType).toBe('zendesk');
     expect(result.data).toEqual({
@@ -276,7 +294,7 @@ describe('writeOutcome', () => {
     });
 
     const result = await writeOutcome({
-      connectionId: 'conn-3',
+      connectionId: 'e9108636-3b75-440c-a4f9-987449669502',
       data: { body: 'reply', ticketId: '42' },
     });
     expect(result.ok).toBe(true);
@@ -294,7 +312,7 @@ describe('writeOutcome', () => {
     });
 
     const result = await writeOutcome({
-      connectionId: 'conn-4',
+      connectionId: 'bd4483f7-1fcc-4abe-916c-deab2811a4dc',
       data: { description: 'A bug', projectKey: 'team-uuid', title: 'Bug' },
     });
     expect(result.ok).toBe(true);
@@ -315,7 +333,10 @@ describe('readSource', () => {
       url: 'https://linear.app/issue/TEAM-1',
     });
 
-    const result = await readSource({ connectionId: 'conn-4', query: { issueId: 'TEAM-1' } });
+    const result = await readSource({
+      connectionId: 'bd4483f7-1fcc-4abe-916c-deab2811a4dc',
+      query: { issueId: 'TEAM-1' },
+    });
     expect(result.ok).toBe(true);
     expect(result.connectionType).toBe('issue_tracker');
     expect(result.data).toEqual({
@@ -339,7 +360,7 @@ describe('runTool', () => {
     });
 
     const result = await runTool({
-      connectionId: 'conn-4',
+      connectionId: 'bd4483f7-1fcc-4abe-916c-deab2811a4dc',
       inputs: { description: 'A task', projectKey: 'PROJ', title: 'Task' },
       tool: 'createIssue',
     });
