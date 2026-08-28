@@ -1,13 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveWorkspace } from './resolveWorkspace.js';
 
+vi.mock('@auto-swe/shared', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@auto-swe/shared')>();
+  return {
+    ...mod,
+    decryptConnectionApiToken: () => 'test-token',
+  };
+});
+
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     connection: { findUnique: vi.fn() },
   },
 }));
 
+vi.mock('../connectors/notion.js', () => ({
+  readNotionPage: vi.fn(),
+}));
+
 const { prisma } = await import('@auto-swe/shared/db');
+const { readNotionPage } = await import('../connectors/notion.js');
 
 describe('resolveWorkspace', () => {
   beforeEach(() => {
@@ -61,7 +74,7 @@ describe('resolveWorkspace', () => {
 
   it('resolves a document workspace from a notion connection', async () => {
     (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
-      config: { sourceId: 'page-1' },
+      config: { sourcePageId: 'page-1' },
       isActive: true,
       name: 'Product Docs',
       type: 'notion',
@@ -78,6 +91,37 @@ describe('resolveWorkspace', () => {
       sourceId: 'page-1',
       workspaceName: 'Product Docs',
     });
+  });
+
+  it('validates the source page when a token is present', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      apiKeyAuthTag: Buffer.from('tag'),
+      apiKeyCiphertext: Buffer.from('cipher'),
+      apiKeyNonce: Buffer.from('nonce'),
+      apiKeyVersion: 1,
+      config: {},
+      isActive: true,
+      name: 'Product Docs',
+      type: 'notion',
+    });
+    (readNotionPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      blocks: [],
+      page: { id: 'page-1', object: 'page', properties: {}, url: 'https://notion.so/page-1' },
+    });
+
+    const result = await resolveWorkspace({
+      connectionId: 'conn-2',
+      payload: { pageId: 'page-1' },
+      workspaceProvider: 'document',
+    });
+
+    expect(result).toEqual({
+      connectionId: 'conn-2',
+      provider: 'document',
+      sourceId: 'page-1',
+      workspaceName: 'Product Docs',
+    });
+    expect(readNotionPage).toHaveBeenCalledWith({ apiToken: 'test-token' }, 'page-1');
   });
 
   it('throws when a document workspace has no connectionId', async () => {
