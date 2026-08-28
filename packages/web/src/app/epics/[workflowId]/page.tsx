@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useEpic } from '@/hooks/useEpics';
 import { errMsg } from '@/lib/errors';
+import { validateRouteParam } from '@/lib/routeParams';
 import { formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
@@ -24,9 +25,17 @@ const STARTUP_GRACE_MS = 45_000;
 
 export default function EpicDetailPage({ params }: PageProps) {
   const { workflowId: rawWorkflowId } = use(params);
-  const workflowId = decodeURIComponent(rawWorkflowId);
+  const workflowId = validateRouteParam(rawWorkflowId);
   const mountedAtRef = useRef(Date.now());
-  const { data: epic, isLoading, error } = useEpic(workflowId);
+  const { data: epic, isLoading, error } = useEpic(workflowId ?? '');
+
+  if (!workflowId) {
+    return (
+      <Card>
+        <p className="text-sm text-brick-400">Epic not found</p>
+      </Card>
+    );
+  }
 
   if (isLoading) {
     return <LoadingState message="loading epic…" />;

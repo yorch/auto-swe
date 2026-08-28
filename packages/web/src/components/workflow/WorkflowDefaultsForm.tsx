@@ -326,7 +326,12 @@ export function WorkflowDefaultsForm() {
             >
               <Select
                 id="ci-wait-mode"
-                onChange={(e) => setField('ciWaitMode', e.target.value as 'signal' | 'poll')}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === 'signal' || v === 'poll') {
+                    setField('ciWaitMode', v);
+                  }
+                }}
                 value={form.ciWaitMode}
               >
                 <option value="signal">signal (webhook)</option>

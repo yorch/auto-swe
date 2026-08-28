@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
@@ -10,6 +11,7 @@ import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TabBar } from '@/components/ui/TabBar';
 import { useTemplateRuns, useWorkflowTemplate } from '@/hooks/useTemplates';
+import { validateRouteParam } from '@/lib/routeParams';
 import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
@@ -45,13 +47,14 @@ function runDuration(start: string, end: string | null): string {
 
 export default function TemplateRunsPage({ params }: PageProps) {
   const router = useRouter();
-  const { id } = use(params);
-  const { data: template } = useWorkflowTemplate(id);
+  const { id: rawId } = use(params);
+  const id = validateRouteParam(rawId);
+  const { data: template } = useWorkflowTemplate(id ?? '');
   const [offset, setOffset] = useState(0);
   const [statusFilter, setStatusFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
 
-  const { data, isLoading } = useTemplateRuns(id, { limit: PAGE_SIZE, offset });
+  const { data, isLoading } = useTemplateRuns(id ?? '', { limit: PAGE_SIZE, offset });
 
   const rows = data?.data ?? [];
   const total = data?.total ?? 0;
@@ -90,6 +93,14 @@ export default function TemplateRunsPage({ params }: PageProps) {
 
   const handlePrev = () => setOffset(Math.max(0, offset - PAGE_SIZE));
   const handleNext = () => setOffset(offset + PAGE_SIZE);
+
+  if (!id) {
+    return (
+      <div className="p-8">
+        <Alert>Template not found</Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-10">

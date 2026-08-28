@@ -25,6 +25,7 @@ import { useInbox } from '@/hooks/useInbox';
 import { useCancelWorkflowRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { errMsg } from '@/lib/errors';
+import { validateRouteParam } from '@/lib/routeParams';
 import { cn, formatDuration, formatRelativeTime } from '@/lib/utils';
 import { SplitRunPanel } from './SplitRunPanel';
 import { TracesTab } from './TracesTab';
@@ -847,9 +848,10 @@ function LayoutC({
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function RunDetailPage({ params }: PageProps) {
-  const { id } = use(params);
-  const { data: run, isError, isLoading, error } = useWorkflowRun(id);
-  const cancelRun = useCancelWorkflowRun(id);
+  const { id: rawId } = use(params);
+  const id = validateRouteParam(rawId);
+  const { data: run, isError, isLoading, error } = useWorkflowRun(id ?? '');
+  const cancelRun = useCancelWorkflowRun(id ?? '');
   const retryRun = useRetryWorkRequest();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const { layout, setLayout } = useUserPreferences();
@@ -937,6 +939,14 @@ export default function RunDetailPage({ params }: PageProps) {
       retryRun.mutate(run.workRequest.id);
     }
   }, [run?.workRequest, retryRun]);
+
+  if (!id) {
+    return (
+      <div className="p-8">
+        <Alert>Run not found</Alert>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return <LoadingState />;

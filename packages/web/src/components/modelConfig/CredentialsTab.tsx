@@ -258,7 +258,12 @@ function CredentialModal({
               className="border-ink-600 bg-ink-900"
               id="scope"
               label="Scope"
-              onChange={(e) => setScope(e.target.value as 'GLOBAL' | 'TEAM')}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === 'GLOBAL' || v === 'TEAM') {
+                  setScope(v);
+                }
+              }}
               value={scope}
             >
               <option value="GLOBAL">Global (used by every team unless overridden)</option>

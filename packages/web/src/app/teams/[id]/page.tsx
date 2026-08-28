@@ -17,15 +17,15 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRemoveTeamMember, useTeam, useUpdateTeam, useUpdateTeamMember } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { validateRouteParam } from '@/lib/routeParams';
 import { useAuthStore } from '@/stores/authStore';
 
-type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
-
 export default function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  const { data: team, isLoading } = useTeam(id);
-  const updateMember = useUpdateTeamMember(id);
-  const removeMember = useRemoveTeamMember(id);
+  const { id: rawId } = use(params);
+  const id = validateRouteParam(rawId);
+  const { data: team, isLoading } = useTeam(id ?? '');
+  const updateMember = useUpdateTeamMember(id ?? '');
+  const removeMember = useRemoveTeamMember(id ?? '');
   const platformRole = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const userId = useAuthStore((s) => s.user?.sub ?? null);
   const canManage = platformRole === 'ADMIN' || platformRole === 'LEAD';
@@ -36,7 +36,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const ownTeamRole = team?.memberships?.find((m) => m.user?.id === userId)?.role;
   const canManageTeamConfig = platformRole === 'ADMIN' || ownTeamRole === 'ADMIN';
 
-  const updateTeam = useUpdateTeam(id);
+  const updateTeam = useUpdateTeam(id ?? '');
 
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -44,6 +44,10 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
   const [personaInput, setPersonaInput] = useState('');
   const [personaError, setPersonaError] = useState<string | null>(null);
+
+  if (!id) {
+    return <div className="text-center py-12 text-paper-400">Team not found</div>;
+  }
 
   async function handleSavePersona() {
     setPersonaError(null);
@@ -114,10 +118,12 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                         className="h-7 w-auto px-2 text-xs"
                         onChange={(e) =>
                           m.user?.id &&
-                          updateMember.mutate({
-                            role: e.target.value as Role,
-                            userId: m.user.id,
-                          })
+                          (() => {
+                            const role = e.target.value;
+                            if (role === 'ADMIN' || role === 'LEAD' || role === 'ENGINEER') {
+                              updateMember.mutate({ role, userId: m.user.id });
+                            }
+                          })()
                         }
                         value={m.role}
                       >

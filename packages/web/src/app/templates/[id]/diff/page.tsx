@@ -13,6 +13,7 @@ import { TabBar } from '@/components/ui/TabBar';
 import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { validateRouteParam } from '@/lib/routeParams';
 import { cn } from '@/lib/utils';
 
 interface PageProps {
@@ -99,8 +100,9 @@ function NodeJsonDiff({
 
 export default function TemplateDiffPage({ params }: PageProps) {
   const router = useRouter();
-  const { id } = use(params);
-  const { data: template } = useWorkflowTemplate(id);
+  const { id: rawId } = use(params);
+  const id = validateRouteParam(rawId);
+  const { data: template } = useWorkflowTemplate(id ?? '');
   const sortedVersions = useMemo(
     () => (template ? [...template.versions].sort((a, b) => b.version - a.version) : []),
     [template]
@@ -127,7 +129,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
     isLoading,
     isError: isDiffError,
     error: diffError,
-  } = useWorkflowSpecDiff(id, a, b);
+  } = useWorkflowSpecDiff(id ?? '', a, b);
   const [parseError, setParseError] = useState<string | null>(null);
 
   const specPair = useMemo(() => {
@@ -165,6 +167,14 @@ export default function TemplateDiffPage({ params }: PageProps) {
       nodeId,
     }));
   }, [diffPayload, specPair]);
+
+  if (!id) {
+    return (
+      <div className="p-8">
+        <Alert>Template not found</Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-10">

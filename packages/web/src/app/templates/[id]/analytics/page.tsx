@@ -4,12 +4,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Alert } from '@/components/ui/Alert';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { TabBar } from '@/components/ui/TabBar';
 import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useTemplates';
+import { validateRouteParam } from '@/lib/routeParams';
 import { cn, formatCost, formatDuration, formatPercent } from '@/lib/utils';
 
 interface PageProps {
@@ -31,10 +33,11 @@ const formatUsdNullable = (n: number | null) => (n === null ? '—' : formatCost
 
 export default function TemplateAnalyticsPage({ params }: PageProps) {
   const router = useRouter();
-  const { id } = use(params);
+  const { id: rawId } = use(params);
+  const id = validateRouteParam(rawId);
   const [windowDays, setWindowDays] = useState<number>(30);
-  const { data: template } = useWorkflowTemplate(id);
-  const { data: stats, isLoading } = useWorkflowTemplateAnalytics(id, windowDays);
+  const { data: template } = useWorkflowTemplate(id ?? '');
+  const { data: stats, isLoading } = useWorkflowTemplateAnalytics(id ?? '', windowDays);
 
   const handleTabChange = (tab: SubTab) => {
     if (tab === 'editor') {
@@ -45,6 +48,14 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
       router.push(`/templates/${id}/diff`);
     }
   };
+
+  if (!id) {
+    return (
+      <div className="p-8">
+        <Alert>Template not found</Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-10">

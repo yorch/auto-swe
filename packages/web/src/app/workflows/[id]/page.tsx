@@ -7,13 +7,18 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useRunsForWorkRequest, useWorkflow } from '@/hooks/useRuns';
+import { validateRouteParam } from '@/lib/routeParams';
 import { formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
 
 export default function WorkflowDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  const { data: workflow, isLoading } = useWorkflow(id);
+  const { id: rawId } = use(params);
+  const id = validateRouteParam(rawId);
+  const { data: workflow, isLoading } = useWorkflow(id ?? '');
   const { data: runs } = useRunsForWorkRequest(workflow?.workRequest?.id);
 
+  if (!id) {
+    return <div className="text-center py-12 text-paper-400">Workflow not found</div>;
+  }
   if (isLoading) {
     return <LoadingState />;
   }

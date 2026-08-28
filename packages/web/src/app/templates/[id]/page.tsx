@@ -41,6 +41,7 @@ import {
 } from '@/hooks/useTemplates';
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
+import { validateRouteParam } from '@/lib/routeParams';
 import { formatPercent, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -485,15 +486,16 @@ function WebhookCard({
 
 export default function TemplateDetailPage({ params }: PageProps) {
   const router = useRouter();
-  const { id } = use(params);
-  const { data: template, isLoading, isError, error } = useWorkflowTemplate(id);
+  const { id: rawId } = use(params);
+  const id = validateRouteParam(rawId);
+  const { data: template, isLoading, isError, error } = useWorkflowTemplate(id ?? '');
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
-  const { data: versionDetail } = useWorkflowTemplateVersion(id, effectiveVersion);
+  const { data: versionDetail } = useWorkflowTemplateVersion(id ?? '', effectiveVersion);
   const { data: stepRegistry } = useStepRegistry();
-  const { data: analytics } = useWorkflowTemplateAnalytics(id, 30);
-  const createVersion = useCreateWorkflowVersion(id);
-  const promoteVersion = usePromoteWorkflowVersion(id);
+  const { data: analytics } = useWorkflowTemplateAnalytics(id ?? '', 30);
+  const createVersion = useCreateWorkflowVersion(id ?? '');
+  const promoteVersion = usePromoteWorkflowVersion(id ?? '');
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const canManage = role === 'ADMIN' || role === 'LEAD';
 
@@ -539,6 +541,14 @@ export default function TemplateDetailPage({ params }: PageProps) {
     }
     return estimateSpecCost(visualSpec, { stepLookup: (name) => stepRegistryByName.get(name) });
   }, [visualSpec, stepRegistryByName]);
+
+  if (!id) {
+    return (
+      <div className="p-8">
+        <Alert>Template not found</Alert>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return <LoadingState message="loading template…" />;

@@ -172,7 +172,12 @@ export function InputSchemaBuilder({
             <Select
               id={`field-type-${i}`}
               label="Type"
-              onChange={(e) => updateField(i, { type: e.target.value as InputFieldType })}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (FIELD_TYPES.some((t) => t.value === v)) {
+                  updateField(i, { type: v as InputFieldType });
+                }
+              }}
               value={f.type}
             >
               {FIELD_TYPES.map(({ label, value: v }) => (
@@ -209,7 +214,12 @@ export function InputSchemaBuilder({
               <Select
                 id={`field-format-${i}`}
                 label="Format"
-                onChange={(e) => updateField(i, { format: e.target.value as '' | 'uuid' })}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === '' || v === 'uuid') {
+                    updateField(i, { format: v });
+                  }
+                }}
                 value={f.format}
               >
                 <option value="">None</option>
@@ -221,11 +231,12 @@ export function InputSchemaBuilder({
             <Select
               id={`item-type-${i}`}
               label="Item type"
-              onChange={(e) =>
-                updateField(i, {
-                  itemType: e.target.value as Exclude<InputFieldType, 'array' | 'connection'>,
-                })
-              }
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === 'string' || v === 'number' || v === 'boolean') {
+                  updateField(i, { itemType: v });
+                }
+              }}
               value={f.itemType}
             >
               <option value="string">String</option>

@@ -21,16 +21,24 @@ import {
 } from '@/hooks/useOrg';
 import { useEligibleUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
+import { validateRouteParam } from '@/lib/routeParams';
+
+const ORG_ROLES: readonly OrgRole[] = ['ORG_MEMBER', 'ORG_ADMIN'];
+
+function isOrgRole(value: string): value is OrgRole {
+  return (ORG_ROLES as readonly string[]).includes(value);
+}
 
 export default function OrgAdminPage({ params }: { params: Promise<{ orgId: string }> }) {
-  const { orgId } = use(params);
+  const { orgId: rawOrgId } = use(params);
+  const orgId = validateRouteParam(rawOrgId);
 
-  const { data: members, isLoading: membersLoading } = useOrgMembers(orgId);
-  const { data: budget, isLoading: budgetLoading } = useOrgBudget(orgId);
-  const upsertMember = useUpsertOrgMember(orgId);
-  const patchMember = usePatchOrgMember(orgId);
-  const removeMember = useRemoveOrgMember(orgId);
-  const patchBudget = usePatchOrgBudget(orgId);
+  const { data: members, isLoading: membersLoading } = useOrgMembers(orgId ?? '');
+  const { data: budget, isLoading: budgetLoading } = useOrgBudget(orgId ?? '');
+  const upsertMember = useUpsertOrgMember(orgId ?? '');
+  const patchMember = usePatchOrgMember(orgId ?? '');
+  const removeMember = useRemoveOrgMember(orgId ?? '');
+  const patchBudget = usePatchOrgBudget(orgId ?? '');
 
   const [addUserId, setAddUserId] = useState('');
   const [addRole, setAddRole] = useState<OrgRole>('ORG_MEMBER');
@@ -52,6 +60,10 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     addUserId && eligibleUsers.some((u) => u.id === addUserId)
       ? addUserId
       : (eligibleUsers[0]?.id ?? '');
+
+  if (!orgId) {
+    return <div className="text-center py-12 text-paper-400">Organization not found</div>;
+  }
 
   async function handleAddMember() {
     setError(null);
@@ -147,7 +159,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     </td>
                     <td className="py-3 pr-3">
                       <Select
-                        onChange={(e) => handleRoleChange(m.userId, e.target.value as OrgRole)}
+                        onChange={(e) => {
+                          const role = e.target.value;
+                          if (isOrgRole(role)) {
+                            handleRoleChange(m.userId, role);
+                          }
+                        }}
                         value={m.role}
                       >
                         <option value="ORG_ADMIN">ORG_ADMIN</option>
@@ -178,7 +195,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 <>
                   <Select
                     label="Role"
-                    onChange={(e) => setAddRole(e.target.value as OrgRole)}
+                    onChange={(e) => {
+                      const role = e.target.value;
+                      if (isOrgRole(role)) {
+                        setAddRole(role);
+                      }
+                    }}
                     value={addRole}
                   >
                     <option value="ORG_MEMBER">ORG_MEMBER</option>

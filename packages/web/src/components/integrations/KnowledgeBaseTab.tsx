@@ -129,9 +129,12 @@ export function KnowledgeBaseTab() {
             <select
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs focus:border-ember-400 focus:outline-none"
               id="kb-provider"
-              onChange={(e) =>
-                setProvider(e.target.value as '' | 'disabled' | KnowledgeBaseProvider)
-              }
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '' || v === 'disabled' || v === 'confluence' || v === 'notion') {
+                  setProvider(v);
+                }
+              }}
               value={provider}
             >
               <option value="">(keep current)</option>
