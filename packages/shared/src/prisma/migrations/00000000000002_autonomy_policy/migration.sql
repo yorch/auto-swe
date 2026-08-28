@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS "autonomy_policies" (
     "name"        TEXT NOT NULL,
     "description" TEXT,
     "is_default"  BOOLEAN NOT NULL DEFAULT FALSE,
-    "rules"       JSONB NOT NULL DEFAULT '{}',
+    -- No DB default for `rules`: the application (Prisma) always sets it, and
+    -- a redundant default in DDL can hide the fact that a create path forgot to
+    -- supply the field.
+    "rules"       JSONB NOT NULL,
     "created_at"  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at"  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

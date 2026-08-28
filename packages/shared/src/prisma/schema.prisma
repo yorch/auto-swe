@@ -379,9 +379,9 @@ model Organization {
 
   configSettings      ConfigSetting[]
   configPermissions   ConfigPermission[]
+  skills            Skill[]
 
   @@map("organizations")
-  skills            Skill[]
 }
 
 model Team {
@@ -426,10 +426,10 @@ model Team {
   configPermissions   ConfigPermission[]
   memoryItems         MemoryItem[]             @relation("TeamMemoryItems")
   autonomyPolicies    AutonomyPolicy[]
+  skills            Skill[]
 
   @@index([orgId])
   @@map("teams")
-  skills            Skill[]
 }
 
 model TeamMembership {
@@ -1224,6 +1224,7 @@ model WorkflowStep {
 
   @@index([runId])
   @@index([runId, nodeId])
+  @@unique([runId, nodeId, attempt])
   @@map("workflow_steps")
 }
 

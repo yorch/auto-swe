@@ -66,7 +66,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     workflowStep: {
       create: vi.fn(),
-      findFirst: vi.fn(async () => null),
+      upsert: vi.fn(),
     },
     workflowTemplate: {
       findFirst: vi.fn(),
@@ -90,7 +90,7 @@ import {
 const findVersion = vi.mocked(prisma.workflowTemplateVersion.findUnique);
 const upsertRun = vi.mocked(prisma.workflowRun.upsert);
 const updateRun = vi.mocked(prisma.workflowRun.update);
-const createStep = vi.mocked(prisma.workflowStep.create);
+const upsertStep = vi.mocked(prisma.workflowStep.upsert);
 const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
 const findTemplate = vi.mocked(prisma.workflowTemplate.findFirst);
 const findAgents = vi.mocked(prisma.agent.findMany);
@@ -117,7 +117,7 @@ afterEach(() => {
   findVersion.mockReset();
   upsertRun.mockReset();
   updateRun.mockReset();
-  createStep.mockReset();
+  upsertStep.mockReset();
   findRepo.mockReset();
   findTemplate.mockReset();
   findAgents.mockReset();
@@ -200,28 +200,31 @@ describe('createWorkflowRun', () => {
 
 describe('recordWorkflowStep', () => {
   it('sets endedAt only for terminal statuses', async () => {
-    createStep.mockResolvedValue({} as never);
+    upsertStep.mockResolvedValue({} as never);
     await recordWorkflowStep({ nodeId: 'a', runId: 'r1', status: 'RUNNING' });
-    const argsRunning = createStep.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+    const argsRunning = upsertStep.mock.calls[0]?.[0]?.create as Record<string, unknown>;
     expect(argsRunning.endedAt).toBeNull();
 
     await recordWorkflowStep({ nodeId: 'a', runId: 'r1', status: 'PASSED' });
-    const argsPassed = createStep.mock.calls[1]?.[0]?.data as Record<string, unknown>;
+    const argsPassed = upsertStep.mock.calls[1]?.[0]?.create as Record<string, unknown>;
     expect(argsPassed.endedAt).toBeInstanceOf(Date);
   });
 
   it('records the attempt number on retried steps', async () => {
-    createStep.mockResolvedValue({} as never);
+    upsertStep.mockResolvedValue({} as never);
     await recordWorkflowStep({ attempt: 3, nodeId: 'a', runId: 'r1', status: 'FAILED' });
-    const args = createStep.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+    const args = upsertStep.mock.calls[0]?.[0]?.create as Record<string, unknown>;
     expect(args.attempt).toBe(3);
   });
 
-  it('does not create duplicate rows for the same runId + nodeId + attempt', async () => {
-    const findStep = vi.mocked(prisma.workflowStep.findFirst);
-    findStep.mockResolvedValue({ id: 'existing' } as never);
+  it('uses the (runId, nodeId, attempt) unique key for idempotent upsert', async () => {
+    upsertStep.mockResolvedValue({} as never);
     await recordWorkflowStep({ attempt: 1, nodeId: 'a', runId: 'r1', status: 'PASSED' });
-    expect(createStep).not.toHaveBeenCalled();
+    expect(upsertStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { runId_nodeId_attempt: { attempt: 1, nodeId: 'a', runId: 'r1' } },
+      })
+    );
   });
 });
 

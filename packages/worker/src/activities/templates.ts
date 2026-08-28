@@ -180,16 +180,10 @@ export async function recordWorkflowStep(input: RecordStepInput): Promise<void> 
   const attempt = input.attempt ?? 1;
 
   // Temporal can retry an activity within the same attempt number under some
-  // failure modes; avoid writing duplicate step rows.
-  const existing = await prisma.workflowStep.findFirst({
-    where: { attempt, nodeId: input.nodeId, runId: input.runId },
-  });
-  if (existing) {
-    return;
-  }
-
-  await prisma.workflowStep.create({
-    data: {
+  // failure modes; the unique constraint on (run_id, node_id, attempt) plus an
+  // upsert makes step recording idempotent.
+  await prisma.workflowStep.upsert({
+    create: {
       attempt,
       endedAt: input.status === 'RUNNING' || input.status === 'PENDING' ? null : now,
       error: input.error,
@@ -200,6 +194,14 @@ export async function recordWorkflowStep(input: RecordStepInput): Promise<void> 
       startedAt: now,
       status: input.status,
     },
+    update: {
+      endedAt: input.status === 'RUNNING' || input.status === 'PENDING' ? null : now,
+      error: input.error,
+      inputs: input.inputs as object | undefined,
+      outputs: input.outputs as object | undefined,
+      status: input.status,
+    },
+    where: { runId_nodeId_attempt: { attempt, nodeId: input.nodeId, runId: input.runId } },
   });
 
   // Phase-7: best-effort Slack notification on terminal FAILED records. The
