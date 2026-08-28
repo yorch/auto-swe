@@ -127,8 +127,10 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       };
 
       let knownIds = await fetchPendingIds();
+      let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+      let closed = false;
 
-      const pollInterval = setInterval(async () => {
+      const poll = async () => {
         try {
           const currentIds = await fetchPendingIds();
           const added = [...currentIds].filter((id) => !knownIds.has(id));
@@ -140,7 +142,11 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         } catch {
           // swallow errors — client will reconnect on dropped connection
         }
-      }, 3000);
+        if (!closed) {
+          pollTimeout = setTimeout(poll, 3000);
+        }
+      };
+      pollTimeout = setTimeout(poll, 3000);
 
       const keepAliveInterval = setInterval(() => {
         write(': keepalive\n\n');
@@ -148,7 +154,10 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
 
       return new Promise<void>((resolve) => {
         const cleanup = () => {
-          clearInterval(pollInterval);
+          closed = true;
+          if (pollTimeout) {
+            clearTimeout(pollTimeout);
+          }
           clearInterval(keepAliveInterval);
           if (!res.writableEnded) {
             res.end();

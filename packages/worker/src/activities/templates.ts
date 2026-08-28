@@ -130,7 +130,15 @@ export async function createWorkflowRun(
     persisted = pinnedSettings;
   }
 
-  return { pinnedSettings: persisted, runId: run.id, spec };
+  // Always return the spec actually stored on the row. On a Temporal retry the
+  // row may already exist (update: {}), and returning the freshly-parsed spec
+  // from `version.spec` would make the workflow see a different snapshot than
+  // the history recorded.
+  return {
+    pinnedSettings: persisted,
+    runId: run.id,
+    spec: (run.specSnapshot as unknown as WorkflowSpec) ?? spec,
+  };
 }
 
 /// Scope context for the run's pinned-settings snapshot. The template comes from
@@ -288,18 +296,14 @@ export async function finalizeWorkflowRun(
 
   const orgId = run?.workRequest?.connection?.team?.orgId;
   const runsIncrement = status === 'SUCCESS' ? 1 : 0;
-
-  const denormalizeUpdate = prisma.workflowRun.update({
-    data: {
-      contextSnapshot: contextSnapshot as object | undefined,
-      costUsdAccrued,
-      endedAt: new Date(),
-      status,
-      tokensInputTotal,
-      tokensOutputTotal,
-    },
-    where: { id: runId },
-  });
+  const terminalUpdate = {
+    contextSnapshot: contextSnapshot as object | undefined,
+    costUsdAccrued,
+    endedAt: new Date(),
+    status,
+    tokensInputTotal,
+    tokensOutputTotal,
+  };
 
   if (orgId) {
     const yearMonth = currentYearMonth();
@@ -307,17 +311,13 @@ export async function finalizeWorkflowRun(
       await tx.$queryRaw`
         SELECT pg_advisory_xact_lock(hashtextextended(${orgId}, 0))
       `;
-      await tx.workflowRun.update({
-        data: {
-          contextSnapshot: contextSnapshot as object | undefined,
-          costUsdAccrued,
-          endedAt: new Date(),
-          status,
-          tokensInputTotal,
-          tokensOutputTotal,
-        },
-        where: { id: runId },
+      const { count } = await tx.workflowRun.updateMany({
+        data: terminalUpdate,
+        where: { endedAt: null, id: runId },
       });
+      if (count === 0) {
+        return; // already finalized by a concurrent attempt
+      }
       await tx.orgMonthlyUsage.upsert({
         create: {
           costUsdAccrued,
@@ -337,7 +337,13 @@ export async function finalizeWorkflowRun(
       });
     });
   } else {
-    await denormalizeUpdate;
+    const { count } = await prisma.workflowRun.updateMany({
+      data: terminalUpdate,
+      where: { endedAt: null, id: runId },
+    });
+    if (count === 0) {
+      return;
+    }
   }
 
   // Write the terminal status back to the ActiveWorkflow row. Templates only

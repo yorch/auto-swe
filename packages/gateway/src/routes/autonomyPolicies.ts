@@ -177,7 +177,11 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         body: UpdateSchema,
         params: IdParams,
-        response: { 200: PolicyDetailResponseSchema, 404: ErrorResponseSchema },
+        response: {
+          200: PolicyDetailResponseSchema,
+          400: ErrorResponseSchema,
+          404: ErrorResponseSchema,
+        },
       },
     },
     async (request, reply) => {
@@ -191,6 +195,9 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'NOT_FOUND', message: 'Policy not found' } });
       }
       const data = request.body;
+      if (!validateScope({ ...existing, ...data })) {
+        return reply.status(400).send({ error: scopeError() });
+      }
       const updated = await fastify.prisma.autonomyPolicy.update({
         data,
         include: {

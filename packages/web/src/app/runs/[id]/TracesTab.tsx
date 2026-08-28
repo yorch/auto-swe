@@ -211,7 +211,12 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
 
   // For llm_response records with systemPrompt/userMessage in inputJson: show
   // a collapsible "Request" section (system + user) and a "Response" section.
-  if (trace.type === 'llm_response' && input && 'systemPrompt' in input) {
+  if (
+    trace.type === 'llm_response' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'systemPrompt' in input
+  ) {
     const systemPrompt = typeof input.systemPrompt === 'string' ? input.systemPrompt : null;
     const userMessage = typeof input.userMessage === 'string' ? input.userMessage : null;
     const outputText = output

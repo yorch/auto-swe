@@ -71,6 +71,7 @@ vi.mock('@auto-swe/shared/db', () => {
     workflowRun: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn(),
     },
     workflowStep: {
@@ -99,8 +100,10 @@ import {
 
 const findVersion = vi.mocked(prisma.workflowTemplateVersion.findUnique);
 const upsertRun = vi.mocked(prisma.workflowRun.upsert);
-const updateRun = vi.mocked(prisma.workflowRun.update);
+
+const updateManyRuns = vi.mocked(prisma.workflowRun.updateMany);
 const upsertStep = vi.mocked(prisma.workflowStep.upsert);
+const orgMonthlyUsageUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
 const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
 const findTemplate = vi.mocked(prisma.workflowTemplate.findFirst);
 const findAgents = vi.mocked(prisma.agent.findMany);
@@ -126,8 +129,10 @@ const validSpec = {
 afterEach(() => {
   findVersion.mockReset();
   upsertRun.mockReset();
-  updateRun.mockReset();
+  updateManyRuns.mockReset();
+  updateManyRuns.mockReset();
   upsertStep.mockReset();
+  orgMonthlyUsageUpsert.mockReset();
   findRepo.mockReset();
   findTemplate.mockReset();
   findAgents.mockReset();
@@ -246,10 +251,10 @@ describe('finalizeWorkflowRun', () => {
         activeWorkflows: [{ costUsdAccrued: 1.5 }, { costUsdAccrued: 0.5 }],
       },
     } as never);
-    updateRun.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
     await finalizeWorkflowRun('run-1', 'SUCCESS', { foo: 'bar' });
-    const args = updateRun.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(args.where).toEqual({ id: 'run-1' });
+    const args = updateManyRuns.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(args.where).toEqual({ endedAt: null, id: 'run-1' });
     const data = args.data as Record<string, unknown>;
     expect(data.status).toBe('SUCCESS');
     expect(data.endedAt).toBeInstanceOf(Date);
@@ -262,9 +267,9 @@ describe('finalizeWorkflowRun', () => {
   it('writes zero cost when there is no work request attached', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     findRun.mockResolvedValue({ workRequest: null } as never);
-    updateRun.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({} as never);
     await finalizeWorkflowRun('run-2', 'FAILED');
-    const args = updateRun.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const args = updateManyRuns.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     const data = args.data as Record<string, unknown>;
     expect(data.costUsdAccrued).toBe(0);
     findRun.mockReset();
@@ -274,7 +279,7 @@ describe('finalizeWorkflowRun', () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const updateActive = vi.mocked(prisma.activeWorkflow.updateMany);
     findRun.mockResolvedValue({ workflowId: 'eng-acme-repo-T-1', workRequest: null } as never);
-    updateRun.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({} as never);
     updateActive.mockResolvedValue({ count: 1 } as never);
 
     await finalizeWorkflowRun('run-3', 'FAILED');
@@ -297,7 +302,7 @@ describe('finalizeWorkflowRun', () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const updateActive = vi.mocked(prisma.activeWorkflow.updateMany);
     findRun.mockResolvedValue({ workflowId: 'eng-acme-repo-T-2', workRequest: null } as never);
-    updateRun.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({} as never);
 
     await finalizeWorkflowRun('run-4', 'SKIPPED');
     expect(updateActive).not.toHaveBeenCalled();
@@ -309,6 +314,7 @@ describe('finalizeWorkflowRun', () => {
   it('aggregates org usage in a transaction on first finalize (SUCCESS counts a run)', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const tx = vi.mocked(prisma.$transaction);
+    const updateMany = vi.mocked(prisma.workflowRun.updateMany);
     const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
     findRun.mockResolvedValue({
       endedAt: null, // not yet finalized → bill
@@ -317,11 +323,13 @@ describe('finalizeWorkflowRun', () => {
         connection: { team: { orgId: 'org-1' } },
       },
     } as never);
-    updateRun.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({} as never);
 
     await finalizeWorkflowRun('run-5', 'SUCCESS');
 
     expect(tx).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany.mock.calls[0]?.[0]).toMatchObject({ where: { endedAt: null } });
     expect(orgUpsert).toHaveBeenCalledTimes(1);
     const args = orgUpsert.mock.calls[0]?.[0] as {
       create: Record<string, unknown>;
@@ -335,6 +343,7 @@ describe('finalizeWorkflowRun', () => {
 
     findRun.mockReset();
     tx.mockReset();
+    updateMany.mockReset();
     orgUpsert.mockReset();
   });
 
@@ -348,7 +357,7 @@ describe('finalizeWorkflowRun', () => {
         connection: { team: { orgId: 'org-1' } },
       },
     } as never);
-    updateRun.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({} as never);
 
     await finalizeWorkflowRun('run-6', 'FAILED');
 
@@ -370,7 +379,7 @@ describe('finalizeWorkflowRun', () => {
     const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
     tx.mockClear();
     orgUpsert.mockClear();
-    updateRun.mockClear();
+    updateManyRuns.mockClear();
     findRun.mockResolvedValue({
       endedAt: new Date(), // already finalized by a prior attempt
       workRequest: {
@@ -378,13 +387,13 @@ describe('finalizeWorkflowRun', () => {
         connection: { team: { orgId: 'org-1' } },
       },
     } as never);
-    updateRun.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({} as never);
 
     await finalizeWorkflowRun('run-7', 'SUCCESS');
 
     expect(tx).not.toHaveBeenCalled();
     expect(orgUpsert).not.toHaveBeenCalled();
-    expect(updateRun).not.toHaveBeenCalled();
+    expect(updateManyRuns).not.toHaveBeenCalled();
 
     findRun.mockReset();
     tx.mockReset();
@@ -397,7 +406,7 @@ describe('finalizeWorkflowRun', () => {
     const mockTrackerSync = vi.mocked(syncTrackerOnEvent);
     mockNotifySlack.mockClear();
     mockTrackerSync.mockClear();
-    updateRun.mockClear();
+    updateManyRuns.mockClear();
     findRun.mockResolvedValue({
       endedAt: new Date(), // already finalized by a prior attempt
       workflowId: 'eng-test-retry',
@@ -409,12 +418,12 @@ describe('finalizeWorkflowRun', () => {
         slackMessageTs: null,
       },
     } as never);
-    updateRun.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({} as never);
 
     await finalizeWorkflowRun('run-already-done', 'SUCCESS');
 
     // No side effects run on retry; the prior finalization is the source of truth.
-    expect(updateRun).not.toHaveBeenCalled();
+    expect(updateManyRuns).not.toHaveBeenCalled();
     // But the three side effects do NOT fire on retry
     expect(mockNotifySlack).not.toHaveBeenCalled();
     expect(mockTrackerSync).not.toHaveBeenCalled();

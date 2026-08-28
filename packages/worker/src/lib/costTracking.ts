@@ -237,20 +237,15 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
   // string that matched no ledger row, so its gate was a permanent silent
   // no-op. `persistActivityTrace` resolves its run the same way.
   const temporalWorkflowId = currentWorkflowId();
-  const [workflow, _] = await Promise.all([
-    prisma.activeWorkflow.findFirst({
-      select: {
-        budgetTier: true,
-        costUsdAccrued: true,
-        tokensInputUsed: true,
-        tokensOutputUsed: true,
-      },
-      where: { temporalWorkflowId },
-    }),
-    // Independent of the row read; usually a cache hit, a second round trip
-    // when the ~30 s TTL has expired.
-    resolveBudgetTiers(),
-  ]);
+  const workflow = await prisma.activeWorkflow.findFirst({
+    select: {
+      budgetTier: true,
+      costUsdAccrued: true,
+      tokensInputUsed: true,
+      tokensOutputUsed: true,
+    },
+    where: { temporalWorkflowId },
+  });
   if (!workflow) {
     return;
   }

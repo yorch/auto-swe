@@ -257,7 +257,8 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { fullTraces, includeTraces } = request.query;
+      const { fullTraces } = request.query;
+      const includeTraces = request.query.includeTraces || fullTraces;
       const run = await fastify.prisma.workflowRun.findFirst({
         include: {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
