@@ -354,6 +354,12 @@ export async function recordLlmUsage(
     specResolutionError = err;
   }
   const { known } = getModelPrice(modelSpec);
+  if (!known) {
+    log.warn(
+      'Unknown model pricing — cost will be recorded as $0. Add the model to MODEL_PRICES or set a MODEL_PRICE_<SPEC> env override.',
+      { modelSpec, role, temporalWorkflowId }
+    );
+  }
 
   // Capture resolved token counts for attribution before entering the span so
   // they're available for the fallback return path (no workflow found).
