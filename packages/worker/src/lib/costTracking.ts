@@ -97,14 +97,19 @@ function parsePriceOverride(value: string): ModelPrice | null {
  *
  * Negative or malformed overrides are ignored (fall through to the static table).
  */
-export function getModelPrice(spec: string): { price: ModelPrice; known: boolean } {
+function resolveEnvPriceOverride(spec: string): ModelPrice | null {
   const envKey = `MODEL_PRICE_${spec.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
   const envValue = process.env[envKey];
-  if (envValue) {
-    const override = parsePriceOverride(envValue);
-    if (override) {
-      return { known: true, price: override };
-    }
+  if (!envValue) {
+    return null;
+  }
+  return parsePriceOverride(envValue);
+}
+
+export function getModelPrice(spec: string): { price: ModelPrice; known: boolean } {
+  const override = resolveEnvPriceOverride(spec);
+  if (override) {
+    return { known: true, price: override };
   }
   const price = MODEL_PRICES[spec];
   if (price) {
