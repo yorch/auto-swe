@@ -77,4 +77,19 @@ describe('RunOutcomeCard', () => {
     expect(link.getAttribute('href')).toBe('https://x.atlassian.net/browse/PROJ-9');
     expect(screen.getByText(/Drafted from brief/)).toBeTruthy();
   });
+
+  it('does not render a malicious issueUrl as a link', () => {
+    const { container } = render(
+      <RunOutcomeCard
+        result={{
+          description: 'Should not be clickable',
+          issueUrl: 'javascript:alert(1)',
+          title: 'Evil',
+        }}
+        templateName="create-issue"
+      />
+    );
+    expect(container.querySelector('a')).toBeNull();
+    expect(screen.getByText(/Should not be clickable/)).toBeTruthy();
+  });
 });

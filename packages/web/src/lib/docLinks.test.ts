@@ -80,15 +80,23 @@ describe('resolveDocLink', () => {
   });
 
   describe('links that must be left alone', () => {
-    it('passes through absolute URLs', () => {
+    it('passes through safe absolute URLs', () => {
       for (const href of [
         'https://api.slack.com/apps',
         'http://localhost:8080',
         'mailto:security@example.com',
-        '//cdn.example.com/x.md',
       ]) {
         expect(resolve(href)).toEqual({ href, kind: 'href' });
       }
+    });
+
+    it('rejects dangerous or non-web schemes', () => {
+      expect(resolve('javascript:alert(1)')).toMatchObject({ kind: 'unserved' });
+      expect(resolve('JavaScript:alert(1)')).toMatchObject({ kind: 'unserved' });
+      expect(resolve('data:text/html,<script>alert(1)</script>')).toMatchObject({
+        kind: 'unserved',
+      });
+      expect(resolve('//cdn.example.com/x.md')).toMatchObject({ kind: 'unserved' });
     });
 
     it('passes through bare anchors', () => {

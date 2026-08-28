@@ -23,6 +23,15 @@ function notionUrl(pageId: string): string {
   return `https://notion.so/${pageId}`;
 }
 
+function isSafeWebUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 function OutcomeLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
@@ -114,7 +123,8 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
   }
 
   if (name === 'create-issue' || name === 'create-issue-from-brief') {
-    const issueUrl = typeof result.issueUrl === 'string' ? result.issueUrl : undefined;
+    const rawIssueUrl = typeof result.issueUrl === 'string' ? result.issueUrl : undefined;
+    const issueUrl = rawIssueUrl && isSafeWebUrl(rawIssueUrl) ? rawIssueUrl : undefined;
     const title = typeof result.title === 'string' ? result.title : undefined;
     return (
       <div className="border border-ink-600/40 rounded-md p-3 bg-ink-900/40">

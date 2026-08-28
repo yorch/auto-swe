@@ -28,7 +28,17 @@ export type DocLinkResolution =
    */
   | { kind: 'unserved'; reason: string };
 
-const isAbsolute = (href: string) => /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//');
+const SAFE_EXTERNAL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
+
+/** Allow only http, https, and mailto URLs to be rendered as live links. */
+export function isSafeExternalUrl(href: string): boolean {
+  for (const scheme of SAFE_EXTERNAL_SCHEMES) {
+    if (href.toLowerCase().startsWith(scheme)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Resolve a `./x/y.md`-style href against the directory of the doc containing
@@ -65,8 +75,10 @@ export function resolveDocLink(href: string, servedSlugs: ReadonlySet<string>): 
     return { href, kind: 'href' };
   }
 
-  // Absolute URLs, mailto:, protocol-relative — leave alone.
-  if (isAbsolute(href)) {
+  // Safe absolute URLs (http, https, mailto) are passed through.
+  // Protocol-relative links and other schemes (e.g. javascript:) are treated
+  // as unserved to prevent XSS via crafted Markdown links.
+  if (isSafeExternalUrl(href)) {
     return { href, kind: 'href' };
   }
 
@@ -79,7 +91,9 @@ export function resolveDocLink(href: string, servedSlugs: ReadonlySet<string>): 
   const anchor = rest.length > 0 ? `#${rest.join('#')}` : '';
 
   // Root-relative links are dashboard routes (`/admin/model-config`), already valid.
-  if (path.startsWith('/')) {
+  // Protocol-relative `//host` links are not considered safe because they inherit
+  // the page's scheme and can point anywhere.
+  if (path.startsWith('/') && !path.startsWith('//')) {
     return { href, kind: 'href' };
   }
 

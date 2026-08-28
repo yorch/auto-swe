@@ -2,7 +2,7 @@ import Link from 'next/link';
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { resolveDocLink } from '@/lib/docLinks';
+import { isSafeExternalUrl, resolveDocLink } from '@/lib/docLinks';
 import { cn } from '@/lib/utils';
 
 /**
@@ -30,8 +30,7 @@ function docAnchor(servedSlugs: ReadonlySet<string>): Components['a'] {
       );
     }
 
-    const external = /^[a-z][a-z0-9+.-]*:|^\/\//i.test(resolved.href);
-    if (external) {
+    if (isSafeExternalUrl(resolved.href)) {
       return (
         <a href={resolved.href} rel="noopener noreferrer" target="_blank" {...rest}>
           {children}
