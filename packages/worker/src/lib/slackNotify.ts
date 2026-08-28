@@ -1,5 +1,8 @@
 import { prisma } from '@auto-swe/shared/db';
-import { resolveSlackBotTokenForSlackChannel } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveSlackBotTokenForSlackChannel,
+  resolveWebUrl,
+} from '@auto-swe/shared/lib/systemConfig';
 
 /**
  * Slack notifications. Four surfaces:
@@ -705,7 +708,7 @@ export async function notifySlackHumanStep(input: {
       REVIEW: 'Review required',
     };
     const descriptionLine = input.description ? `\n${truncate(input.description, 400)}` : '';
-    const inboxUrl = `${process.env.WEB_URL ?? 'http://localhost:3000'}/inbox`;
+    const inboxUrl = `${resolveWebUrl()}/inbox`;
     const text = `:hourglass_flowing_sand: *[${resolved.ticket}]* *${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}\n<${inboxUrl}|Open inbox →>`;
     const blocks = buildHumanStepBlocks({
       inboxUrl,

@@ -719,3 +719,64 @@ export async function resolveOktaOAuthConfig(
     issuer: rawIssuer ? rawIssuer.replace(/\/+$/, '') : null,
   };
 }
+
+// ─── Runtime / bootstrap configuration ────────────────────────────────────────
+// These are deploy-time knobs that do not fit the DB-primary integration pattern
+// (they are needed before the gateway/worker can reach the database, or they
+// are public URLs used in OAuth redirects and Slack link generation). They are
+// still centralized here so callers don't scatter `process.env` reads.
+
+export function resolvePublicUrl(): string {
+  return process.env.PUBLIC_URL ?? 'http://localhost:8080';
+}
+
+export function resolveWebUrl(): string {
+  return process.env.WEB_URL ?? 'http://localhost:3000';
+}
+
+export function resolveTemporalAddress(): string {
+  return process.env.TEMPORAL_ADDRESS ?? 'localhost:7233';
+}
+
+export function resolveOtelExporterEndpoint(): string | undefined {
+  return process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+}
+
+export function resolveOtelMetricExportInterval(): number {
+  const value = Number(process.env.OTEL_METRIC_EXPORT_INTERVAL);
+  return Number.isFinite(value) && value > 0 ? value : 60_000;
+}
+
+export interface AuthEmailConfig {
+  authFromEmail: string | null;
+  resendApiKey: string | null;
+  smtpHost: string | null;
+  smtpPass: string | null;
+  smtpPort: number | undefined;
+  smtpUser: string | null;
+}
+
+export function resolveAuthEmailConfig(): AuthEmailConfig {
+  return {
+    authFromEmail: process.env.AUTH_FROM_EMAIL ?? null,
+    resendApiKey: process.env.RESEND_API_KEY ?? null,
+    smtpHost: process.env.SMTP_HOST ?? null,
+    smtpPass: process.env.SMTP_PASS ?? null,
+    smtpPort: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined,
+    smtpUser: process.env.SMTP_USER ?? null,
+  };
+}
+
+export interface BetterAuthBootstrapConfig {
+  baseUrl: string;
+  clientOrigin: string;
+  secret: string;
+}
+
+export function resolveBetterAuthConfig(): BetterAuthBootstrapConfig {
+  return {
+    baseUrl: process.env.BETTER_AUTH_URL ?? 'http://localhost:8080',
+    clientOrigin: process.env.CORS_ORIGIN?.split(',')[0]?.trim() ?? 'http://localhost:3000',
+    secret: process.env.BETTER_AUTH_SECRET ?? '',
+  };
+}

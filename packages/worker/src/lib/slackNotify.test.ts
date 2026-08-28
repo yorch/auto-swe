@@ -8,6 +8,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     clientSecret: null,
     signingSecret: null,
   }),
+  resolveWebUrl: () => 'http://localhost:3000',
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({

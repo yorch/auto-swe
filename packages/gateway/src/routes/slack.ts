@@ -3,9 +3,11 @@ import { CHANNEL_TASK_STEER_SIGNAL, channelTaskWorkflowId } from '@auto-swe/shar
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
+  resolvePublicUrl,
   resolveSlackBotTokenForSlackChannel,
   resolveSlackBotTokenForWorkspace,
   resolveSlackConfig,
+  resolveWebUrl,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -163,7 +165,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       // bearer credential.
       const state = fastify.auth.signOAuthState(user.sub);
 
-      const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/callback`;
+      const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/callback`;
       // We link by Slack user id only; identity.basic is sufficient.
       const scopes = 'identity.basic';
 
@@ -199,7 +201,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
       });
     }
-    const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/callback`;
+    const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/callback`;
     const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
     if (!tokenData.ok) {
       return reply.status(400).send({
@@ -267,7 +269,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       // Single-purpose, short-lived signed state (not a bearer credential).
       const state = fastify.auth.signOAuthState(user.sub);
-      const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/install/callback`;
+      const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/install/callback`;
       const url = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&scope=${encodeURIComponent(SLACK_INSTALL_BOT_SCOPES)}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
       return reply.redirect(url);
     }
@@ -297,7 +299,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
       });
     }
-    const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/install/callback`;
+    const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/install/callback`;
     const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
     // A bot install returns the bot token as the top-level `access_token` plus the
     // installing `team`. Bail clearly if either is missing (e.g. a user-scope grant).
@@ -352,8 +354,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     // Bounce back to the admin integrations page with a success flag.
-    const webUrl = process.env.WEB_URL ?? 'http://localhost:3000';
-    return reply.redirect(`${webUrl}/admin/integrations?slack_installed=${slackTeamId}`);
+    return reply.redirect(`${resolveWebUrl()}/admin/integrations?slack_installed=${slackTeamId}`);
   });
 
   // POST /api/v1/webhooks/slack — Handle Slack interactive webhooks

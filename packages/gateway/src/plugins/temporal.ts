@@ -1,3 +1,4 @@
+import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import type {
   ChannelAssistantTurnInput,
   ConsolidateLessonsInput,
@@ -234,7 +235,7 @@ declare module 'fastify' {
 
 const temporalPlugin: FastifyPluginAsync = async (fastify) => {
   const connection = await Connection.connect({
-    address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
+    address: resolveTemporalAddress(),
   });
   const client = new Client({ connection });
   const schedules = new ScheduleClient({ connection });

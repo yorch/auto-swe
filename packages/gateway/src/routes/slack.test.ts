@@ -25,6 +25,7 @@ vi.mock('../lib/slack.js', async (importOriginal) => ({
 }));
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolvePublicUrl: vi.fn(() => 'http://localhost:8080'),
   resolveSlackBotTokenForSlackChannel: vi.fn(async () => 'xoxb-test'),
   resolveSlackBotTokenForWorkspace: vi.fn(async () => 'xoxb-test'),
   resolveSlackConfig: vi.fn(async () => ({
@@ -33,6 +34,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     clientSecret: 'client-secret',
     signingSecret: 'test-signing-secret',
   })),
+  resolveWebUrl: vi.fn(() => 'http://localhost:3000'),
   resolveWorkflowDefaults: vi.fn(async () => ({
     branchPrefix: 'auto',
     defaultTeamSlug: 'default',

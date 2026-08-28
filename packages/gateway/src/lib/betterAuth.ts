@@ -16,6 +16,8 @@
 import crypto from 'node:crypto';
 import { PrismaClient } from '@auto-swe/shared/db';
 import {
+  resolveAuthEmailConfig,
+  resolveBetterAuthConfig,
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
   resolveOktaOAuthConfig,
@@ -36,9 +38,11 @@ if (!connectionString) {
 }
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
-const BASE_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:8080';
-const CLIENT_ORIGIN = process.env.CORS_ORIGIN?.split(',')[0]?.trim() ?? 'http://localhost:3000';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+const betterAuthBootstrap = resolveBetterAuthConfig();
+const BASE_URL = betterAuthBootstrap.baseUrl;
+const CLIENT_ORIGIN = betterAuthBootstrap.clientOrigin;
 
 // Guard: never let the in-source dev fallback ship. The fallback is allowed
 // only when NODE_ENV explicitly opts into development/test — an unset NODE_ENV
@@ -48,7 +52,7 @@ const DEV_FALLBACK_SECRET =
   'dev-better-auth-secret-please-change-this-in-production-at-least-32-chars';
 const DEV_SECRET_ALLOWED =
   process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
-const RESOLVED_SECRET = process.env.BETTER_AUTH_SECRET ?? DEV_FALLBACK_SECRET;
+const RESOLVED_SECRET = betterAuthBootstrap.secret || DEV_FALLBACK_SECRET;
 if (!DEV_SECRET_ALLOWED && RESOLVED_SECRET === DEV_FALLBACK_SECRET) {
   throw new Error(
     'BETTER_AUTH_SECRET must be set outside development/test (≥32 chars, generated with crypto rand).'
@@ -65,18 +69,12 @@ let _oktaIssuer: string | null = null;
 let _oktaClientId: string | null = null;
 let _oktaClientSecret: string | null = null;
 
-const resendApiKey = process.env.RESEND_API_KEY;
-const fromEmail = process.env.AUTH_FROM_EMAIL;
-const smtpHost = process.env.SMTP_HOST;
-const smtpPort = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
-const smtpUser = process.env.SMTP_USER;
-const smtpPass = process.env.SMTP_PASS;
-
-/** Lazy-initialised SMTP transporter — only built when SMTP env is present
+/** Lazy-initialised SMTP transporter — only built when SMTP config is present
  *  AND the first magic link wants delivery. Reused across calls. */
 let smtpTransporter: Transporter | null = null;
 function getSmtpTransporter(): Transporter | null {
-  if (!(smtpHost && smtpPort && fromEmail)) {
+  const { authFromEmail, smtpHost, smtpPass, smtpPort, smtpUser } = resolveAuthEmailConfig();
+  if (!(smtpHost && smtpPort && authFromEmail)) {
     return null;
   }
   if (!smtpTransporter) {
@@ -104,11 +102,12 @@ function getSmtpTransporter(): Transporter | null {
  * console fallback is a dev-only convenience.
  */
 async function deliverMagicLink({ email, url }: { email: string; url: string }): Promise<void> {
+  const { authFromEmail, resendApiKey } = resolveAuthEmailConfig();
   const transporter = getSmtpTransporter();
   if (transporter) {
     try {
       const info = await transporter.sendMail({
-        from: fromEmail,
+        from: authFromEmail ?? undefined,
         html: renderMagicLinkHtml({ email, url }),
         subject: 'Your auto-swe sign-in link',
         text: `Sign in to auto-swe:\n\n${url}\n\n(This link expires in 10 minutes.)`,
@@ -129,11 +128,11 @@ async function deliverMagicLink({ email, url }: { email: string; url: string }):
       console.warn(`[magic-link] SMTP failed (${(err as Error).message}); falling back`);
     }
   }
-  if (resendApiKey && fromEmail) {
+  if (resendApiKey && authFromEmail) {
     try {
       const res = await fetch('https://api.resend.com/emails', {
         body: JSON.stringify({
-          from: fromEmail,
+          from: authFromEmail,
           html: renderMagicLinkHtml({ email, url }),
           subject: 'Your auto-swe sign-in link',
           text: `Sign in to auto-swe:\n\n${url}\n\n(This link expires in 10 minutes.)`,
@@ -169,6 +168,7 @@ async function deliverMagicLink({ email, url }: { email: string; url: string }):
  * (which calls POST /api/auth/reset-password with the token + new pw).
  */
 async function deliverPasswordReset({ email, url }: { email: string; url: string }): Promise<void> {
+  const { authFromEmail, resendApiKey } = resolveAuthEmailConfig();
   const subject = 'Reset your auto-swe password';
   const text = `Reset your auto-swe password:\n\n${url}\n\n(This link expires in 1 hour. If you didn't request a reset, ignore this email.)`;
   const html = renderPasswordResetHtml({ email, url });
@@ -176,7 +176,13 @@ async function deliverPasswordReset({ email, url }: { email: string; url: string
   const transporter = getSmtpTransporter();
   if (transporter) {
     try {
-      const info = await transporter.sendMail({ from: fromEmail, html, subject, text, to: email });
+      const info = await transporter.sendMail({
+        from: authFromEmail ?? undefined,
+        html,
+        subject,
+        text,
+        to: email,
+      });
       if (info.rejected.length > 0 && info.accepted.length === 0) {
         throw new Error(`SMTP relay rejected ${email}: ${info.response}`);
       }
@@ -188,10 +194,10 @@ async function deliverPasswordReset({ email, url }: { email: string; url: string
       console.warn(`[password-reset] SMTP failed (${(err as Error).message}); falling back`);
     }
   }
-  if (resendApiKey && fromEmail) {
+  if (resendApiKey && authFromEmail) {
     try {
       const res = await fetch('https://api.resend.com/emails', {
-        body: JSON.stringify({ from: fromEmail, html, subject, text, to: email }),
+        body: JSON.stringify({ from: authFromEmail, html, subject, text, to: email }),
         headers: {
           Authorization: `Bearer ${resendApiKey}`,
           'Content-Type': 'application/json',
