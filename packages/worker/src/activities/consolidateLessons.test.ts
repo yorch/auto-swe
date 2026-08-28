@@ -100,12 +100,7 @@ function makeSuccessGenerate(
 const defaultTxMock = {
   $executeRawUnsafe: vi.fn(),
   $queryRaw: vi.fn(),
-  $queryRawUnsafe: vi.fn(async () => [
-    { id: 'a' },
-    { id: 'b' },
-    { id: 'c' },
-    { id: 'd' },
-  ]),
+  $queryRawUnsafe: vi.fn(async () => [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]),
 };
 
 beforeEach(() => {

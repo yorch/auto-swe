@@ -17,6 +17,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import authPlugin, { extractSessionCookieValue, invalidateSessionCache } from './plugins/auth.js';
 import { prismaPlugin } from './plugins/prisma.js';
@@ -63,6 +64,15 @@ async function start() {
   // Zod validation + serialization
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+
+  // Guard against fast-json-stringify silently stripping undeclared response
+  // fields: any route that does not declare a response schema gets a permissive
+  // `z.any()` for 200 responses. Routes that already declare schemas are untouched.
+  app.addHook('onRoute', (routeOptions) => {
+    if (!routeOptions.schema?.response) {
+      routeOptions.schema = { ...routeOptions.schema, response: { 200: z.any() } };
+    }
+  });
 
   // CORS — allow the web dashboard and any additional origins from env.
   // Explicitly list all methods used by the API so PUT/DELETE preflights pass.
