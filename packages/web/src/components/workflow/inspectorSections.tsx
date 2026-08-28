@@ -11,6 +11,7 @@ import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
 import { OnFailSection, type OnFailValue, SchemaAwareForm } from './inspectorFields';
 
@@ -537,14 +538,24 @@ export function McpSection({
   node: Extract<SpecNode, { type: 'mcp' }>;
   onChange: (next: SpecNode) => void;
 }) {
+  const { data: connections, isLoading: connectionsLoading } = useMcpConnections();
   return (
     <div className="space-y-4">
-      <Input
-        hint="id of an mcp-type Connection (manage at /admin/mcp-connections)"
-        label="Connection reference"
+      <Select
+        hint="Choose an active MCP connection (managed at /admin/mcp-connections)"
+        label="Connection"
         onChange={(e) => onChange({ ...node, connectionRef: e.target.value } as SpecNode)}
         value={node.connectionRef}
-      />
+      >
+        <option disabled value="">
+          {connectionsLoading ? 'Loading connections…' : 'Select an MCP connection…'}
+        </option>
+        {(connections ?? []).map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name} ({c.team?.name ?? c.teamId})
+          </option>
+        ))}
+      </Select>
       <Input
         hint="tool name exposed by the MCP server; its args come from Inputs below"
         label="Tool"
