@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
     $executeRawUnsafe: vi.fn(),
+    $queryRaw: vi.fn(),
     $queryRawUnsafe: vi.fn(),
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
     // Without these the reserve transaction throws on `channelBudgetHold.create`

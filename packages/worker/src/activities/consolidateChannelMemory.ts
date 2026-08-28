@@ -273,6 +273,20 @@ export async function consolidateChannelMemory(
         );
 
         await prisma.$transaction(async (tx) => {
+          // Serialise consolidation per channel and re-check that the source
+          // rows are still unconsolidated before writing. The read + LLM work
+          // happens outside the transaction so the lock is held briefly.
+          await tx.$queryRaw`
+            SELECT pg_advisory_xact_lock(hashtextextended(${channelId}, 0))
+          `;
+          const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(
+            `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
+            sourceIds
+          );
+          if (stillActive.length < sourceIds.length) {
+            return { consolidated: 0, created: 0 };
+          }
+
           for (let i = 0; i < memories.length; i++) {
             const memory = memories[i];
             await tx.$executeRawUnsafe(
@@ -294,7 +308,7 @@ export async function consolidateChannelMemory(
           }
 
           await tx.$executeRawUnsafe(
-            `UPDATE memory_items SET consolidated_at = now() WHERE id = ANY($1::uuid[])`,
+            `UPDATE memory_items SET consolidated_at = now() WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
             sourceIds
           );
         });

@@ -189,6 +189,21 @@ export async function consolidateLessons(
         );
 
         await prisma.$transaction(async (tx) => {
+          // Serialise consolidation per repo. The read + LLM work happened
+          // outside the transaction; re-check that the source rows are still
+          // unconsolidated before writing, otherwise an overlapping scheduled
+          // run would insert duplicate consolidated lessons.
+          await tx.$queryRaw`
+            SELECT pg_advisory_xact_lock(hashtextextended(${repoId}, 0))
+          `;
+          const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(
+            `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
+            sourceIds
+          );
+          if (stillActive.length < sourceIds.length) {
+            return { consolidated: 0, created: 0 };
+          }
+
           for (let i = 0; i < lessons.length; i++) {
             const lesson = lessons[i];
             await tx.$executeRawUnsafe(
@@ -208,7 +223,7 @@ export async function consolidateLessons(
 
           // Soft-delete source rows.
           await tx.$executeRawUnsafe(
-            `UPDATE memory_items SET consolidated_at = now() WHERE id = ANY($1::uuid[])`,
+            `UPDATE memory_items SET consolidated_at = now() WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
             sourceIds
           );
         });

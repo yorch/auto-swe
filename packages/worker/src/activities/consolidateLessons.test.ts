@@ -97,11 +97,22 @@ function makeSuccessGenerate(
   return mockGenerate.mockResolvedValue({ object: { lessons }, usage: null });
 }
 
+const defaultTxMock = {
+  $executeRawUnsafe: vi.fn(),
+  $queryRaw: vi.fn(),
+  $queryRawUnsafe: vi.fn(async () => [
+    { id: 'a' },
+    { id: 'b' },
+    { id: 'c' },
+    { id: 'd' },
+  ]),
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetModel.mockResolvedValue({} as never);
   mockGenerateEmbedding.mockResolvedValue(makeEmbedding(0));
-  mockTransaction.mockImplementation(async (fn) => fn({ $executeRawUnsafe: vi.fn() } as never));
+  mockTransaction.mockImplementation(async (fn) => fn(defaultTxMock as never));
 });
 
 describe('consolidateLessons', () => {
@@ -223,7 +234,7 @@ describe('consolidateLessons', () => {
       }
     });
     mockTransaction.mockImplementation(async (fn) =>
-      fn({ $executeRawUnsafe: mockExecuteRaw } as never)
+      fn({ ...defaultTxMock, $executeRawUnsafe: mockExecuteRaw } as never)
     );
     makeSuccessGenerate([{ failureType: null, lessonSummary: 'consolidated', rationale: 'r' }]);
 
