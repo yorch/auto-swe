@@ -198,6 +198,15 @@ async function gitRepoWriteOutcome(
   };
 }
 
+function textToNotionBlocks(text: string): NotionBlock[] {
+  return text.split('\n').map((line) => ({
+    paragraph: {
+      rich_text: [{ text: { content: line }, type: 'text' }],
+    },
+    type: 'paragraph',
+  }));
+}
+
 async function notionWriteOutcome(
   connection: { config: unknown },
   token: string | null,
@@ -209,6 +218,22 @@ async function notionWriteOutcome(
   }
   const d = data as Record<string, unknown>;
   const apiToken = requireToken(token);
+
+  // Append plain text to an existing page as paragraph blocks.
+  if (typeof d.text === 'string') {
+    const pageId = (d.pageId as string | undefined) ?? config.sourcePageId;
+    if (!pageId) {
+      throw ApplicationFailure.nonRetryable(
+        'Notion writeOutcome text requires pageId or a default sourcePageId on the connection'
+      );
+    }
+    const result = await appendNotionBlocks({ apiToken }, pageId, textToNotionBlocks(d.text));
+    return {
+      connectionType: 'notion',
+      ok: true,
+      reference: result.pageId,
+    };
+  }
 
   // Append blocks to an existing page.
   if (Array.isArray(d.blocks)) {
@@ -228,7 +253,7 @@ async function notionWriteOutcome(
 
   if (!isCreatePageData(d)) {
     throw ApplicationFailure.nonRetryable(
-      'Notion writeOutcome data must include blocks or a create-page request'
+      'Notion writeOutcome data must include text, blocks, or a create-page request'
     );
   }
 

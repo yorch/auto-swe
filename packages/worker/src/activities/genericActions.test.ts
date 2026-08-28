@@ -149,14 +149,44 @@ describe('writeOutcome', () => {
     expect(result.reference).toBe('https://notion.so/new-page');
   });
 
-  it('throws when the notion payload has no blocks or create fields', async () => {
+  it('appends text to a notion page as paragraph blocks', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('notion', { token: true })
+    );
+    (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      appended: 2,
+      pageId: 'page-1',
+    });
+
+    const result = await writeOutcome({
+      connectionId: 'conn-2',
+      data: { pageId: 'page-1', text: 'Line one\nLine two' },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.connectionType).toBe('notion');
+    expect(result.reference).toBe('page-1');
+    expect(appendNotionBlocks).toHaveBeenCalledWith({ apiToken: expect.any(String) }, 'page-1', [
+      {
+        paragraph: { rich_text: [{ text: { content: 'Line one' }, type: 'text' }] },
+        type: 'paragraph',
+      },
+      {
+        paragraph: { rich_text: [{ text: { content: 'Line two' }, type: 'text' }] },
+        type: 'paragraph',
+      },
+    ]);
+  });
+
+  it('throws when the notion payload has no text, blocks, or create fields', async () => {
     (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConnection('notion', { token: true })
     );
 
     await expect(
       writeOutcome({ connectionId: 'conn-2', data: { unknown: 'field' } })
-    ).rejects.toThrow('Notion writeOutcome data must include blocks or a create-page request');
+    ).rejects.toThrow(
+      'Notion writeOutcome data must include text, blocks, or a create-page request'
+    );
   });
 });
 
