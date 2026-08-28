@@ -1,6 +1,16 @@
-import { type ConnectionType, decryptConnectionApiToken } from '@auto-swe/shared';
+import {
+  type ConnectionType,
+  decryptConnectionApiToken,
+  parseNotionConnectionConfig,
+} from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { ApplicationFailure } from '@temporalio/activity';
+import {
+  appendNotionBlocks,
+  createNotionPage,
+  type NotionBlock,
+  readNotionPage,
+} from '../connectors/notion.js';
 
 /**
  * Generic read/write/tool activities parameterised by connection type.
@@ -89,6 +99,31 @@ async function gitRepoReadSource(_connection: unknown, query: unknown): Promise<
   };
 }
 
+function requireToken(token: string | null): string {
+  if (!token) {
+    throw ApplicationFailure.nonRetryable('Connection API token is required');
+  }
+  return token;
+}
+
+async function notionReadSource(
+  connection: { config: unknown },
+  token: string | null,
+  query: unknown
+): Promise<ReadSourceResult> {
+  const config = parseNotionConnectionConfig(connection.config);
+  const requestedPageId =
+    (typeof query === 'object' && query != null && (query as Record<string, unknown>).pageId) ||
+    config.sourcePageId;
+  if (typeof requestedPageId !== 'string') {
+    throw ApplicationFailure.nonRetryable(
+      'Notion readSource requires a pageId in query or connection config'
+    );
+  }
+  const content = await readNotionPage({ apiToken: requireToken(token) }, requestedPageId);
+  return { connectionType: 'notion', data: content, ok: true };
+}
+
 async function genericReadSource(
   connectionType: ConnectionType,
   _connection: unknown,
@@ -112,10 +147,11 @@ export async function readSource(input: ReadSourceInput): Promise<ReadSourceResu
   switch (connection.type) {
     case 'git_repo':
       return gitRepoReadSource(connection, input.query);
+    case 'notion':
+      return notionReadSource(connection, token, input.query);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
-    case 'notion':
     case 'slack_workspace':
     case 'zendesk':
       return genericReadSource(connection.type, connection, token);
@@ -138,6 +174,62 @@ async function gitRepoWriteOutcome(
   };
 }
 
+async function notionWriteOutcome(
+  connection: { config: unknown },
+  token: string | null,
+  data: unknown
+): Promise<WriteOutcomeResult> {
+  const config = parseNotionConnectionConfig(connection.config);
+  if (typeof data !== 'object' || data == null) {
+    throw ApplicationFailure.nonRetryable('Notion writeOutcome data must be an object');
+  }
+  const d = data as Record<string, unknown>;
+  const apiToken = requireToken(token);
+
+  // Append blocks to an existing page.
+  if (Array.isArray(d.blocks)) {
+    const pageId = (d.pageId as string | undefined) ?? config.sourcePageId;
+    if (!pageId) {
+      throw ApplicationFailure.nonRetryable(
+        'Notion writeOutcome blocks requires pageId or a default sourcePageId on the connection'
+      );
+    }
+    const result = await appendNotionBlocks({ apiToken }, pageId, d.blocks as NotionBlock[]);
+    return {
+      connectionType: 'notion',
+      ok: true,
+      reference: result.pageId,
+    };
+  }
+
+  if (!isCreatePageData(d)) {
+    throw ApplicationFailure.nonRetryable(
+      'Notion writeOutcome data must include blocks or a create-page request'
+    );
+  }
+
+  // Create a new page.
+  const created = await createNotionPage(
+    { apiToken },
+    {
+      databaseId: d.databaseId as string | undefined,
+      pageId: (d.pageId as string | undefined) ?? config.sourcePageId,
+      properties: (d.properties as Record<string, unknown> | undefined) ?? {},
+      title: d.title as string | undefined,
+    }
+  );
+  return { connectionType: 'notion', ok: true, reference: created.url };
+}
+
+function isCreatePageData(d: Record<string, unknown>): boolean {
+  return (
+    typeof d.databaseId === 'string' ||
+    typeof d.pageId === 'string' ||
+    typeof d.title === 'string' ||
+    typeof d.properties === 'object'
+  );
+}
+
 async function genericWriteOutcome(
   connectionType: ConnectionType,
   _connection: unknown,
@@ -156,10 +248,11 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   switch (connection.type) {
     case 'git_repo':
       return gitRepoWriteOutcome(connection, input.data);
+    case 'notion':
+      return notionWriteOutcome(connection, token, input.data);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
-    case 'notion':
     case 'slack_workspace':
     case 'zendesk':
       return genericWriteOutcome(connection.type, connection, token);

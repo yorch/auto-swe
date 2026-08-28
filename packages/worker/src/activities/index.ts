@@ -110,6 +110,16 @@ export type {
   GenerateWorkflowSpecResult,
 } from './generateWorkflowSpec.js';
 export { generateWorkflowSpec } from './generateWorkflowSpec.js';
+// Generic workspace / source / outcome activities for non-SWE connectors
+export type {
+  ReadSourceInput,
+  ReadSourceResult,
+  RunToolInput,
+  RunToolResult,
+  WriteOutcomeInput,
+  WriteOutcomeResult,
+} from './genericActions.js';
+export { readSource, runTool, writeOutcome } from './genericActions.js';
 export type { DatasetForRevalidation } from './getDatasetsForRevalidation.js';
 export { getDatasetsForRevalidation } from './getDatasetsForRevalidation.js';
 export type { RepoForConsolidation } from './getReposForConsolidation.js';
@@ -165,6 +175,11 @@ export {
 // Channel assistant — admin memory edit-with-reembed
 export type { ReembedMemoryInput } from './reembedMemory.js';
 export { reembedMemoryItemActivity } from './reembedMemory.js';
+export type {
+  ResolveWorkspaceInput,
+  WorkspaceContext,
+} from './resolveWorkspace.js';
+export { resolveWorkspace } from './resolveWorkspace.js';
 export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';
 export { runAgentNode } from './runAgentNode.js';
 export type { RunEvalNodeInput, RunEvalNodeResult } from './runEvalNode.js';

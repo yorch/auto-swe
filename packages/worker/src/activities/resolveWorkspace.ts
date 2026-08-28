@@ -1,6 +1,8 @@
+import { decryptConnectionApiToken, parseNotionConnectionConfig } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { WorkspaceProviderType } from '@auto-swe/shared/lib/workspaceProviders';
 import { ApplicationFailure } from '@temporalio/activity';
+import { readNotionPage } from '../connectors/notion.js';
 
 /**
  * Generic workspace context materialised before a run's work stage.
@@ -68,7 +70,10 @@ async function resolveGitRepoWorkspace(connectionId: string): Promise<WorkspaceC
   };
 }
 
-async function resolveDocumentWorkspace(connectionId: string): Promise<WorkspaceContext> {
+async function resolveDocumentWorkspace(
+  connectionId: string,
+  payload?: unknown
+): Promise<WorkspaceContext> {
   const connection = await prisma.connection.findUnique({
     where: { id: connectionId },
   });
@@ -77,11 +82,34 @@ async function resolveDocumentWorkspace(connectionId: string): Promise<Workspace
       `Connection ${connectionId} is not an active notion connection`
     );
   }
-  const config = (connection.config as Record<string, unknown> | undefined) ?? {};
+  const config = parseNotionConnectionConfig(connection.config);
+  const payloadPageId =
+    typeof payload === 'object' && payload != null
+      ? (payload as Record<string, unknown>).pageId
+      : undefined;
+  const sourceId =
+    (typeof payloadPageId === 'string' ? payloadPageId : config.sourcePageId) ?? null;
+
+  if (
+    sourceId &&
+    connection.apiKeyCiphertext &&
+    connection.apiKeyNonce &&
+    connection.apiKeyAuthTag
+  ) {
+    const apiToken = decryptConnectionApiToken({
+      apiKeyAuthTag: connection.apiKeyAuthTag,
+      apiKeyCiphertext: connection.apiKeyCiphertext,
+      apiKeyNonce: connection.apiKeyNonce,
+      apiKeyVersion: connection.apiKeyVersion,
+    });
+    // Validate reachability early; the activity will fail fast if the page is missing.
+    await readNotionPage({ apiToken }, sourceId);
+  }
+
   return {
     connectionId,
     provider: 'document',
-    sourceId: typeof config.sourceId === 'string' ? config.sourceId : undefined,
+    sourceId: sourceId ?? undefined,
     workspaceName: connection.name ?? undefined,
   };
 }
@@ -121,7 +149,7 @@ export async function resolveWorkspace(input: ResolveWorkspaceInput): Promise<Wo
       if (!input.connectionId) {
         throw ApplicationFailure.nonRetryable('document workspace requires a connectionId');
       }
-      return resolveDocumentWorkspace(input.connectionId);
+      return resolveDocumentWorkspace(input.connectionId, input.payload);
     }
     case 'git_repo': {
       if (!input.connectionId) {
