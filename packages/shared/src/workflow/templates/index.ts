@@ -20,6 +20,7 @@ import { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
 import { REVIEW_AND_MERGE_SPEC } from './reviewAndMerge.js';
 import { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 import { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
+import { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
 import { SIGNAL_GATED_ROLLOUT_SPEC } from './signalGatedRollout.js';
 import { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
 import { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
@@ -210,6 +211,23 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     workspaceProvider: 'document',
   },
 
+  // ── Slack / messaging pack ───────────────────────────────────────────────
+  {
+    description: SEND_SLACK_UPDATE_SPEC.description,
+    inputSchema: {
+      properties: {
+        channelId: { type: 'string' },
+        connectionId: { format: 'uuid', type: 'string' },
+        message: { type: 'string' },
+      },
+      required: ['channelId', 'connectionId', 'message'],
+      type: 'object',
+    },
+    name: SEND_SLACK_UPDATE_SPEC.name,
+    spec: SEND_SLACK_UPDATE_SPEC,
+    workspaceProvider: 'api_only',
+  },
+
   // ── PRD workflow ─────────────────────────────────────────────────────────
   {
     description: PRD_DECOMPOSITION_SPEC.description,
@@ -248,6 +266,7 @@ export { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
 export { REVIEW_AND_MERGE_SPEC } from './reviewAndMerge.js';
 export { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 export { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
+export { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
 export { SIGNAL_GATED_ROLLOUT_SPEC } from './signalGatedRollout.js';
 export { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
 export { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';

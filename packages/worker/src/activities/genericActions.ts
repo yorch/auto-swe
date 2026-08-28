@@ -2,6 +2,7 @@ import {
   type ConnectionType,
   decryptConnectionApiToken,
   parseNotionConnectionConfig,
+  parseSlackConnectionConfig,
   parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
@@ -12,6 +13,7 @@ import {
   type NotionBlock,
   readNotionPage,
 } from '../connectors/notion.js';
+import { postSlackMessage } from '../connectors/slack.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 
 /**
@@ -268,6 +270,34 @@ async function zendeskWriteOutcome(
   return { connectionType: 'zendesk', ok: true, reference: result.ticketId };
 }
 
+async function slackWriteOutcome(
+  connection: { config: unknown },
+  token: string | null,
+  data: unknown
+): Promise<WriteOutcomeResult> {
+  if (typeof data !== 'object' || data == null) {
+    throw ApplicationFailure.nonRetryable('Slack writeOutcome data must be an object');
+  }
+  const d = data as Record<string, unknown>;
+  const channelId = d.channelId;
+  const text = d.text;
+  if (typeof channelId !== 'string' || typeof text !== 'string') {
+    throw ApplicationFailure.nonRetryable('Slack writeOutcome requires channelId and text strings');
+  }
+  const config = parseSlackConnectionConfig(connection.config);
+  const resolvedChannelId = channelId || config.defaultChannelId;
+  if (!resolvedChannelId) {
+    throw ApplicationFailure.nonRetryable(
+      'Slack writeOutcome requires a channelId or a defaultChannelId on the connection'
+    );
+  }
+  const result = await postSlackMessage(
+    { apiToken: requireToken(token) },
+    { channelId: resolvedChannelId, text }
+  );
+  return { connectionType: 'slack_workspace', ok: true, reference: result.ts };
+}
+
 function isCreatePageData(d: Record<string, unknown>): boolean {
   return (
     typeof d.databaseId === 'string' ||
@@ -299,10 +329,11 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
       return notionWriteOutcome(connection, token, input.data);
     case 'zendesk':
       return zendeskWriteOutcome(connection, token, input.data);
+    case 'slack_workspace':
+      return slackWriteOutcome(connection, token, input.data);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
-    case 'slack_workspace':
       return genericWriteOutcome(connection.type, connection, token);
     default:
       throw ApplicationFailure.nonRetryable(
@@ -360,6 +391,29 @@ async function zendeskRunTool(
   throw ApplicationFailure.nonRetryable(`Unsupported Zendesk tool: ${tool}`);
 }
 
+async function slackRunTool(
+  connection: { config: unknown },
+  token: string | null,
+  tool: string,
+  inputs: unknown
+): Promise<RunToolResult> {
+  const apiToken = requireToken(token);
+  const config = parseSlackConnectionConfig(connection.config);
+  if (tool === 'postMessage') {
+    const data = typeof inputs === 'object' && inputs != null ? inputs : {};
+    const channelId = (data as Record<string, unknown>).channelId || config.defaultChannelId;
+    const text = (data as Record<string, unknown>).text;
+    if (typeof channelId !== 'string' || typeof text !== 'string') {
+      throw ApplicationFailure.nonRetryable(
+        'postMessage requires a channelId and text string inputs'
+      );
+    }
+    const result = await postSlackMessage({ apiToken }, { channelId, text });
+    return { connectionType: 'slack_workspace', ok: true, output: result };
+  }
+  throw ApplicationFailure.nonRetryable(`Unsupported Slack tool: ${tool}`);
+}
+
 async function genericRunTool(
   connectionType: ConnectionType,
   _connection: unknown,
@@ -380,11 +434,12 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
       return gitRepoRunTool(connection, input.tool, input.inputs);
     case 'zendesk':
       return zendeskRunTool(connection, token, input.tool, input.inputs);
+    case 'slack_workspace':
+      return slackRunTool(connection, token, input.tool, input.inputs);
     case 'http_api':
     case 'hubspot':
     case 'mcp':
     case 'notion':
-    case 'slack_workspace':
       return genericRunTool(connection.type, connection, token);
     default:
       throw ApplicationFailure.nonRetryable(

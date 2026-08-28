@@ -20,7 +20,10 @@ export {
   type NotionConnectionConfig,
   NotionConnectionConfigSchema,
   parseNotionConnectionConfig,
+  parseSlackConnectionConfig,
   parseZendeskConnectionConfig,
+  type SlackConnectionConfig,
+  SlackConnectionConfigSchema,
   type ZendeskConnectionConfig,
   ZendeskConnectionConfigSchema,
 } from './lib/connectionTypes.js';

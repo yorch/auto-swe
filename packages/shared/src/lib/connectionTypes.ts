@@ -133,3 +133,14 @@ export function parseZendeskConnectionConfig(config: unknown): ZendeskConnection
   const parsed = ZendeskConnectionConfigSchema.safeParse(config ?? {});
   return parsed.success ? parsed.data : {};
 }
+
+export const SlackConnectionConfigSchema = z.object({
+  defaultChannelId: z.string().optional(),
+});
+
+export type SlackConnectionConfig = z.infer<typeof SlackConnectionConfigSchema>;
+
+export function parseSlackConnectionConfig(config: unknown): SlackConnectionConfig {
+  const parsed = SlackConnectionConfigSchema.safeParse(config ?? {});
+  return parsed.success ? parsed.data : {};
+}
