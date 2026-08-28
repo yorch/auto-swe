@@ -1,13 +1,14 @@
 import {
   type ConnectionType,
   decryptConnectionApiToken,
+  type Prisma,
   parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
   parseSlackConnectionConfig,
   parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
-import { ApplicationFailure } from '@temporalio/activity';
+import { ApplicationFailure, Context } from '@temporalio/activity';
 import { z } from 'zod';
 import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
 import {
@@ -57,6 +58,8 @@ export interface ReadSourceResult {
 export interface WriteOutcomeInput {
   connectionId: string;
   data: unknown;
+  /** Spec node id that produced this outcome (for idempotency ledger). */
+  nodeId?: string;
 }
 
 export interface WriteOutcomeResult {
@@ -409,32 +412,79 @@ async function genericWriteOutcome(
  * types pending the domain-specific activity packs.
  */
 export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutcomeResult> {
-  const { connectionId, data } = validateInput(
-    z.object({ connectionId: ConnectionIdSchema, data: z.unknown() }),
+  const { connectionId, data, nodeId } = validateInput(
+    z.object({
+      connectionId: ConnectionIdSchema,
+      data: z.unknown(),
+      nodeId: z.string().min(1).optional(),
+    }),
     input
   );
-  const connection = await loadConnection(connectionId);
-  const token = getApiToken(connection);
-  switch (connection.type) {
-    case 'git_repo':
-      return gitRepoWriteOutcome(connection, data);
-    case 'notion':
-      return notionWriteOutcome(connection, token, data);
-    case 'zendesk':
-      return zendeskWriteOutcome(connection, token, data);
-    case 'slack_workspace':
-      return slackWriteOutcome(connection, token, data);
-    case 'issue_tracker':
-      return issueTrackerWriteOutcome(connection, token, data);
-    case 'http_api':
-    case 'hubspot':
-    case 'mcp':
-      return genericWriteOutcome(connection.type, connection, token);
-    default:
-      throw ApplicationFailure.nonRetryable(
-        `Unsupported connection type for writeOutcome: ${connection.type}`
-      );
+
+  // Side-effects to external systems (Notion, Zendesk, issue tracker, Slack) are
+  // not idempotent by default. A Temporal activity retry after a successful write
+  // would duplicate the write unless we remember it. Record the result keyed by
+  // (run, node, connection, activity attempt); a duplicate call returns the
+  // stored result instead of hitting the provider again.
+  const info = Context.current().info;
+  const attempt = info.attempt;
+  const workflowId = (info as unknown as { workflowId: string }).workflowId;
+  let runId: string | undefined;
+  if (nodeId && workflowId) {
+    const run = await prisma.workflowRun.findUnique({
+      select: { id: true },
+      where: { workflowId },
+    });
+    runId = run?.id;
   }
+
+  async function perform(): Promise<WriteOutcomeResult> {
+    const connection = await loadConnection(connectionId);
+    const token = getApiToken(connection);
+    switch (connection.type) {
+      case 'git_repo':
+        return gitRepoWriteOutcome(connection, data);
+      case 'notion':
+        return notionWriteOutcome(connection, token, data);
+      case 'zendesk':
+        return zendeskWriteOutcome(connection, token, data);
+      case 'slack_workspace':
+        return slackWriteOutcome(connection, token, data);
+      case 'issue_tracker':
+        return issueTrackerWriteOutcome(connection, token, data);
+      case 'http_api':
+      case 'hubspot':
+      case 'mcp':
+        return genericWriteOutcome(connection.type, connection, token);
+      default:
+        throw ApplicationFailure.nonRetryable(
+          `Unsupported connection type for writeOutcome: ${connection.type}`
+        );
+    }
+  }
+
+  if (!runId || !nodeId) {
+    return perform();
+  }
+
+  const existing = await prisma.workflowOutcomeReference.findUnique({
+    where: { runId_nodeId_connectionId_attempt: { attempt, connectionId, nodeId, runId } },
+  });
+  if (existing) {
+    return existing.result as unknown as WriteOutcomeResult;
+  }
+
+  const result = await perform();
+  await prisma.workflowOutcomeReference.create({
+    data: {
+      attempt,
+      connectionId,
+      nodeId,
+      result: result as unknown as Prisma.InputJsonValue,
+      runId,
+    },
+  });
+  return result;
 }
 
 async function gitRepoRunTool(

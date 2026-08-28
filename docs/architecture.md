@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 57 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 58 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Generated `init` baseline + a hand-written constraints/indexes migration |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -395,7 +395,7 @@ instead. Tenant isolation is enforced in the application layer, not by database 
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 57 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 58 models.
 
 ```mermaid
 erDiagram

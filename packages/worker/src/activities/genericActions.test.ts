@@ -1,8 +1,21 @@
+import { Context } from '@temporalio/activity';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
 import { appendNotionBlocks, createNotionPage, readNotionPage } from '../connectors/notion.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 import { readSource, runTool, writeOutcome } from './genericActions.js';
+
+vi.mock('@temporalio/activity', () => ({
+  ApplicationFailure: {
+    nonRetryable: (message: string) => {
+      const err = new Error(message);
+      return err;
+    },
+  },
+  Context: {
+    current: vi.fn(() => ({ info: { attempt: 1, workflowId: 'wf-1' } })),
+  },
+}));
 
 vi.mock('@auto-swe/shared', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@auto-swe/shared')>();
@@ -15,6 +28,8 @@ vi.mock('@auto-swe/shared', async (importOriginal) => {
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     connection: { findUnique: vi.fn() },
+    workflowOutcomeReference: { create: vi.fn(), findUnique: vi.fn() },
+    workflowRun: { findUnique: vi.fn() },
   },
 }));
 
@@ -222,6 +237,63 @@ describe('writeOutcome', () => {
     ).rejects.toThrow(
       'Notion writeOutcome data must include text, blocks, or a create-page request'
     );
+  });
+
+  it('records an outcome reference when nodeId is provided', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('notion', { token: true })
+    );
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+    });
+    (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      appended: 1,
+      pageId: 'page-1',
+    });
+
+    await writeOutcome({
+      connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
+      data: { blocks: [{ type: 'paragraph' }], pageId: 'page-1' },
+      nodeId: 'node-1',
+    });
+
+    expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        attempt: 1,
+        connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
+        nodeId: 'node-1',
+        runId: '11111111-1111-4111-8111-111111111111',
+      }),
+    });
+  });
+
+  it('returns a stored outcome reference on retry without re-calling the provider', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('notion', { token: true })
+    );
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+    });
+    (prisma.workflowOutcomeReference.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      result: {
+        connectionType: 'notion',
+        ok: true,
+        reference: 'stored-page',
+      },
+    });
+    (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      appended: 1,
+      pageId: 'page-1',
+    });
+
+    const result = await writeOutcome({
+      connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
+      data: { blocks: [{ type: 'paragraph' }], pageId: 'page-1' },
+      nodeId: 'node-1',
+    });
+
+    expect(result).toEqual({ connectionType: 'notion', ok: true, reference: 'stored-page' });
+    expect(appendNotionBlocks).not.toHaveBeenCalled();
   });
 });
 

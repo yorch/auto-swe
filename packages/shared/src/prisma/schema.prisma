@@ -1010,16 +1010,41 @@ model WorkflowRun {
   /// long-running run's cumulative token count can exceed the INT32 ceiling.
   tokensOutputTotal BigInt            @default(0) @map("tokens_output_total")
 
-  steps       WorkflowStep[]
-  artifacts   WorkflowArtifact[]
-  traces      AgentTrace[]
-  memoryItems MemoryItem[]
-  humanSteps  WorkflowHumanStep[]
-  evalResults EvalResult[]
+  steps             WorkflowStep[]
+  artifacts         WorkflowArtifact[]
+  traces            AgentTrace[]
+  memoryItems       MemoryItem[]
+  humanSteps        WorkflowHumanStep[]
+  evalResults       EvalResult[]
+  outcomeReferences WorkflowOutcomeReference[]
 
   @@index([templateId])
   @@index([workRequestId])
   @@map("workflow_runs")
+}
+
+/// Idempotency ledger for `genericActions.writeOutcome`.
+///
+/// Every external side-effect (Notion page/append, Zendesk comment,
+/// issue-tracker create) is recorded against the Temporal activity attempt that
+/// performed it. A retry of the same attempt (or a duplicate scheduling of the
+/// same workflow step) reads this row back instead of re-issuing the external
+/// call. The row is cascaded when the parent `WorkflowRun` is deleted.
+model WorkflowOutcomeReference {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId        String   @map("run_id") @db.Uuid
+  nodeId       String   @map("node_id")
+  connectionId String   @map("connection_id") @db.Uuid
+  attempt      Int
+  /// The serialized `WriteOutcomeResult` returned by the external provider.
+  result       Json
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  run WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, nodeId, connectionId, attempt])
+  @@index([runId])
+  @@map("workflow_outcome_references")
 }
 
 /// A single captured quality signal, normalized to a 0..1 score. P0 of the

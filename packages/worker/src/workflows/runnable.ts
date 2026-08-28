@@ -807,7 +807,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'writeOutcome',
-    ({ inputs }) => {
+    ({ inputs, step }) => {
       let data = inputs.data;
       // Convenience for Notion: a template can pass `text` + `pageId` and the
       // step wraps it into a single paragraph block.
@@ -844,6 +844,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       return genericActivities.writeOutcome({
         connectionId: inputs.connectionId as string,
         data,
+        nodeId: step,
       });
     },
   ],
