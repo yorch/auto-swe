@@ -2,11 +2,13 @@
 
 import { useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar } from '@/components/ui/TabBar';
 import { type InboxFilter, useInbox } from '@/hooks/useInbox';
+import { errMsg } from '@/lib/errors';
 
 const TABS: { id: InboxFilter; label: string }[] = [
   { id: 'PENDING', label: 'Pending' },
@@ -15,10 +17,18 @@ const TABS: { id: InboxFilter; label: string }[] = [
 
 export default function InboxPage() {
   const [filter, setFilter] = useState<InboxFilter>('PENDING');
-  const { data: steps, isLoading, refetch, isFetching } = useInbox(filter);
+  const { data: steps, isLoading, isError, error, refetch, isFetching } = useInbox(filter);
 
   if (isLoading) {
     return <LoadingState />;
+  }
+
+  if (isError) {
+    return (
+      <div className="p-8">
+        <Alert>{errMsg(error, 'Failed to load inbox')}</Alert>
+      </div>
+    );
   }
 
   const count = steps?.length ?? 0;

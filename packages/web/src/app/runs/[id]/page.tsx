@@ -14,6 +14,7 @@ import { LayoutToggle } from '@/components/LayoutToggle';
 import { FailureCard } from '@/components/runs/FailureCard';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -847,7 +848,7 @@ function LayoutC({
 
 export default function RunDetailPage({ params }: PageProps) {
   const { id } = use(params);
-  const { data: run, isError, isLoading } = useWorkflowRun(id);
+  const { data: run, isError, isLoading, error } = useWorkflowRun(id);
   const cancelRun = useCancelWorkflowRun(id);
   const retryRun = useRetryWorkRequest();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -943,7 +944,11 @@ export default function RunDetailPage({ params }: PageProps) {
   // Missing/forbidden run or a run without a spec snapshot: render a real
   // error state instead of spinning forever.
   if (isError || !run || !spec) {
-    return <div className="text-center py-12 text-paper-400">Run not found</div>;
+    return (
+      <div className="p-8">
+        <Alert>{errMsg(error, 'Run not found')}</Alert>
+      </div>
+    );
   }
 
   const traces = run.traces ?? [];
@@ -1048,7 +1053,7 @@ export default function RunDetailPage({ params }: PageProps) {
               className="text-brick-400"
               style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
             >
-              Re-run failed: {(retryRun.error as Error)?.message ?? 'unknown error'}
+              Re-run failed: {errMsg(retryRun.error, 'unknown error')}
             </span>
           )}
           <Link
