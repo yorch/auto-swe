@@ -159,6 +159,10 @@ CREATE TABLE "connections" (
     "consolidation_enabled" BOOLEAN NOT NULL DEFAULT true,
     "gate_commands" JSONB,
     "package_names" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "api_key_ciphertext" BYTEA,
+    "api_key_nonce" BYTEA,
+    "api_key_auth_tag" BYTEA,
+    "api_key_version" INTEGER NOT NULL DEFAULT 1,
 
     CONSTRAINT "connections_pkey" PRIMARY KEY ("id")
 );

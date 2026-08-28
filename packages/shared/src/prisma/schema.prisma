@@ -291,6 +291,13 @@ model Connection {
   /// a dependency string against (P1). Null/empty = match on org/repo identity only.
   packageNames          String[] @default([]) @map("package_names")
 
+  /// Encrypted API token for token-based connection types (Notion, Zendesk,
+  /// HubSpot, http_api). Stored as AES-256-GCM ciphertext with nonce and auth tag.
+  apiKeyCiphertext Bytes? @map("api_key_ciphertext")
+  apiKeyNonce      Bytes? @map("api_key_nonce")
+  apiKeyAuthTag    Bytes? @map("api_key_auth_tag")
+  apiKeyVersion    Int    @default(1) @map("api_key_version")
+
   activeWorkflows       ActiveWorkflow[]
   pullRequests          PullRequest[]
   memoryItems           MemoryItem[]

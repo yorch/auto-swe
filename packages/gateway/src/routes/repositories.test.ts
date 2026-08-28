@@ -5,13 +5,19 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// repositories.ts only uses `Prisma.DbNull` at runtime (config field
-// serialization); mocking the barrel avoids instantiating the real
-// PrismaClient singleton (which requires DATABASE_URL at import) — same
-// pattern as humanSteps.test.ts / slack.test.ts.
+// repositories.ts only uses `Prisma.DbNull` and connection token helpers at
+// runtime; mocking the barrel avoids instantiating the real PrismaClient
+// singleton (which requires DATABASE_URL at import) — same pattern as
+// humanSteps.test.ts / slack.test.ts.
 const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
 vi.mock('@auto-swe/shared', () => ({
   ConnectionTypeSchema,
+  encryptConnectionApiToken: (token: string) => ({
+    apiKeyAuthTag: Buffer.from('auth-tag'),
+    apiKeyCiphertext: Buffer.from(`cipher-${token}`),
+    apiKeyNonce: Buffer.from('nonce'),
+    apiKeyVersion: 1,
+  }),
   Prisma: { DbNull: DB_NULL },
 }));
 

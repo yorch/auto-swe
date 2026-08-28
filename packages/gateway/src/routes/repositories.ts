@@ -1,4 +1,4 @@
-import { ConnectionTypeSchema, Prisma } from '@auto-swe/shared';
+import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -10,6 +10,7 @@ import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateRepoSchema = z.object({
+  apiToken: z.string().optional(),
   config: z.record(z.string(), z.unknown()).optional(),
   defaultBranch: z.string().default('main'),
   description: z.string().optional(),
@@ -30,6 +31,7 @@ const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 });
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
 
 const UpdateRepoSchema = z.object({
+  apiToken: z.string().nullable().optional(),
   config: z.record(z.string(), z.unknown()).nullable().optional(),
   consolidationEnabled: z.boolean().optional(),
   defaultBranch: z.string().optional(),
@@ -165,7 +167,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { organizationName, repoName, teamId, type, name, config, ...rest } = request.body;
+      const { apiToken, organizationName, repoName, teamId, type, name, config, ...rest } =
+        request.body;
 
       if (type === 'git_repo' && (!organizationName || !repoName)) {
         return reply.status(400).send({
@@ -209,10 +212,20 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // partial unique index on (organizationName, repoName) for git_repo
       // connections is the real guard; catch its violation here and translate
       // it to the same 409 rather than a raw 500.
+      const tokenColumns = apiToken
+        ? encryptConnectionApiToken(apiToken)
+        : {
+            apiKeyAuthTag: null,
+            apiKeyCiphertext: null,
+            apiKeyNonce: null,
+            apiKeyVersion: 1,
+          };
+
       let repo: Awaited<ReturnType<typeof fastify.prisma.connection.create>>;
       try {
         repo = await fastify.prisma.connection.create({
           data: {
+            ...tokenColumns,
             config: config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
             name: name ?? null,
             organizationName: organizationName ?? null,
@@ -277,6 +290,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const {
+        apiToken,
         config,
         consolidationEnabled,
         defaultBranch,
@@ -289,8 +303,22 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         name,
         teamId,
       } = request.body;
+
+      const tokenUpdate =
+        apiToken === undefined
+          ? undefined
+          : apiToken
+            ? encryptConnectionApiToken(apiToken)
+            : {
+                apiKeyAuthTag: null,
+                apiKeyCiphertext: null,
+                apiKeyNonce: null,
+                apiKeyVersion: 1,
+              };
+
       const updated = await fastify.prisma.connection.update({
         data: {
+          ...tokenUpdate,
           config:
             config === undefined
               ? undefined
