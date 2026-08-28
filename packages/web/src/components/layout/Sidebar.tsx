@@ -73,46 +73,28 @@ const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { href: '/', icon: 'dashboard', label: 'Home', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
-      { href: '/runs', icon: 'runs', label: 'Runs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
-      { href: '/inbox', icon: 'inbox', label: 'Inbox', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
-    ],
-    label: 'Operate',
-  },
-  {
-    items: [
       {
         href: '/templates',
         icon: 'templates',
-        label: 'Workflows',
+        label: 'My workflows',
         roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
       {
         href: '/workflows',
         icon: 'canvas',
-        label: 'Canvas',
+        label: 'Work requests',
         roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
-      { href: '/epics', icon: 'epics', label: 'Epics', roles: ['LEAD', 'ADMIN'] },
+      { href: '/epics', icon: 'epics', label: 'Outcomes', roles: ['LEAD', 'ADMIN'] },
     ],
-    label: 'Build',
+    label: 'Work',
   },
   {
     items: [
-      {
-        href: '/admin/agents/library',
-        icon: 'agents',
-        label: 'Agents',
-        roles: ['LEAD', 'ADMIN'],
-      },
-      { href: '/admin/skills', icon: 'skills', label: 'Skills', roles: ['LEAD', 'ADMIN'] },
-      {
-        href: '/connections',
-        icon: 'connections',
-        label: 'Connections',
-        roles: ['LEAD', 'ADMIN'],
-      },
+      { href: '/runs', icon: 'runs', label: 'Runs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
+      { href: '/inbox', icon: 'inbox', label: 'Inbox', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
     ],
-    label: 'Library',
+    label: 'Operate',
   },
   {
     items: [
@@ -128,23 +110,24 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Memory',
         roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
-      {
-        href: '/admin/security',
-        icon: 'security',
-        label: 'Security',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/evals',
-        icon: 'analytics',
-        label: 'Evals',
-        roles: ['ADMIN'],
-      },
     ],
     label: 'Insights',
   },
   {
     items: [
+      {
+        href: '/connections',
+        icon: 'connections',
+        label: 'Connections',
+        roles: ['LEAD', 'ADMIN'],
+      },
+      {
+        href: '/admin/agents/library',
+        icon: 'agents',
+        label: 'Agents',
+        roles: ['LEAD', 'ADMIN'],
+      },
+      { href: '/admin/skills', icon: 'skills', label: 'Skills', roles: ['LEAD', 'ADMIN'] },
       { href: '/teams', icon: 'teams', label: 'Teams', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/users', icon: 'users', label: 'Users', roles: ['ADMIN'] },
       {
@@ -178,12 +161,16 @@ const NAV_GROUPS: NavGroup[] = [
         roles: ['ADMIN'],
       },
       {
-        href: '/admin/settings',
-        icon: 'settings',
-        label: 'Settings',
-        // Not ADMIN-only: the page authorises per setting, so a lead holding a
-        // grant needs to be able to reach it.
-        roles: ['ADMIN', 'LEAD'],
+        href: '/admin/security',
+        icon: 'security',
+        label: 'Security',
+        roles: ['ADMIN'],
+      },
+      {
+        href: '/admin/evals',
+        icon: 'analytics',
+        label: 'Evals',
+        roles: ['ADMIN'],
       },
       {
         href: '/admin/workflow',
@@ -221,7 +208,20 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Slack Channels',
         roles: ['ADMIN'],
       },
+      {
+        href: '/admin/settings',
+        icon: 'settings',
+        label: 'Admin Settings',
+        // Not ADMIN-only: the page authorises per setting, so a lead holding a
+        // grant needs to be able to reach it.
+        roles: ['ADMIN', 'LEAD'],
+      },
       { href: '/docs', icon: 'docs', label: 'Docs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
+    ],
+    label: 'Administration',
+  },
+  {
+    items: [
       {
         href: '/settings',
         icon: 'settings',
@@ -229,7 +229,7 @@ const NAV_GROUPS: NavGroup[] = [
         roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
     ],
-    label: 'Admin',
+    label: 'Account',
   },
 ];
 
