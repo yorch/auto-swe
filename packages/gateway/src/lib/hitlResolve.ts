@@ -41,6 +41,7 @@ export type HitlResolveResult =
   | {
       ok: true;
       stepId: string;
+      runId: string;
       kind: string;
       title: string;
       /**
@@ -102,7 +103,7 @@ export async function resolveHitlStep(
   const { prisma, temporal, log } = deps;
 
   const step = await prisma.workflowHumanStep.findFirst({
-    include: { run: { select: { status: true, workflowId: true } } },
+    include: { run: { select: { id: true, status: true, workflowId: true } } },
     where: { id: stepId, ...runVisibilityFilter(user) },
   });
   if (!step) {
@@ -198,5 +199,12 @@ export async function resolveHitlStep(
     );
   }
 
-  return { kind: step.kind, ok: true, signalSent, stepId: step.id, title: step.title };
+  return {
+    kind: step.kind,
+    ok: true,
+    runId: step.run.id,
+    signalSent,
+    stepId: step.id,
+    title: step.title,
+  };
 }

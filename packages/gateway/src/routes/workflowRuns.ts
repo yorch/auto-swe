@@ -9,6 +9,7 @@ import { listSteps } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import {
@@ -176,6 +177,14 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       }
       fastify.temporal.cancelWorkflow(run.workflowId).catch((err: unknown) => {
         request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel signal failed');
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { status: 'CANCELLED' },
+        before: { status: run.status },
+        entityId: run.id,
+        entityType: 'WorkflowRun',
       });
       return { data: { id: run.id, status: 'CANCELLED' } };
     }

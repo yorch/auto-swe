@@ -18,7 +18,8 @@ export type AuditEntityType =
   | 'Skill'
   | 'SlackChannel'
   | 'SlackConfig'
-  | 'StorageConfig';
+  | 'StorageConfig'
+  | 'WorkflowRun';
 
 export async function writeAuditLog(
   fastify: FastifyInstance,

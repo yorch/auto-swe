@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import {
   type HitlResolveErrorCode,
   resolveHitlStep,
@@ -201,6 +202,15 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           .status(STATUS_BY_CODE[result.code])
           .send({ error: { code: result.code, message: result.message } });
       }
+
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { action, resolvedBy: user.sub, status: 'RESOLVED', value },
+        before: { status: 'PENDING' },
+        entityId: result.runId,
+        entityType: 'WorkflowRun',
+      });
 
       // `signalSent: false` means the decision was recorded but the workflow it
       // was meant for no longer exists — a 200 with a caveat, not a failure the

@@ -67,6 +67,9 @@ describe('human step routes', () => {
     } as unknown as never);
 
     app.decorate('prisma', {
+      configAuditLog: {
+        create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+      },
       workflowHumanStep: {
         findFirst: async () => stepRow,
         findMany: async () => listRows,
@@ -196,6 +199,17 @@ describe('human step routes', () => {
           workflowId: 'eng-acme-repo-JIRA-1',
         },
       ]);
+
+      expect(app.prisma.configAuditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'UPDATE',
+            afterJson: expect.objectContaining({ action: 'approve' }),
+            entityId: 'run-1',
+            entityType: 'WorkflowRun',
+          }),
+        })
+      );
     });
 
     it('accepts kind-appropriate actions for the other kinds', async () => {

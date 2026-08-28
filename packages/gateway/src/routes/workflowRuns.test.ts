@@ -8,6 +8,9 @@ function newMockPrisma() {
     agentTrace: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    configAuditLog: {
+      create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+    },
     workflowRun: {
       count: vi.fn().mockResolvedValue(0),
       findFirst: vi.fn().mockResolvedValue(null),
@@ -261,5 +264,16 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(temporal.cancelWorkflow).toHaveBeenCalledWith('wf-1');
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'UPDATE',
+          afterJson: { status: 'CANCELLED' },
+          beforeJson: { status: 'RUNNING' },
+          entityId: runId,
+          entityType: 'WorkflowRun',
+        }),
+      })
+    );
   });
 });
