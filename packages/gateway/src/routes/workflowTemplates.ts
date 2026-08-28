@@ -1,7 +1,11 @@
 import crypto from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
-import { WorkspaceProviderTypeSchema } from '@auto-swe/shared/lib/workspaceProviders';
+import {
+  getWorkspaceProviderMetadata,
+  isWorkspaceProviderType,
+  WorkspaceProviderTypeSchema,
+} from '@auto-swe/shared/lib/workspaceProviders';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
 import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import {
@@ -1369,7 +1373,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
-        select: { activeVersion: true, id: true, inputSchema: true },
+        select: {
+          activeVersion: true,
+          id: true,
+          inputSchema: true,
+          teamId: true,
+          workspaceProvider: true,
+        },
         where: { id: request.params.id, status: 'ACTIVE', ...teamMembershipFilter(user) },
       });
       if (!tpl) {
@@ -1423,6 +1433,50 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         typeof payload.ticketId === 'string'
           ? payload.ticketId
           : (request.body.label ?? workRequestId);
+
+      // Validate the workspace provider / connection pairing when the template
+      // declares one. A non-api_only provider needs a connection of the matching
+      // type; api_only may omit it.
+      const providerMeta =
+        tpl.workspaceProvider && isWorkspaceProviderType(tpl.workspaceProvider)
+          ? getWorkspaceProviderMetadata(tpl.workspaceProvider)
+          : null;
+      if (providerMeta?.connectionType) {
+        if (!connectionId) {
+          return reply.status(400).send({
+            error: {
+              code: 'CONNECTION_REQUIRED',
+              message: `Template requires a ${providerMeta.connectionType} connection`,
+            },
+          });
+        }
+        const connection = await fastify.prisma.connection.findUnique({
+          include: {
+            team: {
+              select: { memberships: { select: { userId: true }, where: { userId: user.sub } } },
+            },
+          },
+          where: { id: connectionId },
+        });
+        if (!connection?.isActive) {
+          return reply.status(404).send({
+            error: { code: 'CONNECTION_NOT_FOUND', message: 'Connection not found or inactive' },
+          });
+        }
+        if (user.role !== 'ADMIN' && connection.team.memberships.length === 0) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'You do not have access to this connection' },
+          });
+        }
+        if (connection.type !== providerMeta.connectionType) {
+          return reply.status(400).send({
+            error: {
+              code: 'CONNECTION_TYPE_MISMATCH',
+              message: `Template expects a ${providerMeta.connectionType} connection but got ${connection.type}`,
+            },
+          });
+        }
+      }
 
       const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);
       // With an Idempotency-Key the ID is a pure function of the key, so the
