@@ -92,7 +92,11 @@ function CollapsibleSection({
     <div>
       <button
         className="flex items-center gap-1 text-paper-500 hover:text-paper-300 transition-colors mb-1"
-        onClick={() => setOpen((v) => !v)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        onKeyDown={(e) => e.stopPropagation()}
         style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.08em' }}
         type="button"
       >
@@ -184,7 +188,11 @@ function TruncatedText({ text }: { text: string }) {
       {isTruncated && (
         <button
           className="text-dust-400 hover:text-dust-300 transition-colors mt-0.5"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
           style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
           type="button"
         >
@@ -363,6 +371,7 @@ function OtelLink({ trace }: { trace: AgentTraceRecord }) {
       className="text-paper-600 hover:text-dust-400 shrink-0 transition-colors"
       href={href}
       onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
       rel="noopener noreferrer"
       style={innerStyle}
       target="_blank"

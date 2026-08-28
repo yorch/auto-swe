@@ -103,9 +103,17 @@ describe('epic routes', () => {
       },
     } as unknown as never);
 
-    app.decorate('prisma', {
+    const prismaMock = {
       $queryRaw: async () => [],
-      $transaction: async (queries: Array<Promise<unknown>>) => Promise.all(queries),
+      $transaction: async (arg: unknown) => {
+        if (Array.isArray(arg)) {
+          return Promise.all(arg);
+        }
+        if (typeof arg === 'function') {
+          return arg(prismaMock);
+        }
+        return undefined;
+      },
       activeWorkflow: {
         create: async (args: { data: Record<string, unknown> }) => {
           const row = {
@@ -208,8 +216,9 @@ describe('epic routes', () => {
           null,
         findMany: async () => workRequestFixtures,
       },
-    } as unknown as never);
+    };
 
+    app.decorate('prisma', prismaMock as unknown as never);
     app.decorate('temporal', {
       startEpicWorkflow: async (id: string) => {
         if (epicStartShouldConflict) {

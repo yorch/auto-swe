@@ -303,9 +303,22 @@ export async function finalizeWorkflowRun(
 
   if (orgId) {
     const yearMonth = currentYearMonth();
-    await prisma.$transaction([
-      denormalizeUpdate,
-      prisma.orgMonthlyUsage.upsert({
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT pg_advisory_xact_lock(hashtextextended(${orgId}, 0))
+      `;
+      await tx.workflowRun.update({
+        data: {
+          contextSnapshot: contextSnapshot as object | undefined,
+          costUsdAccrued,
+          endedAt: new Date(),
+          status,
+          tokensInputTotal,
+          tokensOutputTotal,
+        },
+        where: { id: runId },
+      });
+      await tx.orgMonthlyUsage.upsert({
         create: {
           costUsdAccrued,
           orgId,
@@ -321,8 +334,8 @@ export async function finalizeWorkflowRun(
           tokensOutput: { increment: tokensOutputTotal },
         },
         where: { orgId_yearMonth: { orgId, yearMonth } },
-      }),
-    ]);
+      });
+    });
   } else {
     await denormalizeUpdate;
   }

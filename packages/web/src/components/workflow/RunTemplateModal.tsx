@@ -2,7 +2,6 @@
 
 import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
-import Link from 'next/link';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -29,13 +28,13 @@ export function RunTemplateModal({
   );
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [launchedRunId, setLaunchedRunId] = useState<string | null>(null);
+  const [launched, setLaunched] = useState(false);
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
   const handleClose = () => {
     onClose();
     setError(null);
-    setLaunchedRunId(null);
+    setLaunched(false);
     setAttemptedSubmit(false);
     setLabel('');
     setPayload(schema ? buildInitialPayload(schema) : {});
@@ -51,8 +50,8 @@ export function RunTemplateModal({
       return;
     }
     try {
-      const result = await runTemplate.mutateAsync({ label: label.trim() || undefined, payload });
-      setLaunchedRunId(result.workflowId);
+      await runTemplate.mutateAsync({ label: label.trim() || undefined, payload });
+      setLaunched(true);
     } catch (err) {
       const msg = errMsg(err, 'Run failed');
       setError(msg);
@@ -66,7 +65,7 @@ export function RunTemplateModal({
   const hasSchema = schema && Object.keys(schema.properties).length > 0;
   const requiredKeys = new Set(schema?.required ?? []);
 
-  if (launchedRunId) {
+  if (launched) {
     return (
       <Modal
         eyebrow={`§ ${template.name}`}
@@ -77,15 +76,12 @@ export function RunTemplateModal({
         <div className="space-y-6 py-2 text-center">
           <div className="text-3xl text-moss-400">✓</div>
           <p className="text-sm text-paper-300">
-            Your workflow is running. Track its progress in the run detail view.
+            Your workflow is running. It will appear in the runs list shortly.
           </p>
           <div className="flex justify-center gap-3 pt-2">
             <Button onClick={handleClose} variant="secondary">
               Close
             </Button>
-            <Link href={`/runs/${launchedRunId}`} onClick={handleClose}>
-              <Button variant="primary">View run →</Button>
-            </Link>
           </div>
         </div>
       </Modal>

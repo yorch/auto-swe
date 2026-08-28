@@ -67,11 +67,19 @@ describe('POST /api/v1/work-requests', () => {
     } as unknown as never);
 
     // Mock prisma and temporal on the app instance (cast through unknown to bypass strict typing)
-    app.decorate('prisma', {
+    const prismaMock = {
       $queryRaw: async () => [],
       // The launch path writes its ledger rows in one transaction; the array
       // form just resolves the queued promises in order.
-      $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
+      $transaction: async (arg: unknown) => {
+        if (Array.isArray(arg)) {
+          return Promise.all(arg);
+        }
+        if (typeof arg === 'function') {
+          return arg(prismaMock);
+        }
+        return undefined;
+      },
       activeWorkflow: {
         create: async (args: { data: Record<string, unknown> }) => ({
           id: 'wf-1',
@@ -118,7 +126,8 @@ describe('POST /api/v1/work-requests', () => {
         }),
         findUnique: async () => ({ inputSchema: templateInputSchema }),
       },
-    } as unknown as never);
+    };
+    app.decorate('prisma', prismaMock as unknown as never);
     app.decorate('temporal', {
       cancelWorkflow: async () => {},
       deleteChannelAmbientSchedule: async () => {},

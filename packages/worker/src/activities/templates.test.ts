@@ -28,9 +28,18 @@ vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
   syncTrackerOnEvent: vi.fn(),
 }));
 
-vi.mock('@auto-swe/shared/db', () => ({
-  prisma: {
-    $transaction: vi.fn(),
+vi.mock('@auto-swe/shared/db', () => {
+  const prisma = {
+    $queryRaw: vi.fn(async () => []),
+    $transaction: vi.fn((arg: unknown) => {
+      if (Array.isArray(arg)) {
+        return Promise.all(arg);
+      }
+      if (typeof arg === 'function') {
+        return arg(prisma);
+      }
+      return undefined;
+    }),
     activeWorkflow: {
       // The run's tenant is derived from here as well as from RunInput, because
       // the Slack and scheduled launch paths carry the repo only on this row.
@@ -74,8 +83,9 @@ vi.mock('@auto-swe/shared/db', () => ({
     workflowTemplateVersion: {
       findUnique: vi.fn(),
     },
-  },
-}));
+  };
+  return { prisma };
+});
 
 import { prisma } from '@auto-swe/shared/db';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';

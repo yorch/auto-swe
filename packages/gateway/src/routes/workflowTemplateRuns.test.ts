@@ -29,15 +29,21 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
     const runInputCreates: Array<Record<string, unknown>> = [];
     const activeWorkflowCreates: Array<Record<string, unknown>> = [];
 
-    app.decorate('prisma', {
+    const prismaMock = {
       $queryRaw: async () => [],
-      $transaction: async (writes: Array<Promise<{ id: string }>>) => {
-        const results: Array<{ id: string }> = [];
-        for (const write of writes) {
-          const result = await write;
-          results.push(result);
+      $transaction: async (arg: unknown) => {
+        if (Array.isArray(arg)) {
+          const results: Array<{ id: string }> = [];
+          for (const write of arg) {
+            const result = await write;
+            results.push(result);
+          }
+          return results;
         }
-        return results;
+        if (typeof arg === 'function') {
+          return arg(prismaMock);
+        }
+        return undefined;
       },
       activeWorkflow: {
         create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -75,8 +81,9 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
           };
         },
       },
-    } as unknown as never);
+    };
 
+    app.decorate('prisma', prismaMock as unknown as never);
     app.decorate('temporal', {
       startRunnableWorkflow: async (workflowId: string, input: unknown) => {
         startedWorkflows.push({ input, workflowId });

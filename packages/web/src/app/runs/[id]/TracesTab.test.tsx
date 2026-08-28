@@ -122,11 +122,7 @@ describe('TraceOutput', () => {
     expect(pre.textContent).toBe('raw');
   });
 
-  // Known bug (reported, not fixed here): the row is itself a <button>, so a
-  // click on the nested REQUEST toggle bubbles up and collapses the whole row
-  // instead of opening the section. That makes the Request body — and the
-  // TruncatedText inside it — unreachable from the rendered UI.
-  it('collapses the row when the nested Request toggle is clicked', () => {
+  it('does not collapse the row when a nested Request toggle is clicked', () => {
     expand({
       ...makeTrace('implement'),
       inputJson: { systemPrompt: 'you are an implementer' },
@@ -136,7 +132,9 @@ describe('TraceOutput', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: /REQUEST/ }).at(-1) as HTMLElement);
 
-    expect(document.querySelector('pre')).toBeNull();
+    // The row should stay expanded; the Request section is inside a container
+    // that stops propagation so the row toggle is not affected.
+    expect(document.querySelector('pre')).not.toBeNull();
   });
 
   it('tints an activity_event error with the oklch banner at 2px', () => {
