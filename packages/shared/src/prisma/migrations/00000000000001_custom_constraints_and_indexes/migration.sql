@@ -20,23 +20,23 @@ CREATE INDEX IF NOT EXISTS "idx_memory_items_embedding" ON "memory_items"
 
 -- ── Provider credentials (GLOBAL, ORGANIZATION, or TEAM; no template scope) ──
 ALTER TABLE "provider_credentials"
-    ADD CONSTRAINT "provider_credentials_scope_check"
+    ADD CONSTRAINT IF NOT EXISTS "provider_credentials_scope_check"
     CHECK ("scope" IN ('GLOBAL', 'ORGANIZATION', 'TEAM'));
 
-CREATE UNIQUE INDEX "provider_credentials_global_unique"
+CREATE UNIQUE INDEX IF NOT EXISTS "provider_credentials_global_unique"
     ON "provider_credentials" ("provider")
     WHERE "scope" = 'GLOBAL';
 
-CREATE UNIQUE INDEX "provider_credentials_org_unique"
+CREATE UNIQUE INDEX IF NOT EXISTS "provider_credentials_org_unique"
     ON "provider_credentials" ("provider", "org_id")
     WHERE "scope" = 'ORGANIZATION';
 
-CREATE UNIQUE INDEX "provider_credentials_team_unique"
+CREATE UNIQUE INDEX IF NOT EXISTS "provider_credentials_team_unique"
     ON "provider_credentials" ("provider", "team_id")
     WHERE "scope" = 'TEAM';
 
 ALTER TABLE "provider_credentials"
-    ADD CONSTRAINT "provider_credentials_scope_keys_check"
+    ADD CONSTRAINT IF NOT EXISTS "provider_credentials_scope_keys_check"
     CHECK (
         ("scope" = 'GLOBAL' AND "team_id" IS NULL AND "org_id" IS NULL)
         OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
@@ -48,7 +48,7 @@ ALTER TABLE "provider_credentials"
 -- GLOBAL row could carry a team_id and leak into that tenant's filtered view,
 -- and a TEAM row could exist with no owner to filter on.
 ALTER TABLE "skills"
-    ADD CONSTRAINT "skills_scope_keys_check"
+    ADD CONSTRAINT IF NOT EXISTS "skills_scope_keys_check"
     CHECK (
         ("scope" = 'GLOBAL' AND "team_id" IS NULL AND "org_id" IS NULL)
         OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
@@ -59,30 +59,30 @@ ALTER TABLE "skills"
 -- org/repo are nullable so non-git connection types (e.g. `mcp`) need not set
 -- them; uniqueness applies only to git_repo rows. Prisma can't express a
 -- partial `@@unique`, so it lives here.
-CREATE UNIQUE INDEX "connections_git_repo_org_repo_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "connections_git_repo_org_repo_uidx"
     ON "connections" ("organization_name", "repo_name")
     WHERE "type" = 'git_repo';
 
 -- ── Agent library: one row per (key, version) at a scope ─────────────────────
 -- Partial uniques per scope; Prisma can't express `WHERE scope = …`. Postgres
 -- treats NULL discriminators as distinct, so each WHERE scopes its uniqueness.
-CREATE UNIQUE INDEX "agents_key_version_global_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "agents_key_version_global_uidx"
     ON "agents" ("key", "version")
     WHERE "scope" = 'GLOBAL';
 
-CREATE UNIQUE INDEX "agents_key_version_org_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "agents_key_version_org_uidx"
     ON "agents" ("key", "version", "org_id")
     WHERE "scope" = 'ORGANIZATION';
 
-CREATE UNIQUE INDEX "agents_key_version_team_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "agents_key_version_team_uidx"
     ON "agents" ("key", "version", "team_id")
     WHERE "scope" = 'TEAM';
 
-CREATE UNIQUE INDEX "agents_key_version_channel_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "agents_key_version_channel_uidx"
     ON "agents" ("key", "version", "channel_id")
     WHERE "scope" = 'CHANNEL';
 
-CREATE UNIQUE INDEX "agents_key_version_template_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "agents_key_version_template_uidx"
     ON "agents" ("key", "version", "workflow_template_id")
     WHERE "scope" = 'WORKFLOW_TEMPLATE';
 
@@ -91,7 +91,7 @@ CREATE UNIQUE INDEX "agents_key_version_template_uidx"
 -- `provider_credentials_scope_keys_check`, extended to all five agent scopes.
 -- Complements the partial uniques above (which, because Postgres treats NULL
 -- discriminators as distinct, could otherwise admit multiple mis-scoped rows).
-ALTER TABLE "agents" ADD CONSTRAINT "agents_scope_keys_check" CHECK (
+ALTER TABLE "agents" ADD CONSTRAINT IF NOT EXISTS "agents_scope_keys_check" CHECK (
     ("scope" = 'GLOBAL'            AND "team_id" IS NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'ORGANIZATION'      AND "org_id" IS NOT NULL AND "team_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'TEAM'              AND "team_id" IS NOT NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
@@ -102,7 +102,7 @@ ALTER TABLE "agents" ADD CONSTRAINT "agents_scope_keys_check" CHECK (
 -- ── HITL idempotency ─────────────────────────────────────────────────────────
 -- Prevents duplicate PENDING rows for the same (run_id, node_id) pair while
 -- allowing multiple historical resolved/cancelled rows (retry loops).
-CREATE UNIQUE INDEX workflow_human_steps_pending_unique
+CREATE UNIQUE INDEX IF NOT EXISTS workflow_human_steps_pending_unique
   ON workflow_human_steps (run_id, node_id)
   WHERE status = 'PENDING';
 
@@ -111,7 +111,7 @@ CREATE UNIQUE INDEX workflow_human_steps_pending_unique
 -- the uniqueness applies only once it's set. Prisma can't express a partial
 -- `@@unique`. NOTE: fails to apply if duplicate (repo_id, pr_number) rows
 -- already exist — fine on a clean/consolidated-baseline DB.
-CREATE UNIQUE INDEX "pull_requests_repo_id_pr_number_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "pull_requests_repo_id_pr_number_uidx"
     ON "pull_requests" ("repo_id", "pr_number")
     WHERE "pr_number" IS NOT NULL;
 
@@ -120,46 +120,46 @@ CREATE UNIQUE INDEX "pull_requests_repo_id_pr_number_uidx"
 -- `@default("default")` so client writes always produce the right value; these
 -- checks are belt-and-suspenders against raw SQL inserts.
 ALTER TABLE "github_config"
-    ADD CONSTRAINT "github_config_singleton" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "github_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "slack_config"
-    ADD CONSTRAINT "slack_config_singleton" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "slack_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "storage_config"
-    ADD CONSTRAINT "storage_config_singleton" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "storage_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "storage_config"
-    ADD CONSTRAINT "storage_config_backend_check" CHECK ("backend" IN ('inline', 's3'));
+    ADD CONSTRAINT IF NOT EXISTS "storage_config_backend_check" CHECK ("backend" IN ('inline', 's3'));
 ALTER TABLE "workflow_defaults"
-    ADD CONSTRAINT "workflow_defaults_singleton" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "workflow_defaults_singleton" CHECK ("id" = 'default');
 -- CI-wait strategy. All four columns are nullable: NULL means "not configured
 -- in the DB", so the resolver falls back to CI_WAIT_MODE / CI_POLL_*. Reject a
 -- typo here rather than silently degrading to 'signal', and reject a
 -- non-positive interval, which would busy-loop the CI poller.
 ALTER TABLE "workflow_defaults"
-    ADD CONSTRAINT "workflow_defaults_ci_wait_mode_check"
+    ADD CONSTRAINT IF NOT EXISTS "workflow_defaults_ci_wait_mode_check"
     CHECK ("ci_wait_mode" IS NULL OR "ci_wait_mode" IN ('signal', 'poll'));
 ALTER TABLE "workflow_defaults"
-    ADD CONSTRAINT "workflow_defaults_ci_poll_positive_check"
+    ADD CONSTRAINT IF NOT EXISTS "workflow_defaults_ci_poll_positive_check"
     CHECK (
         ("ci_poll_interval_sec" IS NULL OR "ci_poll_interval_sec" > 0)
         AND ("ci_poll_grace_sec"    IS NULL OR "ci_poll_grace_sec"    > 0)
         AND ("ci_poll_deadline_sec" IS NULL OR "ci_poll_deadline_sec" > 0)
     );
 ALTER TABLE "google_oauth_config"
-    ADD CONSTRAINT "google_oauth_config_singleton" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "google_oauth_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "okta_oauth_config"
-    ADD CONSTRAINT "okta_oauth_config_singleton" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "okta_oauth_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "embedding_configs"
-    ADD CONSTRAINT "embedding_configs_singleton_check" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "embedding_configs_singleton_check" CHECK ("id" = 'default');
 ALTER TABLE "issue_tracker_config"
-    ADD CONSTRAINT "issue_tracker_config_singleton" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "issue_tracker_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "knowledge_base_config"
-    ADD CONSTRAINT "knowledge_base_config_singleton" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "knowledge_base_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "figma_config"
-    ADD CONSTRAINT "figma_config_singleton" CHECK ("id" = 'default');
+    ADD CONSTRAINT IF NOT EXISTS "figma_config_singleton" CHECK ("id" = 'default');
 
 -- ── Config registry: scope discriminator + per-scope uniqueness ──────────────
 -- Same shape as `agents` above: exactly the id column for the row's own scope
 -- may be set, so a TEAM override can never also carry an org id.
-ALTER TABLE "config_settings" ADD CONSTRAINT "config_settings_scope_keys_check" CHECK (
+ALTER TABLE "config_settings" ADD CONSTRAINT IF NOT EXISTS "config_settings_scope_keys_check" CHECK (
     ("scope" = 'GLOBAL'            AND "team_id" IS NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'ORGANIZATION'      AND "org_id" IS NOT NULL AND "team_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'TEAM'              AND "team_id" IS NOT NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
@@ -170,29 +170,29 @@ ALTER TABLE "config_settings" ADD CONSTRAINT "config_settings_scope_keys_check" 
 -- One override per key per scope instance. Partial per scope because Prisma
 -- cannot express `WHERE scope = …` in a unique index — the same reason writes
 -- use findFirst-then-create instead of upsert.
-CREATE UNIQUE INDEX "config_settings_global_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_settings_global_uidx"
     ON "config_settings" ("key")
     WHERE "scope" = 'GLOBAL';
 
-CREATE UNIQUE INDEX "config_settings_org_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_settings_org_uidx"
     ON "config_settings" ("key", "org_id")
     WHERE "scope" = 'ORGANIZATION';
 
-CREATE UNIQUE INDEX "config_settings_team_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_settings_team_uidx"
     ON "config_settings" ("key", "team_id")
     WHERE "scope" = 'TEAM';
 
-CREATE UNIQUE INDEX "config_settings_channel_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_settings_channel_uidx"
     ON "config_settings" ("key", "channel_id")
     WHERE "scope" = 'CHANNEL';
 
-CREATE UNIQUE INDEX "config_settings_template_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_settings_template_uidx"
     ON "config_settings" ("key", "workflow_template_id")
     WHERE "scope" = 'WORKFLOW_TEMPLATE';
 
 -- ── Config permissions: one grantee, tenant-level scopes only ────────────────
 -- A grant names exactly one grantee: a specific user, or every holder of a role.
-ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_grantee_check" CHECK (
+ALTER TABLE "config_permissions" ADD CONSTRAINT IF NOT EXISTS "config_permissions_grantee_check" CHECK (
     ("user_id" IS NOT NULL AND "role" IS NULL)
  OR ("user_id" IS NULL AND "role" IS NOT NULL)
 );
@@ -203,34 +203,34 @@ ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_grantee_chec
 -- covers everything beneath it. `ConfigScope` also permits CHANNEL and
 -- WORKFLOW_TEMPLATE, so a row carrying either fails every branch and is
 -- rejected.
-ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_scope_keys_check" CHECK (
+ALTER TABLE "config_permissions" ADD CONSTRAINT IF NOT EXISTS "config_permissions_scope_keys_check" CHECK (
     ("scope" = 'GLOBAL'       AND "team_id" IS NULL AND "org_id" IS NULL)
  OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
  OR ("scope" = 'TEAM'         AND "team_id" IS NOT NULL AND "org_id" IS NULL)
 );
 
 -- One grant per (pattern, grantee, scope instance) so re-granting is idempotent.
-CREATE UNIQUE INDEX "config_permissions_user_global_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_permissions_user_global_uidx"
     ON "config_permissions" ("key_pattern", "user_id")
     WHERE "scope" = 'GLOBAL' AND "user_id" IS NOT NULL;
 
-CREATE UNIQUE INDEX "config_permissions_role_global_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_permissions_role_global_uidx"
     ON "config_permissions" ("key_pattern", "role")
     WHERE "scope" = 'GLOBAL' AND "role" IS NOT NULL;
 
-CREATE UNIQUE INDEX "config_permissions_user_org_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_permissions_user_org_uidx"
     ON "config_permissions" ("key_pattern", "user_id", "org_id")
     WHERE "scope" = 'ORGANIZATION' AND "user_id" IS NOT NULL;
 
-CREATE UNIQUE INDEX "config_permissions_role_org_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_permissions_role_org_uidx"
     ON "config_permissions" ("key_pattern", "role", "org_id")
     WHERE "scope" = 'ORGANIZATION' AND "role" IS NOT NULL;
 
-CREATE UNIQUE INDEX "config_permissions_user_team_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_permissions_user_team_uidx"
     ON "config_permissions" ("key_pattern", "user_id", "team_id")
     WHERE "scope" = 'TEAM' AND "user_id" IS NOT NULL;
 
-CREATE UNIQUE INDEX "config_permissions_role_team_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "config_permissions_role_team_uidx"
     ON "config_permissions" ("key_pattern", "role", "team_id")
     WHERE "scope" = 'TEAM' AND "role" IS NOT NULL;
 
@@ -279,31 +279,31 @@ ALTER TABLE "connections"
 -- Resolved edges: one per (from, to, kind, source). Suggestions carry a null
 -- to_repo_id and Postgres treats NULLs as distinct, so a plain unique would let
 -- duplicate suggestions through — scope real-edge uniqueness with a partial index.
-CREATE UNIQUE INDEX "repo_dependencies_resolved_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "repo_dependencies_resolved_uidx"
   ON "repo_dependencies" ("from_repo_id", "to_repo_id", "kind", "source")
   WHERE "to_repo_id" IS NOT NULL;
 
 -- Unresolved suggestions: one per (from, to_ref, kind, source).
-CREATE UNIQUE INDEX "repo_dependencies_suggestion_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "repo_dependencies_suggestion_uidx"
   ON "repo_dependencies" ("from_repo_id", "to_ref", "kind", "source")
   WHERE "to_repo_id" IS NULL;
 
 -- A row points at a repo or names an unresolved ref, never neither.
 ALTER TABLE "repo_dependencies"
-  ADD CONSTRAINT "repo_dependencies_target_shape_check"
+  ADD CONSTRAINT IF NOT EXISTS "repo_dependencies_target_shape_check"
   CHECK ("to_repo_id" IS NOT NULL OR "to_ref" IS NOT NULL);
 
 -- No self-edges (holds trivially when to_repo_id is null).
 ALTER TABLE "repo_dependencies"
-  ADD CONSTRAINT "repo_dependencies_no_self_edge_check"
+  ADD CONSTRAINT IF NOT EXISTS "repo_dependencies_no_self_edge_check"
   CHECK ("to_repo_id" IS NULL OR "from_repo_id" <> "to_repo_id");
 
 -- Status / source enums kept as TEXT with a CHECK, per the enum→string house style.
 ALTER TABLE "repo_dependencies"
-  ADD CONSTRAINT "repo_dependencies_status_check"
+  ADD CONSTRAINT IF NOT EXISTS "repo_dependencies_status_check"
   CHECK ("status" IN ('active', 'proposed', 'dismissed', 'unresolved'));
 ALTER TABLE "repo_dependencies"
-  ADD CONSTRAINT "repo_dependencies_source_check"
+  ADD CONSTRAINT IF NOT EXISTS "repo_dependencies_source_check"
   CHECK ("source" IN ('manual', 'manifest', 'git_signal', 'inferred'));
 
 -- ── Seeds ────────────────────────────────────────────────────────────────────
