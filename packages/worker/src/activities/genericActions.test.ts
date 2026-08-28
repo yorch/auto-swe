@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendNotionBlocks, createNotionPage, readNotionPage } from '../connectors/notion.js';
+import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 import { readSource, runTool, writeOutcome } from './genericActions.js';
 
 vi.mock('@auto-swe/shared', async (importOriginal) => {
@@ -22,15 +23,20 @@ vi.mock('../connectors/notion.js', () => ({
   readNotionPage: vi.fn(),
 }));
 
+vi.mock('../connectors/zendesk.js', () => ({
+  fetchZendeskTicket: vi.fn(),
+  postZendeskComment: vi.fn(),
+}));
+
 const { prisma } = await import('@auto-swe/shared/db');
 
-function makeConnection(type: string, options?: { token?: boolean }) {
+function makeConnection(type: string, options?: { config?: unknown; token?: boolean }) {
   return {
     apiKeyAuthTag: options?.token ? Buffer.from('tag') : null,
     apiKeyCiphertext: options?.token ? Buffer.from('cipher') : null,
     apiKeyNonce: options?.token ? Buffer.from('nonce') : null,
     apiKeyVersion: 1,
-    config: { baseUrl: 'https://example.com' },
+    config: options?.config ?? { baseUrl: 'https://example.com' },
     isActive: true,
     type,
   };
@@ -155,10 +161,13 @@ describe('writeOutcome', () => {
 });
 
 describe('runTool', () => {
-  it('returns a placeholder for a zendesk connection', async () => {
+  it('fetches a zendesk ticket via fetchTicket tool', async () => {
     (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeConnection('zendesk')
+      makeConnection('zendesk', { config: { email: 'a@b.com', subdomain: 'x' }, token: true })
     );
+    (fetchZendeskTicket as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ticket: { description: 'Help', id: 42, status: 'open', subject: 'Problem' },
+    });
 
     const result = await runTool({
       connectionId: 'conn-3',
@@ -167,6 +176,75 @@ describe('runTool', () => {
     });
     expect(result.ok).toBe(true);
     expect(result.connectionType).toBe('zendesk');
-    expect(result.placeholder).toBe(true);
+    expect(result.output).toEqual({
+      ticket: { description: 'Help', id: 42, status: 'open', subject: 'Problem' },
+    });
+  });
+
+  it('posts a zendesk comment via postComment tool', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('zendesk', { config: { email: 'a@b.com', subdomain: 'x' }, token: true })
+    );
+    (postZendeskComment as ReturnType<typeof vi.fn>).mockResolvedValue({
+      comment: { body: 'reply', public: false },
+      ticketId: '42',
+    });
+
+    const result = await runTool({
+      connectionId: 'conn-3',
+      inputs: { body: 'reply', public: false, ticketId: '42' },
+      tool: 'postComment',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.connectionType).toBe('zendesk');
+    expect(result.output).toEqual({ comment: { body: 'reply', public: false }, ticketId: '42' });
+  });
+
+  it('throws for unsupported zendesk tool', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('zendesk', { config: { email: 'a@b.com', subdomain: 'x' }, token: true })
+    );
+
+    await expect(
+      runTool({ connectionId: 'conn-3', inputs: {}, tool: 'deleteTicket' })
+    ).rejects.toThrow('Unsupported Zendesk tool: deleteTicket');
+  });
+});
+
+describe('readSource', () => {
+  it('fetches a zendesk ticket', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('zendesk', { config: { email: 'a@b.com', subdomain: 'x' }, token: true })
+    );
+    (fetchZendeskTicket as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ticket: { description: 'Help', id: 42, status: 'open', subject: 'Problem' },
+    });
+
+    const result = await readSource({ connectionId: 'conn-3', query: { ticketId: '42' } });
+    expect(result.ok).toBe(true);
+    expect(result.connectionType).toBe('zendesk');
+    expect(result.data).toEqual({
+      ticket: { description: 'Help', id: 42, status: 'open', subject: 'Problem' },
+    });
+  });
+});
+
+describe('writeOutcome', () => {
+  it('posts a zendesk comment', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('zendesk', { config: { email: 'a@b.com', subdomain: 'x' }, token: true })
+    );
+    (postZendeskComment as ReturnType<typeof vi.fn>).mockResolvedValue({
+      comment: { body: 'reply', public: false },
+      ticketId: '42',
+    });
+
+    const result = await writeOutcome({
+      connectionId: 'conn-3',
+      data: { body: 'reply', ticketId: '42' },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.connectionType).toBe('zendesk');
+    expect(result.reference).toBe('42');
   });
 });

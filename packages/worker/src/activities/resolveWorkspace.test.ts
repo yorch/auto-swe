@@ -19,8 +19,13 @@ vi.mock('../connectors/notion.js', () => ({
   readNotionPage: vi.fn(),
 }));
 
+vi.mock('../connectors/zendesk.js', () => ({
+  fetchZendeskTicket: vi.fn(),
+}));
+
 const { prisma } = await import('@auto-swe/shared/db');
 const { readNotionPage } = await import('../connectors/notion.js');
+const { fetchZendeskTicket } = await import('../connectors/zendesk.js');
 
 describe('resolveWorkspace', () => {
   beforeEach(() => {
@@ -70,6 +75,62 @@ describe('resolveWorkspace', () => {
     await expect(
       resolveWorkspace({ connectionId: 'conn-1', workspaceProvider: 'git_repo' })
     ).rejects.toThrow('missing owner/name');
+  });
+
+  it('resolves a record workspace from a zendesk connection', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      config: { email: 'a@b.com', recordId: '42', subdomain: 'x' },
+      isActive: true,
+      name: 'Support Zendesk',
+      type: 'zendesk',
+    });
+
+    const result = await resolveWorkspace({
+      connectionId: 'conn-3',
+      workspaceProvider: 'record',
+    });
+
+    expect(result).toEqual({
+      connectionId: 'conn-3',
+      provider: 'record',
+      recordId: '42',
+      recordType: undefined,
+      workspaceName: 'Support Zendesk',
+    });
+  });
+
+  it('validates the zendesk ticket when a token is present', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      apiKeyAuthTag: Buffer.from('tag'),
+      apiKeyCiphertext: Buffer.from('cipher'),
+      apiKeyNonce: Buffer.from('nonce'),
+      apiKeyVersion: 1,
+      config: { email: 'a@b.com', subdomain: 'x' },
+      isActive: true,
+      name: 'Support Zendesk',
+      type: 'zendesk',
+    });
+    (fetchZendeskTicket as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ticket: { description: 'Help', id: 42, status: 'open', subject: 'Problem' },
+    });
+
+    const result = await resolveWorkspace({
+      connectionId: 'conn-3',
+      payload: { ticketId: '42' },
+      workspaceProvider: 'record',
+    });
+
+    expect(result).toEqual({
+      connectionId: 'conn-3',
+      provider: 'record',
+      recordId: '42',
+      recordType: undefined,
+      workspaceName: 'Support Zendesk',
+    });
+    expect(fetchZendeskTicket).toHaveBeenCalledWith(
+      { apiToken: 'test-token', config: { email: 'a@b.com', subdomain: 'x' } },
+      '42'
+    );
   });
 
   it('resolves a document workspace from a notion connection', async () => {
