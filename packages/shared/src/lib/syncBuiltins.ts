@@ -3,6 +3,7 @@ import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatter
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import {
+  BRAND_REVIEWER_PROMPT,
   CHANNEL_ASSISTANT_PROMPT,
   CI_FIX_SYSTEM_PROMPT,
   CONTENT_WRITER_PROMPT,
@@ -427,6 +428,17 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Content Writer',
     systemPrompt: CONTENT_WRITER_PROMPT,
+  },
+  {
+    // Content/Comms pack (Phase 2): checks drafts against brand voice, tone, and clarity.
+    // Resolved on demand by the generic `agent` node, so it is not in
+    // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description:
+      'Reviews a draft for brand voice, clarity, and accessibility, returning a concise revision.',
+    key: 'brandReviewer',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
+    name: 'Brand Reviewer',
+    systemPrompt: BRAND_REVIEWER_PROMPT,
   },
   {
     // Support/Ops pack (Phase 2): drafts responses to support tickets.

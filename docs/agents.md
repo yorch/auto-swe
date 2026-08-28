@@ -9,7 +9,7 @@
 Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
 `AnySkillRole = string`. New agents are added as data, not code.
 
-`syncBuiltins` seeds 26 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
+`syncBuiltins` seeds 27 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
 are seed content for the flagship software-engineering use case, not a fixed roster. An agent a team
 adds resolves through exactly the same cascade as `implementer`, and nothing in the engine privileges
 the seeded set — `assertConfigReady` gates boot on what the deployment has *installed*, not on the
@@ -18,7 +18,7 @@ catalog (§2).
 They split by how they bind a model: an agent carries either its own `modelSpec`, or an
 `inheritsModelFrom` pointer that `resolveAgent` chases to a parent.
 
-### Model-backed agents (15)
+### Model-backed agents (16)
 
 Each has a GLOBAL `Agent` row with its own `modelSpec`. Model, prompt, skills, and tools are edited
 — and overridden at CHANNEL / TEAM / ORGANIZATION / WORKFLOW_TEMPLATE scope — through the Agent
@@ -38,6 +38,7 @@ library at `/admin/agents/library`.
 | `workflowExplainer` | NL workflow explanation | `anthropic/claude-sonnet-4-6` |
 | `repoDependencyInferrer` | `inferRepoDependencies` — proposes repo dependency edges for human confirmation | `anthropic/claude-haiku-4-5-20251001` |
 | `contentWriter` | Generic document-workflow drafting (e.g. Notion) | `anthropic/claude-sonnet-4-6` |
+| `brandReviewer` | Content/Comms pack — brand-voice and clarity review | `anthropic/claude-sonnet-4-6` |
 | `supportResponder` | Support/Ops ticket replies | `anthropic/claude-sonnet-4-6` |
 | `productAnalyst` | Product pack — problem analysis | `anthropic/claude-sonnet-4-6` |
 | `prdWriter` | Product pack — PRD drafting | `anthropic/claude-sonnet-4-6` |
