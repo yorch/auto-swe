@@ -1,4 +1,5 @@
 import type { InputSchema } from '../../lib/inputSchema.js';
+import type { WorkspaceProviderType } from '../../lib/workspaceProviders.js';
 import { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
 import type { WorkflowSpec } from '../spec.js';
 import { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
@@ -25,8 +26,10 @@ export interface BuiltinTemplate {
   spec: WorkflowSpec;
   /** Marks the global default used when a team has no team-scoped template. */
   isDefault?: boolean;
-  /** P3 declarative run-input contract; null = accept any payload. */
+  /** Declarative run-input contract; null = accept any payload. */
   inputSchema?: InputSchema;
+  /** Workspace provider this template expects; defaults to git_repo for legacy SWE templates. */
+  workspaceProvider?: WorkspaceProviderType;
 }
 
 /**

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
+import { WorkspaceProviderTypeSchema } from '@auto-swe/shared/lib/workspaceProviders';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
 import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import {
@@ -233,6 +234,7 @@ const CreateTemplateBody = z.object({
   name: z.string().min(1).max(120),
   spec: z.unknown(),
   teamId: z.string().uuid().nullable().optional(),
+  workspaceProvider: WorkspaceProviderTypeSchema.nullable().optional(),
 });
 
 const UpdateTemplateBody = z.object({
@@ -243,6 +245,7 @@ const UpdateTemplateBody = z.object({
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
+  workspaceProvider: WorkspaceProviderTypeSchema.nullable().optional(),
 });
 
 const CreateVersionBody = z.object({ spec: z.unknown() });
@@ -272,6 +275,7 @@ async function createTemplateWithInitialVersion(
     authorUserId: string;
     shellNodes: ShellNodeWithId[];
     egressAllowlist: string[];
+    workspaceProvider: string | null;
   }
 ): Promise<TemplateWithIncludes> {
   return prisma.$transaction(async (tx) => {
@@ -283,6 +287,7 @@ async function createTemplateWithInitialVersion(
         status: args.status,
         teamId: args.teamId,
         versions: { create: { createdBy: args.authorUserId, spec: args.specJson, version: 1 } },
+        workspaceProvider: args.workspaceProvider,
       },
       include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
     });
@@ -432,6 +437,7 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     updatedAt: tpl.updatedAt,
     versionCount: tpl._count.versions,
     webhookToken: tpl.webhookToken ?? null,
+    workspaceProvider: tpl.workspaceProvider ?? null,
   };
 }
 
@@ -552,6 +558,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     name: z.string().min(1).max(120).optional(),
     prompt: z.string().min(1).max(8000),
     teamId: z.string().uuid().nullable().optional(),
+    workspaceProvider: WorkspaceProviderTypeSchema.nullable().optional(),
   });
   app.post(
     '/generate',
@@ -646,6 +653,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           specJson: parsed as object,
           status: 'DRAFT',
           teamId: teamId ?? null,
+          workspaceProvider: request.body.workspaceProvider ?? null,
         });
         const warnings = [
           ...(await validateSpecRefs(fastify.prisma, parsedSpec)),
@@ -767,7 +775,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { name, description, teamId, spec } = request.body;
+      const { name, description, teamId, spec, workspaceProvider } = request.body;
 
       let parsed: unknown;
       try {
@@ -821,6 +829,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           specJson: parsed as object,
           status: 'ACTIVE',
           teamId: teamId ?? null,
+          workspaceProvider: workspaceProvider ?? null,
         });
         // Non-fatal: surface unresolved agent/mcp refs as warnings (never blocks save).
         const warnings = [

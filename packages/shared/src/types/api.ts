@@ -1,4 +1,5 @@
 import type { InputSchema } from '../lib/inputSchema.js';
+import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
 
 export interface ApiResponse<T> {
@@ -231,6 +232,7 @@ export interface WorkflowTemplateSummary {
   webhookToken: string | null;
   versionCount: number;
   inputSchema?: InputSchema | null;
+  workspaceProvider?: WorkspaceProviderType | null;
   team: TeamRef | null;
   lastRun: {
     id: string;
@@ -264,6 +266,7 @@ export interface CreateWorkflowTemplateBody {
   description?: string;
   teamId?: string | null;
   spec: unknown;
+  workspaceProvider?: WorkspaceProviderType | null;
 }
 
 export interface UpdateWorkflowTemplateBody {
@@ -274,6 +277,7 @@ export interface UpdateWorkflowTemplateBody {
   experimentVersion?: number | null;
   experimentSplit?: number | null;
   inputSchema?: InputSchema | null;
+  workspaceProvider?: WorkspaceProviderType | null;
 }
 
 export interface WorkflowTemplateAnalytics {

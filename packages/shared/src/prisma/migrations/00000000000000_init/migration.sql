@@ -662,6 +662,7 @@ CREATE TABLE "workflow_templates" (
     "name" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
     "input_schema" JSONB,
+    "workspace_provider" TEXT,
     "origin" TEXT,
     "status" "WorkflowTemplateStatus" NOT NULL DEFAULT 'DRAFT',
     "is_default" BOOLEAN NOT NULL DEFAULT false,

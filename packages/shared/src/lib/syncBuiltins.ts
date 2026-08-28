@@ -588,6 +588,7 @@ async function syncTemplates(prisma: PrismaClient): Promise<void> {
             isDefault: tmpl.isDefault ?? false,
             origin: SWE_ORIGIN,
             status: 'ACTIVE',
+            workspaceProvider: tmpl.workspaceProvider ?? 'git_repo',
           },
           where: { id: existing.id },
         })
@@ -601,6 +602,7 @@ async function syncTemplates(prisma: PrismaClient): Promise<void> {
             origin: SWE_ORIGIN,
             status: 'ACTIVE',
             teamId: null,
+            workspaceProvider: tmpl.workspaceProvider ?? 'git_repo',
           },
         });
     await prisma.workflowTemplateVersion.upsert({
