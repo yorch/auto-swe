@@ -175,7 +175,7 @@ export async function inferRepoDependencies(
     where: { id: input.repoId },
   });
 
-  if (!connection || connection.type !== 'git_repo' || !connection.isActive || !connection.team) {
+  if (connection?.type !== 'git_repo' || !connection.isActive || !connection.team) {
     return empty;
   }
   const orgId = connection.team.orgId;

@@ -142,8 +142,7 @@ export async function detectRepoDependencies(
   // Skip gracefully: not found, not a git repo, deactivated, or missing the
   // git identity a non-git-repo row could otherwise have (defensive).
   if (
-    !connection ||
-    connection.type !== 'git_repo' ||
+    connection?.type !== 'git_repo' ||
     !connection.isActive ||
     !connection.organizationName ||
     !connection.repoName

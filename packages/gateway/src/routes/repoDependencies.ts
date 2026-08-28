@@ -194,7 +194,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const repo = await loadRepo(fastify.prisma, request.params.id);
-      if (!repo || repo.type !== 'git_repo') {
+      if (repo?.type !== 'git_repo') {
         return reply.status(404).send({
           error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
         });
@@ -234,7 +234,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const repo = await loadRepo(fastify.prisma, request.params.id);
-      if (!repo || repo.type !== 'git_repo') {
+      if (repo?.type !== 'git_repo') {
         return reply.status(404).send({
           error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
         });
@@ -322,7 +322,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         loadRepo(fastify.prisma, request.params.id),
         loadRepo(fastify.prisma, toRepoId),
       ]);
-      if (!from || from.type !== 'git_repo' || !to || to.type !== 'git_repo') {
+      if (from?.type !== 'git_repo' || !to || to.type !== 'git_repo') {
         return reply.status(404).send({
           error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
         });
