@@ -4,12 +4,15 @@ export interface SlackConnectionLike {
   apiToken: string;
 }
 
+const SLACK_TIMEOUT_MS = 30_000;
+
 async function slackFetch<T>(
   connection: SlackConnectionLike,
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
   const url = `https://slack.com/api${path}`;
+  const timeoutSignal = AbortSignal.timeout(SLACK_TIMEOUT_MS);
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -17,6 +20,7 @@ async function slackFetch<T>(
       'Content-Type': 'application/json',
       ...(init.headers ?? {}),
     },
+    signal: init.signal ? AbortSignal.any([timeoutSignal, init.signal]) : timeoutSignal,
   });
 
   if (!response.ok) {

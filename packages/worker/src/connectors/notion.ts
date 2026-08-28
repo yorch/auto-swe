@@ -2,6 +2,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 
 const NOTION_API_BASE = 'https://api.notion.com/v1';
 const NOTION_VERSION = '2022-06-28';
+const NOTION_TIMEOUT_MS = 30_000;
 
 /**
  * Minimal Notion block representation used by the connector. Teams can pass
@@ -42,12 +43,14 @@ async function notionFetch<T>(
   init: RequestInit = {}
 ): Promise<T> {
   const url = `${NOTION_API_BASE}${path}`;
+  const timeoutSignal = AbortSignal.timeout(NOTION_TIMEOUT_MS);
   const response = await fetch(url, {
     ...init,
     headers: {
       ...notionHeaders(connection.apiToken),
       ...(init.headers ?? {}),
     },
+    signal: init.signal ? AbortSignal.any([timeoutSignal, init.signal]) : timeoutSignal,
   });
 
   if (!response.ok) {

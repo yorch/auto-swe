@@ -23,7 +23,7 @@ import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
 import type { Tool } from '@mastra/core/tools';
 import { MCPClient } from '@mastra/mcp';
-import type { AgentTracer } from '../lib/agentTracer.js';
+import { redactString, type AgentTracer } from '../lib/agentTracer.js';
 import { getErrorMessage } from '../lib/errors.js';
 
 /**
@@ -134,7 +134,11 @@ function wrapMcpTool(
   tool.execute = async (...args: Parameters<NonNullable<typeof originalExecute>>) => {
     const input = args[0];
     // Audit line, same spirit as the bash tool's `[bash:audit]` log.
-    console.log(`[mcp:audit] server=${serverUrl} tool=${toolName} args=${safeJson(input)}`);
+    // Redact likely secrets before they reach stdout/logs; the AgentTracer will
+    // redact again before persisting the trace row.
+    console.log(
+      `[mcp:audit] server=${serverUrl} tool=${toolName} args=${redactString(safeJson(input))}`
+    );
     const start = Date.now();
     try {
       const result = await withTimeout(

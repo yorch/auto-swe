@@ -1,5 +1,7 @@
 import { ApplicationFailure } from '@temporalio/activity';
 
+const ZENDESK_TIMEOUT_MS = 30_000;
+
 export interface ZendeskConnectionLike {
   apiToken: string;
   config: { email?: string | null; subdomain?: string | null };
@@ -27,6 +29,7 @@ async function zendeskFetch<T>(
   init: RequestInit = {}
 ): Promise<T> {
   const url = `${zendeskBaseUrl(connection)}${path}`;
+  const timeoutSignal = AbortSignal.timeout(ZENDESK_TIMEOUT_MS);
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -34,6 +37,7 @@ async function zendeskFetch<T>(
       'Content-Type': 'application/json',
       ...(init.headers ?? {}),
     },
+    signal: init.signal ? AbortSignal.any([timeoutSignal, init.signal]) : timeoutSignal,
   });
 
   if (!response.ok) {

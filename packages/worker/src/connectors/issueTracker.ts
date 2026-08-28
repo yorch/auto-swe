@@ -1,6 +1,8 @@
 import type { IssueTrackerConnectionConfig } from '@auto-swe/shared';
 import { ApplicationFailure } from '@temporalio/activity';
 
+const ISSUE_TRACKER_TIMEOUT_MS = 30_000;
+
 export interface IssueTrackerConnectionLike {
   apiToken: string;
   config: IssueTrackerConnectionConfig;
@@ -55,6 +57,7 @@ async function linearFetch<T>(
       'Content-Type': 'application/json',
     },
     method: 'POST',
+    signal: AbortSignal.timeout(ISSUE_TRACKER_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -90,6 +93,7 @@ async function jiraFetch<T>(
   const baseUrl = requireBaseUrl(connection.config);
   const email = requireEmail(connection.config);
   const url = `${baseUrl}${path}`;
+  const timeoutSignal = AbortSignal.timeout(ISSUE_TRACKER_TIMEOUT_MS);
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -97,6 +101,7 @@ async function jiraFetch<T>(
       'Content-Type': 'application/json',
       ...(init.headers ?? {}),
     },
+    signal: init.signal ? AbortSignal.any([timeoutSignal, init.signal]) : timeoutSignal,
   });
 
   if (!response.ok) {

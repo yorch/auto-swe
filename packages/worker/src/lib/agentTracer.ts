@@ -5,6 +5,56 @@ import { prisma } from '@auto-swe/shared/db';
 // payloads while keeping individual rows manageable.
 const MAX_JSON_CHARS = 32_000;
 
+/** Keys that commonly carry credentials or session material. */
+const SENSITIVE_KEYS = new Set([
+  'access_token',
+  'api_key',
+  'api-key',
+  'apikey',
+  'authorization',
+  'client_secret',
+  'cookie',
+  'password',
+  'private_key',
+  'refresh_token',
+  'secret',
+  'token',
+  'x-api-key',
+]);
+
+export function redactString(s: string): string {
+  // URLs with embedded credentials: https://user:pass@host/…
+  let out = s.replace(/(\/\/)[^/:@]+:[^/@]+@/g, '$1***:***@');
+  // Authorization headers / bearer tokens in common formats.
+  out = out.replace(/(Authorization\s*[:=]\s*(?:Bearer|Basic|Token)\s+)[^\s\r\n]+/gi, '$1***');
+  // Loose hex/base64 API-key-looking values following common key names.
+  out = out.replace(
+    /((?:api[_-]?key|apikey|token|secret|access[_-]?token)\s*[:=]\s*)[^\s\r\n'"]+/gi,
+    '$1***'
+  );
+  return out;
+}
+
+function redactJsonValues(obj: unknown): unknown {
+  if (typeof obj === 'string') {
+    return redactString(obj);
+  }
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(redactJsonValues);
+  }
+  return Object.fromEntries(
+    Object.entries(obj as Record<string, unknown>).map(([k, v]) => {
+      if (SENSITIVE_KEYS.has(k.toLowerCase())) {
+        return [k, typeof v === 'string' ? '***' : '[REDACTED]'];
+      }
+      return [k, redactJsonValues(v)];
+    })
+  );
+}
+
 function truncateStr(s: string, max = MAX_JSON_CHARS): string {
   if (s.length <= max) {
     return s;
@@ -12,19 +62,20 @@ function truncateStr(s: string, max = MAX_JSON_CHARS): string {
   return `${s.slice(0, max)}\n…[truncated ${s.length - max} chars]`;
 }
 
-/** Truncate string values inside a plain object one level deep. */
-function truncateJsonValues(obj: unknown): unknown {
-  if (typeof obj === 'string') {
-    return truncateStr(obj);
+/** Redact likely secrets, then truncate string values for persistence. */
+function sanitizeJsonValues(obj: unknown): unknown {
+  const redacted = redactJsonValues(obj);
+  if (typeof redacted === 'string') {
+    return truncateStr(redacted);
   }
-  if (obj === null || typeof obj !== 'object') {
-    return obj;
+  if (redacted === null || typeof redacted !== 'object') {
+    return redacted;
   }
-  if (Array.isArray(obj)) {
-    return obj.map(truncateJsonValues);
+  if (Array.isArray(redacted)) {
+    return redacted.map(sanitizeJsonValues);
   }
   return Object.fromEntries(
-    Object.entries(obj as Record<string, unknown>).map(([k, v]) => [k, truncateJsonValues(v)])
+    Object.entries(redacted as Record<string, unknown>).map(([k, v]) => [k, sanitizeJsonValues(v)])
   );
 }
 
@@ -78,8 +129,8 @@ export class AgentTracer {
     this.records.push({
       durationMs: opts.durationMs,
       error: opts.error,
-      inputJson: truncateJsonValues(opts.inputJson),
-      outputJson: opts.outputJson !== undefined ? truncateJsonValues(opts.outputJson) : undefined,
+      inputJson: sanitizeJsonValues(opts.inputJson),
+      outputJson: opts.outputJson !== undefined ? sanitizeJsonValues(opts.outputJson) : undefined,
       seq: this.seq++,
       toolName: opts.toolName,
       type: 'tool_call',
@@ -106,10 +157,10 @@ export class AgentTracer {
       costUsd: opts.costUsd,
       durationMs: opts.durationMs,
       error: opts.error,
-      inputJson: opts.inputJson !== undefined ? truncateJsonValues(opts.inputJson) : undefined,
+      inputJson: opts.inputJson !== undefined ? sanitizeJsonValues(opts.inputJson) : undefined,
       inputTokens: opts.inputTokens,
       model: opts.model,
-      outputJson: opts.outputJson !== undefined ? truncateJsonValues(opts.outputJson) : undefined,
+      outputJson: opts.outputJson !== undefined ? sanitizeJsonValues(opts.outputJson) : undefined,
       outputTokens: opts.outputTokens,
       seq: this.seq++,
       toolName: opts.role,
@@ -128,8 +179,8 @@ export class AgentTracer {
     this.records.push({
       durationMs: opts.durationMs ?? 0,
       error: opts.error,
-      inputJson: opts.inputJson !== undefined ? truncateJsonValues(opts.inputJson) : undefined,
-      outputJson: opts.outputJson !== undefined ? truncateJsonValues(opts.outputJson) : undefined,
+      inputJson: opts.inputJson !== undefined ? sanitizeJsonValues(opts.inputJson) : undefined,
+      outputJson: opts.outputJson !== undefined ? sanitizeJsonValues(opts.outputJson) : undefined,
       seq: this.seq++,
       toolName: opts.name,
       type: 'activity_event',

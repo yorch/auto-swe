@@ -6,7 +6,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
-import type { AgentTracer } from '../lib/agentTracer.js';
+import { redactString, type AgentTracer } from '../lib/agentTracer.js';
 import {
   loadAgentSkills,
   loadAgentToolConfig,
@@ -224,7 +224,9 @@ export async function createImplementerAgent(
   const bash = createTool({
     description: 'Execute a shell command in the workspace (e.g., run tests, install deps)',
     execute: async ({ command }) => {
-      console.log(`[bash:audit] container=${workspace.containerId} cmd=${JSON.stringify(command)}`);
+      // Redact likely tokens/secrets before they reach stdout/logs.
+      const auditCommand = redactString(command);
+      console.log(`[bash:audit] container=${workspace.containerId} cmd=${JSON.stringify(auditCommand)}`);
       const start = Date.now();
 
       const blocked = await scanShellCommand(command);
@@ -232,7 +234,7 @@ export async function createImplementerAgent(
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           error: 'blocked by shell command scanner',
-          inputJson: { command },
+          inputJson: { command: auditCommand },
           outputJson: { output: blocked },
           toolName: 'bash',
         });
@@ -240,21 +242,26 @@ export async function createImplementerAgent(
       }
 
       try {
-        const result = { output: await workspace.exec(command) };
+        const { exitCode, stderr, stdout } = await workspace.execCapture(command, {
+          timeoutMs: 600_000,
+        });
+        const output = `Command finished (exit code ${exitCode}):\n${stdout}\n${stderr}`.trim();
+        const error = exitCode === 0 ? undefined : `exit code ${exitCode}`;
         tracer?.addToolCall({
           durationMs: Date.now() - start,
-          inputJson: { command },
-          outputJson: result,
+          error,
+          inputJson: { command: auditCommand },
+          outputJson: { output },
           toolName: 'bash',
         });
-        return result;
+        return { output };
       } catch (err: unknown) {
-        const e = err as { status?: number; stdout?: string; stderr?: string };
-        const output = `Command failed (exit code ${e.status}):\n${e.stdout ?? ''}\n${e.stderr ?? getErrorMessage(err)}`;
+        const error = getErrorMessage(err);
+        const output = `Command failed: ${error}`;
         tracer?.addToolCall({
           durationMs: Date.now() - start,
-          error: `exit code ${e.status ?? 'unknown'}`,
-          inputJson: { command },
+          error,
+          inputJson: { command: auditCommand },
           outputJson: { output },
           toolName: 'bash',
         });
