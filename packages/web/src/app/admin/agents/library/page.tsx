@@ -92,7 +92,7 @@ export default function AgentLibraryPage() {
     setWarnings([]);
     try {
       const res = await createAgent.mutateAsync(
-        cleanAgentPayload({ ...createForm }) as unknown as CreateAgentBody
+        cleanAgentPayload({ ...createForm }) as CreateAgentBody
       );
       setWarnings(res.scanWarnings ?? []);
       setCreateOpen(false);
@@ -121,7 +121,7 @@ export default function AgentLibraryPage() {
             modelSpec: editing.modelSpec ?? '',
             name: editing.name,
             systemPrompt: editing.systemPrompt ?? '',
-          }) as unknown as UpdateAgentBody),
+          }) as UpdateAgentBody),
           credentialId: editing.credentialId ?? null,
           mcpConnectionId: editing.mcpConnectionId ?? null,
           skillRefs: skillRefsPayload,

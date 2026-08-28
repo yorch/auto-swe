@@ -85,9 +85,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   async function submitCreate() {
     setError(null);
     try {
-      await createAgent.mutateAsync(
-        cleanAgentPayload({ ...form }) as unknown as CreateTeamAgentBody
-      );
+      await createAgent.mutateAsync(cleanAgentPayload({ ...form }) as CreateTeamAgentBody);
       setCreateOpen(false);
       setForm(EMPTY);
     } catch (e) {
@@ -113,7 +111,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
             modelSpec: editing.modelSpec ?? '',
             name: editing.name,
             systemPrompt: editing.systemPrompt ?? '',
-          }) as unknown as UpdateAgentBody),
+          }) as UpdateAgentBody),
           mcpConnectionId: editing.mcpConnectionId ?? null,
           skillRefs: skillRefsPayload,
           toolKeys: editing.toolKeys,

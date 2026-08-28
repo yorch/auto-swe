@@ -19,8 +19,10 @@ export const ALL_TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash', 
 
 /** Drops empty-string and undefined entries so an untouched optional field is
  *  omitted from the request body rather than sent as `''`. */
-export function cleanAgentPayload(o: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v !== undefined));
+export function cleanAgentPayload<T extends Record<string, unknown>>(o: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(o).filter(([, v]) => v !== '' && v !== undefined)
+  ) as Partial<T>;
 }
 
 export function SkillRefEditor({
