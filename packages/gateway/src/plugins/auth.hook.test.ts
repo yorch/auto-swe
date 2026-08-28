@@ -299,7 +299,7 @@ describe('requireAuth — requiredTeamRole', () => {
     const findUnique = vi.fn().mockResolvedValue({ role: 'LEAD' });
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { id: 'team-1' },
+      params: { id: '00000000-0000-0000-0000-000000000001' },
       prisma: { teamMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });
@@ -308,7 +308,9 @@ describe('requireAuth — requiredTeamRole', () => {
 
     expect(reply.statusCode).toBeUndefined();
     expect(findUnique).toHaveBeenCalledWith({
-      where: { userId_teamId: { teamId: 'team-1', userId: 'user-1' } },
+      where: {
+        userId_teamId: { teamId: '00000000-0000-0000-0000-000000000001', userId: 'user-1' },
+      },
     });
     expect(request.teamRole).toBe('LEAD');
   });
@@ -317,7 +319,7 @@ describe('requireAuth — requiredTeamRole', () => {
     const findUnique = vi.fn().mockResolvedValue({ role: 'ENGINEER' });
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { id: 'team-1' },
+      params: { id: '00000000-0000-0000-0000-000000000001' },
       prisma: { teamMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });
@@ -331,7 +333,7 @@ describe('requireAuth — requiredTeamRole', () => {
     const findUnique = vi.fn().mockResolvedValue(null);
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { id: 'team-1' },
+      params: { id: '00000000-0000-0000-0000-000000000001' },
       prisma: { teamMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });
@@ -345,7 +347,7 @@ describe('requireAuth — requiredTeamRole', () => {
     const findUnique = vi.fn().mockResolvedValue({ role: 'ADMIN' });
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { teamId: 'team-2' },
+      params: { teamId: '00000000-0000-0000-0000-000000000002' },
       prisma: { teamMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });
@@ -357,7 +359,9 @@ describe('requireAuth — requiredTeamRole', () => {
 
     expect(reply.statusCode).toBeUndefined();
     expect(findUnique).toHaveBeenCalledWith({
-      where: { userId_teamId: { teamId: 'team-2', userId: 'user-1' } },
+      where: {
+        userId_teamId: { teamId: '00000000-0000-0000-0000-000000000002', userId: 'user-1' },
+      },
     });
   });
 });
@@ -398,7 +402,7 @@ describe('requireAuth — requiredOrgRole', () => {
     const findUnique = vi.fn().mockResolvedValue({ role: 'ORG_ADMIN' });
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { orgId: 'org-1' },
+      params: { orgId: '00000000-0000-0000-0000-000000000011' },
       prisma: { organizationMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });
@@ -412,7 +416,7 @@ describe('requireAuth — requiredOrgRole', () => {
     const findUnique = vi.fn().mockResolvedValue({ role: 'ORG_MEMBER' });
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { orgId: 'org-1' },
+      params: { orgId: '00000000-0000-0000-0000-000000000011' },
       prisma: { organizationMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });
@@ -426,7 +430,7 @@ describe('requireAuth — requiredOrgRole', () => {
     const findUnique = vi.fn().mockResolvedValue({ role: 'SOMETHING_WEIRD' });
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { orgId: 'org-1' },
+      params: { orgId: '00000000-0000-0000-0000-000000000011' },
       prisma: { organizationMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });
@@ -440,7 +444,7 @@ describe('requireAuth — requiredOrgRole', () => {
     const findUnique = vi.fn().mockResolvedValue(null);
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { orgId: 'org-1' },
+      params: { orgId: '00000000-0000-0000-0000-000000000011' },
       prisma: { organizationMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });
@@ -454,7 +458,7 @@ describe('requireAuth — requiredOrgRole', () => {
     const findUnique = vi.fn().mockResolvedValue({ role: 'ORG_ADMIN' });
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { organization: 'org-9' },
+      params: { organization: '00000000-0000-0000-0000-000000000019' },
       prisma: { organizationMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });
@@ -466,7 +470,7 @@ describe('requireAuth — requiredOrgRole', () => {
 
     expect(reply.statusCode).toBeUndefined();
     expect(findUnique).toHaveBeenCalledWith({
-      where: { userId_orgId: { orgId: 'org-9', userId: 'user-1' } },
+      where: { userId_orgId: { orgId: '00000000-0000-0000-0000-000000000019', userId: 'user-1' } },
     });
   });
 });
@@ -478,7 +482,7 @@ describe('requireAuth — requiredRole is checked before team/org checks', () =>
     const findUnique = vi.fn();
     const request = makeRequest({
       authorization: 'Bearer jwt',
-      params: { id: 'team-1' },
+      params: { id: '00000000-0000-0000-0000-000000000001' },
       prisma: { teamMembership: { findUnique } },
       verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
     });

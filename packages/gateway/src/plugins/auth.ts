@@ -404,9 +404,14 @@ export function requireAuth(options: RBACOptions = {}) {
       }
 
       const teamId = (request.params as Record<string, string>)?.[options.teamIdParam ?? 'id'];
-      if (!teamId || !UUID_RE.test(teamId)) {
-        // requiredTeamRole was set but the param is absent or malformed. Returning
-        // 400 here avoids a Prisma P2023/P2025 when onRequest runs before validation.
+      if (!teamId) {
+        // The route promised a team ID param but did not declare one. This is a
+        // server misconfiguration, not a client error, so it stays a 500.
+        return reply.status(500).send({
+          error: { code: 'SERVER_ERROR', message: 'Team ID route parameter missing' },
+        });
+      }
+      if (!UUID_RE.test(teamId)) {
         return reply.status(400).send({
           error: { code: 'INVALID_ID', message: 'Team ID must be a valid UUID' },
         });
@@ -437,9 +442,14 @@ export function requireAuth(options: RBACOptions = {}) {
       }
 
       const orgId = (request.params as Record<string, string>)?.[options.orgIdParam ?? 'orgId'];
-      if (!orgId || !UUID_RE.test(orgId)) {
-        // requiredOrgRole was set but the param is absent or malformed. Returning 400
-        // here avoids a Prisma P2023/P2025 when onRequest runs before validation.
+      if (!orgId) {
+        // The route promised an org ID param but did not declare one. This is a
+        // server misconfiguration, not a client error, so it stays a 500.
+        return reply.status(500).send({
+          error: { code: 'SERVER_ERROR', message: 'Organization ID route parameter missing' },
+        });
+      }
+      if (!UUID_RE.test(orgId)) {
         return reply.status(400).send({
           error: { code: 'INVALID_ID', message: 'Organization ID must be a valid UUID' },
         });

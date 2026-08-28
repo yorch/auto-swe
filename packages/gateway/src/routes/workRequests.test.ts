@@ -68,6 +68,7 @@ describe('POST /api/v1/work-requests', () => {
 
     // Mock prisma and temporal on the app instance (cast through unknown to bypass strict typing)
     app.decorate('prisma', {
+      $queryRaw: async () => [],
       // The launch path writes its ledger rows in one transaction; the array
       // form just resolves the queued promises in order.
       $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
