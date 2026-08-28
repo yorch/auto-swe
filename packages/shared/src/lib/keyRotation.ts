@@ -67,6 +67,15 @@ function fieldsFor(prefix: string): EncryptedField {
  * moment the old key is dropped.
  */
 export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
+  // Connection stores an encrypted API token without a last-four column.
+  connection: [
+    {
+      authTag: 'apiKeyAuthTag',
+      ciphertext: 'apiKeyCiphertext',
+      keyVersion: 'apiKeyVersion',
+      nonce: 'apiKeyNonce',
+    },
+  ],
   figmaConfig: [fieldsFor('apiToken')],
   gitHubConfig: [
     fieldsFor('token'),
