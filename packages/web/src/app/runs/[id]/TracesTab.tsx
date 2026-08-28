@@ -350,7 +350,9 @@ function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
 
 // ── OtelLink ──────────────────────────────────────────────────────────────────
 
-const GRAFANA_URL = process.env.NEXT_PUBLIC_GRAFANA_URL ?? '';
+import { grafanaUrl } from '@/lib/env';
+
+const GRAFANA_URL = grafanaUrl();
 
 function OtelLink({ trace }: { trace: AgentTraceRecord }) {
   if (trace.type !== 'llm_response' || !trace.otelTraceId) {
