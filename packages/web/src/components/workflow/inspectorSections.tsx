@@ -129,7 +129,7 @@ export function FanOutSection({
   node: Extract<SpecNode, { type: 'fanOut' }>;
   onChange: (next: SpecNode) => void;
 }) {
-  const overFrom = 'from' in node.over ? (node.over as { from: string }).from : '';
+  const overFrom = node.over && 'from' in node.over ? (node.over as { from: string }).from : '';
   const [exportsText, setExportsText] = useState<string>(() => (node.exports ?? []).join('\n'));
   // Re-seed only when the node's own exports actually change. Keyed on the
   // serialized value rather than the array identity, so a parent re-render that

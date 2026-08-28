@@ -1,6 +1,21 @@
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@temporalio/activity', () => ({
+  ApplicationFailure: {
+    nonRetryable: (message: string, type?: string, details?: unknown) => {
+      const err = new Error(message);
+      (err as Error & { type?: string; details?: unknown }).type = type;
+      (err as Error & { type?: string; details?: unknown }).details = details;
+      return err;
+    },
+  },
+  Context: {
+    current: () => ({ info: { attempt: 1 } }),
+  },
+  log: { warn: vi.fn() },
+}));
+
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveIssueTrackerConfig: async () => null,
   resolveSlackBotTokenForSlackChannel: async () => null,

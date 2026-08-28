@@ -38,7 +38,7 @@ import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
 import { makeDefaultNodeFor } from './makeDefaultNode';
 import { NodeInspector } from './NodeInspector';
-import { NodePalette, PALETTE_MIME, type PaletteDragKind } from './NodePalette';
+import { NodePalette, PALETTE_MIME, type PaletteDragKind, PaletteDragSchema } from './NodePalette';
 import { deleteNodeFromSpec, renameNodeInSpec, setSpecEdge } from './specEdits';
 import { specToFlow } from './specToFlow';
 
@@ -150,12 +150,11 @@ function EditorInner({
       if (!payloadRaw) {
         return;
       }
-      let payload: PaletteDragKind;
-      try {
-        payload = JSON.parse(payloadRaw) as PaletteDragKind;
-      } catch {
+      const parsed = PaletteDragSchema.safeParse(JSON.parse(payloadRaw));
+      if (!parsed.success) {
         return;
       }
+      const payload: PaletteDragKind = parsed.data;
 
       const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
 

@@ -88,5 +88,7 @@ export function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
         title: '',
         type: 'humanReview',
       } as SpecNode;
+    default:
+      throw new Error(`Unknown node type: ${payload.nodeType}`);
   }
 }

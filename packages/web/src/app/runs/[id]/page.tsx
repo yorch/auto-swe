@@ -6,6 +6,7 @@ import type {
   WorkflowStepRecord,
 } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
+import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
@@ -874,7 +875,16 @@ export default function RunDetailPage({ params }: PageProps) {
     return { byNodeId };
   }, [run?.steps]);
 
-  const spec = run ? (run.specSnapshot as WorkflowSpec) : null;
+  const spec = useMemo<WorkflowSpec | null>(() => {
+    if (!run?.specSnapshot) {
+      return null;
+    }
+    try {
+      return parseWorkflowSpec(run.specSnapshot);
+    } catch {
+      return null;
+    }
+  }, [run?.specSnapshot]);
 
   const activityToNodeId = useMemo<Record<string, string>>(() => {
     if (!spec?.nodes) {
@@ -882,9 +892,8 @@ export default function RunDetailPage({ params }: PageProps) {
     }
     const map: Record<string, string> = {};
     for (const [nodeId, node] of Object.entries(spec.nodes)) {
-      const n = node as { type: string; step?: string };
-      if (n.type === 'step' && n.step) {
-        map[n.step] = nodeId;
+      if (node.type === 'step' && node.step) {
+        map[node.step] = nodeId;
       }
     }
     return map;

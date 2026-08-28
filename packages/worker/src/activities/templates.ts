@@ -8,6 +8,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import { Context } from '@temporalio/activity';
 import {
   notifySlackRunComplete,
   notifySlackStepFailure,
@@ -215,8 +216,10 @@ export async function recordWorkflowStep(input: RecordStepInput): Promise<void> 
   // Phase-7: best-effort Slack notification on terminal FAILED records. The
   // interpreter records the FAILED row only after onFail retry budget is
   // exhausted (or for warn-mode it records and continues), so we won't spam
-  // the channel on every mid-retry attempt.
-  if (input.status === 'FAILED') {
+  // the channel on every mid-retry attempt. Guard on the Temporal activity
+  // attempt as well, so a notification that succeeds but is followed by an
+  // activity failure is not re-sent on retry.
+  if (input.status === 'FAILED' && Context.current().info.attempt === 1) {
     await notifySlackStepFailure({
       attempt: input.attempt ?? 1,
       error: input.error,

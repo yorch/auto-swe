@@ -10,11 +10,15 @@
 
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { useMemo, useState } from 'react';
+import { z } from 'zod';
 import { cn } from '@/lib/utils';
 
-export type PaletteDragKind =
-  | { kind: 'primitive'; nodeType: SpecNode['type'] }
-  | { kind: 'step'; step: string };
+export const PaletteDragSchema = z.union([
+  z.object({ kind: z.literal('primitive'), nodeType: z.string() }),
+  z.object({ kind: z.literal('step'), step: z.string() }),
+]);
+
+export type PaletteDragKind = z.infer<typeof PaletteDragSchema>;
 
 export const PALETTE_MIME = 'application/x-auto-swe-palette';
 

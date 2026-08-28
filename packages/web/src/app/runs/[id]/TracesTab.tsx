@@ -339,7 +339,9 @@ function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
   const tokenLabel = hasTokens
     ? `↑${(trace.inputTokens ?? 0).toLocaleString()} ↓${(trace.outputTokens ?? 0).toLocaleString()}`
     : null;
-  const costLabel = hasCost ? `$${(trace.costUsd as number).toFixed(4)}` : null;
+  const costLabel = hasCost
+    ? `$${(typeof trace.costUsd === 'number' ? trace.costUsd : Number(trace.costUsd ?? 0)).toFixed(4)}`
+    : null;
 
   return (
     <span
