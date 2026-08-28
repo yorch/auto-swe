@@ -194,6 +194,20 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(prisma.agentTrace.findMany).toHaveBeenCalled();
   });
 
+  it('implies includeTraces=true when only fullTraces=true is set', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    mockTraces(prisma);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}?fullTraces=true`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.traces).toHaveLength(1);
+    expect(prisma.agentTrace.findMany).toHaveBeenCalled();
+  });
+
   // Regression: ?fullTraces=false used to coerce to `true` and return
   // untrimmed trace payloads (a forensic-only escape hatch) by default.
   it('trims large trace fields when fullTraces=false is explicit', async () => {

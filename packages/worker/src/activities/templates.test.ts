@@ -1,4 +1,5 @@
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import { Context } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@temporalio/activity', () => ({
@@ -11,7 +12,7 @@ vi.mock('@temporalio/activity', () => ({
     },
   },
   Context: {
-    current: () => ({ info: { attempt: 1 } }),
+    current: vi.fn(() => ({ info: { attempt: 1 } })),
   },
   log: { warn: vi.fn() },
 }));
@@ -105,7 +106,7 @@ vi.mock('@auto-swe/shared/db', () => {
 
 import { prisma } from '@auto-swe/shared/db';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
-import { notifySlackRunComplete } from '../lib/slackNotify.js';
+import { notifySlackRunComplete, notifySlackStepFailure } from '../lib/slackNotify.js';
 import {
   createWorkflowRun,
   finalizeWorkflowRun,
@@ -211,6 +212,18 @@ describe('createWorkflowRun', () => {
     expect('spec' in out && out.spec.schemaVersion).toBe(SPEC_SCHEMA_VERSION);
   });
 
+  it('returns the persisted spec snapshot, not the freshly parsed template spec', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    const storedSpec = { ...validSpec, name: 'stored-version' };
+    upsertRun.mockResolvedValue({ id: 'run-1', specSnapshot: storedSpec } as never);
+    const out = await createWorkflowRun({
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-1',
+    });
+    expect('spec' in out && out.spec.name).toBe('stored-version');
+  });
+
   it('upserts by workflowId so a retried Temporal execution does not duplicate', async () => {
     findVersion.mockResolvedValue({ spec: validSpec } as never);
     await createWorkflowRun({
@@ -255,6 +268,17 @@ describe('recordWorkflowStep', () => {
         where: { runId_nodeId_attempt: { attempt: 1, nodeId: 'a', runId: 'r1' } },
       })
     );
+  });
+
+  it('does not re-notify Slack on Temporal activity retries of a failed step', async () => {
+    const notify = vi.mocked(notifySlackStepFailure);
+    notify.mockClear();
+    upsertStep.mockResolvedValue({} as never);
+    const context = vi.mocked(Context);
+    context.current.mockReturnValue({ info: { attempt: 2 } } as never);
+    await recordWorkflowStep({ nodeId: 'a', runId: 'r1', status: 'FAILED' });
+    expect(notify).not.toHaveBeenCalled();
+    context.current.mockReturnValue({ info: { attempt: 1 } } as never);
   });
 });
 

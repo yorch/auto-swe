@@ -149,6 +149,25 @@ describe('PATCH /admin/autonomy-policies/:id', () => {
     expect(res.statusCode).toBe(404);
     await app.close();
   });
+
+  it('returns 400 for a patch that leaves an invalid scope', async () => {
+    const app = await buildApp();
+    prisma.autonomyPolicy.findUnique.mockResolvedValueOnce({
+      ...EXISTING,
+      isDefault: true,
+      teamId: null,
+    });
+    const res = await app.inject({
+      body: { isDefault: false },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/autonomy-policies/${EXISTING.id}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('INVALID_SCOPE');
+    expect(prisma.autonomyPolicy.update).not.toHaveBeenCalled();
+    await app.close();
+  });
 });
 
 describe('DELETE /admin/autonomy-policies/:id', () => {
