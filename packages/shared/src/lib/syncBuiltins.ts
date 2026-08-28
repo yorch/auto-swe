@@ -12,6 +12,7 @@ import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
   GATE_FIX_SYSTEM_PROMPT,
   IMPLEMENTER_SYSTEM_PROMPT,
+  ISSUE_DRAFTER_PROMPT,
   LESSON_CONSOLIDATOR_PROMPT,
   MEMORY_SUMMARIZER_PROMPT,
   MERGE_CONFLICT_RESOLVER_PROMPT,
@@ -428,6 +429,16 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Content Writer',
     systemPrompt: CONTENT_WRITER_PROMPT,
+  },
+  {
+    // Product pack (Phase 2): drafts issue descriptions from a brief for issue trackers.
+    // Resolved on demand by the generic `agent` node, so it is not in
+    // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description: 'Drafts a focused issue description from a brief for Linear or Jira.',
+    key: 'issueDrafter',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
+    name: 'Issue Drafter',
+    systemPrompt: ISSUE_DRAFTER_PROMPT,
   },
   {
     // Content/Comms pack (Phase 2): checks drafts against brand voice, tone, and clarity.

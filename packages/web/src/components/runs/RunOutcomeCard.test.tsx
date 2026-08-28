@@ -61,4 +61,20 @@ describe('RunOutcomeCard', () => {
     expect(link.getAttribute('href')).toBe('https://linear.app/issue/TEAM-1');
     expect(screen.getByText(/Something is broken/)).toBeTruthy();
   });
+
+  it('renders an issue tracker outcome for the from-brief template', () => {
+    render(
+      <RunOutcomeCard
+        result={{
+          description: 'Drafted from brief',
+          issueUrl: 'https://x.atlassian.net/browse/PROJ-9',
+          title: 'Refactor auth',
+        }}
+        templateName="create-issue-from-brief"
+      />
+    );
+    const link = screen.getByRole('link');
+    expect(link.getAttribute('href')).toBe('https://x.atlassian.net/browse/PROJ-9');
+    expect(screen.getByText(/Drafted from brief/)).toBeTruthy();
+  });
 });

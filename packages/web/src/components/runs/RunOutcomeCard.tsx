@@ -113,7 +113,7 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
     );
   }
 
-  if (name === 'create-issue') {
+  if (name === 'create-issue' || name === 'create-issue-from-brief') {
     const issueUrl = typeof result.issueUrl === 'string' ? result.issueUrl : undefined;
     const title = typeof result.title === 'string' ? result.title : undefined;
     return (

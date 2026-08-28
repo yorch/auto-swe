@@ -6,6 +6,7 @@ import { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
 import { CODE_AND_CI_SPEC } from './codeAndCi.js';
 import { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 import { CREATE_ISSUE_SPEC } from './createIssue.js';
+import { CREATE_ISSUE_FROM_BRIEF_SPEC } from './createIssueFromBrief.js';
 import { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
 import { FOUR_EYES_SPEC } from './fourEyes.js';
 import { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
@@ -246,6 +247,23 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     spec: CREATE_ISSUE_SPEC,
     workspaceProvider: 'issue_tracker',
   },
+  {
+    description: CREATE_ISSUE_FROM_BRIEF_SPEC.description,
+    inputSchema: {
+      properties: {
+        brief: { type: 'string' },
+        connectionId: { format: 'uuid', type: 'string' },
+        instructions: { type: 'string' },
+        projectKey: { type: 'string' },
+        title: { type: 'string' },
+      },
+      required: ['connectionId', 'title', 'brief'],
+      type: 'object',
+    },
+    name: CREATE_ISSUE_FROM_BRIEF_SPEC.name,
+    spec: CREATE_ISSUE_FROM_BRIEF_SPEC,
+    workspaceProvider: 'issue_tracker',
+  },
 
   // ── PRD workflow ─────────────────────────────────────────────────────────
   {
@@ -271,6 +289,7 @@ export { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
 export { CODE_AND_CI_SPEC } from './codeAndCi.js';
 export { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 export { CREATE_ISSUE_SPEC } from './createIssue.js';
+export { CREATE_ISSUE_FROM_BRIEF_SPEC } from './createIssueFromBrief.js';
 export { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
 export { FOUR_EYES_SPEC } from './fourEyes.js';
 export { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
