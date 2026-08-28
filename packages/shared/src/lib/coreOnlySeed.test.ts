@@ -15,6 +15,7 @@ import { seedCoreDefaults, seedSweStarter } from './syncBuiltins.js';
  */
 
 interface Captured {
+  policyCreates: number;
   scannerCreates: Array<{ type: string; origin: string | null }>;
   scannerUpdates: Array<{ origin: string | null }>;
   skillCreates: number;
@@ -29,6 +30,7 @@ function makeMockPrisma() {
   const cap: Captured = {
     agentCreates: 0,
     agentOrigins: [],
+    policyCreates: 0,
     scannerCreates: [],
     scannerUpdates: [],
     skillCreates: 0,
@@ -37,6 +39,14 @@ function makeMockPrisma() {
     templateOrigins: [],
   };
   const prisma = {
+    autonomyPolicy: {
+      create: vi.fn(async () => {
+        cap.policyCreates += 1;
+        return { id: 'policy-id' };
+      }),
+      findFirst: vi.fn(async () => null),
+      update: vi.fn(async () => ({ id: 'policy-id' })),
+    },
     agent: {
       create: vi.fn(async ({ data }: { data: { origin: string | null } }) => {
         cap.agentCreates += 1;
@@ -116,6 +126,9 @@ describe('seedCoreDefaults — core-only deployment', () => {
     expect(cap.skillCreates).toBe(0);
     expect(cap.templateCreates).toBe(0);
     expect(cap.agentCreates).toBe(0);
+
+    // Core governance default is seeded once.
+    expect(cap.policyCreates).toBe(1);
   });
 });
 

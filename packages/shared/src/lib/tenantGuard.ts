@@ -24,6 +24,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 /** Models with a `teamId` and/or `orgId` column. Derived from schema.prisma. */
 export const TENANT_SCOPED_MODELS = new Set([
   'Agent',
+  'AutonomyPolicy',
   'ConfigPermission',
   'ConfigSetting',
   'Connection',

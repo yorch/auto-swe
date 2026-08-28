@@ -171,6 +171,7 @@ export async function syncBuiltins(prisma: PrismaClient): Promise<void> {
 /** Core platform defaults (origin=null). Always seeded. */
 export async function seedCoreDefaults(prisma: PrismaClient): Promise<void> {
   await syncScannerPatterns(prisma, 'core');
+  await syncAutonomyPolicies(prisma);
 }
 
 /** SWE starter content (origin='swe-starter'). Opt-out-able in the future. */
@@ -676,6 +677,43 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
  *   - 'swe'  → patterns tagged 'swe-starter' (CODE_SECURITY)
  * Provenance is derived from the pattern type via `scannerPatternOrigin`.
  */
+const DEFAULT_AUTONOMY_POLICY = {
+  description:
+    'Default platform policy: internal reads/writes are autonomous; public or mass communication requires human approval.',
+  name: 'Platform default',
+  rules: {
+    external_communication: { action: 'require_approval' },
+    internal_read: { action: 'auto' },
+    internal_write: { action: 'auto' },
+    mass_communication: { action: 'require_approval', approverCount: 2 },
+  },
+};
+
+async function syncAutonomyPolicies(prisma: PrismaClient): Promise<void> {
+  const existing = await prisma.autonomyPolicy.findFirst({
+    where: { isDefault: true, teamId: null, templateId: null },
+  });
+  if (existing) {
+    await prisma.autonomyPolicy.update({
+      data: {
+        description: DEFAULT_AUTONOMY_POLICY.description,
+        name: DEFAULT_AUTONOMY_POLICY.name,
+        rules: DEFAULT_AUTONOMY_POLICY.rules as object,
+      },
+      where: { id: existing.id },
+    });
+  } else {
+    await prisma.autonomyPolicy.create({
+      data: {
+        description: DEFAULT_AUTONOMY_POLICY.description,
+        isDefault: true,
+        name: DEFAULT_AUTONOMY_POLICY.name,
+        rules: DEFAULT_AUTONOMY_POLICY.rules as object,
+      },
+    });
+  }
+}
+
 async function syncScannerPatterns(prisma: PrismaClient, group: 'core' | 'swe'): Promise<void> {
   const wantOrigin = group === 'core' ? null : SWE_ORIGIN;
   for (const p of BUILTIN_SCANNER_PATTERNS) {

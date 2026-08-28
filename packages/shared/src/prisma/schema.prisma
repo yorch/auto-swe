@@ -423,6 +423,7 @@ model Team {
   configSettings      ConfigSetting[]
   configPermissions   ConfigPermission[]
   memoryItems         MemoryItem[]             @relation("TeamMemoryItems")
+  autonomyPolicies    AutonomyPolicy[]
 
   @@index([orgId])
   @@map("teams")
@@ -1298,9 +1299,33 @@ model WorkflowTemplate {
   agents                Agent[]
   scheduledWorkRequests ScheduledWorkRequest[]
   configSettings        ConfigSetting[]
+  autonomyPolicies      AutonomyPolicy[]
 
   @@unique([teamId, name])
   @@map("workflow_templates")
+}
+
+/// Governance policy that decides whether an outcome can be published
+/// automatically or must pause for human approval. Resolution cascade:
+/// template-specific policy → team default policy → seeded global default.
+model AutonomyPolicy {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId      String?   @map("team_id") @db.Uuid
+  team        Team?     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  templateId  String?   @map("template_id") @db.Uuid
+  template    WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  isDefault   Boolean   @default(false) @map("is_default")
+  /// JSON rules keyed by risk class, e.g.
+  /// { "external_communication": { "action": "require_approval" } }
+  rules       Json
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([teamId])
+  @@index([templateId])
+  @@map("autonomy_policies")
 }
 
 /// Immutable snapshot of a template at version N. `spec` is validated against
