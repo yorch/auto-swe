@@ -17,12 +17,15 @@ import { NO_NEW_DEPENDENCIES_SKILL } from './noNewDependencies.js';
 import { OBSERVABILITY_FIRST_SKILL } from './observabilityFirst.js';
 import { PERFORMANCE_IMPACT_ASSESSMENT_SKILL } from './performanceImpactAssessment.js';
 import { PR_DESCRIPTION_QUALITY_SKILL } from './prDescriptionQuality.js';
+import { PRD_READINESS_SKILL } from './prdReadiness.js';
+import { PRODUCT_ACCEPTANCE_CRITERIA_SKILL } from './productAcceptanceCriteria.js';
 import { REVIEW_FOCUS_SECURITY_SKILL } from './reviewFocusSecurity.js';
 import { ROLLBACK_FIRST_PLANNING_SKILL } from './rollbackFirstPlanning.js';
 import { SCOPE_CONSERVATISM_SKILL } from './scopeConservatism.js';
 import { SECURITY_AWARE_IMPLEMENTATION_SKILL } from './securityAwareImplementation.js';
 import { SECURITY_REVIEW_DEPTH_SKILL } from './securityReviewDepth.js';
 import { SHELL_COMMAND_SAFETY_SKILL } from './shellCommandSafety.js';
+import { STORY_DECOMPOSITION_SKILL } from './storyDecomposition.js';
 import { SUBTASK_DECOMPOSITION_SKILL } from './subtaskDecomposition.js';
 import { SUCCESS_CRITERIA_EXTRACTION_SKILL } from './successCriteriaExtraction.js';
 import { SUPPORT_ESCALATION_POLICY_SKILL } from './supportEscalationPolicy.js';
@@ -78,6 +81,10 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
   SUPPORT_KB_RETRIEVAL_SKILL,
   SUPPORT_ESCALATION_POLICY_SKILL,
   SUPPORT_RESPONSE_TEMPLATES_SKILL,
+  // Product pack (Phase 2)
+  PRD_READINESS_SKILL,
+  PRODUCT_ACCEPTANCE_CRITERIA_SKILL,
+  STORY_DECOMPOSITION_SKILL,
 ];
 
 export {
@@ -100,12 +107,15 @@ export {
   OBSERVABILITY_FIRST_SKILL,
   PERFORMANCE_IMPACT_ASSESSMENT_SKILL,
   PR_DESCRIPTION_QUALITY_SKILL,
+  PRD_READINESS_SKILL,
+  PRODUCT_ACCEPTANCE_CRITERIA_SKILL,
   REVIEW_FOCUS_SECURITY_SKILL,
   ROLLBACK_FIRST_PLANNING_SKILL,
   SCOPE_CONSERVATISM_SKILL,
   SECURITY_AWARE_IMPLEMENTATION_SKILL,
   SECURITY_REVIEW_DEPTH_SKILL,
   SHELL_COMMAND_SAFETY_SKILL,
+  STORY_DECOMPOSITION_SKILL,
   SUBTASK_DECOMPOSITION_SKILL,
   SUCCESS_CRITERIA_EXTRACTION_SKILL,
   SUPPORT_ESCALATION_POLICY_SKILL,
