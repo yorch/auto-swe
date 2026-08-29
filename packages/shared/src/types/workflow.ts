@@ -1,3 +1,5 @@
+import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
+
 // ── Workflow Types ──
 
 /// Channel assistant (Phase 0): input to the per-mention channel-assistant workflow.
@@ -50,6 +52,8 @@ export interface RunRequest {
    */
   payload?: unknown;
   budgetTier?: BudgetTier;
+  /** Workspace provider this run targets; defaults to git_repo for legacy SWE runs. */
+  workspaceProvider?: WorkspaceProviderType | null;
   // Phase 2+ fields
   contextSnapshotId?: string;
   planOverride?: string;
