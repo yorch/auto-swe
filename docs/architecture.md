@@ -680,11 +680,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   clean either way. Replay also only guards paths a *recorded* history walked, so a new node type
   needs a new fixture; `runnable.replay.test.ts` asserts the fixture list explicitly so losing one
   fails loudly rather than quietly narrowing the guard.
-- **Generic platform abstractions have first-class schema and routing support, but concrete
-  dispatch for non-git workspaces is still scaffolded.** `Connection.type`, `RunRequest`,
-  `MemoryItem.entityType`/`entityId`, `workspaceProvider` on `WorkflowTemplate`, and outcome
-  publishers are typed and registered. The generic trigger endpoint validates the requested
-  connection against the template provider, and `resolveWorkspace`, `readSource`, `writeOutcome`,
-  and `runTool` activities exist for non-SWE providers. They are not yet wired into the default
-  interpreter flow; templates that want to use them must invoke them explicitly as `agent` or
-  custom step nodes until Phase 2 lands generic workspace/outcome bindings.
+- **Generic workspace and outcome dispatch is wired end-to-end, with provider-specific writes
+  idempotent by workflow identity.** `Connection.type`, `RunRequest`, `MemoryItem.entityType`/
+  `entityId`, `workspaceProvider` on `WorkflowTemplate`, and outcome publishers are typed and
+  registered. The generic trigger endpoints propagate the validated `payload` and `connectionId`
+  through `RunInput` and the `RepoWorkRequest` that starts `RunnableWorkflow`, and the interpreter
+  dispatches `resolveWorkspace`, `readSource`, `writeOutcome`, and `runTool` as built-in steps.
+  `writeOutcome` keys its idempotency ledger on the Temporal workflow execution ID so retries do
+  not duplicate external writes. Notion, Zendesk, Slack, and issue-tracker outcomes are concrete;
+  `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
+  activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
