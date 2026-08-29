@@ -25,6 +25,10 @@ import { SECURITY_REVIEW_DEPTH_SKILL } from './securityReviewDepth.js';
 import { SHELL_COMMAND_SAFETY_SKILL } from './shellCommandSafety.js';
 import { SUBTASK_DECOMPOSITION_SKILL } from './subtaskDecomposition.js';
 import { SUCCESS_CRITERIA_EXTRACTION_SKILL } from './successCriteriaExtraction.js';
+import { SUPPORT_ESCALATION_POLICY_SKILL } from './supportEscalationPolicy.js';
+import { SUPPORT_KB_RETRIEVAL_SKILL } from './supportKbRetrieval.js';
+import { SUPPORT_RESPONSE_TEMPLATES_SKILL } from './supportResponseTemplates.js';
+import { SUPPORT_TICKET_TONE_SKILL } from './supportTicketTone.js';
 import { TEST_FIRST_SKILL } from './testFirst.js';
 
 export interface BuiltinSkillDef {
@@ -69,6 +73,11 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
   CONTEXT_AMBIGUITY_RESOLUTION_SKILL,
   // commitToMemory skills
   ACTIONABLE_LESSONS_SKILL,
+  // Support / Ops pack (Phase 2)
+  SUPPORT_TICKET_TONE_SKILL,
+  SUPPORT_KB_RETRIEVAL_SKILL,
+  SUPPORT_ESCALATION_POLICY_SKILL,
+  SUPPORT_RESPONSE_TEMPLATES_SKILL,
 ];
 
 export {
@@ -99,5 +108,9 @@ export {
   SHELL_COMMAND_SAFETY_SKILL,
   SUBTASK_DECOMPOSITION_SKILL,
   SUCCESS_CRITERIA_EXTRACTION_SKILL,
+  SUPPORT_ESCALATION_POLICY_SKILL,
+  SUPPORT_KB_RETRIEVAL_SKILL,
+  SUPPORT_RESPONSE_TEMPLATES_SKILL,
+  SUPPORT_TICKET_TONE_SKILL,
   TEST_FIRST_SKILL,
 };
