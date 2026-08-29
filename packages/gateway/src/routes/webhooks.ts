@@ -740,8 +740,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
             request: {
               budgetTier: 'STANDARD',
+              connectionId,
               description,
               externalTicketId,
+              payload,
               repoId: connectionId,
               requestPayload: JSON.stringify(payload),
               workRequestId,
