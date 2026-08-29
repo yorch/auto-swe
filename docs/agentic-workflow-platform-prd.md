@@ -167,7 +167,7 @@ The engine, orchestration, and governance layers are largely domain-agnostic:
 ### 8.2 What is SWE-biased and must generalize
 
 - **Activity catalog.** Most registered steps (`executeImplementation`, `runLint`, `runTypecheck`, `runTests`, `runBuild`, `runVulnScan`, `createOrUpdatePullRequest`, `fetchCILogs`, `waitForCiByPolling`, `resolveMergeConflict`) assume code repositories and CI pipelines.
-- **Skill catalog.** The built-in skill catalog includes the original 28 engineering prompts (test-first, async safety, migration safety, PR description quality, etc.) plus the Phase 2 support pack, for a current count of 32.
+- **Skill catalog.** The built-in skill catalog includes the original 28 engineering prompts (test-first, async safety, migration safety, PR description quality, etc.) plus the Phase 2 support and product packs, for a current count of 35.
 - **Agent roster.** All 22 seeded agents are SWE roles.
 - **Workspace model.** `executeImplementation` assumes a git clone into a Docker container with build/test tools.
 - **Output model.** The default template terminates with `prNumber` and `prUrl`; there is no generic publisher abstraction.
