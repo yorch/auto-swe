@@ -217,6 +217,20 @@ export async function resolveHitlStep(
     }
 
     if (!resolved) {
+      // The step may have been resolved by a concurrent response before this
+      // transaction committed. Re-read the authoritative status to avoid telling
+      // the caller the step is still pending when it is not.
+      const current = await prisma.workflowHumanStep.findUnique({
+        select: { status: true },
+        where: { id: step.id },
+      });
+      if (current?.status !== 'PENDING') {
+        return {
+          code: 'ALREADY_RESOLVED',
+          message: 'This step has already been resolved',
+          ok: false,
+        };
+      }
       return {
         kind: step.kind,
         ok: true,

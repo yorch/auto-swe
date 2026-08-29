@@ -770,6 +770,7 @@ model User {
   /// Better-auth relations.
   accounts              Account[]
   sessions              Session[]
+  humanApprovals        HumanApproval[]
   humanStepsResolved    WorkflowHumanStep[]
   workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
@@ -1289,6 +1290,7 @@ model WorkflowHumanStep {
   humanApprovals   HumanApproval[]
 
   @@index([runId])
+  @@index([runId, nodeId])
   @@index([status])
   @@map("workflow_human_steps")
 }
@@ -1296,13 +1298,14 @@ model WorkflowHumanStep {
 /// A single human response recorded against a WorkflowHumanStep.
 /// Used to count distinct approvers before the step is finally resolved.
 model HumanApproval {
-  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  stepId     String            @map("step_id") @db.Uuid
-  step       WorkflowHumanStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
-  resolvedBy String            @map("resolved_by") @db.Uuid
-  action     String
-  value      Json?
-  resolvedAt DateTime          @default(now()) @map("resolved_at") @db.Timestamptz
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stepId       String            @map("step_id") @db.Uuid
+  step         WorkflowHumanStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  resolvedBy   String?           @map("resolved_by") @db.Uuid
+  resolvedByUser User?           @relation(fields: [resolvedBy], references: [id], onDelete: SetNull)
+  action       String
+  value        Json?
+  resolvedAt   DateTime          @default(now()) @map("resolved_at") @db.Timestamptz
 
   @@unique([stepId, resolvedBy])
   @@index([stepId])

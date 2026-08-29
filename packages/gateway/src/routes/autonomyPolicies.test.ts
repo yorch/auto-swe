@@ -110,6 +110,7 @@ describe('POST /admin/autonomy-policies', () => {
         name: 'Bad',
         rules: {},
         teamId: '11111111-1111-4111-8111-111111111111',
+        templateId: '22222222-2222-4222-8222-222222222222',
       },
       headers: AUTH,
       method: 'POST',
@@ -118,6 +119,52 @@ describe('POST /admin/autonomy-policies', () => {
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('INVALID_SCOPE');
     expect(prisma.autonomyPolicy.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('creates a team default policy', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: {
+        description: 'Team default',
+        isDefault: true,
+        name: 'Team default',
+        rules: {},
+        teamId: '11111111-1111-4111-8111-111111111111',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/autonomy-policies',
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.payload);
+    expect(body.data.isDefault).toBe(true);
+    expect(body.data.teamId).toBe('11111111-1111-4111-8111-111111111111');
+    expect(body.data.templateId).toBeNull();
+    expect(prisma.autonomyPolicy.create).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('creates a template override policy', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: {
+        description: 'Template override',
+        isDefault: false,
+        name: 'Template override',
+        rules: {},
+        templateId: '22222222-2222-4222-8222-222222222222',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/autonomy-policies',
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.payload);
+    expect(body.data.isDefault).toBe(false);
+    expect(body.data.teamId).toBeNull();
+    expect(body.data.templateId).toBe('22222222-2222-4222-8222-222222222222');
+    expect(prisma.autonomyPolicy.create).toHaveBeenCalledTimes(1);
     await app.close();
   });
 });

@@ -547,7 +547,13 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     const res = await injectInteractive(interactivePayload());
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      data: { action: 'hitl_resolve', ok: true, signalSent: true, status: 'RESOLVED', stepId: STEP_ID },
+      data: {
+        action: 'hitl_resolve',
+        ok: true,
+        signalSent: true,
+        status: 'RESOLVED',
+        stepId: STEP_ID,
+      },
     });
 
     // Atomic PENDING→RESOLVED guard preserved (same core as the inbox route).
@@ -631,7 +637,13 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     const res = await injectInteractive(interactivePayload());
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      data: { action: 'hitl_resolve', ok: true, signalSent: false, status: 'RESOLVED', stepId: STEP_ID },
+      data: {
+        action: 'hitl_resolve',
+        ok: true,
+        signalSent: false,
+        status: 'RESOLVED',
+        stepId: STEP_ID,
+      },
     });
     // Resolve only — no rollback write.
     expect(state.humanStepUpdateCalls).toHaveLength(1);

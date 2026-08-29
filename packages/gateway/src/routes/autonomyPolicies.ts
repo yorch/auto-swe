@@ -43,7 +43,7 @@ function scopeError(): { code: string; message: string } {
   return {
     code: 'INVALID_SCOPE',
     message:
-      'A policy must have exactly one scope: global default (isDefault=true, no team/template), team default (teamId only), or template override (templateId only).',
+      'A policy must have exactly one scope: global default (isDefault=true, no team/template), team default (isDefault=true + teamId), or template override (templateId only).',
   };
 }
 
@@ -58,7 +58,7 @@ function validateScope(body: {
   if (isDefault && !hasTeam && !hasTemplate) {
     return true;
   }
-  if (!isDefault && hasTeam && !hasTemplate) {
+  if (isDefault && hasTeam && !hasTemplate) {
     return true;
   }
   if (!isDefault && !hasTeam && hasTemplate) {
