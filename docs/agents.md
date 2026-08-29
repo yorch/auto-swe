@@ -290,7 +290,7 @@ Skills are an intentionally **global, ADMIN-curated library** — the `Skill` ta
 
 **Table:** `skills` in `packages/shared/src/prisma/schema.prisma`
 
-### 6.2 Built-in Skills (28 total)
+### 6.2 Built-in Skills (32 total)
 
 **File:** `packages/shared/src/skills/index.ts`
 
@@ -324,6 +324,10 @@ Skills are an intentionally **global, ADMIN-curated library** — the `Skill` ta
 | Validate Context | `success-criteria-extraction` | `validateContext` |
 | | `context-ambiguity-resolution` | `validateContext` |
 | Commit to Memory | `actionable-lessons` | `commitToMemory` |
+|| Support / Ops | `support-ticket-tone` | `supportResponder` |
+|| | `support-kb-retrieval` | `supportResponder` |
+|| | `support-escalation-policy` | `supportResponder` |
+|| | `support-response-templates` | `supportResponder` |
 
 ### 6.3 Skill Assignment & Scope Cascade
 
