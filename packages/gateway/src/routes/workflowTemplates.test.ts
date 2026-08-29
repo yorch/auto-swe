@@ -22,6 +22,7 @@ interface FakeTemplate {
   experimentSplit: number | null;
   teamId: string | null;
   team: { id: string; name: string; slug: string } | null;
+  workspaceProvider: string | null;
   createdAt: Date;
   updatedAt: Date;
   versions: Array<{ id: string; version: number; createdAt: Date; createdBy: string | null }>;
@@ -178,6 +179,7 @@ function buildApp(state: {
             teamId: (data.teamId as string | null) ?? null,
             updatedAt: new Date(),
             versions: [],
+            workspaceProvider: (data.workspaceProvider as string | null) ?? null,
           };
           if (data.versions?.create) {
             const versionId = `v-${id}-1`;
@@ -348,6 +350,22 @@ describe('workflow-templates routes', () => {
     const json = res.json();
     expect.soft(json, JSON.stringify(json)).toHaveProperty('error.code');
     expect(json.error?.code).toBe('INVALID_SPEC');
+  });
+
+  it('defaults workspaceProvider to git_repo when omitted on create', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        name: 'default-provider',
+        spec: VALID_SPEC,
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.data.workspaceProvider).toBe('git_repo');
   });
 
   it('creates a template + initial version + promotes to active', async () => {

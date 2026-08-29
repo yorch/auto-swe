@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { validateRunConnection } from '../lib/runConnection.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -855,7 +856,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           specJson: parsed as object,
           status: 'ACTIVE',
           teamId: teamId ?? null,
-          workspaceProvider: workspaceProvider ?? null,
+          workspaceProvider: workspaceProvider ?? 'git_repo',
         });
         // Non-fatal: surface unresolved agent/mcp refs as warnings (never blocks save).
         const warnings = [
@@ -1470,54 +1471,25 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           ? getWorkspaceProviderMetadata(tpl.workspaceProvider)
           : null;
 
-      // Org monthly budget gate (P5): gate on the connection's organization when
-      // one is supplied; otherwise fall back to the template's owning team org.
-      // This prevents a template in org A from spending against org B's cap when
-      // a connection from org B is used.
-      let budgetOrgId = tpl.team?.organization?.id;
-      let budgetCap = tpl.team?.organization?.monthlyBudgetUsdCents;
-
-      if (connectionId) {
-        const connection = await fastify.prisma.connection.findUnique({
-          include: {
-            team: {
-              select: {
-                memberships: { select: { userId: true }, where: { userId: user.sub } },
-                organization: { select: { id: true, monthlyBudgetUsdCents: true } },
-                orgId: true,
-              },
-            },
-          },
-          where: { id: connectionId },
-        });
-        if (!connection?.isActive) {
-          return reply.status(404).send({
-            error: { code: 'CONNECTION_NOT_FOUND', message: 'Connection not found or inactive' },
-          });
-        }
-        if (user.role !== 'ADMIN' && connection.team.memberships.length === 0) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'You do not have access to this connection' },
-          });
-        }
-        if (providerMeta?.connectionTypes?.length && !(providerMeta.connectionTypes as string[]).includes(connection.type)) {
-          return reply.status(400).send({
-            error: {
-              code: 'CONNECTION_TYPE_MISMATCH',
-              message: `Template expects one of ${providerMeta.connectionTypes.join(', ')} connections but got ${connection.type}`,
-            },
-          });
-        }
-        budgetOrgId = connection.team.organization?.id ?? budgetOrgId;
-        budgetCap = connection.team.organization?.monthlyBudgetUsdCents ?? budgetCap;
-      } else if (providerMeta?.connectionTypes?.length) {
-        return reply.status(400).send({
-          error: {
-            code: 'CONNECTION_REQUIRED',
-            message: `Template requires one of ${providerMeta.connectionTypes.join(', ')} connections`,
-          },
-        });
+      // Validate the connection and provider pairing, then resolve the org for
+      // the budget gate. Authenticated callers are allowed any connection they
+      // have team access to; public/webhook callers are scoped to the template's
+      // team because there is no authenticated user.
+      const connectionResult = await validateRunConnection(
+        {
+          connectionId,
+          prisma: fastify.prisma,
+          providerMeta,
+          templateTeamId: tpl.teamId,
+          user,
+        },
+        reply
+      );
+      if (!connectionResult.ok) {
+        return;
       }
+      const budgetOrgId = connectionResult.budgetOrgId ?? tpl.team?.organization?.id;
+      const budgetCap = connectionResult.budgetCap ?? tpl.team?.organization?.monthlyBudgetUsdCents;
 
       if (budgetOrgId && !(await assertOrgBudget(fastify.prisma, budgetOrgId, budgetCap, reply))) {
         return;

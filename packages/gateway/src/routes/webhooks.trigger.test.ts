@@ -23,6 +23,8 @@ interface Harness {
   order: string[];
   runInputs: Array<Record<string, unknown>>;
   activeWorkflows: Array<Record<string, unknown>>;
+  connection: Record<string, unknown> | null;
+  template: Record<string, unknown>;
   startError?: Error;
 }
 
@@ -34,10 +36,24 @@ async function buildHarness(): Promise<Harness> {
   const h: Harness = {
     activeWorkflows: [],
     app: Fastify(),
+    connection: null,
     order: [],
     runInputs: [],
     started: [],
     startInputs: [],
+    template: {
+      activeVersion: 2,
+      id: TEMPLATE_ID,
+      inputSchema: null,
+      status: 'ACTIVE',
+      team: {
+        id: 'team-1',
+        organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+        slug: 'platform',
+      },
+      teamId: 'team-1',
+      workspaceProvider: 'api_only',
+    },
   };
 
   h.app.setValidatorCompiler(validatorCompiler);
@@ -59,6 +75,13 @@ async function buildHarness(): Promise<Harness> {
         return {};
       },
     },
+    connection: {
+      findUnique: async ({ where }: { where: { id: string } }) =>
+        h.connection && where.id === h.connection.id ? h.connection : null,
+    },
+    orgMonthlyUsage: {
+      findUnique: async () => null,
+    },
     runInput: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         h.runInputs.push(data);
@@ -71,20 +94,19 @@ async function buildHarness(): Promise<Harness> {
     },
     workflowTemplate: {
       findUnique: async ({ where }: { where: { webhookToken?: string } }) =>
-        where.webhookToken === TOKEN
-          ? {
-              activeVersion: 2,
-              id: TEMPLATE_ID,
-              inputSchema: null,
-              status: 'ACTIVE',
-              team: { slug: 'platform' },
-            }
-          : null,
+        where.webhookToken === TOKEN ? h.template : null,
     },
   };
-  prismaMock.$transaction = async (ops: Promise<unknown>[]) => {
-    h.order.push('ledger');
-    return Promise.all(ops);
+  prismaMock.$queryRaw = async () => [];
+  prismaMock.$transaction = async (arg: unknown) => {
+    if (Array.isArray(arg)) {
+      h.order.push('ledger');
+      return Promise.all(arg);
+    }
+    if (typeof arg === 'function') {
+      return arg(prismaMock);
+    }
+    return undefined;
   };
   h.app.decorate('prisma', prismaMock as unknown as never);
 
@@ -182,8 +204,31 @@ describe('POST /webhooks/:token', () => {
   });
 
   it('passes the generic payload and connectionId through to the workflow', async () => {
+    const connectionId = '11111111-1111-4111-8111-111111111111';
+    h.template = {
+      ...h.template,
+      team: {
+        id: 'team-1',
+        organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+        slug: 'platform',
+      },
+      teamId: 'team-1',
+      workspaceProvider: 'document',
+    };
+    h.connection = {
+      id: connectionId,
+      isActive: true,
+      team: {
+        id: 'team-1',
+        memberships: [],
+        organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+      },
+      teamId: 'team-1',
+      type: 'notion',
+    };
+
     const payload = {
-      connectionId: 'conn-1',
+      connectionId,
       message: 'hello',
       ticketId: 'WEB-1',
     };
@@ -196,10 +241,108 @@ describe('POST /webhooks/:token', () => {
     expect(res.statusCode).toBe(201);
     expect(h.startInputs).toHaveLength(1);
     const input = h.startInputs[0] as { request: Record<string, unknown> };
-    expect(input.request.connectionId).toBe('conn-1');
-    expect(input.request.repoId).toBe('conn-1');
+    expect(input.request.connectionId).toBe(connectionId);
+    expect(input.request.repoId).toBe(connectionId);
     expect(input.request.externalTicketId).toBe('WEB-1');
     expect(input.request.payload).toEqual(payload);
     expect(input.request.requestPayload).toBe(JSON.stringify(payload));
+  });
+
+  it('rejects an inactive connection', async () => {
+    const connectionId = '11111111-1111-4111-8111-111111111111';
+    h.connection = {
+      id: connectionId,
+      isActive: false,
+      team: { id: 'team-1', memberships: [], organization: { id: 'org-1' } },
+      teamId: 'team-1',
+      type: 'notion',
+    };
+
+    const res = await h.app.inject({
+      method: 'POST',
+      payload: { connectionId },
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+
+    expect(res.statusCode).toBe(404);
+    const body = JSON.parse(res.payload);
+    expect(body.error.code).toBe('CONNECTION_NOT_FOUND');
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('rejects a connection that does not belong to the template team', async () => {
+    const connectionId = '11111111-1111-4111-8111-111111111111';
+    h.connection = {
+      id: connectionId,
+      isActive: true,
+      team: { id: 'team-2', memberships: [], organization: { id: 'org-2' } },
+      teamId: 'team-2',
+      type: 'notion',
+    };
+
+    const res = await h.app.inject({
+      method: 'POST',
+      payload: { connectionId },
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+
+    expect(res.statusCode).toBe(403);
+    const body = JSON.parse(res.payload);
+    expect(body.error.code).toBe('FORBIDDEN');
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('rejects a connection type mismatch for the template provider', async () => {
+    const connectionId = '11111111-1111-4111-8111-111111111111';
+    h.template = { ...h.template, workspaceProvider: 'document' };
+    h.connection = {
+      id: connectionId,
+      isActive: true,
+      team: { id: 'team-1', memberships: [], organization: { id: 'org-1' } },
+      teamId: 'team-1',
+      type: 'git_repo',
+    };
+
+    const res = await h.app.inject({
+      method: 'POST',
+      payload: { connectionId },
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.payload);
+    expect(body.error.code).toBe('CONNECTION_TYPE_MISMATCH');
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('rejects the run when the org is over its monthly budget', async () => {
+    const connectionId = '11111111-1111-4111-8111-111111111111';
+    h.template = { ...h.template, workspaceProvider: 'document' };
+    h.connection = {
+      id: connectionId,
+      isActive: true,
+      team: {
+        id: 'team-1',
+        memberships: [],
+        organization: { id: 'org-1', monthlyBudgetUsdCents: 5000 },
+      },
+      teamId: 'team-1',
+      type: 'notion',
+    };
+    const app = h.app as unknown as {
+      prisma: { orgMonthlyUsage: { findUnique: () => Promise<unknown> } };
+    };
+    app.prisma.orgMonthlyUsage.findUnique = async () => ({ costUsdAccrued: 100 });
+
+    const res = await h.app.inject({
+      method: 'POST',
+      payload: { connectionId },
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+
+    expect(res.statusCode).toBe(402);
+    const body = JSON.parse(res.payload);
+    expect(body.error.code).toBe('ORG_BUDGET_EXCEEDED');
+    expect(h.started).toHaveLength(0);
   });
 });

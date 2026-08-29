@@ -7,11 +7,17 @@ import {
   resolveSlackBotTokenForSlackChannel,
 } from '@auto-swe/shared/lib/systemConfig';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import {
+  getWorkspaceProviderMetadata,
+  isWorkspaceProviderType,
+} from '@auto-swe/shared/lib/workspaceProviders';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { assertOrgBudget } from '../lib/orgAccess.js';
+import { validateRunConnection } from '../lib/runConnection.js';
 import { postSlackMessage } from '../lib/slack.js';
 // The webhook handlers below undo their DB write and answer non-2xx when a
 // signal fails, so the delivery can be sent again — only ever useful for a
@@ -665,7 +671,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { token } = request.params;
       const template = await fastify.prisma.workflowTemplate.findUnique({
-        include: { team: { select: { slug: true } } },
+        include: {
+          team: {
+            include: {
+              organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+            },
+          },
+        },
         where: { webhookToken: token },
       });
       if (!template) {
@@ -710,6 +722,32 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const temporalWorkflowId = idempotencyKey
         ? workflowIdFromIdempotencyKey('wh', shortTplId, idempotencyKey)
         : `wh-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+
+      const providerMeta =
+        template.workspaceProvider && isWorkspaceProviderType(template.workspaceProvider)
+          ? getWorkspaceProviderMetadata(template.workspaceProvider)
+          : null;
+
+      const connectionResult = await validateRunConnection(
+        {
+          connectionId,
+          prisma: fastify.prisma,
+          providerMeta,
+          templateTeamId: template.teamId,
+          user: null,
+        },
+        reply
+      );
+      if (!connectionResult.ok) {
+        return;
+      }
+      const budgetOrgId = connectionResult.budgetOrgId ?? template.team?.organization?.id;
+      const budgetCap =
+        connectionResult.budgetCap ?? template.team?.organization?.monthlyBudgetUsdCents;
+
+      if (budgetOrgId && !(await assertOrgBudget(fastify.prisma, budgetOrgId, budgetCap, reply))) {
+        return;
+      }
 
       // Ledger rows first, workflow second, rolled back if the start fails —
       // see `launchTrackedWorkflow`.

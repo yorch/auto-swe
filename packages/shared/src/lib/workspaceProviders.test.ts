@@ -44,7 +44,9 @@ describe('workspaceProviders', () => {
   it('maps providers to their supported connection types', () => {
     expect(getWorkspaceProviderMetadata('git_repo').connectionTypes).toEqual(['git_repo']);
     expect(getWorkspaceProviderMetadata('document').connectionTypes).toEqual(['notion']);
-    expect(getWorkspaceProviderMetadata('issue_tracker').connectionTypes).toEqual(['issue_tracker']);
+    expect(getWorkspaceProviderMetadata('issue_tracker').connectionTypes).toEqual([
+      'issue_tracker',
+    ]);
     expect(getWorkspaceProviderMetadata('record').connectionTypes).toEqual(['zendesk', 'hubspot']);
     expect(getWorkspaceProviderMetadata('api_only').connectionTypes).toEqual([]);
   });
