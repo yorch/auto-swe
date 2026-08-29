@@ -25,7 +25,14 @@ const ErrorResponseSchema = z.object({
 const StepListResponseSchema = z.object({ data: z.array(z.unknown()) });
 const StepDetailResponseSchema = z.object({ data: z.unknown() });
 const RespondResponseSchema = z.object({
-  data: z.object({ id: z.string().uuid(), signalSent: z.boolean(), status: z.string() }),
+  data: z.object({
+    approvalsRemaining: z.number().int().min(0),
+    currentApprovers: z.number().int().min(0),
+    id: z.string().uuid(),
+    requiredApprovers: z.number().int().min(1),
+    signalSent: z.boolean(),
+    status: z.string(),
+  }),
 });
 
 /**
@@ -57,6 +64,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       const { status } = request.query;
       const steps = await fastify.prisma.workflowHumanStep.findMany({
         include: {
+          _count: { select: { humanApprovals: true } },
           run: {
             select: {
               id: true,
@@ -75,7 +83,9 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       });
       return {
         data: steps.map((s) => ({
+          approvalsRemaining: Math.max(0, s.requiredApprovers - s._count.humanApprovals),
           context: s.context,
+          currentApprovers: s._count.humanApprovals,
           description: s.description,
           fields: s.fields,
           id: s.id,
@@ -83,6 +93,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           nodeId: s.nodeId,
           options: s.options,
           requestedAt: s.requestedAt,
+          requiredApprovers: s.requiredApprovers,
           resolvedAt: s.resolvedAt,
           run: s.run,
           runId: s.runId,
@@ -184,6 +195,8 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const step = await fastify.prisma.workflowHumanStep.findFirst({
         include: {
+          _count: { select: { humanApprovals: true } },
+          humanApprovals: { select: { action: true, resolvedAt: true, resolvedBy: true } },
           run: {
             select: {
               id: true,
@@ -253,7 +266,16 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       // `signalSent: false` means the decision was recorded but the workflow it
       // was meant for no longer exists — a 200 with a caveat, not a failure the
       // caller can retry into success (see lib/hitlResolve.ts).
-      return { data: { id: result.stepId, signalSent: result.signalSent, status: result.status } };
+      return {
+        data: {
+          approvalsRemaining: result.approvalsRemaining,
+          currentApprovers: result.currentApprovers,
+          id: result.stepId,
+          requiredApprovers: result.requiredApprovers,
+          signalSent: result.signalSent,
+          status: result.status,
+        },
+      };
     }
   );
 };

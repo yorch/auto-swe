@@ -21,6 +21,7 @@ interface UpdateManyCall {
 
 function pendingStep(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    _count: { humanApprovals: 0 },
     context: { plan: 'do the thing' },
     description: 'Please approve the plan',
     fields: null,
@@ -29,6 +30,7 @@ function pendingStep(overrides: Record<string, unknown> = {}): Record<string, un
     nodeId: 'approveGate',
     options: null,
     requestedAt: new Date('2026-06-01T00:00:00Z'),
+    requiredApprovers: 1,
     run: {
       id: 'run-1',
       status: 'RUNNING',
@@ -182,7 +184,10 @@ describe('human step routes', () => {
       const res = await respond({ action: 'approve', value: { note: 'lgtm' } });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).data).toEqual({
+        approvalsRemaining: 0,
+        currentApprovers: 1,
         id: STEP_ID,
+        requiredApprovers: 1,
         signalSent: true,
         status: 'RESOLVED',
       });
@@ -241,7 +246,10 @@ describe('human step routes', () => {
       const res = await respond({ action: 'approve' });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).data).toEqual({
+        approvalsRemaining: 0,
+        currentApprovers: 1,
         id: STEP_ID,
+        requiredApprovers: 1,
         signalSent: false,
         status: 'RESOLVED',
       });

@@ -472,6 +472,7 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     return {
       id: STEP_ID,
       kind: 'APPROVAL',
+      requiredApprovers: 1,
       run: { status: 'RUNNING', workflowId: 'eng-acme-repo-JIRA-1' },
       signalName: 'hitl_approveGate',
       status: 'PENDING',
@@ -549,7 +550,10 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     expect(res.json()).toEqual({
       data: {
         action: 'hitl_resolve',
+        approvalsRemaining: 0,
+        currentApprovers: 1,
         ok: true,
+        requiredApprovers: 1,
         signalSent: true,
         status: 'RESOLVED',
         stepId: STEP_ID,
@@ -639,7 +643,10 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     expect(res.json()).toEqual({
       data: {
         action: 'hitl_resolve',
+        approvalsRemaining: 0,
+        currentApprovers: 1,
         ok: true,
+        requiredApprovers: 1,
         signalSent: false,
         status: 'RESOLVED',
         stepId: STEP_ID,

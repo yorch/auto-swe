@@ -63,6 +63,12 @@ export type HitlResolveResult =
        * webhook's `signalSent`.
        */
       signalSent: boolean;
+      /** Total number of distinct approvers required for this step. */
+      requiredApprovers: number;
+      /** Number of distinct approvals already recorded. */
+      currentApprovers: number;
+      /** How many more distinct approvals are still needed. */
+      approvalsRemaining: number;
     }
   | { ok: false; code: HitlResolveErrorCode; message: string };
 
@@ -148,16 +154,16 @@ export async function resolveHitlStep(
   }
 
   const signalPayload = { action, resolvedBy: user.sub, value };
-  const isMultiApprover =
-    step.kind === 'APPROVAL' && step.requiredApprovers > 1 && action === 'approve';
+  const requiredApprovers = step.requiredApprovers;
+  const isMultiApprover = step.kind === 'APPROVAL' && requiredApprovers > 1 && action === 'approve';
+  let multiApproverState: { resolved: boolean; approvalCount: number } | null = null;
 
   if (isMultiApprover) {
     // Multi-approver accumulation: record the approval, count distinct
     // approvers, and only resolve the step when the threshold is reached.
     // The row is locked so concurrent approve calls cannot double-count.
-    let resolved = false;
     try {
-      resolved = await prisma.$transaction(async (tx) => {
+      multiApproverState = await prisma.$transaction(async (tx) => {
         const [locked] = await tx.$queryRaw<
           Array<{ id: string; status: string; requiredApprovers: number }>
         >(
@@ -168,8 +174,8 @@ export async function resolveHitlStep(
             FOR UPDATE
           `
         );
-        if (!locked || locked.status !== 'PENDING') {
-          return false;
+        if (locked?.status !== 'PENDING') {
+          return { approvalCount: 0, resolved: false };
         }
 
         try {
@@ -193,7 +199,7 @@ export async function resolveHitlStep(
           where: { action: 'approve', stepId },
         });
         if (approvalCount < locked.requiredApprovers) {
-          return false;
+          return { approvalCount, resolved: false };
         }
 
         await tx.workflowHumanStep.update({
@@ -205,7 +211,7 @@ export async function resolveHitlStep(
           },
           where: { id: stepId },
         });
-        return true;
+        return { approvalCount, resolved: true };
       });
     } catch (err: unknown) {
       log.error({ err, stepId: step.id }, 'Multi-approver HITL transaction failed');
@@ -216,7 +222,8 @@ export async function resolveHitlStep(
       };
     }
 
-    if (!resolved) {
+    if (!multiApproverState.resolved) {
+      const approvalCount = multiApproverState.approvalCount;
       // The step may have been resolved by a concurrent response before this
       // transaction committed. Re-read the authoritative status to avoid telling
       // the caller the step is still pending when it is not.
@@ -231,9 +238,13 @@ export async function resolveHitlStep(
           ok: false,
         };
       }
+      const currentApprovers = approvalCount;
       return {
+        approvalsRemaining: Math.max(0, requiredApprovers - currentApprovers),
+        currentApprovers,
         kind: step.kind,
         ok: true,
+        requiredApprovers,
         runId: step.run.id,
         signalSent: false,
         status: 'PENDING',
@@ -313,9 +324,13 @@ export async function resolveHitlStep(
     );
   }
 
+  const currentApprovers = isMultiApprover && multiApproverState ? multiApproverState.approvalCount : 1;
   return {
+    approvalsRemaining: 0,
+    currentApprovers,
     kind: step.kind,
     ok: true,
+    requiredApprovers,
     runId: step.run.id,
     signalSent,
     status: 'RESOLVED',

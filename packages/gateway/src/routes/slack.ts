@@ -1234,17 +1234,20 @@ async function handleHitlResolveAction(
     const who = payload.user?.id ? `<@${payload.user.id}>` : 'someone';
     let text: string;
     if (result.status === 'PENDING') {
-      text = `:hourglass: *${result.title}* — your \`${parsed.action}\` was recorded by ${who}. More approvals are needed before the step is resolved.`;
+      text = `:hourglass: *${result.title}* — ${who} recorded \`${parsed.action}\` (${result.currentApprovers}/${result.requiredApprovers}). ${result.approvalsRemaining} more approval${result.approvalsRemaining === 1 ? '' : 's'} needed.`;
     } else if (result.signalSent) {
-      text = `:white_check_mark: *${result.title}* — resolved with \`${parsed.action}\` by ${who}.`;
+      text = `:white_check_mark: *${result.title}* — resolved with \`${parsed.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}).`;
     } else {
-      text = `:white_check_mark: *${result.title}* — recorded as \`${parsed.action}\` by ${who}, but the workflow run had already finished, so nothing was signalled.`;
+      text = `:white_check_mark: *${result.title}* — recorded as \`${parsed.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}), but the workflow run had already finished, so nothing was signalled.`;
     }
     await respondToInteraction(payload, text, { ephemeral: result.status === 'PENDING' });
     return {
       data: {
         action: 'hitl_resolve',
+        approvalsRemaining: result.approvalsRemaining,
+        currentApprovers: result.currentApprovers,
         ok: true,
+        requiredApprovers: result.requiredApprovers,
         signalSent: result.signalSent,
         status: result.status,
         stepId: result.stepId,
