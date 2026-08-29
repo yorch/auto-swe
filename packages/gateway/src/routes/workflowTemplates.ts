@@ -4,6 +4,7 @@ import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputS
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
+  type WorkspaceProviderType,
   WorkspaceProviderTypeSchema,
 } from '@auto-swe/shared/lib/workspaceProviders';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
@@ -1513,6 +1514,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         repoId: connectionId,
         requestPayload: JSON.stringify(request.body),
         workRequestId,
+        workspaceProvider: tpl.workspaceProvider as WorkspaceProviderType | null,
       };
 
       // Ledger rows first, workflow second, rolled back if the start fails —

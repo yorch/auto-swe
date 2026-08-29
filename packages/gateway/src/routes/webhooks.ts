@@ -10,6 +10,7 @@ import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
+  type WorkspaceProviderType,
 } from '@auto-swe/shared/lib/workspaceProviders';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -785,6 +786,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               repoId: connectionId,
               requestPayload: JSON.stringify(payload),
               workRequestId,
+              workspaceProvider: template.workspaceProvider as WorkspaceProviderType | null,
             },
             templateId: template.id,
             templateVersion,
@@ -924,6 +926,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               repoId: defaultRepo.id,
               requestPayload,
               workRequestId,
+              workspaceProvider: defaultTemplate.workspaceProvider as WorkspaceProviderType | null,
             },
             templateId: defaultTemplate.id,
             templateVersion,
