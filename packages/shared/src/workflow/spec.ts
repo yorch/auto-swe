@@ -370,6 +370,7 @@ const ContainerStepNodeSchema = z.object({
  * The Temporal signal name is `hitl_${nodeId}`.
  */
 const HumanApprovalNodeSchema = z.object({
+  approverCount: BindingSchema.optional(),
   contextFrom: z.string().optional(),
   description: z.string().max(2000).optional(),
   onApprove: NodeIdSchema,

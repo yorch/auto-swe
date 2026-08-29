@@ -13,6 +13,8 @@ export interface PublishOutcomeResult {
   decision: 'auto' | 'require_approval';
   policyName: string;
   reason: string;
+  /** Number of distinct human approvers required when decision is 'require_approval'. */
+  approverCount: number;
 }
 
 export type AutonomyAction = 'auto' | 'require_approval';
@@ -55,16 +57,26 @@ export async function publishOutcome(input: PublishOutcomeInput): Promise<Publis
   const rules = coerceRules(policy?.rules);
   const rule = rules[input.action] ?? { action: 'require_approval' };
   const decision = rule.action === 'auto' ? 'auto' : 'require_approval';
+  const approverCount = normalizeApproverCount(rule.approverCount);
   const reason =
     decision === 'auto'
       ? `Policy '${policy?.name ?? 'platform fallback'}' allows auto for '${input.action}'`
       : `Policy '${policy?.name ?? 'platform fallback'}' requires human approval for '${input.action}'`;
 
   return {
+    approverCount,
     decision,
     policyName: policy?.name ?? 'platform fallback',
     reason,
   };
+}
+
+function normalizeApproverCount(raw: unknown): number {
+  const parsed = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return 1;
+  }
+  return parsed;
 }
 
 async function resolveAutonomyPolicy(

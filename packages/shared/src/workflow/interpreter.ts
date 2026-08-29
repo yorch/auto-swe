@@ -38,6 +38,14 @@ const SELF_RECORDING_NODE_TYPES: ReadonlySet<string> = new Set([
   'containerStep',
 ]);
 
+function normalizeApproverCount(raw: unknown): number {
+  const parsed = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return 1;
+  }
+  return parsed;
+}
+
 /**
  * A cancellation scope passed into `dispatchStep` / `dispatchShell`. Workflow
  * runtimes that support cooperative cancellation (Temporal) wrap each activity
@@ -160,6 +168,8 @@ export interface Dispatcher {
     }>;
     /** Raw timeout duration string from the node spec (e.g. "24h", "30m"). */
     timeout?: string;
+    /** Number of distinct human responses required to resolve the step. */
+    requiredApprovers?: number;
   }): Promise<void>;
 
   /**
@@ -893,6 +903,12 @@ async function runHumanNode(
   // Record the pending state before waiting
   await safeRecord(dispatcher, { nodeId: recordingId, status: 'PENDING' });
 
+  // Resolve the number of distinct approvers required for humanApproval nodes.
+  const requiredApprovers =
+    node.type === 'humanApproval' && node.approverCount
+      ? normalizeApproverCount(resolveBinding(node.approverCount, ctx))
+      : undefined;
+
   // Notify — creates DB record + Slack. Best-effort: don't let notification
   // failure block the workflow; the step is already recorded as PENDING.
   const { notifyHumanStep } = dispatcher;
@@ -909,6 +925,7 @@ async function runHumanNode(
               node.type === 'humanDecision'
                 ? node.options.map((o) => ({ label: o.label, value: o.value }))
                 : undefined,
+            requiredApprovers,
             signalName,
             timeout: node.timeout,
             title: node.title,

@@ -61,6 +61,7 @@ export const ZENDESK_TICKET_REPLY_SPEC: WorkflowSpec = {
       type: 'agent',
     },
     humanApproval: {
+      approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
       contextFrom: 'nodes.draftResponse.output.text',
       description:
         'A support response is ready to be posted to Zendesk. Approve to publish, reject to discard.',

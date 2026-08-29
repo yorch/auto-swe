@@ -64,6 +64,7 @@ export const CREATE_ISSUE_FROM_BRIEF_SPEC: WorkflowSpec = {
       type: 'agent',
     },
     humanApproval: {
+      approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
       contextFrom: 'nodes.draftIssue.output.text',
       description: 'An issue draft is ready. Approve to create it, reject to discard.',
       onApprove: 'manualWrite',

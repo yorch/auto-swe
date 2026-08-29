@@ -55,6 +55,7 @@ describe('publishOutcome', () => {
     const result = await publishOutcome({ action: 'external_communication', workflowId: 'wf-1' });
     expect(result.decision).toBe('auto');
     expect(result.policyName).toBe('Template override');
+    expect(result.approverCount).toBe(1);
   });
 
   it('falls back to the team default policy', async () => {
@@ -74,6 +75,7 @@ describe('publishOutcome', () => {
     const result = await publishOutcome({ action: 'external_communication', workflowId: 'wf-1' });
     expect(result.decision).toBe('require_approval');
     expect(result.policyName).toBe('Team default');
+    expect(result.approverCount).toBe(1);
   });
 
   it('falls back to the global default policy', async () => {
@@ -96,6 +98,7 @@ describe('publishOutcome', () => {
     const result = await publishOutcome({ action: 'external_communication', workflowId: 'wf-1' });
     expect(result.decision).toBe('require_approval');
     expect(result.policyName).toBe('Platform default');
+    expect(result.approverCount).toBe(1);
   });
 
   it('uses the hardcoded fallback when no policy exists', async () => {
@@ -105,6 +108,38 @@ describe('publishOutcome', () => {
     const result = await publishOutcome({ action: 'internal_read', workflowId: 'wf-1' });
     expect(result.decision).toBe('auto');
     expect(result.policyName).toBe('platform fallback');
+    expect(result.approverCount).toBe(1);
+  });
+
+  it('returns approverCount from the mass_communication fallback rule', async () => {
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(makeRun());
+    (prisma.autonomyPolicy.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const result = await publishOutcome({ action: 'mass_communication', workflowId: 'wf-1' });
+    expect(result.decision).toBe('require_approval');
+    expect(result.approverCount).toBe(2);
+  });
+
+  it('returns the explicit approverCount from a policy rule', async () => {
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(makeRun());
+    (prisma.autonomyPolicy.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      name: 'Custom policy',
+      rules: { external_communication: { action: 'require_approval', approverCount: 3 } },
+    });
+
+    const result = await publishOutcome({ action: 'external_communication', workflowId: 'wf-1' });
+    expect(result.approverCount).toBe(3);
+  });
+
+  it('defaults invalid approverCount to 1', async () => {
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(makeRun());
+    (prisma.autonomyPolicy.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      name: 'Bad policy',
+      rules: { external_communication: { action: 'require_approval', approverCount: 'many' } },
+    });
+
+    const result = await publishOutcome({ action: 'external_communication', workflowId: 'wf-1' });
+    expect(result.approverCount).toBe(1);
   });
 
   it('defaults unknown risk classes to require_approval', async () => {
@@ -113,5 +148,6 @@ describe('publishOutcome', () => {
 
     const result = await publishOutcome({ action: 'unknown_risk', workflowId: 'wf-1' });
     expect(result.decision).toBe('require_approval');
+    expect(result.approverCount).toBe(1);
   });
 });

@@ -62,6 +62,8 @@ export interface CreateHumanStepInput {
   }>;
   /** Raw timeout duration string from the node spec (e.g. "24h", "30m"). */
   timeout?: string;
+  /** Number of distinct approvals required to resolve this step. */
+  requiredApprovers?: number;
 }
 
 /** Parse simple duration strings like "30m", "4h", "7d" into milliseconds. */
@@ -108,6 +110,7 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
         kind: input.kind,
         nodeId: input.nodeId,
         options: input.options !== undefined ? (input.options as Prisma.InputJsonValue) : undefined,
+        requiredApprovers: input.requiredApprovers,
         runId: input.runId,
         signalName: input.signalName,
         timeoutAt,

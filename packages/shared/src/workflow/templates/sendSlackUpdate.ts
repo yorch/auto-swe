@@ -49,6 +49,7 @@ export const SEND_SLACK_UPDATE_SPEC: WorkflowSpec = {
       type: 'terminate',
     },
     humanApproval: {
+      approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
       contextFrom: 'request.payload.message',
       description: 'A Slack message is ready to be posted. Approve to send, reject to discard.',
       onApprove: 'manualWrite',

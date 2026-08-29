@@ -51,6 +51,7 @@ export const CREATE_ISSUE_SPEC: WorkflowSpec = {
       type: 'terminate',
     },
     humanApproval: {
+      approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
       contextFrom: 'request.payload.title',
       description: 'An issue is ready to be created. Approve to create it, reject to discard.',
       onApprove: 'manualWrite',
