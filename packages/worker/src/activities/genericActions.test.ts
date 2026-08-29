@@ -12,7 +12,9 @@ vi.mock('@temporalio/activity', () => ({
     },
   },
   Context: {
-    current: vi.fn(() => ({ info: { attempt: 1, workflowId: 'wf-1' } })),
+    current: vi.fn(() => ({
+      info: { attempt: 1, workflowExecution: { workflowId: 'wf-1' } },
+    })),
   },
 }));
 
@@ -293,6 +295,42 @@ describe('writeOutcome', () => {
 
     expect(result).toEqual({ connectionType: 'notion', ok: true, reference: 'stored-page' });
     expect(appendNotionBlocks).not.toHaveBeenCalled();
+  });
+
+  it('returns the stored result on the second call and does not repeat the external write', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('notion', { token: true })
+    );
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+    });
+    (prisma.workflowOutcomeReference.findUnique as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        result: {
+          connectionType: 'notion',
+          ok: true,
+          reference: 'page-1',
+        },
+      });
+    (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      appended: 1,
+      pageId: 'page-1',
+    });
+
+    const args = {
+      connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
+      data: { blocks: [{ type: 'paragraph' }], pageId: 'page-1' },
+      nodeId: 'node-1',
+    };
+
+    const first = await writeOutcome(args);
+    const second = await writeOutcome(args);
+
+    expect(first).toEqual({ connectionType: 'notion', ok: true, reference: 'page-1' });
+    expect(second).toEqual(first);
+    expect(appendNotionBlocks).toHaveBeenCalledTimes(1);
+    expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledTimes(1);
   });
 });
 

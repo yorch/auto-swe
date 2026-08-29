@@ -428,7 +428,7 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   // stored result instead of hitting the provider again.
   const info = Context.current().info;
   const attempt = info.attempt;
-  const workflowId = (info as unknown as { workflowId: string }).workflowId;
+  const workflowId = info.workflowExecution?.workflowId;
   let runId: string | undefined;
   if (nodeId && workflowId) {
     const run = await prisma.workflowRun.findUnique({
