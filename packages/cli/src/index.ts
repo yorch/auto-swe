@@ -22,6 +22,8 @@ COMMANDS
   workflows export <name> [-o <path>]  Write the active spec to a file (or stdout)
   workflows import <path> [--name=N] [--team=<slug>]
                                        Create a template (or new version if --name matches an existing template)
+  workflows run <name> --payload=<json> [--label=<text>]
+                                       Start a run with a generic JSON payload
 
   runs list [--status=S] [--template-id=ID] [--limit=N]
                                        List recent workflow runs

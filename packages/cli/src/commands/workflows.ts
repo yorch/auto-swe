@@ -15,6 +15,8 @@ const SUB_HELP = `auto-swe workflows — manage workflow templates
   workflows export <name> [-o <path>]    Write the active spec to a file (or stdout)
   workflows import <path> [--name=NAME] [--team=<slug>]
                                          Create a template (or add a new version if the name already exists)
+  workflows run <name> --payload=<json> [--label=<text>]
+                                         Start a run with a generic JSON payload
   workflows generate "<description>" [--name=NAME] [--team=<slug>]
                                          Generate a DRAFT template from a plain-language description (AI)
   workflows explain <name>               Explain a template's active version in plain language (AI)
@@ -44,6 +46,9 @@ export async function runWorkflowsCommand(args: string[], env: CliEnv): Promise<
     }
     if (sub === 'explain') {
       return await cmdExplain(rest, env);
+    }
+    if (sub === 'run') {
+      return await cmdRun(rest, env);
     }
   } catch (err) {
     if (err instanceof GatewayError) {
@@ -263,6 +268,48 @@ async function cmdExplain(args: string[], env: CliEnv): Promise<number> {
     `/api/v1/workflow-templates/${tpl.id}/explain`
   );
   process.stdout.write(`${explanation}\n`);
+  return 0;
+}
+
+async function cmdRun(args: string[], env: CliEnv): Promise<number> {
+  const { positional, flags } = parseFlags(args);
+  const name = positional[0];
+  if (!name) {
+    process.stderr.write('Usage: workflows run <name> --payload=<json> [--label=<text>]\n');
+    return 1;
+  }
+  const tpl = await findTemplateByName(env, name);
+  if (!tpl) {
+    process.stderr.write(`No template named "${name}" is visible.\n`);
+    return 1;
+  }
+
+  let payload: Record<string, unknown> = {};
+  if (flags.payload && flags.payload !== 'true') {
+    try {
+      payload = JSON.parse(flags.payload) as Record<string, unknown>;
+    } catch (err) {
+      process.stderr.write(
+        `--payload is not valid JSON: ${err instanceof Error ? err.message : String(err)}\n`
+      );
+      return 1;
+    }
+  }
+
+  const body: { label?: string; payload: Record<string, unknown> } = { payload };
+  if (flags.label && flags.label !== 'true') {
+    body.label = flags.label;
+  }
+
+  const res = await apiRequest<{
+    temporalWorkflowId: string;
+    workflowId: string;
+    workRequestId: string;
+  }>(env, 'POST', `/api/v1/workflow-templates/${tpl.id}/runs`, body);
+
+  process.stdout.write(
+    `Started run for "${name}": workRequestId=${res.workRequestId} workflowId=${res.workflowId} temporalWorkflowId=${res.temporalWorkflowId}\n`
+  );
   return 0;
 }
 
