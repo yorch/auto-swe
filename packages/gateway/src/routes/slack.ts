@@ -1232,17 +1232,21 @@ async function handleHitlResolveAction(
 
   if (result.ok) {
     const who = payload.user?.id ? `<@${payload.user.id}>` : 'someone';
-    // The step is RESOLVED either way; `signalSent: false` only means the run it
-    // belonged to is already gone, so say so rather than implying it was steered.
-    const text = result.signalSent
-      ? `:white_check_mark: *${result.title}* — resolved with \`${parsed.action}\` by ${who}.`
-      : `:white_check_mark: *${result.title}* — recorded as \`${parsed.action}\` by ${who}, but the workflow run had already finished, so nothing was signalled.`;
-    await respondToInteraction(payload, text, { ephemeral: false });
+    let text: string;
+    if (result.status === 'PENDING') {
+      text = `:hourglass: *${result.title}* — your \`${parsed.action}\` was recorded by ${who}. More approvals are needed before the step is resolved.`;
+    } else if (result.signalSent) {
+      text = `:white_check_mark: *${result.title}* — resolved with \`${parsed.action}\` by ${who}.`;
+    } else {
+      text = `:white_check_mark: *${result.title}* — recorded as \`${parsed.action}\` by ${who}, but the workflow run had already finished, so nothing was signalled.`;
+    }
+    await respondToInteraction(payload, text, { ephemeral: result.status === 'PENDING' });
     return {
       data: {
         action: 'hitl_resolve',
         ok: true,
         signalSent: result.signalSent,
+        status: result.status,
         stepId: result.stepId,
       },
     };

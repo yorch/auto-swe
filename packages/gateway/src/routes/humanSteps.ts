@@ -244,7 +244,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
-        after: { action, resolvedBy: user.sub, status: 'RESOLVED', value },
+        after: { action, resolvedBy: user.sub, status: result.status, value },
         before: { status: 'PENDING' },
         entityId: result.runId,
         entityType: 'WorkflowRun',
@@ -253,7 +253,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       // `signalSent: false` means the decision was recorded but the workflow it
       // was meant for no longer exists — a 200 with a caveat, not a failure the
       // caller can retry into success (see lib/hitlResolve.ts).
-      return { data: { id: result.stepId, signalSent: result.signalSent, status: 'RESOLVED' } };
+      return { data: { id: result.stepId, signalSent: result.signalSent, status: result.status } };
     }
   );
 };

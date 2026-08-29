@@ -9,6 +9,7 @@ const RuleSchema = z.record(
   z.string().min(1),
   z.object({
     action: z.enum(['auto', 'require_approval']),
+    approverCount: z.number().int().min(1).optional(),
   })
 );
 
