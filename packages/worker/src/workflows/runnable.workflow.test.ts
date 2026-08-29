@@ -8,6 +8,7 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
@@ -31,6 +32,10 @@ const calls: {
   contextOverflows: { path: string; bytes: number }[];
   /** How many batch activity calls the run made — one per run, not one per value. */
   contextOverflowBatches: number;
+  resolveWorkspace: unknown[];
+  readSource: unknown[];
+  writeOutcome: unknown[];
+  runTool: unknown[];
 } = {
   cancelledHumanSteps: [],
   contextOverflowBatches: 0,
@@ -38,6 +43,10 @@ const calls: {
   createWorkflowRun: [],
   domainStates: [],
   finalize: [],
+  readSource: [],
+  resolveWorkspace: [],
+  runTool: [],
+  writeOutcome: [],
 };
 
 /** Spec served by the fake createWorkflowRun; set per test before starting. */
@@ -79,8 +88,24 @@ const fakeActivities = {
   finalizeWorkflowRun: async (runId: string, status: string) => {
     calls.finalize.push({ runId, status });
   },
+  publishOutcome: async (_input: unknown) => ({ decision: 'auto' }),
+  readSource: async (input: unknown) => {
+    calls.readSource.push(input);
+    return { connectionType: 'notion', data: { ok: true }, ok: true };
+  },
   recordWorkflowStep: async () => {},
   resolveHumanStep: async () => {},
+  resolveWorkspace: async (input: { connectionId?: string | null; workspaceProvider?: string }) => {
+    calls.resolveWorkspace.push(input);
+    return {
+      connectionId: input.connectionId ?? 'conn-default',
+      provider: input.workspaceProvider ?? 'document',
+    };
+  },
+  runTool: async (input: unknown) => {
+    calls.runTool.push(input);
+    return { connectionType: 'zendesk', ok: true };
+  },
   storeContextOverflowBatch: async (input: {
     values: Array<{ path: string; content: string }>;
   }) => {
@@ -92,6 +117,10 @@ const fakeActivities = {
   },
   updateDomainState: (workflowId: string, status: string) =>
     updateDomainStateImpl(workflowId, status),
+  writeOutcome: async (input: unknown) => {
+    calls.writeOutcome.push(input);
+    return { connectionType: 'notion', ok: true, reference: 'page-id' };
+  },
 };
 
 // ── Harness ──────────────────────────────────────────────────────────────────
@@ -138,7 +167,7 @@ afterAll(async () => {
 }, 60_000);
 
 const REQUEST = {
-  budgetTier: 'STANDARD',
+  budgetTier: 'STANDARD' as const,
   description: 'test',
   externalTicketId: 'T-1',
   repoId: '00000000-0000-4000-8000-000000000001',
@@ -146,9 +175,21 @@ const REQUEST = {
   workRequestId: '00000000-0000-4000-8000-000000000002',
 };
 
-function startArgs(workflowId: string) {
+const GENERIC_REQUEST = {
+  budgetTier: 'STANDARD' as const,
+  connectionId: '00000000-0000-4000-8000-000000000003',
+  description: 'generic test',
+  externalTicketId: 'G-1',
+  payload: { pageId: 'SOURCE', targetPageId: 'TARGET' },
+  repoId: null,
+  requestPayload: '{}',
+  workRequestId: '00000000-0000-4000-8000-000000000004',
+  workspaceProvider: 'document' as const,
+};
+
+function startArgs(workflowId: string, request: RepoWorkRequest = REQUEST) {
   return {
-    args: [{ request: REQUEST, templateId: 'tpl-1', templateVersion: 1 }],
+    args: [{ request, templateId: 'tpl-1', templateVersion: 1 }],
     taskQueue: TASK_QUEUE,
     workflowExecutionTimeout: '2 hours',
     workflowId,
@@ -275,6 +316,98 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
         calls.domainStates.push(status);
       };
     }
+  }, 120_000);
+
+  it('defaults resolveWorkspace/readSource/writeOutcome from the run-level workspace', async () => {
+    calls.resolveWorkspace.length = 0;
+    calls.readSource.length = 0;
+    calls.writeOutcome.length = 0;
+    currentSpec = makeSpec(
+      {
+        done: {
+          result: { reference: { from: 'nodes.write.output.reference' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        read: {
+          config: {},
+          inputs: { pageId: { literal: 'SOURCE' } },
+          next: 'write',
+          step: 'readSource',
+          type: 'step',
+        },
+        resolveWorkspace: {
+          config: {},
+          inputs: {},
+          next: 'read',
+          step: 'resolveWorkspace',
+          type: 'step',
+        },
+        write: {
+          config: {},
+          inputs: { pageId: { literal: 'TARGET' }, text: { literal: 'hello' } },
+          next: 'done',
+          step: 'writeOutcome',
+          type: 'step',
+        },
+      },
+      'resolveWorkspace'
+    );
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-generic', GENERIC_REQUEST)
+    )) as { reference: string; status: string };
+    expect(result.status).toBe('SUCCESS');
+    expect(result.reference).toBe('page-id');
+    expect(calls.resolveWorkspace).toHaveLength(1);
+    expect(calls.resolveWorkspace[0]).toMatchObject({
+      connectionId: GENERIC_REQUEST.connectionId,
+      workspaceProvider: 'document',
+    });
+    expect(calls.readSource).toHaveLength(1);
+    expect((calls.readSource[0] as { connectionId: string }).connectionId).toBe(
+      GENERIC_REQUEST.connectionId
+    );
+    expect(calls.writeOutcome).toHaveLength(1);
+    expect((calls.writeOutcome[0] as { connectionId: string }).connectionId).toBe(
+      GENERIC_REQUEST.connectionId
+    );
+  }, 120_000);
+
+  it('still allows inputs.connectionId to override the run-level workspace default', async () => {
+    calls.resolveWorkspace.length = 0;
+    calls.readSource.length = 0;
+    const overrideId = '11111111-1111-4111-9111-111111111111';
+    currentSpec = makeSpec(
+      {
+        done: { result: {}, status: 'SUCCESS', type: 'terminate' },
+        read: {
+          config: {},
+          inputs: { connectionId: { literal: overrideId }, pageId: { literal: 'SOURCE' } },
+          next: 'done',
+          step: 'readSource',
+          type: 'step',
+        },
+        resolveWorkspace: {
+          config: {},
+          inputs: {},
+          next: 'read',
+          step: 'resolveWorkspace',
+          type: 'step',
+        },
+      },
+      'resolveWorkspace'
+    );
+    await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-override', GENERIC_REQUEST)
+    );
+    expect(calls.resolveWorkspace).toHaveLength(1);
+    expect((calls.resolveWorkspace[0] as { connectionId: string }).connectionId).toBe(
+      GENERIC_REQUEST.connectionId
+    );
+    expect(calls.readSource).toHaveLength(1);
+    expect((calls.readSource[0] as { connectionId: string }).connectionId).toBe(overrideId);
   }, 120_000);
 });
 

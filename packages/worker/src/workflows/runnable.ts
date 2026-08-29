@@ -259,6 +259,15 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   // keeps a mid-run edit from changing the ceiling a replay was recorded under.
   const interpreterLimits = readInterpreterLimits(runInfo.pinnedSettings);
 
+  // Generic runs carry their workspace provider and target connection on the
+  // request; SWE runs fall back to the git_repo provider and the repoId.
+  const runConnectionId = input.request.connectionId ?? input.request.repoId ?? null;
+  const rawWorkspaceProvider = input.request.workspaceProvider;
+  const runWorkspaceProvider =
+    typeof rawWorkspaceProvider === 'string'
+      ? (rawWorkspaceProvider as WorkspaceProviderType)
+      : 'git_repo';
+
   // 2. Register signal handlers for every signal name referenced in the spec.
   // SignalSlots owns the stale-payload-reset semantics so dispatcher remains
   // a thin wrapper (see packages/shared/src/workflow/signalSlots.ts).
@@ -360,7 +369,12 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
 
   // 4. Run.
   const initialCtx: Context = {
-    context: {},
+    context: {
+      workspace: {
+        connectionId: runConnectionId,
+        provider: runWorkspaceProvider,
+      },
+    },
     nodes: {},
     request: input.request as unknown as Record<string, unknown>,
     workflow: { id: workflowId },
@@ -434,6 +448,20 @@ interface StepExecutorArgs {
 }
 
 type StepExecutor = (args: StepExecutorArgs) => Promise<unknown>;
+
+/** Resolve a step's target connection, defaulting to the run-level workspace. */
+function resolveConnectionId(step: string, ctx: Context, inputs: Record<string, unknown>): string {
+  const workspaceConnectionId =
+    ((ctx.context as Record<string, unknown>).workspace as Record<string, unknown> | undefined)
+      ?.connectionId ?? undefined;
+  const connectionId =
+    (inputs.connectionId as string | undefined) ??
+    (typeof workspaceConnectionId === 'string' ? workspaceConnectionId : undefined);
+  if (!connectionId) {
+    throw new Error(`${step} requires inputs.connectionId or a resolved workspace connection`);
+  }
+  return connectionId;
+}
 
 /**
  * Read the two cross-repo step opt-ins off a step's config (repo dependency
@@ -784,19 +812,34 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'resolveWorkspace',
-    ({ request, config, inputs }) =>
-      genericActivities.resolveWorkspace({
-        connectionId:
-          (inputs.connectionId as string | null | undefined) ?? request.connectionId ?? null,
+    async ({ request, config, inputs, ctx }) => {
+      const workspaceCtx =
+        ((ctx.context as Record<string, unknown>).workspace as
+          | Record<string, unknown>
+          | undefined) ?? {};
+      const workspaceProvider =
+        (config.workspaceProvider as WorkspaceProviderType | undefined) ??
+        (workspaceCtx.provider as WorkspaceProviderType | undefined) ??
+        'git_repo';
+      const connectionId =
+        (inputs.connectionId as string | null | undefined) ??
+        (workspaceCtx.connectionId as string | null | undefined) ??
+        request.connectionId ??
+        null;
+      const result = await genericActivities.resolveWorkspace({
+        connectionId,
         payload: (inputs.payload as unknown) ?? request.payload,
-        workspaceProvider: (config.workspaceProvider as WorkspaceProviderType) ?? 'document',
-      }),
+        workspaceProvider,
+      });
+      (ctx.context as Record<string, unknown>).workspace = { ...workspaceCtx, ...result };
+      return result;
+    },
   ],
   [
     'readSource',
-    ({ inputs }) =>
+    ({ inputs, ctx, step }) =>
       genericActivities.readSource({
-        connectionId: inputs.connectionId as string,
+        connectionId: resolveConnectionId(step, ctx, inputs),
         query:
           inputs.pageId !== undefined
             ? { pageId: inputs.pageId as string }
@@ -807,7 +850,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'writeOutcome',
-    ({ inputs, step }) => {
+    ({ inputs, ctx, step }) => {
       let data = inputs.data;
       // Convenience for Notion: a template can pass `text` + `pageId` and the
       // step wraps it into a single paragraph block.
@@ -842,7 +885,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         data = { ...(data as object), public: inputs.public };
       }
       return genericActivities.writeOutcome({
-        connectionId: inputs.connectionId as string,
+        connectionId: resolveConnectionId(step, ctx, inputs),
         data,
         nodeId: step,
       });
@@ -862,9 +905,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'runTool',
-    ({ inputs }) =>
+    ({ inputs, ctx, step }) =>
       genericActivities.runTool({
-        connectionId: inputs.connectionId as string,
+        connectionId: resolveConnectionId(step, ctx, inputs),
         inputs: inputs.inputs,
         tool: inputs.tool as string,
       }),
