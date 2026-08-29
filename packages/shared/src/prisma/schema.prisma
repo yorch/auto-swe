@@ -1272,20 +1272,41 @@ model WorkflowHumanStep {
   options        Json?
   /// For INPUT: [{ key, label, type, required?, options? }] field definitions.
   fields         Json?
-  status         HumanStepStatus @default(PENDING)
-  resolvedAt     DateTime?       @map("resolved_at") @db.Timestamptz
-  resolvedBy     String?         @map("resolved_by") @db.Uuid
-  resolvedByUser User?           @relation(fields: [resolvedBy], references: [id], onDelete: SetNull)
+  status           HumanStepStatus @default(PENDING)
+  resolvedAt       DateTime?       @map("resolved_at") @db.Timestamptz
+  resolvedBy       String?         @map("resolved_by") @db.Uuid
+  resolvedByUser   User?           @relation(fields: [resolvedBy], references: [id], onDelete: SetNull)
   /// The signal payload submitted by the human (action + optional value).
-  payload        Json?
-  requestedAt    DateTime        @default(now()) @map("requested_at") @db.Timestamptz
+  payload          Json?
+  requestedAt      DateTime        @default(now()) @map("requested_at") @db.Timestamptz
   /// Absolute deadline derived from the node's timeout duration. Null for steps
   /// created before this column was added (backwards-compatible).
-  timeoutAt      DateTime?       @map("timeout_at") @db.Timestamptz
+  timeoutAt        DateTime?       @map("timeout_at") @db.Timestamptz
+  /// Number of distinct approvals required before the step is resolved.
+  /// Defaults to 1 for all steps created before this column was added.
+  requiredApprovers Int            @default(1) @map("required_approvers")
+
+  humanApprovals   HumanApproval[]
 
   @@index([runId])
   @@index([status])
   @@map("workflow_human_steps")
+}
+
+/// A single human response recorded against a WorkflowHumanStep.
+/// Used to count distinct approvers before the step is finally resolved.
+model HumanApproval {
+  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stepId     String            @map("step_id") @db.Uuid
+  step       WorkflowHumanStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  resolvedBy String            @map("resolved_by") @db.Uuid
+  action     String
+  value      Json?
+  resolvedAt DateTime          @default(now()) @map("resolved_at") @db.Timestamptz
+
+  @@unique([stepId, resolvedBy])
+  @@index([stepId])
+  @@map("human_approvals")
 }
 
 /// A named, team-owned workflow template. Versions are immutable; "edit" creates
