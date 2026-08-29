@@ -3,6 +3,7 @@ import { publishOutcome } from './publishOutcome.js';
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    autonomyDecision: { create: vi.fn().mockResolvedValue({}) },
     autonomyPolicy: { findFirst: vi.fn() },
     workflowRun: {
       findUnique: vi.fn(),

@@ -148,6 +148,7 @@ function buildApp(state: FakeState): FastifyInstance {
       },
       delete: async () => ({}),
     },
+    autonomyDecision: { create: async () => ({}) },
     channelThreadSession: {
       findUnique: async () => null,
     },

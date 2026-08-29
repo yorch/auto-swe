@@ -69,6 +69,7 @@ describe('human step routes', () => {
     } as unknown as never);
 
     app.decorate('prisma', {
+      autonomyDecision: { create: vi.fn().mockResolvedValue({}) },
       configAuditLog: {
         create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
       },

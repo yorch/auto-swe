@@ -63,6 +63,17 @@ export async function publishOutcome(input: PublishOutcomeInput): Promise<Publis
       ? `Policy '${policy?.name ?? 'platform fallback'}' allows auto for '${input.action}'`
       : `Policy '${policy?.name ?? 'platform fallback'}' requires human approval for '${input.action}'`;
 
+  await prisma.autonomyDecision.create({
+    data: {
+      event: 'publish',
+      payload: { decision, reason },
+      policyName: policy?.name ?? 'platform fallback',
+      requiredApprovers: approverCount,
+      riskClass: input.action,
+      runId: run.id,
+    },
+  });
+
   return {
     approverCount,
     decision,

@@ -41,6 +41,7 @@ const CancelRunResponseSchema = z.object({
 });
 
 const EvalResultsResponseSchema = z.object({ data: z.array(z.unknown()) });
+const AutonomyDecisionsResponseSchema = z.object({ data: z.array(z.unknown()) });
 
 /** Max chars per string field in trace payloads returned by the polled run view. */
 const TRACE_FIELD_CAP = 4_000;
@@ -330,6 +331,35 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           workRequest: run.workRequest,
         },
       };
+    }
+  );
+
+  // ── Get the governance audit trail for a run ──
+  app.get(
+    '/:id/autonomy-decisions',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: {
+        params: RunIdParam,
+        response: { 200: AutonomyDecisionsResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: { id: request.params.id, ...runVisibilityFilter(user) },
+      });
+      if (!run) {
+        return reply.status(404).send({
+          error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
+        });
+      }
+      const rows = await fastify.prisma.autonomyDecision.findMany({
+        orderBy: { createdAt: 'asc' },
+        where: { runId: run.id },
+      });
+      return { data: rows };
     }
   );
 };

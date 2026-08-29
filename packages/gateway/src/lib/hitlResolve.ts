@@ -239,6 +239,24 @@ export async function resolveHitlStep(
         };
       }
       const currentApprovers = approvalCount;
+      await prisma.autonomyDecision
+        .create({
+          data: {
+            actorId: user.sub,
+            event: 'approve_partial',
+            payload: {
+              action,
+              signalSent: false,
+              status: 'PENDING',
+              value: value !== undefined ? (value as Prisma.InputJsonValue) : null,
+            } as Prisma.InputJsonValue,
+            requiredApprovers,
+            runId: step.run.id,
+          },
+        })
+        .catch((err) =>
+          log.error({ err, stepId: step.id }, 'Failed to write partial approval audit record')
+        );
       return {
         approvalsRemaining: Math.max(0, requiredApprovers - currentApprovers),
         currentApprovers,
@@ -324,7 +342,26 @@ export async function resolveHitlStep(
     );
   }
 
-  const currentApprovers = isMultiApprover && multiApproverState ? multiApproverState.approvalCount : 1;
+  const currentApprovers =
+    isMultiApprover && multiApproverState ? multiApproverState.approvalCount : 1;
+  await prisma.autonomyDecision
+    .create({
+      data: {
+        actorId: user.sub,
+        event: action,
+        payload: {
+          action,
+          signalSent,
+          status: 'RESOLVED',
+          value: value !== undefined ? (value as Prisma.InputJsonValue) : null,
+        } as Prisma.InputJsonValue,
+        requiredApprovers,
+        runId: step.run.id,
+      },
+    })
+    .catch((err) =>
+      log.error({ err, stepId: step.id }, 'Failed to write HITL resolution audit record')
+    );
   return {
     approvalsRemaining: 0,
     currentApprovers,

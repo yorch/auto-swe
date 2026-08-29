@@ -1018,10 +1018,36 @@ model WorkflowRun {
   humanSteps        WorkflowHumanStep[]
   evalResults       EvalResult[]
   outcomeReferences WorkflowOutcomeReference[]
+  autonomyDecisions AutonomyDecision[]
 
   @@index([templateId])
   @@index([workRequestId])
   @@map("workflow_runs")
+}
+
+/// Audit trail of autonomous governance decisions and human approvals for a run.
+/// Captures publish/approval/rejection events with the actor, policy, and payload
+/// snapshot so the autonomy path can be replayed and reviewed.
+model AutonomyDecision {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId         String      @map("run_id") @db.Uuid
+  run           WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// 'publish', 'approve', 'reject', or 'approve_partial'.
+  event         String
+  /// The user who took the action, if any (null for system publish events).
+  actorId       String?     @map("actor_id") @db.Uuid
+  /// Name of the resolved autonomy policy, if known.
+  policyName    String?     @map("policy_name")
+  /// Risk class being evaluated (e.g. 'external_communication', 'mass_communication').
+  riskClass     String?     @map("risk_class")
+  /// Required distinct approver count at the time of the decision.
+  requiredApprovers Int?    @default(1) @map("required_approvers")
+  /// Event-specific payload: publish decision, HITL action/value, signal status, etc.
+  payload       Json?
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([runId])
+  @@map("autonomy_decisions")
 }
 
 /// Idempotency ledger for `genericActions.writeOutcome`.
