@@ -106,13 +106,13 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
         </dl>
       </div>
 
-      {/* Ticket block */}
+      {/* Request block */}
       {run.workRequest && (
         <>
           <div className="h-px mx-5 bg-ink-500/40" />
           <div className="px-5 py-4">
             <div className="kicker mb-2" style={{ color: 'var(--color-paper-600)' }}>
-              Ticket
+              Request
             </div>
             <div
               className="text-ember-400 mb-1"
