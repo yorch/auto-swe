@@ -19,6 +19,7 @@ const TOKEN = 'tok_abcdef0123456789';
 interface Harness {
   app: FastifyInstance;
   started: string[];
+  startInputs: unknown[];
   order: string[];
   runInputs: Array<Record<string, unknown>>;
   activeWorkflows: Array<Record<string, unknown>>;
@@ -36,6 +37,7 @@ async function buildHarness(): Promise<Harness> {
     order: [],
     runInputs: [],
     started: [],
+    startInputs: [],
   };
 
   h.app.setValidatorCompiler(validatorCompiler);
@@ -88,12 +90,13 @@ async function buildHarness(): Promise<Harness> {
 
   h.app.decorate('temporal', {
     signalWorkflow: async () => {},
-    startRunnableWorkflow: async (id: string) => {
+    startRunnableWorkflow: async (id: string, input: unknown) => {
       h.order.push('start');
       if (h.startError) {
         throw h.startError;
       }
       h.started.push(id);
+      h.startInputs.push(input);
     },
   } as unknown as never);
 
@@ -176,5 +179,27 @@ describe('POST /webhooks/:token', () => {
 
     expect(h.runInputs).toHaveLength(0);
     expect(h.activeWorkflows).toHaveLength(0);
+  });
+
+  it('passes the generic payload and connectionId through to the workflow', async () => {
+    const payload = {
+      connectionId: 'conn-1',
+      message: 'hello',
+      ticketId: 'WEB-1',
+    };
+    const res = await h.app.inject({
+      method: 'POST',
+      payload,
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(h.startInputs).toHaveLength(1);
+    const input = h.startInputs[0] as { request: Record<string, unknown> };
+    expect(input.request.connectionId).toBe('conn-1');
+    expect(input.request.repoId).toBe('conn-1');
+    expect(input.request.externalTicketId).toBe('WEB-1');
+    expect(input.request.payload).toEqual(payload);
+    expect(input.request.requestPayload).toBe(JSON.stringify(payload));
   });
 });

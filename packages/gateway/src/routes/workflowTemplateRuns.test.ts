@@ -165,4 +165,67 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
     expect(body.error.code).toBe('ORG_BUDGET_EXCEEDED');
     expect(startedWorkflows).toHaveLength(0);
   });
+
+  it('passes generic payload and connectionId to the workflow for document templates', async () => {
+    startedWorkflows.length = 0;
+    const connectionId = '11111111-1111-4111-8111-111111111111';
+
+    (
+      app.prisma as unknown as { connection: { findUnique: () => Promise<unknown> } }
+    ).connection.findUnique = async () => ({
+      isActive: true,
+      team: {
+        memberships: [{ userId: USER_ID }],
+        organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+      },
+      type: 'notion',
+    });
+
+    (
+      app.prisma as unknown as {
+        workflowTemplate: {
+          findFirst: (args: { where: Record<string, unknown> }) => Promise<unknown>;
+        };
+      }
+    ).workflowTemplate.findFirst = async ({ where }: { where: Record<string, unknown> }) => {
+      if (where.id !== TEMPLATE_ID) {
+        return null;
+      }
+      return {
+        activeVersion: 1,
+        id: TEMPLATE_ID,
+        inputSchema: null,
+        team: {
+          id: 'team-1',
+          organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+        },
+        teamId: 'team-1',
+        workspaceProvider: 'document',
+      };
+    };
+
+    const payload = {
+      connectionId,
+      instructions: 'Summarise',
+      sourcePageId: 'src-page',
+      targetPageId: 'tgt-page',
+    };
+    const response = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: { label: 'notion-run', payload },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(startedWorkflows).toHaveLength(1);
+    const { input } = startedWorkflows[0];
+    expect((input as { request: { connectionId: string } }).request.connectionId).toBe(
+      connectionId
+    );
+    expect((input as { request: { repoId: string | null } }).request.repoId).toBe(connectionId);
+    expect((input as { request: { payload: Record<string, unknown> } }).request.payload).toEqual(
+      payload
+    );
+  });
 });
