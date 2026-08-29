@@ -1500,21 +1500,21 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             error: { code: 'FORBIDDEN', message: 'You do not have access to this connection' },
           });
         }
-        if (providerMeta?.connectionType && connection.type !== providerMeta.connectionType) {
+        if (providerMeta?.connectionTypes?.length && !(providerMeta.connectionTypes as string[]).includes(connection.type)) {
           return reply.status(400).send({
             error: {
               code: 'CONNECTION_TYPE_MISMATCH',
-              message: `Template expects a ${providerMeta.connectionType} connection but got ${connection.type}`,
+              message: `Template expects one of ${providerMeta.connectionTypes.join(', ')} connections but got ${connection.type}`,
             },
           });
         }
         budgetOrgId = connection.team.organization?.id ?? budgetOrgId;
         budgetCap = connection.team.organization?.monthlyBudgetUsdCents ?? budgetCap;
-      } else if (providerMeta?.connectionType) {
+      } else if (providerMeta?.connectionTypes?.length) {
         return reply.status(400).send({
           error: {
             code: 'CONNECTION_REQUIRED',
-            message: `Template requires a ${providerMeta.connectionType} connection`,
+            message: `Template requires one of ${providerMeta.connectionTypes.join(', ')} connections`,
           },
         });
       }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ConnectionType } from './connectionTypes.js';
 
 /**
  * Registry of supported workspace provider types.
@@ -22,38 +23,38 @@ export interface WorkspaceProviderMetadata {
   key: WorkspaceProviderType;
   label: string;
   description: string;
-  /** Connection type this provider consumes, when the workspace is backed by one. */
-  connectionType?: 'git_repo' | 'issue_tracker' | 'notion' | 'zendesk' | 'hubspot';
+  /** Connection types this provider can consume, when the workspace is backed by one. */
+  connectionTypes?: ConnectionType[];
 }
 
 const METADATA: Record<WorkspaceProviderType, WorkspaceProviderMetadata> = {
   api_only: {
-    connectionType: undefined,
+    connectionTypes: [],
     description:
       'No persistent local container; the agent calls APIs and returns a structured result.',
     key: 'api_only',
     label: 'API-only',
   },
   document: {
-    connectionType: 'notion',
+    connectionTypes: ['notion'],
     description: 'Load source documents, draft and review content, and publish the result.',
     key: 'document',
     label: 'Document workspace',
   },
   git_repo: {
-    connectionType: 'git_repo',
+    connectionTypes: ['git_repo'],
     description: 'Clone a branch, run tests and builds, and open a pull request.',
     key: 'git_repo',
     label: 'Git repository',
   },
   issue_tracker: {
-    connectionType: 'issue_tracker',
+    connectionTypes: ['issue_tracker'],
     description: 'Fetch and create issues in Linear or Jira.',
     key: 'issue_tracker',
     label: 'Issue tracker',
   },
   record: {
-    connectionType: 'zendesk',
+    connectionTypes: ['zendesk', 'hubspot'],
     description: 'Fetch and mutate records in a CRM or ticketing system.',
     key: 'record',
     label: 'Record workspace',
