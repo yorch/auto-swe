@@ -6,7 +6,7 @@
  * the same list-pagination querystring. Keep the projection here so the
  * wire shape stays in lockstep.
  */
-import type { EvalResultDto } from '@auto-swe/shared/types/api';
+import type { AutonomyDecisionDto, EvalResultDto } from '@auto-swe/shared/types/api';
 import { paginationQuery } from '../lib/pagination.js';
 
 export const RunListPaginationQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 });
@@ -70,5 +70,31 @@ export function projectEvalResult(r: {
     scoreType: r.scoreType,
     source: r.source,
     value: r.value,
+  };
+}
+
+/** Shared projection: an autonomy decision row → its wire DTO. Used by the
+ *  per-run governance audit endpoint. */
+export function projectAutonomyDecision(r: {
+  id: string;
+  runId: string;
+  actorId: string | null;
+  event: string;
+  policyName: string | null;
+  riskClass: string | null;
+  requiredApprovers: number | null;
+  payload: unknown;
+  createdAt: Date;
+}): AutonomyDecisionDto {
+  return {
+    actorId: r.actorId,
+    createdAt: r.createdAt.toISOString(),
+    event: r.event,
+    id: r.id,
+    payload: r.payload,
+    policyName: r.policyName,
+    requiredApprovers: r.requiredApprovers,
+    riskClass: r.riskClass,
+    runId: r.runId,
   };
 }

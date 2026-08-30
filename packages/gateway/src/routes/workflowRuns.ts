@@ -13,6 +13,7 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import {
+  projectAutonomyDecision,
   projectEvalResult,
   projectRunSummary,
   RunListPaginationQuery,
@@ -359,7 +360,8 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         orderBy: { createdAt: 'asc' },
         where: { runId: run.id },
       });
-      return { data: rows };
+      const data = rows.map(projectAutonomyDecision);
+      return { data };
     }
   );
 };

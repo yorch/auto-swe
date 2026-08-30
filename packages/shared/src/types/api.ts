@@ -627,6 +627,19 @@ export interface EvalResultDto {
   createdAt: string;
 }
 
+/** Audit trail of autonomous governance decisions and human approvals for a run. */
+export interface AutonomyDecisionDto {
+  id: string;
+  runId: string;
+  actorId: string | null;
+  event: string;
+  policyName: string | null;
+  riskClass: string | null;
+  requiredApprovers: number | null;
+  payload: unknown;
+  createdAt: string;
+}
+
 // ── Eval datasets / cases / runs (P1) ──
 
 /// Scopes offered in the generic config-scope pickers (model config, agent

@@ -148,7 +148,10 @@ describe('runEvalNode (pii scorer)', () => {
   it('passes when no PII patterns match', async () => {
     mockResolveDefaults.mockResolvedValue({} as never);
     mocks.scannerPatternFindMany.mockResolvedValue([]);
-    const r = await runEvalNode({ scorers: [{ kind: 'pii' } as EvalScorer], targetValue: 'hello world' });
+    const r = await runEvalNode({
+      scorers: [{ kind: 'pii' } as EvalScorer],
+      targetValue: 'hello world',
+    });
     expect(r.floorPassed).toBe(true);
     expect(r.score).toBe(1);
     expect(r.decision.blocked).toBe(false);

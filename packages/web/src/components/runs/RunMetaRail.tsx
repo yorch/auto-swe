@@ -3,6 +3,7 @@
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { formatCost, formatDate, formatDuration, formatTokens } from '@/lib/utils';
+import { AutonomyDecisionsPanel } from './AutonomyDecisionsPanel';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
 import { FailureCard } from './FailureCard';
 import { RunOutcomeCard } from './RunOutcomeCard';
@@ -129,6 +130,9 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
 
       {/* Eval signals (P0) */}
       <EvalSignalsPanel runId={run.id} />
+
+      {/* Autonomy decisions (P3) */}
+      <AutonomyDecisionsPanel runId={run.id} />
 
       {/* Non-SWE outcome card */}
       {(() => {

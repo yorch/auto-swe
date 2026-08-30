@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  AutonomyDecisionDto,
   EvalResultDto,
   WorkflowDetail,
   WorkflowRunDetail,
@@ -64,6 +65,19 @@ export function useEvalResultsForRun(runId?: string) {
         .get<{ data: EvalResultDto[] }>(`/api/v1/workflow-runs/${runId}/eval-results`)
         .then((r) => r.data),
     queryKey: ['eval-results', runId],
+    refetchInterval: 10_000,
+  });
+}
+
+/** P3 governance: autonomy decisions for a run. */
+export function useAutonomyDecisionsForRun(runId?: string) {
+  return useQuery({
+    enabled: !!runId,
+    queryFn: () =>
+      api
+        .get<{ data: AutonomyDecisionDto[] }>(`/api/v1/workflow-runs/${runId}/autonomy-decisions`)
+        .then((r) => r.data),
+    queryKey: ['autonomy-decisions', runId],
     refetchInterval: 10_000,
   });
 }
