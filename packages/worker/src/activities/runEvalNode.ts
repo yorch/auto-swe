@@ -14,6 +14,12 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import {
+  type RegexTarget,
+  resolveRegexBudgetMs,
+  runRegexBatch,
+  toRegexSpecs,
+} from '@auto-swe/shared/lib/regexExec';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { type Context, type EvalScorer, evalBoolean } from '@auto-swe/shared/workflow';
 import { z } from 'zod';
@@ -39,11 +45,12 @@ import { runGateStandalone } from './standaloneGateRunner.js';
 /** Scorer kind → the EvalResult source it records under. */
 const SCORER_KIND_SOURCE: Record<
   EvalScorer['kind'],
-  'GATE' | 'ASSERT' | 'JUDGE' | 'TRAJECTORY' | 'POLICY'
+  'GATE' | 'ASSERT' | 'JUDGE' | 'TRAJECTORY' | 'POLICY' | 'PII'
 > = {
   assert: 'ASSERT',
   gate: 'GATE',
   judge: 'JUDGE',
+  pii: 'PII',
   policy: 'POLICY',
   trajectory: 'TRAJECTORY',
 };
@@ -107,6 +114,29 @@ async function evaluateScorer(
         scorer: `policy:${scorer.riskClass}`,
         value: passed ? 1 : 0,
       };
+    }
+    case 'pii': {
+      const text = typeof targetValue === 'string' ? targetValue : JSON.stringify(targetValue);
+      const rows = await prisma.scannerPattern.findMany({
+        orderBy: { label: 'asc' },
+        where: { isActive: true, type: 'PII' },
+      });
+      const entries = [] as { flags: string; label: string; source: string }[];
+      for (const r of rows) {
+        try {
+          new RegExp(r.pattern, r.flags);
+        } catch {
+          console.error(`[pii] skipping invalid pattern '${r.label}': invalid regex`);
+          continue;
+        }
+        entries.push({ flags: r.flags, label: r.label, source: r.pattern });
+      }
+      const specs = toRegexSpecs(entries, 'pii:');
+      const target: RegexTarget = { key: 'target', text };
+      const budgetMs = await resolveRegexBudgetMs();
+      const result = await runRegexBatch(specs, [target], { budgetMs, label: 'piiScan' });
+      const passed = result.hits.length === 0 && !result.incomplete;
+      return { kind: 'pii', passed, scorer: 'pii:pii', value: passed ? 1 : 0 };
     }
     case 'gate': {
       // A `gate` is a floor scorer: it must PASS for the candidate to be

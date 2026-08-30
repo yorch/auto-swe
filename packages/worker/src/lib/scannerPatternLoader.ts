@@ -25,7 +25,8 @@ type PatternType =
   | 'INJECTION'
   | 'EXFILTRATION'
   | 'SENSITIVE_FILE'
-  | 'SHELL_COMMAND';
+  | 'SHELL_COMMAND'
+  | 'PII';
 
 export function makePatternLoader(type: PatternType, logPrefix: string) {
   let cache: { entries: CachedEntry[]; fetchedAt: number } | null = null;

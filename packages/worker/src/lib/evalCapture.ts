@@ -36,7 +36,7 @@ export interface EvalResultInput {
   /** Offline harness linkage (P1): the EvalCase scored + the EvalRun it belongs to. */
   caseId?: string;
   evalRunId?: string;
-  source: 'GATE' | 'ASSERT' | 'REVIEW' | 'MERGE' | 'JUDGE' | 'TRAJECTORY' | 'POLICY';
+  source: 'GATE' | 'ASSERT' | 'REVIEW' | 'MERGE' | 'JUDGE' | 'TRAJECTORY' | 'POLICY' | 'PII';
   scorer: string;
   scoreType: 'BOOLEAN' | 'NUMERIC' | 'CATEGORICAL';
   value: number;

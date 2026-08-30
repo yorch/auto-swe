@@ -19,6 +19,7 @@ const PATTERN_TYPES = [
   'SHELL_COMMAND',
   'CODE_SECURITY',
   'SENSITIVE_FILE',
+  'PII',
 ] as const;
 
 const PatternIdParams = z.object({ id: z.string().uuid() });

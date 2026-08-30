@@ -93,6 +93,7 @@ enum EvalSignalSource {
   JUDGE
   TRAJECTORY
   POLICY
+  PII
 }
 
 model ActiveWorkflow {
@@ -1984,6 +1985,7 @@ enum ScannerPatternType {
   SHELL_COMMAND
   CODE_SECURITY
   SENSITIVE_FILE
+  PII
 }
 
 model ScannerPattern {

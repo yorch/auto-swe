@@ -118,7 +118,7 @@ describe('seedCoreDefaults — core-only deployment', () => {
 
     const types = new Set(cap.scannerCreates.map((p) => p.type));
     expect(types).toEqual(
-      new Set(['INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'SENSITIVE_FILE'])
+      new Set(['INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'SENSITIVE_FILE', 'PII'])
     );
     expect(types.has('CODE_SECURITY')).toBe(false);
 

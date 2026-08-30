@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   autonomyPolicyFindFirst: vi.fn(),
   evalRubricFindFirst: vi.fn().mockResolvedValue(null),
+  scannerPatternFindMany: vi.fn(),
   workflowRunFindUnique: vi.fn(),
 }));
 
@@ -10,6 +11,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     autonomyPolicy: { findFirst: mocks.autonomyPolicyFindFirst },
     evalRubric: { findFirst: mocks.evalRubricFindFirst },
+    scannerPattern: { findMany: mocks.scannerPatternFindMany },
     workflowRun: { findUnique: mocks.workflowRunFindUnique },
   },
 }));
@@ -135,6 +137,31 @@ describe('runEvalNode (policy scorer)', () => {
     const r = await runEvalNode({
       scorers: [{ kind: 'policy', riskClass: 'mass_communication' } as EvalScorer],
       targetValue: {},
+    });
+    expect(r.floorPassed).toBe(false);
+    expect(r.score).toBe(0);
+    expect(r.decision.blocked).toBe(true);
+  });
+});
+
+describe('runEvalNode (pii scorer)', () => {
+  it('passes when no PII patterns match', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mocks.scannerPatternFindMany.mockResolvedValue([]);
+    const r = await runEvalNode({ scorers: [{ kind: 'pii' } as EvalScorer], targetValue: 'hello world' });
+    expect(r.floorPassed).toBe(true);
+    expect(r.score).toBe(1);
+    expect(r.decision.blocked).toBe(false);
+  });
+
+  it('fails when a PII pattern matches', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mocks.scannerPatternFindMany.mockResolvedValue([
+      { flags: '', label: 'test-word', pattern: '\\btest\\b' },
+    ]);
+    const r = await runEvalNode({
+      scorers: [{ kind: 'pii' } as EvalScorer],
+      targetValue: 'this is a test',
     });
     expect(r.floorPassed).toBe(false);
     expect(r.score).toBe(0);

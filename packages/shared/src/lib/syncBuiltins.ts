@@ -253,6 +253,24 @@ const BUILTIN_RUBRICS: ReadonlyArray<{ slug: string; promptText: string; scale: 
     scale: '0..1',
     slug: 'code-review-quality',
   },
+  {
+    promptText: [
+      'You are a brand reviewer checking a draft against voice, tone, and clarity standards.',
+      'Check for off-brand tone, jargon, passive voice, unsupported claims, accessibility issues, or formatting problems.',
+      'Return { "score": 0..1, "rationale": string } where score reflects how on-brand and clear the draft is.',
+    ].join('\n'),
+    scale: '0..1',
+    slug: 'brand-voice',
+  },
+  {
+    promptText: [
+      'You are a factual checker reviewing a draft for unsupported or inaccurate claims.',
+      'Flag any assertions that lack evidence, contradict the provided context, or introduce invented details.',
+      'Return { "score": 0..1, "rationale": string } where score reflects factual reliability.',
+    ].join('\n'),
+    scale: '0..1',
+    slug: 'factual-claims',
+  },
 ];
 
 async function syncEvalRubrics(prisma: PrismaClient): Promise<void> {

@@ -152,6 +152,7 @@ const EvalScorerSchema = z.discriminatedUnion('kind', [
     rubricRef: z.string().min(1),
   }),
   z.object({ kind: z.literal('policy'), riskClass: z.string().min(1) }),
+  z.object({ kind: z.literal('pii') }),
 ]);
 
 const EvalNodeSchema = z.object({

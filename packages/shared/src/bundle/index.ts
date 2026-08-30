@@ -51,6 +51,7 @@ export const SCANNER_PATTERN_TYPES = [
   'SHELL_COMMAND',
   'CODE_SECURITY',
   'SENSITIVE_FILE',
+  'PII',
 ] as const;
 
 export const BundleSkillSchema = z.object({

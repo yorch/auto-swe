@@ -2,7 +2,7 @@ export interface BuiltinScannerPatternDef {
   flags: string;
   label: string;
   pattern: string;
-  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
+  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE' | 'PII';
 }
 
 /**
@@ -468,5 +468,33 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
     label: 'sensitive-credentials-file',
     pattern: 'credentials\\.(json|ya?ml)$',
     type: 'SENSITIVE_FILE',
+  },
+
+  // ── PII patterns ──────────────────────────────────────────────────────────
+  // Advisory by default: these match common personal identifiers in prose.
+  // Admins can disable or refine them to avoid false positives on test data.
+  {
+    flags: 'i',
+    label: 'pii-email-address',
+    pattern: '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b',
+    type: 'PII',
+  },
+  {
+    flags: 'i',
+    label: 'pii-us-ssn',
+    pattern: '\\b\\d{3}-\\d{2}-\\d{4}\\b',
+    type: 'PII',
+  },
+  {
+    flags: 'i',
+    label: 'pii-us-phone',
+    pattern: '\\b(?:\\+1\\s?)?(?:\\([0-9]{3}\\)|[0-9]{3})[\\s.-]?[0-9]{3}[\\s.-]?[0-9]{4}\\b',
+    type: 'PII',
+  },
+  {
+    flags: 'i',
+    label: 'pii-credit-card',
+    pattern: '\\b(?:\\d{4}[\\s-]?){3}\\d{4}\\b',
+    type: 'PII',
   },
 ];
