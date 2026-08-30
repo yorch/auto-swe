@@ -32,6 +32,7 @@ import {
   useExplainWorkflowTemplate,
   usePromoteWorkflowVersion,
   useRegenerateWebhook,
+  useReviewWorkflowVersion,
   useRevokeWebhook,
   useStepRegistry,
   useUpdateWorkflowTemplate,
@@ -496,6 +497,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const { data: analytics } = useWorkflowTemplateAnalytics(id ?? '', 30);
   const createVersion = useCreateWorkflowVersion(id ?? '');
   const promoteVersion = usePromoteWorkflowVersion(id ?? '');
+  const reviewVersion = useReviewWorkflowVersion(id ?? '');
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const canManage = role === 'ADMIN' || role === 'LEAD';
 
@@ -607,6 +609,20 @@ export default function TemplateDetailPage({ params }: PageProps) {
     await promoteVersion.mutateAsync(effectiveVersion);
   };
 
+  const handleReview = async () => {
+    if (effectiveVersion === null) {
+      return;
+    }
+    await reviewVersion.mutateAsync(effectiveVersion);
+  };
+
+  const selectedNeedsReview =
+    canManage &&
+    effectiveVersion !== null &&
+    effectiveVersion !== template.activeVersion &&
+    versionDetail?.generatedBy != null &&
+    versionDetail?.reviewedAt == null;
+
   const handleSpecChange = (next: WorkflowSpec) => {
     setEditorSpec(next);
     setEditorJson(JSON.stringify(next, null, 2));
@@ -658,16 +674,28 @@ export default function TemplateDetailPage({ params }: PageProps) {
           {createVersion.isPending ? 'Saving…' : 'Save new version'}
         </Button>
       )}
-      {!isDirty && effectiveVersion !== null && effectiveVersion !== template.activeVersion && (
-        <Button
-          disabled={promoteVersion.isPending}
-          onClick={handlePromote}
-          size="sm"
-          variant="primary"
-        >
-          {promoteVersion.isPending ? 'Promoting…' : 'Promote to active'}
-        </Button>
-      )}
+      {!isDirty &&
+        effectiveVersion !== null &&
+        effectiveVersion !== template.activeVersion &&
+        (selectedNeedsReview ? (
+          <Button
+            disabled={reviewVersion.isPending}
+            onClick={handleReview}
+            size="sm"
+            variant="primary"
+          >
+            {reviewVersion.isPending ? 'Reviewing…' : 'Review & approve'}
+          </Button>
+        ) : (
+          <Button
+            disabled={promoteVersion.isPending}
+            onClick={handlePromote}
+            size="sm"
+            variant="primary"
+          >
+            {promoteVersion.isPending ? 'Promoting…' : 'Promote to active'}
+          </Button>
+        ))}
     </>
   );
 
@@ -836,6 +864,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
                       active
                     </span>
                   )}
+                  {template.versions[0]?.generatedBy && !template.versions[0]?.reviewedAt && (
+                    <span className="rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ember-400">
+                      needs review
+                    </span>
+                  )}
                 </div>
                 <p className="mt-3 text-[11px] leading-snug text-paper-500">
                   Save changes to create a second version and unlock A/B testing.
@@ -871,6 +904,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
                           {v.version === template.experimentVersion && (
                             <span className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
                               experiment
+                            </span>
+                          )}
+                          {v.generatedBy && !v.reviewedAt && (
+                            <span className="rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ember-400">
+                              needs review
                             </span>
                           )}
                         </div>

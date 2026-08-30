@@ -178,6 +178,18 @@ export function usePromoteWorkflowVersion(templateId: string) {
   });
 }
 
+export function useReviewWorkflowVersion(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (version: number) =>
+      api.post(`/api/v1/workflow-templates/${templateId}/versions/${version}/review`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workflow-template', templateId] });
+      qc.invalidateQueries({ queryKey: ['workflow-template-version', templateId] });
+    },
+  });
+}
+
 export function useUpdateWorkflowTemplate(templateId: string) {
   const qc = useQueryClient();
   return useMutation({

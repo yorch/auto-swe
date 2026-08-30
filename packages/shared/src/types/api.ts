@@ -249,6 +249,9 @@ export interface WorkflowTemplateVersionSummary {
   version: number;
   createdAt: string;
   createdBy: string | null;
+  generatedBy: string | null;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
 }
 
 export interface WorkflowTemplateVersionDetail extends WorkflowTemplateVersionSummary {

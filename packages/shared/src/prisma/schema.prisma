@@ -1411,16 +1411,26 @@ model AutonomyPolicy {
 /// Immutable snapshot of a template at version N. `spec` is validated against
 /// WorkflowSpecSchema on insert in the gateway.
 model WorkflowTemplateVersion {
-  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  templateId String           @map("template_id") @db.Uuid
-  template   WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  version    Int
-  spec       Json
-  createdBy  String?          @map("created_by") @db.Uuid
-  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId  String           @map("template_id") @db.Uuid
+  template    WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version     Int
+  spec        Json
+  createdBy   String?          @map("created_by") @db.Uuid
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  /// Set when the version was produced by the workflow author agent
+  /// (e.g. 'workflow_author'). Null for manually-authored versions.
+  generatedBy String?          @map("generated_by")
+
+  /// Human review timestamp + reviewer before a generated version may be
+  /// promoted to active. Empty for non-generated versions.
+  reviewedAt  DateTime?        @map("reviewed_at") @db.Timestamptz
+  reviewedBy  String?          @map("reviewed_by") @db.Uuid
 
   shellAudits WorkflowShellAudit[]
 
+  @@index([reviewedBy])
   @@unique([templateId, version])
   @@map("workflow_template_versions")
 }

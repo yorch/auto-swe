@@ -67,6 +67,7 @@ export async function persistDraftTemplate(
           versions: {
             create: {
               createdBy: input.createdById ?? null,
+              generatedBy: 'workflow_author',
               spec: specToSave as object,
               version: 1,
             },

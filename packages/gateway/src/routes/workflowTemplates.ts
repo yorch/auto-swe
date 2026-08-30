@@ -283,6 +283,7 @@ async function createTemplateWithInitialVersion(
     shellNodes: ShellNodeWithId[];
     egressAllowlist: string[];
     workspaceProvider: string | null;
+    generatedBy?: string | null;
   }
 ): Promise<TemplateWithIncludes> {
   return prisma.$transaction(async (tx) => {
@@ -293,7 +294,14 @@ async function createTemplateWithInitialVersion(
         name: args.name,
         status: args.status,
         teamId: args.teamId,
-        versions: { create: { createdBy: args.authorUserId, spec: args.specJson, version: 1 } },
+        versions: {
+          create: {
+            createdBy: args.authorUserId,
+            generatedBy: args.generatedBy,
+            spec: args.specJson,
+            version: 1,
+          },
+        },
         workspaceProvider: args.workspaceProvider,
       },
       include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
@@ -333,6 +341,7 @@ async function createTemplateVersion(
     authorUserId: string;
     shellNodes: ShellNodeWithId[];
     egressAllowlist: string[];
+    generatedBy?: string | null;
   }
 ): Promise<{
   id: string;
@@ -340,6 +349,9 @@ async function createTemplateVersion(
   spec: unknown;
   createdAt: Date;
   createdBy: string | null;
+  generatedBy: string | null;
+  reviewedAt: Date | null;
+  reviewedBy: string | null;
 } | null> {
   const MAX_RETRIES = 5;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -354,6 +366,7 @@ async function createTemplateVersion(
         const row = await tx.workflowTemplateVersion.create({
           data: {
             createdBy: args.authorUserId,
+            generatedBy: args.generatedBy,
             spec: args.specJson,
             templateId: args.templateId,
             version: next,
@@ -676,6 +689,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           authorUserId: user.sub,
           description: parsedSpec.description ?? '',
           egressAllowlist,
+          generatedBy: 'workflow_author',
           name,
           shellNodes,
           specJson: parsed as object,
@@ -894,7 +908,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           ...TEMPLATE_INCLUDE,
           versions: {
             orderBy: { version: 'desc' },
-            select: { createdAt: true, createdBy: true, id: true, version: true },
+            select: {
+              createdAt: true,
+              createdBy: true,
+              generatedBy: true,
+              id: true,
+              reviewedAt: true,
+              reviewedBy: true,
+              version: true,
+            },
           },
         },
         where: { id: request.params.id, ...teamMembershipFilter(user) },
@@ -918,7 +940,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             ? {
                 createdAt: activeVersionRow.createdAt,
                 createdBy: activeVersionRow.createdBy,
+                generatedBy: activeVersionRow.generatedBy,
                 id: activeVersionRow.id,
+                reviewedAt: activeVersionRow.reviewedAt,
+                reviewedBy: activeVersionRow.reviewedBy,
                 spec: activeVersionRow.spec,
                 version: activeVersionRow.version,
               }
@@ -1194,6 +1219,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const created = await createTemplateVersion(fastify.prisma, {
         authorUserId: user.sub,
         egressAllowlist: imgGate.egressAllowlist,
+        generatedBy: 'workflow_author',
         shellNodes,
         specJson: parsedSpec as object,
         teamId: tpl.teamId,
@@ -1213,7 +1239,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           createdAt: created.createdAt,
           createdBy: created.createdBy,
+          generatedBy: created.generatedBy,
           id: created.id,
+          reviewedAt: created.reviewedAt,
+          reviewedBy: created.reviewedBy,
           spec: created.spec,
           version: created.version,
         },
@@ -1256,7 +1285,52 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           createdAt: version.createdAt,
           createdBy: version.createdBy,
+          generatedBy: version.generatedBy,
           id: version.id,
+          reviewedAt: version.reviewedAt,
+          reviewedBy: version.reviewedBy,
+          spec: version.spec,
+          version: version.version,
+        },
+      };
+    }
+  );
+
+  // ── Review a generated version before it can be promoted ──
+  // POST /:id/versions/:version/review
+  // Marks a version as human-reviewed. Required for AI-generated versions
+  // (generatedBy is set) before POST /:id/promote will accept them.
+  app.post(
+    '/:id/versions/:version/review',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { params: VersionParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const tpl = await fastify.prisma.workflowTemplate.findFirst({
+        select: { id: true },
+        where: { id: request.params.id, ...teamMembershipFilter(user) },
+      });
+      if (!tpl) {
+        return reply.status(404).send({
+          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
+        });
+      }
+      const version = await fastify.prisma.workflowTemplateVersion.update({
+        data: { reviewedAt: new Date(), reviewedBy: user.sub },
+        where: {
+          templateId_version: { templateId: tpl.id, version: request.params.version },
+        },
+      });
+      return {
+        data: {
+          createdAt: version.createdAt,
+          createdBy: version.createdBy,
+          generatedBy: version.generatedBy,
+          id: version.id,
+          reviewedAt: version.reviewedAt,
+          reviewedBy: version.reviewedBy,
           spec: version.spec,
           version: version.version,
         },
@@ -1327,7 +1401,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           createdAt: created.createdAt,
           createdBy: created.createdBy,
+          generatedBy: created.generatedBy,
           id: created.id,
+          reviewedAt: created.reviewedAt,
+          reviewedBy: created.reviewedBy,
           spec: created.spec,
           version: created.version,
         },
@@ -1361,6 +1438,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (!version) {
         return reply.status(404).send({
           error: { code: 'VERSION_NOT_FOUND', message: 'Version not found' },
+        });
+      }
+      if (version.generatedBy && !version.reviewedAt) {
+        return reply.status(409).send({
+          error: {
+            code: 'REVIEW_REQUIRED',
+            message:
+              'This AI-generated version must be reviewed and approved before it can be promoted to active.',
+          },
         });
       }
       const updated = await fastify.prisma.workflowTemplate.update({
