@@ -23,6 +23,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
+import { resolveAutonomyPolicy } from '../lib/resolveAutonomyPolicy.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import {
   combineScores,
@@ -36,10 +37,14 @@ import { runAgent } from './runAgent.js';
 import { runGateStandalone } from './standaloneGateRunner.js';
 
 /** Scorer kind → the EvalResult source it records under. */
-const SCORER_KIND_SOURCE: Record<EvalScorer['kind'], 'GATE' | 'ASSERT' | 'JUDGE' | 'TRAJECTORY'> = {
+const SCORER_KIND_SOURCE: Record<
+  EvalScorer['kind'],
+  'GATE' | 'ASSERT' | 'JUDGE' | 'TRAJECTORY' | 'POLICY'
+> = {
   assert: 'ASSERT',
   gate: 'GATE',
   judge: 'JUDGE',
+  policy: 'POLICY',
   trajectory: 'TRAJECTORY',
 };
 
@@ -81,6 +86,27 @@ async function evaluateScorer(
     case 'judge': {
       const value = await runJudge(scorer.rubricRef, targetValue);
       return { kind: 'judge', scorer: `judge:${scorer.rubricRef}`, value };
+    }
+    case 'policy': {
+      if (!runId) {
+        return { kind: 'policy', passed: false, scorer: `policy:${scorer.riskClass}`, value: 0 };
+      }
+      const run = await prisma.workflowRun.findUnique({
+        include: { template: { select: { teamId: true } } },
+        where: { id: runId },
+      });
+      const policy = await resolveAutonomyPolicy(
+        run?.templateId ?? '',
+        run?.template?.teamId ?? null
+      );
+      const rule = policy.rules[scorer.riskClass] ?? { action: 'require_approval' };
+      const passed = rule.action === 'auto';
+      return {
+        kind: 'policy',
+        passed,
+        scorer: `policy:${scorer.riskClass}`,
+        value: passed ? 1 : 0,
+      };
     }
     case 'gate': {
       // A `gate` is a floor scorer: it must PASS for the candidate to be

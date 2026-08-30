@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const mocks = vi.hoisted(() => ({
+  autonomyPolicyFindFirst: vi.fn(),
+  evalRubricFindFirst: vi.fn().mockResolvedValue(null),
+  workflowRunFindUnique: vi.fn(),
+}));
+
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { evalRubric: { findFirst: vi.fn().mockResolvedValue(null) } },
+  prisma: {
+    autonomyPolicy: { findFirst: mocks.autonomyPolicyFindFirst },
+    evalRubric: { findFirst: mocks.evalRubricFindFirst },
+    workflowRun: { findUnique: mocks.workflowRunFindUnique },
+  },
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(),
@@ -13,10 +23,12 @@ vi.mock('../lib/evalCapture.js', () => ({ recordEvalResult: vi.fn() }));
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { EvalScorer } from '@auto-swe/shared/workflow';
+import { currentWorkflowRunId } from '../lib/activityContext.js';
 import type { ScoreInput } from '../lib/scorerCombination.js';
 import { assembleScores, evalAssert, runEvalNode } from './runEvalNode.js';
 
 const mockResolveDefaults = vi.mocked(resolveWorkflowDefaults);
+const mockCurrentWorkflowRunId = vi.mocked(currentWorkflowRunId);
 
 describe('evalAssert', () => {
   it('evaluates numeric comparisons against a json path', () => {
@@ -89,5 +101,43 @@ describe('runEvalNode (judge threshold from DB config)', () => {
     mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.4 } as never);
     const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
     expect(r.decision.blocked).toBe(false);
+  });
+});
+
+describe('runEvalNode (policy scorer)', () => {
+  const policyScorer = { kind: 'policy', riskClass: 'internal_read' } as EvalScorer;
+
+  it('passes when the resolved autonomy policy allows the risk class', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mockCurrentWorkflowRunId.mockResolvedValue('run-1');
+    mocks.workflowRunFindUnique.mockResolvedValue({
+      template: { teamId: null },
+      templateId: 'tpl-1',
+    });
+    mocks.autonomyPolicyFindFirst.mockResolvedValue(null);
+    const r = await runEvalNode({ scorers: [policyScorer], targetValue: {} });
+    expect(r.floorPassed).toBe(true);
+    expect(r.score).toBe(1);
+    expect(r.decision.blocked).toBe(false);
+  });
+
+  it('fails when the resolved autonomy policy denies the risk class', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mockCurrentWorkflowRunId.mockResolvedValue('run-1');
+    mocks.workflowRunFindUnique.mockResolvedValue({
+      template: { teamId: null },
+      templateId: 'tpl-1',
+    });
+    mocks.autonomyPolicyFindFirst.mockResolvedValue({
+      name: 'comms',
+      rules: { mass_communication: { action: 'require_approval', approverCount: 2 } },
+    });
+    const r = await runEvalNode({
+      scorers: [{ kind: 'policy', riskClass: 'mass_communication' } as EvalScorer],
+      targetValue: {},
+    });
+    expect(r.floorPassed).toBe(false);
+    expect(r.score).toBe(0);
+    expect(r.decision.blocked).toBe(true);
   });
 });

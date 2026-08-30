@@ -92,6 +92,7 @@ enum EvalSignalSource {
   MERGE
   JUDGE
   TRAJECTORY
+  POLICY
 }
 
 model ActiveWorkflow {

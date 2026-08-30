@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { ApplicationFailure } from '@temporalio/activity';
+import { resolveAutonomyPolicy } from '../lib/resolveAutonomyPolicy.js';
 
 export interface PublishOutcomeInput {
   /** Temporal workflow ID used to locate the run and its template/team context. */
@@ -17,29 +18,12 @@ export interface PublishOutcomeResult {
   approverCount: number;
 }
 
-export type AutonomyAction = 'auto' | 'require_approval';
-
-interface RiskRule {
-  action: AutonomyAction;
-  approverCount?: number;
-}
-
-interface AutonomyRules {
-  [riskClass: string]: RiskRule;
-}
-
-const FALLBACK_RULES: AutonomyRules = {
-  external_communication: { action: 'require_approval' },
-  internal_read: { action: 'auto' },
-  internal_write: { action: 'auto' },
-  mass_communication: { action: 'require_approval', approverCount: 2 },
-};
-
-function coerceRules(raw: unknown): AutonomyRules {
-  if (typeof raw !== 'object' || raw == null) {
-    return FALLBACK_RULES;
+function normalizeApproverCount(raw: unknown): number {
+  const parsed = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return 1;
   }
-  return raw as AutonomyRules;
+  return parsed;
 }
 
 export async function publishOutcome(input: PublishOutcomeInput): Promise<PublishOutcomeResult> {
@@ -54,20 +38,20 @@ export async function publishOutcome(input: PublishOutcomeInput): Promise<Publis
   }
 
   const policy = await resolveAutonomyPolicy(run.templateId, run.template?.teamId ?? null);
-  const rules = coerceRules(policy?.rules);
-  const rule = rules[input.action] ?? { action: 'require_approval' };
+  const rule = policy.rules[input.action] ?? { action: 'require_approval' };
   const decision = rule.action === 'auto' ? 'auto' : 'require_approval';
   const approverCount = normalizeApproverCount(rule.approverCount);
+  const policyName = policy.name;
   const reason =
     decision === 'auto'
-      ? `Policy '${policy?.name ?? 'platform fallback'}' allows auto for '${input.action}'`
-      : `Policy '${policy?.name ?? 'platform fallback'}' requires human approval for '${input.action}'`;
+      ? `Policy '${policyName}' allows auto for '${input.action}'`
+      : `Policy '${policyName}' requires human approval for '${input.action}'`;
 
   await prisma.autonomyDecision.create({
     data: {
       event: 'publish',
       payload: { decision, reason },
-      policyName: policy?.name ?? 'platform fallback',
+      policyName,
       requiredApprovers: approverCount,
       riskClass: input.action,
       runId: run.id,
@@ -77,45 +61,7 @@ export async function publishOutcome(input: PublishOutcomeInput): Promise<Publis
   return {
     approverCount,
     decision,
-    policyName: policy?.name ?? 'platform fallback',
+    policyName,
     reason,
   };
-}
-
-function normalizeApproverCount(raw: unknown): number {
-  const parsed = typeof raw === 'number' ? raw : Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    return 1;
-  }
-  return parsed;
-}
-
-async function resolveAutonomyPolicy(
-  templateId: string,
-  teamId: string | null
-): Promise<{ name: string; rules: AutonomyRules } | null> {
-  const templatePolicy = await prisma.autonomyPolicy.findFirst({
-    where: { templateId },
-  });
-  if (templatePolicy) {
-    return { name: templatePolicy.name, rules: coerceRules(templatePolicy.rules) };
-  }
-
-  if (teamId) {
-    const teamPolicy = await prisma.autonomyPolicy.findFirst({
-      where: { isDefault: true, teamId, templateId: null },
-    });
-    if (teamPolicy) {
-      return { name: teamPolicy.name, rules: coerceRules(teamPolicy.rules) };
-    }
-  }
-
-  const globalPolicy = await prisma.autonomyPolicy.findFirst({
-    where: { isDefault: true, teamId: null, templateId: null },
-  });
-  if (globalPolicy) {
-    return { name: globalPolicy.name, rules: coerceRules(globalPolicy.rules) };
-  }
-
-  return null;
 }

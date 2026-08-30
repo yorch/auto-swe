@@ -603,6 +603,7 @@ export const EVAL_SIGNAL_SOURCES = [
   'MERGE',
   'JUDGE',
   'TRAJECTORY',
+  'POLICY',
 ] as const;
 export type EvalSignalSourceValue = (typeof EVAL_SIGNAL_SOURCES)[number];
 

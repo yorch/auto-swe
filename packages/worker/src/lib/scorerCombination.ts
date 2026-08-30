@@ -13,7 +13,7 @@
  * advisory-with-thresholds and may only block once the judge is calibrated.
  */
 
-export type ScorerKind = 'gate' | 'assert' | 'trajectory' | 'judge';
+export type ScorerKind = 'gate' | 'assert' | 'trajectory' | 'judge' | 'policy';
 
 export interface ScoreInput {
   kind: ScorerKind;
@@ -26,7 +26,7 @@ export interface ScoreInput {
 }
 
 /** Floor = the hard, blocking axes (execution + programmatic guardrail). */
-const FLOOR_KINDS: ReadonlySet<ScorerKind> = new Set<ScorerKind>(['gate', 'assert']);
+const FLOOR_KINDS: ReadonlySet<ScorerKind> = new Set<ScorerKind>(['gate', 'assert', 'policy']);
 
 export function isFloorKind(kind: ScorerKind): boolean {
   return FLOOR_KINDS.has(kind);
