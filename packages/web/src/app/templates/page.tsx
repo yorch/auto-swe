@@ -139,7 +139,15 @@ const JOB_PHASE_LABEL: Record<string, string> = {
   persisting: 'Saving the draft…',
 };
 
-function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function NewTemplateModal({
+  open,
+  onClose,
+  onStartBlank,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onStartBlank: () => void;
+}) {
   const router = useRouter();
   const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
   const startJob = useStartWorkflowGenerationJob();
@@ -147,6 +155,14 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [mode, setMode] = useState<'describe' | 'wizard'>('describe');
+
+  // Wizard fields: the answers are assembled into a single prompt for the
+  // workflow author, so no backend changes are needed.
+  const [goal, setGoal] = useState('');
+  const [inputs, setInputs] = useState('');
+  const [steps, setSteps] = useState('');
+  const [outcome, setOutcome] = useState('');
 
   // Poll the async generation job while one is in flight.
   const { data: job } = useWorkflowGenerationJob(jobId);
@@ -156,6 +172,11 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
     setName('');
     setError(null);
     setJobId(null);
+    setMode('describe');
+    setGoal('');
+    setInputs('');
+    setSteps('');
+    setOutcome('');
   };
 
   // React to terminal job states: route to the canvas on success, surface the
@@ -180,17 +201,34 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
     }
   }, [job, onClose, router]);
 
-  const handleGenerate = async () => {
-    const trimmed = prompt.trim();
-    if (!trimmed) {
-      setError('Describe what the workflow should do');
+  const buildWizardPrompt = () => {
+    const parts = [
+      'Create an agentic workflow.',
+      goal.trim() ? `Goal: ${goal.trim()}` : '',
+      inputs.trim() ? `Input it receives: ${inputs.trim()}` : '',
+      steps.trim() ? `Steps to perform: ${steps.trim()}` : '',
+      outcome.trim() ? `Expected outcome: ${outcome.trim()}` : '',
+    ];
+    return parts.filter(Boolean).join('\n');
+  };
+
+  const handleGenerate = async (forcedPrompt?: string) => {
+    const effectivePrompt = (
+      forcedPrompt ?? (mode === 'wizard' ? buildWizardPrompt() : prompt)
+    ).trim();
+    if (!effectivePrompt) {
+      setError(
+        mode === 'wizard'
+          ? 'Fill in at least one wizard field'
+          : 'Describe what the workflow should do'
+      );
       return;
     }
     setError(null);
     try {
       const result = await startJob.mutateAsync({
         name: name.trim() || undefined,
-        prompt: trimmed,
+        prompt: effectivePrompt,
         teamId: selectedTeamId ?? undefined,
       });
       setJobId(result.jobId);
@@ -216,24 +254,88 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
         reset();
       }}
       open={open}
-      title="Generate a workflow with AI"
+      title="New workflow"
     >
       <div className="space-y-4">
-        <p className="text-sm leading-relaxed text-paper-400">
-          Describe what you want the workflow to do in plain language. An AI agent assembles a
-          workflow from your available steps, agents, and connections, and saves it as a{' '}
-          <span className="font-mono text-paper-300">DRAFT</span> for you to review and edit on the
-          canvas before activating.
-        </p>
         {error && <Alert>{error}</Alert>}
-        <Textarea
-          disabled={busy}
-          label="Description"
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="e.g. When a ticket comes in, run the implementer, then the review network, and open a pull request. Pause for human approval before merging."
-          rows={6}
-          value={prompt}
-        />
+        <div className="flex gap-2">
+          <Button
+            onClick={() => setMode('describe')}
+            size="sm"
+            variant={mode === 'describe' ? 'primary' : 'ghost'}
+          >
+            Describe
+          </Button>
+          <Button
+            onClick={() => setMode('wizard')}
+            size="sm"
+            variant={mode === 'wizard' ? 'primary' : 'ghost'}
+          >
+            Answer questions
+          </Button>
+        </div>
+        {mode === 'describe' ? (
+          <p className="text-sm leading-relaxed text-paper-400">
+            Describe what you want the workflow to do in plain language. An AI agent assembles a
+            workflow from your available steps, agents, and connections, and saves it as a{' '}
+            <span className="font-mono text-paper-300">DRAFT</span> for you to review and edit on
+            the canvas before activating.
+          </p>
+        ) : (
+          <p className="text-sm leading-relaxed text-paper-400">
+            Answer a few questions and the AI will assemble a draft workflow from your answers. You
+            can refine it on the canvas before activating.
+          </p>
+        )}
+        {mode === 'describe' ? (
+          <Textarea
+            disabled={busy}
+            label="Description"
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="e.g. When a ticket comes in, run the implementer, then the review network, and open a pull request. Pause for human approval before merging."
+            rows={6}
+            value={prompt}
+          />
+        ) : (
+          <div className="space-y-3">
+            <Textarea
+              disabled={busy}
+              hint="What should the workflow accomplish?"
+              label="Goal"
+              onChange={(e) => setGoal(e.target.value)}
+              placeholder="e.g. Summarize a support ticket and draft a reply for the responder to review."
+              rows={2}
+              value={goal}
+            />
+            <Textarea
+              disabled={busy}
+              hint="Optional"
+              label="Input"
+              onChange={(e) => setInputs(e.target.value)}
+              placeholder="e.g. A Zendesk ticket number and the customer's last message."
+              rows={2}
+              value={inputs}
+            />
+            <Textarea
+              disabled={busy}
+              hint="Optional"
+              label="Steps"
+              onChange={(e) => setSteps(e.target.value)}
+              placeholder="e.g. Fetch the ticket, classify the issue, retrieve related KB articles, draft a response."
+              rows={2}
+              value={steps}
+            />
+            <Textarea
+              disabled={busy}
+              hint="Optional"
+              label="Outcome"
+              onChange={(e) => setOutcome(e.target.value)}
+              placeholder="e.g. A support reply saved as a draft on the ticket, waiting for human send."
+              rows={2}
+              value={outcome}
+            />
+          </div>
+        )}
         <Input
           disabled={busy}
           hint="Optional — defaults to a name the AI picks"
@@ -257,8 +359,22 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
           >
             Cancel
           </Button>
-          <Button disabled={busy} onClick={handleGenerate} variant="primary">
+          <Button disabled={busy} onClick={() => handleGenerate()} variant="primary">
             {busy ? 'Generating…' : 'Generate draft →'}
+          </Button>
+        </div>
+        <div className="flex justify-end pt-1">
+          <Button
+            disabled={busy}
+            onClick={() => {
+              onClose();
+              reset();
+              onStartBlank();
+            }}
+            size="sm"
+            variant="ghost"
+          >
+            Or start from a blank template
           </Button>
         </div>
       </div>
@@ -304,7 +420,14 @@ export default function TemplatesPage() {
     <div className="space-y-12">
       <CreateTemplateModal onClose={() => setCreateOpen(false)} open={createOpen} />
 
-      <GenerateTemplateModal onClose={() => setGenerateOpen(false)} open={generateOpen} />
+      <NewTemplateModal
+        onClose={() => setGenerateOpen(false)}
+        onStartBlank={() => {
+          setGenerateOpen(false);
+          setCreateOpen(true);
+        }}
+        open={generateOpen}
+      />
 
       <ArchiveConfirmModal onClose={() => setArchiveTarget(null)} target={archiveTarget} />
 
@@ -315,15 +438,10 @@ export default function TemplatesPage() {
       <div className="fade-up">
         <PageHeader
           actions={
-            <div className="flex items-center gap-2">
-              <Button onClick={() => setGenerateOpen(true)} size="sm" variant="primary">
-                <SparkleIcon />
-                Generate with AI
-              </Button>
-              <Button onClick={() => setCreateOpen(true)} size="sm" variant="secondary">
-                + New workflow
-              </Button>
-            </div>
+            <Button onClick={() => setGenerateOpen(true)} size="sm" variant="primary">
+              <SparkleIcon />
+              New workflow
+            </Button>
           }
           chapter="§ Workflows"
           subtitle="Agentic workflow library. Pick a template, run it with your inputs, watch it execute."
