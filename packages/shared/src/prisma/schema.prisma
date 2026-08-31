@@ -1013,6 +1013,13 @@ model WorkflowRun {
   /// long-running run's cumulative token count can exceed the INT32 ceiling.
   tokensOutputTotal BigInt            @default(0) @map("tokens_output_total")
 
+  /// Phase-5 run-level analytics metadata. Populated at start/finalize.
+  estimatedHumanTimeSaved Float?      @map("estimated_human_time_saved")
+  outcomeDomain           String?     @map("outcome_domain")
+  outcomeType             String?     @map("outcome_type")
+  hadHumanStep            Boolean     @default(false) @map("had_human_step")
+  wasAutonomous           Boolean     @default(false) @map("was_autonomous")
+
   steps             WorkflowStep[]
   artifacts         WorkflowArtifact[]
   traces            AgentTrace[]
@@ -1359,6 +1366,9 @@ model WorkflowTemplate {
   /// registered workspace provider types (`git_repo`, `document`, `record`,
   /// `api_only`). Null = legacy behaviour; the runtime falls back to `git_repo`.
   workspaceProvider String?                @map("workspace_provider")
+  /// Phase-5 assumed human minutes this template saves per run.
+  /// Set by template authors; analytics roll it up by team/org.
+  estimatedHumanTimeSavedMinutes Float?     @map("estimated_human_time_saved_minutes")
   // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
   origin            String?
   status            WorkflowTemplateStatus @default(DRAFT)

@@ -281,6 +281,7 @@ export interface UpdateWorkflowTemplateBody {
   experimentSplit?: number | null;
   inputSchema?: InputSchema | null;
   workspaceProvider?: WorkspaceProviderType | null;
+  estimatedHumanTimeSavedMinutes?: number | null;
 }
 
 export interface WorkflowTemplateAnalytics {
@@ -293,6 +294,9 @@ export interface WorkflowTemplateAnalytics {
   p95DurationMs: number | null;
   totalCost: number;
   avgCostPerRun: number | null;
+  estimatedHumanTimeSavedTotal: number | null;
+  autonomyRate: number | null;
+  humanReviewRate: number | null;
   perStepFailureRates: Array<{
     nodeId: string;
     failed: number;
@@ -300,6 +304,7 @@ export interface WorkflowTemplateAnalytics {
     failureRate: number;
   }>;
   perVersionCounts: Array<{ version: number; count: number }>;
+  perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
   significanceHint: {
     versionA: number;
     versionB: number;
@@ -321,13 +326,24 @@ export interface GlobalAnalyticsResponse {
   failed: number;
   successRate: number | null;
   totalCost: number;
+  estimatedHumanTimeSavedTotal: number | null;
+  autonomyRate: number | null;
+  humanReviewRate: number | null;
   perTemplate: Array<{
     templateId: string;
     templateName: string;
     totalRuns: number;
     successRate: number | null;
     totalCost: number;
+    estimatedHumanTimeSavedTotal: number | null;
   }>;
+  perDomain: Array<{
+    domain: string;
+    totalRuns: number;
+    totalCost: number;
+    estimatedHumanTimeSavedTotal: number | null;
+  }>;
+  perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
 }
 
 export interface SpecDiffResponse {

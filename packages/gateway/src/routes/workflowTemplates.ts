@@ -246,6 +246,7 @@ const CreateTemplateBody = z.object({
 
 const UpdateTemplateBody = z.object({
   description: z.string().max(2000).optional(),
+  estimatedHumanTimeSavedMinutes: z.number().min(0).nullable().optional(),
   experimentSplit: z.number().int().min(0).max(100).nullable().optional(),
   experimentVersion: z.number().int().min(1).nullable().optional(),
   inputSchema: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -546,10 +547,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         select: {
           costUsdAccrued: true,
           endedAt: true,
+          estimatedHumanTimeSaved: true,
+          hadHumanStep: true,
+          outcomeDomain: true,
+          outcomeType: true,
           startedAt: true,
           status: true,
           template: { select: { id: true, name: true } },
           templateId: true,
+          wasAutonomous: true,
           // Same back-compat fallback the per-template route uses: legacy +
           // RUNNING rows have `costUsdAccrued = 0` and we read through
           // workRequest → activeWorkflows so the global rollup doesn't
@@ -578,10 +584,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                   0
                 ),
           endedAt: r.endedAt,
+          estimatedHumanTimeSaved: r.estimatedHumanTimeSaved,
+          hadHumanStep: r.hadHumanStep,
+          outcomeDomain: r.outcomeDomain,
+          outcomeType: r.outcomeType,
           startedAt: r.startedAt,
           status: r.status,
           templateId: r.template.id,
           templateName: r.template.name,
+          wasAutonomous: r.wasAutonomous,
         })),
         request.query.window
       );
@@ -1832,9 +1843,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           select: {
             costUsdAccrued: true,
             endedAt: true,
+            estimatedHumanTimeSaved: true,
+            hadHumanStep: true,
+            outcomeType: true,
             startedAt: true,
             status: true,
             templateVersion: true,
+            wasAutonomous: true,
             // Kept for back-compat with rows that pre-date the phase-8
             // denormalization write (analytics.ts falls back to summing this
             // when costUsdAccrued is zero). Cheap because RUNNING runs are

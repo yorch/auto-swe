@@ -19,6 +19,10 @@ export interface AnalyticsRunRow {
   status: string;
   templateVersion: number;
   costUsdAccrued?: number;
+  estimatedHumanTimeSaved?: number | null;
+  outcomeType?: string | null;
+  hadHumanStep?: boolean;
+  wasAutonomous?: boolean;
   workRequest?: {
     activeWorkflows: { costUsdAccrued: number }[];
   } | null;
@@ -39,6 +43,9 @@ export interface AnalyticsResult {
   p95DurationMs: number | null;
   totalCost: number;
   avgCostPerRun: number | null;
+  estimatedHumanTimeSavedTotal: number | null;
+  autonomyRate: number | null;
+  humanReviewRate: number | null;
   perStepFailureRates: Array<{
     nodeId: string;
     failed: number;
@@ -46,6 +53,7 @@ export interface AnalyticsResult {
     failureRate: number;
   }>;
   perVersionCounts: Array<{ version: number; count: number }>;
+  perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
   /**
    * Phase-8 A/B significance hint. Populated only when at least two versions
    * have N ≥ {@link MIN_SAMPLES_FOR_SIGNIFICANCE} runs; otherwise `null` so
@@ -131,11 +139,47 @@ export function computeAnalytics(
     versionCounts.set(r.templateVersion, (versionCounts.get(r.templateVersion) ?? 0) + 1);
   }
 
+  const timeSaved = runs.map((r) => r.estimatedHumanTimeSaved ?? 0).filter((m) => m > 0);
+  const estimatedHumanTimeSavedTotal =
+    timeSaved.length > 0 ? timeSaved.reduce((s, m) => s + m, 0) : null;
+
+  const finishedAutonomy = runs.filter((r) => r.status !== 'RUNNING' && r.wasAutonomous != null);
+  const autonomyRate =
+    finishedAutonomy.length > 0
+      ? finishedAutonomy.filter((r) => r.wasAutonomous).length / finishedAutonomy.length
+      : null;
+
+  const finishedHuman = runs.filter((r) => r.status !== 'RUNNING' && r.hadHumanStep != null);
+  const humanReviewRate =
+    finishedHuman.length > 0
+      ? finishedHuman.filter((r) => r.hadHumanStep).length / finishedHuman.length
+      : null;
+
+  const byOutcome = new Map<string, { runCount: number; totalCost: number }>();
+  for (let i = 0; i < runs.length; i++) {
+    const r = runs[i];
+    if (!r) {
+      continue;
+    }
+    const c = runCosts[i] ?? 0;
+    const key = r.outcomeType ?? 'unknown';
+    const cell = byOutcome.get(key) ?? { runCount: 0, totalCost: 0 };
+    cell.runCount += 1;
+    cell.totalCost += c;
+    byOutcome.set(key, cell);
+  }
+
   return {
+    autonomyRate,
     avgCostPerRun: runCosts.length > 0 ? totalCost / runCosts.length : null,
+    estimatedHumanTimeSavedTotal,
     failed,
+    humanReviewRate,
     p50DurationMs: percentile(durationsMs, 0.5),
     p95DurationMs: percentile(durationsMs, 0.95),
+    perOutcome: Array.from(byOutcome.entries())
+      .map(([outcomeType, cell]) => ({ outcomeType, ...cell }))
+      .sort((a, b) => b.runCount - a.runCount),
     perStepFailureRates: Array.from(perNode.entries())
       .map(([nodeId, { failed: f, total }]) => ({
         failed: f,
@@ -227,6 +271,11 @@ export interface GlobalAnalyticsTemplateRow {
   costUsdAccrued: number;
   endedAt: Date | null;
   startedAt: Date;
+  estimatedHumanTimeSaved?: number | null;
+  outcomeDomain?: string | null;
+  outcomeType?: string | null;
+  wasAutonomous?: boolean;
+  hadHumanStep?: boolean;
 }
 
 export interface GlobalAnalyticsResult {
@@ -236,13 +285,24 @@ export interface GlobalAnalyticsResult {
   failed: number;
   successRate: number | null;
   totalCost: number;
+  estimatedHumanTimeSavedTotal: number | null;
+  autonomyRate: number | null;
+  humanReviewRate: number | null;
   perTemplate: Array<{
     templateId: string;
     templateName: string;
     totalRuns: number;
     successRate: number | null;
     totalCost: number;
+    estimatedHumanTimeSavedTotal: number | null;
   }>;
+  perDomain: Array<{
+    domain: string;
+    totalRuns: number;
+    totalCost: number;
+    estimatedHumanTimeSavedTotal: number | null;
+  }>;
+  perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
 }
 
 export function computeGlobalAnalytics(
@@ -256,6 +316,20 @@ export function computeGlobalAnalytics(
   const successRate = finished.length > 0 ? succeeded / finished.length : null;
   const totalCost = rows.reduce((s, r) => s + (r.costUsdAccrued || 0), 0);
 
+  const timeSaved = rows.map((r) => r.estimatedHumanTimeSaved ?? 0).filter((m) => m > 0);
+  const estimatedHumanTimeSavedTotal =
+    timeSaved.length > 0 ? timeSaved.reduce((s, m) => s + m, 0) : null;
+
+  const autonomyBase = finished.filter((r) => r.wasAutonomous != null);
+  const autonomyRate =
+    autonomyBase.length > 0
+      ? autonomyBase.filter((r) => r.wasAutonomous).length / autonomyBase.length
+      : null;
+
+  const humanBase = finished.filter((r) => r.hadHumanStep != null);
+  const humanReviewRate =
+    humanBase.length > 0 ? humanBase.filter((r) => r.hadHumanStep).length / humanBase.length : null;
+
   const byTemplate = new Map<
     string,
     {
@@ -264,30 +338,63 @@ export function computeGlobalAnalytics(
       succeeded: number;
       totalCost: number;
       finished: number;
+      timeSaved: number;
     }
   >();
+  const byDomain = new Map<string, { totalRuns: number; totalCost: number; timeSaved: number }>();
+  const byOutcome = new Map<string, { runCount: number; totalCost: number }>();
   for (const r of rows) {
-    const cell = byTemplate.get(r.templateId) ?? {
+    const tCell = byTemplate.get(r.templateId) ?? {
       finished: 0,
       succeeded: 0,
       templateName: r.templateName,
+      timeSaved: 0,
       totalCost: 0,
       totalRuns: 0,
     };
-    cell.totalRuns += 1;
-    cell.totalCost += r.costUsdAccrued || 0;
+    tCell.totalRuns += 1;
+    tCell.totalCost += r.costUsdAccrued || 0;
+    tCell.timeSaved += r.estimatedHumanTimeSaved ?? 0;
     if (r.status !== 'RUNNING') {
-      cell.finished += 1;
+      tCell.finished += 1;
       if (r.status === 'SUCCESS') {
-        cell.succeeded += 1;
+        tCell.succeeded += 1;
       }
     }
-    byTemplate.set(r.templateId, cell);
+    byTemplate.set(r.templateId, tCell);
+
+    const dKey = r.outcomeDomain ?? 'unknown';
+    const dCell = byDomain.get(dKey) ?? { timeSaved: 0, totalCost: 0, totalRuns: 0 };
+    dCell.totalRuns += 1;
+    dCell.totalCost += r.costUsdAccrued || 0;
+    dCell.timeSaved += r.estimatedHumanTimeSaved ?? 0;
+    byDomain.set(dKey, dCell);
+
+    const oKey = r.outcomeType ?? 'unknown';
+    const oCell = byOutcome.get(oKey) ?? { runCount: 0, totalCost: 0 };
+    oCell.runCount += 1;
+    oCell.totalCost += r.costUsdAccrued || 0;
+    byOutcome.set(oKey, oCell);
   }
   return {
+    autonomyRate,
+    estimatedHumanTimeSavedTotal,
     failed,
+    humanReviewRate,
+    perDomain: Array.from(byDomain.entries())
+      .map(([domain, cell]) => ({
+        domain,
+        estimatedHumanTimeSavedTotal: cell.timeSaved > 0 ? cell.timeSaved : null,
+        totalCost: cell.totalCost,
+        totalRuns: cell.totalRuns,
+      }))
+      .sort((a, b) => b.totalRuns - a.totalRuns),
+    perOutcome: Array.from(byOutcome.entries())
+      .map(([outcomeType, cell]) => ({ outcomeType, ...cell }))
+      .sort((a, b) => b.runCount - a.runCount),
     perTemplate: Array.from(byTemplate.entries())
       .map(([templateId, cell]) => ({
+        estimatedHumanTimeSavedTotal: cell.timeSaved > 0 ? cell.timeSaved : null,
         successRate: cell.finished > 0 ? cell.succeeded / cell.finished : null,
         templateId,
         templateName: cell.templateName,

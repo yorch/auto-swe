@@ -44,6 +44,9 @@ export async function createWorkflowRun(
   | { error: string }
 > {
   const version = await prisma.workflowTemplateVersion.findUnique({
+    include: {
+      template: { select: { estimatedHumanTimeSavedMinutes: true, workspaceProvider: true } },
+    },
     where: { templateId_version: { templateId: input.templateId, version: input.templateVersion } },
   });
   if (!version) {
@@ -98,7 +101,9 @@ export async function createWorkflowRun(
   const run = await prisma.workflowRun.upsert({
     create: {
       agentVersions,
+      estimatedHumanTimeSaved: version.template?.estimatedHumanTimeSavedMinutes ?? null,
       isCanary,
+      outcomeDomain: version.template?.workspaceProvider ?? null,
       pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
       specSnapshot: spec as unknown as object,
       status: 'RUNNING',
@@ -265,6 +270,42 @@ export async function finalizeWorkflowRun(
   let tokensInputTotal = workflows.reduce((sum, aw) => sum + Number(aw.tokensInputUsed), 0);
   let tokensOutputTotal = workflows.reduce((sum, aw) => sum + Number(aw.tokensOutputUsed), 0);
 
+  // Phase-5 metadata: outcome type, human step presence, and autonomy.
+  const [outcomeRefs, humanStepCount, autonomyDecisions] = await Promise.all([
+    prisma.workflowOutcomeReference.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { result: true },
+      where: { runId },
+    }),
+    prisma.workflowHumanStep.count({ where: { runId } }),
+    prisma.autonomyDecision.findMany({
+      select: { event: true, payload: true },
+      where: { runId },
+    }),
+  ]);
+
+  const firstConnectionType =
+    outcomeRefs &&
+    typeof outcomeRefs.result === 'object' &&
+    outcomeRefs.result !== null &&
+    'connectionType' in outcomeRefs.result
+      ? String((outcomeRefs.result as { connectionType?: unknown }).connectionType)
+      : undefined;
+  const hadHumanStep = humanStepCount > 0;
+  const wasAutonomous =
+    !hadHumanStep &&
+    autonomyDecisions.length > 0 &&
+    autonomyDecisions.every((d) => {
+      if (d.event !== 'publish') {
+        return true;
+      }
+      const decision =
+        typeof d.payload === 'object' && d.payload !== null && 'decision' in d.payload
+          ? String((d.payload as { decision?: unknown }).decision)
+          : undefined;
+      return decision === 'auto';
+    });
+
   // Repo-less runs (e.g. a general Channel Task) have no ActiveWorkflow ledger
   // row, so `recordLlmUsage` never accrued run-level cost/tokens there — the only
   // record of the spend is the run's AgentTrace rows. Sum those so `/runs` shows
@@ -303,9 +344,12 @@ export async function finalizeWorkflowRun(
     contextSnapshot: contextSnapshot as object | undefined,
     costUsdAccrued,
     endedAt: new Date(),
+    hadHumanStep,
+    outcomeType: firstConnectionType ?? null,
     status,
     tokensInputTotal,
     tokensOutputTotal,
+    wasAutonomous,
   };
 
   if (orgId) {

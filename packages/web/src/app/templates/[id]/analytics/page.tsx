@@ -117,6 +117,17 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
             <Stat label="Total cost" value={formatUsdNullable(stats.totalCost)} />
             <Stat label="Succeeded" tone="moss" value={stats.succeeded} />
             <Stat label="Failed" tone="brick" value={stats.failed} />
+            <Stat
+              label="Time saved"
+              tone="moss"
+              value={
+                stats.estimatedHumanTimeSavedTotal == null
+                  ? '—'
+                  : `${Math.round(stats.estimatedHumanTimeSavedTotal)} min`
+              }
+            />
+            <Stat label="Autonomy rate" value={formatPercent(stats.autonomyRate)} />
+            <Stat label="Human review rate" value={formatPercent(stats.humanReviewRate)} />
           </section>
 
           {/* Per-step failure rate chart */}
@@ -271,6 +282,42 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                       </li>
                     );
                   })}
+                </ul>
+              </Card>
+            </section>
+          )}
+
+          {stats.perOutcome.length > 0 && (
+            <section className="fade-up stagger-4">
+              <SectionHeader
+                hint="cost by outcome"
+                number={
+                  stats.significanceHint
+                    ? stats.perVersionCounts.length > 1
+                      ? '04'
+                      : '03'
+                    : stats.perVersionCounts.length > 1
+                      ? '03'
+                      : '02'
+                }
+                title="Outcomes"
+              />
+              <Card>
+                <p className="mb-4 text-xs text-paper-400">
+                  Runs grouped by the type of outcome they produced.
+                </p>
+                <ul className="space-y-2">
+                  {stats.perOutcome.map((o) => (
+                    <li
+                      className="flex items-center justify-between border-b border-ink-600 pb-2 last:border-b-0 last:pb-0"
+                      key={o.outcomeType}
+                    >
+                      <span className="font-mono text-sm text-paper-100">{o.outcomeType}</span>
+                      <span className="tabular font-mono text-xs text-paper-300">
+                        {o.runCount} runs · {formatCost(o.totalCost)}
+                      </span>
+                    </li>
+                  ))}
                 </ul>
               </Card>
             </section>

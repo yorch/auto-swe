@@ -77,6 +77,9 @@ vi.mock('@auto-swe/shared/db', () => {
     orgMonthlyUsage: {
       upsert: vi.fn(),
     },
+    autonomyDecision: {
+      findMany: vi.fn(async () => []),
+    },
     pullRequest: {
       findFirst: vi.fn(),
     },
@@ -84,6 +87,12 @@ vi.mock('@auto-swe/shared/db', () => {
       findUnique: vi.fn(async () => null),
     },
     team: { findUnique: vi.fn() },
+    workflowHumanStep: {
+      count: vi.fn(async () => 0),
+    },
+    workflowOutcomeReference: {
+      findFirst: vi.fn(async () => null),
+    },
     workflowRun: {
       findUnique: vi.fn(),
       update: vi.fn(),
