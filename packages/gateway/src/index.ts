@@ -35,6 +35,7 @@ import { lessonRoutes } from './routes/lessons.js';
 import { mcpConnectionRoutes } from './routes/mcpConnections.js';
 import { meRoutes } from './routes/me.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
+import { organizationRoutes } from './routes/organizations.js';
 import { orgBudgetRoutes } from './routes/orgBudget.js';
 import { orgMembersRoutes } from './routes/orgMembers.js';
 import { prdRunRoutes } from './routes/prdRuns.js';
@@ -290,6 +291,7 @@ async function start() {
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
   await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
   await app.register(humanErrorBaselineRoutes, { prefix: '/api/v1/human-error-baselines' });
+  await app.register(organizationRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
   await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });

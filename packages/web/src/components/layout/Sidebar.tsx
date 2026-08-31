@@ -173,6 +173,12 @@ const NAV_GROUPS: NavGroup[] = [
         roles: ['ADMIN'],
       },
       {
+        href: '/admin/baselines',
+        icon: 'analytics',
+        label: 'Error Baselines',
+        roles: ['ADMIN'],
+      },
+      {
         href: '/admin/workflow',
         icon: 'workflows',
         label: 'Workflow Defaults',

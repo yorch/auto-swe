@@ -949,6 +949,30 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 <dl className="space-y-3 text-sm">
                   <VersionStat label="Runs" value={analytics.totalRuns} />
                   <VersionStat label="Success rate" value={formatPercent(analytics.successRate)} />
+                  {template.estimatedHumanTimeSavedMinutes != null && (
+                    <VersionStat
+                      label="Est. time saved"
+                      value={`${template.estimatedHumanTimeSavedMinutes} min/run`}
+                    />
+                  )}
+                  {analytics.agentErrorRate != null && (
+                    <VersionStat
+                      label="Agent error rate"
+                      value={`${(analytics.agentErrorRate * 100).toFixed(1)}%`}
+                    />
+                  )}
+                  {analytics.autonomyRate != null && (
+                    <VersionStat
+                      label="Autonomy rate"
+                      value={formatPercent(analytics.autonomyRate)}
+                    />
+                  )}
+                  {analytics.humanReviewRate != null && (
+                    <VersionStat
+                      label="Human review rate"
+                      value={formatPercent(analytics.humanReviewRate)}
+                    />
+                  )}
                   {analytics.avgCostPerRun != null && (
                     <VersionStat
                       label="Avg cost / run"

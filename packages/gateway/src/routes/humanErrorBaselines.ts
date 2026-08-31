@@ -12,7 +12,7 @@ const CreateBaselineBody = z.object({
 });
 
 const ListBaselinesQuery = z.object({
-  orgId: z.string().uuid(),
+  orgId: z.string().uuid().optional(),
 });
 
 const BaselineIdParam = z.object({

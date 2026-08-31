@@ -164,6 +164,17 @@ export default function GlobalAnalyticsPage() {
             <KpiTile label="Success rate" value={formatPercent(data.successRate)} />
             <KpiTile label="Succeeded" value={String(data.succeeded)} valueClass="text-moss-400" />
             <KpiTile label="Total cost" value={fmtCost(data.totalCost)} />
+            <KpiTile
+              label="Time saved"
+              value={`${Math.round(data.estimatedHumanTimeSavedTotal ?? 0)} min`}
+              valueClass="text-moss-400"
+            />
+            <KpiTile label="Autonomy rate" value={formatPercent(data.autonomyRate)} />
+            <KpiTile label="Human review rate" value={formatPercent(data.humanReviewRate)} />
+            <KpiTile
+              label="Avg cost/run"
+              value={data.totalRuns > 0 ? fmtCost(data.totalCost / data.totalRuns) : '—'}
+            />
           </div>
 
           <Card>
@@ -284,6 +295,86 @@ export default function GlobalAnalyticsPage() {
               </>
             )}
           </Card>
+
+          {data.perDomain.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>By domain</CardTitle>
+              </CardHeader>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
+                      <th className="px-4 py-2 font-medium">Domain</th>
+                      <th className="px-4 py-2 font-medium text-right">Runs</th>
+                      <th className="px-4 py-2 font-medium text-right">Total cost</th>
+                      <th className="px-4 py-2 font-medium text-right">Time saved</th>
+                      <th className="px-4 py-2 font-medium text-right">Agent error</th>
+                      <th className="px-4 py-2 font-medium text-right">Human error</th>
+                      <th className="px-4 py-2 font-medium text-right">vs human</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.perDomain.map((d) => (
+                      <tr className="border-b border-ink-600 last:border-0" key={d.domain}>
+                        <td className="px-4 py-2">{d.domain}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{d.totalRuns}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {fmtCost(d.totalCost)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {d.estimatedHumanTimeSavedTotal != null
+                            ? `${Math.round(d.estimatedHumanTimeSavedTotal)} min`
+                            : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {d.agentErrorRate != null ? `${fmt(d.agentErrorRate * 100, 1)}%` : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {d.humanErrorRate != null ? `${fmt(d.humanErrorRate * 100, 1)}%` : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {d.errorRateVsHuman != null
+                            ? `${fmt(d.errorRateVsHuman * 100, 1)}pp`
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {data.perOutcome.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>By outcome</CardTitle>
+              </CardHeader>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
+                      <th className="px-4 py-2 font-medium">Outcome</th>
+                      <th className="px-4 py-2 font-medium text-right">Runs</th>
+                      <th className="px-4 py-2 font-medium text-right">Total cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.perOutcome.map((o) => (
+                      <tr className="border-b border-ink-600 last:border-0" key={o.outcomeType}>
+                        <td className="px-4 py-2">{o.outcomeType}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{o.runCount}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {fmtCost(o.totalCost)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
         </>
       )}
     </div>

@@ -189,6 +189,66 @@ export function useEvalDatasets() {
   });
 }
 
+interface UserOrg {
+  id: string;
+  name: string;
+  role: string;
+  slug: string;
+}
+
+export function useUserOrgs() {
+  return useQuery({
+    queryFn: () => api.get<{ data: UserOrg[] }>('/api/v1/admin/organizations').then((r) => r.data),
+    queryKey: ['user-orgs'],
+  });
+}
+
+interface HumanErrorBaseline {
+  domain: string;
+  errorCount: number;
+  errorRate: number;
+  id: string;
+  outcomeType: string | null;
+  recordedAt: string;
+  sampleSize: number;
+}
+
+export function useHumanErrorBaselines(orgId?: string) {
+  const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: HumanErrorBaseline[] }>(`/api/v1/human-error-baselines${qs}`)
+        .then((r) => r.data),
+    queryKey: ['human-error-baselines', orgId ?? 'all'],
+  });
+}
+
+export function useCreateHumanErrorBaseline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      orgId: string;
+      domain: string;
+      outcomeType?: string | null;
+      sampleSize: number;
+      errorCount: number;
+    }) =>
+      api
+        .post<{ data: HumanErrorBaseline }>('/api/v1/human-error-baselines', body)
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['human-error-baselines'] }),
+  });
+}
+
+export function useDeleteHumanErrorBaseline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/human-error-baselines/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['human-error-baselines'] }),
+  });
+}
+
 export function useEvalResults(params: { source?: string; limit?: number } = {}) {
   const qs = new URLSearchParams();
   if (params.source) {
