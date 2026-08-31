@@ -233,6 +233,7 @@ export interface WorkflowTemplateSummary {
   versionCount: number;
   inputSchema?: InputSchema | null;
   workspaceProvider?: WorkspaceProviderType | null;
+  estimatedHumanTimeSavedMinutes?: number | null;
   team: TeamRef | null;
   lastRun: {
     id: string;
@@ -297,6 +298,7 @@ export interface WorkflowTemplateAnalytics {
   estimatedHumanTimeSavedTotal: number | null;
   autonomyRate: number | null;
   humanReviewRate: number | null;
+  agentErrorRate: number | null;
   perStepFailureRates: Array<{
     nodeId: string;
     failed: number;
@@ -342,6 +344,9 @@ export interface GlobalAnalyticsResponse {
     totalRuns: number;
     totalCost: number;
     estimatedHumanTimeSavedTotal: number | null;
+    agentErrorRate: number | null;
+    humanErrorRate: number | null;
+    errorRateVsHuman: number | null;
   }>;
   perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
 }
@@ -624,6 +629,7 @@ export const EVAL_SIGNAL_SOURCES = [
   'TRAJECTORY',
   'POLICY',
   'PII',
+  'HUMAN_AUDIT',
 ] as const;
 export type EvalSignalSourceValue = (typeof EVAL_SIGNAL_SOURCES)[number];
 

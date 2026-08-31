@@ -29,6 +29,7 @@ import { bundleRoutes } from './routes/bundles.js';
 import { configSettingsRoutes } from './routes/configSettings.js';
 import { epicRoutes } from './routes/epics.js';
 import { evalRoutes } from './routes/evals.js';
+import { humanErrorBaselineRoutes } from './routes/humanErrorBaselines.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { mcpConnectionRoutes } from './routes/mcpConnections.js';
@@ -288,6 +289,7 @@ async function start() {
   await app.register(scheduledWorkRequestRoutes, { prefix: '/api/v1/scheduled-work-requests' });
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
   await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
+  await app.register(humanErrorBaselineRoutes, { prefix: '/api/v1/human-error-baselines' });
   await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
   await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });

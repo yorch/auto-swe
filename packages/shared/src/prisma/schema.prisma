@@ -94,6 +94,7 @@ enum EvalSignalSource {
   TRAJECTORY
   POLICY
   PII
+  HUMAN_AUDIT
 }
 
 model ActiveWorkflow {
@@ -378,6 +379,7 @@ model Organization {
   slackWorkspaces     SlackWorkspace[]
   slackChannels       SlackChannel[]
   memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
+  humanErrorBaselines HumanErrorBaseline[]
 
   configSettings      ConfigSetting[]
   configPermissions   ConfigPermission[]
@@ -484,6 +486,31 @@ model OrgMonthlyUsage {
   @@unique([orgId, yearMonth])
   @@index([orgId])
   @@map("org_monthly_usage")
+}
+
+/// Manual human-error baseline used for the P5 `errorRateVsHuman` metric.
+/// Teams record an audited sample of the manual process this workflow replaces.
+model HumanErrorBaseline {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId         String   @map("org_id") @db.Uuid
+  organization  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  /// Domain the baseline applies to, e.g. `git_repo`, `document`, `record`, `api_only`.
+  domain        String
+  /// Optional narrower bucket by connection/outcome type.
+  outcomeType   String?  @map("outcome_type")
+  /// Number of manual outcomes audited.
+  sampleSize    Int      @map("sample_size")
+  /// How many of those were found to be in error.
+  errorCount    Int      @map("error_count")
+  /// Derived rate, persisted on write to avoid division by zero on read.
+  errorRate     Float    @default(0) @map("error_rate")
+  /// Who recorded the baseline.
+  recordedById  String?  @map("recorded_by_id") @db.Uuid
+  recordedBy    User?    @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+  recordedAt    DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+
+  @@index([orgId, domain, outcomeType])
+  @@map("human_error_baselines")
 }
 
 /// A connected Slack workspace (channel assistant). One row per installed Slack team
@@ -774,6 +801,7 @@ model User {
   sessions              Session[]
   humanApprovals        HumanApproval[]
   humanStepsResolved    WorkflowHumanStep[]
+  humanErrorBaselines   HumanErrorBaseline[]
   workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
   configPermissions     ConfigPermission[]
@@ -1019,6 +1047,9 @@ model WorkflowRun {
   outcomeType             String?     @map("outcome_type")
   hadHumanStep            Boolean     @default(false) @map("had_human_step")
   wasAutonomous           Boolean     @default(false) @map("was_autonomous")
+  /// Phase-5 error flag. True if any non-advisory EvalResult for this run
+  /// failed (GATE, ASSERT, PII, REVIEW, or HUMAN_AUDIT).
+  hasError                Boolean     @default(false) @map("has_error")
 
   steps             WorkflowStep[]
   artifacts         WorkflowArtifact[]

@@ -92,6 +92,7 @@ function EditMetadataModal({
   initialName,
   initialDescription,
   isDefault,
+  initialEstimatedHumanTimeSavedMinutes,
 }: {
   open: boolean;
   onClose: () => void;
@@ -99,11 +100,15 @@ function EditMetadataModal({
   initialName: string;
   initialDescription: string;
   isDefault: boolean;
+  initialEstimatedHumanTimeSavedMinutes: number | null;
 }) {
   const updateTemplate = useUpdateWorkflowTemplate(templateId);
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription);
   const [defaultChecked, setDefaultChecked] = useState(isDefault);
+  const [estimatedMinutes, setEstimatedMinutes] = useState<number | null>(
+    initialEstimatedHumanTimeSavedMinutes
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -111,9 +116,10 @@ function EditMetadataModal({
       setName(initialName);
       setDescription(initialDescription);
       setDefaultChecked(isDefault);
+      setEstimatedMinutes(initialEstimatedHumanTimeSavedMinutes);
       setError(null);
     }
-  }, [open, initialName, initialDescription, isDefault]);
+  }, [open, initialName, initialDescription, isDefault, initialEstimatedHumanTimeSavedMinutes]);
 
   const handleSave = async () => {
     const trimmed = name.trim();
@@ -121,10 +127,15 @@ function EditMetadataModal({
       setError('Name is required');
       return;
     }
+    if (estimatedMinutes != null && estimatedMinutes < 0) {
+      setError('Estimated human time saved cannot be negative');
+      return;
+    }
     setError(null);
     try {
       await updateTemplate.mutateAsync({
         description: description.trim() || undefined,
+        estimatedHumanTimeSavedMinutes: estimatedMinutes,
         isDefault: defaultChecked,
         name: trimmed,
       });
@@ -145,6 +156,18 @@ function EditMetadataModal({
           onChange={(e) => setDescription(e.target.value)}
           rows={3}
           value={description}
+        />
+        <Input
+          hint="Optional — minutes saved per run"
+          label="Estimated human time saved"
+          min={0}
+          onChange={(e) => {
+            const v = e.target.value;
+            setEstimatedMinutes(v === '' ? null : Number(v));
+          }}
+          step={0.1}
+          type="number"
+          value={estimatedMinutes ?? ''}
         />
         <label className="flex cursor-pointer items-center gap-2 text-sm text-paper-300">
           <input
@@ -992,6 +1015,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       <EditMetadataModal
         initialDescription={template.description ?? ''}
+        initialEstimatedHumanTimeSavedMinutes={template.estimatedHumanTimeSavedMinutes ?? null}
         initialName={template.name}
         isDefault={template.isDefault}
         onClose={() => setEditMetaOpen(false)}

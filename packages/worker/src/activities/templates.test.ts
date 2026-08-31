@@ -68,17 +68,20 @@ vi.mock('@auto-swe/shared/db', () => {
     agentTrace: {
       aggregate: vi.fn(),
     },
+    autonomyDecision: {
+      findMany: vi.fn(async () => []),
+    },
     // Backs the config registry: no rows means every setting resolves to its
     // definition default, i.e. the constant it replaced.
     configSetting: { findMany: vi.fn(async () => []) },
     connection: {
       findUniqueOrThrow: vi.fn(),
     },
+    evalResult: {
+      findMany: vi.fn(async () => []),
+    },
     orgMonthlyUsage: {
       upsert: vi.fn(),
-    },
-    autonomyDecision: {
-      findMany: vi.fn(async () => []),
     },
     pullRequest: {
       findFirst: vi.fn(),

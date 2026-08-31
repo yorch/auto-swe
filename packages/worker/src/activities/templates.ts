@@ -271,7 +271,7 @@ export async function finalizeWorkflowRun(
   let tokensOutputTotal = workflows.reduce((sum, aw) => sum + Number(aw.tokensOutputUsed), 0);
 
   // Phase-5 metadata: outcome type, human step presence, and autonomy.
-  const [outcomeRefs, humanStepCount, autonomyDecisions] = await Promise.all([
+  const [outcomeRefs, humanStepCount, autonomyDecisions, errorEvals] = await Promise.all([
     prisma.workflowOutcomeReference.findFirst({
       orderBy: { createdAt: 'asc' },
       select: { result: true },
@@ -281,6 +281,10 @@ export async function finalizeWorkflowRun(
     prisma.autonomyDecision.findMany({
       select: { event: true, payload: true },
       where: { runId },
+    }),
+    prisma.evalResult.findMany({
+      select: { source: true },
+      where: { passed: false, runId },
     }),
   ]);
 
@@ -305,6 +309,9 @@ export async function finalizeWorkflowRun(
           : undefined;
       return decision === 'auto';
     });
+
+  const ERROR_EVAL_SOURCES = new Set(['GATE', 'ASSERT', 'PII', 'REVIEW', 'HUMAN_AUDIT']);
+  const hasError = errorEvals.some((e) => ERROR_EVAL_SOURCES.has(e.source));
 
   // Repo-less runs (e.g. a general Channel Task) have no ActiveWorkflow ledger
   // row, so `recordLlmUsage` never accrued run-level cost/tokens there — the only
@@ -345,6 +352,7 @@ export async function finalizeWorkflowRun(
     costUsdAccrued,
     endedAt: new Date(),
     hadHumanStep,
+    hasError,
     outcomeType: firstConnectionType ?? null,
     status,
     tokensInputTotal,

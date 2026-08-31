@@ -202,6 +202,7 @@ export function useUpdateWorkflowTemplate(templateId: string) {
         experimentVersion: number | null;
         experimentSplit: number | null;
         inputSchema: InputSchema | null;
+        estimatedHumanTimeSavedMinutes: number | null;
       }>
     ) =>
       api.patch<{ data: WorkflowTemplateSummary }>(

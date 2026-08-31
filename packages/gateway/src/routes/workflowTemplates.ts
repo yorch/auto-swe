@@ -25,6 +25,7 @@ import {
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { experimentBucket } from '../lib/experimentBucket.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -439,6 +440,7 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     activeVersion: tpl.activeVersion,
     createdAt: tpl.createdAt,
     description: tpl.description,
+    estimatedHumanTimeSavedMinutes: tpl.estimatedHumanTimeSavedMinutes ?? null,
     experimentSplit: tpl.experimentSplit,
     experimentVersion: tpl.experimentVersion,
     id: tpl.id,
@@ -549,6 +551,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           endedAt: true,
           estimatedHumanTimeSaved: true,
           hadHumanStep: true,
+          hasError: true,
           outcomeDomain: true,
           outcomeType: true,
           startedAt: true,
@@ -574,8 +577,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           template: teamMembershipFilter(user),
         },
       });
+      const [runs, baselines] = await Promise.all([
+        rows,
+        fastify.prisma.humanErrorBaseline.findMany({
+          select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
+          where: { organization: { memberships: { some: { userId: user.sub } } } },
+        }),
+      ]);
       const analytics = computeGlobalAnalytics(
-        rows.map((r) => ({
+        runs.map((r) => ({
           costUsdAccrued:
             r.costUsdAccrued > 0
               ? r.costUsdAccrued
@@ -586,6 +596,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           endedAt: r.endedAt,
           estimatedHumanTimeSaved: r.estimatedHumanTimeSaved,
           hadHumanStep: r.hadHumanStep,
+          hasError: r.hasError,
           outcomeDomain: r.outcomeDomain,
           outcomeType: r.outcomeType,
           startedAt: r.startedAt,
@@ -594,7 +605,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           templateName: r.template.name,
           wasAutonomous: r.wasAutonomous,
         })),
-        request.query.window
+        request.query.window,
+        baselines.map((b) => ({
+          domain: b.domain,
+          errorRate: b.errorRate,
+          outcomeType: b.outcomeType,
+          sampleSize: b.sampleSize,
+        }))
       );
       return { data: analytics };
     }
@@ -1496,6 +1513,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
         select: {
           activeVersion: true,
+          experimentSplit: true,
+          experimentVersion: true,
           id: true,
           inputSchema: true,
           team: {
@@ -1560,6 +1579,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         typeof payload.ticketId === 'string'
           ? payload.ticketId
           : (request.body.label ?? workRequestId);
+
+      const split = tpl.experimentSplit ?? 0;
+      const resolvedVersion =
+        split > 0 && tpl.experimentVersion != null
+          ? experimentBucket(externalTicketId, tpl.id) < split
+            ? tpl.experimentVersion
+            : tpl.activeVersion
+          : tpl.activeVersion;
 
       // Validate the workspace provider / connection pairing when the template
       // declares one. A non-api_only provider needs a connection of the matching
@@ -1635,14 +1662,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             requestedById: user.sub,
             requestPayload: JSON.stringify(request.body),
             templateId: tpl.id,
-            templateVersion: tpl.activeVersion,
+            templateVersion: resolvedVersion,
           },
         },
         () =>
           fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
             request: repoWorkRequest,
             templateId: tpl.id,
-            templateVersion: tpl.activeVersion as number,
+            templateVersion: resolvedVersion,
           }),
         { log: fastify.log }
       );
@@ -1845,6 +1872,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             endedAt: true,
             estimatedHumanTimeSaved: true,
             hadHumanStep: true,
+            hasError: true,
             outcomeType: true,
             startedAt: true,
             status: true,
