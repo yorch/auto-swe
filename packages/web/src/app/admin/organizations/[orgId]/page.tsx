@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import { EligibleUserSelect } from '@/components/EligibleUserSelect';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -12,8 +12,11 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import {
   type OrgRole,
+  useInviteOrgMember,
+  useOrg,
   useOrgBudget,
   useOrgMembers,
+  usePatchOrg,
   usePatchOrgBudget,
   usePatchOrgMember,
   useRemoveOrgMember,
@@ -22,6 +25,7 @@ import {
 import { useEligibleUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
+import { useAuthStore } from '@/stores/authStore';
 
 const ORG_ROLES: readonly OrgRole[] = ['ORG_MEMBER', 'ORG_ADMIN'];
 
@@ -35,13 +39,31 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
 
   const { data: members, isLoading: membersLoading } = useOrgMembers(orgId ?? '');
   const { data: budget, isLoading: budgetLoading } = useOrgBudget(orgId ?? '');
+  const { data: org } = useOrg(orgId ?? '');
   const upsertMember = useUpsertOrgMember(orgId ?? '');
   const patchMember = usePatchOrgMember(orgId ?? '');
   const removeMember = useRemoveOrgMember(orgId ?? '');
+  const inviteMember = useInviteOrgMember(orgId ?? '');
+  const patchOrg = usePatchOrg(orgId ?? '');
   const patchBudget = usePatchOrgBudget(orgId ?? '');
 
+  const authUserId = useAuthStore((s) => s.user?.sub ?? null);
+
+  const [orgName, setOrgName] = useState('');
+  const [orgSlug, setOrgSlug] = useState('');
+  const [orgError, setOrgError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (org) {
+      setOrgName(org.name);
+      setOrgSlug(org.slug);
+    }
+  }, [org]);
   const [addUserId, setAddUserId] = useState('');
   const [addRole, setAddRole] = useState<OrgRole>('ORG_MEMBER');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<OrgRole>('ORG_MEMBER');
+  const [inviteError, setInviteError] = useState<string | null>(null);
   const [budgetInput, setBudgetInput] = useState('');
   const [thresholdInput, setThresholdInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +116,41 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       await removeMember.mutateAsync(userId);
     } catch (e) {
       setError(errMsg(e, 'Failed to remove member'));
+    }
+  }
+
+  async function handleInvite() {
+    setInviteError(null);
+    const email = inviteEmail.trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setInviteError('Enter a valid email address');
+      return;
+    }
+    try {
+      await inviteMember.mutateAsync({ email, orgRole: inviteRole });
+      setInviteEmail('');
+      setInviteRole('ORG_MEMBER');
+    } catch (e) {
+      setInviteError(errMsg(e, 'Failed to invite member'));
+    }
+  }
+
+  async function handleSaveOrg() {
+    setOrgError(null);
+    const name = orgName.trim();
+    const slug = orgSlug.trim();
+    if (!name || !slug) {
+      setOrgError('Name and slug are required');
+      return;
+    }
+    if (!/^[a-z0-9-]+$/.test(slug)) {
+      setOrgError('Slug must be lowercase kebab-case');
+      return;
+    }
+    try {
+      await patchOrg.mutateAsync({ name, slug });
+    } catch (e) {
+      setOrgError(errMsg(e, 'Failed to update organization'));
     }
   }
 
@@ -151,37 +208,46 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 </tr>
               </thead>
               <tbody>
-                {(members ?? []).map((m) => (
-                  <tr className="border-b border-ink-600 last:border-0" key={m.id}>
-                    <td className="py-3 pr-3 text-paper-100">{m.user.email}</td>
-                    <td className="py-3 pr-3 font-mono text-[11px] text-paper-400">
-                      {m.user.role}
-                    </td>
-                    <td className="py-3 pr-3">
-                      <Select
-                        onChange={(e) => {
-                          const role = e.target.value;
-                          if (isOrgRole(role)) {
-                            handleRoleChange(m.userId, role);
+                {(members ?? []).map((m) => {
+                  const isMe = m.userId === authUserId;
+                  return (
+                    <tr className="border-b border-ink-600 last:border-0" key={m.id}>
+                      <td className="py-3 pr-3 text-paper-100">
+                        {m.user.email} {isMe ? <span className="text-paper-500">(you)</span> : null}
+                      </td>
+                      <td className="py-3 pr-3 font-mono text-[11px] text-paper-400">
+                        {m.user.role}
+                      </td>
+                      <td className="py-3 pr-3">
+                        <Select
+                          disabled={isMe}
+                          onChange={(e) => {
+                            const role = e.target.value;
+                            if (isOrgRole(role)) {
+                              handleRoleChange(m.userId, role);
+                            }
+                          }}
+                          value={m.role}
+                        >
+                          <option value="ORG_ADMIN">ORG_ADMIN</option>
+                          <option value="ORG_MEMBER">ORG_MEMBER</option>
+                        </Select>
+                      </td>
+                      <td className="py-3 text-right">
+                        <Button
+                          disabled={isMe}
+                          onClick={() =>
+                            setPendingRemoval({ email: m.user.email, userId: m.userId })
                           }
-                        }}
-                        value={m.role}
-                      >
-                        <option value="ORG_ADMIN">ORG_ADMIN</option>
-                        <option value="ORG_MEMBER">ORG_MEMBER</option>
-                      </Select>
-                    </td>
-                    <td className="py-3 text-right">
-                      <Button
-                        onClick={() => setPendingRemoval({ email: m.user.email, userId: m.userId })}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        Remove
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          Remove
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             <div className="mt-4 flex items-end gap-3 border-t border-ink-600 pt-4">
@@ -216,8 +282,64 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 </>
               )}
             </div>
+            <div className="mt-4 space-y-3 border-t border-ink-600 pt-4">
+              {inviteError ? <Alert variant="error">{inviteError}</Alert> : null}
+              <div className="flex items-end gap-3">
+                <Input
+                  label="Invite by email"
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="colleague@example.com"
+                  type="email"
+                  value={inviteEmail}
+                />
+                <Select
+                  label="Role"
+                  onChange={(e) => {
+                    const role = e.target.value;
+                    if (isOrgRole(role)) {
+                      setInviteRole(role);
+                    }
+                  }}
+                  value={inviteRole}
+                >
+                  <option value="ORG_MEMBER">ORG_MEMBER</option>
+                  <option value="ORG_ADMIN">ORG_ADMIN</option>
+                </Select>
+                <Button
+                  disabled={inviteMember.isPending}
+                  onClick={handleInvite}
+                  variant="secondary"
+                >
+                  Invite
+                </Button>
+              </div>
+            </div>
           </>
         )}
+      </Card>
+
+      {/* ── Settings ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle eyebrow="Org">Profile</CardTitle>
+        </CardHeader>
+        <div className="space-y-4 p-4 pt-0">
+          {orgError ? <Alert variant="error">{orgError}</Alert> : null}
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Name" onChange={(e) => setOrgName(e.target.value)} value={orgName} />
+            <Input
+              hint="Lowercase letters, numbers, hyphens"
+              label="Slug"
+              onChange={(e) => setOrgSlug(e.target.value)}
+              value={orgSlug}
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button disabled={patchOrg.isPending} onClick={handleSaveOrg} variant="primary">
+              {patchOrg.isPending ? 'Saving…' : 'Save Profile'}
+            </Button>
+          </div>
+        </div>
       </Card>
 
       {/* ── Budget ── */}

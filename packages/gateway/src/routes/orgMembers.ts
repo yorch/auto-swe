@@ -11,7 +11,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth } from '../plugins/auth.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
 const MemberParamsSchema = z.object({ orgId: z.string().uuid(), userId: z.string().uuid() });
@@ -78,6 +78,61 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // POST /api/v1/admin/organizations/:orgId/members/invite
+  f.post(
+    '/:orgId/members/invite',
+    {
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      schema: {
+        body: z.object({
+          email: z.string().email(),
+          orgRole: z.enum(['ORG_ADMIN', 'ORG_MEMBER']).default('ORG_MEMBER'),
+        }),
+        params: OrgParamsSchema,
+      },
+    },
+    async (request, reply) => {
+      const { orgId } = OrgParamsSchema.parse(request.params);
+      const { email, orgRole } = request.body;
+
+      const existing = await fastify.prisma.user.findUnique({ where: { email } });
+      if (existing) {
+        return reply
+          .status(409)
+          .send({ error: { code: 'USER_EXISTS', message: 'User with this email already exists' } });
+      }
+
+      const user = await fastify.prisma.user.create({
+        data: {
+          email,
+          emailVerified: true,
+          isActive: true,
+          role: 'ENGINEER',
+        },
+        select: { email: true, id: true, isActive: true, role: true },
+      });
+      await fastify.prisma.organizationMembership.create({
+        data: { orgId, role: orgRole, userId: user.id },
+      });
+
+      try {
+        const { getAuth } = await import('../lib/betterAuth.js');
+        const clientOrigin =
+          process.env.CORS_ORIGIN?.split(',')[0]?.trim() ?? 'http://localhost:3000';
+        await getAuth().api.signInMagicLink({
+          body: { callbackURL: `${clientOrigin}/login?bridge=1`, email },
+          headers: new Headers(),
+        });
+      } catch (err) {
+        fastify.log.warn({ err }, 'org invite magic-link send failed — user row was created');
+      }
+
+      return reply.status(201).send({
+        data: { ...user, orgRole },
+      });
+    }
+  );
+
   // PATCH /api/v1/admin/organizations/:orgId/members/:userId
   f.patch(
     '/:orgId/members/:userId',
@@ -97,6 +152,21 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Membership not found' } });
       }
+      if (row.role === 'ORG_ADMIN' && role !== 'ORG_ADMIN') {
+        if (requireUser(request).sub === userId) {
+          return reply.status(409).send({
+            error: { code: 'SELF_DEMOTION', message: 'Cannot demote yourself' },
+          });
+        }
+        const adminCount = await fastify.prisma.organizationMembership.count({
+          where: { orgId, role: 'ORG_ADMIN' },
+        });
+        if (adminCount <= 1) {
+          return reply.status(409).send({
+            error: { code: 'LAST_ORG_ADMIN', message: 'Cannot demote the last org admin' },
+          });
+        }
+      }
       const updated = await fastify.prisma.organizationMembership.update({
         data: { role },
         where: { id: row.id },
@@ -115,6 +185,12 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { orgId, userId } = MemberParamsSchema.parse(request.params);
 
+      if (requireUser(request).sub === userId) {
+        return reply
+          .status(409)
+          .send({ error: { code: 'SELF_REMOVAL', message: 'Cannot remove yourself' } });
+      }
+
       const row = await fastify.prisma.organizationMembership.findUnique({
         where: { userId_orgId: { orgId, userId } },
       });
@@ -122,6 +198,16 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         return reply
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Membership not found' } });
+      }
+      if (row.role === 'ORG_ADMIN') {
+        const adminCount = await fastify.prisma.organizationMembership.count({
+          where: { orgId, role: 'ORG_ADMIN' },
+        });
+        if (adminCount <= 1) {
+          return reply.status(409).send({
+            error: { code: 'LAST_ORG_ADMIN', message: 'Cannot remove the last org admin' },
+          });
+        }
       }
       await fastify.prisma.organizationMembership.delete({ where: { id: row.id } });
       return reply.status(204).send();

@@ -19,6 +19,7 @@ function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
   const app = makeAuthedApp({
     prisma: {
       organizationMembership: {
+        count: vi.fn().mockResolvedValue(2),
         create: vi.fn().mockResolvedValue(MEMBER_ROW),
         delete: vi.fn().mockResolvedValue({}),
         findMany: vi.fn().mockResolvedValue([MEMBER_ROW]),

@@ -173,9 +173,21 @@ const NAV_GROUPS: NavGroup[] = [
         roles: ['ADMIN'],
       },
       {
+        href: '/admin/organizations',
+        icon: 'teams',
+        label: 'Organizations',
+        roles: ['ADMIN'],
+      },
+      {
         href: '/admin/baselines',
         icon: 'analytics',
         label: 'Error Baselines',
+        roles: ['ADMIN'],
+      },
+      {
+        href: '/admin/budget-alerts',
+        icon: 'security',
+        label: 'Budget Alerts',
         roles: ['ADMIN'],
       },
       {

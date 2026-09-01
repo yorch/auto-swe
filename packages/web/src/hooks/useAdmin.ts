@@ -189,8 +189,18 @@ export function useEvalDatasets() {
   });
 }
 
-interface UserOrg {
+interface OrgMonthUsage {
+  costUsdAccrued: number;
+  runsCompleted: number;
+  yearMonth: string;
+}
+
+export interface UserOrg {
+  alert: { percent: number | null; triggered: boolean };
+  budgetAlertThresholdPercent: number | null;
+  currentMonthUsage: OrgMonthUsage | null;
   id: string;
+  monthlyBudgetUsdCents: number | null;
   name: string;
   role: string;
   slug: string;

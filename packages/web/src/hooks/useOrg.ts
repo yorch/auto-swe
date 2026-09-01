@@ -35,6 +35,35 @@ export interface OrgBudgetRow {
 
 // ── Org Members ──
 
+export interface OrgRow {
+  budgetAlertThresholdPercent: number | null;
+  id: string;
+  monthlyBudgetUsdCents: number | null;
+  name: string;
+  slug: string;
+}
+
+export function useOrg(orgId: string) {
+  return useQuery({
+    enabled: !!orgId,
+    queryFn: () =>
+      api.get<{ data: OrgRow }>(`/api/v1/admin/organizations/${orgId}`).then((r) => r.data),
+    queryKey: ['org', orgId],
+  });
+}
+
+export function usePatchOrg(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name?: string; slug?: string }) =>
+      api.patch<{ data: OrgRow }>(`/api/v1/admin/organizations/${orgId}`, body).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['org', orgId] });
+      qc.invalidateQueries({ queryKey: ['user-orgs'] });
+    },
+  });
+}
+
 export function useOrgMembers(orgId: string) {
   return useQuery({
     enabled: !!orgId,
@@ -70,6 +99,40 @@ export function useRemoveOrgMember(orgId: string) {
   });
 }
 
+export interface BudgetAlertOrg {
+  alert: { percent: number | null; triggered: boolean };
+  budgetAlertThresholdPercent: number | null;
+  currentMonthUsage: {
+    costUsdAccrued: number;
+    runsCompleted: number;
+    yearMonth: string;
+  } | null;
+  id: string;
+  monthlyBudgetUsdCents: number | null;
+  name: string;
+  slug: string;
+}
+
+export function useBudgetAlerts() {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: BudgetAlertOrg[] }>('/api/v1/admin/organizations/budget-alerts')
+        .then((r) => r.data),
+    queryKey: ['budget-alerts'],
+    refetchInterval: 30_000,
+  });
+}
+
+export function useInviteOrgMember(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { email: string; orgRole: OrgRole }) =>
+      api.post<OrgMemberRow>(`/api/v1/admin/organizations/${orgId}/members/invite`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-members', orgId] }),
+  });
+}
+
 // ── Org Budget ──
 
 export function useOrgBudget(orgId: string) {
@@ -95,6 +158,10 @@ export function usePatchOrgBudget(orgId: string) {
         monthlyBudgetUsdCents: number | null;
         name: string;
       }>(`/api/v1/admin/organizations/${orgId}/budget`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-budget', orgId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['org-budget', orgId] });
+      qc.invalidateQueries({ queryKey: ['org', orgId] });
+      qc.invalidateQueries({ queryKey: ['user-orgs'] });
+    },
   });
 }
