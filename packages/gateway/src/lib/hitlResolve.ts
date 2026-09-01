@@ -209,7 +209,7 @@ export async function resolveHitlStep(
             resolvedBy: user.sub,
             status: 'RESOLVED',
           },
-          where: { id: stepId },
+          where: { id: stepId, status: 'PENDING' },
         });
         return { approvalCount, resolved: true };
       });

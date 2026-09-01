@@ -1,4 +1,5 @@
-import type { Prisma } from '@auto-swe/shared';
+import type { Prisma, Role } from '@auto-swe/shared';
+import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -36,6 +37,47 @@ const AddMemberSchema = z.object({
 const UpdateMemberSchema = z.object({
   role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']),
 });
+
+interface TeamGuardResult {
+  code: string;
+  message: string;
+}
+
+/** Prevent self-removal/self-demotion, hierarchy violations, and removing the last team admin. */
+async function guardTeamMembershipChange(
+  fastify: Parameters<typeof teamRoutes>[0],
+  teamId: string,
+  actorUserId: string,
+  actorRole: Role,
+  targetUserId: string,
+  targetRole: Role,
+  action: 'delete' | 'update',
+  newRole?: Role
+): Promise<TeamGuardResult | null> {
+  if (actorUserId === targetUserId) {
+    if (action === 'delete') {
+      return { code: 'SELF_REMOVAL', message: 'Cannot remove yourself from the team' };
+    }
+    if (newRole && newRole !== actorRole) {
+      return { code: 'SELF_DEMOTION', message: 'Cannot demote yourself' };
+    }
+  }
+  if (roleMeets(targetRole, actorRole) && targetRole !== actorRole) {
+    return { code: 'HIERARCHY', message: 'Cannot modify a member with a higher role' };
+  }
+  if (newRole && roleMeets(newRole, actorRole) && newRole !== actorRole) {
+    return { code: 'PRIVILEGE_ESCALATION', message: 'Cannot grant a role higher than your own' };
+  }
+  if (targetRole === 'ADMIN' && (action === 'delete' || (newRole && newRole !== 'ADMIN'))) {
+    const adminCount = await fastify.prisma.teamMembership.count({
+      where: { role: 'ADMIN', teamId },
+    });
+    if (adminCount <= 1) {
+      return { code: 'LAST_TEAM_ADMIN', message: 'Cannot remove or demote the last team admin' };
+    }
+  }
+  return null;
+}
 
 export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -356,18 +398,9 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.get<{ Params: { id: string } }>(
     '/:id/members',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ requiredTeamRole: 'ENGINEER', teamIdParam: 'id' }),
     },
-    async (request, reply) => {
-      const team = await fastify.prisma.team.findUnique({
-        where: { id: request.params.id },
-      });
-      if (!team) {
-        return reply.status(404).send({
-          error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' },
-        });
-      }
-
+    async (request) => {
       const members = await fastify.prisma.teamMembership.findMany({
         include: {
           user: { select: { email: true, id: true, isActive: true, role: true, slackId: true } },
@@ -389,6 +422,16 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { userId, role } = request.body;
+      const actorRole = (request.teamRole as Role | undefined) ?? requireUser(request).role;
+
+      if (roleMeets(role, actorRole) && role !== actorRole) {
+        return reply.status(403).send({
+          error: {
+            code: 'PRIVILEGE_ESCALATION',
+            message: 'Cannot grant a role higher than your own',
+          },
+        });
+      }
 
       const existing = await fastify.prisma.teamMembership.findUnique({
         where: { userId_teamId: { teamId: request.params.id, userId } },
@@ -420,6 +463,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: UpdateMemberSchema, params: TeamMemberParamsSchema },
     },
     async (request, reply) => {
+      const actorRole = (request.teamRole as Role | undefined) ?? requireUser(request).role;
       const membership = await fastify.prisma.teamMembership.findUnique({
         where: { userId_teamId: { teamId: request.params.id, userId: request.params.userId } },
       });
@@ -427,6 +471,20 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({
           error: { code: 'MEMBER_NOT_FOUND', message: 'Membership not found' },
         });
+      }
+
+      const guard = await guardTeamMembershipChange(
+        fastify,
+        request.params.id,
+        requireUser(request).sub,
+        actorRole,
+        request.params.userId,
+        membership.role,
+        'update',
+        request.body.role
+      );
+      if (guard) {
+        return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
       }
 
       const updated = await fastify.prisma.teamMembership.update({
@@ -445,6 +503,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
     },
     async (request, reply) => {
+      const actorRole = (request.teamRole as Role | undefined) ?? requireUser(request).role;
       const membership = await fastify.prisma.teamMembership.findUnique({
         where: { userId_teamId: { teamId: request.params.id, userId: request.params.userId } },
       });
@@ -452,6 +511,19 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({
           error: { code: 'MEMBER_NOT_FOUND', message: 'Membership not found' },
         });
+      }
+
+      const guard = await guardTeamMembershipChange(
+        fastify,
+        request.params.id,
+        requireUser(request).sub,
+        actorRole,
+        request.params.userId,
+        membership.role,
+        'delete'
+      );
+      if (guard) {
+        return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
       }
 
       await fastify.prisma.teamMembership.delete({

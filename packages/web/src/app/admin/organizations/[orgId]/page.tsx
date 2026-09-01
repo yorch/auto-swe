@@ -158,13 +158,13 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     setBudgetError(null);
     const val = budgetInput.trim();
     const cents = val === '' ? null : Number(val);
-    if (cents !== null && (Number.isNaN(cents) || cents < 0)) {
+    if (cents !== null && (!Number.isInteger(cents) || cents < 0)) {
       setBudgetError('Enter a non-negative integer (USD cents), or leave blank to remove the cap');
       return;
     }
     const tval = thresholdInput.trim();
     const threshold = tval === '' ? null : Number(tval);
-    if (threshold !== null && (Number.isNaN(threshold) || threshold < 0 || threshold > 100)) {
+    if (threshold !== null && (!Number.isInteger(threshold) || threshold < 0 || threshold > 100)) {
       setBudgetError('Alert threshold must be an integer between 0 and 100');
       return;
     }

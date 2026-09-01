@@ -25,6 +25,43 @@ const PatchMemberSchema = z.object({
   role: z.enum(['ORG_ADMIN', 'ORG_MEMBER']),
 });
 
+type OrgAdminGuardResult = { code: string; message: string } | null;
+
+/** Prevent self-demotion/self-removal and removing/demoting the last org admin. */
+async function guardOrgAdminChange(
+  fastify: Parameters<typeof orgMembersPlugin>[0],
+  orgId: string,
+  targetUserId: string,
+  actorUserId: string,
+  action: 'delete' | 'update',
+  currentRole: 'ORG_ADMIN' | 'ORG_MEMBER',
+  newRole?: 'ORG_ADMIN' | 'ORG_MEMBER'
+): Promise<OrgAdminGuardResult> {
+  if (actorUserId === targetUserId) {
+    if (action === 'delete') {
+      return { code: 'SELF_REMOVAL', message: 'Cannot remove yourself from the organization' };
+    }
+    if (newRole && newRole !== currentRole) {
+      return { code: 'SELF_DEMOTION', message: 'Cannot change your own organization role' };
+    }
+  }
+  if (
+    currentRole === 'ORG_ADMIN' &&
+    ((action === 'update' && newRole && newRole !== 'ORG_ADMIN') || action === 'delete')
+  ) {
+    const adminCount = await fastify.prisma.organizationMembership.count({
+      where: { orgId, role: 'ORG_ADMIN' },
+    });
+    if (adminCount <= 1) {
+      return {
+        code: 'LAST_ORG_ADMIN',
+        message: 'Cannot remove or demote the last organization admin',
+      };
+    }
+  }
+  return null;
+}
+
 const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -65,6 +102,18 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         where: { userId_orgId: { orgId, userId } },
       });
       if (existing) {
+        const guard = await guardOrgAdminChange(
+          fastify,
+          orgId,
+          userId,
+          requireUser(request).sub,
+          'update',
+          existing.role,
+          role
+        );
+        if (guard) {
+          return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
+        }
         const updated = await fastify.prisma.organizationMembership.update({
           data: { role },
           where: { id: existing.id },
@@ -152,20 +201,17 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Membership not found' } });
       }
-      if (row.role === 'ORG_ADMIN' && role !== 'ORG_ADMIN') {
-        if (requireUser(request).sub === userId) {
-          return reply.status(409).send({
-            error: { code: 'SELF_DEMOTION', message: 'Cannot demote yourself' },
-          });
-        }
-        const adminCount = await fastify.prisma.organizationMembership.count({
-          where: { orgId, role: 'ORG_ADMIN' },
-        });
-        if (adminCount <= 1) {
-          return reply.status(409).send({
-            error: { code: 'LAST_ORG_ADMIN', message: 'Cannot demote the last org admin' },
-          });
-        }
+      const guard = await guardOrgAdminChange(
+        fastify,
+        orgId,
+        userId,
+        requireUser(request).sub,
+        'update',
+        row.role,
+        role
+      );
+      if (guard) {
+        return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
       }
       const updated = await fastify.prisma.organizationMembership.update({
         data: { role },
@@ -185,12 +231,6 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { orgId, userId } = MemberParamsSchema.parse(request.params);
 
-      if (requireUser(request).sub === userId) {
-        return reply
-          .status(409)
-          .send({ error: { code: 'SELF_REMOVAL', message: 'Cannot remove yourself' } });
-      }
-
       const row = await fastify.prisma.organizationMembership.findUnique({
         where: { userId_orgId: { orgId, userId } },
       });
@@ -199,15 +239,16 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Membership not found' } });
       }
-      if (row.role === 'ORG_ADMIN') {
-        const adminCount = await fastify.prisma.organizationMembership.count({
-          where: { orgId, role: 'ORG_ADMIN' },
-        });
-        if (adminCount <= 1) {
-          return reply.status(409).send({
-            error: { code: 'LAST_ORG_ADMIN', message: 'Cannot remove the last org admin' },
-          });
-        }
+      const guard = await guardOrgAdminChange(
+        fastify,
+        orgId,
+        userId,
+        requireUser(request).sub,
+        'delete',
+        row.role
+      );
+      if (guard) {
+        return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
       }
       await fastify.prisma.organizationMembership.delete({ where: { id: row.id } });
       return reply.status(204).send();
