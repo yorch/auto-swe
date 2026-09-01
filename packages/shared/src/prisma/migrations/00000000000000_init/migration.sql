@@ -35,13 +35,13 @@ CREATE TYPE "HumanStepStatus" AS ENUM ('PENDING', 'RESOLVED', 'TIMED_OUT', 'CANC
 CREATE TYPE "EvalScoreType" AS ENUM ('BOOLEAN', 'NUMERIC', 'CATEGORICAL');
 
 -- CreateEnum
-CREATE TYPE "EvalSignalSource" AS ENUM ('GATE', 'ASSERT', 'REVIEW', 'MERGE', 'JUDGE', 'TRAJECTORY');
+CREATE TYPE "EvalSignalSource" AS ENUM ('GATE', 'ASSERT', 'REVIEW', 'MERGE', 'JUDGE', 'TRAJECTORY', 'POLICY', 'PII', 'HUMAN_AUDIT');
 
 -- CreateEnum
 CREATE TYPE "channel_open_item_status" AS ENUM ('OPEN', 'RESOLVED', 'DISMISSED');
 
 -- CreateEnum
-CREATE TYPE "ScannerPatternType" AS ENUM ('INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'CODE_SECURITY', 'SENSITIVE_FILE');
+CREATE TYPE "ScannerPatternType" AS ENUM ('INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'CODE_SECURITY', 'SENSITIVE_FILE', 'PII');
 
 -- CreateTable
 CREATE TABLE "active_workflows" (
@@ -245,6 +245,21 @@ CREATE TABLE "org_monthly_usage" (
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "org_monthly_usage_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "human_error_baselines" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "org_id" UUID NOT NULL,
+    "domain" TEXT NOT NULL,
+    "outcome_type" TEXT,
+    "sample_size" INTEGER NOT NULL,
+    "error_count" INTEGER NOT NULL,
+    "error_rate" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "recorded_by_id" UUID,
+    "recorded_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "human_error_baselines_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -498,8 +513,29 @@ CREATE TABLE "workflow_runs" (
     "cost_usd_accrued" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "tokens_input_total" BIGINT NOT NULL DEFAULT 0,
     "tokens_output_total" BIGINT NOT NULL DEFAULT 0,
+    "estimated_human_time_saved" DOUBLE PRECISION,
+    "outcome_domain" TEXT,
+    "outcome_type" TEXT,
+    "had_human_step" BOOLEAN NOT NULL DEFAULT false,
+    "was_autonomous" BOOLEAN NOT NULL DEFAULT false,
+    "has_error" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "workflow_runs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "autonomy_decisions" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "run_id" UUID NOT NULL,
+    "event" TEXT NOT NULL,
+    "actor_id" UUID,
+    "policy_name" TEXT,
+    "risk_class" TEXT,
+    "required_approvers" INTEGER DEFAULT 1,
+    "payload" JSONB,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "autonomy_decisions_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -659,8 +695,21 @@ CREATE TABLE "workflow_human_steps" (
     "payload" JSONB,
     "requested_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "timeout_at" TIMESTAMPTZ,
+    "required_approvers" INTEGER NOT NULL DEFAULT 1,
 
     CONSTRAINT "workflow_human_steps_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "human_approvals" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "step_id" UUID NOT NULL,
+    "resolved_by" UUID,
+    "action" TEXT NOT NULL,
+    "value" JSONB,
+    "resolved_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "human_approvals_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -671,6 +720,7 @@ CREATE TABLE "workflow_templates" (
     "description" TEXT NOT NULL DEFAULT '',
     "input_schema" JSONB,
     "workspace_provider" TEXT,
+    "estimated_human_time_saved_minutes" DOUBLE PRECISION,
     "origin" TEXT,
     "status" "WorkflowTemplateStatus" NOT NULL DEFAULT 'DRAFT',
     "is_default" BOOLEAN NOT NULL DEFAULT false,
@@ -707,6 +757,9 @@ CREATE TABLE "workflow_template_versions" (
     "spec" JSONB NOT NULL,
     "created_by" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "generated_by" TEXT,
+    "reviewed_at" TIMESTAMPTZ,
+    "reviewed_by" UUID,
 
     CONSTRAINT "workflow_template_versions_pkey" PRIMARY KEY ("id")
 );
@@ -1219,6 +1272,9 @@ CREATE INDEX "org_monthly_usage_org_id_idx" ON "org_monthly_usage"("org_id");
 CREATE UNIQUE INDEX "org_monthly_usage_org_id_year_month_key" ON "org_monthly_usage"("org_id", "year_month");
 
 -- CreateIndex
+CREATE INDEX "human_error_baselines_org_id_domain_outcome_type_idx" ON "human_error_baselines"("org_id", "domain", "outcome_type");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "slack_workspaces_slack_team_id_key" ON "slack_workspaces"("slack_team_id");
 
 -- CreateIndex
@@ -1309,6 +1365,9 @@ CREATE INDEX "workflow_runs_template_id_idx" ON "workflow_runs"("template_id");
 CREATE INDEX "workflow_runs_work_request_id_idx" ON "workflow_runs"("work_request_id");
 
 -- CreateIndex
+CREATE INDEX "autonomy_decisions_run_id_idx" ON "autonomy_decisions"("run_id");
+
+-- CreateIndex
 CREATE INDEX "workflow_outcome_references_run_id_idx" ON "workflow_outcome_references"("run_id");
 
 -- CreateIndex
@@ -1360,7 +1419,16 @@ CREATE UNIQUE INDEX "workflow_steps_run_id_node_id_attempt_key" ON "workflow_ste
 CREATE INDEX "workflow_human_steps_run_id_idx" ON "workflow_human_steps"("run_id");
 
 -- CreateIndex
+CREATE INDEX "workflow_human_steps_run_id_node_id_idx" ON "workflow_human_steps"("run_id", "node_id");
+
+-- CreateIndex
 CREATE INDEX "workflow_human_steps_status_idx" ON "workflow_human_steps"("status");
+
+-- CreateIndex
+CREATE INDEX "human_approvals_step_id_idx" ON "human_approvals"("step_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "human_approvals_step_id_resolved_by_key" ON "human_approvals"("step_id", "resolved_by");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "workflow_templates_webhook_token_key" ON "workflow_templates"("webhook_token");
@@ -1373,6 +1441,9 @@ CREATE INDEX "autonomy_policies_team_id_idx" ON "autonomy_policies"("team_id");
 
 -- CreateIndex
 CREATE INDEX "autonomy_policies_template_id_idx" ON "autonomy_policies"("template_id");
+
+-- CreateIndex
+CREATE INDEX "workflow_template_versions_reviewed_by_idx" ON "workflow_template_versions"("reviewed_by");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "workflow_template_versions_template_id_version_key" ON "workflow_template_versions"("template_id", "version");
@@ -1549,6 +1620,12 @@ ALTER TABLE "organization_memberships" ADD CONSTRAINT "organization_memberships_
 ALTER TABLE "org_monthly_usage" ADD CONSTRAINT "org_monthly_usage_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "human_error_baselines" ADD CONSTRAINT "human_error_baselines_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "human_error_baselines" ADD CONSTRAINT "human_error_baselines_recorded_by_id_fkey" FOREIGN KEY ("recorded_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "slack_workspaces" ADD CONSTRAINT "slack_workspaces_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -1606,6 +1683,9 @@ ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_template_id_fkey" FORE
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "autonomy_decisions" ADD CONSTRAINT "autonomy_decisions_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "workflow_outcome_references" ADD CONSTRAINT "workflow_outcome_references_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -1634,6 +1714,12 @@ ALTER TABLE "workflow_human_steps" ADD CONSTRAINT "workflow_human_steps_run_id_f
 
 -- AddForeignKey
 ALTER TABLE "workflow_human_steps" ADD CONSTRAINT "workflow_human_steps_resolved_by_fkey" FOREIGN KEY ("resolved_by") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "human_approvals" ADD CONSTRAINT "human_approvals_step_id_fkey" FOREIGN KEY ("step_id") REFERENCES "workflow_human_steps"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "human_approvals" ADD CONSTRAINT "human_approvals_resolved_by_fkey" FOREIGN KEY ("resolved_by") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "workflow_templates" ADD CONSTRAINT "workflow_templates_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1712,3 +1798,4 @@ ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_template
 
 -- AddForeignKey
 ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+

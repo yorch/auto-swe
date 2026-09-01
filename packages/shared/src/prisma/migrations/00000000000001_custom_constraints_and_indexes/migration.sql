@@ -312,3 +312,24 @@ ALTER TABLE "repo_dependencies"
 INSERT INTO "embedding_configs" ("id", "model_spec")
 VALUES ('default', 'openai/text-embedding-3-large')
 ON CONFLICT ("id") DO NOTHING;
+
+-- ── Migrations consolidated into the baseline below ──────────────────────────
+-- These partial indexes and CHECK constraints were added after the original
+-- baseline but are not expressible in Prisma's schema DSL. They are kept here
+-- so the generated `00000000000000_init` can be regenerated at will.
+
+CREATE UNIQUE INDEX IF NOT EXISTS "autonomy_policies_global_default_key"
+    ON "autonomy_policies" ("is_default") WHERE "is_default" = true AND "team_id" IS NULL AND "template_id" IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "autonomy_policies_team_default_key"
+    ON "autonomy_policies" ("team_id") WHERE "is_default" = true AND "template_id" IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "autonomy_policies_template_key"
+    ON "autonomy_policies" ("template_id") WHERE "template_id" IS NOT NULL;
+
+ALTER TABLE "human_error_baselines"
+    ADD CONSTRAINT IF NOT EXISTS "human_error_baselines_sample_size_check" CHECK ("sample_size" >= 0);
+ALTER TABLE "human_error_baselines"
+    ADD CONSTRAINT IF NOT EXISTS "human_error_baselines_error_count_check" CHECK ("error_count" >= 0);
+ALTER TABLE "human_error_baselines"
+    ADD CONSTRAINT IF NOT EXISTS "human_error_baselines_error_rate_check" CHECK ("error_rate" >= 0 AND "error_rate" <= 1);
