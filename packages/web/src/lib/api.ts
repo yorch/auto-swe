@@ -13,10 +13,23 @@ export class ApiClient {
   setToken(token: string) {
     this.accessToken = token;
     this.tokenGeneration++;
+    if (typeof window !== 'undefined') {
+      // biome-ignore lint/suspicious/noDocumentCookie: middleware-visible bearer token cookie for server-side admin guards.
+      document.cookie = `${COOKIE_ACCESS_TOKEN}=${encodeURIComponent(token)}; path=/; max-age=3600; SameSite=Lax`;
+    }
   }
 
   getToken(): string | null {
     return this.accessToken;
+  }
+
+  /**
+   * Proactively exchange the better-auth session for a JWT and persist it in the
+   * middleware-visible cookie. Useful on initial page load before the first
+   * /api/v1/* call would otherwise trigger a lazy refresh.
+   */
+  refreshToken(): Promise<boolean> {
+    return this.tryRefresh();
   }
 
   clearToken() {

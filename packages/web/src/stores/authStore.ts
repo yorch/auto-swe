@@ -208,6 +208,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     const user = await fetchBetterAuthSession();
     if (user) {
       setSessionMarkerCookie();
+      // Ensure a middleware-readable bearer token is available for server-side
+      // admin route guards, not only after the first /api/v1/* call.
+      await api.refreshToken().catch(() => {});
       set({ isAuthenticated: true, user });
       return;
     }
@@ -222,6 +225,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       return false;
     }
     setSessionMarkerCookie();
+    await api.refreshToken().catch(() => {});
     set({ isAuthenticated: true, user });
     return true;
   },

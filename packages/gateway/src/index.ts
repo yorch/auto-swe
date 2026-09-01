@@ -19,7 +19,12 @@ import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
-import authPlugin, { extractSessionCookieValue, invalidateSessionCache } from './plugins/auth.js';
+import authPlugin, {
+  extractSessionCookieValue,
+  invalidateSessionCache,
+  requireAuth,
+  requireUser,
+} from './plugins/auth.js';
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
@@ -278,6 +283,19 @@ async function start() {
         error: { code: 'INTERNAL_ERROR', message: 'session-token bridge failed' },
       });
     }
+  });
+
+  // Who am I? Used by the web server for server-side admin route guards.
+  app.get('/api/v1/auth/me', { onRequest: requireAuth() }, async (request, reply) => {
+    const actor = requireUser(request);
+    const user = await app.prisma.user.findUnique({
+      select: { email: true, id: true, role: true },
+      where: { id: actor.sub },
+    });
+    if (!user) {
+      return reply.status(403).send({ error: { code: 'FORBIDDEN', message: 'User not found' } });
+    }
+    return { data: user };
   });
 
   // ── Public routes (no auth) ──
