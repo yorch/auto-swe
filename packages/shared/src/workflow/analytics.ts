@@ -85,7 +85,7 @@ export interface SignificanceHint {
 export const MIN_SAMPLES_FOR_SIGNIFICANCE = 30;
 
 const TERMINAL_FAILURE_STATUSES = new Set(['FAILED', 'TIMED_OUT', 'CANCELLED']);
-const STEP_STATUSES_TO_SKIP = new Set(['SKIPPED', 'PENDING']);
+const STEP_STATUSES_TO_SKIP = new Set(['SKIPPED', 'PENDING', 'RUNNING']);
 
 function percentile(sorted: number[], p: number): number | null {
   if (sorted.length === 0) {
@@ -114,13 +114,12 @@ export function computeAnalytics(
   // Phase-8: prefer the denormalized run-level cost column. Fall back to the
   // legacy workRequest → activeWorkflow sum if the column wasn't populated
   // (still RUNNING, or a row that pre-dates finalize-time write).
-  const runCosts = runs
-    .map((r) =>
-      typeof r.costUsdAccrued === 'number' && r.costUsdAccrued > 0
-        ? r.costUsdAccrued
-        : (r.workRequest?.activeWorkflows ?? []).reduce((s, aw) => s + aw.costUsdAccrued, 0)
-    )
-    .filter((c) => c > 0);
+  const costs = runs.map((r) =>
+    typeof r.costUsdAccrued === 'number' && r.costUsdAccrued > 0
+      ? r.costUsdAccrued
+      : (r.workRequest?.activeWorkflows ?? []).reduce((s, aw) => s + aw.costUsdAccrued, 0)
+  );
+  const runCosts = costs.filter((c) => c > 0);
   const totalCost = runCosts.reduce((s, c) => s + c, 0);
 
   const perNode = new Map<string, { failed: number; total: number }>();
@@ -169,7 +168,7 @@ export function computeAnalytics(
     if (!r) {
       continue;
     }
-    const c = runCosts[i] ?? 0;
+    const c = costs[i] ?? 0;
     const key = r.outcomeType ?? 'unknown';
     const cell = byOutcome.get(key) ?? { runCount: 0, totalCost: 0 };
     cell.runCount += 1;
