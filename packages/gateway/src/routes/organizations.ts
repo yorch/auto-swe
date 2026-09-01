@@ -1,4 +1,5 @@
 import { Prisma } from '@auto-swe/shared';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -35,17 +36,27 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
   // List organizations the current user is a member of, with budget + alert state.
   app.get('/', { onRequest: requireAuth({ requiredRole: 'LEAD' }) }, async (request) => {
     const user = requireUser(request);
-    const rows = await fastify.prisma.organizationMembership.findMany({
-      include: {
-        organization: {
+    // Scoped by `userId` (the caller's own memberships), but the tenant guard
+    // only recognises org/team keys as scoping — `userId` alone is a false
+    // positive here. The query reads only the caller's own rows, so name the
+    // model unscoped rather than weakening the guard to treat `userId` as a
+    // tenant key (which would mask genuinely missing filters elsewhere).
+    const rows = await runUnscoped(
+      'user lists their own org memberships',
+      ['OrganizationMembership'],
+      () =>
+        fastify.prisma.organizationMembership.findMany({
           include: {
-            monthlyUsages: { where: { yearMonth: currentYearMonth() } },
+            organization: {
+              include: {
+                monthlyUsages: { where: { yearMonth: currentYearMonth() } },
+              },
+            },
           },
-        },
-      },
-      orderBy: { organization: { name: 'asc' } },
-      where: { userId: user.sub },
-    });
+          orderBy: { organization: { name: 'asc' } },
+          where: { userId: user.sub },
+        })
+    );
     return {
       data: rows.map((m) => {
         const org = m.organization;

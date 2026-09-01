@@ -115,9 +115,28 @@ const unscoped = new AsyncLocalStorage<{ reason: string; models: ReadonlySet<str
  * states what it was granted for rather than "whatever happens in here". A
  * second query on an already-named model does still inherit it — a deliberately
  * narrower hole than the unbounded region had.
+ *
+ * **Promises are awaited inside the region.** `AsyncLocalStorage.run` only
+ * covers the synchronous call to `fn`; a Prisma query returns a thenable that
+ * executes when it is later `await`ed. Every call site writes
+ * `await runUnscoped(..., () => prisma.x.findMany(...))` — the `await` is
+ * outside `run`, so without awaiting here the guard's `isUnscoped` check runs
+ * in the root context and throws on every admin listing. When `fn` returns a
+ * thenable we await it inside `run` and return its resolved value, preserving
+ * the `() => T` signature for synchronous callers.
  */
 export function runUnscoped<T>(reason: string, models: readonly string[], fn: () => T): T {
-  return unscoped.run({ models: new Set(models), reason }, fn);
+  const ctx = { models: new Set(models), reason };
+  const result = unscoped.run(ctx, fn);
+  // Prisma queries return a thenable that only executes when awaited. ALS.run
+  // only covers the synchronous call to `fn`, so an outer `await` (the shape
+  // every call site uses) would resume in the root context and the guard's
+  // isUnscoped check throws. Wrap the await inside an async fn run in the same
+  // ALS context so the query's $allOperations hook sees the exemption.
+  if (result && typeof (result as unknown as PromiseLike<unknown>).then === 'function') {
+    return unscoped.run(ctx, async () => result as unknown as Promise<unknown>) as unknown as T;
+  }
+  return result;
 }
 
 /** Is `model` covered by an active exemption? */
