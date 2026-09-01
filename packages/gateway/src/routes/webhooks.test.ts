@@ -90,6 +90,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+import { prisma } from '@auto-swe/shared/db';
 import { webhookRoutes } from './webhooks.js';
 
 const SECRET = 'hook-secret';
@@ -220,6 +221,8 @@ describe('webhook routes', () => {
         findFirst: async () => workflowRunRow,
       },
     } as unknown as never);
+
+    Object.assign(app.prisma, prisma);
 
     app.decorate('temporal', {
       signalWorkflow: async (workflowId: string, signalName: string, args: unknown[]) => {

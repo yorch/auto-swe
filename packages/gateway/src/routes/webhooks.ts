@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import { prisma } from '@auto-swe/shared/db';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import {
   resolveGitHubConfig,
@@ -18,6 +17,23 @@ import { z } from 'zod';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
+
+const JiraWebhookSchema = z
+  .object({
+    issue: z
+      .object({
+        fields: z.record(z.string(), z.unknown()).optional(),
+        key: z.string(),
+      })
+      .optional(),
+    transition: z
+      .object({
+        to: z.object({ name: z.string() }),
+      })
+      .optional(),
+  })
+  .passthrough();
+
 import { validateRunConnection } from '../lib/runConnection.js';
 import { postSlackMessage } from '../lib/slack.js';
 // The webhook handlers below undo their DB write and answer non-2xx when a
@@ -663,6 +679,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:token',
     {
+      bodyLimit: 128 * 1024,
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
       schema: {
         body: z.record(z.string(), z.unknown()).optional(),
         headers: IdempotencyHeaderSchema,
@@ -836,18 +854,20 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // 2. Parse the Jira webhook payload
-      const payload = request.body as Record<string, unknown>;
-      const issue = payload?.issue as Record<string, unknown> | undefined;
-      const transition = payload?.transition as Record<string, unknown> | undefined;
+      const parsed = JiraWebhookSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply
+          .code(422)
+          .send({ error: { code: 'VALIDATION_ERROR', issues: parsed.error.issues } });
+      }
+      const { issue, transition } = parsed.data;
       if (!issue || !transition) {
         return reply.code(200).send({ skipped: true }); // not an issue transition event
       }
 
       // 3. Check if the transition matches webhookTriggerStatus
       const triggerStatus = config.webhookTriggerStatus;
-      const toStatus = (transition?.to as Record<string, unknown> | undefined)?.name as
-        | string
-        | undefined;
+      const toStatus = transition.to.name;
       if (!triggerStatus || !toStatus) {
         return reply.code(200).send({ skipped: true });
       }
@@ -856,11 +876,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // 4. Auto-create a work request — find the first active git_repo connection
-      const ticketId = issue.key as string | undefined;
-      if (!ticketId) {
-        return reply.code(200).send({ reason: 'missing issue key', skipped: true });
-      }
-      const fields = issue.fields as Record<string, unknown> | undefined;
+      const ticketId = issue.key;
+      const fields = issue.fields;
       const summary = (fields?.summary as string | undefined) ?? ticketId;
       // Resolve the default repo + workflow template in parallel — they're
       // independent lookups, so the RunInput is processable without paying two
@@ -870,8 +887,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // anyway, so the two are equivalent here — but they are no longer the
       // same client, and a multi-row query added below would escape the guard.
       const [defaultRepo, defaultTemplate] = await Promise.all([
-        prisma.connection.findFirst({ where: { isActive: true, type: 'git_repo' } }),
-        prisma.workflowTemplate.findFirst({ where: { isDefault: true, status: 'ACTIVE' } }),
+        fastify.prisma.connection.findFirst({ where: { isActive: true, type: 'git_repo' } }),
+        fastify.prisma.workflowTemplate.findFirst({ where: { isDefault: true, status: 'ACTIVE' } }),
       ]);
       if (!defaultRepo) {
         return reply.code(200).send({ reason: 'no active repos', skipped: true });
@@ -898,7 +915,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // makes the auto-trigger once-ever per ticket; that dedup now also
       // outlives Temporal's execution-retention window.
       const launch = await launchTrackedWorkflow(
-        prisma,
+        fastify.prisma,
         {
           activeWorkflow: {
             budgetTier: 'STANDARD',
