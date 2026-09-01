@@ -81,8 +81,8 @@ Per-role baked-in defaults seeded onto the GLOBAL Agents (also recorded in `AGEN
 | Embeddings | `openai/text-embedding-3-large` |
 
 The 11 sub-role personas carry no `modelSpec` — each binds its parent's model via
-`inheritsModelFrom`. `contentWriter`, `brandReviewer`, `supportResponder`, `productAnalyst`, and
-`prdWriter` are model-backed agents added for the non-SWE workflow packs. Full roster in [`agents.md` §1](./agents.md#1-agents).
+`inheritsModelFrom`. `contentWriter`, `brandReviewer`, `supportResponder`, `productAnalyst`,
+`prdWriter`, and `issueDrafter` are model-backed agents added for the non-SWE workflow packs. Full roster in [`agents.md` §1](./agents.md#1-agents).
 
 ---
 

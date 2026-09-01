@@ -18,7 +18,7 @@ catalog (§2).
 They split by how they bind a model: an agent carries either its own `modelSpec`, or an
 `inheritsModelFrom` pointer that `resolveAgent` chases to a parent.
 
-### Model-backed agents (16)
+### Model-backed agents (17)
 
 Each has a GLOBAL `Agent` row with its own `modelSpec`. Model, prompt, skills, and tools are edited
 — and overridden at CHANNEL / TEAM / ORGANIZATION / WORKFLOW_TEMPLATE scope — through the Agent
@@ -42,6 +42,7 @@ library at `/admin/agents/library`.
 | `supportResponder` | Support/Ops ticket replies | `anthropic/claude-sonnet-4-6` |
 | `productAnalyst` | Product pack — problem analysis | `anthropic/claude-sonnet-4-6` |
 | `prdWriter` | Product pack — PRD drafting | `anthropic/claude-sonnet-4-6` |
+| `issueDrafter` | Product pack — drafts issue descriptions from a brief | `anthropic/claude-sonnet-4-6` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`

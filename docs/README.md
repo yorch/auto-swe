@@ -27,6 +27,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [nl-workflow-authoring.md](./nl-workflow-authoring.md) | Describing an automation in natural language and getting a validated `WorkflowSpec` back |
 | [figma-integration.md](./figma-integration.md) | Design context — the `design-fidelity` skill and submit-time Figma enrichment |
 | [repo-dependency-graph.md](./repo-dependency-graph.md) | Directed dependency edges between git repos — the `RepoDependency` model, the cross-team edge API and management UI, and the neighbour resolver |
+| [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
 
 ## Configuration & operations
 
@@ -38,6 +39,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [oauth-setup.md](./oauth-setup.md) | GitHub, Google, and Okta sign-in; magic-link email |
 | [github-app-setup.md](./github-app-setup.md) | GitHub App creation, permissions, installation, auth modes |
 | [slack-app-setup.md](./slack-app-setup.md) | Slack app manifest import and admin configuration |
+| [packages/cli/README.md](../packages/cli/README.md) | `auto-swe` CLI — work requests, runs, workflow templates, tokens, bundles |
 
 Also here: [`slack-app-manifest.json`](./slack-app-manifest.json) and [`redesign/`](./redesign/)
 (dashboard design screenshots).

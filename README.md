@@ -93,6 +93,7 @@ cp .env.example .env
 # docs/model-configuration.md for the bootstrap flow.
 
 # 3. Start infrastructure (Postgres, Temporal, Garage)
+# Garage starts only when COMPOSE_PROFILES includes objectstore (set by default in .env.example).
 yarn docker:infra:up
 
 # 4. Set up the database
@@ -223,7 +224,7 @@ yarn db:seed             # Seed admin user + sample repository
 yarn dev:gateway         # Gateway in watch mode
 yarn dev:worker          # Worker in watch mode
 yarn dev:web             # Next.js dashboard (port 3000)
-yarn docker:infra:up     # Start infra services (postgres + temporal + garage). Observability (Grafana/OTel) starts with yarn docker:app:up.
+yarn docker:infra:up     # Start infra services (postgres + temporal + garage). Garage starts only when COMPOSE_PROFILES includes objectstore. Observability (Grafana/OTel) starts with yarn docker:app:up.
 yarn docker:infra:down   # Stop infra services
 yarn docker:app:up           # Start everything (infra + app)
 yarn docker:app:down         # Stop everything

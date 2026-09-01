@@ -37,7 +37,7 @@ it. (§7 states precisely how far that guarantee reaches.)
 | **Engineering teams** (more tickets than engineers) | Autonomous implementation of well-specified tickets, with quality gates and review applied by default | Dashboard submit flow, Slack teammate, Epics |
 | **Tech leads** | Guaranteed human-governed merge, full visibility into what the agent did and why, HITL approval gates | Run viewer, HITL inbox, review network output |
 | **Platform / DevOps engineers** | Run auto-swe as shared infrastructure for other teams: integrations, model config, RBAC, security policy | Admin console, team config, scanner patterns |
-| **Workflow authors** | Automate team-specific engineering processes as versioned DAGs — no code change, no redeploy | Visual template editor, NL authoring, CLI bundles |
+| **Workflow authors** | Automate team-specific engineering processes as versioned DAGs — no code change, no redeploy | Visual template editor, NL authoring, [CLI bundles](./bundles.md) |
 | **CI/CD pipeline authors** | A scriptable pipeline step (PAT + CLI/REST) that fires on issue creation | CLI, REST API, scheduled work requests |
 
 The Slack teammate cuts across all of these: it answers questions in-channel with repo and run
@@ -110,7 +110,7 @@ flowchart TB
 | **Workflow engine** | 15 node types (incl. the declarative `agent` node and the `eval` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |
 | **Memory** | pgvector (HNSW) semantic lessons; per-repo cosine retrieval at run start; weekly consolidation ("dreaming") of similar lessons |
-| **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 58 built-in admin-extensible regex patterns; locked-down ephemeral shell containers |
+| **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 62 built-in admin-extensible regex patterns (13 INJECTION, 11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE, 4 PII); locked-down ephemeral shell containers |
 | **HITL** | 4 node types (approval / decision / input / review); inbox UI + Slack buttons; atomic resolution, timeout routing, cancellation cleanup. See [hitl-workflows.md](./hitl-workflows.md). |
 | **Auth / RBAC** | 3 auth paths (JWT, PAT, better-auth sessions); 3 platform roles + team-scoped roles; OAuth (GitHub/Google), Okta OIDC SSO, magic-link, account linking, new-user approval |
 | **Integrations** | GitHub (PAT *or* GitHub App), Slack (slash command + interactive), issue trackers (Jira / Linear / GitHub Issues), S3-compatible object storage, email (SMTP/Resend) — all DB-configured, encrypted, with connection tests + audit log |
