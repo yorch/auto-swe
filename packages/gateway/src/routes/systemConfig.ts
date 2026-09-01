@@ -1,4 +1,3 @@
-import { prisma } from '@auto-swe/shared/db';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
   resolveCanaryConfig,
@@ -276,15 +275,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── GitHub ──────────────────────────────────────────────────────────────────
 
   f.get('/config/github', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getGitHubConfig(prisma))
+    reply.send(await getGitHubConfig(fastify.prisma))
   );
 
   f.put(
     '/config/github',
     { schema: { body: GitHubPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateGitHubConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateGitHubConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -296,15 +295,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── Slack ───────────────────────────────────────────────────────────────────
 
   f.get('/config/slack', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getSlackConfig(prisma))
+    reply.send(await getSlackConfig(fastify.prisma))
   );
 
   f.put(
     '/config/slack',
     { schema: { body: SlackPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateSlackConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateSlackConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -316,15 +315,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── Storage ─────────────────────────────────────────────────────────────────
 
   f.get('/config/storage', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getStorageConfig(prisma))
+    reply.send(await getStorageConfig(fastify.prisma))
   );
 
   f.put(
     '/config/storage',
     { schema: { body: StoragePutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateStorageConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateStorageConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -345,8 +344,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/workflow-defaults',
     { schema: { body: WorkflowDefaultsPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateWorkflowDefaults(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateWorkflowDefaults(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       // result.data is the shared resolver's shape so GET and PUT match,
       // including env-var fallbacks for fields not yet set in DB.
       return reply.send({ data: result.data });
@@ -356,15 +355,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── Google OAuth ─────────────────────────────────────────────────────────────
 
   f.get('/config/oauth/google', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getGoogleOAuthConfig(prisma))
+    reply.send(await getGoogleOAuthConfig(fastify.prisma))
   );
 
   f.put(
     '/config/oauth/google',
     { schema: { body: GoogleOAuthPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateGoogleOAuthConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateGoogleOAuthConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -372,7 +371,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── Okta (enterprise SSO) ────────────────────────────────────────────────────
 
   f.get('/config/oauth/okta', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getOktaOAuthConfig(prisma))
+    reply.send(await getOktaOAuthConfig(fastify.prisma))
   );
 
   f.put(
@@ -400,8 +399,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           });
         }
       }
-      const result = await updateOktaOAuthConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateOktaOAuthConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -409,15 +408,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── Issue tracker ────────────────────────────────────────────────────────────
 
   f.get('/config/issue-tracker', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getIssueTrackerConfig(prisma))
+    reply.send(await getIssueTrackerConfig(fastify.prisma))
   );
 
   f.put(
     '/config/issue-tracker',
     { schema: { body: IssueTrackerPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateIssueTrackerConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateIssueTrackerConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -449,15 +448,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── Knowledge base ───────────────────────────────────────────────────────────
 
   f.get('/config/knowledge-base', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getKnowledgeBaseConfig(prisma))
+    reply.send(await getKnowledgeBaseConfig(fastify.prisma))
   );
 
   f.put(
     '/config/knowledge-base',
     { schema: { body: KnowledgeBasePutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateKnowledgeBaseConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateKnowledgeBaseConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -471,15 +470,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── Figma (design source) ────────────────────────────────────────────────────
 
   f.get('/config/figma', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getFigmaConfig(prisma))
+    reply.send(await getFigmaConfig(fastify.prisma))
   );
 
   f.put(
     '/config/figma',
     { schema: { body: FigmaPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateFigmaConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateFigmaConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );
@@ -493,7 +492,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.get('/config/audit-log', { schema: { response: { 200: z.any() } } }, async (req, reply) => {
     const limitParam = (req.query as { limit?: string }).limit;
     const take = Math.min(Number(limitParam ?? 100), 500);
-    return reply.send({ data: await listConfigAuditEntries(prisma, take) });
+    return reply.send({ data: await listConfigAuditEntries(fastify.prisma, take) });
   });
 
   // ── Consolidation schedule ───────────────────────────────────────────────────
@@ -512,8 +511,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/consolidation',
     { schema: { body: ConsolidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateConsolidationConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateConsolidationConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
 
       const config = await resolveConsolidationConfig();
       await fastify.temporal.syncConsolidationSchedule(config);
@@ -547,8 +546,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/eval-schedule',
     { schema: { body: EvalSchedulePutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateEvalScheduleConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateEvalScheduleConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
 
       const config = await resolveEvalScheduleConfig();
       await fastify.temporal.syncEvalSchedule(config);
@@ -578,8 +577,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/revalidation',
     { schema: { body: RevalidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateRevalidationScheduleConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateRevalidationScheduleConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
 
       const config = await resolveRevalidationConfig();
       await fastify.temporal.syncRevalidationSchedule(config);
@@ -619,7 +618,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           ? req.body.candidateVersion
           : current.candidateVersion;
       if (agentKey && candidateVersion != null) {
-        const agent = await prisma.agent.findFirst({
+        const agent = await fastify.prisma.agent.findFirst({
           select: { id: true },
           where: { isActive: true, key: agentKey, version: candidateVersion },
         });
@@ -632,8 +631,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           });
         }
       }
-      const result = await updateCanaryConfig(prisma, req.body);
-      await auditConfigWrite(prisma, fastify.log, requireUser(req).sub, result);
+      const result = await updateCanaryConfig(fastify.prisma, req.body);
+      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       const config = await resolveCanaryConfig();
       return reply.send({ data: config });
     }
@@ -642,6 +641,6 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── Test endpoint (checks decryption works for all secrets) ──────────────────
 
   f.get('/config/test-decrypt', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send({ data: await testDecryptSecrets(prisma) })
+    reply.send({ data: await testDecryptSecrets(fastify.prisma) })
   );
 };

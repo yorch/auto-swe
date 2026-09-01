@@ -64,6 +64,7 @@ async function buildApp() {
       return { exp: 9_999_999_999, iat: 0, role, sub };
     },
   } as unknown as never);
+  app.decorate('prisma', prisma as unknown as never);
   await app.register(configSettingsRoutes, { prefix: '/api/v1/admin' });
   await app.ready();
   return app;

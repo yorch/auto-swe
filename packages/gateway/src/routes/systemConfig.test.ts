@@ -213,11 +213,7 @@ async function buildApp() {
   } as unknown as never);
 
   // Minimal prisma on the app instance (used by some route handlers directly).
-  app.decorate('prisma', {
-    workflowDefaults: {
-      upsert: vi.fn(async () => ({})),
-    },
-  } as unknown as never);
+  app.decorate('prisma', prisma as unknown as never);
 
   // Minimal temporal (used by consolidation routes, not under test here).
   app.decorate('temporal', {

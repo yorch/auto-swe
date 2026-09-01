@@ -1,5 +1,4 @@
 import { SETTING_SCOPE_ORDER } from '@auto-swe/shared/config';
-import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -85,7 +84,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       // needs the same membership check a scoped write gets — grants only
       // authorise writes, and there is nothing else guarding the ids in the
       // query string.
-      if (!(await canReadScope(prisma, { id: actor.sub, role: actor.role }, selector))) {
+      if (!(await canReadScope(fastify.prisma, { id: actor.sub, role: actor.role }, selector))) {
         return reply.status(403).send({
           error: {
             code: 'FORBIDDEN',
@@ -95,7 +94,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       }
 
       const settings = await listSettings(
-        prisma,
+        fastify.prisma,
         { id: actor.sub, role: actor.role },
         {
           channelId: query.channelId,
@@ -123,7 +122,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       const actor = requireUser(req);
       const selector = selectorFrom(req.query);
       const result = await setSetting(
-        prisma,
+        fastify.prisma,
         { id: actor.sub, role: actor.role },
         req.params.key,
         selector,
@@ -141,7 +140,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
         });
       }
 
-      await writeSystemConfigAudit(prisma, fastify.log, {
+      await writeSystemConfigAudit(fastify.prisma, fastify.log, {
         action: result.before === undefined ? 'CREATE' : 'UPDATE',
         actorId: actor.sub,
         afterJson: {
@@ -177,7 +176,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       const actor = requireUser(req);
       const selector = selectorFrom(req.query);
       const result = await clearSetting(
-        prisma,
+        fastify.prisma,
         { id: actor.sub, role: actor.role },
         req.params.key,
         selector
@@ -188,7 +187,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
         });
       }
       if (result.before !== undefined) {
-        await writeSystemConfigAudit(prisma, fastify.log, {
+        await writeSystemConfigAudit(fastify.prisma, fastify.log, {
           action: 'UPDATE',
           actorId: actor.sub,
           afterJson: {
@@ -219,7 +218,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
         'the admin grant listing is deployment-wide by definition',
         ['ConfigPermission'],
         () =>
-          prisma.configPermission.findMany({
+          fastify.prisma.configPermission.findMany({
             include: {
               organization: { select: { name: true } },
               team: { select: { name: true } },
@@ -260,7 +259,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       }
 
       const actor = requireUser(req);
-      const grant = await prisma.configPermission.create({
+      const grant = await fastify.prisma.configPermission.create({
         data: {
           createdById: actor.sub,
           keyPattern: body.keyPattern,
@@ -271,7 +270,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
           userId: body.userId ?? null,
         },
       });
-      await writeSystemConfigAudit(prisma, fastify.log, {
+      await writeSystemConfigAudit(fastify.prisma, fastify.log, {
         action: 'CREATE',
         actorId: actor.sub,
         afterJson: { ...body, changedFields: [body.keyPattern] },
@@ -290,15 +289,17 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       schema: { params: z.object({ id: z.uuid() }), response: { 200: z.any(), 404: z.any() } },
     },
     async (req, reply) => {
-      const existing = await prisma.configPermission.findUnique({ where: { id: req.params.id } });
+      const existing = await fastify.prisma.configPermission.findUnique({
+        where: { id: req.params.id },
+      });
       if (!existing) {
         return reply
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Grant not found.' } });
       }
-      await prisma.configPermission.delete({ where: { id: req.params.id } });
+      await fastify.prisma.configPermission.delete({ where: { id: req.params.id } });
       const actor = requireUser(req);
-      await writeSystemConfigAudit(prisma, fastify.log, {
+      await writeSystemConfigAudit(fastify.prisma, fastify.log, {
         action: 'UPDATE',
         actorId: actor.sub,
         afterJson: { changedFields: [existing.keyPattern], revoked: true },
