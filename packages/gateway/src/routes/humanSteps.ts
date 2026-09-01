@@ -2,11 +2,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
-import {
-  type HitlResolveErrorCode,
-  resolveHitlStep,
-  runVisibilityFilter,
-} from '../lib/hitlResolve.js';
+import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const StepIdParam = z.object({ id: z.string().uuid() });
@@ -78,7 +75,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         take: status === 'ALL' ? 200 : 100,
         where: {
           ...(status === 'ALL' ? {} : { status: 'PENDING' }),
-          ...runVisibilityFilter(user),
+          ...buildWorkflowHumanStepVisibilityFilter(user),
         },
       });
       return {
@@ -132,7 +129,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       const fetchPendingIds = async (): Promise<Set<string>> => {
         const rows = await fastify.prisma.workflowHumanStep.findMany({
           select: { id: true },
-          where: { status: 'PENDING', ...runVisibilityFilter(user) },
+          where: { status: 'PENDING', ...buildWorkflowHumanStepVisibilityFilter(user) },
         });
         return new Set(rows.map((r) => r.id));
       };
@@ -206,7 +203,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             },
           },
         },
-        where: { id: request.params.id, ...runVisibilityFilter(user) },
+        where: { id: request.params.id, ...buildWorkflowHumanStepVisibilityFilter(user) },
       });
       if (!step) {
         return reply

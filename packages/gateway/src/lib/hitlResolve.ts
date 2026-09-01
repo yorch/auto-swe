@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { Prisma } from '@auto-swe/shared';
 import { HITL_VALID_ACTIONS, type HitlKind } from '@auto-swe/shared/workflow/interpreter';
+import { buildWorkflowHumanStepVisibilityFilter } from './runVisibility.js';
 import { isTerminalSignalError } from './temporalErrors.js';
 
 /**
@@ -9,7 +10,7 @@ import { isTerminalSignalError } from './temporalErrors.js';
  *   - `routes/slack.ts`      — `hitl_resolve` Block Kit button interactions
  *
  * Both entry points enforce the SAME authorization (team visibility via
- * {@link runVisibilityFilter}), the same action validation, the same atomic
+ * {@link buildWorkflowHumanStepVisibilityFilter}), the same action validation, the same atomic
  * PENDING→RESOLVED guard, and the same Temporal-signal-with-rollback semantics.
  * The HTTP wire contracts live in the callers; this module only returns a
  * typed result.
@@ -73,32 +74,6 @@ export type HitlResolveResult =
   | { ok: false; code: HitlResolveErrorCode; message: string };
 
 /**
- * Visibility filter for human steps: ADMIN sees everything; everyone else
- * sees steps whose run belongs to a global template, a template owned by one
- * of their teams, or a work request touching a repo of one of their teams.
- */
-export function runVisibilityFilter(user: HitlActor): Prisma.WorkflowHumanStepWhereInput {
-  if (user.role === 'ADMIN') {
-    return {};
-  }
-  return {
-    run: {
-      OR: [
-        { template: { teamId: null } },
-        { template: { team: { memberships: { some: { userId: user.sub } } } } },
-        {
-          workRequest: {
-            activeWorkflows: {
-              some: { repository: { team: { memberships: { some: { userId: user.sub } } } } },
-            },
-          },
-        },
-      ],
-    },
-  };
-}
-
-/**
  * Resolve a pending human step on behalf of `user`.
  *
  * Sequence (must stay in lock-step with what the inbox route promised):
@@ -122,7 +97,7 @@ export async function resolveHitlStep(
 
   const step = await prisma.workflowHumanStep.findFirst({
     include: { run: { select: { id: true, status: true, workflowId: true } } },
-    where: { id: stepId, ...runVisibilityFilter(user) },
+    where: { id: stepId, ...buildWorkflowHumanStepVisibilityFilter(user) },
   });
   if (!step) {
     return { code: 'NOT_FOUND', message: 'Human step not found', ok: false };

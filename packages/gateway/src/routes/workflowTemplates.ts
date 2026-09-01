@@ -30,6 +30,7 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { assertOrgBudget } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
+import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -502,27 +503,6 @@ function specValidationWarnings(spec: WorkflowSpec): string[] {
   return [...report.errors, ...report.warnings].map(formatValidationIssue);
 }
 
-/** Visibility filter for workflow runs: mirrors the logic in workflowRuns.ts so that
- *  per-template run lists never leak cross-org work for global templates. */
-function runVisibilityFilter(user: { sub: string; role: string }): Prisma.WorkflowRunWhereInput {
-  if (user.role === 'ADMIN') {
-    return {};
-  }
-  return {
-    OR: [
-      { template: { teamId: null } },
-      { template: { team: { memberships: { some: { userId: user.sub } } } } },
-      {
-        workRequest: {
-          activeWorkflows: {
-            some: { repository: { team: { memberships: { some: { userId: user.sub } } } } },
-          },
-        },
-      },
-    ],
-  };
-}
-
 export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -574,7 +554,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           startedAt: { gte: windowStart },
           // Visibility: same run-level visibility predicate used on /runs so
           // global templates do not leak cross-team work-request runs.
-          ...runVisibilityFilter(user),
+          ...buildWorkflowRunVisibilityFilter(user),
         },
       });
       const [runs, baselines] = await Promise.all([
@@ -1714,10 +1694,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           orderBy: { startedAt: 'desc' },
           skip: offset,
           take: limit,
-          where: { templateId: tpl.id, ...runVisibilityFilter(user) },
+          where: { templateId: tpl.id, ...buildWorkflowRunVisibilityFilter(user) },
         }),
         fastify.prisma.workflowRun.count({
-          where: { templateId: tpl.id, ...runVisibilityFilter(user) },
+          where: { templateId: tpl.id, ...buildWorkflowRunVisibilityFilter(user) },
         }),
       ]);
       return {
@@ -1894,7 +1874,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: tpl.id,
             // Visibility: same predicate used on /runs so a global template's
             // runs are not exposed through a different team's work request.
-            ...runVisibilityFilter(user),
+            ...buildWorkflowRunVisibilityFilter(user),
           },
         }),
         fastify.prisma.workflowStep.findMany({
@@ -1905,7 +1885,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             run: {
               startedAt: { gte: windowStart },
               templateId: tpl.id,
-              ...runVisibilityFilter(user),
+              ...buildWorkflowRunVisibilityFilter(user),
             },
           },
         }),

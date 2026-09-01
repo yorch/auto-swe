@@ -11,6 +11,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import {
   projectAutonomyDecision,
@@ -89,27 +90,6 @@ const ListRunsQuery = RunListPaginationQuery.extend({
   workRequestId: z.string().uuid().optional(),
 });
 
-function runVisibilityFilter(user: { sub: string; role: string }): Prisma.WorkflowRunWhereInput {
-  if (user.role === 'ADMIN') {
-    return {};
-  }
-  // A run is visible if either the template is global / on the user's team, or
-  // the originating work request targets a repo on the user's team.
-  return {
-    OR: [
-      { template: { teamId: null } },
-      { template: { team: { memberships: { some: { userId: user.sub } } } } },
-      {
-        workRequest: {
-          activeWorkflows: {
-            some: { repository: { team: { memberships: { some: { userId: user.sub } } } } },
-          },
-        },
-      },
-    ],
-  };
-}
-
 export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -124,7 +104,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const { includeChannel, limit, offset, status, templateId, workRequestId } = request.query;
       const where: Prisma.WorkflowRunWhereInput = {
-        ...runVisibilityFilter(user),
+        ...buildWorkflowRunVisibilityFilter(user),
         ...(status ? { status } : {}),
         ...(templateId ? { templateId } : {}),
         ...(workRequestId ? { workRequestId } : {}),
@@ -174,7 +154,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const run = await fastify.prisma.workflowRun.findFirst({
-        where: { id: request.params.id, ...runVisibilityFilter(user) },
+        where: { id: request.params.id, ...buildWorkflowRunVisibilityFilter(user) },
       });
       if (!run) {
         return reply
@@ -236,7 +216,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const run = await fastify.prisma.workflowRun.findFirst({
         select: { id: true },
-        where: { id: request.params.id, ...runVisibilityFilter(user) },
+        where: { id: request.params.id, ...buildWorkflowRunVisibilityFilter(user) },
       });
       if (!run) {
         return reply.status(404).send({
@@ -275,7 +255,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             select: { description: true, externalTicketId: true, id: true },
           },
         },
-        where: { id: request.params.id, ...runVisibilityFilter(user) },
+        where: { id: request.params.id, ...buildWorkflowRunVisibilityFilter(user) },
       });
       if (!run) {
         return reply.status(404).send({
@@ -355,7 +335,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const run = await fastify.prisma.workflowRun.findFirst({
         select: { id: true },
-        where: { id: request.params.id, ...runVisibilityFilter(user) },
+        where: { id: request.params.id, ...buildWorkflowRunVisibilityFilter(user) },
       });
       if (!run) {
         return reply.status(404).send({
