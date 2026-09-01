@@ -82,7 +82,14 @@ export class AtlassianClient {
             span.setAttribute('http.status_code', res.status);
 
             if (res.status === 429) {
-              const retryAfter = Number(res.headers.get('Retry-After') ?? '5');
+              const raw = res.headers.get('Retry-After') ?? '5';
+              let retryAfter = Number(raw);
+              if (Number.isNaN(retryAfter)) {
+                const date = Date.parse(raw);
+                retryAfter = Number.isNaN(date)
+                  ? 60
+                  : Math.max(0, Math.ceil((date - Date.now()) / 1000));
+              }
               await new Promise((r) => setTimeout(r, retryAfter * 1000));
               lastError = new AtlassianError(
                 429,
