@@ -5,6 +5,9 @@ import { workflowRunRoutes } from './workflowRuns.js';
 
 function newMockPrisma() {
   return {
+    activeWorkflow: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     agentTrace: {
       findMany: vi.fn().mockResolvedValue([]),
     },

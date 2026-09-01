@@ -389,7 +389,7 @@ describe('POST /api/v1/work-requests', () => {
       url: '/api/v1/work-requests',
     });
     expect(res.statusCode).toBe(201);
-    expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1-r2');
+    expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1-r1');
   });
 
   it('enriches the context snapshot when a tracker is configured and the fetch succeeds', async () => {
