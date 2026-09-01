@@ -620,11 +620,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   call site is accounted for: a deliberate cross-tenant read declares itself with
   `runUnscoped(reason, models, fn)`, and the common `admin ? {} : filter` shape uses
   `asPlatformAdmin`,
-  which keeps the guard live for everyone except the role meant to see everything. It throws
-  outside production and warns inside it, so a false positive pages someone rather than taking the
-  API down; `TENANT_GUARD_STRICT=1` makes production throw too. Single-row lookups are deliberately
-  unguarded — `findUnique` by id is the normal fetch-then-check shape — and raw SQL bypasses the
-  extension entirely. This is defence in depth, not the row-level security it stands in for.
+  which keeps the guard live for everyone except the role meant to see everything. It throws in
+  every environment by default, so a missing tenant filter fails fast rather than leaking data; set
+  `TENANT_GUARD_WARN=1` to warn instead of throw while triaging false positives. Single-row lookups
+  are deliberately unguarded — `findUnique` by id is the normal fetch-then-check shape — and raw SQL
+  bypasses the extension entirely. This is defence in depth, not the row-level security it stands in for.
 - **A `runUnscoped` exemption still covers repeat queries on the models it names.** It is an
   `AsyncLocalStorage` region, so everything awaited inside inherits it; naming the models bounds
   that — a query on anything else inside the block still fails — but a *second* query on an

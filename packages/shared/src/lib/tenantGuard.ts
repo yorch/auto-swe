@@ -30,6 +30,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'Connection',
   'EvalDataset',
   'EvalRubric',
+  'HumanErrorBaseline',
   'MemoryItem',
   'OrgMonthlyUsage',
   'OrganizationMembership',
@@ -196,14 +197,13 @@ export interface TenantGuardOptions {
   /**
    * `'throw'` fails the query; `'warn'` logs and lets it through.
    *
-   * Defaults to `'throw'` outside production, `'warn'` inside it. Every gateway
-   * call site has been triaged — each cross-tenant query now declares itself
-   * through `runUnscoped` or `asPlatformAdmin` — so a new violation is a new
-   * bug and should stop a test rather than be logged and forgotten.
+   * Defaults to `'throw'` in all environments. Every gateway call site has
+   * been triaged — each cross-tenant query now declares itself through
+   * `runUnscoped` or `asPlatformAdmin` — so a new violation is a new bug and
+   * should stop a test rather than be logged and forgotten.
    *
-   * Production still warns: a guard false-positive on a query that has been
-   * serving traffic should page someone, not take the API down. Set
-   * `TENANT_GUARD_STRICT=1` to make production throw too.
+   * Set `TENANT_GUARD_WARN=1` to warn instead of throw while triaging false
+   * positives, but do not leave that enabled in production.
    */
   mode?: 'throw' | 'warn';
   onViolation?: (err: UnscopedTenantQueryError) => void;
@@ -211,11 +211,7 @@ export interface TenantGuardOptions {
 
 /** The `$extends` argument. Kept separate from the client so it is unit-testable. */
 export function tenantGuardExtension(opts?: TenantGuardOptions) {
-  const mode =
-    opts?.mode ??
-    (process.env.TENANT_GUARD_STRICT === '1' || process.env.NODE_ENV !== 'production'
-      ? 'throw'
-      : 'warn');
+  const mode = opts?.mode ?? (process.env.TENANT_GUARD_WARN === '1' ? 'warn' : 'throw');
   return {
     name: 'tenantGuard',
     query: {

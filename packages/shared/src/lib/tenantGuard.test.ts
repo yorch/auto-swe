@@ -168,10 +168,10 @@ describe('tenantGuardExtension', () => {
   });
 
   it('throws by default outside production — every call site is triaged, so a new one is a bug', async () => {
-    const prevStrict = process.env.TENANT_GUARD_STRICT;
+    const prevWarn = process.env.TENANT_GUARD_WARN;
     const prevEnv = process.env.NODE_ENV;
     try {
-      delete process.env.TENANT_GUARD_STRICT;
+      delete process.env.TENANT_GUARD_WARN;
       process.env.NODE_ENV = 'test';
       const ext = tenantGuardExtension();
       await expect(
@@ -179,18 +179,18 @@ describe('tenantGuardExtension', () => {
       ).rejects.toBeInstanceOf(UnscopedTenantQueryError);
     } finally {
       process.env.NODE_ENV = prevEnv;
-      if (prevStrict !== undefined) {
-        process.env.TENANT_GUARD_STRICT = prevStrict;
+      if (prevWarn !== undefined) {
+        process.env.TENANT_GUARD_WARN = prevWarn;
       }
     }
   });
 
-  it('warns in production, so a false positive does not take the API down', async () => {
-    const prevStrict = process.env.TENANT_GUARD_STRICT;
+  it('warns when TENANT_GUARD_WARN=1, for triaging false positives only', async () => {
+    const prevWarn = process.env.TENANT_GUARD_WARN;
     const prevEnv = process.env.NODE_ENV;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      delete process.env.TENANT_GUARD_STRICT;
+      process.env.TENANT_GUARD_WARN = '1';
       process.env.NODE_ENV = 'production';
       const ext = tenantGuardExtension();
       await expect(
@@ -199,17 +199,19 @@ describe('tenantGuardExtension', () => {
     } finally {
       warn.mockRestore();
       process.env.NODE_ENV = prevEnv;
-      if (prevStrict !== undefined) {
-        process.env.TENANT_GUARD_STRICT = prevStrict;
+      if (prevWarn === undefined) {
+        delete process.env.TENANT_GUARD_WARN;
+      } else {
+        process.env.TENANT_GUARD_WARN = prevWarn;
       }
     }
   });
 
-  it('throws in production too when TENANT_GUARD_STRICT=1', async () => {
-    const prevStrict = process.env.TENANT_GUARD_STRICT;
+  it('throws in production by default', async () => {
+    const prevWarn = process.env.TENANT_GUARD_WARN;
     const prevEnv = process.env.NODE_ENV;
     try {
-      process.env.TENANT_GUARD_STRICT = '1';
+      delete process.env.TENANT_GUARD_WARN;
       process.env.NODE_ENV = 'production';
       const ext = tenantGuardExtension();
       await expect(
@@ -217,10 +219,10 @@ describe('tenantGuardExtension', () => {
       ).rejects.toBeInstanceOf(UnscopedTenantQueryError);
     } finally {
       process.env.NODE_ENV = prevEnv;
-      if (prevStrict === undefined) {
-        delete process.env.TENANT_GUARD_STRICT;
+      if (prevWarn === undefined) {
+        delete process.env.TENANT_GUARD_WARN;
       } else {
-        process.env.TENANT_GUARD_STRICT = prevStrict;
+        process.env.TENANT_GUARD_WARN = prevWarn;
       }
     }
   });

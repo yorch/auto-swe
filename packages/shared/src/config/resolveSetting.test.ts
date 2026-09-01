@@ -274,7 +274,7 @@ describe('tenant guard', () => {
     // would reject it as an unscoped findMany. The exemption has to still be in
     // scope at the moment Prisma is called — an AsyncLocalStorage region that
     // ended one await too early would let the guard fire in production under
-    // TENANT_GUARD_STRICT while every mocked test kept passing.
+    // TENANT_GUARD_WARN while every mocked test kept passing.
     let exemptAtQueryTime: boolean | undefined;
     findMany.mockImplementation(async () => {
       exemptAtQueryTime = isUnscoped('ConfigSetting');
