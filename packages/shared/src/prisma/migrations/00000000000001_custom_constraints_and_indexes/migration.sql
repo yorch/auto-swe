@@ -18,10 +18,19 @@ CREATE INDEX IF NOT EXISTS "idx_memory_items_embedding" ON "memory_items"
     USING hnsw ("embedding" vector_cosine_ops)
     WITH (m = 16, ef_construction = 200);
 
+-- NOTE: PostgreSQL has no `ALTER TABLE … ADD CONSTRAINT IF NOT EXISTS`. Each
+-- CHECK constraint below is wrapped in a DO block that swallows
+-- `duplicate_object` so the migration is safe to re-run if `prisma migrate
+-- deploy` retries a partially failed migration, without changing the final
+-- schema. `CREATE [UNIQUE] INDEX IF NOT EXISTS` is natively supported and needs
+-- no wrapper.
+
 -- ── Provider credentials (GLOBAL, ORGANIZATION, or TEAM; no template scope) ──
-ALTER TABLE "provider_credentials"
-    ADD CONSTRAINT IF NOT EXISTS "provider_credentials_scope_check"
+DO $$ BEGIN
+  ALTER TABLE "provider_credentials"
+    ADD CONSTRAINT "provider_credentials_scope_check"
     CHECK ("scope" IN ('GLOBAL', 'ORGANIZATION', 'TEAM'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS "provider_credentials_global_unique"
     ON "provider_credentials" ("provider")
@@ -35,25 +44,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS "provider_credentials_team_unique"
     ON "provider_credentials" ("provider", "team_id")
     WHERE "scope" = 'TEAM';
 
-ALTER TABLE "provider_credentials"
-    ADD CONSTRAINT IF NOT EXISTS "provider_credentials_scope_keys_check"
+DO $$ BEGIN
+  ALTER TABLE "provider_credentials"
+    ADD CONSTRAINT "provider_credentials_scope_keys_check"
     CHECK (
         ("scope" = 'GLOBAL' AND "team_id" IS NULL AND "org_id" IS NULL)
         OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
         OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL)
     );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── Skills: same scope-discriminator rule as provider credentials ───────────
 -- Skills are GLOBAL platform content or owned by one tenant. Without this a
 -- GLOBAL row could carry a team_id and leak into that tenant's filtered view,
 -- and a TEAM row could exist with no owner to filter on.
-ALTER TABLE "skills"
-    ADD CONSTRAINT IF NOT EXISTS "skills_scope_keys_check"
+DO $$ BEGIN
+  ALTER TABLE "skills"
+    ADD CONSTRAINT "skills_scope_keys_check"
     CHECK (
         ("scope" = 'GLOBAL' AND "team_id" IS NULL AND "org_id" IS NULL)
         OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
         OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL)
     );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── Connections: git_repo identity uniqueness (partial) ─────────────────────
 -- org/repo are nullable so non-git connection types (e.g. `mcp`) need not set
@@ -91,13 +104,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS "agents_key_version_template_uidx"
 -- `provider_credentials_scope_keys_check`, extended to all five agent scopes.
 -- Complements the partial uniques above (which, because Postgres treats NULL
 -- discriminators as distinct, could otherwise admit multiple mis-scoped rows).
-ALTER TABLE "agents" ADD CONSTRAINT IF NOT EXISTS "agents_scope_keys_check" CHECK (
+DO $$ BEGIN
+  ALTER TABLE "agents" ADD CONSTRAINT "agents_scope_keys_check" CHECK (
     ("scope" = 'GLOBAL'            AND "team_id" IS NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'ORGANIZATION'      AND "org_id" IS NOT NULL AND "team_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'TEAM'              AND "team_id" IS NOT NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'CHANNEL'           AND "channel_id" IS NOT NULL AND "team_id" IS NULL AND "org_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'WORKFLOW_TEMPLATE' AND "workflow_template_id" IS NOT NULL AND "team_id" IS NULL AND "org_id" IS NULL AND "channel_id" IS NULL)
-);
+  );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── HITL idempotency ─────────────────────────────────────────────────────────
 -- Prevents duplicate PENDING rows for the same (run_id, node_id) pair while
@@ -119,53 +134,81 @@ CREATE UNIQUE INDEX IF NOT EXISTS "pull_requests_repo_id_pr_number_uidx"
 -- The `id` column must always be the literal 'default'. The Prisma models use
 -- `@default("default")` so client writes always produce the right value; these
 -- checks are belt-and-suspenders against raw SQL inserts.
-ALTER TABLE "github_config"
-    ADD CONSTRAINT IF NOT EXISTS "github_config_singleton" CHECK ("id" = 'default');
-ALTER TABLE "slack_config"
-    ADD CONSTRAINT IF NOT EXISTS "slack_config_singleton" CHECK ("id" = 'default');
-ALTER TABLE "storage_config"
-    ADD CONSTRAINT IF NOT EXISTS "storage_config_singleton" CHECK ("id" = 'default');
-ALTER TABLE "storage_config"
-    ADD CONSTRAINT IF NOT EXISTS "storage_config_backend_check" CHECK ("backend" IN ('inline', 's3'));
-ALTER TABLE "workflow_defaults"
-    ADD CONSTRAINT IF NOT EXISTS "workflow_defaults_singleton" CHECK ("id" = 'default');
+DO $$ BEGIN
+  ALTER TABLE "github_config"
+    ADD CONSTRAINT "github_config_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "slack_config"
+    ADD CONSTRAINT "slack_config_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "storage_config"
+    ADD CONSTRAINT "storage_config_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "storage_config"
+    ADD CONSTRAINT "storage_config_backend_check" CHECK ("backend" IN ('inline', 's3'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "workflow_defaults"
+    ADD CONSTRAINT "workflow_defaults_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 -- CI-wait strategy. All four columns are nullable: NULL means "not configured
 -- in the DB", so the resolver falls back to CI_WAIT_MODE / CI_POLL_*. Reject a
 -- typo here rather than silently degrading to 'signal', and reject a
 -- non-positive interval, which would busy-loop the CI poller.
-ALTER TABLE "workflow_defaults"
-    ADD CONSTRAINT IF NOT EXISTS "workflow_defaults_ci_wait_mode_check"
+DO $$ BEGIN
+  ALTER TABLE "workflow_defaults"
+    ADD CONSTRAINT "workflow_defaults_ci_wait_mode_check"
     CHECK ("ci_wait_mode" IS NULL OR "ci_wait_mode" IN ('signal', 'poll'));
-ALTER TABLE "workflow_defaults"
-    ADD CONSTRAINT IF NOT EXISTS "workflow_defaults_ci_poll_positive_check"
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "workflow_defaults"
+    ADD CONSTRAINT "workflow_defaults_ci_poll_positive_check"
     CHECK (
         ("ci_poll_interval_sec" IS NULL OR "ci_poll_interval_sec" > 0)
         AND ("ci_poll_grace_sec"    IS NULL OR "ci_poll_grace_sec"    > 0)
         AND ("ci_poll_deadline_sec" IS NULL OR "ci_poll_deadline_sec" > 0)
     );
-ALTER TABLE "google_oauth_config"
-    ADD CONSTRAINT IF NOT EXISTS "google_oauth_config_singleton" CHECK ("id" = 'default');
-ALTER TABLE "okta_oauth_config"
-    ADD CONSTRAINT IF NOT EXISTS "okta_oauth_config_singleton" CHECK ("id" = 'default');
-ALTER TABLE "embedding_configs"
-    ADD CONSTRAINT IF NOT EXISTS "embedding_configs_singleton_check" CHECK ("id" = 'default');
-ALTER TABLE "issue_tracker_config"
-    ADD CONSTRAINT IF NOT EXISTS "issue_tracker_config_singleton" CHECK ("id" = 'default');
-ALTER TABLE "knowledge_base_config"
-    ADD CONSTRAINT IF NOT EXISTS "knowledge_base_config_singleton" CHECK ("id" = 'default');
-ALTER TABLE "figma_config"
-    ADD CONSTRAINT IF NOT EXISTS "figma_config_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "google_oauth_config"
+    ADD CONSTRAINT "google_oauth_config_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "okta_oauth_config"
+    ADD CONSTRAINT "okta_oauth_config_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "embedding_configs"
+    ADD CONSTRAINT "embedding_configs_singleton_check" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "issue_tracker_config"
+    ADD CONSTRAINT "issue_tracker_config_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "knowledge_base_config"
+    ADD CONSTRAINT "knowledge_base_config_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "figma_config"
+    ADD CONSTRAINT "figma_config_singleton" CHECK ("id" = 'default');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── Config registry: scope discriminator + per-scope uniqueness ──────────────
 -- Same shape as `agents` above: exactly the id column for the row's own scope
 -- may be set, so a TEAM override can never also carry an org id.
-ALTER TABLE "config_settings" ADD CONSTRAINT IF NOT EXISTS "config_settings_scope_keys_check" CHECK (
+DO $$ BEGIN
+  ALTER TABLE "config_settings" ADD CONSTRAINT "config_settings_scope_keys_check" CHECK (
     ("scope" = 'GLOBAL'            AND "team_id" IS NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'ORGANIZATION'      AND "org_id" IS NOT NULL AND "team_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'TEAM'              AND "team_id" IS NOT NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'CHANNEL'           AND "channel_id" IS NOT NULL AND "team_id" IS NULL AND "org_id" IS NULL AND "workflow_template_id" IS NULL)
  OR ("scope" = 'WORKFLOW_TEMPLATE' AND "workflow_template_id" IS NOT NULL AND "team_id" IS NULL AND "org_id" IS NULL AND "channel_id" IS NULL)
-);
+  );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- One override per key per scope instance. Partial per scope because Prisma
 -- cannot express `WHERE scope = …` in a unique index — the same reason writes
@@ -192,10 +235,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS "config_settings_template_uidx"
 
 -- ── Config permissions: one grantee, tenant-level scopes only ────────────────
 -- A grant names exactly one grantee: a specific user, or every holder of a role.
-ALTER TABLE "config_permissions" ADD CONSTRAINT IF NOT EXISTS "config_permissions_grantee_check" CHECK (
+DO $$ BEGIN
+  ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_grantee_check" CHECK (
     ("user_id" IS NOT NULL AND "role" IS NULL)
  OR ("user_id" IS NULL AND "role" IS NOT NULL)
-);
+  );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Grants are only meaningful down to a tenant boundary: a CHANNEL- or
 -- TEMPLATE-scoped grant would be narrower than the thing an operator actually
@@ -203,11 +248,13 @@ ALTER TABLE "config_permissions" ADD CONSTRAINT IF NOT EXISTS "config_permission
 -- covers everything beneath it. `ConfigScope` also permits CHANNEL and
 -- WORKFLOW_TEMPLATE, so a row carrying either fails every branch and is
 -- rejected.
-ALTER TABLE "config_permissions" ADD CONSTRAINT IF NOT EXISTS "config_permissions_scope_keys_check" CHECK (
+DO $$ BEGIN
+  ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_scope_keys_check" CHECK (
     ("scope" = 'GLOBAL'       AND "team_id" IS NULL AND "org_id" IS NULL)
  OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
  OR ("scope" = 'TEAM'         AND "team_id" IS NOT NULL AND "org_id" IS NULL)
-);
+  );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- One grant per (pattern, grantee, scope instance) so re-granting is idempotent.
 CREATE UNIQUE INDEX IF NOT EXISTS "config_permissions_user_global_uidx"
@@ -289,22 +336,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS "repo_dependencies_suggestion_uidx"
   WHERE "to_repo_id" IS NULL;
 
 -- A row points at a repo or names an unresolved ref, never neither.
-ALTER TABLE "repo_dependencies"
-  ADD CONSTRAINT IF NOT EXISTS "repo_dependencies_target_shape_check"
-  CHECK ("to_repo_id" IS NOT NULL OR "to_ref" IS NOT NULL);
+DO $$ BEGIN
+  ALTER TABLE "repo_dependencies"
+    ADD CONSTRAINT "repo_dependencies_target_shape_check"
+    CHECK ("to_repo_id" IS NOT NULL OR "to_ref" IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- No self-edges (holds trivially when to_repo_id is null).
-ALTER TABLE "repo_dependencies"
-  ADD CONSTRAINT IF NOT EXISTS "repo_dependencies_no_self_edge_check"
-  CHECK ("to_repo_id" IS NULL OR "from_repo_id" <> "to_repo_id");
+DO $$ BEGIN
+  ALTER TABLE "repo_dependencies"
+    ADD CONSTRAINT "repo_dependencies_no_self_edge_check"
+    CHECK ("to_repo_id" IS NULL OR "from_repo_id" <> "to_repo_id");
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Status / source enums kept as TEXT with a CHECK, per the enum→string house style.
-ALTER TABLE "repo_dependencies"
-  ADD CONSTRAINT IF NOT EXISTS "repo_dependencies_status_check"
-  CHECK ("status" IN ('active', 'proposed', 'dismissed', 'unresolved'));
-ALTER TABLE "repo_dependencies"
-  ADD CONSTRAINT IF NOT EXISTS "repo_dependencies_source_check"
-  CHECK ("source" IN ('manual', 'manifest', 'git_signal', 'inferred'));
+DO $$ BEGIN
+  ALTER TABLE "repo_dependencies"
+    ADD CONSTRAINT "repo_dependencies_status_check"
+    CHECK ("status" IN ('active', 'proposed', 'dismissed', 'unresolved'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "repo_dependencies"
+    ADD CONSTRAINT "repo_dependencies_source_check"
+    CHECK ("source" IN ('manual', 'manifest', 'git_signal', 'inferred'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── Seeds ────────────────────────────────────────────────────────────────────
 -- Default embedding config so the worker can resolve a spec before the admin
@@ -327,9 +382,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS "autonomy_policies_team_default_key"
 CREATE UNIQUE INDEX IF NOT EXISTS "autonomy_policies_template_key"
     ON "autonomy_policies" ("template_id") WHERE "template_id" IS NOT NULL;
 
-ALTER TABLE "human_error_baselines"
-    ADD CONSTRAINT IF NOT EXISTS "human_error_baselines_sample_size_check" CHECK ("sample_size" >= 0);
-ALTER TABLE "human_error_baselines"
-    ADD CONSTRAINT IF NOT EXISTS "human_error_baselines_error_count_check" CHECK ("error_count" >= 0);
-ALTER TABLE "human_error_baselines"
-    ADD CONSTRAINT IF NOT EXISTS "human_error_baselines_error_rate_check" CHECK ("error_rate" >= 0 AND "error_rate" <= 1);
+DO $$ BEGIN
+  ALTER TABLE "human_error_baselines"
+    ADD CONSTRAINT "human_error_baselines_sample_size_check" CHECK ("sample_size" >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "human_error_baselines"
+    ADD CONSTRAINT "human_error_baselines_error_count_check" CHECK ("error_count" >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "human_error_baselines"
+    ADD CONSTRAINT "human_error_baselines_error_rate_check" CHECK ("error_rate" >= 0 AND "error_rate" <= 1);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
