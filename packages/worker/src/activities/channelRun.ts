@@ -259,8 +259,8 @@ export async function finalizeChannelRun(input: FinalizeChannelRunInput): Promis
       costUsdAccrued: totals._sum.costUsd ?? 0,
       endedAt: new Date(),
       status: input.status,
-      tokensInputTotal: totals._sum.inputTokens ?? 0,
-      tokensOutputTotal: totals._sum.outputTokens ?? 0,
+      tokensInputTotal: BigInt(totals._sum.inputTokens ?? 0),
+      tokensOutputTotal: BigInt(totals._sum.outputTokens ?? 0),
     },
     where: { id: run.id },
   });
