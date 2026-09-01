@@ -201,6 +201,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'RUN_NOT_RUNNING', message: 'Run reached a terminal state before cancel' },
         });
       }
+      if (run.workflowId) {
+        await fastify.prisma.activeWorkflow.updateMany({
+          data: { currentStatus: 'CANCELLED' },
+          where: { temporalWorkflowId: run.workflowId },
+        });
+      }
       fastify.temporal.cancelWorkflow(run.workflowId).catch((err: unknown) => {
         request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel signal failed');
       });

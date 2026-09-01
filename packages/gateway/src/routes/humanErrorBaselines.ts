@@ -30,12 +30,16 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
+      const where: {
+        orgId?: string;
+        organization?: { memberships: { some: { userId: string } } };
+      } = { orgId: request.query.orgId };
+      if (user.role !== 'ADMIN') {
+        where.organization = { memberships: { some: { userId: user.sub } } };
+      }
       const rows = await fastify.prisma.humanErrorBaseline.findMany({
         orderBy: { recordedAt: 'desc' },
-        where: {
-          organization: { memberships: { some: { userId: user.sub } } },
-          orgId: request.query.orgId,
-        },
+        where,
       });
       return {
         data: rows.map((b) => ({
@@ -112,10 +116,13 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const existing = await fastify.prisma.humanErrorBaseline.findFirst({
-        where: {
-          id: request.params.id,
-          organization: { memberships: { some: { userId: user.sub } } },
-        },
+        where:
+          user.role === 'ADMIN'
+            ? { id: request.params.id }
+            : {
+                id: request.params.id,
+                organization: { memberships: { some: { userId: user.sub } } },
+              },
       });
       if (!existing) {
         return reply.status(404).send({

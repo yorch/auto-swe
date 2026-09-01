@@ -386,7 +386,7 @@ async function createTemplateVersion(
       });
     } catch (err: unknown) {
       const e = err as { code?: string };
-      if (e.code !== 'P2002' || attempt === MAX_RETRIES - 1) {
+      if (e.code !== 'P2002') {
         throw err;
       }
     }

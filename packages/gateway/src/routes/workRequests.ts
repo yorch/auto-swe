@@ -308,7 +308,8 @@ async function allocateWorkflowId(
   if (active) {
     return { conflictWorkflowId: active.temporalWorkflowId };
   }
-  return { isRerun: true, workflowId: `${baseId}-r${existing.length + 1}` };
+  const reruns = existing.filter((w) => w.temporalWorkflowId !== baseId);
+  return { isRerun: true, workflowId: `${baseId}-r${reruns.length + 1}` };
 }
 
 const CreateWorkRequestSchema = z.object({
