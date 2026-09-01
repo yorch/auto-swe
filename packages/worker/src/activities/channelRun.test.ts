@@ -144,8 +144,8 @@ describe('finalizeChannelRun', () => {
     expect(call.where).toEqual({ id: 'run-1' });
     expect(call.data.status).toBe('SUCCESS');
     expect(call.data.costUsdAccrued).toBe(0.0123);
-    expect(call.data.tokensInputTotal).toBe(4200);
-    expect(call.data.tokensOutputTotal).toBe(900);
+    expect(call.data.tokensInputTotal).toBe(4200n);
+    expect(call.data.tokensOutputTotal).toBe(900n);
     expect(call.data.endedAt).toBeInstanceOf(Date);
   });
 
@@ -160,8 +160,8 @@ describe('finalizeChannelRun', () => {
     const call = p.workflowRun.update.mock.calls[0][0];
     expect(call.data.status).toBe('FAILED');
     expect(call.data.costUsdAccrued).toBe(0);
-    expect(call.data.tokensInputTotal).toBe(0);
-    expect(call.data.tokensOutputTotal).toBe(0);
+    expect(call.data.tokensInputTotal).toBe(0n);
+    expect(call.data.tokensOutputTotal).toBe(0n);
   });
 
   it('is a no-op when the run row is missing', async () => {

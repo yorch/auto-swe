@@ -36,8 +36,8 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
           user.role === 'ADMIN'
             ? { orgId: request.query.orgId }
             : {
-                orgId: request.query.orgId,
                 organization: { memberships: { some: { userId: user.sub } } },
+                orgId: request.query.orgId,
               },
       });
       return {

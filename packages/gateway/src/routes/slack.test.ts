@@ -588,7 +588,11 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
   });
 
   it('forwards the decision option value through to the Temporal signal', async () => {
-    state.humanStep = pendingHumanStep({ kind: 'DECISION', signalName: 'hitl_pick' });
+    state.humanStep = pendingHumanStep({
+      kind: 'DECISION',
+      options: [{ label: 'Ship', next: 'ship', value: 'ship-it' }],
+      signalName: 'hitl_pick',
+    });
     const body = interactivePayload({
       actions: [
         {

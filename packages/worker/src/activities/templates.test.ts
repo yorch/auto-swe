@@ -144,6 +144,7 @@ beforeEach(() => {
   aggregateTraces.mockResolvedValue({
     _sum: { costUsd: null, inputTokens: null, outputTokens: null },
   } as never);
+  vi.mocked(prisma.$transaction).mockReset();
 });
 
 const validSpec = {
@@ -370,7 +371,7 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockResolvedValue({
       endedAt: null, // not yet finalized → bill
       workRequest: {
-        activeWorkflows: [{ costUsdAccrued: 2, tokensInputUsed: 100, tokensOutputUsed: 50 }],
+        activeWorkflows: [{ costUsdAccrued: 2, tokensInputUsed: 100n, tokensOutputUsed: 50n }],
         connection: { team: { orgId: 'org-1' } },
       },
     } as never);
@@ -404,7 +405,7 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockResolvedValue({
       endedAt: null,
       workRequest: {
-        activeWorkflows: [{ costUsdAccrued: 3, tokensInputUsed: 10, tokensOutputUsed: 5 }],
+        activeWorkflows: [{ costUsdAccrued: 3, tokensInputUsed: 10n, tokensOutputUsed: 5n }],
         connection: { team: { orgId: 'org-1' } },
       },
     } as never);
@@ -434,7 +435,7 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockResolvedValue({
       endedAt: new Date(), // already finalized by a prior attempt
       workRequest: {
-        activeWorkflows: [{ costUsdAccrued: 2, tokensInputUsed: 100, tokensOutputUsed: 50 }],
+        activeWorkflows: [{ costUsdAccrued: 2, tokensInputUsed: 100n, tokensOutputUsed: 50n }],
         connection: { team: { orgId: 'org-1' } },
       },
     } as never);
