@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { Prisma } from '@auto-swe/shared';
 import { HITL_VALID_ACTIONS, type HitlKind } from '@auto-swe/shared/workflow/interpreter';
+import { z } from 'zod';
 import { buildWorkflowHumanStepVisibilityFilter } from './runVisibility.js';
 import { isTerminalSignalError } from './temporalErrors.js';
 
@@ -41,6 +42,7 @@ export type HitlResolveErrorCode =
   | 'RUN_NOT_RUNNING'
   | 'UNKNOWN_KIND'
   | 'INVALID_ACTION'
+  | 'INVALID_VALUE'
   | 'SIGNAL_FAILED';
 
 export type HitlResolveResult =
@@ -72,6 +74,138 @@ export type HitlResolveResult =
       approvalsRemaining: number;
     }
   | { ok: false; code: HitlResolveErrorCode; message: string };
+
+const DecisionOptionValueSchema = z.array(z.object({ value: z.string().min(1).max(100) }));
+
+const InputFieldSchema = z.object({
+  key: z.string().min(1).max(64),
+  label: z.string().min(1).max(100),
+  options: z.array(z.string()).optional(),
+  required: z.boolean().optional(),
+  type: z.enum(['text', 'number', 'boolean', 'select']),
+});
+
+const InputFieldsSchema = z.array(InputFieldSchema).min(1).max(20);
+
+interface HitlStepShape {
+  fields: Prisma.JsonValue;
+  kind: string;
+  options: Prisma.JsonValue;
+}
+
+interface ValueValidationSuccess {
+  ok: true;
+  value: unknown;
+}
+
+interface ValueValidationFailure {
+  message: string;
+  ok: false;
+}
+
+type ValueValidationResult = ValueValidationSuccess | ValueValidationFailure;
+
+function isEmptyInputValue(v: unknown): boolean {
+  return v === undefined || v === null || (typeof v === 'string' && v === '');
+}
+
+/**
+ * Validate the submitted `value` against the step's kind and stored
+ * configuration. This is the single chokepoint for both the inbox and Slack
+ * resolve paths, so malformed payloads cannot be persisted or signalled.
+ */
+function validateHitlValue(step: HitlStepShape, value: unknown): ValueValidationResult {
+  const kind = step.kind as HitlKind;
+
+  switch (kind) {
+    case 'APPROVAL': {
+      if (value !== undefined && value !== null) {
+        return { message: 'APPROVAL steps only accept an action; do not send a value.', ok: false };
+      }
+      return { ok: true, value: undefined };
+    }
+
+    case 'REVIEW': {
+      if (isEmptyInputValue(value)) {
+        return { ok: true, value: undefined };
+      }
+      if (typeof value !== 'string') {
+        return { message: 'REVIEW value must be a string.', ok: false };
+      }
+      if (value.length > 2000) {
+        return { message: 'REVIEW value must be at most 2000 characters.', ok: false };
+      }
+      return { ok: true, value };
+    }
+
+    case 'DECISION': {
+      if (typeof value !== 'string' || value.length === 0 || value.length > 100) {
+        return { message: 'DECISION value must be a non-empty option string.', ok: false };
+      }
+      const parsed = DecisionOptionValueSchema.safeParse(step.options);
+      const optionValues = parsed.success ? parsed.data.map((o) => o.value) : [];
+      if (optionValues.length > 0 && !optionValues.includes(value)) {
+        return {
+          message: `DECISION value '${value}' is not one of the configured options.`,
+          ok: false,
+        };
+      }
+      return { ok: true, value };
+    }
+
+    case 'INPUT': {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return {
+          message: 'INPUT value must be an object keyed by the configured field keys.',
+          ok: false,
+        };
+      }
+      const parsedFields = InputFieldsSchema.safeParse(step.fields);
+      if (!parsedFields.success) {
+        return { message: 'Step field configuration is invalid.', ok: false };
+      }
+      const record = value as Record<string, unknown>;
+      const errors: string[] = [];
+      for (const field of parsedFields.data) {
+        const v = record[field.key];
+        const missing = isEmptyInputValue(v);
+        if (field.required && missing) {
+          errors.push(`Field '${field.label}' is required.`);
+          continue;
+        }
+        if (missing) {
+          continue;
+        }
+        if (field.type === 'text') {
+          if (typeof v !== 'string' || v.length > 10000) {
+            errors.push(`Field '${field.label}' must be a string of at most 10000 characters.`);
+          }
+        } else if (field.type === 'number') {
+          if (typeof v !== 'number') {
+            errors.push(`Field '${field.label}' must be a number.`);
+          }
+        } else if (field.type === 'boolean') {
+          if (typeof v !== 'boolean') {
+            errors.push(`Field '${field.label}' must be a boolean.`);
+          }
+        } else if (field.type === 'select') {
+          if (typeof v !== 'string') {
+            errors.push(`Field '${field.label}' must be a string.`);
+          } else if (field.options && !field.options.includes(v)) {
+            errors.push(`Field '${field.label}' must be one of the configured options.`);
+          }
+        }
+      }
+      if (errors.length > 0) {
+        return { message: errors.join(' '), ok: false };
+      }
+      return { ok: true, value };
+    }
+
+    default:
+      return { message: `Unknown step kind: ${kind}`, ok: false };
+  }
+}
 
 /**
  * Resolve a pending human step on behalf of `user`.
@@ -127,6 +261,12 @@ export async function resolveHitlStep(
       ok: false,
     };
   }
+
+  const validation = validateHitlValue(step, value);
+  if (!validation.ok) {
+    return { code: 'INVALID_VALUE', message: validation.message, ok: false };
+  }
+  value = validation.value;
 
   const signalPayload = { action, resolvedBy: user.sub, value };
   const requiredApprovers = step.requiredApprovers;

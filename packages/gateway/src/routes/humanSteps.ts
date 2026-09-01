@@ -40,6 +40,7 @@ const RespondResponseSchema = z.object({
 const STATUS_BY_CODE: Record<HitlResolveErrorCode, 200 | 400 | 404 | 409 | 502> = {
   ALREADY_RESOLVED: 409,
   INVALID_ACTION: 400,
+  INVALID_VALUE: 400,
   NOT_FOUND: 404,
   RUN_NOT_RUNNING: 409,
   SIGNAL_FAILED: 502,

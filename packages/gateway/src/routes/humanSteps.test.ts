@@ -182,7 +182,7 @@ describe('human step routes', () => {
 
     it('happy path: marks the row RESOLVED, signals the workflow, returns 200', async () => {
       stepRow = pendingStep();
-      const res = await respond({ action: 'approve', value: { note: 'lgtm' } });
+      const res = await respond({ action: 'approve' });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).data).toEqual({
         approvalsRemaining: 0,
@@ -200,7 +200,7 @@ describe('human step routes', () => {
 
       expect(signalCalls).toEqual([
         {
-          args: [{ action: 'approve', resolvedBy: USER_ID, value: { note: 'lgtm' } }],
+          args: [{ action: 'approve', resolvedBy: USER_ID }],
           signalName: 'hitl_approveGate',
           workflowId: 'eng-acme-repo-JIRA-1',
         },
@@ -219,11 +219,19 @@ describe('human step routes', () => {
     });
 
     it('accepts kind-appropriate actions for the other kinds', async () => {
-      stepRow = pendingStep({ kind: 'DECISION', signalName: 'hitl_pick' });
+      stepRow = pendingStep({
+        kind: 'DECISION',
+        options: [{ label: 'Ship', next: 'ship', value: 'ship' }],
+        signalName: 'hitl_pick',
+      });
       let res = await respond({ action: 'select', value: 'ship' });
       expect(res.statusCode).toBe(200);
 
-      stepRow = pendingStep({ kind: 'INPUT', signalName: 'hitl_form' });
+      stepRow = pendingStep({
+        fields: [{ key: 'reason', label: 'Reason', required: false, type: 'text' }],
+        kind: 'INPUT',
+        signalName: 'hitl_form',
+      });
       res = await respond({ action: 'submit', value: { reason: 'why not' } });
       expect(res.statusCode).toBe(200);
 
