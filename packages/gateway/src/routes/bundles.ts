@@ -11,7 +11,7 @@ import {
   installBundle,
   listInstalledBundles,
 } from '../lib/bundleService.js';
-import { resolveBundleTrustedKeys } from '../lib/bundleTrust.js';
+import { resolveBundleAllowUnverified, resolveBundleTrustedKeys } from '../lib/bundleTrust.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -45,6 +45,7 @@ async function runInstall(
 ): Promise<FastifyReply> {
   try {
     const result: InstallResult = await installBundle(fastify.prisma, raw, {
+      allowUnverified: resolveBundleAllowUnverified(),
       installedById: actor.sub,
       trustedKeys: resolveBundleTrustedKeys(),
     });

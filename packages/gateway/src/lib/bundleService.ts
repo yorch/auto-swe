@@ -44,6 +44,8 @@ export interface InstallOptions {
   /** Deployment trust anchors; a signature matching one yields trustState=VERIFIED. */
   trustedKeys?: TrustedKey[];
   installedById?: string | null;
+  /** Permit an UNVERIFIED bundle to install; defaults to false (deny by default). */
+  allowUnverified?: boolean;
 }
 
 export interface InstalledBundleRow {
@@ -269,6 +271,13 @@ export async function installBundle(
   // Trust: a detached signature matching a deployment-trusted key → VERIFIED.
   const trust = verifyBundleSignature(manifest, opts.trustedKeys ?? []);
   const trustState = trust.verified ? 'VERIFIED' : 'UNVERIFIED';
+
+  if (trustState === 'UNVERIFIED' && !opts.allowUnverified) {
+    throw new BundleIntegrityError(
+      'bundle is UNVERIFIED and unverified installs are disabled. ' +
+        'Add the signer to BUNDLE_TRUSTED_KEYS or set BUNDLE_ALLOW_UNVERIFIED=1 to proceed.'
+    );
+  }
 
   const origin = manifest.metadata.source ?? `bundle:${manifest.metadata.name}`;
   const counts = { agents: 0, scannerPatterns: 0, skills: 0, templates: 0 };

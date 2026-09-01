@@ -163,7 +163,7 @@ describe('installBundle', () => {
       [{ connectionType: 'mcp' }]
     );
 
-    const res = await installBundle(asArg(), m);
+    const res = await installBundle(asArg(), m, { allowUnverified: true });
 
     expect(res.counts).toEqual({ agents: 1, scannerPatterns: 1, skills: 1, templates: 1 });
     expect(prisma.skill.create).toHaveBeenCalledTimes(1);
@@ -192,7 +192,10 @@ describe('installBundle', () => {
       expect.objectContaining({ create: expect.objectContaining({ trustState: 'VERIFIED' }) })
     );
 
-    const unsigned = await installBundle(asArg(), manifestFor({ ...EMPTY }), { trustedKeys: [] });
+    const unsigned = await installBundle(asArg(), manifestFor({ ...EMPTY }), {
+      allowUnverified: true,
+      trustedKeys: [],
+    });
     expect(unsigned.trustState).toBe('UNVERIFIED');
     expect(unsigned.signedBy).toBeNull();
   });
@@ -226,14 +229,19 @@ describe('installBundle', () => {
     const rehashed = manifestFor({ ...EMPTY }, [], { name: 'victim-pack', version: '1.0.0' });
     rehashed.metadata.signature = honest.metadata.signature;
     rehashed.metadata.signedBy = 'first-party';
-    const res = await installBundle(asArg(), rehashed, { trustedKeys });
+    const res = await installBundle(asArg(), rehashed, {
+      allowUnverified: true,
+      trustedKeys,
+    });
     expect(res.trustState).toBe('UNVERIFIED');
     expect(res.signedBy).toBeNull();
 
     // Same content replayed under a bumped version is likewise not VERIFIED.
     const bumped = manifestFor({ ...EMPTY }, [], { name: 'vendor-pack', version: '2.0.0' });
     bumped.metadata.signature = honest.metadata.signature;
-    await expect(installBundle(asArg(), bumped, { trustedKeys })).resolves.toMatchObject({
+    await expect(
+      installBundle(asArg(), bumped, { allowUnverified: true, trustedKeys })
+    ).resolves.toMatchObject({
       trustState: 'UNVERIFIED',
     });
   });
@@ -269,7 +277,7 @@ describe('installBundle', () => {
       ...EMPTY,
       scannerPatterns: [{ flags: 'i', label: 'redos', pattern: '(a+)+$', type: 'INJECTION' }],
     } as unknown as BundleEntities);
-    await expect(installBundle(asArg(), m)).resolves.toBeDefined();
+    await expect(installBundle(asArg(), m, { allowUnverified: true })).resolves.toBeDefined();
     expect(prisma.scannerPattern.upsert).toHaveBeenCalled();
   });
 
@@ -280,8 +288,14 @@ describe('installBundle', () => {
         { flags: 'i', label: 'ok', pattern: 'ignore\\s+previous', type: 'INJECTION' },
       ],
     } as unknown as BundleEntities);
-    const res = await installBundle(asArg(), m);
+    const res = await installBundle(asArg(), m, { allowUnverified: true });
     expect(res.counts.scannerPatterns).toBe(1);
     expect(prisma.scannerPattern.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an UNVERIFIED bundle by default', async () => {
+    await expect(installBundle(asArg(), manifestFor({ ...EMPTY }))).rejects.toBeInstanceOf(
+      BundleIntegrityError
+    );
   });
 });

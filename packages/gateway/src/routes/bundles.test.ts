@@ -10,7 +10,7 @@ import {
 } from '@auto-swe/shared/bundle';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bundleRoutes } from './bundles.js';
 
 function newMockPrisma() {
@@ -56,6 +56,8 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
 const AUTH = { authorization: 'Bearer fake' };
 
 beforeEach(() => vi.clearAllMocks());
+beforeAll(() => vi.stubEnv('BUNDLE_ALLOW_UNVERIFIED', '1'));
+afterAll(() => vi.unstubAllEnvs());
 
 describe('bundleRoutes', () => {
   it('exports an (empty) bundle for an admin', async () => {

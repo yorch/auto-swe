@@ -3,7 +3,7 @@ import type { TrustedKey } from '@auto-swe/shared/bundle';
 /**
  * Deployment trust anchors for bundle signatures (P4/WS3).
  *
- * Sourced from the `BUNDLE_TRUSTED_KEYS` env var (JSON `[{ id, publicKeyPem }]`)
+ * Sourced from the `BUNDLE_TRUSTED_KEYS` env var (JSON `[{ id, publicKeyPem }]`).
  * — deliberately env, not DB: a trust anchor must not be mutable by anyone with
  * DB write access (that would let them mark a malicious bundle VERIFIED). Same
  * rationale as `CONFIG_ENCRYPTION_KEY`. Absent/malformed → no trusted keys, so
@@ -25,4 +25,9 @@ export function resolveBundleTrustedKeys(): TrustedKey[] {
   } catch {
     return [];
   }
+}
+
+/** Whether to allow UNVERIFIED bundles to install. Default is deny. */
+export function resolveBundleAllowUnverified(): boolean {
+  return process.env.BUNDLE_ALLOW_UNVERIFIED === '1';
 }
