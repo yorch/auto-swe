@@ -83,7 +83,7 @@ const TENANT_KEYS = new Set([
 const NULL_SCOPES_TENANT = new Set(['orgId', 'organizationId', 'teamId']);
 
 /** Relation/scalar operators that select everything *except* a tenant. */
-const NEGATING_OPERATORS = new Set(['none', 'not', 'isNot']);
+const NEGATING_OPERATORS = new Set(['none', 'not', 'isNot', 'notIn']);
 
 /** Does `value`, sitting under tenant key `key`, actually narrow to a tenant? */
 function narrowsToTenant(key: string, value: unknown): boolean {

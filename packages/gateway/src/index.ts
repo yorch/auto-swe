@@ -289,11 +289,13 @@ async function start() {
   app.get('/api/v1/auth/me', { onRequest: requireAuth() }, async (request, reply) => {
     const actor = requireUser(request);
     const user = await app.prisma.user.findUnique({
-      select: { email: true, id: true, role: true },
+      select: { email: true, id: true, isActive: true, role: true },
       where: { id: actor.sub },
     });
-    if (!user) {
-      return reply.status(403).send({ error: { code: 'FORBIDDEN', message: 'User not found' } });
+    if (!user?.isActive) {
+      return reply
+        .status(403)
+        .send({ error: { code: 'FORBIDDEN', message: 'User not found or inactive' } });
     }
     return { data: user };
   });

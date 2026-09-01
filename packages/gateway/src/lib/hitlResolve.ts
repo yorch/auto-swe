@@ -143,8 +143,11 @@ function validateHitlValue(step: HitlStepShape, value: unknown): ValueValidation
         return { message: 'DECISION value must be a non-empty option string.', ok: false };
       }
       const parsed = DecisionOptionValueSchema.safeParse(step.options);
-      const optionValues = parsed.success ? parsed.data.map((o) => o.value) : [];
-      if (optionValues.length > 0 && !optionValues.includes(value)) {
+      if (!parsed.success || parsed.data.length === 0) {
+        return { message: 'DECISION step options are missing or invalid.', ok: false };
+      }
+      const optionValues = parsed.data.map((o) => o.value);
+      if (!optionValues.includes(value)) {
         return {
           message: `DECISION value '${value}' is not one of the configured options.`,
           ok: false,
@@ -165,7 +168,15 @@ function validateHitlValue(step: HitlStepShape, value: unknown): ValueValidation
         return { message: 'Step field configuration is invalid.', ok: false };
       }
       const record = value as Record<string, unknown>;
+      const fieldKeys = new Set(parsedFields.data.map((field) => field.key));
       const errors: string[] = [];
+
+      for (const key of Object.keys(record)) {
+        if (!fieldKeys.has(key)) {
+          errors.push(`Unknown field '${key}'.`);
+        }
+      }
+
       for (const field of parsedFields.data) {
         const v = record[field.key];
         const missing = isEmptyInputValue(v);
@@ -181,8 +192,8 @@ function validateHitlValue(step: HitlStepShape, value: unknown): ValueValidation
             errors.push(`Field '${field.label}' must be a string of at most 10000 characters.`);
           }
         } else if (field.type === 'number') {
-          if (typeof v !== 'number') {
-            errors.push(`Field '${field.label}' must be a number.`);
+          if (typeof v !== 'number' || !Number.isFinite(v)) {
+            errors.push(`Field '${field.label}' must be a finite number.`);
           }
         } else if (field.type === 'boolean') {
           if (typeof v !== 'boolean') {
@@ -317,15 +328,25 @@ export async function resolveHitlStep(
           return { approvalCount, resolved: false };
         }
 
-        await tx.workflowHumanStep.update({
-          data: {
-            payload: signalPayload as Prisma.InputJsonValue,
-            resolvedAt: new Date(),
-            resolvedBy: user.sub,
-            status: 'RESOLVED',
-          },
-          where: { id: stepId, status: 'PENDING' },
-        });
+        try {
+          await tx.workflowHumanStep.update({
+            data: {
+              payload: signalPayload as Prisma.InputJsonValue,
+              resolvedAt: new Date(),
+              resolvedBy: user.sub,
+              status: 'RESOLVED',
+            },
+            where: { id: stepId, status: 'PENDING' },
+          });
+        } catch (err: unknown) {
+          // Another concurrent response resolved the row between the count and
+          // the update. The PENDING status no longer exists — report as not yet
+          // resolved so the outer code re-reads and returns ALREADY_RESOLVED.
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+            return { approvalCount, resolved: false };
+          }
+          throw err;
+        }
         return { approvalCount, resolved: true };
       });
     } catch (err: unknown) {

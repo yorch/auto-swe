@@ -11,8 +11,8 @@ import { GUARDED_OPERATIONS, hasTenantPredicate, TENANT_SCOPED_MODELS } from './
  *
  * `tenantGuard` already enforces this at run time, but only on a path some test
  * actually walks with a real client — and route tests decorate a mocked Prisma,
- * so the extension never runs. In production the guard defaults to `'warn'`, so
- * the first symptom of a forgotten filter is a log line nobody reads. Hand
+ * so the extension never runs. In production the guard now defaults to `'throw'`,
+ * the first symptom of a forgotten filter is a thrown error during tests or at runtime. Hand
  * triage does not close that: it was done twice on the gateway and missed seven
  * call sites both times.
  *
@@ -59,6 +59,7 @@ const EXEMPT_WRAPPERS = new Set(['runUnscoped', 'asPlatformAdmin']);
 const HAND_VERIFIED = new Map([
   ['packages/gateway/src/lib/agentLibraryService.ts:agent.findMany', 1],
   ['packages/gateway/src/lib/agentLibraryService.ts:agent.updateMany', 1],
+  ['packages/gateway/src/routes/humanErrorBaselines.ts:humanErrorBaseline.findMany', 1],
   ['packages/gateway/src/routes/skills.ts:skill.findMany', 1],
 ]);
 
