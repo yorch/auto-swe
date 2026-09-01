@@ -572,9 +572,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         take: ANALYTICS_ROW_CAP,
         where: {
           startedAt: { gte: windowStart },
-          // Visibility: piggy-back on the same per-template filter to scope
-          // the global rollup to what this user is allowed to see.
-          template: teamMembershipFilter(user),
+          // Visibility: same run-level visibility predicate used on /runs so
+          // global templates do not leak cross-team work-request runs.
+          ...runVisibilityFilter(user),
         },
       });
       const [runs, baselines] = await Promise.all([
@@ -1889,13 +1889,25 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             },
           },
           take: ANALYTICS_ROW_CAP,
-          where: { startedAt: { gte: windowStart }, templateId: tpl.id },
+          where: {
+            startedAt: { gte: windowStart },
+            templateId: tpl.id,
+            // Visibility: same predicate used on /runs so a global template's
+            // runs are not exposed through a different team's work request.
+            ...runVisibilityFilter(user),
+          },
         }),
         fastify.prisma.workflowStep.findMany({
           orderBy: { startedAt: 'desc' },
           select: { nodeId: true, status: true },
           take: ANALYTICS_ROW_CAP,
-          where: { run: { startedAt: { gte: windowStart }, templateId: tpl.id } },
+          where: {
+            run: {
+              startedAt: { gte: windowStart },
+              templateId: tpl.id,
+              ...runVisibilityFilter(user),
+            },
+          },
         }),
       ]);
 
