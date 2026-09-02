@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
@@ -788,7 +789,12 @@ function MemoryItemEditForm({
 
 function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClose: () => void }) {
   const [showConsolidated, setShowConsolidated] = useState(false);
-  const { data: items, isLoading } = useChannelMemory(channel?.id ?? null, showConsolidated);
+  const {
+    data: items,
+    isLoading,
+    isError,
+    error: loadError,
+  } = useChannelMemory(channel?.id ?? null, showConsolidated);
   const deleteMemory = useDeleteChannelMemory();
   const [confirmItem, setConfirmItem] = useState<MemoryItemDto | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -835,77 +841,84 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
             Show consolidated (archived) items
           </label>
         </div>
-        {isLoading ? (
-          <div className="py-6 text-center text-sm text-paper-400">Loading…</div>
-        ) : !items || items.length === 0 ? (
-          <div className="py-6 text-center text-sm text-paper-400">
-            No memory yet for this channel.
-          </div>
-        ) : (
-          <ul className="divide-y divide-ink-600">
-            {items.map((item) => {
-              const consolidatedAt = item.consolidatedAt;
-              const isConsolidated = !!consolidatedAt;
-              return (
-                <li className={`py-3 ${isConsolidated ? 'opacity-50' : ''}`} key={item.id}>
-                  {!isConsolidated && editingId === item.id ? (
-                    <MemoryItemEditForm
-                      channelId={channel?.id ?? ''}
-                      item={item}
-                      onCancel={() => setEditingId(null)}
-                      onSaved={() => setEditingId(null)}
-                    />
-                  ) : (
-                    <div className="flex items-start gap-4">
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <p className="text-sm text-paper-100 leading-snug">{item.lessonSummary}</p>
-                        <p className="text-xs text-paper-500 leading-snug">{item.rationale}</p>
-                        <div className="flex items-center gap-3">
-                          {consolidatedAt && (
-                            <span className="rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-paper-500">
-                              consolidated {fmtDate(consolidatedAt)}
-                            </span>
-                          )}
-                          {item.agentKey && (
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isLoading={isLoading}
+          label="channel memory"
+        >
+          {!items || items.length === 0 ? (
+            <div className="py-6 text-center text-sm text-paper-400">
+              No memory yet for this channel.
+            </div>
+          ) : (
+            <ul className="divide-y divide-ink-600">
+              {items.map((item) => {
+                const consolidatedAt = item.consolidatedAt;
+                const isConsolidated = !!consolidatedAt;
+                return (
+                  <li className={`py-3 ${isConsolidated ? 'opacity-50' : ''}`} key={item.id}>
+                    {!isConsolidated && editingId === item.id ? (
+                      <MemoryItemEditForm
+                        channelId={channel?.id ?? ''}
+                        item={item}
+                        onCancel={() => setEditingId(null)}
+                        onSaved={() => setEditingId(null)}
+                      />
+                    ) : (
+                      <div className="flex items-start gap-4">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <p className="text-sm text-paper-100 leading-snug">
+                            {item.lessonSummary}
+                          </p>
+                          <p className="text-xs text-paper-500 leading-snug">{item.rationale}</p>
+                          <div className="flex items-center gap-3">
+                            {consolidatedAt && (
+                              <span className="rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-paper-500">
+                                consolidated {fmtDate(consolidatedAt)}
+                              </span>
+                            )}
+                            {item.agentKey && (
+                              <span className="font-mono text-[10px] text-paper-600">
+                                {item.agentKey}
+                              </span>
+                            )}
                             <span className="font-mono text-[10px] text-paper-600">
-                              {item.agentKey}
+                              {fmtDate(item.createdAt)}
                             </span>
-                          )}
-                          <span className="font-mono text-[10px] text-paper-600">
-                            {fmtDate(item.createdAt)}
-                          </span>
+                          </div>
                         </div>
+                        {!isConsolidated && (
+                          <div className="flex items-center gap-2">
+                            <Button
+                              onClick={() => {
+                                setEditingId(item.id);
+                              }}
+                              size="sm"
+                              variant="secondary"
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              onClick={() => {
+                                setDeleteError(null);
+                                setConfirmItem(item);
+                              }}
+                              size="sm"
+                              variant="danger"
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                      {!isConsolidated && (
-                        <div className="flex items-center gap-2">
-                          <Button
-                            onClick={() => {
-                              setEditingId(item.id);
-                            }}
-                            size="sm"
-                            variant="secondary"
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            onClick={() => {
-                              setDeleteError(null);
-                              setConfirmItem(item);
-                            }}
-                            size="sm"
-                            variant="danger"
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </QueryBoundary>
         <div className="flex justify-end pt-2">
           <Button onClick={onClose} type="button" variant="ghost">
             Close
@@ -966,7 +979,12 @@ function OpenItemsModal({
   onClose: () => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<ChannelOpenItemStatus | 'all'>('OPEN');
-  const { data: items, isLoading } = useChannelOpenItems(channel?.id ?? null, statusFilter);
+  const {
+    data: items,
+    isLoading,
+    isError,
+    error: loadError,
+  } = useChannelOpenItems(channel?.id ?? null, statusFilter);
   const updateItem = useUpdateChannelOpenItem();
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -1013,64 +1031,64 @@ function OpenItemsModal({
           </div>
         )}
 
-        {isLoading ? (
-          <LoadingState />
-        ) : !items || items.length === 0 ? (
-          <p className="py-4 text-center text-sm text-paper-500">
-            No {statusFilter !== 'all' ? statusFilter.toLowerCase() : ''} items for this channel.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {items.map((item) => (
-              <div className="rounded border border-ink-600 bg-ink-800 p-3 text-sm" key={item.id}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1">
-                    <p className="text-paper-100">{item.description}</p>
-                    <div className="mt-1 flex flex-wrap gap-2 font-mono text-[10px] text-paper-500">
-                      <span className={STATUS_COLORS[item.status]}>
-                        {STATUS_LABELS[item.status]}
-                      </span>
-                      <span>·</span>
-                      <span>{relativeTime(item.createdAt)}</span>
-                      {item.ownerUserId && (
-                        <>
-                          <span>·</span>
-                          <span>owner: {item.ownerUserId}</span>
-                        </>
-                      )}
-                      {item.lastNudgedAt && (
-                        <>
-                          <span>·</span>
-                          <span>nudged {relativeTime(item.lastNudgedAt)}</span>
-                        </>
-                      )}
+        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="open items">
+          {!items || items.length === 0 ? (
+            <p className="py-4 text-center text-sm text-paper-500">
+              No {statusFilter !== 'all' ? statusFilter.toLowerCase() : ''} items for this channel.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {items.map((item) => (
+                <div className="rounded border border-ink-600 bg-ink-800 p-3 text-sm" key={item.id}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <p className="text-paper-100">{item.description}</p>
+                      <div className="mt-1 flex flex-wrap gap-2 font-mono text-[10px] text-paper-500">
+                        <span className={STATUS_COLORS[item.status]}>
+                          {STATUS_LABELS[item.status]}
+                        </span>
+                        <span>·</span>
+                        <span>{relativeTime(item.createdAt)}</span>
+                        {item.ownerUserId && (
+                          <>
+                            <span>·</span>
+                            <span>owner: {item.ownerUserId}</span>
+                          </>
+                        )}
+                        {item.lastNudgedAt && (
+                          <>
+                            <span>·</span>
+                            <span>nudged {relativeTime(item.lastNudgedAt)}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
+                    {item.status === 'OPEN' && (
+                      <div className="flex shrink-0 gap-1">
+                        <Button
+                          disabled={updateItem.isPending}
+                          onClick={() => handleStatus(item, 'RESOLVED')}
+                          size="sm"
+                          variant="secondary"
+                        >
+                          Resolve
+                        </Button>
+                        <Button
+                          disabled={updateItem.isPending}
+                          onClick={() => handleStatus(item, 'DISMISSED')}
+                          size="sm"
+                          variant="danger"
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                  {item.status === 'OPEN' && (
-                    <div className="flex shrink-0 gap-1">
-                      <Button
-                        disabled={updateItem.isPending}
-                        onClick={() => handleStatus(item, 'RESOLVED')}
-                        size="sm"
-                        variant="secondary"
-                      >
-                        Resolve
-                      </Button>
-                      <Button
-                        disabled={updateItem.isPending}
-                        onClick={() => handleStatus(item, 'DISMISSED')}
-                        size="sm"
-                        variant="danger"
-                      >
-                        Dismiss
-                      </Button>
-                    </div>
-                  )}
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </QueryBoundary>
       </div>
     </Modal>
   );

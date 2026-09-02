@@ -6,9 +6,9 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   type Skill,
@@ -328,7 +328,7 @@ function DeleteConfirmModal({ skill, onClose }: { skill: Skill | null; onClose: 
 // ── Effectiveness Card ────────────────────────────────────────────────────────
 
 function EffectivenessCard() {
-  const { data, isLoading } = useSkillEffectiveness();
+  const { data, isLoading, isError, error: loadError } = useSkillEffectiveness();
   return (
     <Card>
       <CardHeader>
@@ -340,38 +340,43 @@ function EffectivenessCard() {
         Correlational — skills are assigned per team/template, so differences may reflect the team
         or workload, not the skill.
       </p>
-      {isLoading ? (
-        <LoadingState />
-      ) : !data?.perSkill.length ? (
-        <div className="py-6 text-center text-sm text-paper-400">
-          No runs with active skills in this window yet.
-        </div>
-      ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-ink-600">
-              <th className="py-2 text-left text-xs text-paper-500">Skill</th>
-              <th className="py-2 text-right text-xs text-paper-500">Runs</th>
-              <th className="py-2 text-right text-xs text-paper-500">Success rate</th>
-              <th className="py-2 text-right text-xs text-paper-500">Avg cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.perSkill.map((s) => (
-              <tr className="border-b border-ink-600 last:border-0" key={s.name}>
-                <td className="py-2 pr-4 font-medium text-paper-100">{s.name}</td>
-                <td className="py-2 text-right tabular-nums text-paper-400">{s.runs}</td>
-                <td className="py-2 text-right tabular-nums text-paper-400">
-                  {pct(s.successRate)}
-                </td>
-                <td className="py-2 text-right tabular-nums text-paper-400">
-                  {s.avgCostUsd == null ? '—' : `$${s.avgCostUsd.toFixed(2)}`}
-                </td>
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="skill effectiveness"
+      >
+        {!data?.perSkill.length ? (
+          <div className="py-6 text-center text-sm text-paper-400">
+            No runs with active skills in this window yet.
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ink-600">
+                <th className="py-2 text-left text-xs text-paper-500">Skill</th>
+                <th className="py-2 text-right text-xs text-paper-500">Runs</th>
+                <th className="py-2 text-right text-xs text-paper-500">Success rate</th>
+                <th className="py-2 text-right text-xs text-paper-500">Avg cost</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {data.perSkill.map((s) => (
+                <tr className="border-b border-ink-600 last:border-0" key={s.name}>
+                  <td className="py-2 pr-4 font-medium text-paper-100">{s.name}</td>
+                  <td className="py-2 text-right tabular-nums text-paper-400">{s.runs}</td>
+                  <td className="py-2 text-right tabular-nums text-paper-400">
+                    {pct(s.successRate)}
+                  </td>
+                  <td className="py-2 text-right tabular-nums text-paper-400">
+                    {s.avgCostUsd == null ? '—' : `$${s.avgCostUsd.toFixed(2)}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </QueryBoundary>
     </Card>
   );
 }
@@ -382,7 +387,7 @@ export default function AdminSkillsPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
-  const { data: skills, isLoading } = useSkills();
+  const { data: skills, isLoading, isError, error: loadError } = useSkills();
   const update = useUpdateSkill();
 
   return (
@@ -401,77 +406,79 @@ export default function AdminSkillsPage() {
         <CardHeader>
           <CardTitle>All Skills</CardTitle>
         </CardHeader>
-        {isLoading ? (
-          <LoadingState />
-        ) : !skills?.length ? (
-          <div className="py-8 text-center text-sm text-paper-400">
-            No skills yet. Create one with the button above.
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ink-600">
-                <th className="py-2 text-left text-xs text-paper-500">Name</th>
-                <th className="py-2 text-left text-xs text-paper-500">Description</th>
-                <th className="py-2 text-left text-xs text-paper-500">Used by</th>
-                <th className="py-2 text-left text-xs text-paper-500">Active</th>
-                <th className="py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {skills.map((skill) => (
-                <tr className="border-b border-ink-600 last:border-0" key={skill.id}>
-                  <td className="py-2 pr-4">
-                    <button
-                      className="text-left hover:underline"
-                      onClick={() => setViewTarget(skill)}
-                      type="button"
-                    >
-                      <span className="font-medium text-paper-100">{skill.name}</span>
-                    </button>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                      {skill.isBuiltIn && (
-                        <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                          built-in
-                        </span>
-                      )}
-                      {skill.origin && <OriginBadge origin={skill.origin} />}
-                      {skill.isVerified && (
-                        <span className="font-mono text-[10px] text-moss-400">verified</span>
-                      )}
-                      {!skill.isVerified && !skill.isBuiltIn && (
-                        <span className="font-mono text-[10px] text-amber-400">unverified</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="max-w-xs py-2 pr-4">
-                    <span className="line-clamp-1 text-paper-400">{skill.description ?? '—'}</span>
-                  </td>
-                  <td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</td>
-                  <td className="py-2 pr-4">
-                    <ToggleSwitch
-                      checked={skill.isActive}
-                      disabled={update.isPending}
-                      onChange={() => update.mutate({ id: skill.id, isActive: !skill.isActive })}
-                    />
-                  </td>
-                  <td className="py-2 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
-                        View / Edit
-                      </Button>
-                      {!skill.isBuiltIn && (
-                        <Button onClick={() => setDeleteTarget(skill)} size="sm" variant="danger">
-                          Delete
-                        </Button>
-                      )}
-                    </div>
-                  </td>
+        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="skills">
+          {!skills?.length ? (
+            <div className="py-8 text-center text-sm text-paper-400">
+              No skills yet. Create one with the button above.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-ink-600">
+                  <th className="py-2 text-left text-xs text-paper-500">Name</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Description</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Used by</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Active</th>
+                  <th className="py-2" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              </thead>
+              <tbody>
+                {skills.map((skill) => (
+                  <tr className="border-b border-ink-600 last:border-0" key={skill.id}>
+                    <td className="py-2 pr-4">
+                      <button
+                        className="text-left hover:underline"
+                        onClick={() => setViewTarget(skill)}
+                        type="button"
+                      >
+                        <span className="font-medium text-paper-100">{skill.name}</span>
+                      </button>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                        {skill.isBuiltIn && (
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                            built-in
+                          </span>
+                        )}
+                        {skill.origin && <OriginBadge origin={skill.origin} />}
+                        {skill.isVerified && (
+                          <span className="font-mono text-[10px] text-moss-400">verified</span>
+                        )}
+                        {!skill.isVerified && !skill.isBuiltIn && (
+                          <span className="font-mono text-[10px] text-amber-400">unverified</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="max-w-xs py-2 pr-4">
+                      <span className="line-clamp-1 text-paper-400">
+                        {skill.description ?? '—'}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</td>
+                    <td className="py-2 pr-4">
+                      <ToggleSwitch
+                        checked={skill.isActive}
+                        disabled={update.isPending}
+                        onChange={() => update.mutate({ id: skill.id, isActive: !skill.isActive })}
+                      />
+                    </td>
+                    <td className="py-2 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
+                          View / Edit
+                        </Button>
+                        {!skill.isBuiltIn && (
+                          <Button onClick={() => setDeleteTarget(skill)} size="sm" variant="danger">
+                            Delete
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </QueryBoundary>
       </Card>
 
       <EffectivenessCard />

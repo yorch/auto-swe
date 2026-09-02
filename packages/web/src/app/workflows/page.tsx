@@ -5,21 +5,23 @@ import { useState } from 'react';
 import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequestModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useWorkflows } from '@/hooks/useRuns';
 import { formatCost, formatRelativeTime } from '@/lib/utils';
 
 export default function WorkflowsPage() {
-  const { data: workflows, isLoading } = useWorkflows();
+  const { data: workflows, isLoading, isError, error: loadError } = useWorkflows();
   const { data: repos } = useRepositories();
   const [submitOpen, setSubmitOpen] = useState(false);
   const canSubmit = (repos ?? []).length > 0;
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="workflows" />
+    );
   }
 
   return (

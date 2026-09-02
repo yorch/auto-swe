@@ -5,8 +5,8 @@ import { LessonsByTypeChart } from '@/components/charts/LessonsByTypeChart';
 import { LessonsOverTimeChart } from '@/components/charts/LessonsOverTimeChart';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { useLessonSearch, useLessons } from '@/hooks/useLessons';
 import { useRepositories } from '@/hooks/useRepositories';
@@ -14,7 +14,7 @@ import { groupLessonsByDate, groupLessonsByType } from '@/lib/chartUtils';
 import { formatDate } from '@/lib/utils';
 
 export default function LessonsPage() {
-  const { data: lessons, isLoading } = useLessons();
+  const { data: lessons, isLoading, isError, error: loadError } = useLessons();
   const { data: repos = [] } = useRepositories();
   const [query, setQuery] = useState('');
   const [repoId, setRepoId] = useState('');
@@ -29,8 +29,10 @@ export default function LessonsPage() {
   const typeData = useMemo(() => groupLessonsByType(all), [all]);
   const timeData = useMemo(() => groupLessonsByDate(all), [all]);
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="lessons" />
+    );
   }
 
   return (

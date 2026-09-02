@@ -7,9 +7,9 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRepositories } from '@/hooks/useRepositories';
@@ -316,7 +316,7 @@ function ScheduleRow({
 export default function AdminSchedulesPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ScheduledWorkRequestSummary | null>(null);
-  const { data: schedules, isLoading } = useSchedules();
+  const { data: schedules, isLoading, isError, error: loadError } = useSchedules();
 
   return (
     <div className="space-y-6">
@@ -334,33 +334,33 @@ export default function AdminSchedulesPage() {
         <CardHeader>
           <CardTitle>All Schedules</CardTitle>
         </CardHeader>
-        {isLoading ? (
-          <LoadingState />
-        ) : !schedules?.length ? (
-          <div className="py-8 text-center text-sm text-paper-400">
-            No schedules yet. Create one with the button above.
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ink-600">
-                <th className="py-2 text-left text-xs text-paper-500">Name</th>
-                <th className="py-2 text-left text-xs text-paper-500">Repository</th>
-                <th className="py-2 text-left text-xs text-paper-500">Cron</th>
-                <th className="py-2 text-left text-xs text-paper-500">Template</th>
-                <th className="py-2 text-left text-xs text-paper-500">Status</th>
-                <th className="py-2 text-left text-xs text-paper-500">Next fire</th>
-                <th className="py-2 text-left text-xs text-paper-500">Last fire</th>
-                <th className="py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {schedules.map((s) => (
-                <ScheduleRow key={s.id} onDelete={() => setDeleteTarget(s)} schedule={s} />
-              ))}
-            </tbody>
-          </table>
-        )}
+        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="schedules">
+          {!schedules?.length ? (
+            <div className="py-8 text-center text-sm text-paper-400">
+              No schedules yet. Create one with the button above.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-ink-600">
+                  <th className="py-2 text-left text-xs text-paper-500">Name</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Repository</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Cron</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Template</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Status</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Next fire</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Last fire</th>
+                  <th className="py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {schedules.map((s) => (
+                  <ScheduleRow key={s.id} onDelete={() => setDeleteTarget(s)} schedule={s} />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </QueryBoundary>
       </Card>
 
       <ScheduleFormModal onClose={() => setNewOpen(false)} open={newOpen} />

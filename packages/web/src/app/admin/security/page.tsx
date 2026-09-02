@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { SecurityEventBadge, SecurityEventList } from '@/components/security/SecurityEventList';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import type { SecurityEventType } from '@/hooks/useAdmin';
 import { useSecurityEvents } from '@/hooks/useAdmin';
@@ -44,7 +44,12 @@ function SummaryBar({ events }: { events: Array<{ eventType: SecurityEventType }
 
 export default function AdminSecurityPage() {
   const [typeFilter, setTypeFilter] = useState<SecurityEventType | ''>('');
-  const { data: events, isLoading } = useSecurityEvents({
+  const {
+    data: events,
+    isLoading,
+    isError,
+    error: loadError,
+  } = useSecurityEvents({
     limit: 100,
     type: typeFilter || undefined,
   });
@@ -70,48 +75,55 @@ export default function AdminSecurityPage() {
         title="Security Events"
       />
 
-      {isLoading ? (
-        <LoadingState />
-      ) : (
-        <>
-          {events && events.length > 0 && (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="security events"
+      >
+        {
+          <>
+            {events && events.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Summary</CardTitle>
+                </CardHeader>
+                <SummaryBar events={events} />
+              </Card>
+            )}
+
             <Card>
               <CardHeader>
-                <CardTitle>Summary</CardTitle>
+                <CardTitle>
+                  {typeFilter
+                    ? `${TYPE_OPTIONS.find((o) => o.value === typeFilter)?.label} events`
+                    : 'All events'}
+                  {events && events.length > 0 && (
+                    <span className="ml-2 text-sm font-normal text-paper-400">
+                      · {events.length}
+                    </span>
+                  )}
+                </CardTitle>
               </CardHeader>
-              <SummaryBar events={events} />
+              <SecurityEventList
+                emptyMessage="No security events found. Events appear here when the agent triggers a scanner."
+                events={events ?? []}
+                showRunLink
+              />
+              {events && events.length > 0 && (
+                <div className="pt-3 mt-3 border-t border-ink-600">
+                  <p className="text-xs text-paper-500">
+                    Showing the {events.length} most recent events.{' '}
+                    <Link className="text-ember-400 hover:underline" href="/runs">
+                      View all runs →
+                    </Link>
+                  </p>
+                </div>
+              )}
             </Card>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                {typeFilter
-                  ? `${TYPE_OPTIONS.find((o) => o.value === typeFilter)?.label} events`
-                  : 'All events'}
-                {events && events.length > 0 && (
-                  <span className="ml-2 text-sm font-normal text-paper-400">· {events.length}</span>
-                )}
-              </CardTitle>
-            </CardHeader>
-            <SecurityEventList
-              emptyMessage="No security events found. Events appear here when the agent triggers a scanner."
-              events={events ?? []}
-              showRunLink
-            />
-            {events && events.length > 0 && (
-              <div className="pt-3 mt-3 border-t border-ink-600">
-                <p className="text-xs text-paper-500">
-                  Showing the {events.length} most recent events.{' '}
-                  <Link className="text-ember-400 hover:underline" href="/runs">
-                    View all runs →
-                  </Link>
-                </p>
-              </div>
-            )}
-          </Card>
-        </>
-      )}
+          </>
+        }
+      </QueryBoundary>
     </div>
   );
 }

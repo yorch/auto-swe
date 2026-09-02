@@ -11,9 +11,9 @@ import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
 import { SparkleIcon } from '@/components/ui/icons';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Textarea } from '@/components/ui/Textarea';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
@@ -385,7 +385,12 @@ function NewTemplateModal({
 export default function TemplatesPage() {
   const router = useRouter();
   const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
-  const { data: templates, isLoading } = useWorkflowTemplates(selectedTeamId);
+  const {
+    data: templates,
+    isLoading,
+    isError,
+    error: loadError,
+  } = useWorkflowTemplates(selectedTeamId);
   const createTemplate = useCreateWorkflowTemplate();
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
@@ -551,95 +556,92 @@ export default function TemplatesPage() {
                             webhook
                           </span>
                         )}
-                      </div>
-                      {t.description && (
-                        <div className="text-xs text-paper-500">{t.description}</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-paper-400">
-                      {t.team?.name ?? <em className="text-paper-500">global</em>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={t.status} />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-paper-300">
-                      {t.activeVersion !== null ? `v${t.activeVersion}` : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      {t.lastRun ? (
-                        <Link
-                          className="inline-flex items-center gap-2"
-                          href={`/runs/${t.lastRun.id}`}
-                        >
-                          <StatusBadge status={t.lastRun.status} />
-                          <span className="font-mono text-[11px] text-paper-500">
-                            {formatRelativeTime(t.lastRun.startedAt)}
-                          </span>
-                        </Link>
-                      ) : (
-                        <span className="font-mono text-[11px] uppercase tracking-wider text-paper-500">
-                          never
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-paper-500">
-                      {formatRelativeTime(t.updatedAt)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {t.status === 'ARCHIVED' ? null : t.status === 'ACTIVE' &&
-                          t.activeVersion !== null ? (
-                          <Button onClick={() => setRunTarget(t)} size="sm" variant="primary">
-                            Run →
-                          </Button>
+                      </td>
+                      <td className="px-4 py-3 text-paper-400">
+                        {t.team?.name ?? <em className="text-paper-500">global</em>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={t.status} />
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-paper-300">
+                        {t.activeVersion !== null ? `v${t.activeVersion}` : '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {t.lastRun ? (
+                          <Link
+                            className="inline-flex items-center gap-2"
+                            href={`/runs/${t.lastRun.id}`}
+                          >
+                            <StatusBadge status={t.lastRun.status} />
+                            <span className="font-mono text-[11px] text-paper-500">
+                              {formatRelativeTime(t.lastRun.startedAt)}
+                            </span>
+                          </Link>
                         ) : (
-                          <span
-                            className="cursor-not-allowed"
-                            title={
-                              t.status === 'DRAFT'
-                                ? 'Activate this template before running'
-                                : 'No active version — promote a version first'
-                            }
-                          >
-                            <Button disabled size="sm" variant="ghost">
-                              Run
-                            </Button>
+                          <span className="font-mono text-[11px] uppercase tracking-wider text-paper-500">
+                            never
                           </span>
                         )}
-                        <Button
-                          onClick={() => router.push(`/templates/${t.id}`)}
-                          size="sm"
-                          variant="secondary"
-                        >
-                          Edit
-                        </Button>
-                        {t.status !== 'ARCHIVED' && (
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-paper-500">
+                        {formatRelativeTime(t.updatedAt)}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {t.status === 'ARCHIVED' ? null : t.status === 'ACTIVE' &&
+                            t.activeVersion !== null ? (
+                            <Button onClick={() => setRunTarget(t)} size="sm" variant="primary">
+                              Run →
+                            </Button>
+                          ) : (
+                            <span
+                              className="cursor-not-allowed"
+                              title={
+                                t.status === 'DRAFT'
+                                  ? 'Activate this template before running'
+                                  : 'No active version — promote a version first'
+                              }
+                            >
+                              <Button disabled size="sm" variant="ghost">
+                                Run
+                              </Button>
+                            </span>
+                          )}
                           <Button
-                            onClick={() => setArchiveTarget({ id: t.id, name: t.name })}
+                            onClick={() => router.push(`/templates/${t.id}`)}
                             size="sm"
-                            variant="danger"
+                            variant="secondary"
                           >
-                            Archive
+                            Edit
                           </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {(templates ?? []).length === 0 && (
-                  <tr>
-                    <td
-                      className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
-                      colSpan={7}
-                    >
-                      no templates yet — fork a starter above or create a blank template
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </Card>
-        )}
+                          {t.status !== 'ARCHIVED' && (
+                            <Button
+                              onClick={() => setArchiveTarget({ id: t.id, name: t.name })}
+                              size="sm"
+                              variant="danger"
+                            >
+                              Archive
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {(templates ?? []).length === 0 && (
+                    <tr>
+                      <td
+                        className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
+                        colSpan={7}
+                      >
+                        no templates yet — fork a starter above or create a blank template
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </Card>
+          }
+        </QueryBoundary>
       </section>
     </div>
   );

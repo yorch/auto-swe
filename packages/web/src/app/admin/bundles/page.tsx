@@ -5,13 +5,13 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useExportBundle, useInstallBundleFromUrl, useInstalledBundles } from '@/hooks/useBundles';
 import { errMsg } from '@/lib/errors';
 
 export default function AdminBundlesPage() {
-  const { data: bundles, isLoading } = useInstalledBundles();
+  const { data: bundles, isLoading, isError, error: loadError } = useInstalledBundles();
   const installFromUrl = useInstallBundleFromUrl();
   const exportBundle = useExportBundle();
 
@@ -123,39 +123,39 @@ export default function AdminBundlesPage() {
         <CardHeader>
           <CardTitle>Installed bundles</CardTitle>
         </CardHeader>
-        {isLoading ? (
-          <LoadingState />
-        ) : !bundles || bundles.length === 0 ? (
-          <div className="py-4 text-center text-sm text-paper-400">No bundles installed yet.</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ink-600">
-                <th className="py-2 text-left text-xs text-paper-500">Name</th>
-                <th className="py-2 text-left text-xs text-paper-500">Version</th>
-                <th className="py-2 text-left text-xs text-paper-500">Trust</th>
-                <th className="py-2 text-left text-xs text-paper-500">Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bundles.map((b) => (
-                <tr className="border-b border-ink-600 last:border-0" key={b.name}>
-                  <td className="py-2 pr-4 font-mono text-xs text-paper-100">{b.name}</td>
-                  <td className="py-2 pr-4 text-paper-300">{b.version}</td>
-                  <td className="py-2 pr-4">
-                    <span
-                      className={b.trustState === 'VERIFIED' ? 'text-moss-400' : 'text-amber-400'}
-                    >
-                      {b.trustState}
-                      {b.signedBy ? ` · ${b.signedBy}` : ''}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4 text-xs text-paper-400">{b.source ?? '—'}</td>
+        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="bundles">
+          {!bundles || bundles.length === 0 ? (
+            <div className="py-4 text-center text-sm text-paper-400">No bundles installed yet.</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-ink-600">
+                  <th className="py-2 text-left text-xs text-paper-500">Name</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Version</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Trust</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Source</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              </thead>
+              <tbody>
+                {bundles.map((b) => (
+                  <tr className="border-b border-ink-600 last:border-0" key={b.name}>
+                    <td className="py-2 pr-4 font-mono text-xs text-paper-100">{b.name}</td>
+                    <td className="py-2 pr-4 text-paper-300">{b.version}</td>
+                    <td className="py-2 pr-4">
+                      <span
+                        className={b.trustState === 'VERIFIED' ? 'text-moss-400' : 'text-amber-400'}
+                      >
+                        {b.trustState}
+                        {b.signedBy ? ` · ${b.signedBy}` : ''}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4 text-xs text-paper-400">{b.source ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </QueryBoundary>
       </Card>
     </div>
   );

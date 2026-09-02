@@ -5,9 +5,9 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
@@ -447,7 +447,7 @@ function PatternSection({
 
 export default function AdminScannerPage() {
   const [newOpen, setNewOpen] = useState(false);
-  const { data: patterns, isLoading } = useScannerPatterns();
+  const { data: patterns, isLoading, isError, error: loadError } = useScannerPatterns();
 
   const injection = patterns?.filter((p) => p.type === 'INJECTION') ?? [];
   const exfiltration = patterns?.filter((p) => p.type === 'EXFILTRATION') ?? [];
@@ -467,37 +467,42 @@ export default function AdminScannerPage() {
         title="Scanner Patterns"
       />
 
-      {isLoading ? (
-        <LoadingState />
-      ) : (
-        <>
-          <PatternSection
-            description="Checked when custom skill content is saved. Detects attempts to override agent instructions."
-            patterns={injection}
-            title="Injection Patterns"
-          />
-          <PatternSection
-            description="Checked when custom skill content is saved. Detects attempts to exfiltrate data via skill prompts."
-            patterns={exfiltration}
-            title="Exfiltration Patterns"
-          />
-          <PatternSection
-            description="Checked before each bash tool invocation. Dangerous matches are soft-blocked — the agent receives an error and can self-correct."
-            patterns={shellCommand}
-            title="Shell Command Patterns"
-          />
-          <PatternSection
-            description="Checked against added lines in the final diff. Findings are advisory — passed to the security reviewer agent as structured context."
-            patterns={codeSecurity}
-            title="Code Security Patterns"
-          />
-          <PatternSection
-            description="Checked against file paths before each writeFile tool call. Matches are hard-blocked — the agent cannot write to the matched path."
-            patterns={sensitiveFile}
-            title="Sensitive File Patterns"
-          />
-        </>
-      )}
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="scanner patterns"
+      >
+        {
+          <>
+            <PatternSection
+              description="Checked when custom skill content is saved. Detects attempts to override agent instructions."
+              patterns={injection}
+              title="Injection Patterns"
+            />
+            <PatternSection
+              description="Checked when custom skill content is saved. Detects attempts to exfiltrate data via skill prompts."
+              patterns={exfiltration}
+              title="Exfiltration Patterns"
+            />
+            <PatternSection
+              description="Checked before each bash tool invocation. Dangerous matches are soft-blocked — the agent receives an error and can self-correct."
+              patterns={shellCommand}
+              title="Shell Command Patterns"
+            />
+            <PatternSection
+              description="Checked against added lines in the final diff. Findings are advisory — passed to the security reviewer agent as structured context."
+              patterns={codeSecurity}
+              title="Code Security Patterns"
+            />
+            <PatternSection
+              description="Checked against file paths before each writeFile tool call. Matches are hard-blocked — the agent cannot write to the matched path."
+              patterns={sensitiveFile}
+              title="Sensitive File Patterns"
+            />
+          </>
+        }
+      </QueryBoundary>
 
       <CreatePatternModal onClose={() => setNewOpen(false)} open={newOpen} />
     </div>

@@ -2,18 +2,26 @@
 
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Th } from '@/components/ui/Th';
 import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useAdmin';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 export default function AdminSessionsPage() {
-  const { data: sessions, isLoading } = useAdminSessions();
+  const { data: sessions, isLoading, isError, error: loadError } = useAdminSessions();
   const revoke = useAdminRevokeSession();
 
-  if (isLoading) {
-    return <LoadingState message="loading sessions…" />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="sessions"
+        loadingMessage="loading sessions…"
+      />
+    );
   }
 
   const rows = sessions ?? [];

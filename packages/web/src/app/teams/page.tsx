@@ -5,19 +5,21 @@ import { useState } from 'react';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useTeams } from '@/hooks/useTeams';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function TeamsPage() {
-  const { data: teams, isLoading } = useTeams();
+  const { data: teams, isLoading, isError, error: loadError } = useTeams();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const canCreate = role === 'ADMIN';
   const [creating, setCreating] = useState(false);
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="teams" />
+    );
   }
 
   return (

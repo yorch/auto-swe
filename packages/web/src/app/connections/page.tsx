@@ -9,8 +9,8 @@ import { RepoDependenciesModal } from '@/components/repositories/RepoDependencie
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   useRepoDependencySuggestions,
   useTriggerRepoDependencyScan,
@@ -52,15 +52,22 @@ function ConnectionTypeBadge({ type }: { type: string }) {
 }
 
 export default function ConnectionsPage() {
-  const { data: repos, isLoading } = useRepositories();
+  const { data: repos, isLoading, isError, error: loadError } = useRepositories();
   const suggestions = useRepoDependencySuggestions();
   const scan = useTriggerRepoDependencyScan();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const canManage = role === 'ADMIN' || role === 'LEAD';
   const [mode, setMode] = useState<ModalMode>(null);
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="connections"
+      />
+    );
   }
 
   function handleImportSelect(repo: GitHubRepoInfo) {

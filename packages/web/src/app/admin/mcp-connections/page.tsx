@@ -5,9 +5,9 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import {
   type McpConnectionRow,
@@ -307,7 +307,7 @@ export default function AdminMcpConnectionsPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<McpConnectionRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<McpConnectionRow | null>(null);
-  const { data: connections, isLoading } = useMcpConnections();
+  const { data: connections, isLoading, isError, error: loadError } = useMcpConnections();
 
   return (
     <div className="space-y-6">
@@ -328,59 +328,66 @@ export default function AdminMcpConnectionsPage() {
         title="MCP Connections"
       />
 
-      {isLoading ? (
-        <LoadingState />
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle>Connections</CardTitle>
-          </CardHeader>
-          {!connections || connections.length === 0 ? (
-            <div className="py-4 text-center text-sm text-paper-400">
-              No MCP connections yet. Create one to enable MCP tools for an agent.
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
-                  <th className="py-2 text-left text-xs text-paper-500">Name</th>
-                  <th className="py-2 text-left text-xs text-paper-500">URL</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Timeouts (list/call ms)</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Team</th>
-                  <th className="py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {connections.map((c) => (
-                  <tr className="border-b border-ink-600 last:border-0" key={c.id}>
-                    <td className="py-2 pr-4 font-mono text-xs text-paper-100">{c.name}</td>
-                    <td className="max-w-xs py-2 pr-4">
-                      <code className="block truncate font-mono text-[11px] text-paper-300">
-                        {c.config?.url}
-                      </code>
-                    </td>
-                    <td className="py-2 pr-4 text-xs text-paper-300">
-                      {c.config?.listTimeoutMs ?? 'default'} /{' '}
-                      {c.config?.callTimeoutMs ?? 'default'}
-                    </td>
-                    <td className="py-2 pr-4 text-xs text-paper-300">{c.team?.name ?? '—'}</td>
-                    <td className="py-2 text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button onClick={() => setEditTarget(c)} size="sm" variant="secondary">
-                          Edit
-                        </Button>
-                        <Button onClick={() => setDeleteTarget(c)} size="sm" variant="danger">
-                          Delete
-                        </Button>
-                      </div>
-                    </td>
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="MCP connections"
+      >
+        {
+          <Card>
+            <CardHeader>
+              <CardTitle>Connections</CardTitle>
+            </CardHeader>
+            {!connections || connections.length === 0 ? (
+              <div className="py-4 text-center text-sm text-paper-400">
+                No MCP connections yet. Create one to enable MCP tools for an agent.
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-ink-600">
+                    <th className="py-2 text-left text-xs text-paper-500">Name</th>
+                    <th className="py-2 text-left text-xs text-paper-500">URL</th>
+                    <th className="py-2 text-left text-xs text-paper-500">
+                      Timeouts (list/call ms)
+                    </th>
+                    <th className="py-2 text-left text-xs text-paper-500">Team</th>
+                    <th className="py-2" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
-      )}
+                </thead>
+                <tbody>
+                  {connections.map((c) => (
+                    <tr className="border-b border-ink-600 last:border-0" key={c.id}>
+                      <td className="py-2 pr-4 font-mono text-xs text-paper-100">{c.name}</td>
+                      <td className="max-w-xs py-2 pr-4">
+                        <code className="block truncate font-mono text-[11px] text-paper-300">
+                          {c.config?.url}
+                        </code>
+                      </td>
+                      <td className="py-2 pr-4 text-xs text-paper-300">
+                        {c.config?.listTimeoutMs ?? 'default'} /{' '}
+                        {c.config?.callTimeoutMs ?? 'default'}
+                      </td>
+                      <td className="py-2 pr-4 text-xs text-paper-300">{c.team?.name ?? '—'}</td>
+                      <td className="py-2 text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button onClick={() => setEditTarget(c)} size="sm" variant="secondary">
+                            Edit
+                          </Button>
+                          <Button onClick={() => setDeleteTarget(c)} size="sm" variant="danger">
+                            Delete
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+        }
+      </QueryBoundary>
 
       <CreateMcpConnectionModal onClose={() => setNewOpen(false)} open={newOpen} />
       <EditMcpConnectionModal

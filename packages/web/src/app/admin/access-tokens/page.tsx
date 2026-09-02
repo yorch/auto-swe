@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Th } from '@/components/ui/Th';
 import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
@@ -27,7 +27,7 @@ function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
 }
 
 export default function AdminAccessTokensPage() {
-  const { data: tokens, isLoading } = useAdminTokens();
+  const { data: tokens, isLoading, isError, error: loadError } = useAdminTokens();
   const revokeToken = useAdminRevokeToken();
   const pruneAudit = useAdminPruneShellAudit(90);
   const [pruneResult, setPruneResult] = useState<{ deleted: number } | null>(null);
@@ -58,8 +58,16 @@ export default function AdminAccessTokensPage() {
     (t) => !t.revokedAt && !(t.expiresAt && new Date(t.expiresAt).getTime() < now)
   ).length;
 
-  if (isLoading) {
-    return <LoadingState message="loading tokens…" />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="tokens"
+        loadingMessage="loading tokens…"
+      />
+    );
   }
 
   return (

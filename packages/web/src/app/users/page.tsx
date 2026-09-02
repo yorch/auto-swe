@@ -5,8 +5,8 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Th } from '@/components/ui/Th';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
 export default function UsersPage() {
-  const { data: users, isLoading } = useUsers();
+  const { data: users, isLoading, isError, error: loadError } = useUsers();
   const updateUser = useUpdateUser();
   const inviteUser = useInviteUser();
   const [inviteEmail, setInviteEmail] = useState('');
@@ -42,8 +42,16 @@ export default function UsersPage() {
     return { active: a, pending: p };
   }, [users]);
 
-  if (isLoading) {
-    return <LoadingState message="loading users…" />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="users"
+        loadingMessage="loading users…"
+      />
+    );
   }
 
   const handleApprove = (id: string) => updateUser.mutate({ id, patch: { isActive: true } });

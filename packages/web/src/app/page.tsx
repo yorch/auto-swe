@@ -11,8 +11,8 @@ import { DashboardOnboarding } from '@/components/dashboard/DashboardOnboarding'
 import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequestModal';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useInbox } from '@/hooks/useInbox';
@@ -77,8 +77,11 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { data: workflows, isLoading } = useWorkflows();
-  const { data: repos, isLoading: reposLoading } = useRepositories();
+  const workflowsQuery = useWorkflows();
+  const reposQuery = useRepositories();
+  const { data: workflows, isLoading } = workflowsQuery;
+  const { data: repos, isLoading: reposLoading } = reposQuery;
+  const loadFailed = workflowsQuery.isError || reposQuery.isError;
   const { data: inboxSteps } = useInbox();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const [submitOpen, setSubmitOpen] = useState(false);
@@ -94,8 +97,16 @@ export default function DashboardPage() {
   const timeData = useMemo(() => groupWorkflowsByDate(all), [all]);
   const repoData = useMemo(() => groupWorkflowsByRepo(all), [all]);
 
-  if (isLoading || reposLoading) {
-    return <LoadingState message="loading…" />;
+  if (isLoading || reposLoading || loadFailed) {
+    return (
+      <QueryBoundary
+        error={workflowsQuery.error ?? reposQuery.error}
+        isError={loadFailed}
+        isLoading={isLoading || reposLoading}
+        label="dashboard"
+        loadingMessage="loading…"
+      />
+    );
   }
 
   if (all.length === 0) {
