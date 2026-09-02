@@ -9,7 +9,7 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './agentLibrary.js';
 
 function newMockPrisma() {
-  return {
+  const prisma = {
     agent: {
       create: vi.fn(),
       findFirst: vi.fn(),
@@ -20,6 +20,7 @@ function newMockPrisma() {
     },
     agentSkillRef: {
       create: vi.fn().mockResolvedValue({}),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
       findMany: vi.fn().mockResolvedValue([]),
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
@@ -32,6 +33,14 @@ function newMockPrisma() {
     teamMembership: { findUnique: vi.fn() },
     workflowTemplate: { findUnique: vi.fn() },
   };
+  // The service wraps agent + skill-ref writes in an interactive transaction;
+  // hand the callback the same fake so the assertions below still see the calls.
+  return Object.assign(prisma, {
+    $transaction: async (arg: unknown) =>
+      typeof arg === 'function'
+        ? (arg as (tx: typeof prisma) => Promise<unknown>)(prisma)
+        : Promise.all(arg as Promise<unknown>[]),
+  });
 }
 
 async function buildAdminApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {

@@ -193,38 +193,46 @@ export async function createAgent(
     throw new AgentLineageExistsError(key.key, key.scope);
   }
   const scan = base.systemPrompt ? await scanSkillContent(base.systemPrompt) : { warnings: [] };
-  const agentBase = await prisma.agent.create({
-    data: {
-      channelId: scopeWhere(key).channelId,
-      createdById: actorId,
-      credentialId: base.credentialId ?? null,
-      description: base.description ?? null,
-      inheritsModelFrom: base.inheritsModelFrom ?? null,
-      isActive: true,
-      isBuiltIn: false,
-      isVerified: false,
-      key: key.key,
-      mcpConnectionId: base.mcpConnectionId ?? null,
-      modelSpec: base.modelSpec ?? null,
-      name: base.name,
-      orgId: scopeWhere(key).orgId,
-      origin: null,
-      scope: key.scope,
-      systemPrompt: base.systemPrompt ?? null,
-      teamId: scopeWhere(key).teamId,
-      toolKeys: base.toolKeys ?? undefined,
-      version: 1,
-      workflowTemplateId: scopeWhere(key).workflowTemplateId,
-    },
-  });
-  for (const ref of base.skillRefs ?? []) {
-    await prisma.agentSkillRef.create({
-      data: { agentId: agentBase.id, skillId: ref.skillId, sortOrder: ref.sortOrder },
+  // Create the row and its skill refs atomically so a failure mid-way cannot
+  // leave a partial agent behind.
+  const agent = await prisma.$transaction(async (tx) => {
+    const agentBase = await tx.agent.create({
+      data: {
+        channelId: scopeWhere(key).channelId,
+        createdById: actorId,
+        credentialId: base.credentialId ?? null,
+        description: base.description ?? null,
+        inheritsModelFrom: base.inheritsModelFrom ?? null,
+        isActive: true,
+        isBuiltIn: false,
+        isVerified: false,
+        key: key.key,
+        mcpConnectionId: base.mcpConnectionId ?? null,
+        modelSpec: base.modelSpec ?? null,
+        name: base.name,
+        orgId: scopeWhere(key).orgId,
+        origin: null,
+        scope: key.scope,
+        systemPrompt: base.systemPrompt ?? null,
+        teamId: scopeWhere(key).teamId,
+        toolKeys: base.toolKeys ?? undefined,
+        version: 1,
+        workflowTemplateId: scopeWhere(key).workflowTemplateId,
+      },
     });
-  }
-  const agent = await prisma.agent.findUniqueOrThrow({
-    include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
-    where: { id: agentBase.id },
+    if ((base.skillRefs ?? []).length > 0) {
+      await tx.agentSkillRef.createMany({
+        data: (base.skillRefs ?? []).map((ref) => ({
+          agentId: agentBase.id,
+          skillId: ref.skillId,
+          sortOrder: ref.sortOrder,
+        })),
+      });
+    }
+    return tx.agent.findUniqueOrThrow({
+      include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
+      where: { id: agentBase.id },
+    });
   });
   return { agent, scanWarnings: scan.warnings };
 }
@@ -270,43 +278,49 @@ export async function updateAgent(
     refsToCreate = currentRefs;
   }
 
-  const agentBase = await prisma.agent.create({
-    data: {
-      channelId: current.channelId,
-      createdById: actorId,
-      credentialId: pick(base.credentialId, current.credentialId),
-      description: pick(base.description, current.description),
-      inheritsModelFrom: pick(base.inheritsModelFrom, current.inheritsModelFrom),
-      isActive: true,
-      isBuiltIn: current.isBuiltIn,
-      // A prompt edit drops verification (mirrors the skill library); an
-      // unchanged prompt keeps the prior verification state.
-      isVerified: promptChanged ? false : current.isVerified,
-      key: current.key,
-      mcpConnectionId: pick(base.mcpConnectionId, current.mcpConnectionId),
-      modelSpec: pick(base.modelSpec, current.modelSpec),
-      name: pick(base.name, current.name),
-      orgId: current.orgId,
-      origin: current.origin,
-      scope: current.scope,
-      systemPrompt: pick(base.systemPrompt, current.systemPrompt),
-      teamId: current.teamId,
-      toolKeys:
-        base.toolKeys === undefined
-          ? (current.toolKeys ?? undefined)
-          : (base.toolKeys ?? undefined),
-      version: nextVersion,
-      workflowTemplateId: current.workflowTemplateId,
-    },
-  });
-  for (const ref of refsToCreate) {
-    await prisma.agentSkillRef.create({
-      data: { agentId: agentBase.id, skillId: ref.skillId, sortOrder: ref.sortOrder },
+  const agent = await prisma.$transaction(async (tx) => {
+    const agentBase = await tx.agent.create({
+      data: {
+        channelId: current.channelId,
+        createdById: actorId,
+        credentialId: pick(base.credentialId, current.credentialId),
+        description: pick(base.description, current.description),
+        inheritsModelFrom: pick(base.inheritsModelFrom, current.inheritsModelFrom),
+        isActive: true,
+        isBuiltIn: current.isBuiltIn,
+        // A prompt edit drops verification (mirrors the skill library); an
+        // unchanged prompt keeps the prior verification state.
+        isVerified: promptChanged ? false : current.isVerified,
+        key: current.key,
+        mcpConnectionId: pick(base.mcpConnectionId, current.mcpConnectionId),
+        modelSpec: pick(base.modelSpec, current.modelSpec),
+        name: pick(base.name, current.name),
+        orgId: current.orgId,
+        origin: current.origin,
+        scope: current.scope,
+        systemPrompt: pick(base.systemPrompt, current.systemPrompt),
+        teamId: current.teamId,
+        toolKeys:
+          base.toolKeys === undefined
+            ? (current.toolKeys ?? undefined)
+            : (base.toolKeys ?? undefined),
+        version: nextVersion,
+        workflowTemplateId: current.workflowTemplateId,
+      },
     });
-  }
-  const agent = await prisma.agent.findUniqueOrThrow({
-    include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
-    where: { id: agentBase.id },
+    if (refsToCreate.length > 0) {
+      await tx.agentSkillRef.createMany({
+        data: refsToCreate.map((ref) => ({
+          agentId: agentBase.id,
+          skillId: ref.skillId,
+          sortOrder: ref.sortOrder,
+        })),
+      });
+    }
+    return tx.agent.findUniqueOrThrow({
+      include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
+      where: { id: agentBase.id },
+    });
   });
   return { agent, scanWarnings: scan.warnings };
 }
