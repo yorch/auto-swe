@@ -315,7 +315,7 @@ function ScheduleRow({
   );
 }
 
-export default function AdminSchedulesPage() {
+export default function GovernSchedulesPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ScheduledWorkRequestSummary | null>(null);
   const { data: schedules, isLoading, isError, error: loadError } = useSchedules();

@@ -8,7 +8,7 @@ import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useAdmin';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
-export default function AdminSessionsPage() {
+export default function GovernSessionsPage() {
   const { data: sessions, isLoading, isError, error: loadError } = useAdminSessions();
   const revoke = useAdminRevokeSession();
 

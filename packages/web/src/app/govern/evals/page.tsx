@@ -23,7 +23,7 @@ function summarizeByScorer(results: EvalResultDto[]) {
     .sort((a, b) => a.scorer.localeCompare(b.scorer));
 }
 
-export default function AdminEvalsPage() {
+export default function GovernEvalsPage() {
   const { data: datasets, isLoading: dsLoading } = useEvalDatasets();
   const { data: results, isLoading: rLoading } = useEvalResults({ limit: 200 });
 

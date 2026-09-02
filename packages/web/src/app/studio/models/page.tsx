@@ -17,7 +17,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'audit', label: 'Audit log' },
 ];
 
-export default function AdminModelConfigPage() {
+export default function StudioModelConfigPage() {
   const [active, setActive] = useState<Tab>('credentials');
 
   return (

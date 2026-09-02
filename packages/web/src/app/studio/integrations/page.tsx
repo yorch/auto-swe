@@ -38,17 +38,17 @@ function isTab(value: string | null): value is Tab {
   return TABS.some((t) => t.id === value);
 }
 
-export default function AdminIntegrationsPage() {
+export default function StudioIntegrationsPage() {
   // useSearchParams() needs a Suspense boundary above it for the page to stay
   // statically prerenderable.
   return (
     <Suspense fallback={null}>
-      <AdminIntegrationsPageInner />
+      <StudioIntegrationsPageInner />
     </Suspense>
   );
 }
 
-function AdminIntegrationsPageInner() {
+function StudioIntegrationsPageInner() {
   const searchParams = useSearchParams();
   // `?tab=` picks the initial tab (the Slack install callback lands on
   // `?tab=slack&slack_installed=<teamId>`); switching afterwards is local state.

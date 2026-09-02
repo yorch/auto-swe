@@ -7,7 +7,7 @@ import { isTerminalSignalError } from './temporalErrors.js';
 
 /**
  * Shared HITL resolve core, used by:
- *   - `routes/humanSteps.ts` — POST /inbox/:id/respond (the inbox UI)
+ *   - `routes/humanSteps.ts` — POST /api/v1/inbox/:id/respond (human step API)
  *   - `routes/slack.ts`      — `hitl_resolve` Block Kit button interactions
  *
  * Both entry points enforce the SAME authorization (team visibility via

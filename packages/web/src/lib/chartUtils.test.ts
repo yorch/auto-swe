@@ -4,7 +4,6 @@ import {
   groupLessonsByDate,
   groupLessonsByType,
   groupWorkflowsByDate,
-  groupWorkflowsByRepo,
   groupWorkflowsByStatus,
 } from './chartUtils.js';
 
@@ -112,39 +111,6 @@ describe('groupWorkflowsByDate', () => {
     expect(first?.date).toBeDefined();
     expect(second?.date).toBeDefined();
     expect((first?.date ?? '') < (second?.date ?? '')).toBe(true);
-  });
-});
-
-describe('groupWorkflowsByRepo', () => {
-  it('returns an empty array for no workflows', () => {
-    expect(groupWorkflowsByRepo([])).toEqual([]);
-  });
-
-  it('groups by repository name and sorts descending by count', () => {
-    const repoA: NonNullable<WorkflowSummary['repository']> = {
-      id: 'r1',
-      organizationName: 'acme',
-      repoName: 'api',
-    };
-    const repoB: NonNullable<WorkflowSummary['repository']> = {
-      id: 'r2',
-      organizationName: 'acme',
-      repoName: 'web',
-    };
-    const result = groupWorkflowsByRepo([
-      makeWorkflow({ repository: repoB }),
-      makeWorkflow({ repository: repoA }),
-      makeWorkflow({ repository: repoA }),
-    ]);
-    expect(result).toEqual([
-      { count: 2, repo: 'api' },
-      { count: 1, repo: 'web' },
-    ]);
-  });
-
-  it('falls back to "Unknown" when repository is null', () => {
-    const result = groupWorkflowsByRepo([makeWorkflow({ repository: null })]);
-    expect(result).toEqual([{ count: 1, repo: 'Unknown' }]);
   });
 });
 

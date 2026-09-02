@@ -46,7 +46,7 @@ const GROUP_BLURBS: Record<string, string> = {
     'Container images and isolation for agent workspaces, plus worker capacity. Mostly platform-wide.',
 };
 
-export default function AdminSettingsPage() {
+export default function GovernSettingsPage() {
   const [scope, setScope] = useState<ScopeSelection['scope']>('GLOBAL');
   const [teamId, setTeamId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);

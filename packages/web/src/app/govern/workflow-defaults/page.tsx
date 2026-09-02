@@ -6,7 +6,7 @@ import { ConsolidationForm } from '@/components/workflow/ConsolidationForm';
 import { RevalidationForm } from '@/components/workflow/RevalidationForm';
 import { WorkflowDefaultsForm } from '@/components/workflow/WorkflowDefaultsForm';
 
-export default function AdminWorkflowPage() {
+export default function GovernWorkflowPage() {
   return (
     <div className="space-y-6">
       <PageHeader
