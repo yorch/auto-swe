@@ -14,7 +14,7 @@
  */
 
 import crypto from 'node:crypto';
-import { PrismaClient } from '@auto-swe/shared/db';
+import { prisma } from '@auto-swe/shared/db';
 import {
   resolveAuthEmailConfig,
   resolveBetterAuthConfig,
@@ -23,20 +23,14 @@ import {
   resolveOktaOAuthConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
-import { PrismaPg } from '@prisma/adapter-pg';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { magicLink } from 'better-auth/plugins';
 import { genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import nodemailer, { type Transporter } from 'nodemailer';
 
-// Reuse the same Prisma client wiring the rest of the gateway uses so we
-// hit the same connection pool.
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error('DATABASE_URL environment variable is required');
-}
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+// Share the gateway's single Prisma client (one pool, tenant guard attached)
+// instead of opening a second, unguarded connection pool for auth.
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
