@@ -62,6 +62,7 @@ vi.mock('../agents/securityReviewProcessor.js', () => ({
 }));
 
 vi.mock('../lib/activityContext.js', () => ({
+  currentAttempt: vi.fn(() => 1),
   currentWorkflowId: vi.fn(() => 'wf-1'),
   persistActivityTrace: vi.fn(async () => {}),
 }));
@@ -100,6 +101,8 @@ vi.mock('./workspace.js', () => ({
   shellQuote: (s: string) => `'${s}'`,
 }));
 
+import { currentAttempt } from '../lib/activityContext.js';
+import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { executeImplementation } from './executeImplementation.js';
 
 const REQUEST: RepoWorkRequest = {
@@ -116,6 +119,8 @@ function systemPrompt(): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(currentAttempt).mockReturnValue(1);
+  vi.mocked(scanDiffForCodeIssues).mockResolvedValue([]);
   loadMock.mockResolvedValue('');
   checkoutMock.mockResolvedValue('');
   generateMock.mockResolvedValue({ text: 'done', usage: { inputTokens: 1, outputTokens: 1 } });
@@ -199,5 +204,50 @@ describe('executeImplementation shell hygiene', () => {
     const commands = workspaceMock.exec.mock.calls.map((c) => c[0] as string);
     expect(commands).toContain("git diff origin/'main; touch /pwned'");
     expect(commands).not.toContain('git diff origin/main; touch /pwned');
+  });
+});
+
+describe('executeImplementation retry safety', () => {
+  const execCommands = () => workspaceMock.exec.mock.calls.map((c) => c[0] as string);
+
+  it('starts from the clone HEAD on the first attempt', async () => {
+    await executeImplementation(REQUEST);
+    expect(workspaceMock.gitAuthed).not.toHaveBeenCalledWith("fetch origin 'auto/JIRA-1'");
+    expect(execCommands()).not.toContain("git reset --hard origin/'auto/JIRA-1'");
+  });
+
+  it('syncs to the branch a previous attempt pushed when retried', async () => {
+    vi.mocked(currentAttempt).mockReturnValue(2);
+    await executeImplementation(REQUEST);
+    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith("fetch origin 'auto/JIRA-1'");
+    expect(execCommands()).toContain("git reset --hard origin/'auto/JIRA-1'");
+    // The push still happens after the agent's work.
+    expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith("push origin 'auto/JIRA-1'");
+  });
+
+  it('proceeds from the clone when the retry finds nothing pushed yet', async () => {
+    vi.mocked(currentAttempt).mockReturnValue(2);
+    workspaceMock.gitAuthed.mockImplementation(async (sub: string) => {
+      if (sub.startsWith('fetch')) {
+        throw new Error("fatal: couldn't find remote ref");
+      }
+      return '';
+    });
+    await expect(executeImplementation(REQUEST)).resolves.toMatchObject({ branch: 'auto/JIRA-1' });
+  });
+
+  it('skips the commit when nothing is staged so a no-op retry still pushes', async () => {
+    await executeImplementation(REQUEST);
+    expect(execCommands()).toContain(
+      "git diff --cached --quiet || git commit -m 'auto: implement JIRA-1'"
+    );
+  });
+
+  it('degrades the advisory code-security scan instead of failing the run', async () => {
+    vi.mocked(scanDiffForCodeIssues).mockRejectedValue(new Error('pattern db down'));
+    await expect(executeImplementation(REQUEST)).resolves.toMatchObject({
+      codeSecurityFindings: undefined,
+      repoId: 'repo-1',
+    });
   });
 });

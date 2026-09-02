@@ -244,6 +244,14 @@ describe('runImplementerFixSession', () => {
     expect(commands.some((c) => c.startsWith('git reset --hard origin/'))).toBe(true);
   });
 
+  it('degrades the advisory code-security scan instead of failing the fix', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    scanDiffForCodeIssuesMock.mockRejectedValueOnce(new Error('pattern db down'));
+    const out = await runImplementerFixSession(input());
+    expect(out.codeSecurityFindings).toBeUndefined();
+    expect(out.headSha).toBe('abc123');
+  });
+
   it('shell-quotes the repository defaultBranch in the diff command', async () => {
     findRepo.mockResolvedValue({ ...REPO, defaultBranch: 'main; touch /pwned' } as never);
     await runImplementerFixSession(input());

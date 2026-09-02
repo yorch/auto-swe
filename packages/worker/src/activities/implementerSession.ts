@@ -242,8 +242,18 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     });
 
     // Static code security scan — advisory findings passed to the review
-    // network, same as the initial implementation path.
-    const codeSecurityFindings: CodeSecurityFinding[] = await scanDiffForCodeIssues(diff);
+    // network, same as the initial implementation path; a scanner that cannot
+    // run degrades to no findings rather than aborting a pushed fix.
+    let codeSecurityFindings: CodeSecurityFinding[] = [];
+    try {
+      codeSecurityFindings = await scanDiffForCodeIssues(diff);
+    } catch (err) {
+      tracer.addActivityEvent({
+        error: err instanceof Error ? err.message : String(err),
+        name: 'code_security.scan',
+        outputJson: { degraded: true },
+      });
+    }
     if (codeSecurityFindings.length > 0) {
       tracer.addActivityEvent({
         name: 'code_security.scan',

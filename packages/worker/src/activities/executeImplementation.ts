@@ -17,7 +17,7 @@ import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { buildImplementerForActivity } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
-import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import { currentAttempt, currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
@@ -128,6 +128,21 @@ export async function executeImplementation(
 
   try {
     heartbeat('workspace provisioned');
+
+    // Retry safety. This activity can fail AFTER its push (the diff read, the
+    // scanners, the security gate), and createWorkspace always cuts a fresh
+    // `branch` from defaultBranch HEAD — so a retry would rebuild the change
+    // from scratch and then have its push rejected as non-fast-forward. Sync to
+    // whatever a previous attempt pushed, exactly as the fix sessions do.
+    if (currentAttempt() > 1) {
+      try {
+        await workspace.gitAuthed(`fetch origin ${shellQuote(branch)}`);
+        await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
+      } catch {
+        // Nothing pushed yet — the previous attempt failed before its push.
+        heartbeat('retry: remote branch not found, starting from clone HEAD');
+      }
+    }
 
     // Detect test framework
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
@@ -367,7 +382,10 @@ export async function executeImplementation(
       ? `auto: ${subtask.id} — ${subtask.title} (${request.externalTicketId})`
       : `auto: implement ${request.externalTicketId}`;
     await workspace.exec('git add -A');
-    await workspace.exec(`git commit -m ${shellQuote(commitSummary)}`);
+    // Skip the commit when there is nothing staged: on a retry that resumed from
+    // the pushed branch the agent may have had nothing left to change, and an
+    // empty `git commit` exits non-zero.
+    await workspace.exec(`git diff --cached --quiet || git commit -m ${shellQuote(commitSummary)}`);
     await workspace.gitAuthed(`push origin ${shellQuote(branch)}`);
 
     // Collect results
@@ -382,8 +400,18 @@ export async function executeImplementation(
     });
 
     // Static code security scan — advisory findings passed to the review network.
-    // Not blocking here; the security reviewer agent decides severity.
-    const codeSecurityFindings: CodeSecurityFinding[] = await scanDiffForCodeIssues(diff);
+    // Not blocking here; the security reviewer agent decides severity — and an
+    // advisory scanner that cannot run must degrade, never abort a pushed run.
+    let codeSecurityFindings: CodeSecurityFinding[] = [];
+    try {
+      codeSecurityFindings = await scanDiffForCodeIssues(diff);
+    } catch (err) {
+      tracer.addActivityEvent({
+        error: err instanceof Error ? err.message : String(err),
+        name: 'code_security.scan',
+        outputJson: { degraded: true },
+      });
+    }
     if (codeSecurityFindings.length > 0) {
       tracer.addActivityEvent({
         name: 'code_security.scan',
