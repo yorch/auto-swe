@@ -410,6 +410,25 @@ function teamMembershipFilter(user: {
   };
 }
 
+/**
+ * Write-scoped counterpart of `teamMembershipFilter`. Global templates
+ * (`teamId: null`) are readable by everyone but may only be mutated by a
+ * platform admin — a LEAD must never be able to edit, version, promote or
+ * re-key the platform-wide fallback every other team runs.
+ */
+function templateWriteFilter(user: {
+  sub: string;
+  role: string;
+}): Prisma.WorkflowTemplateWhereInput {
+  if (user.role === 'ADMIN') {
+    return {};
+  }
+  return {
+    team: { memberships: { some: { userId: user.sub } } },
+    teamId: { not: null },
+  };
+}
+
 interface LastRunRow {
   templateId: string;
   id: string;
@@ -972,7 +991,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const existing = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...teamMembershipFilter(user) },
+        where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!existing) {
         return reply.status(404).send({
@@ -1132,7 +1151,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
         select: { id: true, name: true, teamId: true },
-        where: { id: request.params.id, ...teamMembershipFilter(user) },
+        where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!tpl) {
         return reply.status(404).send({
@@ -1318,7 +1337,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
         select: { id: true },
-        where: { id: request.params.id, ...teamMembershipFilter(user) },
+        where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!tpl) {
         return reply.status(404).send({
@@ -1356,7 +1375,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...teamMembershipFilter(user) },
+        where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!tpl) {
         return reply.status(404).send({
@@ -1431,7 +1450,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...teamMembershipFilter(user) },
+        where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!tpl) {
         return reply.status(404).send({
@@ -1718,7 +1737,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const existing = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...teamMembershipFilter(user) },
+        where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!existing) {
         return reply
@@ -1745,7 +1764,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const existing = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...teamMembershipFilter(user) },
+        where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!existing) {
         return reply

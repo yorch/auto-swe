@@ -63,11 +63,21 @@ function buildApp(state: {
     }),
   } as unknown as never);
 
+  // Mirrors the two shapes the routes use: an equality (`teamId: 'x'` /
+  // `teamId: null`) and the write filter's `teamId: { not: null }`.
+  const teamIdMatches = (t: FakeTemplate, teamId: unknown): boolean => {
+    if (teamId === undefined) {
+      return true;
+    }
+    if (teamId !== null && typeof teamId === 'object' && 'not' in teamId) {
+      return t.teamId !== (teamId as { not: string | null }).not;
+    }
+    return t.teamId === teamId;
+  };
+
   const findTemplate = (where: Mutable): FakeTemplate | undefined =>
     state.templates.find(
-      (t) =>
-        (where.id === undefined || t.id === where.id) &&
-        (where.teamId === undefined || t.teamId === where.teamId)
+      (t) => (where.id === undefined || t.id === where.id) && teamIdMatches(t, where.teamId)
     );
 
   const shellAudits: Array<{
@@ -564,6 +574,87 @@ describe('workflow-templates routes', () => {
       url: '/api/v1/workflow-templates/generate',
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  it('hides global templates from non-admin write routes (404) but admins can edit them', async () => {
+    const globalId = '00000000-0000-4000-8000-0000000000aa';
+    state.templates.push({
+      activeVersion: 1,
+      createdAt: new Date(),
+      description: 'platform default',
+      experimentSplit: null,
+      experimentVersion: null,
+      id: globalId,
+      isDefault: false,
+      name: 'global-tpl',
+      status: 'ACTIVE',
+      team: null,
+      teamId: null,
+      updatedAt: new Date(),
+      versions: [{ createdAt: new Date(), createdBy: null, id: 'v-global-1', version: 1 }],
+      workspaceProvider: null,
+    });
+    try {
+      // Readable by a LEAD…
+      const read = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: `/api/v1/workflow-templates/${globalId}`,
+      });
+      expect(read.statusCode).toBe(200);
+
+      // …but not editable, versionable, promotable or re-keyable.
+      const lead = await Promise.all([
+        app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'PATCH',
+          payload: { description: 'hijacked' },
+          url: `/api/v1/workflow-templates/${globalId}`,
+        }),
+        app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'POST',
+          payload: { spec: VALID_SPEC },
+          url: `/api/v1/workflow-templates/${globalId}/versions`,
+        }),
+        app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'POST',
+          payload: { version: 1 },
+          url: `/api/v1/workflow-templates/${globalId}/promote`,
+        }),
+        app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'POST',
+          url: `/api/v1/workflow-templates/${globalId}/webhook/regenerate`,
+        }),
+        app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'DELETE',
+          url: `/api/v1/workflow-templates/${globalId}/webhook`,
+        }),
+      ]);
+      for (const res of lead) {
+        expect(res.statusCode).toBe(404);
+      }
+      expect(state.templates.find((t) => t.id === globalId)?.description).toBe('platform default');
+
+      // A platform admin still can.
+      state.userRole = 'ADMIN';
+      const admin = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { description: 'admin edit' },
+        url: `/api/v1/workflow-templates/${globalId}`,
+      });
+      expect(admin.statusCode).toBe(200);
+    } finally {
+      state.userRole = undefined;
+      state.templates.splice(
+        state.templates.findIndex((t) => t.id === globalId),
+        1
+      );
+    }
   });
 
   it('lists templates with last run summary', async () => {
