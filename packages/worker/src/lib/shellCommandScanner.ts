@@ -175,7 +175,7 @@ export async function scanShellCommand(command: string): Promise<string | null> 
   }
 
   const budgetMs = await resolveRegexBudgetMs();
-  const { hits, incomplete } = await runRegexBatch(
+  const { hits, incomplete, quarantinedPatternKeys } = await runRegexBatch(
     toRegexSpecs(patterns),
     chunkScanText(command).map((text, i) => ({ key: String(i), text })),
     { budgetMs, label: 'shellCommandScanner' }
@@ -185,6 +185,16 @@ export async function scanShellCommand(command: string): Promise<string | null> 
     return (
       `Command blocked by security policy [${hit.patternKey}]:\n  ${truncate()}\n` +
       'Modify the command to avoid the restricted pattern and retry.'
+    );
+  }
+  // A quarantined rule was skipped, not evaluated. `incomplete` does not
+  // cover that case, and a blocking scanner that ran without one of its rules
+  // cannot claim the command is clean.
+  if (quarantinedPatternKeys.length > 0) {
+    return (
+      `Command blocked: the shell security rule [${quarantinedPatternKeys[0]}] is quarantined ` +
+      `and was not enforced, so the command could not be cleared.\n  ${truncate()}\n` +
+      'An administrator must fix the offending pattern at /admin/scanner.'
     );
   }
   if (incomplete) {

@@ -8,9 +8,19 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+// Spy on the real `runRegexBatch` so the quarantine test below can hand the
+// scanner a batch result without a real overrun; every other test runs the
+// real executor.
+vi.mock('@auto-swe/shared/lib/regexExec', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@auto-swe/shared/lib/regexExec')>();
+  return { ...actual, runRegexBatch: vi.fn(actual.runRegexBatch) };
+});
+
 import { prisma } from '@auto-swe/shared/db';
+import { runRegexBatch } from '@auto-swe/shared/lib/regexExec';
 import {
   checkSensitiveFilePath,
+  checkSensitiveFilePaths,
   invalidateSensitiveFilePatternCache,
   normalizeScanPath,
 } from './sensitiveFileScanner.js';
@@ -155,6 +165,23 @@ describe('checkSensitiveFilePath — pattern loading behavior', () => {
     mockPatternRows([{ flags: 'g', label: 'g-flag-rule', pattern: '\\.pem$' }]);
     expect(await checkSensitiveFilePath('a.pem')).toContain('[g-flag-rule]');
     expect(await checkSensitiveFilePath('a.pem')).toContain('[g-flag-rule]');
+  });
+
+  it('fails closed when a quarantined rule was skipped, even with no hit and incomplete=false', async () => {
+    const quarantined = {
+      hits: [],
+      incomplete: false,
+      quarantinedPatternKeys: ['sensitive-env-file'],
+      timedOutPatternKeys: [],
+    };
+    vi.mocked(runRegexBatch).mockResolvedValueOnce(quarantined);
+    const single = await checkSensitiveFilePath('README.md');
+    expect(single).toContain('Write blocked');
+    expect(single).toContain('quarantined');
+
+    vi.mocked(runRegexBatch).mockResolvedValueOnce(quarantined);
+    // The batch variant reports the first path as blocked, like an overrun.
+    expect(await checkSensitiveFilePaths(['README.md', 'src/a.ts'])).toBe('README.md');
   });
 
   it('fails closed with a block message when the pattern store is unavailable', async () => {

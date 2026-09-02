@@ -375,6 +375,19 @@ describe('scanShellCommand — pattern loading behavior', () => {
     expect(await scanShellCommand('mkfs /dev/sda1')).toContain('[g-flag-rule]');
   });
 
+  it('fails closed when a quarantined rule was skipped, even with no hit and incomplete=false', async () => {
+    runRegexBatchSpy.mockResolvedValueOnce({
+      hits: [],
+      incomplete: false,
+      quarantinedPatternKeys: ['shell-rm-system-paths'],
+      timedOutPatternKeys: [],
+    });
+    const result = await scanShellCommand('ls');
+    expect(result).toContain('Command blocked');
+    expect(result).toContain('[shell-rm-system-paths]');
+    expect(result).toContain('quarantined');
+  });
+
   it('fails closed with a block message when the pattern store is unavailable', async () => {
     findMany.mockReset();
     findMany.mockRejectedValue(new Error('db down'));

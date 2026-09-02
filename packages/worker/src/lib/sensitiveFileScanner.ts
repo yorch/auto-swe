@@ -59,10 +59,18 @@ async function scanSensitiveFilePaths(filePaths: string[]): Promise<SensitiveFil
   });
 
   const budgetMs = await resolveRegexBudgetMs();
-  const { hits, incomplete } = await runRegexBatch(toRegexSpecs(patterns), targets, {
+  const {
+    hits,
+    incomplete: batchIncomplete,
+    quarantinedPatternKeys,
+  } = await runRegexBatch(toRegexSpecs(patterns), targets, {
     budgetMs,
     label: 'sensitiveFileScanner',
   });
+  // A quarantined rule was skipped rather than evaluated; `incomplete` does
+  // not cover it, and a blocking policy that ran without one of its rules
+  // cannot clear the path. Treat it exactly like an overrun.
+  const incomplete = batchIncomplete || quarantinedPatternKeys.length > 0;
 
   let hitIndex: number | null = null;
   let hitPatternKey: string | null = null;
@@ -121,9 +129,9 @@ export async function checkSensitiveFilePath(filePath: string): Promise<string |
   if (incomplete) {
     return (
       `Write blocked: the sensitive-file scan of '${filePath}' could not complete.\n` +
-      'A scanner pattern exceeded its execution budget, so the path could not be ' +
-      'cleared. Retry; if this persists, an administrator must fix the offending ' +
-      'pattern at /admin/scanner.'
+      'A scanner pattern exceeded its execution budget or is quarantined, so the path ' +
+      'could not be cleared. Retry; if this persists, an administrator must fix the ' +
+      'offending pattern at /admin/scanner.'
     );
   }
   return null;
