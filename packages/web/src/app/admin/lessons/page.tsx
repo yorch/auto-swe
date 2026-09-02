@@ -66,7 +66,7 @@ function RepoStatsRow({
 
 export default function AdminLessonsPage() {
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminLessonStats();
-  const { data: lessons, isLoading: lessonsLoading } = useLessons(false);
+  const { data: lessons, isLoading: lessonsLoading } = useLessons(false, { limit: 20 });
   const { data: consolidation } = useConsolidationConfig();
   const deleteLesson = useDeleteLesson();
 

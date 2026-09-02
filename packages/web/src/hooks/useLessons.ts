@@ -2,6 +2,7 @@
 
 import type { LessonListItem } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { api } from '@/lib/api';
 
 export interface LessonRepoStats {
@@ -33,15 +34,16 @@ export function useAdminLessonStats() {
   });
 }
 
-export function useLessons(includeConsolidated = false) {
-  return useQuery({
+export function useLessons(includeConsolidated = false, opts: ListOptions = {}) {
+  return useListQuery<Lesson>({
     queryFn: () =>
-      api
-        .get<{ data: Lesson[] }>(
-          `/api/v1/lessons?includeConsolidated=${includeConsolidated ? 'true' : 'false'}`
+      api.get(
+        listUrl(
+          `/api/v1/lessons?includeConsolidated=${includeConsolidated ? 'true' : 'false'}`,
+          opts
         )
-        .then((r) => r.data),
-    queryKey: ['lessons', includeConsolidated],
+      ),
+    queryKey: ['lessons', includeConsolidated, opts],
   });
 }
 

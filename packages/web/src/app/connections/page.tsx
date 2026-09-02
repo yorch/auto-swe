@@ -52,7 +52,7 @@ function ConnectionTypeBadge({ type }: { type: string }) {
 }
 
 export default function ConnectionsPage() {
-  const { data: repos, isLoading, isError, error: loadError } = useRepositories();
+  const { data: repos, meta, isLoading, isError, error: loadError } = useRepositories();
   const suggestions = useRepoDependencySuggestions();
   const scan = useTriggerRepoDependencyScan();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
@@ -152,6 +152,11 @@ export default function ConnectionsPage() {
             </Card>
           );
         })}
+        {meta !== undefined && meta.total > (repos ?? []).length && (
+          <p className="text-center font-mono text-[11px] uppercase tracking-wider text-paper-500">
+            showing the first {(repos ?? []).length} of {meta.total} connections
+          </p>
+        )}
         {(repos ?? []).length === 0 && (
           <p className="col-span-full py-12 text-center text-sm text-paper-400">
             No connections yet.

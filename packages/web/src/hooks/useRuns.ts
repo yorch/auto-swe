@@ -9,6 +9,7 @@ import type {
   WorkflowSummary,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { api } from '@/lib/api';
 
 export interface CreateWorkRequestBody {
@@ -22,10 +23,10 @@ export interface CreateWorkRequestResponse {
   data: { workflowIds: string[]; workRequestId: string };
 }
 
-export function useWorkflows() {
-  return useQuery({
-    queryFn: () => api.get<{ data: WorkflowSummary[] }>('/api/v1/workflows').then((r) => r.data),
-    queryKey: ['workflows'],
+export function useWorkflows(opts: ListOptions = {}) {
+  return useListQuery<WorkflowSummary>({
+    queryFn: () => api.get(listUrl('/api/v1/workflows', opts)),
+    queryKey: ['workflows', opts],
     refetchInterval: 10_000,
   });
 }

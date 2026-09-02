@@ -2,6 +2,7 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { api } from '@/lib/api';
 
 export interface GitHubRepoInfo {
@@ -55,11 +56,10 @@ export interface UpdateRepoBody {
   config?: unknown;
 }
 
-export function useRepositories() {
-  return useQuery({
-    queryFn: () =>
-      api.get<{ data: RepositorySummary[] }>('/api/v1/repositories').then((r) => r.data),
-    queryKey: ['repositories'],
+export function useRepositories(opts: ListOptions = {}) {
+  return useListQuery<RepositorySummary>({
+    queryFn: () => api.get(listUrl('/api/v1/repositories', opts)),
+    queryKey: ['repositories', opts],
   });
 }
 

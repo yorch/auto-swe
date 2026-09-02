@@ -13,8 +13,18 @@ import { useRepositories } from '@/hooks/useRepositories';
 import { groupLessonsByDate, groupLessonsByType } from '@/lib/chartUtils';
 import { formatDate } from '@/lib/utils';
 
+const LESSONS_PAGE_SIZE = 200;
+
 export default function LessonsPage() {
-  const { data: lessons, isLoading, isError, error: loadError } = useLessons();
+  // The gateway caps this list at 200; the charts and the list below cover
+  // the loaded page and the caption says so when more exist.
+  const {
+    data: lessons,
+    meta,
+    isLoading,
+    isError,
+    error: loadError,
+  } = useLessons(false, { limit: LESSONS_PAGE_SIZE });
   const { data: repos = [] } = useRepositories();
   const [query, setQuery] = useState('');
   const [repoId, setRepoId] = useState('');
@@ -26,6 +36,7 @@ export default function LessonsPage() {
 
   const all = lessons ?? [];
   const visible = searchEnabled ? (searchResults ?? []) : all;
+  const truncated = meta !== undefined && meta.total > all.length;
   const typeData = useMemo(() => groupLessonsByType(all), [all]);
   const timeData = useMemo(() => groupLessonsByDate(all), [all]);
 
@@ -37,7 +48,15 @@ export default function LessonsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader chapter="§ Memory" title="Agent Lessons" />
+      <PageHeader
+        chapter={`§ Memory · ${meta?.total ?? all.length} total`}
+        subtitle={
+          truncated
+            ? `Showing the first ${all.length} of ${meta.total} lessons — search by repository to find older ones.`
+            : undefined
+        }
+        title="Agent Lessons"
+      />
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
