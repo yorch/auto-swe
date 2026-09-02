@@ -1,3 +1,4 @@
+import { Role } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -25,15 +26,24 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
       schema: { querystring: ListBaselinesQuery },
     },
     async (request) => {
       const user = requireUser(request);
       const rows = await fastify.prisma.humanErrorBaseline.findMany({
         orderBy: { recordedAt: 'desc' },
+        select: {
+          domain: true,
+          errorCount: true,
+          errorRate: true,
+          id: true,
+          outcomeType: true,
+          recordedAt: true,
+          sampleSize: true,
+        },
         where:
-          user.role === 'ADMIN'
+          user.role === Role.ADMIN
             ? { orgId: request.query.orgId }
             : {
                 organization: { memberships: { some: { userId: user.sub } } },
@@ -57,7 +67,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
       schema: { body: CreateBaselineBody },
     },
     async (request, reply) => {
@@ -73,6 +83,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const membership = await fastify.prisma.organizationMembership.findFirst({
+        select: { id: true },
         where: { orgId, userId: user.sub },
       });
       if (!membership && user.role !== 'ADMIN') {
@@ -109,14 +120,15 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
       schema: { params: BaselineIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const existing = await fastify.prisma.humanErrorBaseline.findFirst({
+        select: { id: true },
         where:
-          user.role === 'ADMIN'
+          user.role === Role.ADMIN
             ? { id: request.params.id }
             : {
                 id: request.params.id,
