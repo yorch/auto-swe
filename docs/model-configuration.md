@@ -193,7 +193,7 @@ TOKEN=<admin-PAT>
 
 # Override one agent's model for one team. Scope discriminators are exclusive:
 # TEAM scope takes teamId and nothing else.
-curl -X POST http://localhost:8080/api/v1/admin/agent-library \
+curl -X POST http://localhost:8080/api/v1/platform/agent-library \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -206,13 +206,13 @@ curl -X POST http://localhost:8080/api/v1/admin/agent-library \
 
 # Rotate a credential (admin scope). Provider + scope are immutable; only
 # apiBase and apiKey can change.
-curl -X PUT http://localhost:8080/api/v1/admin/credentials/<credential-id> \
+curl -X PUT http://localhost:8080/api/v1/platform/credentials/<credential-id> \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"apiKey": "sk-ant-new..."}'
 
 # Probe a credential (issues a list-models HTTP call).
-curl -X POST http://localhost:8080/api/v1/admin/credentials/<credential-id>/test \
+curl -X POST http://localhost:8080/api/v1/platform/credentials/<credential-id>/test \
   -H "Authorization: Bearer $TOKEN"
 ```
 

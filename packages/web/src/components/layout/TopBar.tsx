@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Select } from '@/components/ui/Select';
-import { useInboxCount } from '@/hooks/useInbox';
+import { useApprovalsCount } from '@/hooks/useApprovals';
 import { useTeams } from '@/hooks/useTeams';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
@@ -69,7 +69,7 @@ export function TopBar() {
   };
 
   const teamLabel = teams?.find((t) => t.id === selectedTeamId)?.name ?? 'all teams';
-  const inboxCount = useInboxCount();
+  const inboxCount = useApprovalsCount();
   const title = pageTitle(pathname);
 
   return (

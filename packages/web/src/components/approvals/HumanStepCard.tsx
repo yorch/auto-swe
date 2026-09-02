@@ -7,7 +7,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
-import { useRespondToHumanStep } from '@/hooks/useInbox';
+import { useRespondToApproval } from '@/hooks/useApprovals';
 import { formatDuration, formatRelativeTime } from '@/lib/utils';
 import { DiffRenderer } from './DiffRenderer';
 
@@ -111,7 +111,7 @@ export interface HumanStepCardProps {
 }
 
 export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) {
-  const respond = useRespondToHumanStep();
+  const respond = useRespondToApproval();
   const [expanded, setExpanded] = useState(false);
   const [showContext, setShowContext] = useState(false);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});

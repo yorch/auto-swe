@@ -52,7 +52,7 @@ async function buildAdminApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
-  await app.register(agentLibraryRoutes, { prefix: '/api/v1/admin' });
+  await app.register(agentLibraryRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return { app, mockPrisma };
 }
@@ -90,7 +90,7 @@ describe('agentLibraryRoutes — admin', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(200);
     const data = JSON.parse(res.payload).data;
@@ -103,7 +103,7 @@ describe('agentLibraryRoutes — admin', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(403);
     await app.close();
@@ -121,7 +121,7 @@ describe('agentLibraryRoutes — admin', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/agent-library?all=false',
+      url: '/api/v1/platform/agent-library?all=false',
     });
     expect(res.statusCode).toBe(200);
     const data = JSON.parse(res.payload).data;
@@ -138,7 +138,7 @@ describe('agentLibraryRoutes — admin', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/agent-library?all=true',
+      url: '/api/v1/platform/agent-library?all=true',
     });
     expect(res.statusCode).toBe(200);
     const data = JSON.parse(res.payload).data;
@@ -151,7 +151,7 @@ describe('agentLibraryRoutes — admin', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/agent-library?all=1',
+      url: '/api/v1/platform/agent-library?all=1',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -179,7 +179,7 @@ describe('agentLibraryRoutes — admin', () => {
       body: { key: 'myAgent', name: 'My Agent', scope: 'GLOBAL', systemPrompt: 'hi' },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(201);
     expect(JSON.parse(res.payload).data.id).toBe('new-1');
@@ -195,7 +195,7 @@ describe('agentLibraryRoutes — admin', () => {
       body: { key: 'mcpAgent', name: 'MCP Agent', scope: 'GLOBAL', toolKeys: ['bash', 'mcp'] },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(201);
     await app.close();
@@ -207,7 +207,7 @@ describe('agentLibraryRoutes — admin', () => {
       body: { key: 'x', name: 'X', scope: 'GLOBAL', toolKeys: ['bogusTool'] },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -233,7 +233,7 @@ describe('agentLibraryRoutes — admin', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(201);
     expect(mockPrisma.agent.create).toHaveBeenCalledWith(
@@ -261,7 +261,7 @@ describe('agentLibraryRoutes — admin', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('INVALID_MCP_CONNECTION');
@@ -298,7 +298,7 @@ describe('agentLibraryRoutes — admin', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(201);
     expect(mockPrisma.agent.create).toHaveBeenCalledWith(
@@ -315,7 +315,7 @@ describe('agentLibraryRoutes — admin', () => {
       body: { key: 'channelAssistant', name: 'Channel Assistant', scope: 'CHANNEL' },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -328,7 +328,7 @@ describe('agentLibraryRoutes — admin', () => {
       body: { key: 'reviewer', name: 'Reviewer', scope: 'GLOBAL' },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(409);
     await app.close();
@@ -341,7 +341,7 @@ describe('agentLibraryRoutes — admin', () => {
       body: { key: 'x', name: 'X', scope: 'TEAM', teamId: TEAM },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/agent-library',
+      url: '/api/v1/platform/agent-library',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -379,7 +379,7 @@ describe('agentLibraryRoutes — admin', () => {
       body: { modelSpec: 'anthropic/claude-opus-4-8' },
       headers: AUTH,
       method: 'PUT',
-      url: '/api/v1/admin/agent-library/33333333-3333-4333-8333-333333333333',
+      url: '/api/v1/platform/agent-library/33333333-3333-4333-8333-333333333333',
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.version).toBe(2);
@@ -402,7 +402,7 @@ describe('agentLibraryRoutes — admin', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: '/api/v1/admin/agent-library/33333333-3333-4333-8333-333333333333',
+      url: '/api/v1/platform/agent-library/33333333-3333-4333-8333-333333333333',
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.deactivated).toBe(3);

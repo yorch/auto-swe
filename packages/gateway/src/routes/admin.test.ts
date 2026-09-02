@@ -24,7 +24,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
 
-  await app.register(adminRoutes, { prefix: '/api/v1/admin' });
+  await app.register(adminRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return { app, mockPrisma };
 }
@@ -55,7 +55,7 @@ describe('adminRoutes', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'GET',
-        url: '/api/v1/admin/access-tokens',
+        url: '/api/v1/platform/access-tokens',
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
@@ -69,7 +69,7 @@ describe('adminRoutes', () => {
       const res = await app.inject({
         headers: AUTH,
         method: 'GET',
-        url: '/api/v1/admin/access-tokens',
+        url: '/api/v1/platform/access-tokens',
       });
       expect(res.statusCode).toBe(403);
       await app.close();
@@ -101,7 +101,7 @@ describe('adminRoutes', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'DELETE',
-        url: '/api/v1/admin/access-tokens/11111111-1111-4111-8111-111111111111',
+        url: '/api/v1/platform/access-tokens/11111111-1111-4111-8111-111111111111',
       });
       expect(res.statusCode).toBe(200);
       expect(ctx.mockPrisma.personalAccessToken.update).toHaveBeenCalled();
@@ -112,7 +112,7 @@ describe('adminRoutes', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'DELETE',
-        url: '/api/v1/admin/access-tokens/22222222-2222-4222-8222-222222222222',
+        url: '/api/v1/platform/access-tokens/22222222-2222-4222-8222-222222222222',
       });
       expect(res.statusCode).toBe(404);
     });
@@ -130,7 +130,7 @@ describe('adminRoutes', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'POST',
-        url: '/api/v1/admin/shell-audit/prune',
+        url: '/api/v1/platform/shell-audit/prune',
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
@@ -143,7 +143,7 @@ describe('adminRoutes', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'POST',
-        url: '/api/v1/admin/shell-audit/prune?days=30',
+        url: '/api/v1/platform/shell-audit/prune?days=30',
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);

@@ -38,7 +38,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
   app.decorate('temporal', { startEvalRunWorkflow: async () => {} } as unknown as never);
-  await app.register(evalRoutes, { prefix: '/api/v1/admin' });
+  await app.register(evalRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return { app, prisma };
 }
@@ -50,7 +50,7 @@ beforeEach(() => vi.clearAllMocks());
 describe('evalRoutes', () => {
   it('rejects non-admins', async () => {
     const { app } = await buildApp('ENGINEER');
-    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/admin/evals' });
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/evals' });
     expect(res.statusCode).toBe(403);
   });
 
@@ -67,7 +67,7 @@ describe('evalRoutes', () => {
         slug: 'swe-golden',
       },
     ]);
-    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/admin/evals' });
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/evals' });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data[0]).toMatchObject({ caseCount: 3, slug: 'swe-golden' });
   });
@@ -98,7 +98,7 @@ describe('evalRoutes', () => {
         name: 'New',
         slug: 'new-set',
       },
-      url: '/api/v1/admin/evals',
+      url: '/api/v1/platform/evals',
     });
     expect(res.statusCode).toBe(201);
     expect(prisma.evalDataset.create).toHaveBeenCalledTimes(1);
@@ -117,7 +117,7 @@ describe('evalRoutes', () => {
       headers: AUTH,
       method: 'POST',
       payload: { name: 'X', slug: 'Bad Slug!' },
-      url: '/api/v1/admin/evals',
+      url: '/api/v1/platform/evals',
     });
     expect(res.statusCode).toBe(400);
   });
@@ -138,7 +138,7 @@ describe('evalRoutes', () => {
       headers: AUTH,
       method: 'POST',
       payload: { promptText: 'grade it', slug: 'code-review-quality' },
-      url: '/api/v1/admin/evals/rubrics',
+      url: '/api/v1/platform/evals/rubrics',
     });
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
@@ -167,7 +167,7 @@ describe('evalRoutes', () => {
         candidateRef: 'main',
         datasetId: '11111111-1111-4111-8111-111111111111',
       },
-      url: '/api/v1/admin/evals/runs',
+      url: '/api/v1/platform/evals/runs',
     });
     expect(res.statusCode).toBe(202);
     expect(JSON.parse(res.payload).data.id).toBe('run-9');
@@ -184,7 +184,7 @@ describe('evalRoutes', () => {
         candidateRef: 'c',
         datasetId: '11111111-1111-4111-8111-111111111111',
       },
-      url: '/api/v1/admin/evals/runs',
+      url: '/api/v1/platform/evals/runs',
     });
     expect(res.statusCode).toBe(404);
   });
@@ -211,7 +211,7 @@ describe('evalRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/evals/results?source=GATE&limit=10',
+      url: '/api/v1/platform/evals/results?source=GATE&limit=10',
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);

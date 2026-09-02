@@ -15,7 +15,7 @@ import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { NewRequestModal } from '@/components/workflow/NewRequestModal';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
-import { useInbox } from '@/hooks/useInbox';
+import { useApprovals } from '@/hooks/useApprovals';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useAllWorkflowRuns, useWorkflows } from '@/hooks/useRuns';
 import { groupWorkflowsByDate, groupWorkflowsByStatus } from '@/lib/chartUtils';
@@ -78,7 +78,7 @@ export default function DashboardPage() {
   const { data: workflows, isLoading } = workflowsQuery;
   const { data: repos, isLoading: reposLoading } = reposQuery;
   const loadFailed = workflowsQuery.isError || reposQuery.isError;
-  const { data: inboxSteps } = useInbox();
+  const { data: approvalSteps } = useApprovals();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const [newOpen, setNewOpen] = useState(false);
   const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
@@ -87,7 +87,7 @@ export default function DashboardPage() {
   const active = all.filter((w) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
   const completed = all.filter((w) => w.currentStatus === 'COMPLETED');
   const failed = all.filter((w) => w.currentStatus === 'FAILED');
-  const pendingApprovals = inboxSteps ?? [];
+  const pendingApprovals = approvalSteps ?? [];
 
   const statusData = useMemo(() => groupWorkflowsByStatus(all), [all]);
   const timeData = useMemo(() => groupWorkflowsByDate(all), [all]);

@@ -24,7 +24,7 @@ export interface ScannerPattern {
 export function useScannerPatterns() {
   return useQuery({
     queryFn: () =>
-      api.get<{ data: ScannerPattern[] }>('/api/v1/admin/scanner-patterns').then((r) => r.data),
+      api.get<{ data: ScannerPattern[] }>('/api/v1/platform/scanner-patterns').then((r) => r.data),
     queryKey: ['scanner-patterns'],
   });
 }
@@ -39,7 +39,7 @@ export function useCreateScannerPattern() {
       type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
     }) =>
       api
-        .post<{ data: ScannerPattern }>('/api/v1/admin/scanner-patterns', body)
+        .post<{ data: ScannerPattern }>('/api/v1/platform/scanner-patterns', body)
         .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scanner-patterns'] }),
   });
@@ -60,7 +60,7 @@ export function useUpdateScannerPattern() {
       type?: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
     }) =>
       api
-        .put<{ data: ScannerPattern }>(`/api/v1/admin/scanner-patterns/${id}`, body)
+        .put<{ data: ScannerPattern }>(`/api/v1/platform/scanner-patterns/${id}`, body)
         .then((r) => r.data),
     onSuccess: (result) => {
       qc.setQueryData<ScannerPattern[]>(['scanner-patterns'], (old) => {
@@ -76,7 +76,7 @@ export function useUpdateScannerPattern() {
 export function useDeleteScannerPattern() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/scanner-patterns/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/platform/scanner-patterns/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scanner-patterns'] }),
   });
 }
@@ -95,7 +95,7 @@ interface AdminSessionSummary {
 export function useAdminTokens() {
   return useQuery({
     queryFn: () =>
-      api.get<{ data: AdminTokenSummary[] }>('/api/v1/admin/access-tokens').then((r) => r.data),
+      api.get<{ data: AdminTokenSummary[] }>('/api/v1/platform/access-tokens').then((r) => r.data),
     queryKey: ['admin-tokens'],
     refetchInterval: 30_000,
   });
@@ -104,21 +104,21 @@ export function useAdminTokens() {
 export function useAdminRevokeToken() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/access-tokens/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/platform/access-tokens/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-tokens'] }),
   });
 }
 
 export function useAdminPruneShellAudit(days = 90) {
   return useMutation({
-    mutationFn: () => api.post(`/api/v1/admin/shell-audit/prune?days=${days}`, {}),
+    mutationFn: () => api.post(`/api/v1/platform/shell-audit/prune?days=${days}`, {}),
   });
 }
 
 export function useAdminSessions() {
   return useQuery({
     queryFn: () =>
-      api.get<{ data: AdminSessionSummary[] }>('/api/v1/admin/sessions').then((r) => r.data),
+      api.get<{ data: AdminSessionSummary[] }>('/api/v1/platform/sessions').then((r) => r.data),
     queryKey: ['admin-sessions'],
     refetchInterval: 30_000,
   });
@@ -127,7 +127,7 @@ export function useAdminSessions() {
 export function useAdminRevokeSession() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/sessions/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/platform/sessions/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-sessions'] }),
   });
 }
@@ -174,7 +174,9 @@ export function useSecurityEvents(params?: {
   }
   return useQuery({
     queryFn: () =>
-      api.get<{ data: SecurityEvent[] }>(`/api/v1/admin/security-events?${qs}`).then((r) => r.data),
+      api
+        .get<{ data: SecurityEvent[] }>(`/api/v1/platform/security-events?${qs}`)
+        .then((r) => r.data),
     queryKey: ['security-events', params],
     refetchInterval: 30_000,
   });
@@ -185,7 +187,7 @@ export function useSecurityEvents(params?: {
 export function useEvalDatasets() {
   return useQuery({
     queryFn: () =>
-      api.get<{ data: EvalDatasetSummary[] }>('/api/v1/admin/evals').then((r) => r.data),
+      api.get<{ data: EvalDatasetSummary[] }>('/api/v1/platform/evals').then((r) => r.data),
     queryKey: ['eval-datasets'],
     refetchInterval: 30_000,
   });
@@ -210,7 +212,8 @@ export interface UserOrg {
 
 export function useUserOrgs() {
   return useQuery({
-    queryFn: () => api.get<{ data: UserOrg[] }>('/api/v1/admin/organizations').then((r) => r.data),
+    queryFn: () =>
+      api.get<{ data: UserOrg[] }>('/api/v1/platform/organizations').then((r) => r.data),
     queryKey: ['user-orgs'],
   });
 }
@@ -271,7 +274,7 @@ export function useEvalResults(params: { source?: string; limit?: number } = {})
     queryFn: () =>
       api
         .get<{ data: EvalResultDto[]; meta: { total: number } }>(
-          `/api/v1/admin/evals/results?${qs.toString()}`
+          `/api/v1/platform/evals/results?${qs.toString()}`
         )
         .then((r) => ({ data: r.data, meta: r.meta })),
     queryKey: ['eval-results', params],

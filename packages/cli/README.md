@@ -79,7 +79,7 @@ help                                 Show usage
 ```
 
 `bundle` (singular) is token-free local authoring over `@auto-swe/sdk`; `bundles`
-(plural) hits `/api/v1/admin/bundles` and needs an admin token. `evals` also needs an
+(plural) hits `/api/v1/platform/bundles` and needs an admin token. `evals` also needs an
 admin token; `evals run` is the regression gate a nightly CI job polls to completion
 (see [`docs/evals.md`](../../docs/evals.md)).
 

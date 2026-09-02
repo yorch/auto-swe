@@ -50,7 +50,7 @@ export function useConfigSettings(selection: ScopeSelection) {
   return useQuery({
     queryFn: () =>
       api
-        .get<{ data: SettingView[] }>(`/api/v1/admin/config/settings?${query}`)
+        .get<{ data: SettingView[] }>(`/api/v1/platform/config/settings?${query}`)
         .then((r) => r.data),
     queryKey: ['config-settings', query],
   });
@@ -62,7 +62,7 @@ export function useSetConfigSetting(selection: ScopeSelection) {
   return useMutation({
     mutationFn: ({ key, value }: { key: string; value: unknown }) =>
       api.put<{ data: unknown }>(
-        `/api/v1/admin/config/settings/${encodeURIComponent(key)}?${query}`,
+        `/api/v1/platform/config/settings/${encodeURIComponent(key)}?${query}`,
         { value }
       ),
     // A write at one scope changes what broader scopes resolve to, so refresh
@@ -77,8 +77,54 @@ export function useClearConfigSetting(selection: ScopeSelection) {
   return useMutation({
     mutationFn: (key: string) =>
       api.delete<{ data: { cleared: boolean } }>(
-        `/api/v1/admin/config/settings/${encodeURIComponent(key)}?${query}`
+        `/api/v1/platform/config/settings/${encodeURIComponent(key)}?${query}`
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['config-settings'] }),
+  });
+}
+
+export interface ConfigGrant {
+  id: string;
+  keyPattern: string;
+  userId: string | null;
+  role: 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
+  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
+  teamId: string | null;
+  orgId: string | null;
+  createdAt: string;
+  user?: { email: string } | null;
+  team?: { name: string } | null;
+  organization?: { name: string } | null;
+}
+
+export function useConfigGrants() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: ConfigGrant[] }>('/api/v1/platform/config/grants').then((r) => r.data),
+    queryKey: ['config-grants'],
+  });
+}
+
+export function useCreateConfigGrant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      keyPattern: string;
+      role?: 'ADMIN' | 'LEAD' | 'ENGINEER';
+      userId?: string;
+      scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
+      teamId?: string;
+      orgId?: string;
+    }) =>
+      api.post<{ data: ConfigGrant }>('/api/v1/platform/config/grants', body).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['config-grants'] }),
+  });
+}
+
+export function useRevokeConfigGrant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/platform/config/grants/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['config-grants'] }),
   });
 }

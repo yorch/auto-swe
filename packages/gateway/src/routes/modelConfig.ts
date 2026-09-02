@@ -16,7 +16,7 @@ import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 /**
  * Admin routes for provider credentials + the embedding-model singleton, plus
  * the config audit-log read. Per-role model/prompt config moved to the Agent
- * library (`/api/v1/admin/agent-library`) in P1.5 — see `agentLibrary.ts`.
+ * library (`/api/v1/platform/agent-library`) in P1.5 — see `agentLibrary.ts`.
  *
  * Team-scoped credential variants live in `teamScopedConfigRoutes` (mounted by
  * `teams.ts`). Business logic lives in `lib/credentialService.ts` +

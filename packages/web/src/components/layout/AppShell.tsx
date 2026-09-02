@@ -3,7 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
-import { useInboxStream } from '@/hooks/useInbox';
+import { useApprovalsStream } from '@/hooks/useApprovals';
 
 const CHROMELESS_ROUTES = ['/login'];
 
@@ -30,7 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 // Split out so the inbox stream only mounts (and its hook only runs) on
 // chromed routes — a hook cannot sit behind the early return above.
 function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscreen: boolean }) {
-  useInboxStream();
+  useApprovalsStream();
 
   return (
     <div

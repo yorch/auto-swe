@@ -50,7 +50,7 @@ export async function runEvalsCommand(args: string[], env: CliEnv): Promise<numb
 // the payload itself. Destructuring `.data` a second time returned undefined
 // and made every subcommand throw.
 async function cmdList(env: CliEnv): Promise<number> {
-  const data = await apiRequest<EvalDatasetSummary[]>(env, 'GET', '/api/v1/admin/evals');
+  const data = await apiRequest<EvalDatasetSummary[]>(env, 'GET', '/api/v1/platform/evals');
   if (data.length === 0) {
     process.stdout.write('No eval datasets.\n');
     return 0;
@@ -67,7 +67,7 @@ async function cmdShow(rest: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Usage: evals show <id>\n');
     return 1;
   }
-  const data = await apiRequest<EvalDatasetDetail>(env, 'GET', `/api/v1/admin/evals/${id}`);
+  const data = await apiRequest<EvalDatasetDetail>(env, 'GET', `/api/v1/platform/evals/${id}`);
   process.stdout.write(`${data.name} (${data.slug}) — ${data.cases.length} cases\n`);
   for (const c of data.cases) {
     const screened = c.flakeScreened ? '✓screened' : 'unscreened';
@@ -84,13 +84,13 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
     return 1;
   }
   // Resolve slug → id.
-  const datasets = await apiRequest<EvalDatasetSummary[]>(env, 'GET', '/api/v1/admin/evals');
+  const datasets = await apiRequest<EvalDatasetSummary[]>(env, 'GET', '/api/v1/platform/evals');
   const ds = datasets.find((d) => d.slug === slug);
   if (!ds) {
     process.stderr.write(`No dataset with slug '${slug}'\n`);
     return 1;
   }
-  const started = await apiRequest<EvalRunDto>(env, 'POST', '/api/v1/admin/evals/runs', {
+  const started = await apiRequest<EvalRunDto>(env, 'POST', '/api/v1/platform/evals/runs', {
     baselineRef: flags.against,
     candidateRef: flags.candidate,
     datasetId: ds.id,
@@ -103,7 +103,11 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
   // the nightly CI gates on the result.
   const deadline = Date.now() + 4 * 60 * 60 * 1000; // 4h
   for (;;) {
-    const run = await apiRequest<EvalRunDto>(env, 'GET', `/api/v1/admin/evals/runs/${started.id}`);
+    const run = await apiRequest<EvalRunDto>(
+      env,
+      'GET',
+      `/api/v1/platform/evals/runs/${started.id}`
+    );
     if (run.status !== 'RUNNING') {
       const summary = (run.summary ?? {}) as { summary?: string };
       process.stdout.write(`${summary.summary ?? run.status}\n`);
@@ -139,7 +143,7 @@ async function cmdResults(rest: string[], env: CliEnv): Promise<number> {
   const { data, meta } = await apiRequestFull<{
     data: EvalResultDto[];
     meta: { total: number };
-  }>(env, 'GET', `/api/v1/admin/evals/results?${qs.toString()}`);
+  }>(env, 'GET', `/api/v1/platform/evals/results?${qs.toString()}`);
   if (data.length === 0) {
     process.stdout.write('No eval results.\n');
     return 0;

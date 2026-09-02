@@ -17,15 +17,15 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  * Admin CRUD for the Skills library + a team-scoped read-only skill list.
  *
  * Skills are prompt fragments. They are attached to agents via the Agent
- * library's `skillRefs` (`/api/v1/admin/agent-library`) — the per-role
+ * library's `skillRefs` (`/api/v1/platform/agent-library`) — the per-role
  * AgentSkillAssignment / AgentToolConfig routes were retired in P1.5.
  *
- *   GET    /api/v1/admin/skills              List all skills
- *   GET    /api/v1/admin/skills/effectiveness
- *   POST   /api/v1/admin/skills              Create a custom skill
- *   GET    /api/v1/admin/skills/:id          Get skill by ID
- *   PUT    /api/v1/admin/skills/:id          Update skill
- *   DELETE /api/v1/admin/skills/:id          Delete skill (rejects built-in)
+ *   GET    /api/v1/platform/skills              List all skills
+ *   GET    /api/v1/platform/skills/effectiveness
+ *   POST   /api/v1/platform/skills              Create a custom skill
+ *   GET    /api/v1/platform/skills/:id          Get skill by ID
+ *   PUT    /api/v1/platform/skills/:id          Update skill
+ *   DELETE /api/v1/platform/skills/:id          Delete skill (rejects built-in)
  *   GET    /api/v1/teams/:teamId/skills      Read-only skill library (team members)
  */
 
@@ -54,7 +54,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
 
-  // GET /api/v1/admin/skills — `usedByCount` is how many Agents reference it.
+  // GET /api/v1/platform/skills — `usedByCount` is how many Agents reference it.
   app.get(
     '/skills',
     { onRequest: adminOnly, schema: { querystring: ListSkillsQuery } },
@@ -69,7 +69,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // GET /api/v1/admin/skills/effectiveness — correlational report.
+  // GET /api/v1/platform/skills/effectiveness — correlational report.
   app.get(
     '/skills/effectiveness',
     {
@@ -85,7 +85,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     })
   );
 
-  // POST /api/v1/admin/skills
+  // POST /api/v1/platform/skills
   app.post(
     '/skills',
     { onRequest: adminOnly, schema: { body: CreateSkillSchema } },
@@ -107,7 +107,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // GET /api/v1/admin/skills/:id
+  // GET /api/v1/platform/skills/:id
   app.get(
     '/skills/:id',
     { onRequest: adminOnly, schema: { params: SkillIdParams } },
@@ -123,7 +123,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PUT /api/v1/admin/skills/:id
+  // PUT /api/v1/platform/skills/:id
   app.put(
     '/skills/:id',
     { onRequest: adminOnly, schema: { body: UpdateSkillSchema, params: SkillIdParams } },
@@ -162,7 +162,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // DELETE /api/v1/admin/skills/:id
+  // DELETE /api/v1/platform/skills/:id
   app.delete(
     '/skills/:id',
     { onRequest: adminOnly, schema: { params: SkillIdParams } },
@@ -205,7 +205,7 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /api/v1/teams/:teamId/skills — read-only skill library for team members,
   // so team owners can pick skills for their TEAM-scope agents without the
-  // admin-only /api/v1/admin/skills endpoint.
+  // admin-only /api/v1/platform/skills endpoint.
   app.get(
     '/:teamId/skills',
     { onRequest: engineer, schema: { params: TeamIdParams } },

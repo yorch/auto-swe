@@ -92,7 +92,7 @@ describe('human step routes', () => {
       },
     } as unknown as never);
 
-    await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });
+    await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
     await app.ready();
   });
 
@@ -110,7 +110,7 @@ describe('human step routes', () => {
   describe('GET /', () => {
     it('returns the pending steps visible to the user', async () => {
       listRows = [pendingStep()];
-      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/inbox' });
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.data).toHaveLength(1);
@@ -134,7 +134,7 @@ describe('human step routes', () => {
         headers: AUTH,
         method: 'POST',
         payload,
-        url: `/api/v1/inbox/${STEP_ID}/respond`,
+        url: `/api/v1/human-steps/${STEP_ID}/respond`,
       });
     }
 

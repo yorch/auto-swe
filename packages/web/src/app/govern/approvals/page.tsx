@@ -1,23 +1,23 @@
 'use client';
 
 import { useState } from 'react';
-import { HumanStepCard } from '@/components/inbox/HumanStepCard';
+import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar } from '@/components/ui/TabBar';
-import { type InboxFilter, useInbox } from '@/hooks/useInbox';
+import { type ApprovalFilter, useApprovals } from '@/hooks/useApprovals';
 import { errMsg } from '@/lib/errors';
 
-const TABS: { id: InboxFilter; label: string }[] = [
+const TABS: { id: ApprovalFilter; label: string }[] = [
   { id: 'PENDING', label: 'Pending' },
   { id: 'ALL', label: 'All' },
 ];
 
-export default function InboxPage() {
-  const [filter, setFilter] = useState<InboxFilter>('PENDING');
-  const { data: steps, isLoading, isError, error, refetch, isFetching } = useInbox(filter);
+export default function GovernApprovalsPage() {
+  const [filter, setFilter] = useState<ApprovalFilter>('PENDING');
+  const { data: steps, isLoading, isError, error, refetch, isFetching } = useApprovals(filter);
 
   if (isLoading) {
     return <LoadingState />;

@@ -1,6 +1,6 @@
 /**
  * Org-level budget management (P5 billing).
- * Mounted at /api/v1/admin/organizations.
+ * Mounted at /api/v1/platform/organizations.
  */
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -74,7 +74,7 @@ function projectBudget(
 const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
-  // GET /api/v1/admin/organizations/:orgId/budget — any org member may read.
+  // GET /api/v1/platform/organizations/:orgId/budget — any org member may read.
   f.get(
     '/:orgId/budget',
     {
@@ -111,7 +111,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PATCH /api/v1/admin/organizations/:orgId/budget — ORG_ADMIN only.
+  // PATCH /api/v1/platform/organizations/:orgId/budget — ORG_ADMIN only.
   f.patch(
     '/:orgId/budget',
     {

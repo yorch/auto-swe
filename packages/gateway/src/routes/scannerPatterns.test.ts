@@ -44,7 +44,7 @@ async function buildApp() {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ADMIN', sub: 'admin-1' }),
   } as unknown as never);
-  await app.register(scannerPatternRoutes, { prefix: '/api/v1/admin' });
+  await app.register(scannerPatternRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return app;
 }
@@ -57,7 +57,7 @@ const create = async (body: Record<string, unknown>) => {
     body,
     headers: AUTH,
     method: 'POST',
-    url: '/api/v1/admin/scanner-patterns',
+    url: '/api/v1/platform/scanner-patterns',
   });
   await app.close();
   return res;
@@ -117,7 +117,7 @@ describe('PUT /admin/scanner-patterns/:id — ReDoS gate', () => {
       body: { pattern: '(x+)+y' },
       headers: AUTH,
       method: 'PUT',
-      url: `/api/v1/admin/scanner-patterns/${EXISTING.id}`,
+      url: `/api/v1/platform/scanner-patterns/${EXISTING.id}`,
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('REDOS_RISK');
@@ -131,7 +131,7 @@ describe('PUT /admin/scanner-patterns/:id — ReDoS gate', () => {
       body: { pattern: 'x+y' },
       headers: AUTH,
       method: 'PUT',
-      url: `/api/v1/admin/scanner-patterns/${EXISTING.id}`,
+      url: `/api/v1/platform/scanner-patterns/${EXISTING.id}`,
     });
     expect(res.statusCode).toBe(200);
     expect(prisma.scannerPattern.update).toHaveBeenCalledTimes(1);

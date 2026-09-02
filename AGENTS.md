@@ -487,7 +487,7 @@ Limitations of this arrangement, stated so nothing above reads as more than it i
 
 **Security events:** blocks tag `AgentTrace.error` with the prefixes above; advisory events write
 named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The
-`GET /api/v1/admin/security-events` endpoint derives each `SecurityEventType` with DB-level
+`GET /api/v1/platform/security-events` endpoint derives each `SecurityEventType` with DB-level
 predicates so pagination stays correct.
 
 ### Multi-Model Support

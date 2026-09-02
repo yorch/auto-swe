@@ -89,7 +89,7 @@ describe('runBundlesCommand (gateway-backed)', () => {
     }) as typeof fetch;
     const code = await runBundlesCommand(['install', file], ENV);
     expect(code).toBe(0);
-    expect(captured[0]?.url).toContain('/api/v1/admin/bundles/install');
+    expect(captured[0]?.url).toContain('/api/v1/platform/bundles/install');
     expect(captured[0]?.body).toEqual({ bundle: { bundleSchemaVersion: 1 } });
     expect(stdoutWrites.join('')).toContain('2 agents, 1 skills');
   });

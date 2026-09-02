@@ -51,7 +51,9 @@ export interface EmbeddingConfigRow {
 export function useAdminCredentials() {
   return useQuery({
     queryFn: () =>
-      api.get<{ data: ProviderCredentialRow[] }>('/api/v1/admin/credentials').then((r) => r.data),
+      api
+        .get<{ data: ProviderCredentialRow[] }>('/api/v1/platform/credentials')
+        .then((r) => r.data),
     queryKey: ['admin-credentials'],
   });
 }
@@ -74,7 +76,7 @@ export function useAdminCreateCredential() {
       orgId?: string;
       apiBase?: string;
       apiKey: string;
-    }) => api.post<{ data: ProviderCredentialRow }>('/api/v1/admin/credentials', body),
+    }) => api.post<{ data: ProviderCredentialRow }>('/api/v1/platform/credentials', body),
     onSuccess: () => invalidateCredentialQueries(qc),
   });
 }
@@ -83,7 +85,7 @@ export function useAdminUpdateCredential() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; apiBase?: string | null; apiKey?: string }) =>
-      api.put<{ data: ProviderCredentialRow }>(`/api/v1/admin/credentials/${id}`, body),
+      api.put<{ data: ProviderCredentialRow }>(`/api/v1/platform/credentials/${id}`, body),
     onSuccess: () => invalidateCredentialQueries(qc),
   });
 }
@@ -91,7 +93,7 @@ export function useAdminUpdateCredential() {
 export function useAdminDeleteCredential() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/credentials/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/platform/credentials/${id}`),
     onSuccess: () => invalidateCredentialQueries(qc),
   });
 }
@@ -100,7 +102,7 @@ export function useAdminTestCredential() {
   return useMutation({
     mutationFn: (id: string) =>
       api.post<{ data: { ok: boolean; status?: number; error?: string } }>(
-        `/api/v1/admin/credentials/${id}/test`,
+        `/api/v1/platform/credentials/${id}/test`,
         {}
       ),
   });
@@ -125,7 +127,7 @@ export function useAdminConfigAuditLog(filter?: {
     queryFn: () =>
       api
         .get<{ data: ConfigAuditRow[] }>(
-          `/api/v1/admin/config-audit-log${qs.toString() ? `?${qs}` : ''}`
+          `/api/v1/platform/config-audit-log${qs.toString() ? `?${qs}` : ''}`
         )
         .then((r) => r.data),
     queryKey: [
@@ -143,7 +145,7 @@ export function useEmbeddingConfig() {
   return useQuery({
     queryFn: () =>
       api
-        .get<{ data: EmbeddingConfigRow | null }>('/api/v1/admin/embedding-config')
+        .get<{ data: EmbeddingConfigRow | null }>('/api/v1/platform/embedding-config')
         .then((r) => r.data),
     queryKey: ['admin-embedding-config'],
   });
@@ -153,7 +155,7 @@ export function useUpdateEmbeddingConfig() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { modelSpec: string; credentialId?: string | null }) =>
-      api.put<{ data: EmbeddingConfigRow }>('/api/v1/admin/embedding-config', body),
+      api.put<{ data: EmbeddingConfigRow }>('/api/v1/platform/embedding-config', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-embedding-config'] }),
   });
 }

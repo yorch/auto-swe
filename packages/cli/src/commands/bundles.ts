@@ -8,7 +8,7 @@ import { pad } from '../lib/format.js';
 /**
  * `auto-swe bundles` — gateway-backed bundle distribution (admin token required).
  * Authoring of bundles (init/validate/sign) lives in the token-free `bundle`
- * command; this one talks to `/api/v1/admin/bundles`.
+ * command; this one talks to `/api/v1/platform/bundles`.
  */
 const SUB_HELP = `auto-swe bundles — distribute library bundles (admin)
 
@@ -65,7 +65,7 @@ export async function runBundlesCommand(args: string[], env: CliEnv): Promise<nu
 }
 
 async function cmdList(env: CliEnv): Promise<number> {
-  const rows = await apiRequest<InstalledBundleRow[]>(env, 'GET', '/api/v1/admin/bundles');
+  const rows = await apiRequest<InstalledBundleRow[]>(env, 'GET', '/api/v1/platform/bundles');
   if (rows.length === 0) {
     process.stdout.write('No bundles installed.\n');
     return 0;
@@ -97,11 +97,16 @@ async function cmdExport(args: string[], env: CliEnv): Promise<number> {
     process.stderr.write('-o/--output requires a file path\n');
     return 1;
   }
-  const manifest = await apiRequest<BundleManifest>(env, 'POST', '/api/v1/admin/bundles/export', {
-    name,
-    ...(flags.origin && flags.origin !== 'true' ? { origin: flags.origin } : {}),
-    version,
-  });
+  const manifest = await apiRequest<BundleManifest>(
+    env,
+    'POST',
+    '/api/v1/platform/bundles/export',
+    {
+      name,
+      ...(flags.origin && flags.origin !== 'true' ? { origin: flags.origin } : {}),
+      version,
+    }
+  );
   const payload = `${JSON.stringify(manifest, null, 2)}\n`;
   if (rawOutput) {
     await fs.writeFile(rawOutput, payload);
@@ -128,7 +133,7 @@ async function cmdInstall(args: string[], env: CliEnv): Promise<number> {
     );
     return 1;
   }
-  const result = await apiRequest<InstallResult>(env, 'POST', '/api/v1/admin/bundles/install', {
+  const result = await apiRequest<InstallResult>(env, 'POST', '/api/v1/platform/bundles/install', {
     bundle,
   });
   printInstall(result);
@@ -145,7 +150,7 @@ async function cmdInstallFromUrl(args: string[], env: CliEnv): Promise<number> {
   const result = await apiRequest<InstallResult>(
     env,
     'POST',
-    '/api/v1/admin/bundles/install-from-url',
+    '/api/v1/platform/bundles/install-from-url',
     { url }
   );
   printInstall(result);

@@ -67,7 +67,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user-1' }),
   } as unknown as never);
-  await app.register(slackChannelRoutes, { prefix: '/api/v1/admin/slack-channels' });
+  await app.register(slackChannelRoutes, { prefix: '/api/v1/platform/slack-channels' });
   await app.ready();
   return { app, mockPrisma, mockTemporal };
 }
@@ -91,7 +91,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(200);
     const data = JSON.parse(res.payload).data;
@@ -113,7 +113,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(200);
     expect(mockPrisma.slackChannel.findMany).toHaveBeenCalledWith(
@@ -135,7 +135,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.id).toBe(CHANNEL);
@@ -158,7 +158,7 @@ describe('slackChannelRoutes', () => {
       body: { name: 'general', slackChannelId: 'C123', slackTeamId: 'T123', teamId: TEAM },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(201);
     expect(mockPrisma.slackWorkspace.upsert).toHaveBeenCalled();
@@ -176,7 +176,7 @@ describe('slackChannelRoutes', () => {
       body: { slackChannelId: 'C123', slackTeamId: 'T123', teamId: TEAM },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -191,7 +191,7 @@ describe('slackChannelRoutes', () => {
       body: { slackChannelId: 'C123', slackTeamId: 'T123', teamId: TEAM },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(409);
     await app.close();
@@ -206,7 +206,7 @@ describe('slackChannelRoutes', () => {
       body: { slackChannelId: 'C123', slackTeamId: 'T123', teamId: TEAM },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('WORKSPACE_ORG_MISMATCH');
@@ -226,7 +226,7 @@ describe('slackChannelRoutes', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -252,7 +252,7 @@ describe('slackChannelRoutes', () => {
       body: { agentKey: 'customAgent', isActive: false },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(mockPrisma.slackChannel.update).toHaveBeenCalledWith(
@@ -282,7 +282,7 @@ describe('slackChannelRoutes', () => {
       body: { reactiveCooldownMinutes: 5 },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.reactiveCooldownMinutes).toBe(5);
@@ -313,7 +313,7 @@ describe('slackChannelRoutes', () => {
       body: { reactiveCooldownMinutes: null },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.reactiveCooldownMinutes).toBeNull();
@@ -331,7 +331,7 @@ describe('slackChannelRoutes', () => {
       body: { orgFlagCooldownHours: 0 },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -357,7 +357,7 @@ describe('slackChannelRoutes', () => {
       body: { teamId: NEW_TEAM },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(mockPrisma.slackChannel.update).toHaveBeenCalledWith(
@@ -378,7 +378,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.deleted).toBe(true);
@@ -409,7 +409,7 @@ describe('slackChannelRoutes', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(201);
     expect(mockTemporal.syncChannelAmbientSchedule).toHaveBeenCalledWith({
@@ -437,7 +437,7 @@ describe('slackChannelRoutes', () => {
       body: { slackChannelId: 'C123', slackTeamId: 'T123', teamId: TEAM },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(201);
     expect(mockTemporal.syncChannelAmbientSchedule).not.toHaveBeenCalled();
@@ -465,7 +465,7 @@ describe('slackChannelRoutes', () => {
       body: { ambientCron: '30 8 * * *', ambientEnabled: true },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(mockTemporal.syncChannelAmbientSchedule).toHaveBeenCalledWith({
@@ -495,7 +495,7 @@ describe('slackChannelRoutes', () => {
       body: { ambientEnabled: false },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(mockTemporal.deleteChannelAmbientSchedule).toHaveBeenCalledWith(CHANNEL);
@@ -524,7 +524,7 @@ describe('slackChannelRoutes', () => {
       body: { isActive: false },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(mockTemporal.deleteChannelAmbientSchedule).toHaveBeenCalledWith(CHANNEL);
@@ -538,7 +538,7 @@ describe('slackChannelRoutes', () => {
       body: { ambientCron: 'nope' },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -554,7 +554,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(200);
     expect(mockTemporal.deleteChannelAmbientSchedule).toHaveBeenCalledWith(CHANNEL);
@@ -577,7 +577,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/budget`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/budget`,
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);
@@ -602,7 +602,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory`,
     });
     expect(res.statusCode).toBe(200);
     const data = JSON.parse(res.payload).data;
@@ -645,7 +645,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/audit`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/audit`,
     });
     expect(res.statusCode).toBe(200);
     const data = JSON.parse(res.payload).data;
@@ -685,7 +685,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/audit?kind=mention`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/audit?kind=mention`,
     });
     expect(res.statusCode).toBe(200);
     const data = JSON.parse(res.payload).data;
@@ -706,7 +706,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.deleted).toBe(true);
@@ -721,7 +721,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
     });
     expect(res.statusCode).toBe(404);
     expect(mockPrisma.memoryItem.delete).not.toHaveBeenCalled();
@@ -733,7 +733,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
     });
     expect(res.statusCode).toBe(403);
     expect(mockPrisma.memoryItem.findUnique).not.toHaveBeenCalled();
@@ -762,7 +762,7 @@ describe('slackChannelRoutes', () => {
       body: { lessonSummary: 'new summary', rationale: 'new rationale' },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/${MEMORY}`,
     });
     expect(res.statusCode).toBe(200);
     const data = JSON.parse(res.payload).data;
@@ -815,7 +815,7 @@ describe('slackChannelRoutes', () => {
       body: { lessonSummary: 'new summary' },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/${MEMORY}`,
     });
     expect(res.statusCode).toBe(200);
     // Only the provided field is written.
@@ -847,7 +847,7 @@ describe('slackChannelRoutes', () => {
       body: { lessonSummary: 'new' },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/${MEMORY}`,
     });
     expect(res.statusCode).toBe(200);
     expect(mockPrisma.memoryItem.update).toHaveBeenCalled();
@@ -866,7 +866,7 @@ describe('slackChannelRoutes', () => {
       body: { lessonSummary: 'new' },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/${MEMORY}`,
     });
     expect(res.statusCode).toBe(404);
     expect(mockPrisma.memoryItem.update).not.toHaveBeenCalled();
@@ -880,7 +880,7 @@ describe('slackChannelRoutes', () => {
       body: {},
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/${MEMORY}`,
     });
     expect(res.statusCode).toBe(400);
     expect(mockPrisma.memoryItem.findUnique).not.toHaveBeenCalled();
@@ -893,7 +893,7 @@ describe('slackChannelRoutes', () => {
       body: { lessonSummary: 'new' },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/${MEMORY}`,
     });
     expect(res.statusCode).toBe(403);
     expect(mockPrisma.memoryItem.findUnique).not.toHaveBeenCalled();
@@ -906,7 +906,7 @@ describe('slackChannelRoutes', () => {
       body: { slackChannelId: 'C123', slackTeamId: 'T123', teamId: TEAM },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/slack-channels',
+      url: '/api/v1/platform/slack-channels',
     });
     expect(res.statusCode).toBe(403);
     await app.close();
@@ -917,7 +917,7 @@ describe('slackChannelRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
     });
     expect(res.statusCode).toBe(403);
     await app.close();
@@ -950,7 +950,7 @@ describe('POST /:id/budget/reset', () => {
     app.inject({
       headers: AUTH,
       method: 'POST',
-      url: `/api/v1/admin/slack-channels/${CHANNEL}/budget/reset`,
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/budget/reset`,
     });
 
   it('refunds only the holds it actually claimed', async () => {

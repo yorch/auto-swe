@@ -1323,7 +1323,7 @@ model WorkflowStep {
 /// A human action required to resume a workflow run. Created when the interpreter
 /// reaches a humanApproval / humanDecision / humanInput / humanReview node.
 /// The run stays RUNNING (workflow paused at condition()) until a human responds
-/// via POST /api/v1/inbox/:id/respond or the step times out.
+/// via POST /api/v1/human-steps/:id/respond or the step times out.
 model WorkflowHumanStep {
   id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   runId          String          @map("run_id") @db.Uuid
@@ -1517,7 +1517,7 @@ model ProviderCredential {
 /// permitted (enforced by a CHECK constraint on the `id` column in the
 /// migration alongside this model). The semantic-memory pipeline reads this
 /// row at every `generateEmbedding` call; mutations go through
-/// `/api/v1/admin/embedding-config`.
+/// `/api/v1/platform/embedding-config`.
 ///
 /// `credentialId` pins a specific ProviderCredential when set, otherwise the
 /// resolver looks up the credential by the provider parsed from `modelSpec`.
@@ -1690,7 +1690,7 @@ model WorkflowDefaults {
   evalScheduleBaselineRef  String @default("last-release") @map("eval_schedule_baseline_ref")
 
   // Eval golden-set re-validation schedule. The gateway reads these on startup
-  // and on PUT /api/v1/admin/config/revalidation. Disabled by default — needs seeded
+  // and on PUT /api/v1/platform/config/revalidation. Disabled by default — needs seeded
   // EvalDatasets and a Docker-capable worker.
   revalidationEnabled     Boolean  @default(false) @map("revalidation_enabled")
   revalidationCron        String   @default("0 5 * * 0") @map("revalidation_cron")
@@ -1995,7 +1995,7 @@ model ConfigAuditLog {
 ///
 /// (D8) Intentionally global, not tenant-scoped: there is no `teamId`/`orgId`
 /// column here by design. The library is a single ADMIN-curated set — creation
-/// (`POST /api/v1/admin/skills`) and updates are ADMIN-only routes; tenant
+/// (`POST /api/v1/platform/skills`) and updates are ADMIN-only routes; tenant
 /// isolation happens one layer up, via which Agents (which ARE tenant-scoped)
 /// reference a given skill through `skillRefs`, not via row ownership on Skill
 /// itself.

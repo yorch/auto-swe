@@ -464,7 +464,7 @@ erDiagram
 Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost and tokens
 accrue for every terminal status. `Organization.monthlyBudgetUsdCents` caps monthly spend —
 work-request submit returns `402 ORG_BUDGET_EXCEEDED` once the month's accrued cost meets the cap.
-The cap and org membership are managed at `/api/v1/admin/organizations/:orgId/budget` and
+The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
 `/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
 so the worker writer and the gateway reader cannot disagree about which month a run lands in.
 
