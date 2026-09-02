@@ -12,6 +12,7 @@ const DB_NULL = vi.hoisted(() => ({ __sentinel: 'DbNull' }));
 vi.mock('@auto-swe/shared', () => ({
   ConnectionTypeSchema,
   Prisma: { DbNull: DB_NULL },
+  Role: { ADMIN: 'ADMIN', ENGINEER: 'ENGINEER', LEAD: 'LEAD' },
 }));
 
 import { repoDependencyRoutes } from './repoDependencies.js';

@@ -12,7 +12,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
 vi.mock('@auto-swe/shared', () => ({
   ConnectionTypeSchema,
-  Role: { ADMIN: 'ADMIN', ENGINEER: 'ENGINEER', LEAD: 'LEAD' },
   encryptConnectionApiToken: (token: string) => ({
     apiKeyAuthTag: Buffer.from('auth-tag'),
     apiKeyCiphertext: Buffer.from(`cipher-${token}`),
@@ -20,6 +19,7 @@ vi.mock('@auto-swe/shared', () => ({
     apiKeyVersion: 1,
   }),
   Prisma: { DbNull: DB_NULL },
+  Role: { ADMIN: 'ADMIN', ENGINEER: 'ENGINEER', LEAD: 'LEAD' },
 }));
 
 import { repositoryRoutes } from './repositories.js';
