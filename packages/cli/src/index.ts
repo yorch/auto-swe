@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { runBundleCommand } from './commands/bundle.js';
 import { runBundlesCommand } from './commands/bundles.js';
 import { runEvalsCommand } from './commands/evals.js';
@@ -103,7 +105,27 @@ async function main(argv: string[]): Promise<number> {
 // only runs `main(process.argv.slice(2))` when invoked as a script.
 export { main };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * True when this module is the script Node was asked to run (as opposed to
+ * being imported by a test). `import.meta.url` is the *resolved* path of this
+ * file, while `process.argv[1]` is whatever the user typed — the
+ * `node_modules/.bin/auto-swe` symlink, a relative path, or a path with spaces
+ * — so compare after realpath + URL encoding, or the CLI silently does nothing
+ * when installed as a bin.
+ */
+function isEntryPoint(): boolean {
+  const script = process.argv[1];
+  if (!script) {
+    return false;
+  }
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(script)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (err) => {
