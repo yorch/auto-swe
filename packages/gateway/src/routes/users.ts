@@ -203,8 +203,8 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
             update: {},
             where: { userId_teamId: { teamId: defaultTeam.id, userId: user.id } },
           })
-          .catch(() => {
-            /* non-fatal */
+          .catch((err: unknown) => {
+            request.log.warn({ err, userId: user.id }, 'default-team enrolment failed (non-fatal)');
           });
       }
 

@@ -398,8 +398,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             },
           });
         }
-      } catch {
+      } catch (err) {
         // capture must never break the merge signal path
+        request.log.warn({ err }, 'eval-signal capture failed on PR merge (non-fatal)');
       }
 
       // Best-effort Slack "merged" notification back to the originating channel.
@@ -416,7 +417,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             ...(originChannel && wr?.slackMessageTs ? { threadTs: wr.slackMessageTs } : {}),
           },
           botToken ?? undefined
-        ).catch(() => null);
+        ).catch((err: unknown) => {
+          request.log.warn({ err }, 'Slack merge notification failed (non-fatal)');
+          return null;
+        });
       }
 
       // Best-effort tracker sync on PR merge.
@@ -432,7 +436,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             type: 'workflow_completed',
           },
           trackerConfig
-        ).catch(() => null);
+        ).catch((err: unknown) => {
+          request.log.warn({ err }, 'tracker sync failed (non-fatal)');
+          return null;
+        });
       }
 
       return {
@@ -656,7 +663,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               ? { issueId: ticketId, type: 'ci_passed' }
               : { issueId: ticketId, summary: `CI ${conclusion}`, type: 'ci_failed' },
             trackerConfig
-          ).catch(() => null);
+          ).catch((err: unknown) => {
+            request.log.warn({ err }, 'tracker sync failed (non-fatal)');
+            return null;
+          });
         }
       }
 
