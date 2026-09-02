@@ -294,19 +294,30 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       const run = await fastify.prisma.evalRun.create({
         data: { baselineRef, candidateRef, datasetId, status: 'RUNNING' },
       });
-      // Start the durable harness workflow. Best-effort: if Temporal is briefly
-      // unreachable the run row stays RUNNING and can be retried; we don't fail
-      // the request (mirrors the work-request start path).
-      await fastify.temporal
-        .startEvalRunWorkflow(`eval-${run.id}`, {
+      // Start the durable harness workflow. There is no retry endpoint and the
+      // CLI polls this row for a verdict, so a start failure must be visible:
+      // mark the row FAILED and answer 502 rather than leaving it RUNNING forever.
+      try {
+        await fastify.temporal.startEvalRunWorkflow(`eval-${run.id}`, {
           baselineRef,
           candidateRef,
           datasetId,
           evalRunId: run.id,
-        })
-        .catch((err: unknown) => {
-          request.log.error({ err, evalRunId: run.id }, 'failed to start EvalRunWorkflow');
         });
+      } catch (err) {
+        request.log.error({ err, evalRunId: run.id }, 'failed to start EvalRunWorkflow');
+        await fastify.prisma.evalRun.update({
+          data: {
+            endedAt: new Date(),
+            status: 'FAILED',
+            summary: { error: err instanceof Error ? err.message : String(err) },
+          },
+          where: { id: run.id },
+        });
+        return reply.status(502).send({
+          error: { code: 'EVAL_START_FAILED', message: 'Could not start the eval run workflow' },
+        });
+      }
       const data: EvalRunDto = {
         baselineRef: run.baselineRef,
         candidateRef: run.candidateRef,
