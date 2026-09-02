@@ -21,6 +21,8 @@ function extractRequiresRestart(result: unknown): boolean {
 
 export interface UseIntegrationConfigFormResult {
   saved: boolean;
+  /** True while `submit()`'s runner is in flight — disable the save button on it. */
+  saving: boolean;
   error: string | null;
   requiresRestart: boolean;
   testing: boolean;
@@ -50,6 +52,7 @@ export interface UseIntegrationConfigFormResult {
  */
 export function useIntegrationConfigForm(): UseIntegrationConfigFormResult {
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requiresRestart, setRequiresRestart] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -60,6 +63,7 @@ export function useIntegrationConfigForm(): UseIntegrationConfigFormResult {
     setSaved(false);
     setRequiresRestart(false);
     setTestResult(null);
+    setSaving(true);
     try {
       const result = await run();
       setSaved(true);
@@ -67,6 +71,8 @@ export function useIntegrationConfigForm(): UseIntegrationConfigFormResult {
       onSuccess?.(result);
     } catch (err) {
       setError(errMsg(err, 'Failed to save'));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -82,5 +88,5 @@ export function useIntegrationConfigForm(): UseIntegrationConfigFormResult {
     }
   };
 
-  return { error, requiresRestart, runTest, saved, submit, testing, testResult };
+  return { error, requiresRestart, runTest, saved, saving, submit, testing, testResult };
 }

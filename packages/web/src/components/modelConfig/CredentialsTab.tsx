@@ -194,7 +194,7 @@ function CredentialModal({
   const [teamId, setTeamId] = useState(existing?.teamId ?? '');
   const [apiBase, setApiBase] = useState(existing?.apiBase ?? '');
   const [apiKey, setApiKey] = useState('');
-  const { error, submit } = useIntegrationConfigForm();
+  const { error, saving, submit } = useIntegrationConfigForm();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -318,8 +318,8 @@ function CredentialModal({
           <Button onClick={onClose} type="button" variant="ghost">
             Cancel
           </Button>
-          <Button type="submit" variant="primary">
-            Save
+          <Button disabled={saving} type="submit" variant="primary">
+            {saving ? 'Saving…' : 'Save'}
           </Button>
         </div>
       </form>

@@ -8,10 +8,41 @@ describe('useIntegrationConfigForm', () => {
   it('starts with clean state', () => {
     const { result } = renderHook(() => useIntegrationConfigForm());
     expect(result.current.saved).toBe(false);
+    expect(result.current.saving).toBe(false);
     expect(result.current.error).toBeNull();
     expect(result.current.requiresRestart).toBe(false);
     expect(result.current.testing).toBe(false);
     expect(result.current.testResult).toBeNull();
+  });
+
+  it('submit reports saving while the runner is in flight and clears it after', async () => {
+    let resolve: (v: unknown) => void = () => {};
+    const run = vi.fn(() => new Promise((r) => (resolve = r)));
+    const { result } = renderHook(() => useIntegrationConfigForm());
+
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.submit(run);
+    });
+    expect(result.current.saving).toBe(true);
+
+    await act(async () => {
+      resolve({ data: {} });
+      await pending;
+    });
+    expect(result.current.saving).toBe(false);
+    expect(result.current.saved).toBe(true);
+  });
+
+  it('submit clears saving when the runner throws', async () => {
+    const run = vi.fn().mockRejectedValue(new Error('boom'));
+    const { result } = renderHook(() => useIntegrationConfigForm());
+
+    await act(async () => {
+      await result.current.submit(run);
+    });
+    expect(result.current.saving).toBe(false);
+    expect(result.current.error).toBe('boom');
   });
 
   it('submit runs the mutation, marks saved, and calls onSuccess with the result', async () => {
