@@ -6,7 +6,7 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { getDefaultClientOrigin } from '../lib/env.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { invalidateSessionCache, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateUserSchema = z.object({
   email: z.string().email(),
@@ -288,6 +288,20 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           select: { email: true, id: true, isActive: true, role: true, slackId: true },
           where: { id: request.params.id },
         });
+        // A demotion or deactivation must take effect now, not after the
+        // session cache's TTL — drop every cached session for the user.
+        const privilegeChanged =
+          (request.body.role !== undefined && request.body.role !== user.role) ||
+          (request.body.isActive !== undefined && request.body.isActive !== user.isActive);
+        if (privilegeChanged) {
+          const sessions = await fastify.prisma.session.findMany({
+            select: { token: true },
+            where: { userId: updated.id },
+          });
+          for (const session of sessions) {
+            invalidateSessionCache(session.token);
+          }
+        }
         return { data: updated };
       } catch (err) {
         const conflict = replyOnUserUniqueViolation(err, reply);

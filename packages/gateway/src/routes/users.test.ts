@@ -41,6 +41,9 @@ async function buildApp() {
   const authState: AuthState = { role: 'ADMIN', sub: 'admin-1' };
 
   const mockPrisma = {
+    session: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     team: {
       findUnique: vi.fn(),
     },
