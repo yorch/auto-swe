@@ -479,7 +479,9 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     team: tpl.team ? { id: tpl.team.id, name: tpl.team.name, slug: tpl.team.slug } : null,
     updatedAt: tpl.updatedAt,
     versionCount: tpl._count.versions,
-    webhookToken: tpl.webhookToken ?? null,
+    // The token is an unauthenticated trigger credential: expose only whether
+    // one exists. The plaintext is returned once, by POST /:id/webhook/regenerate.
+    webhookConfigured: tpl.webhookToken != null,
     workspaceProvider: tpl.workspaceProvider ?? null,
   };
 }
@@ -1343,6 +1345,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({
           error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
         });
+      }
+      const target = await fastify.prisma.workflowTemplateVersion.findUnique({
+        select: { id: true },
+        where: { templateId_version: { templateId: tpl.id, version: request.params.version } },
+      });
+      if (!target) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'VERSION_NOT_FOUND', message: 'Version not found' } });
       }
       const version = await fastify.prisma.workflowTemplateVersion.update({
         data: { reviewedAt: new Date(), reviewedBy: user.sub },

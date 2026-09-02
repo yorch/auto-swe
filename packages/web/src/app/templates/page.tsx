@@ -543,7 +543,7 @@ export default function TemplatesPage() {
                             default
                           </span>
                         )}
-                        {t.webhookToken && (
+                        {t.webhookConfigured && (
                           <span
                             className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-violet-400"
                             title="Webhook trigger active"

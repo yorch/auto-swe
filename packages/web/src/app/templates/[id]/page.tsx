@@ -433,15 +433,20 @@ function WebhookCard({
   const regenerate = useRegenerateWebhook(template.id);
   const revoke = useRevokeWebhook(template.id);
   const [error, setError] = useState<string | null>(null);
+  // The token is a trigger credential: the API returns it exactly once, from
+  // the regenerate call, so it only lives in this component's state until the
+  // page is left. Afterwards the template only reports that one is configured.
+  const [freshToken, setFreshToken] = useState<string | null>(null);
 
-  const webhookUrl = template.webhookToken
-    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/webhooks/${template.webhookToken}`
+  const webhookUrl = freshToken
+    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/webhooks/${freshToken}`
     : null;
 
   const handleRegenerate = async () => {
     setError(null);
     try {
-      await regenerate.mutateAsync();
+      const { webhookToken } = await regenerate.mutateAsync();
+      setFreshToken(webhookToken);
     } catch (err) {
       setError(errMsg(err, 'regenerate failed'));
     }
@@ -451,6 +456,7 @@ function WebhookCard({
     setError(null);
     try {
       await revoke.mutateAsync();
+      setFreshToken(null);
     } catch (err) {
       setError(errMsg(err, 'revoke failed'));
     }
@@ -468,6 +474,33 @@ function WebhookCard({
             </code>
             <CopyButton value={webhookUrl} />
           </div>
+          {canManage && (
+            <div className="flex gap-2">
+              <Button
+                disabled={regenerate.isPending}
+                onClick={handleRegenerate}
+                size="sm"
+                variant="secondary"
+              >
+                {regenerate.isPending ? 'Regenerating…' : 'Regenerate'}
+              </Button>
+              <Button
+                disabled={revoke.isPending}
+                onClick={handleRevoke}
+                size="sm"
+                variant="secondary"
+              >
+                {revoke.isPending ? 'Revoking…' : 'Revoke'}
+              </Button>
+            </div>
+          )}
+        </div>
+      ) : template.webhookConfigured ? (
+        <div className="space-y-3">
+          <p className="text-xs text-paper-500">
+            A webhook URL is configured. The token is shown only once, when it is generated —
+            regenerate to issue a new one (the previous URL stops working) or revoke it.
+          </p>
           {canManage && (
             <div className="flex gap-2">
               <Button

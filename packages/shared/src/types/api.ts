@@ -235,7 +235,9 @@ export interface WorkflowTemplateSummary {
   activeVersion: number | null;
   experimentVersion: number | null;
   experimentSplit: number | null;
-  webhookToken: string | null;
+  /** Whether an unauthenticated webhook trigger token exists. The token itself
+   *  is only returned by POST /workflow-templates/:id/webhook/regenerate. */
+  webhookConfigured: boolean;
   versionCount: number;
   inputSchema?: InputSchema | null;
   workspaceProvider?: WorkspaceProviderType | null;
