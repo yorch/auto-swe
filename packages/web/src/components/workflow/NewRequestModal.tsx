@@ -22,10 +22,14 @@ export function NewRequestModal({
   const { data: templates, isLoading } = useWorkflowTemplates(selectedTeamId);
   const [templateId, setTemplateId] = useState('');
 
-  const selected = templates?.find((t) => t.id === templateId);
+  const runnable = (templates ?? []).filter(
+    (t) => t.status === 'ACTIVE' && t.activeVersion !== null
+  );
+  const selected = runnable.find((t) => t.id === templateId);
+  const canContinue = selected !== undefined;
 
   function handleContinue() {
-    if (!selected) {
+    if (!canContinue) {
       return;
     }
     onSelect(selected);
@@ -42,7 +46,7 @@ export function NewRequestModal({
       <div className="space-y-6">
         {isLoading ? (
           <LoadingState message="Loading templates…" />
-        ) : (templates ?? []).length === 0 ? (
+        ) : runnable.length === 0 ? (
           <p className="text-sm text-paper-400">
             No active templates. Ask a lead or admin to create one in the{' '}
             <a className="text-ember-400 hover:underline" href="/workflows/library">
@@ -58,7 +62,7 @@ export function NewRequestModal({
             value={templateId}
           >
             <option value="">Choose a template…</option>
-            {(templates ?? []).map((t) => (
+            {runnable.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
@@ -70,7 +74,7 @@ export function NewRequestModal({
           <Button onClick={onClose} type="button" variant="ghost">
             Cancel
           </Button>
-          <Button disabled={!selected} onClick={handleContinue} type="button" variant="primary">
+          <Button disabled={!canContinue} onClick={handleContinue} type="button" variant="primary">
             Continue →
           </Button>
         </div>

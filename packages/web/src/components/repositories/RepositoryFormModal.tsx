@@ -125,7 +125,7 @@ export function RepositoryFormModal({
       eyebrow={isEdit ? '§ Edit repository' : '§ Connect repository'}
       onClose={onClose}
       open={open}
-      subtitle="auto-swe clones this repo into an ephemeral Docker container per work request and opens pull requests back here."
+      subtitle="The platform clones this repo into an ephemeral container per run and opens pull requests back here."
       title={isEdit ? `${initial?.organizationName}/${initial?.repoName}` : 'Add a repository'}
     >
       <form className="space-y-5" onSubmit={handleSubmit}>

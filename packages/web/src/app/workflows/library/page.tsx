@@ -292,7 +292,7 @@ function NewTemplateModal({
             disabled={busy}
             label="Description"
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="e.g. When a ticket comes in, run the implementer, then the review network, and open a pull request. Pause for human approval before merging."
+            placeholder="e.g. When a request comes in, plan the work, run the right agents, and produce a validated outcome. Pause for human approval before finalizing."
             rows={6}
             value={prompt}
           />

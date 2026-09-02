@@ -378,9 +378,13 @@ export interface WorkflowRunSummary {
   templateId: string;
   templateName?: string | null;
   templateVersion: number;
+  domain: string | null;
   status: WorkflowRunStatus;
   startedAt: string;
   endedAt: string | null;
+  outcomeDomain: string | null;
+  outcomeType: string | null;
+  costUsdAccrued: number;
   workRequest: {
     id: string;
     externalTicketId: string;

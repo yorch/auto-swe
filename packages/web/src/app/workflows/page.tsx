@@ -10,13 +10,47 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { NewRequestModal } from '@/components/workflow/NewRequestModal';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
-import { useWorkflows } from '@/hooks/useRuns';
-import { formatCost, formatRelativeTime } from '@/lib/utils';
+import { useAllWorkflowRuns } from '@/hooks/useRuns';
+import { cn } from '@/lib/utils';
+
+type Scope = 'ALL' | 'MINE' | 'TEAM';
+
+const SCOPE_LABELS: Record<Scope, string> = {
+  ALL: 'All',
+  MINE: 'Mine',
+  TEAM: 'Team',
+};
+
+function OutcomeCell({
+  outcomeDomain,
+  outcomeType,
+  status,
+}: {
+  outcomeDomain: string | null;
+  outcomeType: string | null;
+  status: string;
+}) {
+  if (outcomeDomain) {
+    return (
+      <span className="text-paper-400">
+        {outcomeDomain}
+        {outcomeType ? <span className="text-paper-500"> · {outcomeType}</span> : null}
+      </span>
+    );
+  }
+  if (status === 'COMPLETED') {
+    return <span className="text-paper-400">completed</span>;
+  }
+  return <span className="text-paper-600">—</span>;
+}
 
 export default function WorkflowsPage() {
-  const { data: workflows, isLoading } = useWorkflows();
+  const [scope, setScope] = useState<Scope>('MINE');
+  const { data, isLoading } = useAllWorkflowRuns({ limit: 50, scope });
   const [newOpen, setNewOpen] = useState(false);
   const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
+  const runs = data?.data ?? [];
+  const total = data?.meta.total ?? 0;
 
   if (isLoading) {
     return <LoadingState />;
@@ -30,7 +64,7 @@ export default function WorkflowsPage() {
             + New request
           </Button>
         }
-        chapter={`§ Requests · ${(workflows ?? []).length} total`}
+        chapter={`§ Requests · ${total} total`}
         title="Request queue"
       />
       <NewRequestModal
@@ -45,35 +79,64 @@ export default function WorkflowsPage() {
         <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
       )}
 
+      <div className="flex gap-2">
+        {(Object.keys(SCOPE_LABELS) as Scope[]).map((s) => (
+          <button
+            className={cn(
+              'rounded px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-colors',
+              s === scope
+                ? 'bg-ember-400 text-ink-900'
+                : 'border border-ink-600 text-paper-400 hover:border-ember-400 hover:text-paper-200'
+            )}
+            key={s}
+            onClick={() => setScope(s)}
+            type="button"
+          >
+            {SCOPE_LABELS[s]}
+          </button>
+        ))}
+      </div>
+
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-ink-600 bg-ink-800">
-              <th className="text-left px-4 py-3 font-medium">Repository</th>
-              <th className="text-left px-4 py-3 font-medium">Branch</th>
+              <th className="text-left px-4 py-3 font-medium">Label</th>
+              <th className="text-left px-4 py-3 font-medium">Workflow</th>
+              <th className="text-left px-4 py-3 font-medium">Domain</th>
               <th className="text-left px-4 py-3 font-medium">Status</th>
-              <th className="text-left px-4 py-3 font-medium">Updated</th>
-              <th className="text-right px-4 py-3 font-medium">Cost</th>
+              <th className="text-left px-4 py-3 font-medium">Outcome</th>
             </tr>
           </thead>
           <tbody>
-            {(workflows ?? []).map((w) => (
-              <tr className="border-b border-ink-600 hover:bg-ink-800 transition-colors" key={w.id}>
+            {runs.length === 0 && (
+              <tr>
+                <td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+                  No requests in this scope.
+                </td>
+              </tr>
+            )}
+            {runs.map((r) => (
+              <tr className="border-b border-ink-600 hover:bg-ink-800 transition-colors" key={r.id}>
                 <td className="px-4 py-3">
                   <Link
                     className="text-ember-400 hover:underline font-medium"
-                    href={`/workflows/${w.id}`}
+                    href={`/runs/${r.id}`}
                   >
-                    {w.repository?.organizationName}/{w.repository?.repoName}
+                    {r.workRequest?.description || r.workRequest?.externalTicketId || '—'}
                   </Link>
                 </td>
-                <td className="px-4 py-3 text-paper-400">{w.assignedBranch}</td>
+                <td className="px-4 py-3 text-paper-400">{r.templateName ?? '—'}</td>
+                <td className="px-4 py-3 text-paper-400">{r.domain ?? '—'}</td>
                 <td className="px-4 py-3">
-                  <StatusBadge status={w.currentStatus} />
+                  <StatusBadge status={r.status} />
                 </td>
-                <td className="px-4 py-3 text-paper-400">{formatRelativeTime(w.updatedAt)}</td>
-                <td className="px-4 py-3 text-right text-xs text-paper-400">
-                  {formatCost(w.costUsdAccrued)}
+                <td className="px-4 py-3">
+                  <OutcomeCell
+                    outcomeDomain={r.outcomeDomain}
+                    outcomeType={r.outcomeType}
+                    status={r.status}
+                  />
                 </td>
               </tr>
             ))}

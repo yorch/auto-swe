@@ -85,6 +85,7 @@ const ListRunsQuery = RunListPaginationQuery.extend({
    * engineering runs. Opt in with `?includeChannel=true`.
    */
   includeChannel: booleanQueryParam(false),
+  scope: z.enum(['ALL', 'MINE', 'TEAM']).optional(),
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
   templateId: z.string().uuid().optional(),
   workRequestId: z.string().uuid().optional(),
@@ -102,9 +103,17 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { includeChannel, limit, offset, status, templateId, workRequestId } = request.query;
+      const { includeChannel, limit, offset, scope, status, templateId, workRequestId } =
+        request.query;
+      const teamFilter = buildWorkflowRunVisibilityFilter(user);
+      const visibilityFilter: Prisma.WorkflowRunWhereInput =
+        user.role === 'ADMIN' && scope === 'ALL'
+          ? {}
+          : scope === 'MINE'
+            ? { AND: [teamFilter, { workRequest: { requestedById: user.sub } }] }
+            : teamFilter;
       const where: Prisma.WorkflowRunWhereInput = {
-        ...buildWorkflowRunVisibilityFilter(user),
+        ...visibilityFilter,
         ...(status ? { status } : {}),
         ...(templateId ? { templateId } : {}),
         ...(workRequestId ? { workRequestId } : {}),
@@ -118,7 +127,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
           include: {
-            template: { select: { name: true } },
+            template: { select: { name: true, workspaceProvider: true } },
             workRequest: {
               select: { description: true, externalTicketId: true, id: true },
             },

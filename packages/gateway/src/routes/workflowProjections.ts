@@ -19,7 +19,10 @@ export interface RunWithWorkRequest {
   status: string;
   startedAt: Date;
   endedAt: Date | null;
-  template?: { name: string } | null;
+  costUsdAccrued: number;
+  outcomeDomain: string | null;
+  outcomeType: string | null;
+  template?: { name: string; workspaceProvider: string | null } | null;
   workRequest: {
     id: string;
     externalTicketId: string;
@@ -29,8 +32,12 @@ export interface RunWithWorkRequest {
 
 export function projectRunSummary(r: RunWithWorkRequest) {
   return {
+    costUsdAccrued: r.costUsdAccrued,
+    domain: r.template?.workspaceProvider ?? null,
     endedAt: r.endedAt,
     id: r.id,
+    outcomeDomain: r.outcomeDomain,
+    outcomeType: r.outcomeType,
     startedAt: r.startedAt,
     status: r.status,
     templateId: r.templateId,

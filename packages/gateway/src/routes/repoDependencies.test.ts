@@ -9,9 +9,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // `Prisma.DbNull` from the barrel; mock the barrel to avoid instantiating the
 // real PrismaClient singleton (needs DATABASE_URL at import).
 const DB_NULL = vi.hoisted(() => ({ __sentinel: 'DbNull' }));
+const ROLE = vi.hoisted(() => ({ ADMIN: 'ADMIN', ENGINEER: 'ENGINEER', LEAD: 'LEAD' }) as const);
 vi.mock('@auto-swe/shared', () => ({
   ConnectionTypeSchema,
   Prisma: { DbNull: DB_NULL },
+  Role: ROLE,
 }));
 
 import { repoDependencyRoutes } from './repoDependencies.js';
