@@ -13,6 +13,8 @@ import {
   Client,
   Connection,
   ScheduleClient,
+  type ScheduleHandle,
+  ScheduleNotFoundError,
   type ScheduleOptionsAction,
   ScheduleOverlapPolicy,
   WorkflowIdReusePolicy,
@@ -334,21 +336,50 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
    * fire while the previous run is still in flight is dropped, not stacked).
    * When `paused` is omitted, neither branch touches schedule state.
    */
+  /**
+   * `describe()` distinguishes "no such schedule" from "Temporal is unreachable"
+   * only by error class. Treating every error as not-found made an outage look
+   * like a clean slate: deletes reported success (leaving live schedules that
+   * kept firing runs no row could stop) and status reads showed "not scheduled".
+   */
+  async function scheduleExists(handle: ScheduleHandle): Promise<boolean> {
+    try {
+      await handle.describe();
+      return true;
+    } catch (err) {
+      if (err instanceof ScheduleNotFoundError) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async function deleteScheduleIfExists(scheduleId: string): Promise<void> {
+    try {
+      await schedules.getHandle(scheduleId).delete();
+    } catch (err) {
+      if (!(err instanceof ScheduleNotFoundError)) {
+        throw err;
+      }
+      // Already gone (or never created) — deletion is idempotent.
+    }
+  }
+
   async function upsertSchedule(
     scheduleId: string,
     opts: { action: ScheduleOptionsAction; cronExpression: string; paused?: boolean }
   ): Promise<void> {
     const handle = schedules.getHandle(scheduleId);
-    try {
-      await handle.describe();
-      // Schedule exists — update it in place.
+    if (await scheduleExists(handle)) {
+      // Schedule exists — update it in place. Any failure here is real
+      // (timeout, bad cron, conflict) and must surface, not fall into create.
       await handle.update((prev) => ({
         ...prev,
         action: opts.action,
         spec: { cronExpressions: [opts.cronExpression] },
         ...(opts.paused !== undefined ? { state: { ...prev.state, paused: opts.paused } } : {}),
       }));
-    } catch {
+    } else {
       // Schedule doesn't exist yet — create it.
       await schedules.create({
         action: opts.action,
@@ -370,33 +401,18 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     //    SlackChannel with ambientEnabled + ambientCron) ──
 
     async deleteChannelAmbientSchedule(channelId: string): Promise<void> {
-      const handle = schedules.getHandle(channelAmbientScheduleId(channelId));
-      try {
-        await handle.delete();
-      } catch {
-        // Already gone (or never created) — deletion is idempotent.
-      }
+      await deleteScheduleIfExists(channelAmbientScheduleId(channelId));
     },
 
     async deleteChannelReactiveSchedule(channelId: string): Promise<void> {
-      const handle = schedules.getHandle(channelReactiveScheduleId(channelId));
-      try {
-        await handle.delete();
-      } catch {
-        // Already gone (or never created) — deletion is idempotent.
-      }
+      await deleteScheduleIfExists(channelReactiveScheduleId(channelId));
     },
 
     // ── Recurring work-request schedules (one Temporal Schedule per
     //    ScheduledWorkRequest row) ──
 
     async deleteWorkRequestSchedule(scheduleRowId: string): Promise<void> {
-      const handle = schedules.getHandle(workRequestScheduleId(scheduleRowId));
-      try {
-        await handle.delete();
-      } catch {
-        // Already gone (or never created) — deletion is idempotent.
-      }
+      await deleteScheduleIfExists(workRequestScheduleId(scheduleRowId));
     },
 
     async explainWorkflowSpec(
@@ -442,7 +458,10 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
           nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
           paused: desc.state.paused,
         };
-      } catch {
+      } catch (err) {
+        if (!(err instanceof ScheduleNotFoundError)) {
+          throw err;
+        }
         return { exists: false, nextRunAt: null, paused: false };
       }
     },
@@ -457,7 +476,10 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
           nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
           paused: desc.state.paused,
         };
-      } catch {
+      } catch (err) {
+        if (!(err instanceof ScheduleNotFoundError)) {
+          throw err;
+        }
         return { exists: false, nextRunAt: null, paused: false };
       }
     },
@@ -474,7 +496,10 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
           nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
           paused: desc.state.paused,
         };
-      } catch {
+      } catch (err) {
+        if (!(err instanceof ScheduleNotFoundError)) {
+          throw err;
+        }
         return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
       }
     },
@@ -491,7 +516,10 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
           nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
           paused: desc.state.paused,
         };
-      } catch {
+      } catch (err) {
+        if (!(err instanceof ScheduleNotFoundError)) {
+          throw err;
+        }
         return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
       }
     },
@@ -508,7 +536,10 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
           nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
           paused: desc.state.paused,
         };
-      } catch {
+      } catch (err) {
+        if (!(err instanceof ScheduleNotFoundError)) {
+          throw err;
+        }
         return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
       }
     },
@@ -596,7 +627,10 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
           nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
           paused: desc.state.paused,
         };
-      } catch {
+      } catch (err) {
+        if (!(err instanceof ScheduleNotFoundError)) {
+          throw err;
+        }
         return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
       }
     },

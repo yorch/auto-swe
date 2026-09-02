@@ -568,8 +568,20 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         });
       }
 
-      // Temporal first (idempotent — swallows not-found), then the row.
-      await fastify.temporal.deleteWorkRequestSchedule(existing.id);
+      // Temporal first (idempotent — only not-found is swallowed), then the
+      // row. If Temporal is unreachable the row must survive: deleting it
+      // would orphan a live schedule that keeps starting runs nothing can stop.
+      try {
+        await fastify.temporal.deleteWorkRequestSchedule(existing.id);
+      } catch (err) {
+        request.log.error({ err, scheduleId: existing.id }, 'failed to delete Temporal schedule');
+        return reply.status(502).send({
+          error: {
+            code: 'SCHEDULE_SYNC_FAILED',
+            message: 'Could not remove the Temporal schedule; the scheduled request was kept',
+          },
+        });
+      }
       await fastify.prisma.scheduledWorkRequest.delete({ where: { id: existing.id } });
       return reply.send({ data: { deleted: true } });
     }
