@@ -19,33 +19,50 @@ jobs:
       id-token: write # For OIDC -> ECR auth
 
     steps:
+      # Inputs are passed through `env:` rather than interpolated into the
+      # script body, so a crafted repo_id (or client_payload) cannot inject
+      # shell — `${{ }}` expands before bash parses the line.
       - name: Determine repo ID
         id: repo
+        env:
+          INPUT_REPO_ID: ${{ github.event.inputs.repo_id }}
+          PAYLOAD_REPO_ID: ${{ github.event.client_payload.repo_id }}
         run: |
-          if [ -n "${{ github.event.inputs.repo_id }}" ]; then
-            echo "id=${{ github.event.inputs.repo_id }}" >> "$GITHUB_OUTPUT"
-          elif [ -n "${{ github.event.client_payload.repo_id }}" ]; then
-            echo "id=${{ github.event.client_payload.repo_id }}" >> "$GITHUB_OUTPUT"
+          if [ -n "${INPUT_REPO_ID}" ]; then
+            echo "id=${INPUT_REPO_ID}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${PAYLOAD_REPO_ID}" ]; then
+            echo "id=${PAYLOAD_REPO_ID}" >> "$GITHUB_OUTPUT"
           else
-            echo "No repo_id provided. Scheduled builds should iterate all repos."
-            exit 0
+            # Scheduled runs carry no repo id. Exiting 0 here used to let every
+            # later step run against an empty id and fail; instead the steps
+            # below are gated on `steps.repo.outputs.id` and the run ends green
+            # as a no-op until per-repo dispatch (repository_dispatch with a
+            # repo_id) is wired up for the schedule.
+            echo "No repo_id provided; nothing to build on this trigger."
           fi
 
       - name: Fetch repo config from Gateway API
         id: config
+        if: steps.repo.outputs.id != ''
+        env:
+          GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
+          GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
+          REPO_ID: ${{ steps.repo.outputs.id }}
         run: |
-          REPO=$(curl -sf -H "Authorization: Bearer ${{ secrets.GATEWAY_TOKEN }}" \
-            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${{ steps.repo.outputs.id }}")
+          REPO=$(curl -sf -H "Authorization: Bearer ${GATEWAY_TOKEN}" \
+            "${GATEWAY_URL}/api/v1/repositories/${REPO_ID}")
           echo "org=$(echo "$REPO" | jq -r '.data.organizationName')" >> "$GITHUB_OUTPUT"
           echo "name=$(echo "$REPO" | jq -r '.data.repoName')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout target repo
+        if: steps.repo.outputs.id != ''
         uses: actions/checkout@v7
         with:
           repository: ${{ steps.config.outputs.org }}/${{ steps.config.outputs.name }}
           token: ${{ secrets.GITHUB_APP_TOKEN }}
 
       - name: Resolve Dockerfile
+        if: steps.repo.outputs.id != ''
         id: dockerfile
         run: |
           if [ -f ".auto-swe/Dockerfile" ]; then
@@ -60,19 +77,23 @@ jobs:
           fi
 
       - name: Configure AWS credentials (OIDC)
+        if: steps.repo.outputs.id != ''
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        if: steps.repo.outputs.id != ''
         uses: aws-actions/amazon-ecr-login@v2
         id: ecr-login
 
       - name: Set up Docker Buildx
+        if: steps.repo.outputs.id != ''
         uses: docker/setup-buildx-action@v4
 
       - name: Generate image metadata
+        if: steps.repo.outputs.id != ''
         uses: docker/metadata-action@v6
         id: meta
         with:
@@ -82,6 +103,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push
+        if: steps.repo.outputs.id != ''
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -93,11 +115,17 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Update repository executor image in Gateway
+        if: steps.repo.outputs.id != ''
+        env:
+          GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
+          GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
+          REPO_ID: ${{ steps.repo.outputs.id }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           # Use the first tag (date-sha) as the pinned image reference
-          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
+          IMAGE_TAG=$(echo "${IMAGE_TAGS}" | head -1)
           curl -sf -X PATCH \
-            -H "Authorization: Bearer ${{ secrets.GATEWAY_TOKEN }}" \
+            -H "Authorization: Bearer ${GATEWAY_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"executorImage\": \"${IMAGE_TAG}\"}" \
-            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${{ steps.repo.outputs.id }}"
+            -d "$(jq -cn --arg image "${IMAGE_TAG}" '{executorImage: $image}')" \
+            "${GATEWAY_URL}/api/v1/repositories/${REPO_ID}"
