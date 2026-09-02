@@ -65,7 +65,7 @@ async function buildApp() {
     },
   } as unknown as never);
   app.decorate('prisma', prisma as unknown as never);
-  await app.register(configSettingsRoutes, { prefix: '/api/v1/admin' });
+  await app.register(configSettingsRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return app;
 }
@@ -87,7 +87,7 @@ describe('GET /config/settings', () => {
     const res = await app.inject({
       headers: auth('ENGINEER'),
       method: 'GET',
-      url: '/api/v1/admin/config/settings',
+      url: '/api/v1/platform/config/settings',
     });
     expect(res.statusCode).toBe(200);
     const settings = res.json().data as Array<Record<string, unknown>>;
@@ -112,7 +112,7 @@ describe('GET /config/settings', () => {
     const res = await app.inject({
       headers: auth('ADMIN'),
       method: 'GET',
-      url: `/api/v1/admin/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
+      url: `/api/v1/platform/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
     });
     const settings = res.json().data as Array<Record<string, unknown>>;
     expect(settings.find((s) => s.key === 'channel.historyMessageLimit')).toMatchObject({
@@ -133,7 +133,7 @@ describe('GET /config/settings — scoped reads', () => {
     const res = await app.inject({
       headers: auth('ENGINEER'),
       method: 'GET',
-      url: `/api/v1/admin/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
+      url: `/api/v1/platform/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
     });
     expect(res.statusCode).toBe(403);
     await app.close();
@@ -145,7 +145,7 @@ describe('GET /config/settings — scoped reads', () => {
     const res = await app.inject({
       headers: auth('ENGINEER'),
       method: 'GET',
-      url: `/api/v1/admin/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
+      url: `/api/v1/platform/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
     });
     expect(res.statusCode).toBe(200);
     await app.close();
@@ -156,7 +156,7 @@ describe('GET /config/settings — scoped reads', () => {
     const res = await app.inject({
       headers: auth('ADMIN'),
       method: 'GET',
-      url: `/api/v1/admin/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
+      url: `/api/v1/platform/config/settings?scope=TEAM&teamId=${TEAM_ID}`,
     });
     expect(res.statusCode).toBe(200);
     await app.close();
@@ -167,7 +167,7 @@ describe('GET /config/settings — scoped reads', () => {
     const res = await app.inject({
       headers: auth('ENGINEER'),
       method: 'GET',
-      url: '/api/v1/admin/config/settings',
+      url: '/api/v1/platform/config/settings',
     });
     expect(res.statusCode).toBe(200);
     await app.close();
@@ -180,7 +180,7 @@ describe('GET /config/settings — scoped reads', () => {
     const res = await app.inject({
       headers: auth('ENGINEER'),
       method: 'GET',
-      url: `/api/v1/admin/config/settings?scope=CHANNEL&channelId=${ORG_ID}`,
+      url: `/api/v1/platform/config/settings?scope=CHANNEL&channelId=${ORG_ID}`,
     });
     expect(res.statusCode).toBe(200);
     await app.close();
@@ -192,7 +192,7 @@ describe('GET /config/settings — scoped reads', () => {
     const res = await app.inject({
       headers: auth('ENGINEER'),
       method: 'GET',
-      url: `/api/v1/admin/config/settings?scope=CHANNEL&channelId=${ORG_ID}`,
+      url: `/api/v1/platform/config/settings?scope=CHANNEL&channelId=${ORG_ID}`,
     });
     expect(res.statusCode).toBe(403);
     await app.close();
@@ -206,7 +206,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: 1 },
       headers: auth('ADMIN'),
       method: 'PUT',
-      url: '/api/v1/admin/config/settings/not.a.setting',
+      url: '/api/v1/platform/config/settings/not.a.setting',
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('UNKNOWN_SETTING');
@@ -219,7 +219,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: -3 },
       headers: auth('ADMIN'),
       method: 'PUT',
-      url: '/api/v1/admin/config/settings/channel.historyMessageLimit',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('SETTING_INVALID');
@@ -234,7 +234,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: false },
       headers: auth('ADMIN'),
       method: 'PUT',
-      url: `/api/v1/admin/config/settings/workspace.blockMetadata?scope=TEAM&teamId=${TEAM_ID}`,
+      url: `/api/v1/platform/config/settings/workspace.blockMetadata?scope=TEAM&teamId=${TEAM_ID}`,
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('SCOPE_NOT_ALLOWED');
@@ -247,7 +247,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: 12 },
       headers: auth('ADMIN'),
       method: 'PUT',
-      url: '/api/v1/admin/config/settings/channel.historyMessageLimit',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
     });
     expect(res.statusCode).toBe(200);
     expect(configSetting.create).toHaveBeenCalledTimes(1);
@@ -272,7 +272,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: 12 },
       headers: auth('ADMIN'),
       method: 'PUT',
-      url: '/api/v1/admin/config/settings/channel.historyMessageLimit',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
     });
     expect(res.statusCode).toBe(200);
     expect(configSetting.update).toHaveBeenCalledTimes(1);
@@ -291,7 +291,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: 12 },
       headers: auth('LEAD'),
       method: 'PUT',
-      url: `/api/v1/admin/config/settings/channel.historyMessageLimit?scope=TEAM&teamId=${TEAM_ID}`,
+      url: `/api/v1/platform/config/settings/channel.historyMessageLimit?scope=TEAM&teamId=${TEAM_ID}`,
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('NO_GRANT');
@@ -314,7 +314,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: 12 },
       headers: auth('LEAD'),
       method: 'PUT',
-      url: `/api/v1/admin/config/settings/channel.historyMessageLimit?scope=TEAM&teamId=${TEAM_ID}`,
+      url: `/api/v1/platform/config/settings/channel.historyMessageLimit?scope=TEAM&teamId=${TEAM_ID}`,
     });
     expect(res.statusCode).toBe(200);
     await app.close();
@@ -339,7 +339,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: 12 },
       headers: auth('LEAD'),
       method: 'PUT',
-      url: `/api/v1/admin/config/settings/channel.historyMessageLimit?scope=CHANNEL&channelId=${ORG_ID}`,
+      url: `/api/v1/platform/config/settings/channel.historyMessageLimit?scope=CHANNEL&channelId=${ORG_ID}`,
     });
     expect(res.statusCode).toBe(200);
     await app.close();
@@ -362,7 +362,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: 12 },
       headers: auth('LEAD'),
       method: 'PUT',
-      url: `/api/v1/admin/config/settings/channel.historyMessageLimit?scope=CHANNEL&channelId=${ORG_ID}`,
+      url: `/api/v1/platform/config/settings/channel.historyMessageLimit?scope=CHANNEL&channelId=${ORG_ID}`,
     });
     expect(res.statusCode).toBe(403);
     await app.close();
@@ -377,7 +377,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: 'alpine/git:1.0' },
       headers: auth('LEAD'),
       method: 'PUT',
-      url: '/api/v1/admin/config/settings/workspace.gitHelperImage',
+      url: '/api/v1/platform/config/settings/workspace.gitHelperImage',
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('ROLE_TOO_LOW');
@@ -390,7 +390,7 @@ describe('PUT /config/settings/:key', () => {
       body: { value: 12 },
       headers: auth('ADMIN'),
       method: 'PUT',
-      url: '/api/v1/admin/config/settings/channel.historyMessageLimit?scope=TEAM',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit?scope=TEAM',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -404,7 +404,7 @@ describe('DELETE /config/settings/:key', () => {
     const res = await app.inject({
       headers: auth('ADMIN'),
       method: 'DELETE',
-      url: '/api/v1/admin/config/settings/channel.historyMessageLimit',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.cleared).toBe(true);
@@ -417,7 +417,7 @@ describe('DELETE /config/settings/:key', () => {
     const res = await app.inject({
       headers: auth('ADMIN'),
       method: 'DELETE',
-      url: '/api/v1/admin/config/settings/channel.historyMessageLimit',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.cleared).toBe(false);
@@ -431,7 +431,7 @@ describe('DELETE /config/settings/:key', () => {
     const res = await app.inject({
       headers: auth('ENGINEER'),
       method: 'DELETE',
-      url: '/api/v1/admin/config/settings/channel.historyMessageLimit',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
     });
     expect(res.statusCode).toBe(403);
     expect(configSetting.delete).not.toHaveBeenCalled();
@@ -449,7 +449,7 @@ describe('grants', () => {
       body: { keyPattern: '*', role: 'LEAD', scope: 'GLOBAL' },
       headers: auth('LEAD'),
       method: 'POST',
-      url: '/api/v1/admin/config/grants',
+      url: '/api/v1/platform/config/grants',
     });
     expect(res.statusCode).toBe(403);
     expect(configPermission.create).not.toHaveBeenCalled();
@@ -462,7 +462,7 @@ describe('grants', () => {
       body: { keyPattern: 'channel.*', role: 'LEAD', scope: 'GLOBAL', userId: USER_ID },
       headers: auth('ADMIN'),
       method: 'POST',
-      url: '/api/v1/admin/config/grants',
+      url: '/api/v1/platform/config/grants',
     });
     expect(both.statusCode).toBe(400);
 
@@ -470,7 +470,7 @@ describe('grants', () => {
       body: { keyPattern: 'channel.*', scope: 'GLOBAL' },
       headers: auth('ADMIN'),
       method: 'POST',
-      url: '/api/v1/admin/config/grants',
+      url: '/api/v1/platform/config/grants',
     });
     expect(neither.statusCode).toBe(400);
     await app.close();
@@ -482,7 +482,7 @@ describe('grants', () => {
       body: { keyPattern: 'channel.*', role: 'LEAD', scope: 'TEAM' },
       headers: auth('ADMIN'),
       method: 'POST',
-      url: '/api/v1/admin/config/grants',
+      url: '/api/v1/platform/config/grants',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -494,7 +494,7 @@ describe('grants', () => {
       body: { keyPattern: 'channel.*', role: 'LEAD', scope: 'TEAM', teamId: TEAM_ID },
       headers: auth('ADMIN'),
       method: 'POST',
-      url: '/api/v1/admin/config/grants',
+      url: '/api/v1/platform/config/grants',
     });
     expect(res.statusCode).toBe(200);
     expect(configPermission.create).toHaveBeenCalledTimes(1);

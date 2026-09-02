@@ -77,7 +77,7 @@ async function validateRegex(pattern: string, flags: string): Promise<RegexSafet
 export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
-  // GET /api/v1/admin/scanner-patterns
+  // GET /api/v1/platform/scanner-patterns
   app.get('/scanner-patterns', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
     const patterns = await fastify.prisma.scannerPattern.findMany({
       orderBy: [{ type: 'asc' }, { label: 'asc' }],
@@ -85,7 +85,7 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
     return { data: patterns };
   });
 
-  // POST /api/v1/admin/scanner-patterns
+  // POST /api/v1/platform/scanner-patterns
   app.post(
     '/scanner-patterns',
     {
@@ -116,7 +116,7 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PUT /api/v1/admin/scanner-patterns/:id
+  // PUT /api/v1/platform/scanner-patterns/:id
   app.put(
     '/scanner-patterns/:id',
     {
@@ -180,7 +180,7 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // DELETE /api/v1/admin/scanner-patterns/:id
+  // DELETE /api/v1/platform/scanner-patterns/:id
   app.delete(
     '/scanner-patterns/:id',
     {

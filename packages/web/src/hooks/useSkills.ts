@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-/** A skill row as `/api/v1/admin/skills` returns it. */
+/** A skill row as `/api/v1/platform/skills` returns it. */
 export interface Skill {
   id: string;
   name: string;
@@ -47,7 +47,7 @@ export interface SkillEffectiveness {
  */
 export function useSkills() {
   return useQuery({
-    queryFn: () => api.get<{ data: Skill[] }>('/api/v1/admin/skills').then((r) => r.data),
+    queryFn: () => api.get<{ data: Skill[] }>('/api/v1/platform/skills').then((r) => r.data),
     queryKey: ['skills', 'all'],
   });
 }
@@ -56,7 +56,7 @@ export function useSkillEffectiveness() {
   return useQuery({
     queryFn: () =>
       api
-        .get<{ data: SkillEffectiveness }>('/api/v1/admin/skills/effectiveness')
+        .get<{ data: SkillEffectiveness }>('/api/v1/platform/skills/effectiveness')
         .then((r) => r.data),
     queryKey: ['skills', 'effectiveness'],
   });
@@ -66,7 +66,7 @@ export function useCreateSkill() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { name: string; description?: string; promptText: string }) =>
-      api.post<{ data: Skill }>('/api/v1/admin/skills', body).then((r) => r.data),
+      api.post<{ data: Skill }>('/api/v1/platform/skills', body).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   });
 }
@@ -83,7 +83,7 @@ export function useUpdateSkill() {
       description?: string;
       promptText?: string;
       isActive?: boolean;
-    }) => api.put<{ data: Skill }>(`/api/v1/admin/skills/${id}`, body).then((r) => r.data),
+    }) => api.put<{ data: Skill }>(`/api/v1/platform/skills/${id}`, body).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   });
 }
@@ -91,7 +91,7 @@ export function useUpdateSkill() {
 export function useDeleteSkill() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/skills/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/platform/skills/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   });
 }

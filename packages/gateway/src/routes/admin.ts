@@ -10,9 +10,9 @@ import { invalidateSessionCache, requireAuth } from '../plugins/auth.js';
  * All routes here require role ADMIN. They operate across users and are
  * intentionally not exposed in the self-service token/team routes.
  *
- *   GET    /api/v1/admin/access-tokens          — list all users' PATs
- *   DELETE /api/v1/admin/access-tokens/:id      — revoke any PAT
- *   POST   /api/v1/admin/shell-audit/prune      — delete old WorkflowShellAudit rows
+ *   GET    /api/v1/platform/access-tokens          — list all users' PATs
+ *   DELETE /api/v1/platform/access-tokens/:id      — revoke any PAT
+ *   POST   /api/v1/platform/shell-audit/prune      — delete old WorkflowShellAudit rows
  */
 
 const TokenIdParam = z.object({ id: z.string().uuid() });

@@ -129,7 +129,7 @@ Workflow interpreter
              │
              │   human acts in inbox UI or via API
              ▼
-Gateway POST /api/v1/inbox/:id/respond
+Gateway POST /api/v1/human-steps/:id/respond
   ├─ validate action against HITL_VALID_ACTIONS[kind]
   ├─ UPDATE WorkflowHumanStep SET status=RESOLVED (atomic, race-safe)
   └─ temporal.signalWorkflow(workflowId, signalName, [{ action, value, resolvedBy }])
@@ -247,7 +247,7 @@ When a workflow exits abnormally (cancelled by the user or failed), all `PENDING
 
 All endpoints require at least the `ENGINEER` role. Visibility follows the same team-membership rules as the inbox UI.
 
-### `GET /api/v1/inbox`
+### `GET /api/v1/human-steps`
 
 Returns up to 100 `PENDING` steps visible to the authenticated user, ordered by `requestedAt` descending.
 
@@ -281,13 +281,13 @@ Response:
 }
 ```
 
-### `GET /api/v1/inbox/:id`
+### `GET /api/v1/human-steps/:id`
 
 Returns a single step by ID (same shape as one element of the list above).
 
 Returns `404` if the step does not exist or is not visible to the caller.
 
-### `POST /api/v1/inbox/:id/respond`
+### `POST /api/v1/human-steps/:id/respond`
 
 Submit a response to a pending step.
 

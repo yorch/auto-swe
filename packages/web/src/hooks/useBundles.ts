@@ -14,7 +14,7 @@ export interface InstalledBundleRow {
   updatedAt: string;
 }
 
-const BASE = '/api/v1/admin/bundles';
+const BASE = '/api/v1/platform/bundles';
 const KEY = ['admin-bundles'];
 
 export function useInstalledBundles() {

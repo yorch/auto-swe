@@ -53,7 +53,7 @@ async function cmdList(env: CliEnv): Promise<number> {
   const { data } = await apiRequest<{ data: EvalDatasetSummary[] }>(
     env,
     'GET',
-    '/api/v1/admin/evals'
+    '/api/v1/platform/evals'
   );
   if (data.length === 0) {
     process.stdout.write('No eval datasets.\n');
@@ -74,7 +74,7 @@ async function cmdShow(rest: string[], env: CliEnv): Promise<number> {
   const { data } = await apiRequest<{ data: EvalDatasetDetail }>(
     env,
     'GET',
-    `/api/v1/admin/evals/${id}`
+    `/api/v1/platform/evals/${id}`
   );
   process.stdout.write(`${data.name} (${data.slug}) — ${data.cases.length} cases\n`);
   for (const c of data.cases) {
@@ -95,7 +95,7 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
   const { data: datasets } = await apiRequest<{ data: EvalDatasetSummary[] }>(
     env,
     'GET',
-    '/api/v1/admin/evals'
+    '/api/v1/platform/evals'
   );
   const ds = datasets.find((d) => d.slug === slug);
   if (!ds) {
@@ -105,7 +105,7 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
   const { data: started } = await apiRequest<{ data: EvalRunDto }>(
     env,
     'POST',
-    '/api/v1/admin/evals/runs',
+    '/api/v1/platform/evals/runs',
     { baselineRef: flags.against, candidateRef: flags.candidate, datasetId: ds.id }
   );
   process.stdout.write(
@@ -119,7 +119,7 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
     const { data: run } = await apiRequest<{ data: EvalRunDto }>(
       env,
       'GET',
-      `/api/v1/admin/evals/runs/${started.id}`
+      `/api/v1/platform/evals/runs/${started.id}`
     );
     if (run.status !== 'RUNNING') {
       const summary = (run.summary ?? {}) as { summary?: string };
@@ -154,7 +154,7 @@ async function cmdResults(rest: string[], env: CliEnv): Promise<number> {
   const { data, meta } = await apiRequest<{
     data: EvalResultDto[];
     meta: { total: number };
-  }>(env, 'GET', `/api/v1/admin/evals/results?${qs.toString()}`);
+  }>(env, 'GET', `/api/v1/platform/evals/results?${qs.toString()}`);
   if (data.length === 0) {
     process.stdout.write('No eval results.\n');
     return 0;

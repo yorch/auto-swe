@@ -87,7 +87,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
     };
   });
 
-  // GET /api/v1/admin/organizations/budget-alerts — platform ADMIN view of alerting orgs.
+  // GET /api/v1/platform/organizations/budget-alerts — platform ADMIN view of alerting orgs.
   app.get('/budget-alerts', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
     const orgs = await fastify.prisma.organization.findMany({
       include: {
@@ -124,7 +124,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
     };
   });
 
-  // GET /api/v1/admin/organizations/:orgId — any org member may read.
+  // GET /api/v1/platform/organizations/:orgId — any org member may read.
   app.get(
     '/:orgId',
     {
@@ -152,7 +152,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PATCH /api/v1/admin/organizations/:orgId — ORG_ADMIN can update name/slug.
+  // PATCH /api/v1/platform/organizations/:orgId — ORG_ADMIN can update name/slug.
   app.patch(
     '/:orgId',
     {

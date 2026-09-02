@@ -12,7 +12,7 @@ export { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 
 /**
  * Provider-credential service: redaction, SSRF-guarded probing, and the
- * create/update flows shared by the admin routes (`/api/v1/admin/credentials`)
+ * create/update flows shared by the admin routes (`/api/v1/platform/credentials`)
  * and the team-scoped routes (`/api/v1/teams/:id/credentials`). Functions take
  * `prisma` as an argument — no Fastify coupling — so they are unit-testable
  * and callable from any route variant.

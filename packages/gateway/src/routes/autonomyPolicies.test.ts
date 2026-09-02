@@ -44,7 +44,7 @@ async function buildApp(role: string = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
-  await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/admin' });
+  await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return app;
 }
@@ -59,7 +59,7 @@ describe('GET /admin/autonomy-policies', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/autonomy-policies',
+      url: '/api/v1/platform/autonomy-policies',
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data).toEqual([]);
@@ -72,7 +72,7 @@ describe('GET /admin/autonomy-policies', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/autonomy-policies',
+      url: '/api/v1/platform/autonomy-policies',
     });
     expect(res.statusCode).toBe(403);
     await app.close();
@@ -91,7 +91,7 @@ describe('POST /admin/autonomy-policies', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/autonomy-policies',
+      url: '/api/v1/platform/autonomy-policies',
     });
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
@@ -114,7 +114,7 @@ describe('POST /admin/autonomy-policies', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/autonomy-policies',
+      url: '/api/v1/platform/autonomy-policies',
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('INVALID_SCOPE');
@@ -134,7 +134,7 @@ describe('POST /admin/autonomy-policies', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/autonomy-policies',
+      url: '/api/v1/platform/autonomy-policies',
     });
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
@@ -157,7 +157,7 @@ describe('POST /admin/autonomy-policies', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/autonomy-policies',
+      url: '/api/v1/platform/autonomy-policies',
     });
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
@@ -176,7 +176,7 @@ describe('PATCH /admin/autonomy-policies/:id', () => {
       body: { name: 'Updated' },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/autonomy-policies/${EXISTING.id}`,
+      url: `/api/v1/platform/autonomy-policies/${EXISTING.id}`,
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.name).toBe('Updated');
@@ -191,7 +191,7 @@ describe('PATCH /admin/autonomy-policies/:id', () => {
       body: { name: 'Updated' },
       headers: AUTH,
       method: 'PATCH',
-      url: '/api/v1/admin/autonomy-policies/11111111-1111-4111-8111-111111111111',
+      url: '/api/v1/platform/autonomy-policies/11111111-1111-4111-8111-111111111111',
     });
     expect(res.statusCode).toBe(404);
     await app.close();
@@ -208,7 +208,7 @@ describe('PATCH /admin/autonomy-policies/:id', () => {
       body: { isDefault: false },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/autonomy-policies/${EXISTING.id}`,
+      url: `/api/v1/platform/autonomy-policies/${EXISTING.id}`,
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('INVALID_SCOPE');
@@ -223,7 +223,7 @@ describe('DELETE /admin/autonomy-policies/:id', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: `/api/v1/admin/autonomy-policies/${EXISTING.id}`,
+      url: `/api/v1/platform/autonomy-policies/${EXISTING.id}`,
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.deleted).toBe(true);

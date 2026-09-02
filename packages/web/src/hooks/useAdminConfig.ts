@@ -25,7 +25,7 @@ export type ConfigResponse<T> = { data: T; sources: ConfigSources<keyof T & stri
 
 /**
  * Every admin config is a singleton behind the same endpoint shape:
- * `GET /api/v1/admin/config/<slug>`, `PUT` to the same path, and — where the
+ * `GET /api/v1/platform/config/<slug>`, `PUT` to the same path, and — where the
  * integration supports it — `POST …/test` or `POST …/trigger`. Deriving the
  * path and the cache key from one slug is what keeps a resource from reading
  * one cache entry and invalidating another.
@@ -34,7 +34,7 @@ export type ConfigResponse<T> = { data: T; sources: ConfigSources<keyof T & stri
  * return `{ data, sources }` whole so each field can be badged db/env, while
  * the schedule and tuning configs unwrap to `data` alone.
  */
-const configPath = (slug: string) => `/api/v1/admin/config/${slug}`;
+const configPath = (slug: string) => `/api/v1/platform/config/${slug}`;
 
 /** `oauth/google` → `admin-config-oauth-google`; every other slug is flat. */
 const configKey = (slug: string) => [`admin-config-${slug.replaceAll('/', '-')}`];
@@ -338,7 +338,7 @@ export function useDetectJiraFields() {
       const res = await api.post<{
         fields: { id: string; name: string }[];
         storyPointsFieldId: string | null;
-      }>('/api/v1/admin/config/issue-tracker/detect-fields', {});
+      }>('/api/v1/platform/config/issue-tracker/detect-fields', {});
       return DetectJiraFieldsResponseSchema.parse(res);
     },
   });
@@ -502,7 +502,7 @@ export function useConfigAuditLog(limit = 100) {
   return useQuery({
     queryFn: () =>
       api
-        .get<{ data: ConfigAuditEntry[] }>(`/api/v1/admin/config/audit-log?limit=${limit}`)
+        .get<{ data: ConfigAuditEntry[] }>(`/api/v1/platform/config/audit-log?limit=${limit}`)
         .then((r) => r.data),
     queryKey: ['admin-config-audit-log', limit],
   });

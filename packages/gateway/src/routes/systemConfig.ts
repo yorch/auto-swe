@@ -46,22 +46,22 @@ import {
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /// Admin CRUD routes for the singleton system-config tables:
-///   GET/PUT /api/v1/admin/config/github
-///   GET/PUT /api/v1/admin/config/slack
-///   GET/PUT /api/v1/admin/config/storage
-///   GET/PUT /api/v1/admin/config/workflow-defaults
-///   GET/PUT /api/v1/admin/config/oauth/google
-///   GET/PUT /api/v1/admin/config/oauth/okta
-///   GET/PUT /api/v1/admin/config/issue-tracker
-///   GET/PUT /api/v1/admin/config/knowledge-base
+///   GET/PUT /api/v1/platform/config/github
+///   GET/PUT /api/v1/platform/config/slack
+///   GET/PUT /api/v1/platform/config/storage
+///   GET/PUT /api/v1/platform/config/workflow-defaults
+///   GET/PUT /api/v1/platform/config/oauth/google
+///   GET/PUT /api/v1/platform/config/oauth/okta
+///   GET/PUT /api/v1/platform/config/issue-tracker
+///   GET/PUT /api/v1/platform/config/knowledge-base
 ///
 /// Also:
-///   POST /api/v1/admin/config/github/test          — live connection test
-///   POST /api/v1/admin/config/slack/test           — live connection test
-///   POST /api/v1/admin/config/storage/test         — connectivity test
-///   POST /api/v1/admin/config/issue-tracker/test   — fetch a sample ticket
-///   POST /api/v1/admin/config/knowledge-base/test  — knowledge base connectivity test
-///   GET  /api/v1/admin/config/audit-log            — config change history
+///   POST /api/v1/platform/config/github/test          — live connection test
+///   POST /api/v1/platform/config/slack/test           — live connection test
+///   POST /api/v1/platform/config/storage/test         — connectivity test
+///   POST /api/v1/platform/config/issue-tracker/test   — fetch a sample ticket
+///   POST /api/v1/platform/config/knowledge-base/test  — knowledge base connectivity test
+///   GET  /api/v1/platform/config/audit-log            — config change history
 ///
 /// All routes require platform ADMIN role.
 /// Secret fields are write-only from the API: reads return `lastFour` only,

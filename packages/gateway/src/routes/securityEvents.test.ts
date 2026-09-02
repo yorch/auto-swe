@@ -20,7 +20,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
-  await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
+  await app.register(securityEventRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return { app, prisma };
 }
@@ -51,7 +51,7 @@ describe('securityEventRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/security-events',
+      url: '/api/v1/platform/security-events',
     });
     expect(res.statusCode).toBe(403);
   });
@@ -61,7 +61,7 @@ describe('securityEventRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/security-events?type=CHANNEL_SUSPICIOUS',
+      url: '/api/v1/platform/security-events?type=CHANNEL_SUSPICIOUS',
     });
     expect(res.statusCode).toBe(200);
     const where = prisma.agentTrace.findMany.mock.calls[0][0].where as {
@@ -78,7 +78,7 @@ describe('securityEventRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/security-events',
+      url: '/api/v1/platform/security-events',
     });
     expect(res.statusCode).toBe(200);
     const where = prisma.agentTrace.findMany.mock.calls[0][0].where as {
@@ -97,7 +97,7 @@ describe('securityEventRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/security-events',
+      url: '/api/v1/platform/security-events',
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();

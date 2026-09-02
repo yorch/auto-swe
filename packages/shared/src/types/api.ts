@@ -500,7 +500,7 @@ export interface StepRegistryEntry {
 
 // ── Admin ──
 
-/** Shape returned by GET /api/v1/admin/access-tokens (platform ADMIN only) */
+/** Shape returned by GET /api/v1/platform/access-tokens (platform ADMIN only) */
 export interface AdminTokenSummary {
   id: string;
   name: string;

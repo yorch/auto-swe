@@ -23,7 +23,7 @@ export interface CreateMcpConnectionBody {
   callTimeoutMs?: number;
 }
 
-const BASE = '/api/v1/admin/mcp-connections';
+const BASE = '/api/v1/platform/mcp-connections';
 const KEY = ['admin-mcp-connections'];
 
 export function useMcpConnections() {

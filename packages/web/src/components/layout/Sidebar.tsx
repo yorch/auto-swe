@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useMemo } from 'react';
-import { useInbox } from '@/hooks/useInbox';
+import { useApprovals } from '@/hooks/useApprovals';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -209,8 +209,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
   const userLevel = ROLE_HIERARCHY[user?.role ?? 'ENGINEER'] ?? 1;
-  const { data: inboxSteps } = useInbox();
-  const inboxCount = (inboxSteps ?? []).length;
+  const { data: approvalSteps } = useApprovals();
+  const inboxCount = (approvalSteps ?? []).length;
 
   const allowed = useMemo(
     () =>

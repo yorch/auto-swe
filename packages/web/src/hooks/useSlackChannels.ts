@@ -102,7 +102,7 @@ export interface UpdateSlackChannelBody {
   teamId?: string;
 }
 
-const BASE = '/api/v1/admin/slack-channels';
+const BASE = '/api/v1/platform/slack-channels';
 const KEY = ['admin-slack-channels'];
 
 export function useSlackChannels() {

@@ -65,7 +65,7 @@ help                                 Show usage
 ```
 
 `bundle` (singular) is token-free local authoring over `@auto-swe/sdk`; `bundles`
-(plural) hits `/api/v1/admin/bundles` and needs an admin token.
+(plural) hits `/api/v1/platform/bundles` and needs an admin token.
 
 ## Exit codes
 
