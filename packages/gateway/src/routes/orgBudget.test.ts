@@ -3,6 +3,7 @@ import { makeAuthedApp } from '../test/authedApp.js';
 import { orgBudgetRoutes } from './orgBudget.js';
 
 const ORG_ID = '00000000-0000-4000-8000-000000000001';
+const PREFIX = '/api/v1/admin/organizations';
 const USER_ID = '00000000-0000-4000-8000-0000000000aa';
 
 const ORG_ROW = {
@@ -37,7 +38,8 @@ function buildApp(role: string, membershipRole: string | null = 'ORG_MEMBER') {
     role,
     sub: USER_ID,
   });
-  app.register(orgBudgetRoutes);
+  // Register under the real prefix so a plugin that drops it is caught here.
+  app.register(orgBudgetRoutes, { prefix: PREFIX });
   return app;
 }
 
@@ -47,7 +49,7 @@ describe('GET /:orgId/budget', () => {
   it('returns budget + usage for org member', async () => {
     const app = buildApp('LEAD');
     await app.ready();
-    const res = await app.inject({ method: 'GET', url: `/${ORG_ID}/budget` });
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget` });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.monthlyBudgetUsdCents).toBe(10000);
@@ -59,7 +61,7 @@ describe('GET /:orgId/budget', () => {
   it('returns 403 for non-member', async () => {
     const app = buildApp('LEAD', null);
     await app.ready();
-    const res = await app.inject({ method: 'GET', url: `/${ORG_ID}/budget` });
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget` });
     expect(res.statusCode).toBe(403);
   });
 });
@@ -74,7 +76,7 @@ describe('PATCH /:orgId/budget', () => {
       body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 5000 }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
-      url: `/${ORG_ID}/budget`,
+      url: `${PREFIX}/${ORG_ID}/budget`,
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
@@ -88,7 +90,7 @@ describe('PATCH /:orgId/budget', () => {
       body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: null }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
-      url: `/${ORG_ID}/budget`,
+      url: `${PREFIX}/${ORG_ID}/budget`,
     });
     expect(res.statusCode).toBe(200);
   });
@@ -100,7 +102,7 @@ describe('PATCH /:orgId/budget', () => {
       body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 5000 }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
-      url: `/${ORG_ID}/budget`,
+      url: `${PREFIX}/${ORG_ID}/budget`,
     });
     expect(res.statusCode).toBe(200);
   });
@@ -112,7 +114,7 @@ describe('PATCH /:orgId/budget', () => {
       body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 5000 }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
-      url: `/${ORG_ID}/budget`,
+      url: `${PREFIX}/${ORG_ID}/budget`,
     });
     expect(res.statusCode).toBe(403);
   });
@@ -124,7 +126,7 @@ describe('PATCH /:orgId/budget', () => {
       body: JSON.stringify({ budgetAlertThresholdPercent: 90, monthlyBudgetUsdCents: 10000 }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
-      url: `/${ORG_ID}/budget`,
+      url: `${PREFIX}/${ORG_ID}/budget`,
     });
     expect(res.statusCode).toBe(200);
     const update = app.prisma.organization.update as ReturnType<typeof vi.fn>;

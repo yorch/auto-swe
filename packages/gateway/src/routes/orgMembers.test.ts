@@ -3,6 +3,7 @@ import { makeAuthedApp } from '../test/authedApp.js';
 import { orgMembersRoutes } from './orgMembers.js';
 
 const ORG_ID = '00000000-0000-4000-8000-000000000001';
+const PREFIX = '/api/v1/admin/organizations';
 const USER_ID = '00000000-0000-4000-8000-0000000000aa';
 const TARGET_USER = '00000000-0000-4000-8000-0000000000bb';
 
@@ -37,7 +38,8 @@ function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
     role,
     sub: USER_ID,
   });
-  app.register(orgMembersRoutes);
+  // Register under the real prefix so a plugin that drops it is caught here.
+  app.register(orgMembersRoutes, { prefix: PREFIX });
   return app;
 }
 
@@ -47,7 +49,7 @@ describe('GET /:orgId/members', () => {
   it('returns members list for org admin', async () => {
     const app = buildApp('ADMIN');
     await app.ready();
-    const res = await app.inject({ method: 'GET', url: `/${ORG_ID}/members` });
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/members` });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(Array.isArray(body)).toBe(true);
@@ -57,7 +59,7 @@ describe('GET /:orgId/members', () => {
   it('returns 403 when non-member tries to list', async () => {
     const app = buildApp('LEAD', null);
     await app.ready();
-    const res = await app.inject({ method: 'GET', url: `/${ORG_ID}/members` });
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/members` });
     expect(res.statusCode).toBe(403);
   });
 });
@@ -72,7 +74,7 @@ describe('POST /:orgId/members', () => {
       body: JSON.stringify({ role: 'ORG_MEMBER', userId: TARGET_USER }),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
-      url: `/${ORG_ID}/members`,
+      url: `${PREFIX}/${ORG_ID}/members`,
     });
     expect(res.statusCode).toBeOneOf([200, 201]);
   });
@@ -84,7 +86,7 @@ describe('POST /:orgId/members', () => {
       body: JSON.stringify({ role: 'ORG_MEMBER', userId: TARGET_USER }),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
-      url: `/${ORG_ID}/members`,
+      url: `${PREFIX}/${ORG_ID}/members`,
     });
     expect(res.statusCode).toBeOneOf([200, 201]);
   });
@@ -96,7 +98,7 @@ describe('POST /:orgId/members', () => {
       body: JSON.stringify({ role: 'ORG_MEMBER', userId: TARGET_USER }),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
-      url: `/${ORG_ID}/members`,
+      url: `${PREFIX}/${ORG_ID}/members`,
     });
     expect(res.statusCode).toBe(403);
   });
@@ -112,7 +114,7 @@ describe('PATCH /:orgId/members/:userId', () => {
       body: JSON.stringify({ role: 'ORG_ADMIN' }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
-      url: `/${ORG_ID}/members/${TARGET_USER}`,
+      url: `${PREFIX}/${ORG_ID}/members/${TARGET_USER}`,
     });
     expect(res.statusCode).toBe(403);
   });
@@ -126,7 +128,7 @@ describe('DELETE /:orgId/members/:userId', () => {
     await app.ready();
     const res = await app.inject({
       method: 'DELETE',
-      url: `/${ORG_ID}/members/${TARGET_USER}`,
+      url: `${PREFIX}/${ORG_ID}/members/${TARGET_USER}`,
     });
     expect(res.statusCode).toBe(204);
   });
@@ -136,7 +138,7 @@ describe('DELETE /:orgId/members/:userId', () => {
     await app.ready();
     const res = await app.inject({
       method: 'DELETE',
-      url: `/${ORG_ID}/members/${TARGET_USER}`,
+      url: `${PREFIX}/${ORG_ID}/members/${TARGET_USER}`,
     });
     expect(res.statusCode).toBe(403);
   });

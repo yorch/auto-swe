@@ -3,7 +3,6 @@
  * Mounted at /api/v1/admin/organizations.
  */
 import type { FastifyPluginAsync } from 'fastify';
-import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { type AuditEntityType, writeAuditLog } from '../lib/auditLog.js';
@@ -175,7 +174,8 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   );
 };
 
-export const orgBudgetRoutes = fp(orgBudgetPlugin, {
-  fastify: '5.x',
-  name: 'org-budget-routes',
-});
+// Deliberately NOT wrapped in fastify-plugin: `fp()` sets skip-override, and
+// Fastify then ignores the `prefix` passed at registration, mounting these
+// routes at the server root instead of under /api/v1/admin/organizations.
+// The plugin decorates nothing, so encapsulation is exactly what it needs.
+export const orgBudgetRoutes: FastifyPluginAsync = orgBudgetPlugin;
