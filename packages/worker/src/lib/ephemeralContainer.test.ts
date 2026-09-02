@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildDockerArgs, buildSidecarDockerArgs } from './ephemeralContainer.js';
+import {
+  buildDockerArgs,
+  buildSidecarDockerArgs,
+  isAllowedHostMountPath,
+} from './ephemeralContainer.js';
 
 const BASE = {
   command: 'echo hello',
@@ -71,6 +75,33 @@ describe('buildDockerArgs', () => {
       /Invalid workspace mount source/
     );
     expect(() => buildDockerArgs({ ...BASE, workspaceMount: 'vol with space' }, 'name')).toThrow();
+  });
+
+  it('rejects host paths that would hand the command the docker socket or system trees', () => {
+    for (const mount of [
+      '/',
+      '/var/run/docker.sock',
+      '/run/docker.sock',
+      '/var/lib/docker',
+      '/etc',
+      '/etc/passwd',
+      '/proc/1',
+      '/data/workspaces/../../etc',
+      '/data/./workspaces',
+    ]) {
+      // `/` alone never passes the shape regex; every other one passes it and
+      // is stopped by the host-path guard — either way, no argv is produced.
+      expect(() => buildDockerArgs({ ...BASE, workspaceMount: mount }, 'name')).toThrow(
+        /workspace mount source/
+      );
+    }
+    // The sidecar builder shares the guard.
+    expect(() =>
+      buildSidecarDockerArgs(
+        { image: 'node:24-alpine', port: 8080, workspaceMount: '/var/run/docker.sock' },
+        'name'
+      )
+    ).toThrow(/not allowed as workspace mount source/);
   });
 
   it('rejects malformed memory literals', () => {
@@ -215,4 +246,15 @@ describe('buildSidecarDockerArgs', () => {
     expect(args).toContain('--memory=2g');
     expect(args).toContain('--cpus=4');
   });
+});
+
+describe('isAllowedHostMountPath', () => {
+  it.each(['/data/workspaces/w1', '/home/ci/work', '/tmp/ws-1', '/etcetera/x', '/usr-data'])(
+    'accepts %s',
+    (p) => expect(isAllowedHostMountPath(p)).toBe(true)
+  );
+  it.each(['/', '/etc', '/usr/bin', '/var/run', '/var/lib/docker/volumes', '/a/../b', 'vol'])(
+    'rejects %s',
+    (p) => expect(isAllowedHostMountPath(p)).toBe(false)
+  );
 });

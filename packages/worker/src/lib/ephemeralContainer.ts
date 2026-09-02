@@ -18,6 +18,7 @@
 
 import crypto from 'node:crypto';
 import { promises as dnsPromises } from 'node:dns';
+import path from 'node:path';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { type CapturedResult, execShellAsync, spawnCaptureAsync } from './execUtils.js';
@@ -68,8 +69,48 @@ const MEMORY_RE = /^\d+[bkmg]?$/i;
 // Docker volume names: [a-zA-Z0-9][a-zA-Z0-9_.-]+. Host absolute paths start
 // with `/`. Either is fine here; the regex rejects anything that could be
 // interpreted as a Docker flag (`-`, `--no-...`) when concatenated into the
-// `-v src:/workspace:rw` argv slot.
+// `-v src:/workspace:rw` argv slot. A host path is additionally checked by
+// `isAllowedHostMountPath` — the regex alone accepted any absolute path.
 const MOUNT_SOURCE_RE = /^(\/[^:]+|[a-zA-Z0-9][a-zA-Z0-9_.-]+)$/;
+
+// Host directories that must never be bind-mounted read-write into a
+// container running an author-supplied command: the Docker socket and the
+// daemon's state (a container escape), the root, and the system trees.
+const BLOCKED_HOST_MOUNT_ROOTS = [
+  '/bin',
+  '/boot',
+  '/dev',
+  '/etc',
+  '/lib',
+  '/lib64',
+  '/proc',
+  '/root',
+  '/run',
+  '/sbin',
+  '/sys',
+  '/usr',
+  '/var/lib/docker',
+  '/var/run',
+];
+
+/**
+ * Whether an absolute host path may be used as the workspace mount source.
+ * Every in-repo caller passes a Docker named volume; this is the guard for the
+ * host-path form the interface also accepts. The path must already be in
+ * canonical form (no `.`/`..` segments — a normalised `/data/../etc` is `/etc`),
+ * must not be `/`, and must not sit under a system root. Exported for tests.
+ */
+export function isAllowedHostMountPath(hostPath: string): boolean {
+  if (!hostPath.startsWith('/') || hostPath === '/') {
+    return false;
+  }
+  if (path.posix.normalize(hostPath) !== hostPath) {
+    return false;
+  }
+  return !BLOCKED_HOST_MOUNT_ROOTS.some(
+    (root) => hostPath === root || hostPath.startsWith(`${root}/`)
+  );
+}
 
 /**
  * Validate the shared inputs and emit the lockdown flag block common to every
@@ -87,6 +128,9 @@ function lockdownFlags(input: Omit<EphemeralRunInput, 'command'>): {
   }
   if (!MOUNT_SOURCE_RE.test(input.workspaceMount)) {
     throw new Error(`Invalid workspace mount source: ${input.workspaceMount}`);
+  }
+  if (input.workspaceMount.startsWith('/') && !isAllowedHostMountPath(input.workspaceMount)) {
+    throw new Error(`Host path not allowed as workspace mount source: ${input.workspaceMount}`);
   }
   const memory = input.memory ?? '512m';
   if (!MEMORY_RE.test(memory)) {
