@@ -92,7 +92,7 @@ export class ApiClient {
           if (!retryResponse.ok) {
             throw new Error(await this.extractErrorMessage(retryResponse));
           }
-          return retryResponse.json();
+          return this.parseBody<T>(retryResponse);
         }
       }
       // JWT refresh failed or request used BetterAuth session only — session is gone.
@@ -103,7 +103,20 @@ export class ApiClient {
       throw new Error(await this.extractErrorMessage(response));
     }
 
-    return response.json();
+    return this.parseBody<T>(response);
+  }
+
+  /**
+   * Several gateway DELETE routes answer `204 No Content`. Calling `.json()` on
+   * an empty body throws, which would reject the mutation *after* the server
+   * already applied it — so the caller never runs its invalidation. Treat an
+   * empty response as `undefined` instead.
+   */
+  private async parseBody<T>(res: Response): Promise<T> {
+    if (res.status === 204 || res.headers.get('content-length') === '0') {
+      return undefined as T;
+    }
+    return res.json() as Promise<T>;
   }
 
   private expireSession(): never {
