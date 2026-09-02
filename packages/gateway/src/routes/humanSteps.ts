@@ -47,6 +47,10 @@ const STATUS_BY_CODE: Record<HitlResolveErrorCode, 200 | 400 | 404 | 409 | 502> 
   UNKNOWN_KIND: 400,
 };
 
+const MAX_INBOX_STREAMS_PER_USER = 5;
+/** user id → number of currently open `/inbox/stream` connections. */
+const openInboxStreams = new Map<string, number>();
+
 export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -110,6 +114,28 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
 
+      // Each stream polls the DB every 3 s for as long as it stays open and the
+      // global rate limiter only sees the initial request, so bound how many a
+      // single user may hold before the response is hijacked.
+      const openCount = openInboxStreams.get(user.sub) ?? 0;
+      if (openCount >= MAX_INBOX_STREAMS_PER_USER) {
+        return reply.status(429).send({
+          error: {
+            code: 'TOO_MANY_STREAMS',
+            message: `At most ${MAX_INBOX_STREAMS_PER_USER} concurrent inbox streams per user`,
+          },
+        });
+      }
+      openInboxStreams.set(user.sub, openCount + 1);
+      const releaseStream = () => {
+        const remaining = (openInboxStreams.get(user.sub) ?? 1) - 1;
+        if (remaining <= 0) {
+          openInboxStreams.delete(user.sub);
+        } else {
+          openInboxStreams.set(user.sub, remaining);
+        }
+      };
+
       reply.hijack();
 
       const res = reply.raw;
@@ -135,7 +161,17 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         return new Set(rows.map((r) => r.id));
       };
 
-      let knownIds = await fetchPendingIds();
+      let knownIds: Set<string>;
+      try {
+        knownIds = await fetchPendingIds();
+      } catch (err) {
+        // After hijack() Fastify cannot answer for us; end the stream so the
+        // browser EventSource reconnects instead of hanging on a dead socket.
+        request.log.warn({ err }, 'inbox stream: initial fetch failed');
+        releaseStream();
+        res.end();
+        return;
+      }
       let pollTimeout: ReturnType<typeof setTimeout> | null = null;
       let closed = false;
 
@@ -148,8 +184,10 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             write(`event: change\ndata: ${JSON.stringify({ added, removed })}\n\n`);
             knownIds = currentIds;
           }
-        } catch {
-          // swallow errors — client will reconnect on dropped connection
+        } catch (err) {
+          // Keep the stream open (the next poll may succeed) but say so — a
+          // persistently failing DB otherwise looks like a silently frozen inbox.
+          request.log.warn({ err }, 'inbox stream: poll failed');
         }
         if (!closed) {
           pollTimeout = setTimeout(poll, 3000);
@@ -163,7 +201,11 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
 
       return new Promise<void>((resolve) => {
         const cleanup = () => {
+          if (closed) {
+            return;
+          }
           closed = true;
+          releaseStream();
           if (pollTimeout) {
             clearTimeout(pollTimeout);
           }
