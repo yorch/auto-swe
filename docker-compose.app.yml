@@ -108,5 +108,8 @@ services:
       # injected into window.__APP_CONFIG__ — no rebuild required to change URLs.
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
       - NEXT_PUBLIC_TEMPORAL_UI_URL=${NEXT_PUBLIC_TEMPORAL_UI_URL:-}
+      # Server-side fetches (the /admin layout's role check) reach the gateway
+      # over the compose network — the browser URL above does not resolve here.
+      - API_INTERNAL_URL=${API_INTERNAL_URL:-http://gateway:8080}
       - PORT=3000
       - HOSTNAME=0.0.0.0

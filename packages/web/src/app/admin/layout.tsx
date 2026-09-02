@@ -1,7 +1,8 @@
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { API_BASE, COOKIE_ACCESS_TOKEN, PATHNAME_HEADER } from '@/lib/config';
+import { COOKIE_ACCESS_TOKEN, PATHNAME_HEADER } from '@/lib/config';
+import { apiInternalUrl } from '@/lib/env';
 
 interface AuthMeResponse {
   data?: { isActive?: boolean; role?: string };
@@ -29,17 +30,21 @@ export default async function AdminLayout({ children }: { children: ReactNode })
     redirect('/login');
   }
 
-  let body: AuthMeResponse;
+  // redirect() works by throwing, so it must not be called inside the try —
+  // the catch would swallow it. Resolve the body first, then decide.
+  let body: AuthMeResponse | null = null;
   try {
-    const res = await fetch(`${API_BASE}/api/v1/auth/me`, {
+    const res = await fetch(`${apiInternalUrl()}/api/v1/auth/me`, {
       cache: 'no-store',
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) {
-      redirect('/login');
+    if (res.ok) {
+      body = (await res.json()) as AuthMeResponse;
     }
-    body = (await res.json()) as AuthMeResponse;
   } catch {
+    body = null;
+  }
+  if (!body) {
     redirect('/login');
   }
 

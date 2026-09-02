@@ -86,6 +86,7 @@ JWT_SECRET=<openssl rand -base64 48>
 # Web app — read at request time by the root Server Component and injected
 # into window.__APP_CONFIG__, so a change is a container restart, not a rebuild
 NEXT_PUBLIC_API_URL=https://api.example.com
+API_INTERNAL_URL=http://gateway:8080                      # server-only: gateway as reached from the web container; defaults to NEXT_PUBLIC_API_URL
 NEXT_PUBLIC_TEMPORAL_UI_URL=https://temporal.example.com   # optional; omit to hide the link
 
 # Browser-facing gateway
