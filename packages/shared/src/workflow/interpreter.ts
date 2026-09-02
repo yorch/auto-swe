@@ -370,24 +370,53 @@ async function walk(
     try {
       switch (node.type) {
         case 'step': {
-          currentNodeId = await runStep(recordingId, node, ctx, dispatcher, cancellationSink);
+          currentNodeId = await runStep(
+            recordingId,
+            nodeId,
+            node,
+            ctx,
+            dispatcher,
+            cancellationSink
+          );
           break;
         }
         case 'agent': {
-          currentNodeId = await runAgentNode(recordingId, node, ctx, dispatcher, cancellationSink);
+          currentNodeId = await runAgentNode(
+            recordingId,
+            nodeId,
+            node,
+            ctx,
+            dispatcher,
+            cancellationSink
+          );
           break;
         }
         case 'mcp': {
-          currentNodeId = await runMcpNode(recordingId, node, ctx, dispatcher, cancellationSink);
+          currentNodeId = await runMcpNode(
+            recordingId,
+            nodeId,
+            node,
+            ctx,
+            dispatcher,
+            cancellationSink
+          );
           break;
         }
         case 'eval': {
-          currentNodeId = await runEvalNode(recordingId, node, ctx, dispatcher, cancellationSink);
+          currentNodeId = await runEvalNode(
+            recordingId,
+            nodeId,
+            node,
+            ctx,
+            dispatcher,
+            cancellationSink
+          );
           break;
         }
         case 'containerStep': {
           currentNodeId = await runContainerStep(
             recordingId,
+            nodeId,
             node,
             ctx,
             dispatcher,
@@ -404,7 +433,7 @@ async function walk(
           break;
         }
         case 'signal': {
-          currentNodeId = await runSignal(recordingId, node, ctx, dispatcher);
+          currentNodeId = await runSignal(recordingId, nodeId, node, ctx, dispatcher);
           break;
         }
         case 'terminate': {
@@ -426,7 +455,14 @@ async function walk(
           break;
         }
         case 'shell': {
-          currentNodeId = await runShell(recordingId, node, ctx, dispatcher, cancellationSink);
+          currentNodeId = await runShell(
+            recordingId,
+            nodeId,
+            node,
+            ctx,
+            dispatcher,
+            cancellationSink
+          );
           break;
         }
         case 'humanApproval':
@@ -461,6 +497,7 @@ async function walk(
 
 async function runStep(
   nodeId: string,
+  specNodeId: string,
   node: StepNode,
   ctx: Context,
   dispatcher: Dispatcher,
@@ -485,11 +522,13 @@ async function runStep(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    specNodeId,
   });
 }
 
 async function runAgentNode(
   nodeId: string,
+  specNodeId: string,
   node: import('./spec.js').AgentNode,
   ctx: Context,
   dispatcher: Dispatcher,
@@ -535,11 +574,13 @@ async function runAgentNode(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    specNodeId,
   });
 }
 
 async function runEvalNode(
   nodeId: string,
+  specNodeId: string,
   node: import('./spec.js').EvalNode,
   ctx: Context,
   dispatcher: Dispatcher,
@@ -579,11 +620,13 @@ async function runEvalNode(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    specNodeId,
   });
 }
 
 async function runMcpNode(
   nodeId: string,
+  specNodeId: string,
   node: import('./spec.js').McpNode,
   ctx: Context,
   dispatcher: Dispatcher,
@@ -615,11 +658,13 @@ async function runMcpNode(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    specNodeId,
   });
 }
 
 async function runContainerStep(
   nodeId: string,
+  specNodeId: string,
   node: import('./spec.js').ContainerStepNode,
   ctx: Context,
   dispatcher: Dispatcher,
@@ -668,11 +713,13 @@ async function runContainerStep(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    specNodeId,
   });
 }
 
 async function runShell(
   nodeId: string,
+  specNodeId: string,
   node: ShellNode,
   ctx: Context,
   dispatcher: Dispatcher,
@@ -701,6 +748,7 @@ async function runShell(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    specNodeId,
   });
 }
 
@@ -724,7 +772,15 @@ function resolveInputs(
  * react to thrown errors the same way; only the activity-invocation differs.
  */
 async function runRetryable(args: {
+  /** Recording id — prefixed inside a fan-out branch so step rows disambiguate. */
   nodeId: string;
+  /**
+   * The node's key in `spec.nodes`. Context writes (`nodes.<id>.output`) use
+   * this, never the recording id: a binding or expression in the same branch
+   * reads `nodes.<id>.…` by the spec key, and the child context is sealed per
+   * branch so the unprefixed key cannot collide with a sibling.
+   */
+  specNodeId: string;
   inputs: Record<string, unknown>;
   ctx: Context;
   invoke: () => Promise<unknown>;
@@ -733,7 +789,7 @@ async function runRetryable(args: {
   onError: StepNode['onError'];
   dispatcher: Dispatcher;
 }): Promise<string | undefined> {
-  const { nodeId, inputs, ctx, invoke, next, onFail, onError, dispatcher } = args;
+  const { nodeId, specNodeId, inputs, ctx, invoke, next, onFail, onError, dispatcher } = args;
 
   // A quality-gate / shell-step may return { passed: false, ... } to signal a
   // logical failure without throwing. Treat that the same as a thrown error
@@ -772,7 +828,7 @@ async function runRetryable(args: {
         break;
       }
 
-      setPath(ctx, `nodes.${nodeId}.output`, output);
+      setPath(ctx, `nodes.${specNodeId}.output`, output);
       await safeRecord(dispatcher, {
         attempt,
         inputs,
@@ -804,8 +860,8 @@ async function runRetryable(args: {
           nodeId,
           status: 'SKIPPED',
         });
-        setPath(ctx, `nodes.${nodeId}.output`, null);
-        setPath(ctx, `nodes.${nodeId}.error`, String(err));
+        setPath(ctx, `nodes.${specNodeId}.output`, null);
+        setPath(ctx, `nodes.${specNodeId}.error`, String(err));
         return next;
       }
       // Record the failed attempt; retry if budget remains.
@@ -827,15 +883,15 @@ async function runRetryable(args: {
 
   if (!terminalBlock) {
     // warn: surface the failure in context but continue.
-    setPath(ctx, `nodes.${nodeId}.output`, lastOutput ?? null);
+    setPath(ctx, `nodes.${specNodeId}.output`, lastOutput ?? null);
     if (lastError) {
-      setPath(ctx, `nodes.${nodeId}.error`, String(lastError));
+      setPath(ctx, `nodes.${specNodeId}.error`, String(lastError));
     }
     return next;
   }
 
   if (lastFailedAsGate) {
-    setPath(ctx, `nodes.${nodeId}.output`, lastOutput);
+    setPath(ctx, `nodes.${specNodeId}.output`, lastOutput);
     throw new Error(gateFailureMessage(lastOutput));
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
@@ -864,6 +920,7 @@ function runCond(node: CondNode, ctx: Context): string {
 
 async function runSignal(
   nodeId: string,
+  specNodeId: string,
   node: SignalNode,
   ctx: Context,
   dispatcher: Dispatcher
@@ -876,7 +933,7 @@ async function runSignal(
   if (node.storeAs) {
     setPath(ctx, node.storeAs, payload);
   }
-  setPath(ctx, `nodes.${nodeId}.output`, payload);
+  setPath(ctx, `nodes.${specNodeId}.output`, payload);
   await safeRecord(dispatcher, { nodeId, outputs: payload, status: 'PASSED' });
   return node.onReceive;
 }

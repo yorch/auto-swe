@@ -498,6 +498,79 @@ describe('runSpec', () => {
     expect(peak).toBe(2);
   });
 
+  it('fanOut: a later subgraph node binds nodes.<subgraphStep>.output by its spec key', async () => {
+    // Inside a branch the step row is RECORDED under the prefixed id
+    // (`fan[0]/work`) so workflow_steps disambiguates, but the CONTEXT write
+    // must land under the spec key — that is what a sibling `set`/`cond`/
+    // `terminate` binding in the same branch reads. Storing it under the
+    // prefixed id makes every `nodes.<id>.output` binding inside a subgraph
+    // silently resolve to undefined.
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-branch-binding',
+      nodes: {
+        branchDone: {
+          result: { fromStep: { from: 'nodes.work.output.value' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        branchFailed: { status: 'FAILED', type: 'terminate' },
+        checkWork: {
+          expr: 'nodes.work.output.value > 0',
+          onFalse: 'branchFailed',
+          onTrue: 'stash',
+          type: 'cond',
+        },
+        done: {
+          result: { results: { from: 'nodes.fan.output.results' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          exports: ['context.stashed'],
+          join: 'done',
+          over: { literal: [1, 2] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        stash: {
+          next: 'branchDone',
+          type: 'set',
+          values: { 'context.stashed': { from: 'nodes.work.output.value' } },
+        },
+        work: {
+          inputs: { n: { from: 'subtask' } },
+          next: 'checkWork',
+          step: 'compute',
+          type: 'step',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { compute: (i: Record<string, unknown>) => ({ value: (i.n as number) * 10 }) },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    const results = result.result.results as Array<{
+      status: string;
+      result: { fromStep: unknown };
+      exports?: Record<string, unknown>;
+    }>;
+    expect(results.map((r) => r.status)).toEqual(['SUCCESS', 'SUCCESS']);
+    expect(results.map((r) => r.result.fromStep)).toEqual([10, 20]);
+    expect(results.map((r) => r.exports)).toEqual([
+      { 'context.stashed': 10 },
+      { 'context.stashed': 20 },
+    ]);
+    // Recording still carries the branch prefix so step rows disambiguate.
+    expect(records.filter((r) => r.status === 'PASSED').map((r) => r.nodeId)).toEqual(
+      expect.arrayContaining(['fan[0]/work', 'fan[1]/work'])
+    );
+    expect(records.some((r) => r.nodeId === 'work')).toBe(false);
+  });
+
   it('fanOut: sealed child context — branch writes do not leak to parent', async () => {
     const spec = parseWorkflowSpec({
       entry: 'fan',

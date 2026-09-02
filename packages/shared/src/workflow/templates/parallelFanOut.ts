@@ -58,7 +58,7 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
       type: 'fanOut',
     },
     implementBranch: {
-      next: 'branchDone',
+      next: 'recordBranchResult',
       step: 'executeImplementation',
       type: 'step',
     },
@@ -67,6 +67,14 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
       next: 'savePrInfo',
       step: 'createOrUpdatePullRequest',
       type: 'step',
+    },
+    // Stash the branch's implementer output where the fanOut `exports` list
+    // reads it at join time — a branch that never writes the exported path
+    // joins with `exports: { 'context.currentCodeResult': undefined }`.
+    recordBranchResult: {
+      next: 'branchDone',
+      type: 'set',
+      values: { 'context.currentCodeResult': { from: 'nodes.implementBranch.output' } },
     },
     savePrInfo: {
       next: 'done',
