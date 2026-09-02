@@ -1382,7 +1382,7 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
     });
 
     expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toContain('/admin/integrations?slack_installed=T-NEW');
+    expect(res.headers.location).toContain('/admin/integrations?tab=slack&slack_installed=T-NEW');
 
     // New workspace → create (not update), carrying encrypted token columns +
     // install metadata, and never the plaintext token.

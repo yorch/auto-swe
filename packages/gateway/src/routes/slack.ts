@@ -17,6 +17,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastif
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
+import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import {
   fetchSlackChannelIsPrivate,
   openSlackView,
@@ -112,6 +113,23 @@ interface SlackInteractivePayload {
     };
     private_metadata?: string;
   };
+}
+
+/**
+ * A Slack button carries the target workflow id in its `value`, which any
+ * client can forge (or read from a forwarded message). Gate every signal on
+ * the same run-visibility predicate the dashboard uses.
+ */
+async function canSeeRun(
+  fastify: FastifyInstance,
+  user: { id: string; role: string },
+  workflowId: string
+): Promise<boolean> {
+  const run = await fastify.prisma.workflowRun.findFirst({
+    select: { id: true },
+    where: { workflowId, ...buildWorkflowRunVisibilityFilter({ role: user.role, sub: user.id }) },
+  });
+  return run !== null;
 }
 
 export const slackRoutes: FastifyPluginAsync = async (fastify) => {
@@ -367,7 +385,9 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     // Bounce back to the admin integrations page with a success flag.
-    return reply.redirect(`${resolveWebUrl()}/admin/integrations?slack_installed=${slackTeamId}`);
+    return reply.redirect(
+      `${resolveWebUrl()}/admin/integrations?tab=slack&slack_installed=${slackTeamId}`
+    );
   });
 
   // POST /api/v1/webhooks/slack — Handle Slack interactive webhooks
@@ -523,6 +543,11 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
             error: { code: 'INVALID_PAYLOAD', message: 'Missing workflow id in action value' },
           });
         }
+        if (!(await canSeeRun(fastify, user, workflowId))) {
+          return reply
+            .status(404)
+            .send({ error: { code: 'RUN_NOT_FOUND', message: 'Run not found' } });
+        }
         await fastify.temporal.signalWorkflow(workflowId, 'humanMergeSignal', [true]);
         return { data: { action: 'approved', workflowId } };
       }
@@ -533,6 +558,11 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
           return reply.status(400).send({
             error: { code: 'INVALID_PAYLOAD', message: 'Missing workflow id in action value' },
           });
+        }
+        if (!(await canSeeRun(fastify, user, workflowId))) {
+          return reply
+            .status(404)
+            .send({ error: { code: 'RUN_NOT_FOUND', message: 'Run not found' } });
         }
         // Signal CI failure to trigger the CI fix loop. The workflow will
         // re-provision a workspace, run the CI fix agent, and push a new commit.
@@ -1649,7 +1679,18 @@ async function handleRunModalSubmission(
   // Resolve workflow template — explicit choice wins, else default resolver.
   let resolvedTemplate: { templateId: string; version: number } | null = null;
   if (templateId) {
-    const tpl = await fastify.prisma.workflowTemplate.findUnique({ where: { id: templateId } });
+    // Same visibility rule as the picker that offered the option (and as
+    // POST /workflow-templates/:id/runs): a tampered client cannot launch a
+    // template the user cannot see or one that is not active.
+    const tpl = await fastify.prisma.workflowTemplate.findFirst({
+      where: {
+        id: templateId,
+        status: 'ACTIVE',
+        ...(user.role === 'ADMIN'
+          ? {}
+          : { OR: [{ teamId: null }, { team: { memberships: { some: { userId: user.id } } } }] }),
+      },
+    });
     if (!tpl?.activeVersion) {
       return {
         errors: { template_block: 'Selected workflow has no active version' },

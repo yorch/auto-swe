@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useState } from 'react';
 import { AuditLogTab } from '@/components/integrations/AuditLogTab';
 import { FigmaTab } from '@/components/integrations/FigmaTab';
 import { GitHubTab } from '@/components/integrations/GitHubTab';
@@ -33,8 +34,27 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'audit-log', label: 'Audit log' },
 ];
 
+function isTab(value: string | null): value is Tab {
+  return TABS.some((t) => t.id === value);
+}
+
 export default function AdminIntegrationsPage() {
-  const [active, setActive] = useState<Tab>('github');
+  // useSearchParams() needs a Suspense boundary above it for the page to stay
+  // statically prerenderable.
+  return (
+    <Suspense fallback={null}>
+      <AdminIntegrationsPageInner />
+    </Suspense>
+  );
+}
+
+function AdminIntegrationsPageInner() {
+  const searchParams = useSearchParams();
+  // `?tab=` picks the initial tab (the Slack install callback lands on
+  // `?tab=slack&slack_installed=<teamId>`); switching afterwards is local state.
+  const requestedTab = searchParams.get('tab');
+  const [active, setActive] = useState<Tab>(isTab(requestedTab) ? requestedTab : 'github');
+  const installedSlackTeamId = searchParams.get('slack_installed');
 
   return (
     <div className="space-y-6">
@@ -53,7 +73,7 @@ export default function AdminIntegrationsPage() {
       />
       <TabBar active={active} onChange={setActive} tabs={TABS} />
       {active === 'github' && <GitHubTab />}
-      {active === 'slack' && <SlackTab />}
+      {active === 'slack' && <SlackTab installedTeamId={installedSlackTeamId} />}
       {active === 'storage' && <StorageTab />}
       {active === 'tracker' && <IssueTrackerTab />}
       {active === 'knowledge-base' && <KnowledgeBaseTab />}

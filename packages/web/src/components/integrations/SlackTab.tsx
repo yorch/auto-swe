@@ -18,7 +18,12 @@ import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
 import { UrlRow } from './UrlRow';
 
-export function SlackTab() {
+interface SlackTabProps {
+  /** Workspace id from the install callback's `?slack_installed=` redirect, if any. */
+  installedTeamId: string | null;
+}
+
+export function SlackTab({ installedTeamId }: SlackTabProps) {
   const { data: resp, isLoading } = useSlackConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
@@ -142,7 +147,7 @@ export function SlackTab() {
         )}
       </Card>
 
-      <WorkspaceInstallCard />
+      <WorkspaceInstallCard installedTeamId={installedTeamId} />
 
       <Card>
         <CardHeader>
@@ -178,13 +183,8 @@ export function SlackTab() {
  * still on the singleton fallback. Standalone card (not part of the credentials
  * form) so navigating to the install endpoint doesn't trip the form submit.
  */
-function WorkspaceInstallCard() {
+function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
   const { data: workspaces, isLoading } = useSlackWorkspaces();
-  // Success flag set by the install callback redirect (`?slack_installed=<teamId>`).
-  const installedTeamId =
-    typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search).get('slack_installed')
-      : null;
 
   return (
     <Card>
