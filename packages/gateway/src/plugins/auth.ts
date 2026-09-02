@@ -24,8 +24,8 @@ declare module 'fastify' {
       hashToken: (token: string) => string;
       /** Sign a single-purpose, short-lived token for OAuth `state`. Audience-
        *  scoped so it can never be replayed as an API bearer (and vice versa). */
-      signOAuthState: (sub: string) => string;
-      verifyOAuthState: (token: string) => { sub: string };
+      signOAuthState: (sub: string, purpose: OAuthStatePurpose) => string;
+      verifyOAuthState: (token: string, purpose: OAuthStatePurpose) => { sub: string };
     };
   }
   interface FastifyRequest {
@@ -81,6 +81,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // as an API bearer. Both are enforced at verify time.
 const ACCESS_TOKEN_AUDIENCE = 'auto-swe:api';
 const OAUTH_STATE_AUDIENCE = 'auto-swe:oauth-state';
+/**
+ * Each OAuth flow mints its own state purpose so a token minted by the
+ * ENGINEER-level user-link flow can never complete the ADMIN-only bot
+ * install (or vice versa). Verified as an exact match at the callback.
+ */
+export type OAuthStatePurpose = 'slack-link' | 'slack-install';
 const OAUTH_STATE_TTL = '10m';
 
 const JWT_DEV_FALLBACK = 'dev-secret-change-me';
@@ -147,8 +153,8 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
-    signOAuthState(sub: string): string {
-      return jwt.sign({ sub }, privateKey, {
+    signOAuthState(sub: string, purpose: OAuthStatePurpose): string {
+      return jwt.sign({ purpose, sub }, privateKey, {
         algorithm,
         audience: OAUTH_STATE_AUDIENCE,
         expiresIn: OAUTH_STATE_TTL,
@@ -162,11 +168,14 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       }) as JwtPayload;
     },
 
-    verifyOAuthState(token: string): { sub: string } {
+    verifyOAuthState(token: string, purpose: OAuthStatePurpose): { sub: string } {
       const decoded = jwt.verify(token, publicKey, {
         algorithms: [algorithm],
         audience: OAUTH_STATE_AUDIENCE,
-      }) as { sub: string };
+      }) as { sub: string; purpose?: string };
+      if (decoded.purpose !== purpose) {
+        throw new Error('OAuth state was minted for a different flow');
+      }
       return { sub: decoded.sub };
     },
   });

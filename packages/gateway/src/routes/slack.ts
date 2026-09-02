@@ -163,7 +163,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       // Single-purpose, short-lived state token (not an API access token) so a
       // leak via Slack logs / Referer / browser history can't be replayed as a
       // bearer credential.
-      const state = fastify.auth.signOAuthState(user.sub);
+      const state = fastify.auth.signOAuthState(user.sub, 'slack-link');
 
       const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/callback`;
       // We link by Slack user id only; identity.basic is sufficient.
@@ -188,7 +188,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     // Verify the single-purpose OAuth state token.
     let statePayload: { sub: string };
     try {
-      statePayload = fastify.auth.verifyOAuthState(state);
+      statePayload = fastify.auth.verifyOAuthState(state, 'slack-link');
     } catch {
       return reply.status(400).send({
         error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },
@@ -268,7 +268,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const user = requireUser(request);
       // Single-purpose, short-lived signed state (not a bearer credential).
-      const state = fastify.auth.signOAuthState(user.sub);
+      const state = fastify.auth.signOAuthState(user.sub, 'slack-install');
       const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/install/callback`;
       const url = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&scope=${encodeURIComponent(SLACK_INSTALL_BOT_SCOPES)}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
       return reply.redirect(url);
@@ -285,11 +285,24 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         error: { code: 'INVALID_CALLBACK', message: 'Missing code or state' },
       });
     }
+    let installerId: string;
     try {
-      fastify.auth.verifyOAuthState(state);
+      installerId = fastify.auth.verifyOAuthState(state, 'slack-install').sub;
     } catch {
       return reply.status(400).send({
         error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },
+      });
+    }
+    // The state proves who started the flow; re-check that they are still an
+    // active platform admin at completion time so a demoted or deactivated
+    // account (or a state token from a lesser flow) cannot bind a bot token.
+    const installer = await fastify.prisma.user.findUnique({
+      select: { isActive: true, role: true },
+      where: { id: installerId },
+    });
+    if (!installer?.isActive || installer.role !== 'ADMIN') {
+      return reply.status(403).send({
+        error: { code: 'FORBIDDEN', message: 'Only active platform admins may install the bot' },
       });
     }
 

@@ -65,6 +65,7 @@ interface FakeTemplate {
 }
 
 interface FakeState {
+  installer: { id: string; isActive: boolean; role: string } | null;
   users: FakeUser[];
   templates: FakeTemplate[];
   versions: Map<string, { spec: unknown; version: number }>;
@@ -206,6 +207,9 @@ function buildApp(state: FakeState): FastifyInstance {
     user: {
       findFirst: async ({ where }: { where: { slackId?: string } }) =>
         state.users.find((u) => u.slackId === where.slackId) ?? null,
+      // The install callback re-checks the installer's platform role.
+      findUnique: async ({ where }: { where: { id: string } }) =>
+        state.installer && state.installer.id === where.id ? state.installer : null,
       update: async () => ({}),
     },
     workflowHumanStep: {
@@ -280,6 +284,7 @@ beforeEach(async () => {
     humanStep: null,
     humanStepUpdateCalls: [],
     humanStepUpdateCount: 1,
+    installer: { id: 'u1', isActive: true, role: 'ADMIN' },
     launchOrder: [],
     runInputCreates: [],
     runnableStartError: null,
@@ -1405,6 +1410,20 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
     expect(state.workspaceCreateCalls).toHaveLength(0);
     expect(state.workspaceUpdateCalls).toHaveLength(1);
     expect(state.workspaceUpdateCalls[0].where).toEqual({ slackTeamId: 'T-EXIST' });
+  });
+
+  it('refuses to bind a bot token when the installer is not an active admin', async () => {
+    stubOauthExchange({ access_token: 'xoxb-abcd', ok: true, team: { id: 'T-NEW' } });
+    state.installer = { id: 'u1', isActive: true, role: 'LEAD' };
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/slack/install/callback?code=c1&state=s1',
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(state.workspaceCreateCalls).toHaveLength(0);
+    expect(state.workspaceUpdateCalls).toHaveLength(0);
   });
 
   it('rejects a grant with no bot token (e.g. a user-scope grant)', async () => {
