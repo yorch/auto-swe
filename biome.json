@@ -107,6 +107,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["packages/web/src/components/AppConfigScript.tsx"],
+      "linter": {
+        "rules": {
+          "security": {
+            "noDangerouslySetInnerHtml": "off"
+          }
+        }
+      }
     }
   ],
   "root": true,

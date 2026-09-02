@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { IBM_Plex_Mono, Inter } from 'next/font/google';
-import Script from 'next/script';
 import './globals.css';
+import { AppConfigScript } from '@/components/AppConfigScript';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppShell } from '@/components/layout/AppShell';
 import { Providers } from '@/components/Providers';
@@ -42,11 +42,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       suppressHydrationWarning
     >
-      <head>
-        <Script
-          id="__APP_CONFIG__"
-          strategy="beforeInteractive"
-        >{`window.__APP_CONFIG__=${appConfig};`}</Script>
+      <head suppressHydrationWarning>
+        <AppConfigScript appConfig={appConfig} />
         <style>{`
           :root {
             --font-display: var(--font-inter), 'Inter', -apple-system, sans-serif;
