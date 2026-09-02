@@ -264,6 +264,10 @@ const FigmaPutBody = z.object({
 
 // ─── route plugin ─────────────────────────────────────────────────────────────
 
+const AuditLogQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+});
+
 export const systemConfigRoutes: FastifyPluginAsync = async (
   fastify: FastifyInstance
 ): Promise<void> => {
@@ -489,11 +493,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   // ── Config audit log ─────────────────────────────────────────────────────────
 
-  f.get('/config/audit-log', { schema: { response: { 200: z.any() } } }, async (req, reply) => {
-    const limitParam = (req.query as { limit?: string }).limit;
-    const take = Math.min(Number(limitParam ?? 100), 500);
-    return reply.send({ data: await listConfigAuditEntries(fastify.prisma, take) });
-  });
+  f.get(
+    '/config/audit-log',
+    { schema: { querystring: AuditLogQuery, response: { 200: z.any() } } },
+    async (req, reply) =>
+      reply.send({ data: await listConfigAuditEntries(fastify.prisma, req.query.limit) })
+  );
 
   // ── Consolidation schedule ───────────────────────────────────────────────────
 
