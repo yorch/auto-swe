@@ -176,6 +176,78 @@ export function spawnCaptureAsync(
   return withHeartbeat(options?.heartbeatLabel ?? 'exec', work);
 }
 
+/**
+ * Like {@link spawnCaptureAsync}, but streams `stdin` to the child instead of
+ * ignoring it. Used to move file contents into a workspace container: content
+ * passed as an argument (`echo '<base64>' | …`) is bounded by the kernel's
+ * argv limit (E2BIG at roughly 128 KiB single-argument), a pipe is not.
+ */
+export function spawnWithStdinAsync(
+  file: string,
+  args: string[],
+  stdin: string | Buffer,
+  options?: { timeoutMs?: number; maxBuffer?: number; heartbeatLabel?: string }
+): Promise<CapturedResult> {
+  const timeoutMs = options?.timeoutMs ?? 600_000;
+  const maxBuffer = options?.maxBuffer ?? 10 * 1024 * 1024;
+
+  const work = new Promise<CapturedResult>((resolve) => {
+    const child = spawn(file, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+
+    const settle = (result: CapturedResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(killTimer);
+      resolve(result);
+    };
+
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, timeoutMs);
+    killTimer.unref?.();
+
+    const cap = (current: string, chunk: Buffer): string =>
+      current.length >= maxBuffer ? current : current + chunk.toString('utf-8');
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout = cap(stdout, chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr = cap(stderr, chunk);
+    });
+    child.on('error', (err) => {
+      settle({
+        exitCode: 127,
+        signal: 'SPAWN_ERROR',
+        stderr: `${stderr}\n${err.name}: ${err.message}`.trim(),
+        stdout,
+      });
+    });
+    child.on('close', (code, signal) => {
+      if (timedOut) {
+        settle({ exitCode: 124, signal: signal ?? 'SIGTERM', stderr, stdout });
+        return;
+      }
+      settle({ exitCode: code ?? 0, stderr, stdout, ...(signal ? { signal } : {}) });
+    });
+
+    // A child that exits early (or never reads stdin) closes the pipe under
+    // us; EPIPE on the write must not become an unhandled error.
+    child.stdin?.on('error', () => {
+      /* reported through exitCode/stderr on close */
+    });
+    child.stdin?.end(stdin);
+  });
+
+  return withHeartbeat(options?.heartbeatLabel ?? 'exec', work);
+}
+
 export interface CapturedResult {
   exitCode: number;
   stdout: string;

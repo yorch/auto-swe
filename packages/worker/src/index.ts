@@ -7,12 +7,18 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveSetting } from '@auto-swe/shared/config';
+import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
 import { initTemporalClient } from './lib/temporalClient.js';
 
 async function run() {
+  // Every provider credential and integration secret decrypts through this
+  // key; without it the first LLM call fails inside an activity instead of
+  // the process refusing to start. Check before anything else is initialised.
+  assertEncryptionKeyConfigured();
+
   // Install Temporal runtime with OTel metrics if endpoint is available
   const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   if (otelEndpoint) {

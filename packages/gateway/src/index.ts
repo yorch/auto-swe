@@ -5,6 +5,7 @@ import { initTelemetry } from './lib/telemetry.js';
 const otel = initTelemetry('auto-swe-gateway');
 
 import { resolveSettings } from '@auto-swe/shared/config';
+import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import {
   resolveConsolidationConfig,
@@ -64,6 +65,12 @@ import { workflowTemplateRoutes } from './routes/workflowTemplates.js';
 import { workRequestRoutes } from './routes/workRequests.js';
 
 async function start() {
+  // Fail at boot, not on the first credential save: every DB-stored secret
+  // (provider keys, GitHub/Slack/S3/OAuth config) goes through this key, and
+  // a gateway that starts without it serves 500s on exactly the admin pages
+  // needed to bootstrap a deployment.
+  assertEncryptionKeyConfigured();
+
   // Must run before betterAuth.handler is called — reads OAuth creds from DB.
   await initAuth();
 

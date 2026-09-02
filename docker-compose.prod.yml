@@ -23,6 +23,12 @@ services:
       DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production — set a strong value in .env (or set DATABASE_URL_OVERRIDE for an external database)}@postgres:5432/${POSTGRES_DB:-engineering_system}}
       TEMPORAL_ADDRESS: temporal:7233
       PORT: "8080"
+      # The image runs with NODE_ENV=production and refuses the in-source dev
+      # fallbacks for these, so surface a missing one as a compose error at
+      # `up` time rather than a crash loop after the pull.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required in production — set a strong random value in .env}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required in production — set a random value of at least 32 chars in .env}
+      CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?CONFIG_ENCRYPTION_KEY is required in production — generate one with openssl rand -base64 32 and set it in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,6 +45,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production — set a strong value in .env (or set DATABASE_URL_OVERRIDE for an external database)}@postgres:5432/${POSTGRES_DB:-engineering_system}}
       TEMPORAL_ADDRESS: temporal:7233
+      # Same key as the gateway — every provider credential decrypts with it.
+      CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?CONFIG_ENCRYPTION_KEY is required in production — generate one with openssl rand -base64 32 and set it in .env}
       # Defaults to the bundled Garage service. To use hosted S3 instead
       # (AWS/R2/B2/…), set these three plus the credentials below in `.env` and
       # clear COMPOSE_PROFILES so the bundled store is not started — no compose

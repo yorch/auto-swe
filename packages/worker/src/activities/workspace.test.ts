@@ -6,6 +6,7 @@ vi.mock('../lib/execUtils.js', async (importOriginal) => {
   return {
     ...actual,
     execShellAsync: vi.fn(async () => ''),
+    spawnWithStdinAsync: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
   };
 });
 
@@ -33,7 +34,7 @@ vi.mock('../lib/config/contextLookup.js', () => ({
 }));
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
-import { execShellAsync } from '../lib/execUtils.js';
+import { execShellAsync, spawnWithStdinAsync } from '../lib/execUtils.js';
 import {
   buildMetadataBlockArgs,
   cloneDependencyRepos,
@@ -309,6 +310,46 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     await ws.exec('git status');
     expect(vi.mocked(execShellAsync).mock.calls.at(-1)?.[1]).toMatchObject({
       timeoutMs: undefined,
+    });
+  });
+});
+
+describe('Workspace.execStdin (spawn mocked)', () => {
+  beforeEach(() => {
+    vi.mocked(execShellAsync).mockReset();
+    vi.mocked(execShellAsync).mockImplementation(async () => '');
+    vi.mocked(spawnWithStdinAsync).mockReset();
+    vi.mocked(spawnWithStdinAsync).mockResolvedValue({ exitCode: 0, stderr: '', stdout: '' });
+  });
+
+  it('pipes the content into `docker exec -i` instead of putting it on the command line', async () => {
+    const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/T-1', 'main');
+    const content = 'z'.repeat(256 * 1024);
+    await ws.execStdin("cat > 'big.json'", content);
+
+    expect(spawnWithStdinAsync).toHaveBeenCalledTimes(1);
+    const [file, args, stdin] = vi.mocked(spawnWithStdinAsync).mock.calls[0];
+    expect(file).toBe('docker');
+    expect(args.slice(0, 4)).toEqual(['exec', '-i', '-w', '/workspace/target-repo']);
+    expect(args[4]).toBe(ws.containerId);
+    expect(args.slice(5)).toEqual(['sh', '-c', "cat > 'big.json'"]);
+    expect(stdin).toBe(content);
+    // Nothing that large ever went through a shell command string.
+    for (const call of vi.mocked(execShellAsync).mock.calls) {
+      expect((call[0] as string).length).toBeLessThan(4096);
+    }
+  });
+
+  it('rejects on a non-zero exit like exec does', async () => {
+    const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/T-1', 'main');
+    vi.mocked(spawnWithStdinAsync).mockResolvedValueOnce({
+      exitCode: 1,
+      stderr: 'sh: cannot create',
+      stdout: '',
+    });
+    await expect(ws.execStdin('cat > /nope/x', 'data')).rejects.toMatchObject({
+      exitCode: 1,
+      stderr: 'sh: cannot create',
     });
   });
 });

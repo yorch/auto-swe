@@ -30,6 +30,15 @@ services:
       # and refuses the in-source dev secrets, so require real values here.
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required — set a strong random value in .env}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required — set a random value of at least 32 chars in .env}
+      # Every DB-stored secret (provider keys, GitHub/Slack/S3/OAuth config) is
+      # encrypted with this key; the gateway refuses to boot without it.
+      - CONFIG_ENCRYPTION_KEY=${CONFIG_ENCRYPTION_KEY:?CONFIG_ENCRYPTION_KEY is required — generate one with openssl rand -base64 32 and set it in .env}
+      # Browser-facing URLs. Defaults match the published host ports; override
+      # when the dashboard or gateway is reached through another origin.
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:${WEB_PORT:-3000}}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:${GATEWAY_PORT:-8080}}
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:${GATEWAY_PORT:-8080}}
+      - DEFAULT_TEAM_SLUG=${DEFAULT_TEAM_SLUG:-default}
       - SLACK_CLIENT_ID=${SLACK_CLIENT_ID:-}
       - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET:-}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
@@ -50,9 +59,14 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}
       - TEMPORAL_ADDRESS=temporal:7233
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # LLM provider keys are NOT env vars — they live encrypted in the DB
+      # (/admin/model-config) and decrypt with this key, so the worker refuses
+      # to boot without it.
+      - CONFIG_ENCRYPTION_KEY=${CONFIG_ENCRYPTION_KEY:?CONFIG_ENCRYPTION_KEY is required — generate one with openssl rand -base64 32 and set it in .env}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      # Base URL for the "Open inbox" link in Slack HITL notifications.
+      - WEB_URL=${WEB_URL:-http://localhost:${WEB_PORT:-3000}}
+      - DEFAULT_TEAM_SLUG=${DEFAULT_TEAM_SLUG:-default}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
       # Artifact store — opt in by setting ARTIFACT_S3_BUCKET in your .env.
       # When set, the worker writes artifacts to the Garage container started

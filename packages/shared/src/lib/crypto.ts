@@ -91,6 +91,16 @@ function loadKeys(): { version: number; keys: Map<number, Buffer> } {
   return cached;
 }
 
+/**
+ * Boot-time guard: load (and cache) the key material now so a missing,
+ * non-base64, or wrong-length `CONFIG_ENCRYPTION_KEY` fails the process at
+ * startup rather than on the first credential read or write. Throws the same
+ * descriptive errors the lazy path would.
+ */
+export function assertEncryptionKeyConfigured(): void {
+  loadKeys();
+}
+
 export interface EncryptedSecret {
   ciphertext: Uint8Array<ArrayBuffer>;
   nonce: Uint8Array<ArrayBuffer>;

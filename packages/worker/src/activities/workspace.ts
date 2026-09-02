@@ -3,7 +3,12 @@ import { resolveSettings } from '@auto-swe/shared/config';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { type CapturedResult, execShellAsync, spawnCaptureAsync } from '../lib/execUtils.js';
+import {
+  type CapturedResult,
+  execShellAsync,
+  spawnCaptureAsync,
+  spawnWithStdinAsync,
+} from '../lib/execUtils.js';
 import { redactExecError } from '../lib/redactToken.js';
 
 export type CapturedExec = CapturedResult;
@@ -22,6 +27,13 @@ export interface Workspace {
    * code themselves rather than relying on exec's throw-on-error semantics.
    */
   execCapture: (command: string, options?: { timeoutMs?: number }) => Promise<CapturedExec>;
+  /**
+   * Run a command with `stdin` streamed to it (`docker exec -i`); resolves
+   * with stdout, rejects on non-zero exit. This is how file contents reach the
+   * container: passing them on the command line is capped by the kernel's
+   * argv limit, a pipe is not.
+   */
+  execStdin: (command: string, stdin: string | Buffer) => Promise<string>;
   /**
    * Run a git subcommand (e.g. `push origin main`) against `origin` with the
    * clone credential injected for this call only via `-c http.extraheader`,
@@ -492,6 +504,23 @@ export async function createWorkspace(
         ['exec', '-w', '/workspace/target-repo', containerName, 'sh', '-c', command],
         { heartbeatLabel: 'workspace: exec (capture)', timeoutMs: options?.timeoutMs ?? 600_000 }
       ),
+    execStdin: async (command: string, stdin: string | Buffer) => {
+      const result = await spawnWithStdinAsync(
+        'docker',
+        ['exec', '-i', '-w', '/workspace/target-repo', containerName, 'sh', '-c', command],
+        stdin,
+        { heartbeatLabel: 'workspace: exec (stdin)' }
+      );
+      if (result.exitCode !== 0) {
+        throw Object.assign(
+          new Error(
+            `Command failed (exit code ${result.exitCode}${result.signal ? `, ${result.signal}` : ''}): ${command}`
+          ),
+          { exitCode: result.exitCode, stderr: result.stderr, stdout: result.stdout }
+        );
+      }
+      return result.stdout;
+    },
     gitAuthed: async (subcommand: string) => {
       try {
         return await execShellAsync(

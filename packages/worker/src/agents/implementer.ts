@@ -126,8 +126,11 @@ export async function createImplementerAgent(
   const writeExecute = wrapWriteToolWithSecurityCheck(async ({ path, content }) => {
     const safep = safePath(path);
     await workspace.exec(`mkdir -p "$(dirname ${shellQuote(safep)})"`);
-    const b64 = Buffer.from(content).toString('base64');
-    await workspace.exec(`echo ${shellQuote(b64)} | base64 -d > ${shellQuote(safep)}`);
+    // Stream the content over stdin rather than as a base64 argument: a
+    // single argv value is capped by the kernel (E2BIG at roughly 128 KiB),
+    // which silently made any larger file — lockfiles, fixtures, generated
+    // code — impossible to write.
+    await workspace.execStdin(`cat > ${shellQuote(safep)}`, content);
     return { result: `File written: ${safep}` };
   });
 
