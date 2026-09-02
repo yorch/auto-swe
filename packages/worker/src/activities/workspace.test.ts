@@ -198,6 +198,121 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
   });
 });
 
+describe('createWorkspace clone credential handling (execShellAsync mocked)', () => {
+  const AUTHED = 'https://x-access-token:ghp_secret@github.com/acme/repo.git';
+  const CLEAN = 'https://github.com/acme/repo.git';
+  const HEADER_B64 = Buffer.from('x-access-token:ghp_secret').toString('base64');
+  // The clone runs inside `docker exec … sh -c '<script>'`, so a value that is
+  // `shellQuote`d in the script appears re-escaped once more in the outer command.
+  const Q = (v: string) => shellQuote(v).replace(/'/g, "'\\''");
+
+  beforeEach(() => {
+    vi.mocked(execShellAsync).mockReset();
+    vi.mocked(execShellAsync).mockImplementation(async () => '');
+  });
+
+  const cloneCommands = () =>
+    vi
+      .mocked(execShellAsync)
+      .mock.calls.map((call) => call[0] as string)
+      .filter((c) => c.includes('git') && c.includes('clone'));
+
+  it('clones with the clean URL, a per-call auth header, and `--` before the URL', async () => {
+    const ws = await createWorkspace(AUTHED, 'auto/TICKET-1', 'main');
+    const [cloneCmd] = cloneCommands();
+    expect(cloneCmd).toBeDefined();
+    // The raw token never appears on the command line…
+    expect(cloneCmd).not.toContain('ghp_secret');
+    expect(cloneCmd).not.toContain('x-access-token:');
+    // …the credential travels as a per-call header instead…
+    expect(cloneCmd).toContain('http.extraheader=');
+    expect(cloneCmd).toContain(HEADER_B64);
+    // …and option parsing is terminated before the (quoted) clean URL.
+    expect(cloneCmd).toContain(`-- ${Q(CLEAN)} /workspace/target-repo`);
+    expect(cloneCmd).toContain(`-b ${Q('main')}`);
+    await ws.destroy();
+  });
+
+  it('terminates options with `--` on the pinned-SHA and existing-branch clone paths too', async () => {
+    await createWorkspace(AUTHED, 'auto/T-1', 'main', undefined, 'deadbeef');
+    await createWorkspace(AUTHED, 'auto/T-1', 'main', undefined, undefined, true);
+    const cmds = cloneCommands();
+    expect(cmds).toHaveLength(2);
+    for (const c of cmds) {
+      expect(c).toContain(`-- ${Q(CLEAN)} /workspace/target-repo`);
+      expect(c).not.toContain('ghp_secret');
+    }
+    expect(cmds[1]).toContain(`-b ${Q('auto/T-1')}`);
+  });
+
+  it('redacts the token and its auth header from a clone failure and removes the container', async () => {
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+      if (cmd.includes('clone')) {
+        // Shape of a promisify(exec) rejection: the full command line in the
+        // message, plus stdout/stderr/cmd own-properties.
+        throw Object.assign(new Error(`Command failed: ${cmd}\nfatal: auth failed`), {
+          cmd,
+          stderr: `fatal: unable to access with ${HEADER_B64} / ghp_secret`,
+          stdout: '',
+        });
+      }
+      return '';
+    });
+
+    let caught: (Error & { cmd?: string; stderr?: string }) | undefined;
+    try {
+      await createWorkspace(AUTHED, 'auto/TICKET-1', 'main');
+    } catch (err) {
+      caught = err as Error & { cmd?: string; stderr?: string };
+    }
+    expect(caught).toBeDefined();
+    expect(caught?.message).toContain('Command failed');
+    expect(caught?.message).toContain('***');
+    for (const field of [caught?.message, caught?.cmd, caught?.stderr]) {
+      expect(field).not.toContain('ghp_secret');
+      expect(field).not.toContain(HEADER_B64);
+    }
+
+    const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+    expect(commands.some((c) => c.startsWith('docker rm -f workspace-'))).toBe(true);
+  });
+
+  it('redacts the auth header from a failed authenticated push', async () => {
+    const ws = await createWorkspace(AUTHED, 'auto/TICKET-1', 'main');
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+      if (cmd.includes('push')) {
+        throw Object.assign(new Error(`Command failed: ${cmd}`), { cmd });
+      }
+      return '';
+    });
+    await expect(ws.gitAuthed(`push origin ${shellQuote('auto/TICKET-1')}`)).rejects.toSatisfy(
+      (err: Error & { cmd?: string }) =>
+        err.message.includes('***') &&
+        !err.message.includes(HEADER_B64) &&
+        !err.message.includes('ghp_secret') &&
+        !(err.cmd ?? '').includes(HEADER_B64)
+    );
+  });
+
+  it('forwards an explicit exec timeout and gives the clone a 10-minute ceiling', async () => {
+    const ws = await createWorkspace(AUTHED, 'auto/TICKET-1', 'main');
+    const cloneCall = vi
+      .mocked(execShellAsync)
+      .mock.calls.find((call) => (call[0] as string).includes('clone'));
+    expect(cloneCall?.[1]).toMatchObject({ timeoutMs: 600_000 });
+
+    await ws.exec('yarn test', { timeoutMs: 600_000 });
+    const testCall = vi.mocked(execShellAsync).mock.calls.at(-1);
+    expect(testCall?.[0]).toContain('yarn test');
+    expect(testCall?.[1]).toMatchObject({ timeoutMs: 600_000 });
+
+    await ws.exec('git status');
+    expect(vi.mocked(execShellAsync).mock.calls.at(-1)?.[1]).toMatchObject({
+      timeoutMs: undefined,
+    });
+  });
+});
+
 describe('splitCloneCredential', () => {
   it('strips an embedded token and builds the per-call auth header', () => {
     const { cleanUrl, gitAuthHeader } = splitCloneCredential(

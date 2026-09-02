@@ -4,12 +4,18 @@ import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { type CapturedResult, execShellAsync, spawnCaptureAsync } from '../lib/execUtils.js';
+import { redactExecError } from '../lib/redactToken.js';
 
 export type CapturedExec = CapturedResult;
 
 export interface Workspace {
   containerId: string;
-  exec: (command: string) => Promise<string>;
+  /**
+   * Run a command and resolve with stdout; rejects on non-zero exit. The
+   * default 2-minute timeout suits git/file operations — pass `timeoutMs` for
+   * anything that legitimately runs longer (test suites, builds).
+   */
+  exec: (command: string, options?: { timeoutMs?: number }) => Promise<string>;
   /**
    * Run a command and capture stdout/stderr/exitCode without throwing on
    * non-zero exits. Used by quality-gate activities that interpret exit
@@ -42,6 +48,11 @@ export interface SplitCloneCredential {
    * or `undefined` when the source URL carried no credential.
    */
   gitAuthHeader?: string;
+  /**
+   * The raw (decoded) credential, exposed only so callers can redact it — and
+   * its base64 form in `gitAuthHeader` — out of child-process failures.
+   */
+  token?: string;
 }
 
 /**
@@ -90,7 +101,7 @@ export function splitCloneCredential(authedRepoUrl: string): SplitCloneCredentia
     token = rawPassword;
   }
   const gitAuthHeader = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
-  return { cleanUrl, gitAuthHeader };
+  return { cleanUrl, gitAuthHeader, token };
 }
 
 /**
@@ -312,7 +323,14 @@ export async function createWorkspace(
   // see the `git remote set-url` scrub below and `gitAuthed` on the returned
   // Workspace. Backward compatible: a plain (unauthenticated) URL just falls
   // through with no auth header.
-  const { cleanUrl, gitAuthHeader } = splitCloneCredential(authedRepoUrl);
+  const { cleanUrl, gitAuthHeader, token } = splitCloneCredential(authedRepoUrl);
+  // Every form the credential can take in a failed git command line or its
+  // stderr: the raw token, the full header, and the header's bare base64 value.
+  const cloneSecrets = [
+    token,
+    gitAuthHeader,
+    gitAuthHeader?.slice(gitAuthHeader.lastIndexOf(' ') + 1),
+  ];
 
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
@@ -376,10 +394,25 @@ export async function createWorkspace(
   }
 
   // Initial exec function (root of container)
-  const rootExec = (command: string): Promise<string> =>
+  const rootExec = (command: string, timeoutMs?: number): Promise<string> =>
     execShellAsync(`docker exec ${containerName} sh -c ${shellQuote(command)}`, {
       heartbeatLabel: 'workspace: provisioning',
+      timeoutMs,
     });
+
+  // A clone of a large repository legitimately outlasts the 2-minute exec
+  // default; give it the same 10-minute ceiling as a test run.
+  const CLONE_TIMEOUT_MS = 600_000;
+  // Clone with the CLEAN url and the credential injected per-call via
+  // `-c http.extraheader`, so the token is never on the command line (where a
+  // failure would echo it back in `error.message`) and never written to
+  // `.git/config`. `--` terminates option parsing so a URL beginning with a
+  // dash cannot be read as a git flag.
+  const cloneCmd = (args: string): string =>
+    gitWithAuthHeader(
+      `clone ${args}${args ? ' ' : ''}-- ${shellQuote(cleanUrl)} /workspace/target-repo`,
+      gitAuthHeader
+    );
 
   // Wrap provisioning in try/catch — destroy the container if any setup step fails
   // to prevent accumulation of orphaned containers on repeated failures.
@@ -397,7 +430,7 @@ export async function createWorkspace(
     // commit), then cut the working branch from that exact commit. Without one,
     // the cheap shallow clone at defaultBranch HEAD is used.
     if (checkoutSha) {
-      await rootExec(`git clone ${shellQuote(authedRepoUrl)} /workspace/target-repo`);
+      await rootExec(cloneCmd(''), CLONE_TIMEOUT_MS);
       await rootExec(
         `cd /workspace/target-repo && git checkout -b ${shellQuote(branch)} ${shellQuote(checkoutSha)}`
       );
@@ -405,22 +438,18 @@ export async function createWorkspace(
       // Check out an existing remote branch directly (the eval-gate path), so
       // the workspace holds the candidate's pushed code rather than a fresh
       // branch cut from defaultBranch HEAD.
-      await rootExec(
-        `git clone --depth=50 -b ${shellQuote(branch)} ${shellQuote(authedRepoUrl)} /workspace/target-repo`
-      );
+      await rootExec(cloneCmd(`--depth=50 -b ${shellQuote(branch)}`), CLONE_TIMEOUT_MS);
     } else {
-      await rootExec(
-        `git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedRepoUrl)} /workspace/target-repo`
-      );
+      await rootExec(cloneCmd(`--depth=50 -b ${shellQuote(defaultBranch)}`), CLONE_TIMEOUT_MS);
       await rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
     }
 
-    // Scrub the credential out of the persisted `origin` remote URL — `git
-    // clone` bakes whatever URL it was given (including the embedded token)
-    // into `.git/config`, where it would sit in plaintext for the rest of the
-    // container's life and leak into any `git remote -v`/`cat .git/config`
-    // an agent runs. Network git ops going forward use `workspace.gitAuthed`,
-    // which injects the credential per-call instead.
+    // Belt and braces: the clone above already used the clean URL, so `origin`
+    // holds no credential — pin it explicitly anyway so a future change to the
+    // clone invocation cannot silently persist a token in `.git/config`, where
+    // it would leak into any `git remote -v`/`cat .git/config` an agent runs.
+    // Network git ops going forward use `workspace.gitAuthed`, which injects
+    // the credential per-call instead.
     await rootExec(
       `cd /workspace/target-repo && git remote set-url origin ${shellQuote(cleanUrl)}`
     );
@@ -430,6 +459,10 @@ export async function createWorkspace(
     } catch {
       /* already gone */
     }
+    // A failed git command rejects with the full command line in
+    // `error.message` (and stdout/stderr/cmd) — scrub the credential before
+    // it reaches Temporal history or a log line.
+    redactExecError(err, cloneSecrets);
     throw err;
   }
 
@@ -448,10 +481,10 @@ export async function createWorkspace(
         // Container may already be gone
       }
     },
-    exec: (command: string) =>
+    exec: (command: string, options) =>
       execShellAsync(
         `docker exec -w /workspace/target-repo ${containerName} sh -c ${shellQuote(command)}`,
-        { heartbeatLabel: 'workspace: exec' }
+        { heartbeatLabel: 'workspace: exec', timeoutMs: options?.timeoutMs }
       ),
     execCapture: (command: string, options) =>
       spawnCaptureAsync(
@@ -459,10 +492,17 @@ export async function createWorkspace(
         ['exec', '-w', '/workspace/target-repo', containerName, 'sh', '-c', command],
         { heartbeatLabel: 'workspace: exec (capture)', timeoutMs: options?.timeoutMs ?? 600_000 }
       ),
-    gitAuthed: (subcommand: string) =>
-      execShellAsync(
-        `docker exec ${containerName} sh -c ${shellQuote(`cd /workspace/target-repo && ${gitAuthedArgs(subcommand)}`)}`,
-        { heartbeatLabel: 'workspace: git' }
-      ),
+    gitAuthed: async (subcommand: string) => {
+      try {
+        return await execShellAsync(
+          `docker exec ${containerName} sh -c ${shellQuote(`cd /workspace/target-repo && ${gitAuthedArgs(subcommand)}`)}`,
+          { heartbeatLabel: 'workspace: git' }
+        );
+      } catch (err) {
+        // Same leak as a failed clone: the auth header is on the command line.
+        redactExecError(err, cloneSecrets);
+        throw err;
+      }
+    },
   };
 }

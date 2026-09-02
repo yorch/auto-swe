@@ -37,6 +37,7 @@ import { putArtifact } from '../lib/artifactStore.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
+import { redactExecError, redactToken } from '../lib/redactToken.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
@@ -81,23 +82,6 @@ async function gitHelperImage(): Promise<string> {
   return resolveSetting('workspace.gitHelperImage', await currentRequestContext());
 }
 
-/**
- * Redact the GitHub token from any string. `runDocker` invokes `git clone`
- * with the token embedded in the URL (see `loadRepoMeta`), and `execSync`
- * throws with the full command in `error.message` + may also carry it in
- * `error.stdout` / `error.stderr`. Without this, a failed clone would leak
- * the token into the Temporal workflow history.
- */
-function redactToken(s: unknown, token?: string | null): string {
-  if (typeof s !== 'string') {
-    return String(s);
-  }
-  if (!token) {
-    return s;
-  }
-  return s.split(token).join('***');
-}
-
 async function runDocker(args: string[], tokenForRedact?: string | null): Promise<string> {
   // We shell-quote each arg before joining into a single shell command. The
   // inputs to this helper are either hard-coded literals or identifiers that
@@ -108,24 +92,11 @@ async function runDocker(args: string[], tokenForRedact?: string | null): Promis
   try {
     return await execShellAsync(`docker ${quoted}`, { heartbeatLabel: 'shell-step: docker' });
   } catch (err) {
-    if (err instanceof Error) {
-      err.message = redactToken(err.message, tokenForRedact);
-    }
-    const e = err as { stdout?: unknown; stderr?: unknown; cmd?: unknown };
-    if (typeof e.stdout === 'string') {
-      e.stdout = redactToken(e.stdout, tokenForRedact);
-    }
-    if (typeof e.stderr === 'string') {
-      e.stderr = redactToken(e.stderr, tokenForRedact);
-    }
-    // `promisify(exec)`'s rejection also carries the raw command string on
-    // `.cmd` (own enumerable property, alongside code/killed/signal). It
-    // never reaches Temporal history (the failure converter only takes
-    // message/stack/type), but a `log.error({ err })` call would serialize
-    // it verbatim — redact it too.
-    if (typeof e.cmd === 'string') {
-      e.cmd = redactToken(e.cmd, tokenForRedact);
-    }
+    // `runDocker` invokes `git clone` with the token embedded in the URL (see
+    // `loadRepoMeta`), and `promisify(exec)` throws with the full command in
+    // `error.message` / `.stdout` / `.stderr` / `.cmd`. Without this, a failed
+    // clone would leak the token into the Temporal workflow history.
+    redactExecError(err, [tokenForRedact]);
     throw err;
   }
 }
