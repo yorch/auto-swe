@@ -110,13 +110,29 @@ jobs:
       - name: Generate Prisma client
         run: yarn db:generate
 
+      # `db:deploy` is `prisma migrate deploy` — the production path. The dev
+      # command (`prisma migrate dev`) diffs the schema against the migrations
+      # and tries to *generate* one when they disagree, which here would mean
+      # dropping the hand-written HNSW index rather than reporting drift.
       - name: Apply all migrations to a fresh database
-        run: yarn db:migrate
+        run: yarn db:deploy
 
-      - name: Seed (admin user, default team, sample repo, templates, skills)
+      # Fails when a migration is pending or the schema has drifted from the
+      # committed migrations, so a schema.prisma edit without a migration is
+      # caught here rather than at the next deploy.
+      - name: Verify migrations match schema.prisma
+        run: yarn workspace @auto-swe/shared prisma migrate status
+
+      # The full seed: the shared half (admin user, default team, sample repo,
+      # templates, skills, agents) and the gateway half (provisionAuthAdmin,
+      # which gives the seeded admin a better-auth credential account).
+      - name: Seed
+        env:
+          BETTER_AUTH_SECRET: ci-only-not-a-real-deployment-secret-32chars
+          JWT_SECRET: ci-only-not-a-real-deployment-secret
         run: |
           export CONFIG_ENCRYPTION_KEY=$(openssl rand -base64 32)
-          yarn workspace @auto-swe/shared prisma db seed
+          yarn db:seed
 
       - name: Re-apply migrations (idempotency check)
-        run: yarn db:migrate
+        run: yarn db:deploy
