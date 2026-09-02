@@ -5,6 +5,7 @@ import {
   resolveIssueTrackerConfig,
   resolveSlackBotTokenForSlackChannel,
 } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import {
   getWorkspaceProviderMetadata,
@@ -42,6 +43,7 @@ import { postSlackMessage } from '../lib/slack.js';
 // the write and answers 2xx instead.
 import { isTerminalSignalError } from '../lib/temporalErrors.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
+import { resolveDefaultTemplate } from './workRequests.js';
 
 // GitHub payloads are HMAC-verified before we get here, but a shape change or a
 // non-PR/non-check event can still arrive. Validate the fields we touch so a
@@ -875,28 +877,63 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(200).send({ skipped: true });
       }
 
-      // 4. Auto-create a work request — find the first active git_repo connection
+      // 4. Auto-create a work request. The tracker config is a platform-wide
+      // singleton with no ticket → repository mapping, so the trigger is only
+      // unambiguous when exactly one active git repository is onboarded. With
+      // several (a multi-team or multi-org deployment) picking "the first" would
+      // route one tenant's tickets — and spend — into another tenant's repo, so
+      // the transition is acknowledged and skipped instead.
       const ticketId = issue.key;
       const fields = issue.fields;
       const summary = (fields?.summary as string | undefined) ?? ticketId;
-      // Resolve the default repo + workflow template in parallel — they're
-      // independent lookups, so the RunInput is processable without paying two
-      // sequential round trips. These use the module-level `prisma`, which is
-      // NOT `fastify.prisma`: the latter carries the `tenantGuard` extension.
-      // Both reads are single-row `findFirst`s, which the guard does not cover
-      // anyway, so the two are equivalent here — but they are no longer the
-      // same client, and a multi-row query added below would escape the guard.
-      const [defaultRepo, defaultTemplate] = await Promise.all([
-        fastify.prisma.connection.findFirst({ where: { isActive: true, type: 'git_repo' } }),
-        fastify.prisma.workflowTemplate.findFirst({ where: { isDefault: true, status: 'ACTIVE' } }),
-      ]);
-      if (!defaultRepo) {
+      const candidateRepos = await runUnscoped(
+        'jira auto-trigger resolves the single onboarded repo',
+        ['Connection'],
+        () =>
+          fastify.prisma.connection.findMany({
+            include: {
+              team: {
+                select: { organization: { select: { monthlyBudgetUsdCents: true } }, orgId: true },
+              },
+            },
+            take: 2,
+            where: { isActive: true, type: 'git_repo' },
+          })
+      );
+      if (candidateRepos.length === 0) {
         return reply.code(200).send({ reason: 'no active repos', skipped: true });
       }
-      if (!defaultTemplate || defaultTemplate.activeVersion == null) {
+      if (candidateRepos.length > 1) {
+        fastify.log.warn(
+          { ticketId },
+          'Jira auto-trigger skipped: more than one active repository — submit via POST /work-requests or a template webhook instead'
+        );
+        return reply.code(200).send({ reason: 'ambiguous target repository', skipped: true });
+      }
+      const defaultRepo = candidateRepos[0];
+      // Team default first, then the global default — the same resolution (and
+      // A/B bucketing) an authenticated submission for this repo would get,
+      // instead of whichever team's default row Postgres returns first.
+      const resolved = await resolveDefaultTemplate(fastify.prisma, defaultRepo.teamId, ticketId);
+      const defaultTemplate = resolved
+        ? await fastify.prisma.workflowTemplate.findUnique({ where: { id: resolved.templateId } })
+        : null;
+      if (!resolved || !defaultTemplate) {
         return reply.code(200).send({ reason: 'no active default template', skipped: true });
       }
-      const templateVersion = defaultTemplate.activeVersion;
+      const templateVersion = resolved.version;
+      // The run spends the repo's org budget exactly like an authenticated
+      // submission would, so apply the same monthly cap.
+      if (
+        !(await assertOrgBudget(
+          fastify.prisma,
+          defaultRepo.team.orgId,
+          defaultRepo.team.organization?.monthlyBudgetUsdCents,
+          reply
+        ))
+      ) {
+        return;
+      }
 
       const requestPayload = JSON.stringify({ source: 'jira_webhook', summary, ticketId });
       const workRequestId = crypto.randomUUID();

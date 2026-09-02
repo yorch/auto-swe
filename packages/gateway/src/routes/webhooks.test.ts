@@ -36,6 +36,8 @@ vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
 // Mutable per-test via jiraPrismaState.
 const jiraPrismaState = vi.hoisted(() => ({
   activeRepo: null as Record<string, unknown> | null,
+  /** When set, overrides `activeRepo` for the list query (multi-repo deployments). */
+  activeRepos: null as Array<Record<string, unknown>> | null,
   activeWorkflowCreateCalls: [] as Record<string, unknown>[],
   activeWorkflowDeleteCalls: 0,
   defaultTemplate: { activeVersion: 1, id: 'tpl-1' } as Record<string, unknown> | null,
@@ -76,6 +78,13 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     connection: {
       findFirst: vi.fn(async () => jiraPrismaState.activeRepo),
+      // The Jira auto-trigger lists up to two active repos to detect ambiguity.
+      findMany: vi.fn(async () => {
+        const repos =
+          jiraPrismaState.activeRepos ??
+          (jiraPrismaState.activeRepo ? [jiraPrismaState.activeRepo] : []);
+        return repos.map((r) => ({ team: { organization: null, orgId: 'org-1' }, ...r }));
+      }),
     },
     runInput: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
@@ -86,6 +95,11 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     workflowTemplate: {
       findFirst: vi.fn(async () => jiraPrismaState.defaultTemplate),
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+        jiraPrismaState.defaultTemplate && jiraPrismaState.defaultTemplate.id === where.id
+          ? jiraPrismaState.defaultTemplate
+          : null
+      ),
     },
   },
 }));
@@ -280,6 +294,7 @@ describe('webhook routes', () => {
       webhookTriggerStatus: 'Ready for Dev',
     };
     jiraPrismaState.activeRepo = null;
+    jiraPrismaState.activeRepos = null;
     jiraPrismaState.runInputCreateCalls.length = 0;
     jiraPrismaState.activeWorkflowCreateCalls.length = 0;
     jiraPrismaState.activeWorkflowDeleteCalls = 0;
