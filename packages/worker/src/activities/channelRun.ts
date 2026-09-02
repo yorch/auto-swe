@@ -1,6 +1,7 @@
 import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME } from '@auto-swe/shared/lib/channelTask';
+import { logError } from '../lib/activityLog.js';
 
 /**
  * Name of the GLOBAL workflow template that backs channel-run observability —
@@ -130,16 +131,19 @@ export async function touchChannelThreadSession(
           },
         });
       } catch (sweepErr) {
-        console.error(
-          `[channelRun] thread-session sweep failed for ${input.channelId}:`,
-          sweepErr instanceof Error ? sweepErr.message : sweepErr
-        );
+        logError(`[channelRun] thread-session sweep failed for ${input.channelId}:`, {
+          channelId: input.channelId,
+          err: sweepErr instanceof Error ? sweepErr.message : sweepErr,
+        });
       }
     }
   } catch (err) {
-    console.error(
+    logError(
       `[channelRun] failed to touch thread session for ${input.channelId}/${input.threadTs}:`,
-      err instanceof Error ? err.message : err
+      {
+        channelId: input.channelId,
+        err: err instanceof Error ? err.message : err,
+      }
     );
   }
 }

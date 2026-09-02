@@ -9,6 +9,7 @@ import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { Context } from '@temporalio/activity';
+import { logError } from '../lib/activityLog.js';
 import {
   notifySlackRunComplete,
   notifySlackStepFailure,
@@ -543,10 +544,10 @@ async function finalizeChannelTaskRun(
       0;
     await accrueChannelUsage(channelId, costUsd);
   } catch (err) {
-    console.error(
-      `[finalizeChannelTaskRun] failed to accrue channel usage for ${channelId}:`,
-      err instanceof Error ? err.message : err
-    );
+    logError(`[finalizeChannelTaskRun] failed to accrue channel usage for ${channelId}:`, {
+      channelId,
+      err: err instanceof Error ? err.message : err,
+    });
   }
 
   // 2. Report the result back into the originating thread (opt-in-independent).
@@ -560,10 +561,10 @@ async function finalizeChannelTaskRun(
     await postSlackThreadMessage(slackChannelId, threadTs, text);
   } catch (err) {
     // Best-effort: a Slack failure must not fail the finalize.
-    console.error(
-      `[finalizeChannelTaskRun] failed to post result for channel ${channelId}:`,
-      err instanceof Error ? err.message : err
-    );
+    logError(`[finalizeChannelTaskRun] failed to post result for channel ${channelId}:`, {
+      channelId,
+      err: err instanceof Error ? err.message : err,
+    });
   }
 }
 
