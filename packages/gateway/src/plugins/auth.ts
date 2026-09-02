@@ -73,7 +73,9 @@ function getErrorName(err: unknown): string | undefined {
 
 export { getErrorMessage, getErrorName };
 
-const ACCESS_TOKEN_TTL = '1h';
+/** Access-token lifetime, exported so the session-token bridge reports the same value. */
+export const ACCESS_TOKEN_TTL_SECONDS = 3600;
+const ACCESS_TOKEN_TTL = ACCESS_TOKEN_TTL_SECONDS;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Audience claims keep token classes from being swapped: an API access token

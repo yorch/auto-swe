@@ -22,13 +22,14 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import authPlugin, {
+  ACCESS_TOKEN_TTL_SECONDS,
   extractSessionCookieValue,
   invalidateSessionCache,
   requireAuth,
   requireUser,
 } from './plugins/auth.js';
-import { prismaPlugin } from './plugins/prisma.js';
-import { temporalPlugin } from './plugins/temporal.js';
+import prismaPlugin from './plugins/prisma.js';
+import temporalPlugin from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrary.js';
 import { autonomyPolicyRoutes } from './routes/autonomyPolicies.js';
@@ -281,7 +282,7 @@ async function start() {
       return reply.send({
         data: {
           accessToken,
-          expiresIn: 3600,
+          expiresIn: ACCESS_TOKEN_TTL_SECONDS,
           user: { email: user.email, id: user.id, role: user.role },
         },
       });
