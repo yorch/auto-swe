@@ -11,6 +11,7 @@
  * `../githubAuth.ts` — it is a GitHub-internal concern behind this provider.
  */
 
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
 import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
@@ -38,6 +39,47 @@ async function octokitFor(repo: RepoRef) {
   const apiUrl =
     repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
   return new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
+}
+
+/** Wall-clock cap on a CI log download — the URL is third-party data. */
+const CI_LOG_FETCH_TIMEOUT_MS = 15_000;
+
+/** Origins the configured GitHub credential may be sent to. */
+function trustedGitHubOrigins(ghConfig: { baseUrl: string; apiUrl: string }): string[] {
+  const origins: string[] = [];
+  for (const raw of [ghConfig.baseUrl, ghConfig.apiUrl]) {
+    try {
+      origins.push(new URL(raw).origin);
+    } catch {
+      // A malformed configured URL simply contributes no trusted origin.
+    }
+  }
+  return origins;
+}
+
+export type CiLogsTarget = { ok: true; url: URL; trusted: boolean } | { ok: false; reason: string };
+
+/**
+ * Decide whether — and how — to fetch a CI logs URL.
+ *
+ * The URL is not ours: it is a check-run `html_url`, a commit-status
+ * `target_url` (set by whichever integration posted the status), or a webhook
+ * payload field. Two things follow. It goes through the SSRF guard like every
+ * other externally-supplied URL the worker fetches, and the configured GitHub
+ * token is attached ONLY when the target is https on the configured GitHub
+ * origin (web or API host) — a status whose `target_url` points anywhere else
+ * must not receive a bearer token that can read and push to every repository
+ * the credential covers. Per-repo GHE overrides (`RepoRef.baseUrl`) are not
+ * consulted here because the log URL arrives without its repository; such a
+ * deployment's logs are fetched unauthenticated.
+ */
+export function resolveCiLogsTarget(logsUrl: string, trustedOrigins: string[]): CiLogsTarget {
+  const safety = isSafeProbeUrl(logsUrl);
+  if (!safety.ok) {
+    return { ok: false, reason: safety.reason };
+  }
+  const trusted = safety.url.protocol === 'https:' && trustedOrigins.includes(safety.url.origin);
+  return { ok: true, trusted, url: safety.url };
 }
 
 export class GitHubScmProvider implements ScmProvider {
@@ -130,22 +172,29 @@ export class GitHubScmProvider implements ScmProvider {
 
   async fetchCiLogs(logsUrl: string): Promise<string> {
     const ghConfig = await resolveGitHubConfig();
-    let githubToken: string | null = null;
-    try {
-      githubToken = await resolveGitHubToken(ghConfig);
-    } catch (err) {
-      if (!(err instanceof GitHubTokenMissingError)) {
-        // Real auth error (e.g. malformed App credentials) — surface it so the
-        // operator knows why the log fetch failed rather than seeing a 401.
-        return `Cannot fetch CI logs — GitHub auth error: ${err instanceof Error ? err.message : String(err)}`;
-      }
-      // No token configured at all: proceed unauthenticated for public repos.
+    const target = resolveCiLogsTarget(logsUrl, trustedGitHubOrigins(ghConfig));
+    if (!target.ok) {
+      return `Cannot fetch CI logs — refusing to fetch '${logsUrl}': ${target.reason}`;
     }
-    const response = await fetch(logsUrl, {
+    let githubToken: string | null = null;
+    if (target.trusted) {
+      try {
+        githubToken = await resolveGitHubToken(ghConfig);
+      } catch (err) {
+        if (!(err instanceof GitHubTokenMissingError)) {
+          // Real auth error (e.g. malformed App credentials) — surface it so the
+          // operator knows why the log fetch failed rather than seeing a 401.
+          return `Cannot fetch CI logs — GitHub auth error: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        // No token configured at all: proceed unauthenticated for public repos.
+      }
+    }
+    const response = await fetch(target.url, {
       headers: {
         Accept: 'application/vnd.github.v3+json',
         ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
       },
+      signal: AbortSignal.timeout(CI_LOG_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
