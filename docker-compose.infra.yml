@@ -11,6 +11,10 @@
 # ARTIFACT_S3_SECRET_KEY are set in `.env`, and those same variables feed the
 # services below, so the prod path cannot come up on the dev defaults.
 #
+# Long-running services carry `restart: unless-stopped` so a daemon restart or
+# an OOM kill brings the stack back without an operator; the one-shot setup
+# containers keep their bounded `on-failure` retries and exit on success.
+#
 # Ports for Postgres (5432), Temporal (7233/8233), and the object store (9000)
 # are published to the host for local development and so the documented runbook
 # can run `psql` / `prisma migrate deploy` from the host. On any shared or
@@ -22,6 +26,7 @@
 services:
   postgres:
     image: pgvector/pgvector:${PGVECTOR_TAG:-pg18}
+    restart: unless-stopped
     # !! DEV-ONLY DEFAULT CREDENTIALS — POSTGRES_PASSWORD falls back to
     # !! "password" for local dev. Production MUST override it in `.env`
     # !! (docker-compose.prod.yml makes it mandatory via `:?`).
@@ -43,6 +48,7 @@ services:
   # Temporal gets its own Postgres to avoid schema conflicts with pgvector
   postgres-temporal:
     image: postgres:${POSTGRES_TEMPORAL_TAG:-18-alpine}
+    restart: unless-stopped
     # !! DEV-ONLY DEFAULT CREDENTIALS — same POSTGRES_PASSWORD fallback as the
     # !! `postgres` service above. Production MUST set POSTGRES_PASSWORD.
     environment:
@@ -81,6 +87,7 @@ services:
 
   temporal:
     image: temporalio/server:${TEMPORAL_VERSION:-1.31.2}
+    restart: unless-stopped
     # !! DEV-ONLY DEFAULT CREDENTIALS — POSTGRES_PWD falls back to "password"
     # !! for local dev. Production MUST set POSTGRES_PASSWORD.
     depends_on:
@@ -126,6 +133,7 @@ services:
   # TEMPORAL_UI_PORT default and avoid colliding with gateway:8080.
   temporal-ui:
     image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.53.3}
+    restart: unless-stopped
     depends_on:
       temporal:
         condition: service_healthy
@@ -150,6 +158,7 @@ services:
   garage:
     image: dxflrs/garage:${GARAGE_VERSION:-v2.3.0}
     profiles: ["objectstore"]
+    restart: unless-stopped
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     # !! DEV-ONLY DEFAULT CREDENTIALS — ARTIFACT_S3_ACCESS_KEY/_SECRET_KEY fall
     # !! back to a local placeholder. Production MUST override both in `.env`
