@@ -56,6 +56,15 @@ describe('runWorkRequestsCommand', () => {
     expect(stderrWrites.join('')).toContain('--repo');
   });
 
+  it('rejects the unsupported --workflow flag instead of silently ignoring it', async () => {
+    const code = await runWorkRequestsCommand(
+      ['--ticket=T-1', '--description=foo', '--repo=org/repo', '--workflow=custom'],
+      ENV
+    );
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('workflows run');
+  });
+
   it('errors when --repo format is invalid', async () => {
     const code = await runWorkRequestsCommand(
       ['--ticket=T-1', '--description=foo', '--repo=noslash'],

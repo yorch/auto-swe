@@ -4,16 +4,18 @@ import type { CliEnv } from '../lib/env.js';
 
 const SUB_HELP = `auto-swe run — submit a work request
 
-  run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--workflow=<template-name>]
+  run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
 
   FLAGS
     --ticket=<id>           External ticket ID (e.g. JIRA-123, GH-42)
-    --description=<text>    What the agent should implement
     --repo=<org/name>       Target repository in "org/name" format
     --repo-id=<uuid>        Target repository UUID (bypasses name-resolution lookup)
-    --workflow=<name>       Workflow template name (uses team default when omitted)
+    --description=<text>    What the agent should implement
     --budget=STANDARD|LARGE|EPIC
                             Budget tier for the run (default: STANDARD)
+
+  The run uses the repository's team default template (or the global default).
+  To start a specific template with an arbitrary payload, use \`workflows run\`.
 `;
 
 /** Shape returned by POST /api/v1/work-requests (201). */
@@ -27,8 +29,9 @@ interface ParsedRunFlags {
   description: string | undefined;
   repo: string | undefined;
   repoId: string | undefined;
-  workflow: string | undefined;
   budget: string | undefined;
+  /** Set when the removed `--workflow` flag is passed, so we can say why it is rejected. */
+  workflow: string | undefined;
 }
 
 function parseRunFlags(args: string[]): ParsedRunFlags {
@@ -111,6 +114,15 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
 
   const flags = parseRunFlags(args);
 
+  if (flags.workflow !== undefined) {
+    // The work-request endpoint has no template field — it always runs the
+    // repository's team default. Refuse loudly rather than silently ignoring
+    // the flag; `workflows run` is the path for a specific template.
+    process.stderr.write(
+      '--workflow is not supported: a work request always runs the team/global default template. Use `workflows run <name>` to start a specific template.\n'
+    );
+    return 1;
+  }
   if (!flags.ticket) {
     process.stderr.write('Missing required flag: --ticket=<id>\n');
     return 1;
@@ -167,36 +179,12 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     resolvedRepoId = repo.id;
   }
 
-  // Optionally resolve a specific workflow template ID
-  let templateId: string | undefined;
-  if (flags.workflow) {
-    const templates = await apiRequest<Array<{ id: string; name: string }>>(
-      env,
-      'GET',
-      '/api/v1/workflow-templates'
-    );
-    const tpl = templates.find((t) => t.name.toLowerCase() === flags.workflow?.toLowerCase());
-    if (!tpl) {
-      process.stderr.write(`Workflow template "${flags.workflow}" not found.\n`);
-      return 1;
-    }
-    templateId = tpl.id;
-  }
-
   const body: Record<string, unknown> = {
     budgetTier: budget,
     description: flags.description,
     externalTicketId: flags.ticket,
     repoIds: [resolvedRepoId],
   };
-  if (templateId) {
-    // The gateway does not accept a template override yet (its Zod schema
-    // strips unknown fields) — warn instead of silently using the default.
-    process.stderr.write(
-      `Warning: --workflow is not yet honored by the server; the team/global default template will be used.\n`
-    );
-  }
-
   const result = await apiRequest<WorkRequestResponse>(env, 'POST', '/api/v1/work-requests', body);
 
   process.stdout.write(`Work request submitted.\n`);
