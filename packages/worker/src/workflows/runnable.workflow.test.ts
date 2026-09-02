@@ -318,6 +318,47 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     }
   }, 120_000);
 
+  it('finalizes a cancelled run as CANCELLED and clears its pending human steps', async () => {
+    calls.cancelledHumanSteps.length = 0;
+    const before = calls.finalize.length;
+    currentSpec = makeSpec(
+      {
+        approved: { status: 'SUCCESS', type: 'terminate' },
+        gate: {
+          onApprove: 'approved',
+          onReject: 'rejected',
+          onTimeout: 'rejected',
+          timeout: '24h',
+          title: 'Approve?',
+          type: 'humanApproval',
+        },
+        marker: {
+          config: { status: 'AWAITING_HUMAN' },
+          next: 'gate',
+          step: 'updateDomainState',
+          type: 'step',
+        },
+        rejected: { status: 'FAILED', type: 'terminate' },
+      },
+      'marker'
+    );
+    const handle = await env.client.workflow.start('RunnableWorkflow', startArgs('wf-cancel'));
+    const deadline = Date.now() + 15_000;
+    while (!calls.domainStates.includes('AWAITING_HUMAN') && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(calls.domainStates).toContain('AWAITING_HUMAN');
+    await env.sleep('1 second');
+    await handle.cancel();
+    // The workflow still ends cancelled from Temporal's point of view…
+    await expect(handle.result()).rejects.toThrow();
+    // …but the finalisation ran despite the cancelled root scope, and recorded
+    // what actually happened rather than FAILED.
+    expect(calls.finalize.length).toBeGreaterThan(before);
+    expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'CANCELLED' });
+    expect(calls.cancelledHumanSteps).toContain('run-test-1');
+  }, 120_000);
+
   it('defaults resolveWorkspace/readSource/writeOutcome from the run-level workspace', async () => {
     calls.resolveWorkspace.length = 0;
     calls.readSource.length = 0;

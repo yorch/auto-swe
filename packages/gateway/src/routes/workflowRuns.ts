@@ -167,8 +167,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       // DB update is the authoritative record; fail the request if it rejects.
-      // Temporal cancel is best-effort: the workflow's CancelledFailure handler
-      // will also write CANCELLED, so a transient Temporal blip isn't fatal.
+      // Temporal cancel is best-effort: once the cancellation lands, the
+      // workflow's non-cancellable finalisation calls finalizeWorkflowRun with
+      // CANCELLED and clears the run's PENDING human steps, so a transient
+      // Temporal blip here isn't fatal.
       // Guard the update with a status=RUNNING predicate so a race against a
       // concurrent terminal-state write (e.g. the workflow finishing between
       // the findFirst above and this update) can't clobber a completed run.

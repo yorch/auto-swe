@@ -392,30 +392,42 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     runError = err;
   }
 
+  // A workflow cancellation (handle.cancel(), the run-cancel route) surfaces
+  // from runSpec as a CancelledFailure. It is not a failure of the spec: record
+  // it as CANCELLED so the run row, the inbox, and Slack all say what happened.
+  const cancelled = runError !== null && isCancellation(runError);
   const finalStatus: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED' = outcome
     ? (outcome.status as 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED')
-    : 'FAILED';
+    : cancelled
+      ? 'CANCELLED'
+      : 'FAILED';
   // Persist the terminate-node result so the run detail page can surface it
   // without re-deriving it from the spec and step traces.
   if (outcome) {
     outcome.finalContext.result = outcome.result;
   }
-  const finalContext = outcome
-    ? await snapshotContext(outcome.finalContext, runId)
-    : { error: String(runError) };
-  // Cancel any PENDING human-step rows before finalizing. This cleans up steps
-  // left waiting by a workflow cancellation, hard failure, or other abnormal exit
-  // so they don't linger in the inbox as un-actionable ghost tasks.
-  // Best-effort: a failure here must not prevent finalization.
-  try {
-    await stateActivities.cancelPendingHumanSteps(runId);
-  } catch (err) {
-    log.warn('cancelPendingHumanSteps failed; lingering PENDING rows may remain in the inbox', {
-      err: err instanceof Error ? err.message : String(err),
-      runId,
-    });
-  }
-  await stateActivities.finalizeWorkflowRun(runId, finalStatus, finalContext);
+  // Finalisation must run to completion even after the workflow's root scope
+  // was cancelled: every activity started from a cancelled scope throws
+  // CancelledFailure immediately, which left cancelled runs RUNNING forever
+  // with their PENDING human steps still in the inbox.
+  await CancellationScope.nonCancellable(async () => {
+    const finalContext = outcome
+      ? await snapshotContext(outcome.finalContext, runId)
+      : { error: String(runError) };
+    // Cancel any PENDING human-step rows before finalizing. This cleans up steps
+    // left waiting by a workflow cancellation, hard failure, or other abnormal exit
+    // so they don't linger in the inbox as un-actionable ghost tasks.
+    // Best-effort: a failure here must not prevent finalization.
+    try {
+      await stateActivities.cancelPendingHumanSteps(runId);
+    } catch (err) {
+      log.warn('cancelPendingHumanSteps failed; lingering PENDING rows may remain in the inbox', {
+        err: err instanceof Error ? err.message : String(err),
+        runId,
+      });
+    }
+    await stateActivities.finalizeWorkflowRun(runId, finalStatus, finalContext);
+  });
 
   if (runError) {
     throw runError instanceof Error ? runError : new Error(String(runError));
