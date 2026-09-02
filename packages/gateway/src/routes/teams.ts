@@ -4,7 +4,9 @@ import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendConflict } from '../lib/conflict.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { teamScopedConfigRoutes } from './modelConfig.js';
 
@@ -101,9 +103,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { OR: [{ name }, { slug }] },
       });
       if (existing) {
-        return reply.status(409).send({
-          error: { code: 'TEAM_EXISTS', message: 'Team name or slug already exists' },
-        });
+        return sendConflict(reply, 'TEAM_EXISTS', 'Team name or slug already exists');
       }
 
       // P5: every team nests under an organization. Use the requested org, else
@@ -120,9 +120,19 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const team = await fastify.prisma.team.create({
-        data: { description, name, orgId: org.id, slug },
-      });
+      // The findFirst above is a friendly pre-check; the unique indexes on
+      // name/slug are the real guard, so map their violation to the same 409.
+      let team: Awaited<ReturnType<typeof fastify.prisma.team.create>>;
+      try {
+        team = await fastify.prisma.team.create({
+          data: { description, name, orgId: org.id, slug },
+        });
+      } catch (err) {
+        if (isUniqueConstraintError(err)) {
+          return sendConflict(reply, 'TEAM_EXISTS', 'Team name or slug already exists');
+        }
+        throw err;
+      }
 
       return reply.status(201).send({ data: team });
     }
@@ -160,10 +170,11 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /api/v1/teams/:id — Team detail
-  app.get<{ Params: { id: string } }>(
+  app.get(
     '/:id',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: TeamParamsSchema },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -368,10 +379,11 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // DELETE /api/v1/teams/:id — Soft-delete team (ADMIN only)
-  app.delete<{ Params: { id: string } }>(
+  app.delete(
     '/:id',
     {
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { params: TeamParamsSchema },
     },
     async (request, reply) => {
       const team = await fastify.prisma.team.findUnique({
@@ -437,9 +449,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { userId_teamId: { teamId: request.params.id, userId } },
       });
       if (existing) {
-        return reply.status(409).send({
-          error: { code: 'MEMBER_EXISTS', message: 'User is already a member of this team' },
-        });
+        return sendConflict(reply, 'MEMBER_EXISTS', 'User is already a member of this team');
       }
 
       const membership = await fastify.prisma.teamMembership.create({
@@ -497,10 +507,11 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // DELETE /api/v1/teams/:id/members/:userId — Remove member (requires LEAD in this team)
-  app.delete<{ Params: { id: string; userId: string } }>(
+  app.delete(
     '/:id/members/:userId',
     {
       onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      schema: { params: TeamMemberParamsSchema },
     },
     async (request, reply) => {
       const actorRole = (request.teamRole as Role | undefined) ?? requireUser(request).role;

@@ -25,6 +25,8 @@ const LessonSearchQuery = z.object({
   repoId: z.string().uuid(),
 });
 
+const LessonIdParams = z.object({ id: z.string().uuid() });
+
 export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -252,10 +254,11 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // DELETE /api/v1/lessons/:id — Delete lesson (ADMIN only)
-  app.delete<{ Params: { id: string } }>(
+  app.delete(
     '/:id',
     {
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { params: LessonIdParams },
     },
     async (request, reply) => {
       const lesson = await fastify.prisma.memoryItem.findUnique({

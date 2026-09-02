@@ -30,6 +30,32 @@ function computeAlert(
   return { percent, triggered: percent >= threshold };
 }
 
+interface OrgWithCurrentUsage {
+  id: string;
+  name: string;
+  slug: string;
+  monthlyBudgetUsdCents: number | null;
+  budgetAlertThresholdPercent: number | null;
+  monthlyUsages: Array<{ costUsdAccrued: unknown; runsCompleted: number; yearMonth: string }>;
+}
+
+/** Budget summary shared by the "my organizations" and budget-alert listings. */
+function projectOrgBudgetSummary(org: OrgWithCurrentUsage) {
+  const usage = org.monthlyUsages[0];
+  const spent = usage ? Number(usage.costUsdAccrued) : 0;
+  return {
+    alert: computeAlert(org.monthlyBudgetUsdCents, org.budgetAlertThresholdPercent, spent),
+    budgetAlertThresholdPercent: org.budgetAlertThresholdPercent,
+    currentMonthUsage: usage
+      ? { costUsdAccrued: spent, runsCompleted: usage.runsCompleted, yearMonth: usage.yearMonth }
+      : null,
+    id: org.id,
+    monthlyBudgetUsdCents: org.monthlyBudgetUsdCents,
+    name: org.name,
+    slug: org.slug,
+  };
+}
+
 export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -58,32 +84,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
         })
     );
     return {
-      data: rows.map((m) => {
-        const org = m.organization;
-        const usage = org.monthlyUsages[0];
-        const spent = usage ? Number(usage.costUsdAccrued) : 0;
-        const alert = computeAlert(
-          org.monthlyBudgetUsdCents,
-          org.budgetAlertThresholdPercent,
-          spent
-        );
-        return {
-          alert,
-          budgetAlertThresholdPercent: org.budgetAlertThresholdPercent,
-          currentMonthUsage: usage
-            ? {
-                costUsdAccrued: spent,
-                runsCompleted: usage.runsCompleted,
-                yearMonth: usage.yearMonth,
-              }
-            : null,
-          id: org.id,
-          monthlyBudgetUsdCents: org.monthlyBudgetUsdCents,
-          name: org.name,
-          role: m.role,
-          slug: org.slug,
-        };
-      }),
+      data: rows.map((m) => ({ ...projectOrgBudgetSummary(m.organization), role: m.role })),
     };
   });
 
@@ -96,32 +97,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       orderBy: { name: 'asc' },
       where: { isActive: true },
     });
-    return {
-      data: orgs.map((org) => {
-        const usage = org.monthlyUsages[0];
-        const spent = usage ? Number(usage.costUsdAccrued) : 0;
-        const alert = computeAlert(
-          org.monthlyBudgetUsdCents,
-          org.budgetAlertThresholdPercent,
-          spent
-        );
-        return {
-          alert,
-          budgetAlertThresholdPercent: org.budgetAlertThresholdPercent,
-          currentMonthUsage: usage
-            ? {
-                costUsdAccrued: spent,
-                runsCompleted: usage.runsCompleted,
-                yearMonth: usage.yearMonth,
-              }
-            : null,
-          id: org.id,
-          monthlyBudgetUsdCents: org.monthlyBudgetUsdCents,
-          name: org.name,
-          slug: org.slug,
-        };
-      }),
-    };
+    return { data: orgs.map(projectOrgBudgetSummary) };
   });
 
   // GET /api/v1/admin/organizations/:orgId — any org member may read.
@@ -132,7 +108,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { params: OrgParamsSchema },
     },
     async (request, reply) => {
-      const { orgId } = OrgParamsSchema.parse(request.params);
+      const { orgId } = request.params;
       const org = await fastify.prisma.organization.findUnique({
         select: {
           budgetAlertThresholdPercent: true,
@@ -160,8 +136,8 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: PatchOrgSchema, params: OrgParamsSchema },
     },
     async (request, reply) => {
-      const { orgId } = OrgParamsSchema.parse(request.params);
-      const body = PatchOrgSchema.parse(request.body);
+      const { orgId } = request.params;
+      const body = request.body;
       if (Object.keys(body).length === 0) {
         return reply.status(400).send({
           error: { code: 'INVALID_BODY', message: 'No fields to update' },

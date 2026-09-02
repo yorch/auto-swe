@@ -68,9 +68,12 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   // GET /api/v1/admin/organizations/:orgId/members
   f.get(
     '/:orgId/members',
-    { onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }) },
+    {
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }),
+      schema: { params: OrgParamsSchema },
+    },
     async (request) => {
-      const { orgId } = OrgParamsSchema.parse(request.params);
+      const { orgId } = request.params;
       const rows = await fastify.prisma.organizationMembership.findMany({
         include: { user: { select: { email: true, id: true, name: true, role: true } } },
         orderBy: { createdAt: 'asc' },
@@ -95,8 +98,8 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       schema: { body: UpsertMemberSchema, params: OrgParamsSchema },
     },
     async (request, reply) => {
-      const { orgId } = OrgParamsSchema.parse(request.params);
-      const { userId, role } = UpsertMemberSchema.parse(request.body);
+      const { orgId } = request.params;
+      const { userId, role } = request.body;
 
       const existing = await fastify.prisma.organizationMembership.findUnique({
         where: { userId_orgId: { orgId, userId } },
@@ -141,7 +144,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const { orgId } = OrgParamsSchema.parse(request.params);
+      const { orgId } = request.params;
       const { email, orgRole } = request.body;
 
       const existing = await fastify.prisma.user.findUnique({ where: { email } });
@@ -189,8 +192,8 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       schema: { body: PatchMemberSchema, params: MemberParamsSchema },
     },
     async (request, reply) => {
-      const { orgId, userId } = MemberParamsSchema.parse(request.params);
-      const { role } = PatchMemberSchema.parse(request.body);
+      const { orgId, userId } = request.params;
+      const { role } = request.body;
 
       const row = await fastify.prisma.organizationMembership.findUnique({
         where: { userId_orgId: { orgId, userId } },
@@ -228,7 +231,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       schema: { params: MemberParamsSchema },
     },
     async (request, reply) => {
-      const { orgId, userId } = MemberParamsSchema.parse(request.params);
+      const { orgId, userId } = request.params;
 
       const row = await fastify.prisma.organizationMembership.findUnique({
         where: { userId_orgId: { orgId, userId } },

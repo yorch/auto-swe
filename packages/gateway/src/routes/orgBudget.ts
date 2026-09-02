@@ -39,6 +39,38 @@ const ErrorResponseSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
 
+function projectBudget(
+  org: {
+    id: string;
+    name: string;
+    monthlyBudgetUsdCents: number | null;
+    budgetAlertThresholdPercent: number | null;
+  },
+  usage: {
+    costUsdAccrued: unknown;
+    runsCompleted: number;
+    tokensInput: unknown;
+    tokensOutput: unknown;
+    yearMonth: string;
+  } | null
+) {
+  return {
+    budgetAlertThresholdPercent: org.budgetAlertThresholdPercent,
+    currentMonthUsage: usage
+      ? {
+          costUsdAccrued: Number(usage.costUsdAccrued),
+          runsCompleted: usage.runsCompleted,
+          tokensInput: Number(usage.tokensInput),
+          tokensOutput: Number(usage.tokensOutput),
+          yearMonth: usage.yearMonth,
+        }
+      : null,
+    monthlyBudgetUsdCents: org.monthlyBudgetUsdCents,
+    orgId: org.id,
+    orgName: org.name,
+  };
+}
+
 const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -47,10 +79,13 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
     '/:orgId/budget',
     {
       onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }),
-      schema: { response: { 200: BudgetResponseSchema, 404: ErrorResponseSchema } },
+      schema: {
+        params: OrgParamsSchema,
+        response: { 200: BudgetResponseSchema, 404: ErrorResponseSchema },
+      },
     },
     async (request, reply) => {
-      const { orgId } = OrgParamsSchema.parse(request.params);
+      const { orgId } = request.params;
 
       const [org, usage] = await Promise.all([
         fastify.prisma.organization.findUnique({
@@ -72,21 +107,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
       }
 
-      return {
-        budgetAlertThresholdPercent: org.budgetAlertThresholdPercent,
-        currentMonthUsage: usage
-          ? {
-              costUsdAccrued: Number(usage.costUsdAccrued),
-              runsCompleted: usage.runsCompleted,
-              tokensInput: Number(usage.tokensInput),
-              tokensOutput: Number(usage.tokensOutput),
-              yearMonth: usage.yearMonth,
-            }
-          : null,
-        monthlyBudgetUsdCents: org.monthlyBudgetUsdCents,
-        orgId: org.id,
-        orgName: org.name,
-      };
+      return projectBudget(org, usage);
     }
   );
 
@@ -102,10 +123,8 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const { orgId } = OrgParamsSchema.parse(request.params);
-      const { budgetAlertThresholdPercent, monthlyBudgetUsdCents } = PatchBudgetSchema.parse(
-        request.body
-      );
+      const { orgId } = request.params;
+      const { budgetAlertThresholdPercent, monthlyBudgetUsdCents } = request.body;
 
       const org = await fastify.prisma.organization.findUnique({
         select: {
@@ -155,21 +174,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
         request.log.warn({ auditErr, orgId }, 'failed to write organization budget audit log');
       }
 
-      return {
-        budgetAlertThresholdPercent: updated.budgetAlertThresholdPercent,
-        currentMonthUsage: usage
-          ? {
-              costUsdAccrued: Number(usage.costUsdAccrued),
-              runsCompleted: usage.runsCompleted,
-              tokensInput: Number(usage.tokensInput),
-              tokensOutput: Number(usage.tokensOutput),
-              yearMonth: usage.yearMonth,
-            }
-          : null,
-        monthlyBudgetUsdCents: updated.monthlyBudgetUsdCents,
-        orgId: updated.id,
-        orgName: updated.name,
-      };
+      return projectBudget(updated, usage);
     }
   );
 };

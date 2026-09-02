@@ -1,6 +1,7 @@
 import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import {
   type ConnectionEnvelopeColumns,
   type RedactedConnection,
@@ -34,6 +35,8 @@ function serializeWorkflow<
     tokensOutputUsed: Number(workflow.tokensOutputUsed),
   };
 }
+
+const WorkflowIdParams = z.object({ id: z.string().uuid() });
 
 export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -72,10 +75,11 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /api/v1/workflows/:id
-  fastify.get<{ Params: { id: string } }>(
+  app.get(
     '/:id',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: WorkflowIdParams },
     },
     async (request, reply) => {
       const user = requireUser(request);
