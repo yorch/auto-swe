@@ -121,13 +121,15 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Connections',
         roles: ['LEAD', 'ADMIN'],
       },
+      // The agent-library and skills routes are ADMIN-only on the gateway and the
+      // /admin layout redirects everyone else, so a LEAD entry would be a dead link.
       {
         href: '/admin/agents/library',
         icon: 'agents',
         label: 'Agents',
-        roles: ['LEAD', 'ADMIN'],
+        roles: ['ADMIN'],
       },
-      { href: '/admin/skills', icon: 'skills', label: 'Skills', roles: ['LEAD', 'ADMIN'] },
+      { href: '/admin/skills', icon: 'skills', label: 'Skills', roles: ['ADMIN'] },
       { href: '/teams', icon: 'teams', label: 'Teams', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/users', icon: 'users', label: 'Users', roles: ['ADMIN'] },
       {

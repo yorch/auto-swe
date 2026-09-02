@@ -18,6 +18,9 @@ function windowConfig(): Partial<AppConfig> {
 // consistent across all three without a silent auth break.
 export const COOKIE_ACCESS_TOKEN = 'accessToken';
 export const COOKIE_SESSION_MARKER = 'web-session-active';
+// Request header the proxy sets so Server Component layouts can read the
+// pathname (app/admin/layout.tsx uses it for its role check).
+export const PATHNAME_HEADER = 'x-pathname';
 
 export const API_BASE =
   windowConfig().apiUrl ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
