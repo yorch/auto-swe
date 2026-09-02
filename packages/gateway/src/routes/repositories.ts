@@ -11,10 +11,24 @@ import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
+/**
+ * `defaultBranch` is interpolated into git commands inside the workspace
+ * container. Every call site shell-quotes it, but a value that is not a valid
+ * ref name should fail here, not when the first run tries to check it out.
+ */
+const GitRefSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .regex(/^(?!-)[\w./-]+$/, 'must be a valid git ref name')
+  .refine((v) => !v.includes('..') && !v.includes('@{') && !v.endsWith('.lock'), {
+    message: 'must be a valid git ref name',
+  });
+
 const CreateRepoSchema = z.object({
   apiToken: z.string().optional(),
   config: z.record(z.string(), z.unknown()).optional(),
-  defaultBranch: z.string().default('main'),
+  defaultBranch: GitRefSchema.default('main'),
   description: z.string().optional(),
   executorImage: z.string().optional(),
   githubApiUrl: z.string().url().optional(),
@@ -42,7 +56,7 @@ const UpdateRepoSchema = z.object({
   apiToken: z.string().nullable().optional(),
   config: z.record(z.string(), z.unknown()).nullable().optional(),
   consolidationEnabled: z.boolean().optional(),
-  defaultBranch: z.string().optional(),
+  defaultBranch: GitRefSchema.optional(),
   description: z.string().nullable().optional(),
   executorImage: z.string().nullable().optional(),
   githubApiUrl: z.string().url().nullable().optional(),

