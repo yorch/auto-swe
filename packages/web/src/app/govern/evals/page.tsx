@@ -31,7 +31,7 @@ function meanColor(mean: number): string {
   return 'var(--color-brick-400)';
 }
 
-export default function AdminEvalsPage() {
+export default function GovernEvalsPage() {
   const { data: datasets, isLoading: dsLoading } = useEvalDatasets();
   const { data: results, isLoading: rLoading } = useEvalResults({ limit: 200 });
 

@@ -42,7 +42,7 @@ function SummaryBar({ events }: { events: Array<{ eventType: SecurityEventType }
   );
 }
 
-export default function AdminSecurityPage() {
+export default function GovernSecurityPage() {
   const [typeFilter, setTypeFilter] = useState<SecurityEventType | ''>('');
   const { data: events, isLoading } = useSecurityEvents({
     limit: 100,

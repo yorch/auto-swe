@@ -10,7 +10,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { useExportBundle, useInstallBundleFromUrl, useInstalledBundles } from '@/hooks/useBundles';
 import { errMsg } from '@/lib/errors';
 
-export default function AdminBundlesPage() {
+export default function StudioBundlesPage() {
   const { data: bundles, isLoading } = useInstalledBundles();
   const installFromUrl = useInstallBundleFromUrl();
   const exportBundle = useExportBundle();

@@ -26,7 +26,7 @@ function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
   );
 }
 
-export default function AdminAccessTokensPage() {
+export default function GovernAccessTokensPage() {
   const { data: tokens, isLoading } = useAdminTokens();
   const revokeToken = useAdminRevokeToken();
   const pruneAudit = useAdminPruneShellAudit(90);

@@ -77,19 +77,6 @@ export function groupWorkflowsByDate(
   return buckets.map((date) => ({ date, ...map[date] }));
 }
 
-export function groupWorkflowsByRepo(
-  workflows: WorkflowSummary[]
-): { repo: string; count: number }[] {
-  const counts: Record<string, number> = {};
-  for (const w of workflows) {
-    const repo = w.repository?.repoName ?? 'Unknown';
-    counts[repo] = (counts[repo] ?? 0) + 1;
-  }
-  return Object.entries(counts)
-    .map(([repo, count]) => ({ count, repo }))
-    .sort((a, b) => b.count - a.count);
-}
-
 // ── Lesson transformations ────────────────────────────────────────────
 
 export function groupLessonsByType(lessons: LessonForChart[]): { type: string; count: number }[] {

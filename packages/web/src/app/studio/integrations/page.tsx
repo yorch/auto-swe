@@ -33,7 +33,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'audit-log', label: 'Audit log' },
 ];
 
-export default function AdminIntegrationsPage() {
+export default function StudioIntegrationsPage() {
   const [active, setActive] = useState<Tab>('github');
 
   return (

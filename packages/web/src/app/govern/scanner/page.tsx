@@ -445,7 +445,7 @@ function PatternSection({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function AdminScannerPage() {
+export default function GovernScannerPage() {
   const [newOpen, setNewOpen] = useState(false);
   const { data: patterns, isLoading } = useScannerPatterns();
 

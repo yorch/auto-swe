@@ -303,7 +303,7 @@ function DeleteMcpConnectionModal({
   );
 }
 
-export default function AdminMcpConnectionsPage() {
+export default function StudioMcpConnectionsPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<McpConnectionRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<McpConnectionRow | null>(null);

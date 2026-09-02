@@ -378,7 +378,7 @@ function EffectivenessCard() {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-export default function AdminSkillsPage() {
+export default function StudioSkillsPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);

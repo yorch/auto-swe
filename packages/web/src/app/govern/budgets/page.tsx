@@ -14,7 +14,7 @@ function fmtCents(n: number | null): string {
   return `$${(n / 100).toFixed(2)}`;
 }
 
-export default function AdminOrganizationsPage() {
+export default function GovernBudgetsPage() {
   const { data: orgs, isLoading } = useUserOrgs();
 
   const alertCount = (orgs ?? []).filter((o) => o.alert.triggered).length;

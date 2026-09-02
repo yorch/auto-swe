@@ -198,7 +198,7 @@ function DeleteBaselineModal({
   );
 }
 
-export default function AdminBaselinesPage() {
+export default function GovernBaselinesPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<string>('all');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; domain: string } | null>(null);

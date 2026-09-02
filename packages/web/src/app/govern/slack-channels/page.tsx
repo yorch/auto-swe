@@ -1284,7 +1284,7 @@ function ChannelRow({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function AdminSlackChannelsPage() {
+export default function GovernSlackChannelsPage() {
   const { data: channels, isLoading } = useSlackChannels();
   const deleteChannel = useDeleteSlackChannel();
 
