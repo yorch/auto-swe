@@ -38,7 +38,7 @@ vi.mock('../lib/scm/index.js', () => ({
   toRepoRef: (repo: Record<string, unknown>) => repo,
 }));
 
-const execMock = vi.fn(async (cmd: string) => {
+const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) => {
   if (cmd.includes('rev-parse')) {
     return 'abc123\n';
   }
@@ -255,9 +255,7 @@ describe('runImplementerFixSession', () => {
   it('gives the test run the long timeout instead of the 2-minute exec default', async () => {
     findRepo.mockResolvedValue(REPO as never);
     await runImplementerFixSession(input());
-    const testCall = execMock.mock.calls.find(
-      (c) => (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === 600_000
-    );
+    const testCall = execMock.mock.calls.find((c) => c[1]?.timeoutMs === 600_000);
     expect(testCall).toBeDefined();
   });
 

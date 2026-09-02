@@ -19,9 +19,9 @@ const { checkoutMock, generateMock, loadMock, prismaMock, workspaceMock } = vi.h
   },
   workspaceMock: {
     destroy: vi.fn(async () => {}),
-    exec: vi.fn(async () => ''),
+    exec: vi.fn(async (_command: string, _options?: { timeoutMs?: number }) => ''),
     execCapture: vi.fn(),
-    gitAuthed: vi.fn(async () => ''),
+    gitAuthed: vi.fn(async (_subcommand: string) => ''),
   },
 }));
 
@@ -201,14 +201,14 @@ describe('executeImplementation shell hygiene', () => {
       repoName: 'api',
     });
     await executeImplementation(REQUEST);
-    const commands = workspaceMock.exec.mock.calls.map((c) => c[0] as string);
+    const commands = workspaceMock.exec.mock.calls.map((c) => c[0]);
     expect(commands).toContain("git diff origin/'main; touch /pwned'");
     expect(commands).not.toContain('git diff origin/main; touch /pwned');
   });
 });
 
 describe('executeImplementation retry safety', () => {
-  const execCommands = () => workspaceMock.exec.mock.calls.map((c) => c[0] as string);
+  const execCommands = () => workspaceMock.exec.mock.calls.map((c) => c[0]);
 
   it('starts from the clone HEAD on the first attempt', async () => {
     await executeImplementation(REQUEST);
@@ -253,9 +253,7 @@ describe('executeImplementation retry safety', () => {
 
   it('gives the test run the long timeout instead of the 2-minute exec default', async () => {
     await executeImplementation(REQUEST);
-    const testCall = workspaceMock.exec.mock.calls.find(
-      (c) => (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === 600_000
-    );
+    const testCall = workspaceMock.exec.mock.calls.find((c) => c[1]?.timeoutMs === 600_000);
     expect(testCall).toBeDefined();
   });
 });
