@@ -4,3 +4,19 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  # Base images in the three app Dockerfiles (node:24-alpine) and the pinned
+  # infra images in the compose files (pgvector, postgres, temporal, garage,
+  # otel-lgtm, watchtower). Compose tags are `${VAR:-default}` expressions;
+  # Dependabot updates the default.
+  - package-ecosystem: docker
+    directories:
+      - /packages/gateway
+      - /packages/web
+      - /packages/worker
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly

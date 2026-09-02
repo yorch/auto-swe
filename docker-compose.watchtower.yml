@@ -1,6 +1,9 @@
 services:
   watchtower:
-    image: containrrr/watchtower
+    # Pinned: an unpinned tag re-pulls whatever `latest` is on every restart,
+    # which for the container that redeploys the rest of the stack is the one
+    # place a surprise upgrade is least welcome. Dependabot bumps it.
+    image: containrrr/watchtower:${WATCHTOWER_VERSION:-1.7.1}
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
