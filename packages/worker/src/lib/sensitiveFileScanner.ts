@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   type RegexTarget,
   resolveRegexBudgetMs,
@@ -33,7 +34,7 @@ async function scanSensitiveFilePaths(filePaths: string[]): Promise<SensitiveFil
   const patterns = await loadSensitiveFilePatterns();
   const targets: RegexTarget[] = [];
   filePaths.forEach((filePath, i) => {
-    const normalized = filePath.replace(/\\/g, '/');
+    const normalized = normalizeScanPath(filePath);
     const basename = normalized.split('/').pop() ?? normalized;
     for (const [j, text] of chunkScanText(basename).entries()) {
       targets.push({ key: `${i}:base:${j}`, text });
@@ -59,6 +60,23 @@ async function scanSensitiveFilePaths(filePaths: string[]): Promise<SensitiveFil
     }
   }
   return { hitIndex, hitPatternKey, incomplete };
+}
+
+/**
+ * Canonical form a path is matched in: forward slashes, `.`/`..` segments
+ * collapsed, no leading `./`. Patterns are written against the canonical path
+ * (`^\\.env`, `(^|\\/)id_rsa$`), so an agent spelling the same file as
+ * `./src/../.env` or `a\\..\\id_rsa` must resolve to the string the pattern
+ * expects rather than slip past an anchor. Exported for the write-tool tests.
+ */
+export function normalizeScanPath(filePath: string): string {
+  const slashed = filePath.replace(/\\/g, '/');
+  const collapsed = path.posix.normalize(slashed);
+  // `normalize('')` is `.`; keep an empty input empty so nothing matches it.
+  if (collapsed === '.' && slashed === '') {
+    return '';
+  }
+  return collapsed.replace(/^(\.\/)+/, '');
 }
 
 /**

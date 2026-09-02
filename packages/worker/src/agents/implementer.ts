@@ -139,7 +139,9 @@ export async function createImplementerAgent(
     execute: async ({ path, content }) => {
       const start = Date.now();
       try {
-        const sensitiveBlock = await checkSensitiveFilePath(path);
+        // Scan the same normalised path the write will use, so `./x/../.env`
+        // and `.env` are the same file to the policy as they are to the shell.
+        const sensitiveBlock = await checkSensitiveFilePath(safePath(path));
         if (sensitiveBlock) {
           tracer?.addToolCall({
             durationMs: Date.now() - start,

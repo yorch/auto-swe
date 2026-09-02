@@ -12,6 +12,7 @@ import { prisma } from '@auto-swe/shared/db';
 import {
   checkSensitiveFilePath,
   invalidateSensitiveFilePatternCache,
+  normalizeScanPath,
 } from './sensitiveFileScanner.js';
 
 const findMany = vi.mocked(prisma.scannerPattern.findMany);
@@ -101,6 +102,17 @@ describe('checkSensitiveFilePath — paths that must be blocked', () => {
     expect(result).toContain('[sensitive-pem-cert]');
   });
 
+  it.each([
+    ['./.env', 'sensitive-env-file'],
+    ['./src/../.env.production', 'sensitive-env-file'],
+    ['config/./id_rsa', 'sensitive-ssh-private-key'],
+    ['keys\\..\\id_ed25519', 'sensitive-ssh-private-key'],
+    ['a/b/../../credentials.json', 'sensitive-credentials-file'],
+  ])('collapses ./ and ../ segments so %j still hits [%s]', async (filePath, label) => {
+    const result = await checkSensitiveFilePath(filePath);
+    expect(result).toContain(`[${label}]`);
+  });
+
   it('normalizes Windows backslash paths before matching', async () => {
     const result = await checkSensitiveFilePath('C:\\Users\\dev\\.ssh\\id_rsa');
     expect(result).toContain('[sensitive-ssh-private-key]');
@@ -149,5 +161,19 @@ describe('checkSensitiveFilePath — pattern loading behavior', () => {
     findMany.mockReset();
     findMany.mockRejectedValue(new Error('db down'));
     await expect(checkSensitiveFilePath('.env')).rejects.toThrow('db down');
+  });
+});
+
+describe('normalizeScanPath', () => {
+  it.each([
+    ['.env', '.env'],
+    ['./.env', '.env'],
+    ['././src/../.env', '.env'],
+    ['a\\b\\..\\c.pem', 'a/c.pem'],
+    ['dir/', 'dir/'],
+    ['', ''],
+    ['..', '..'],
+  ])('%j → %j', (input, expected) => {
+    expect(normalizeScanPath(input)).toBe(expected);
   });
 });
