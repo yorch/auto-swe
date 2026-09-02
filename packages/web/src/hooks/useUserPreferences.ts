@@ -1,11 +1,15 @@
 'use client';
 
+import { RUN_DETAIL_LAYOUTS, type RunDetailLayout } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { RunDetailLayout } from '@/components/LayoutToggle';
 import { api } from '@/lib/api';
 
 interface UserPreferences {
   runDetailLayout?: RunDetailLayout;
+}
+
+function isRunDetailLayout(value: unknown): value is RunDetailLayout {
+  return (RUN_DETAIL_LAYOUTS as readonly unknown[]).includes(value);
 }
 
 interface PreferencesResponse {
@@ -18,11 +22,11 @@ const DEFAULT_LAYOUT: RunDetailLayout = 'A';
 /**
  * Server-persisted per-user UI preferences, optimistically updated.
  *
- * `runDetailLayout` is the one key so far. It reuses `LayoutToggle`'s union
- * rather than declaring its own: this hook previously typed the layout as
- * `'split' | 'inline'` while the toggle and the run page used `'A' | 'B' | 'C'`,
- * two unrelated unions under the same name, and the hook had no callers to
- * make the mismatch show up.
+ * `runDetailLayout` is the one key so far. The union lives in
+ * `@auto-swe/shared` so the gateway's Zod schema, the toggle and this hook
+ * cannot drift apart again (they once disagreed on the member names, so every
+ * PATCH was a 400). The stored value is validated on read because the column
+ * is free-form JSON that older clients may have written.
  */
 export function useUserPreferences() {
   const qc = useQueryClient();
@@ -51,7 +55,7 @@ export function useUserPreferences() {
   });
 
   return {
-    layout: data?.runDetailLayout ?? DEFAULT_LAYOUT,
+    layout: isRunDetailLayout(data?.runDetailLayout) ? data.runDetailLayout : DEFAULT_LAYOUT,
     setLayout: mutation.mutate,
   };
 }

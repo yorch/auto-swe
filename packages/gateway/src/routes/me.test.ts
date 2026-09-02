@@ -50,7 +50,7 @@ describe('meRoutes', () => {
   describe('GET /api/v1/me/preferences', () => {
     it('returns the user preferences', async () => {
       ctx.mockPrisma.user.findUniqueOrThrow.mockResolvedValueOnce({
-        preferences: { runDetailLayout: 'split' },
+        preferences: { runDetailLayout: 'A' },
       });
 
       const res = await ctx.app.inject({
@@ -61,7 +61,7 @@ describe('meRoutes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({
-        preferences: { runDetailLayout: 'split' },
+        preferences: { runDetailLayout: 'A' },
       });
     });
 
@@ -78,27 +78,27 @@ describe('meRoutes', () => {
     it('merges the new value and returns updated preferences', async () => {
       // Existing preferences has an extra key that should survive the patch
       ctx.mockPrisma.user.findUniqueOrThrow.mockResolvedValueOnce({
-        preferences: { otherKey: 'keep-me', runDetailLayout: 'split' },
+        preferences: { otherKey: 'keep-me', runDetailLayout: 'A' },
       });
       ctx.mockPrisma.user.update.mockResolvedValueOnce({
-        preferences: { otherKey: 'keep-me', runDetailLayout: 'inline' },
+        preferences: { otherKey: 'keep-me', runDetailLayout: 'B' },
       });
 
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'PATCH',
-        payload: { runDetailLayout: 'inline' },
+        payload: { runDetailLayout: 'B' },
         url: '/api/v1/me/preferences',
       });
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({
-        preferences: { otherKey: 'keep-me', runDetailLayout: 'inline' },
+        preferences: { otherKey: 'keep-me', runDetailLayout: 'B' },
       });
       expect(ctx.mockPrisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
           // otherKey must be preserved from the existing preferences
-          data: { preferences: { otherKey: 'keep-me', runDetailLayout: 'inline' } },
+          data: { preferences: { otherKey: 'keep-me', runDetailLayout: 'B' } },
         })
       );
     });
@@ -113,7 +113,7 @@ describe('meRoutes', () => {
         headers: AUTH_HEADER,
         method: 'PATCH',
         // `unknownKey` is not in the Zod schema and should be stripped
-        payload: { runDetailLayout: 'split', unknownKey: 'evil' },
+        payload: { runDetailLayout: 'A', unknownKey: 'evil' },
         url: '/api/v1/me/preferences',
       });
 
@@ -121,7 +121,7 @@ describe('meRoutes', () => {
       // The update was called with only the whitelisted key
       expect(ctx.mockPrisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { preferences: { runDetailLayout: 'split' } },
+          data: { preferences: { runDetailLayout: 'A' } },
         })
       );
     });
@@ -129,7 +129,7 @@ describe('meRoutes', () => {
     it('returns 401 without auth', async () => {
       const res = await ctx.app.inject({
         method: 'PATCH',
-        payload: { runDetailLayout: 'inline' },
+        payload: { runDetailLayout: 'B' },
         url: '/api/v1/me/preferences',
       });
       expect(res.statusCode).toBe(401);

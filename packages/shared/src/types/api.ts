@@ -7,6 +7,12 @@ export interface ApiResponse<T> {
   error?: { code: string; message: string };
 }
 
+// ── User preferences ──
+
+/** Run-detail page layouts, in the order the toggle renders them. */
+export const RUN_DETAIL_LAYOUTS = ['A', 'B', 'C'] as const;
+export type RunDetailLayout = (typeof RUN_DETAIL_LAYOUTS)[number];
+
 // ── Shared reference shapes (minimal projections returned by includes) ──
 
 export interface TeamRef {

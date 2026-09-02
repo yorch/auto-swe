@@ -1,6 +1,6 @@
 'use client';
 
-export type RunDetailLayout = 'A' | 'B' | 'C';
+import type { RunDetailLayout } from '@auto-swe/shared/types/api';
 
 const OPTIONS: { id: RunDetailLayout; label: string; title: string }[] = [
   { id: 'A', label: 'A', title: 'Split Console' },

@@ -1,10 +1,11 @@
+import { RUN_DETAIL_LAYOUTS } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const PreferencesBodySchema = z.object({
-  runDetailLayout: z.enum(['split', 'inline']).optional(),
+  runDetailLayout: z.enum(RUN_DETAIL_LAYOUTS).optional(),
 });
 
 export const meRoutes: FastifyPluginAsync = async (fastify) => {
