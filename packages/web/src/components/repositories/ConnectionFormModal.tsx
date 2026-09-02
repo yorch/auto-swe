@@ -213,7 +213,7 @@ export function ConnectionFormModal({
       open={open}
       subtitle={
         isGit
-          ? 'auto-swe clones this repo into an ephemeral Docker container per work request and opens pull requests back here.'
+          ? 'The platform clones this repo into an ephemeral container per run and opens pull requests back here.'
           : 'A named external system your workflows can target or reference.'
       }
       title={mode.kind === 'edit' ? connectionLabel(mode.repo) : 'Add a connection'}

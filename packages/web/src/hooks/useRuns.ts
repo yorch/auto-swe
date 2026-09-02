@@ -78,6 +78,7 @@ export function useAllWorkflowRuns(
   filters: {
     status?: string;
     templateId?: string;
+    scope?: 'ALL' | 'MINE' | 'TEAM';
     limit?: number;
     offset?: number;
     includeChannel?: boolean;
@@ -89,6 +90,9 @@ export function useAllWorkflowRuns(
   }
   if (filters.templateId) {
     params.set('templateId', filters.templateId);
+  }
+  if (filters.scope) {
+    params.set('scope', filters.scope);
   }
   if (filters.includeChannel) {
     params.set('includeChannel', 'true');

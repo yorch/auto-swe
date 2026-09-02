@@ -90,7 +90,7 @@ export function resolveDocLink(href: string, servedSlugs: ReadonlySet<string>): 
   const [path, ...rest] = href.split('#');
   const anchor = rest.length > 0 ? `#${rest.join('#')}` : '';
 
-  // Root-relative links are dashboard routes (`/admin/model-config`), already valid.
+  // Root-relative links are dashboard routes (`/studio/models`), already valid.
   // Protocol-relative `//host` links are not considered safe because they inherit
   // the page's scheme and can point anywhere.
   if (path.startsWith('/') && !path.startsWith('//')) {

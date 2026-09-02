@@ -13,11 +13,11 @@ type Role = 'ADMIN' | 'LEAD' | 'ENGINEER' | string;
 export function DashboardOnboarding({
   repos,
   role,
-  onSubmit,
+  onNewRequest,
 }: {
   repos: RepositorySummary[];
   role: Role;
-  onSubmit?: () => void;
+  onNewRequest?: () => void;
 }) {
   // Start empty so SSR output is stable regardless of runtime env. After mount,
   // window.__APP_CONFIG__ is set and TEMPORAL_UI_URL holds the runtime value.
@@ -29,26 +29,26 @@ export function DashboardOnboarding({
   const canManageRepos = role === 'ADMIN' || role === 'LEAD';
   const hasRepo = repos.length > 0;
   const sampleRepo = repos[0];
-  const sampleRepoId = sampleRepo?.id ?? '<repo-uuid>';
   const sampleRepoLabel = sampleRepo
-    ? `${sampleRepo.organizationName}/${sampleRepo.repoName}`
-    : 'your repo';
+    ? sampleRepo.organizationName && sampleRepo.repoName
+      ? `${sampleRepo.organizationName}/${sampleRepo.repoName}`
+      : (sampleRepo.name ?? 'your workspace')
+    : 'your workspace';
 
-  const curlExample = `curl -X POST ${API_BASE}/api/v1/work-requests \\
+  const curlExample = `curl -X POST ${API_BASE}/api/v1/workflow-templates/<template-id>/runs \\
   -H 'Authorization: Bearer <your-token>' \\
   -H 'Content-Type: application/json' \\
   -d '{
-    "externalTicketId": "JIRA-1",
-    "description": "Add a GET /health endpoint",
-    "repoIds": ["${sampleRepoId}"]
+    "label": "Short request description",
+    "payload": {}
   }'`;
 
   return (
     <div className="space-y-12">
       <div className="fade-up">
         <PageHeader
-          chapter="§ Welcome to auto-swe"
-          subtitle="No runs yet. Here's the shortest path to your first reviewed pull request."
+          chapter="§ Welcome"
+          subtitle="No runs yet. Here's the shortest path to your first validated outcome."
           title="Let's get the workshop running."
         />
       </div>
@@ -66,7 +66,7 @@ export function DashboardOnboarding({
             </div>
             <p className="text-sm leading-relaxed text-paper-400">
               The worker refuses to boot until every agent role has a model, a provider credential,
-              and GitHub access — skip this and the first run hangs silently. Two stops:
+              and a workspace connection — skip this and the first run hangs silently. Two stops:
             </p>
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <ResourceLink
@@ -76,7 +76,7 @@ export function DashboardOnboarding({
                 title="Model config"
               />
               <ResourceLink
-                body="GitHub token + webhook secret."
+                body="Provider credentials, tokens, and webhook secrets."
                 eyebrow="integrations"
                 href="/studio/integrations"
                 title="Integrations"
@@ -93,8 +93,8 @@ export function DashboardOnboarding({
             body={
               hasRepo ? (
                 <p>
-                  <span className="text-moss-400">{repos.length}</span> repository
-                  {repos.length === 1 ? '' : 'ies'} connected.
+                  <span className="text-moss-400">{repos.length}</span> workspace{' '}
+                  {repos.length === 1 ? 'connection' : 'connections'} connected.
                   {canManageRepos && (
                     <>
                       {' '}
@@ -107,22 +107,22 @@ export function DashboardOnboarding({
                 </p>
               ) : canManageRepos ? (
                 <p>
-                  Add the GitHub repo auto-swe should send pull requests to.{' '}
+                  Add a workspace connection for the workflows you want to run.{' '}
                   <Link className="text-ember-400 hover:underline" href="/connections">
                     Open connections →
                   </Link>
                 </p>
               ) : (
                 <p>
-                  No repositories yet. Ask an{' '}
+                  No workspace connections yet. Ask an{' '}
                   <span className="text-paper-200">admin or team lead</span> to add one — only they
-                  can connect repos.
+                  can connect workspaces.
                 </p>
               )
             }
             done={hasRepo}
             index={1}
-            title="Connect a repository"
+            title="Connect a workspace"
           />
           <OnboardingStep
             body={
@@ -130,29 +130,29 @@ export function DashboardOnboarding({
                 <p>
                   {hasRepo ? (
                     <>
-                      Target <span className="text-paper-200">{sampleRepoLabel}</span> with a ticket
-                      ID and a brief.
+                      Pick a template and describe what you need from{' '}
+                      <span className="text-paper-200">{sampleRepoLabel}</span>.
                     </>
                   ) : (
-                    <>Step 01 unlocks this — connect a repository first.</>
+                    <>Step 01 unlocks this — connect a workspace first.</>
                   )}
                 </p>
-                {onSubmit && (
+                {onNewRequest && (
                   <Button
                     disabled={!hasRepo}
-                    onClick={onSubmit}
+                    onClick={onNewRequest}
                     size="sm"
                     type="button"
                     variant="primary"
                   >
-                    + Submit work request
+                    + New request
                   </Button>
                 )}
               </div>
             }
             disabled={!hasRepo}
             index={2}
-            title="Submit a work request"
+            title="Start a request"
           />
           <OnboardingStep
             body={

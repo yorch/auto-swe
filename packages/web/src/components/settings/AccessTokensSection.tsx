@@ -64,7 +64,7 @@ export function AccessTokensSection() {
     <>
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="for the auto-swe CLI">Personal access tokens</CardTitle>
+          <CardTitle eyebrow="for the CLI">Personal access tokens</CardTitle>
           <Button onClick={() => setCreating(true)} size="sm" variant="primary">
             + New token
           </Button>
@@ -74,7 +74,7 @@ export function AccessTokensSection() {
           <LoadingState compact />
         ) : (tokens ?? []).length === 0 ? (
           <p className="text-xs text-paper-500">
-            No tokens yet. Create one to authenticate the <code>auto-swe</code> CLI via
+            No tokens yet. Create one to authenticate the CLI via
             <code className="ml-1 text-paper-300">AUTO_SWE_TOKEN</code>.
           </p>
         ) : (
@@ -125,7 +125,7 @@ export function AccessTokensSection() {
         eyebrow="§ New personal access token"
         onClose={() => setCreating(false)}
         open={creating}
-        subtitle="Tokens authenticate the auto-swe CLI and API. The plaintext value is shown once and never stored — copy it before closing the next dialog."
+        subtitle="Tokens authenticate the CLI and API. The plaintext value is shown once and never stored — copy it before closing the next dialog."
         title="Mint a token"
       >
         <form className="space-y-5" onSubmit={handleCreate}>

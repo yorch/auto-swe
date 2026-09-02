@@ -108,7 +108,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             error: {
               code: 'GITHUB_NOT_CONFIGURED',
               message:
-                'GitHub integration not configured. Visit /admin/integrations to add a PAT or GitHub App.',
+                'GitHub integration not configured. Visit /studio/integrations to add a PAT or GitHub App.',
             },
           });
         }
