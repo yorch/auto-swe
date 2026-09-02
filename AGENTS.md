@@ -73,7 +73,7 @@ Run `ls packages/<name>/src` for the actual layout — only non-obvious rules li
 
 | Package            | Purpose                                              | Critical conventions                                                                                                                                                                          |
 | ------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/shared`  | Prisma schema, DB client, shared types, workflow spec + interpreter, config registry | Singleton `PrismaClient` exported from `db.ts`; types re-exported via the `index.ts` barrel; `prisma/` holds `schema.prisma`, `seed.ts`, migrations; `skills/` holds built-in skill definitions (one file per skill); `config/` holds the setting registry + its resolver and permission rules |
+| `packages/shared`  | Prisma schema, DB client, shared types, workflow spec + interpreter, config registry | Singleton `PrismaClient` exported from `db.ts`; types re-exported via the `index.ts` barrel; `src/prisma/` holds `schema.prisma`, `seed.ts`, migrations; `skills/` holds built-in skill definitions (one file per skill); `config/` holds the setting registry + its resolver and permission rules |
 | `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; Octokit lives in `lib/github.ts`; entry point `src/index.ts`                                              |
 | `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external packages.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
@@ -104,7 +104,8 @@ Top-level files that matter:
 - Boolean query params go through `booleanQueryParam()` (`gateway/src/lib/queryParams.ts`), never
   `z.coerce.boolean()` — coercion is `Boolean(input)`, so the string `false` arrives as `true` and
   the parameter silently means its opposite
-- Prisma for all DB access — raw SQL (`$queryRawUnsafe`) only for pgvector operations (embeddings)
+- Prisma for all DB access — raw SQL (`$queryRawUnsafe`) only for pgvector operations (embeddings),
+  plus the row/advisory-lock exception in §7
 - Prefer explicit error handling over silent failures
 - **Biome** is the single source of truth for lint + format — config at root `biome.json` (single quotes, lineWidth 100, indent 2, organizeImports on). Run `yarn lint:fix` before committing.
 
@@ -434,9 +435,20 @@ that executes every scanner pattern and is `terminate()`d when a batch overruns 
 budget. That budget is the `workspace.regexScanBudgetMs` setting (default 250 ms, ADMIN-only,
 platform-wide — see the Setting Registry section above) resolved once per scan call and passed
 through `runRegexBatch`'s `opts.budgetMs`; a resolution failure falls back to the default rather
-than throwing, since a scan must never abort its caller. On an overrun the batch is bisected against
-a fresh thread to attribute the hang to a specific pattern; the well-behaved patterns' results are
-kept. Warm round trips cost ~0.1 ms.
+than throwing, since a scan must never abort its caller. The budget is **per target**: each window
+a blocking scanner passes gets the full budget against every pattern, so a long command is bounded
+by `windows × budget`, not held to one budget for all of them. On an overrun the batch is bisected
+against a fresh thread to attribute the hang to a specific pattern; the well-behaved patterns'
+results are kept. An isolated overrun is then **confirmed** — the lone pattern is re-run by itself
+on a fresh thread — and only a second overrun blames the pattern; a pattern that completes on the
+re-run is treated as evaluated. Warm round trips cost ~0.1 ms.
+
+Built-in `SHELL_COMMAND` patterns of the form `\bword\b … tail` bound the scan after the word to
+the next occurrence of the same word set (`restOfSegment` in `scannerPatterns/index.ts`), so their
+cost stays linear in a 20k window; `regexExec.test.ts` times the whole built-in set against
+adversarial windows. A plain `[^;&|]*` there is quadratic — attempted at every occurrence of the
+word, each attempt scanning to the end of the segment — and 20k of `curl curl curl …` costs more
+than the entire budget for one pattern.
 
 - **Blocking scanners fail closed.** `scanShellCommand` and `checkSensitiveFilePath` return a block
   message when the scan cannot complete — they cannot say the input is clean, so they do not.
@@ -457,14 +469,18 @@ kept. Warm round trips cost ~0.1 ms.
 
 Limitations of this arrangement, stated so nothing above reads as more than it is:
 
-- A pattern that overruns is **quarantined per process** and skipped by later scans, which report
-  themselves complete — fail-open for that one rule. The alternative, refusing every scan forever,
-  turns one bad admin row into a total outage. It is logged loudly on every skip; the quarantine is
-  per-process and per-lifetime, so gateway and worker quarantine independently and forget on restart.
+- A pattern that overruns twice in isolation is **quarantined per process for
+  `REGEX_QUARANTINE_TTL_MS`** (10 min) and skipped by scans inside that window. The executor
+  reports the skipped keys in `quarantinedPatternKeys` and does not mark those scans `incomplete`,
+  so whether a skipped rule is fail-open or fail-closed is the caller's decision, not the
+  executor's. Refusing every scan forever would turn one bad admin row into a total outage. It is
+  logged loudly on every skip; the quarantine is per-process, so gateway and worker quarantine
+  independently and both forget on restart. When the TTL lapses the pattern runs again, and a
+  still-bad one costs another two budgets before it is re-quarantined.
 - The scan during which a pattern overran fails closed, so an agent can see one spurious block
   before the quarantine takes effect.
-- N distinct pathological patterns cost N budgets before they are all quarantined. The budget
-  bounds a hang; it does not make scanning free.
+- N distinct pathological patterns cost N × two budgets per target before they are all
+  quarantined. The budget bounds a hang; it does not make scanning free.
 
 **Security events:** blocks tag `AgentTrace.error` with the prefixes above; advisory events write
 named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The
@@ -481,8 +497,10 @@ Any other provider name routes through `@ai-sdk/openai-compatible` and requires 
 credential row — this covers OpenRouter, Ollama, vLLM, Groq, Cerebras, and similar.
 
 **Credentials** are AES-256-GCM encrypted in `provider_credentials.api_key_ciphertext`.
-`CONFIG_ENCRYPTION_KEY` (base64, 32 bytes) is required to start the gateway or worker — both fail
-fast on a missing or wrong-length key. Rotation is not implemented; `key_version` is reserved for it.
+`CONFIG_ENCRYPTION_KEY` (base64, 32 bytes) is required to start the gateway or worker — both call
+`assertEncryptionKeyConfigured()` first thing and exit on a missing or wrong-length key. Rotation
+is a two-key dance (`CONFIG_ENCRYPTION_KEY_VERSION` + `CONFIG_ENCRYPTION_KEY_PREVIOUS`, then
+`yarn keys:rotate`); see [`docs/model-configuration.md`](./docs/model-configuration.md).
 
 **Mid-run config changes:** activities re-resolve their model on every call, so an edit lands on the
 next LLM call inside an already-running workflow rather than waiting for a fresh run.
@@ -589,7 +607,10 @@ Dockerfile; it has the specific rules and what has already been tried and does n
 - Do **NOT** auto-merge PRs on target repositories — humans merge
 - Do **NOT** store secrets in code or commit `.env` files
 - Do **NOT** modify the Temporal server or its configuration
-- Do **NOT** use raw SQL except for pgvector operations — use the Prisma client for everything else
+- Do **NOT** use raw SQL except for pgvector operations — use the Prisma client for everything else.
+  The one other exception is a lock Prisma cannot express — `SELECT … FOR UPDATE` on a row or
+  `pg_advisory_xact_lock` inside a transaction — and each such call is marked with a
+  `// CLAUDE.md §7 exception:` comment so a grep finds every one
 - Do **NOT** add dependencies without checking whether an existing one covers the need
 - Do **NOT** write status prose, PR numbers, or phase labels into a living doc (§5)
 
@@ -634,9 +655,9 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 Monitor at `http://localhost:3000` (dashboard), `/runs` (history), and `http://localhost:8233`
 (Temporal UI). To start over locally,
 `yarn workspace @auto-swe/shared exec prisma migrate reset` is the cleanest path — a generated
-`init` baseline plus hand-written migrations (`custom_constraints_and_indexes`, then
-`repo_dependencies`) for DDL the Prisma DSL cannot express (CHECK constraints, partial unique
-indexes, the pgvector HNSW index, array `NOT NULL`).
+`init` baseline plus one hand-written migration (`custom_constraints_and_indexes`) for DDL the
+Prisma DSL cannot express (CHECK constraints, partial unique indexes, the pgvector HNSW index,
+array `NOT NULL`).
 
 Full production runbook: [`docs/deployment.md`](./docs/deployment.md).
 

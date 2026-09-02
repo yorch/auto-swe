@@ -64,6 +64,8 @@ export async function assertOrgBudget(
   }
   const yearMonth = currentYearMonth();
   return prisma.$transaction(async (tx) => {
+    // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises
+    // concurrent budget checks for one org; Prisma has no API for it.
     await tx.$queryRaw(Prisma.sql`
       SELECT pg_advisory_xact_lock(hashtextextended(${orgId}, 0))
     `);

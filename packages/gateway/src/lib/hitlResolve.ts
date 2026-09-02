@@ -288,6 +288,8 @@ export async function resolveHitlStep(
     // Multi-approver accumulation: record the approval, count distinct
     // approvers, and only resolve the step when the threshold is reached.
     // The row is locked so concurrent approve calls cannot double-count.
+    // CLAUDE.md §7 exception: Prisma has no `SELECT … FOR UPDATE`, so the
+    // row lock is the one raw query here; everything after it is Prisma.
     try {
       multiApproverState = await prisma.$transaction(async (tx) => {
         const [locked] = await tx.$queryRaw<
