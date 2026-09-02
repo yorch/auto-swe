@@ -1,8 +1,9 @@
-import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma } from '@auto-swe/shared';
+import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma, Role } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendConflict } from '../lib/conflict.js';
 import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -59,14 +60,14 @@ export async function canManageTeamRepos(
   user: { sub: string; role: string },
   teamId: string
 ): Promise<boolean> {
-  if (user.role === 'ADMIN') {
+  if (user.role === Role.ADMIN) {
     return true;
   }
   const membership = await prisma.teamMembership.findUnique({
     include: { team: { select: { isActive: true } } },
     where: { userId_teamId: { teamId, userId: user.sub } },
   });
-  return !!membership && membership.team.isActive && hasRole(membership.role, 'LEAD');
+  return !!membership && membership.team.isActive && hasRole(membership.role, Role.LEAD);
 }
 
 export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
@@ -121,7 +122,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { querystring: ListReposQuery },
     },
     async (request) => {
@@ -129,7 +130,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       const { limit, offset } = request.query;
       const where: Prisma.ConnectionWhereInput = {
         isActive: true,
-        ...(user.role !== 'ADMIN' && {
+        ...(user.role !== Role.ADMIN && {
           team: { memberships: { some: { userId: user.sub } } },
         }),
       };
@@ -162,7 +163,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
       schema: { body: CreateRepoSchema },
     },
     async (request, reply) => {
@@ -180,7 +181,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Verify team exists
-      const team = await fastify.prisma.team.findUnique({ where: { id: teamId } });
+      const team = await fastify.prisma.team.findUnique({
+        select: { id: true, isActive: true },
+        where: { id: teamId },
+      });
       if (!team?.isActive) {
         return reply.status(404).send({
           error: { code: 'TEAM_NOT_FOUND', message: 'Team not found or inactive' },
@@ -201,9 +205,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           where: { organizationName, repoName, type: 'git_repo' },
         });
         if (existing) {
-          return reply.status(409).send({
-            error: { code: 'REPO_EXISTS', message: 'Repository already onboarded' },
-          });
+          return sendConflict(reply, 'REPO_EXISTS', 'Repository already onboarded');
         }
       }
 
@@ -238,9 +240,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       } catch (err) {
         if (isUniqueConstraintError(err)) {
-          return reply.status(409).send({
-            error: { code: 'REPO_EXISTS', message: 'Repository already onboarded' },
-          });
+          return sendConflict(reply, 'REPO_EXISTS', 'Repository already onboarded');
         }
         throw err;
       }
@@ -253,12 +253,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
       schema: { body: UpdateRepoSchema, params: RepoParamsSchema },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const repo = await fastify.prisma.connection.findUnique({
+        select: { id: true, teamId: true },
         where: { id: request.params.id },
       });
       if (!repo) {
@@ -276,7 +277,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // ...and, when reassigning to a different team, also lead the destination.
       const newTeamId = request.body.teamId;
       if (newTeamId && newTeamId !== repo.teamId) {
-        const destTeam = await fastify.prisma.team.findUnique({ where: { id: newTeamId } });
+        const destTeam = await fastify.prisma.team.findUnique({
+          select: { isActive: true },
+          where: { id: newTeamId },
+        });
         if (!destTeam?.isActive) {
           return reply.status(404).send({
             error: { code: 'TEAM_NOT_FOUND', message: 'Target team not found or inactive' },
