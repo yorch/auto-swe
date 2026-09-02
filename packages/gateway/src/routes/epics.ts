@@ -5,14 +5,16 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateEpicSchema = z.object({
   description: z
     .string()
-    .min(1, 'description is required — tell the agent what to build across repos'),
-  externalTicketId: z.string().min(1),
+    .min(1, 'description is required — tell the agent what to build across repos')
+    .max(MAX_DESCRIPTION_LENGTH),
+  externalTicketId: ExternalTicketIdSchema,
   repoIds: z.array(z.string().uuid()).min(1),
 });
 

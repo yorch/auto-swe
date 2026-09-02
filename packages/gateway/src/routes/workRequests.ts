@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -314,8 +315,11 @@ async function allocateWorkflowId(
 
 const CreateWorkRequestSchema = z.object({
   budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).optional().default('STANDARD'),
-  description: z.string().min(1, 'description is required — tell the agent what to implement'),
-  externalTicketId: z.string().min(1),
+  description: z
+    .string()
+    .min(1, 'description is required — tell the agent what to implement')
+    .max(MAX_DESCRIPTION_LENGTH),
+  externalTicketId: ExternalTicketIdSchema,
   repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
 });
 
