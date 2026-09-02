@@ -42,6 +42,34 @@ export function assertPublicBundleUrl(rawUrl: string): void {
  * re-checked against each `Location` before it's followed. Throws on any
  * failure; the caller maps that to a 400.
  */
+const FETCH_TIMEOUT_MS = 15_000;
+
+async function readBodyCapped(res: Response, maxBytes: number): Promise<string> {
+  if (!res.body) {
+    return '';
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      received += value.byteLength;
+      if (received > maxBytes) {
+        throw new Error(`bundle exceeds the ${maxBytes}-byte limit`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    // Cancel is a no-op after a clean read; after an overrun it releases the socket.
+    await reader.cancel().catch(() => {});
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 export async function fetchBundleJson(
   url: string,
   maxBytes = resolveMaxBundleBytes()
@@ -49,7 +77,10 @@ export async function fetchBundleJson(
   let current = url;
   for (let hop = 0; ; hop++) {
     assertPublicBundleUrl(current);
-    const res = await fetch(current, { redirect: 'manual' });
+    const res = await fetch(current, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
 
     if (res.status >= 300 && res.status < 400) {
       if (hop >= MAX_REDIRECTS) {
@@ -70,10 +101,8 @@ export async function fetchBundleJson(
     if (declared > maxBytes) {
       throw new Error(`bundle exceeds the ${maxBytes}-byte limit`);
     }
-    const text = await res.text();
-    if (text.length > maxBytes) {
-      throw new Error(`bundle exceeds the ${maxBytes}-byte limit`);
-    }
-    return JSON.parse(text);
+    // Content-Length is optional (chunked responses omit it), so enforce the
+    // cap while streaming rather than after buffering the whole body.
+    return JSON.parse(await readBodyCapped(res, maxBytes));
   }
 }

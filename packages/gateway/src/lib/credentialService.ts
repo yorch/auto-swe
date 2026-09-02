@@ -99,6 +99,8 @@ export async function probeCredential(args: {
     const base = safety.url.toString().replace(/\/+$/, '');
     const res = await fetch(`${base}/models`, {
       headers: { Authorization: `Bearer ${apiKey}` },
+      // The guard checked `apiBase`, not wherever it redirects to.
+      redirect: 'manual',
       signal,
     });
     return { ok: res.ok, status: res.status };

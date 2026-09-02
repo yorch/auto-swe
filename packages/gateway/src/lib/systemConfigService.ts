@@ -375,6 +375,7 @@ export async function testGitHubConnection(): Promise<{ detail: string; ok: bool
         'User-Agent': 'auto-swe/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
       },
+      redirect: 'manual',
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) {
@@ -660,6 +661,7 @@ export async function testStorageConnection(): Promise<{ detail: string; ok: boo
     // 405 for HEAD on bucket paths, masking real reachability.
     const res = await fetch(url, {
       method: 'GET',
+      redirect: 'manual',
       signal: AbortSignal.timeout(8_000),
     });
     // 403 / 400 → endpoint reachable, auth error (expected without signed request)
