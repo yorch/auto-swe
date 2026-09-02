@@ -72,6 +72,8 @@ interface FakeState {
   humanStep: Record<string, unknown> | null;
   humanStepUpdateCount: number;
   humanStepUpdateCalls: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
+  /** Run the Slack button's workflow id resolves to for this user (null = not visible). */
+  visibleRun: { id: string } | null;
   signalCalls: Array<{ workflowId: string; signalName: string; args: unknown[] }>;
   /** When set, `signalWorkflow` rejects with this instead of recording a call. */
   signalError: Error | null;
@@ -222,8 +224,18 @@ function buildApp(state: FakeState): FastifyInstance {
         return { count: state.humanStepUpdateCount };
       },
     },
+    workflowRun: {
+      findFirst: async () => state.visibleRun,
+    },
     workflowTemplate: {
-      findFirst: async () => null,
+      // The run modal looks the chosen template up with the visibility filter;
+      // other callers (default-template resolution) look up by team/default.
+      findFirst: async ({ where }: { where: { id?: string; status?: string } }) =>
+        where.id
+          ? (state.templates.find(
+              (t) => t.id === where.id && (!where.status || t.status === where.status)
+            ) ?? null)
+          : null,
       findMany: async () => state.templates,
       findUnique: async ({ where }: { where: { id?: string } }) =>
         state.templates.find((t) => t.id === where.id) ?? null,
@@ -323,6 +335,7 @@ beforeEach(async () => {
         },
       ],
     ]),
+    visibleRun: { id: 'run-1' },
     workspaceCreateCalls: [],
     workspaceUpdateCalls: [],
   };
@@ -1437,6 +1450,53 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
     expect(res.statusCode).toBe(400);
     expect(state.workspaceCreateCalls).toHaveLength(0);
     expect(state.workspaceUpdateCalls).toHaveLength(0);
+  });
+});
+
+describe('Slack buttons respect run visibility', () => {
+  function buttonPayload(actionId: string, value: string): string {
+    return JSON.stringify({
+      actions: [{ action_id: actionId, value }],
+      type: 'block_actions',
+      user: { id: 'U1' },
+    });
+  }
+
+  function inject(body: string) {
+    const payload = `payload=${encodeURIComponent(body)}`;
+    const { ts, sig } = signRequest(payload);
+    return app.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload,
+      url: '/api/v1/auth/slack/interactive',
+    });
+  }
+
+  it('refuses to approve a run the clicker cannot see', async () => {
+    state.visibleRun = null;
+    const res = await inject(buttonPayload('approve_merge', 'wf-other-team'));
+    expect(res.statusCode).toBe(404);
+    expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('refuses to request a CI fix on a run the clicker cannot see', async () => {
+    state.visibleRun = null;
+    const res = await inject(buttonPayload('retry_ci_x', 'wf-other-team'));
+    expect(res.statusCode).toBe(404);
+    expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('signals when the run is visible', async () => {
+    const res = await inject(buttonPayload('approve_merge', 'wf-mine'));
+    expect(res.statusCode).toBe(200);
+    expect(state.signalCalls).toEqual([
+      { args: [true], signalName: 'humanMergeSignal', workflowId: 'wf-mine' },
+    ]);
   });
 });
 
