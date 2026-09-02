@@ -136,7 +136,19 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { label, pattern, flags, type, isActive } = request.body;
 
-      // Built-in patterns: only allow toggling isActive
+      // Built-in patterns: only allow toggling isActive. Refuse, rather than
+      // silently drop, anything else so the admin UI cannot believe an edit landed.
+      if (
+        existing.isBuiltIn &&
+        (label !== undefined || pattern !== undefined || flags !== undefined || type !== undefined)
+      ) {
+        return reply.status(400).send({
+          error: {
+            code: 'BUILTIN_READONLY_FIELDS',
+            message: 'Built-in scanner patterns only allow toggling isActive',
+          },
+        });
+      }
       const updateData = existing.isBuiltIn
         ? { isActive: isActive ?? existing.isActive }
         : {
