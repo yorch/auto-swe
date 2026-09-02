@@ -96,21 +96,24 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
         ...(runId ? { runId } : {}),
       };
 
-      const rows = await fastify.prisma.agentTrace.findMany({
-        include: {
-          run: {
-            select: {
-              startedAt: true,
-              workflowId: true,
-              workRequest: { select: { externalTicketId: true, id: true } },
+      const [rows, total] = await Promise.all([
+        fastify.prisma.agentTrace.findMany({
+          include: {
+            run: {
+              select: {
+                startedAt: true,
+                workflowId: true,
+                workRequest: { select: { externalTicketId: true, id: true } },
+              },
             },
           },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: offset,
-        take: limit,
-        where,
-      });
+          orderBy: { createdAt: 'desc' },
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.agentTrace.count({ where }),
+      ]);
 
       const events = rows.map((t) => ({
         createdAt: t.createdAt,
@@ -128,7 +131,7 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
         workRequestId: t.run.workRequest?.id ?? null,
       }));
 
-      return { data: events };
+      return { data: events, meta: { limit, offset, total } };
     }
   );
 };

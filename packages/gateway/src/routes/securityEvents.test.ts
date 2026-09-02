@@ -6,6 +6,7 @@ import { securityEventRoutes } from './securityEvents.js';
 function newMockPrisma() {
   return {
     agentTrace: {
+      count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
     },
   };
