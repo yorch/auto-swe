@@ -371,7 +371,9 @@ export async function executeImplementation(
     await workspace.gitAuthed(`push origin ${shellQuote(branch)}`);
 
     // Collect results
-    const diff = await workspace.exec(`git diff origin/${repo.defaultBranch}`);
+    // `defaultBranch` is an operator-editable column — quote it like every other
+    // interpolated ref so it cannot smuggle shell syntax into the container.
+    const diff = await workspace.exec(`git diff origin/${shellQuote(repo.defaultBranch)}`);
     const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
 
     tracer.addActivityEvent({

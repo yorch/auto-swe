@@ -244,6 +244,14 @@ describe('runImplementerFixSession', () => {
     expect(commands.some((c) => c.startsWith('git reset --hard origin/'))).toBe(true);
   });
 
+  it('shell-quotes the repository defaultBranch in the diff command', async () => {
+    findRepo.mockResolvedValue({ ...REPO, defaultBranch: 'main; touch /pwned' } as never);
+    await runImplementerFixSession(input());
+    const commands = execMock.mock.calls.map((c) => c[0]);
+    expect(commands).toContain("git diff origin/'main; touch /pwned'");
+    expect(commands).not.toContain('git diff origin/main; touch /pwned');
+  });
+
   it('feeds the afterGenerate note into the implementation notes', async () => {
     findRepo.mockResolvedValue(REPO as never);
     const out = await runImplementerFixSession(

@@ -185,3 +185,19 @@ describe('executeImplementation cross-repo context', () => {
     ).resolves.toMatchObject({ repoId: 'repo-1' });
   });
 });
+
+describe('executeImplementation shell hygiene', () => {
+  it('shell-quotes the repository defaultBranch in the diff command', async () => {
+    prismaMock.connection.findUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main; touch /pwned',
+      executorImage: null,
+      id: 'repo-1',
+      organizationName: 'acme',
+      repoName: 'api',
+    });
+    await executeImplementation(REQUEST);
+    const commands = workspaceMock.exec.mock.calls.map((c) => c[0] as string);
+    expect(commands).toContain("git diff origin/'main; touch /pwned'");
+    expect(commands).not.toContain('git diff origin/main; touch /pwned');
+  });
+});
