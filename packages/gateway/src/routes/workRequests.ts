@@ -20,16 +20,13 @@ import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
-
-export { experimentBucket } from '../lib/experimentBucket.js';
-
-import { experimentBucket } from '../lib/experimentBucket.js';
 
 /**
  * Deterministic canary routing decision (Evals P2). Returns the pinned candidate
@@ -636,6 +633,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
                   team: {
                     select: {
                       memberships: { select: { userId: true }, where: { userId: user.sub } },
+                      organization: { select: { monthlyBudgetUsdCents: true } },
+                      orgId: true,
                     },
                   },
                 },
@@ -662,6 +661,24 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(403).send({
           error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
         });
+      }
+      // A re-run spends exactly like a fresh submission, so it passes the same
+      // org access and monthly budget gates.
+      if (
+        user.role !== 'ADMIN' &&
+        !(await assertOrgAccess(fastify.prisma, user, repo.team.orgId, reply))
+      ) {
+        return;
+      }
+      if (
+        !(await assertOrgBudget(
+          fastify.prisma,
+          repo.team.orgId,
+          repo.team.organization?.monthlyBudgetUsdCents,
+          reply
+        ))
+      ) {
+        return;
       }
       if (!workRequest.templateId || !workRequest.templateVersion) {
         return reply.status(409).send({

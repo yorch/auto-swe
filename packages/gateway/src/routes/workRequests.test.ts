@@ -31,8 +31,9 @@ vi.mock('../lib/issueTrackerClient.js', () => ({
 }));
 
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
-import { experimentBucket, resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
+import { resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
 
 const resolveIssueTrackerConfigMock = vi.mocked(resolveIssueTrackerConfig);
 const fetchTicketMock = vi.mocked(fetchTicket);
