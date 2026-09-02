@@ -98,7 +98,7 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
             <MonoValue>
               <Link
                 className="text-ember-400 hover:text-ember-300 transition-colors"
-                href={`/templates/${run.templateId}`}
+                href={`/workflows/library/${run.templateId}`}
               >
                 {run.templateName}
               </Link>

@@ -1,22 +1,22 @@
 'use client';
 
+import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
-import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequestModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useRepositories } from '@/hooks/useRepositories';
+import { NewRequestModal } from '@/components/workflow/NewRequestModal';
+import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { useWorkflows } from '@/hooks/useRuns';
 import { formatCost, formatRelativeTime } from '@/lib/utils';
 
 export default function WorkflowsPage() {
   const { data: workflows, isLoading } = useWorkflows();
-  const { data: repos } = useRepositories();
-  const [submitOpen, setSubmitOpen] = useState(false);
-  const canSubmit = (repos ?? []).length > 0;
+  const [newOpen, setNewOpen] = useState(false);
+  const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
 
   if (isLoading) {
     return <LoadingState />;
@@ -26,19 +26,24 @@ export default function WorkflowsPage() {
     <div className="space-y-6">
       <PageHeader
         actions={
-          <Button
-            disabled={!canSubmit}
-            onClick={() => setSubmitOpen(true)}
-            title={canSubmit ? undefined : 'Connect a repository first'}
-            variant="primary"
-          >
-            + Submit
+          <Button onClick={() => setNewOpen(true)} variant="primary">
+            + New request
           </Button>
         }
-        chapter={`§ Workflows · ${(workflows ?? []).length} total`}
-        title="Workflows"
+        chapter={`§ Requests · ${(workflows ?? []).length} total`}
+        title="Request queue"
       />
-      <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
+      <NewRequestModal
+        onClose={() => setNewOpen(false)}
+        onSelect={(t) => {
+          setRunTarget(t);
+          setNewOpen(false);
+        }}
+        open={newOpen}
+      />
+      {runTarget && (
+        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
+      )}
 
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-sm">

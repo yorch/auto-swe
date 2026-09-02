@@ -246,7 +246,7 @@ export default function GlobalAnalyticsPage() {
                             <td className="px-4 py-2">
                               <Link
                                 className="text-ember-400 hover:underline"
-                                href={`/templates/${row.templateId}`}
+                                href={`/workflows/library/${row.templateId}`}
                               >
                                 {row.templateName}
                               </Link>

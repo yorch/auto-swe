@@ -78,7 +78,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
       onClose();
       setName('');
       setDescription('');
-      router.push(`/templates/${data.id}`);
+      router.push(`/workflows/library/${data.id}`);
     } catch (err) {
       setError(errMsg(err, 'create failed'));
     }
@@ -194,7 +194,7 @@ function NewTemplateModal({
       setError(null);
       setJobId(null);
       onClose();
-      router.push(`/templates/${id}`);
+      router.push(`/workflows/library/${id}`);
     } else if (job.status === 'failed') {
       setError(job.message);
       setJobId(null);
@@ -408,7 +408,7 @@ export default function TemplatesPage() {
         teamId: selectedTeamId ?? undefined,
       });
       const data = (result as { data: { id: string } }).data;
-      router.push(`/templates/${data.id}`);
+      router.push(`/workflows/library/${data.id}`);
     } catch (err) {
       setForkError(errMsg(err, 'fork failed'));
     } finally {
@@ -534,7 +534,7 @@ export default function TemplatesPage() {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <Link
                           className="font-medium text-paper-100 hover:text-ember-400"
-                          href={`/templates/${t.id}`}
+                          href={`/workflows/library/${t.id}`}
                         >
                           {t.name}
                         </Link>
@@ -607,7 +607,7 @@ export default function TemplatesPage() {
                           </span>
                         )}
                         <Button
-                          onClick={() => router.push(`/templates/${t.id}`)}
+                          onClick={() => router.push(`/workflows/library/${t.id}`)}
                           size="sm"
                           variant="secondary"
                         >

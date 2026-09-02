@@ -552,7 +552,7 @@ export function McpSection({
         <Alert>{errMsg(connectionsError, 'Failed to load MCP connections')}</Alert>
       )}
       <Select
-        hint="Choose an active MCP connection (managed at /admin/mcp-connections)"
+        hint="Choose an active MCP connection (managed at /studio/mcp)"
         label="Connection"
         onChange={(e) => onChange({ ...node, connectionRef: e.target.value })}
         value={node.connectionRef}

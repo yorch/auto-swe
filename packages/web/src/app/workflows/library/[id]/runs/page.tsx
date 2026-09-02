@@ -83,11 +83,11 @@ export default function TemplateRunsPage({ params }: PageProps) {
 
   const handleTabChange = (tab: SubTab) => {
     if (tab === 'editor') {
-      router.push(`/templates/${id}`);
+      router.push(`/workflows/library/${id}`);
     } else if (tab === 'analytics') {
-      router.push(`/templates/${id}/analytics`);
+      router.push(`/workflows/library/${id}/analytics`);
     } else if (tab === 'compare') {
-      router.push(`/templates/${id}/diff`);
+      router.push(`/workflows/library/${id}/diff`);
     }
   };
 
@@ -107,7 +107,7 @@ export default function TemplateRunsPage({ params }: PageProps) {
       <div className="fade-up">
         <Link
           className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
-          href={`/templates/${id}`}
+          href={`/workflows/library/${id}`}
         >
           <span>←</span> {template?.name ?? 'template'}
         </Link>

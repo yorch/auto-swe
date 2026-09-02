@@ -734,7 +734,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
       <div className="fade-up">
         <Link
           className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
-          href="/templates"
+          href="/workflows/library"
         >
           <span>←</span> workflows
         </Link>
@@ -798,7 +798,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
             return;
           }
           router.push(
-            `/templates/${id}/${tab === 'analytics' ? 'analytics' : tab === 'runs' ? 'runs' : 'diff'}`
+            `/workflows/library/${id}/${tab === 'analytics' ? 'analytics' : tab === 'runs' ? 'runs' : 'diff'}`
           );
         }}
         tabs={SUB_TABS}

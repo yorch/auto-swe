@@ -72,13 +72,13 @@ export function DashboardOnboarding({
               <ResourceLink
                 body="Seed Anthropic defaults + add a provider credential."
                 eyebrow="models"
-                href="/admin/model-config"
+                href="/studio/models"
                 title="Model config"
               />
               <ResourceLink
                 body="GitHub token + webhook secret."
                 eyebrow="integrations"
-                href="/admin/integrations"
+                href="/studio/integrations"
                 title="Integrations"
               />
             </div>
@@ -205,13 +205,13 @@ export function DashboardOnboarding({
           <ResourceLink
             body="Customise the default engineering loop — gates, fan-out, signals."
             eyebrow="workflows"
-            href="/templates"
+            href="/workflows/library"
             title="Workflow templates"
           />
           <ResourceLink
             body="Scope repositories and lessons to the right group."
             eyebrow="people"
-            href="/teams"
+            href="/govern/teams"
             title="Teams"
           />
         </div>
