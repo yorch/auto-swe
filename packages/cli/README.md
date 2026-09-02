@@ -1,8 +1,8 @@
 # `@auto-swe/cli`
 
 `auto-swe` — a thin command-line client over the gateway REST API for submitting
-work requests and managing workflow templates, runs, and personal access tokens.
-ESM, Node 24+.
+work requests and managing workflow templates, runs, personal access tokens,
+bundles, and eval datasets. ESM, Node 24+.
 
 ## Install / build
 
@@ -35,18 +35,25 @@ run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--b
                                      Submit a work request and start a run on the default template
 
 workflows list                       List workflow templates visible to you
-workflows show <name>                Print one template's active spec (JSON)
+workflows show <name> [--version=N]  Print one template's active (or given) spec (JSON)
 workflows export <name> [-o <path>]  Write the active spec to a file (or stdout)
 workflows import <path> [--name=N] [--team=<slug>]
                                      Create a template (or a new version if --name matches)
+workflows run <name> --payload=<json> [--label=<text>]
+                                     Start a run with a generic JSON payload
+workflows generate "<description>" [--name=N] [--team=<slug>]
+                                     Generate a DRAFT template from plain language (AI)
+workflows explain <name>             Explain a template's active version in plain language (AI)
 
 runs list [--status=S] [--template-id=ID] [--limit=N]
                                      List recent workflow runs
 runs show <runId>                    Print one run (with steps) as JSON
-runs tail <runId> [--interval=SEC]   Poll until terminal status
+runs tail <runId> [--interval=SEC] [--max=N]
+                                     Poll until terminal status (exit 2 if the run did not succeed)
 
 tokens list                          List your personal access tokens
-tokens create <name>                 Issue a long-lived API token (printed once)
+tokens create <name> [--expires-in-days=N]
+                                     Issue a personal access token (printed once)
 tokens revoke <id>                   Revoke a token
 
 bundle init [dir] [--name=N] [--version=V]
@@ -61,19 +68,28 @@ bundles export <name> <version> [--origin=TAG] [-o <path>]
 bundles install <path>               Install a bundle from a file
 bundles install-from-url <url>       Install a bundle from a URL
 
+evals list                           List eval datasets (admin token)
+evals show <id>                      Print a dataset's cases
+evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=N]
+                                     Query captured eval signals
+evals run <dataset-slug> --candidate=<ref> --against=<ref>
+                                     Run the regression gate; exits 1 on a regression
+
 help                                 Show usage
 ```
 
 `bundle` (singular) is token-free local authoring over `@auto-swe/sdk`; `bundles`
-(plural) hits `/api/v1/admin/bundles` and needs an admin token.
+(plural) hits `/api/v1/admin/bundles` and needs an admin token. `evals` also needs an
+admin token; `evals run` is the regression gate a nightly CI job polls to completion
+(see [`docs/evals.md`](../../docs/evals.md)).
 
 ## Exit codes
 
 | Code | Meaning                                   |
 | ---- | ----------------------------------------- |
 | `0`  | Success                                   |
-| `1`  | User error (missing arg, no token, etc.)  |
-| `2`  | Remote error (HTTP non-2xx from gateway)  |
+| `1`  | User error (missing arg, no token, etc.); `evals run` also exits 1 on a regression |
+| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail` also exits 2 when the run ends in a non-success status |
 
 ## Examples
 

@@ -203,7 +203,7 @@ process.stdout.write(\`\${JSON.stringify(bundle, null, 2)}\\n\`);
 function scaffoldReadme(name: string): string {
   return `# bundle-${name}
 
-An auto-swe distribution bundle authored with [\`@auto-swe/sdk\`](https://code.claude.com/docs).
+An auto-swe distribution bundle authored with [\`@auto-swe/sdk\`](https://github.com/yorch/auto-swe/blob/main/docs/bundles.md).
 
 ## Author
 

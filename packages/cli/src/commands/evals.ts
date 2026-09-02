@@ -8,7 +8,7 @@ import { apiRequest, apiRequestFull, GatewayError } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { parseFlags } from './workflows.js';
 
-const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regression gate (P1)
+const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regression gate
 
   evals list                          List eval datasets
   evals show <id>                     Print a dataset's cases

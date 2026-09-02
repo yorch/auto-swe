@@ -20,45 +20,55 @@ COMMANDS
                                        Submit a work request and start a run on the default template
 
   workflows list                       List workflow templates visible to you
-  workflows show <name>                Print one template's active spec (JSON)
+  workflows show <name> [--version=N]  Print one template's active (or given) spec (JSON)
   workflows export <name> [-o <path>]  Write the active spec to a file (or stdout)
   workflows import <path> [--name=N] [--team=<slug>]
                                        Create a template (or new version if --name matches an existing template)
   workflows run <name> --payload=<json> [--label=<text>]
                                        Start a run with a generic JSON payload
+  workflows generate "<description>" [--name=N] [--team=<slug>]
+                                       Generate a DRAFT template from plain language (AI)
+  workflows explain <name>             Explain a template's active version in plain language (AI)
 
   runs list [--status=S] [--template-id=ID] [--limit=N]
                                        List recent workflow runs
   runs show <runId>                    Print one run (with steps) as JSON
-  runs tail <runId> [--interval=SEC]   Poll until terminal status
+  runs tail <runId> [--interval=SEC] [--max=N]
+                                       Poll until terminal status (exit 2 if the run did not succeed)
 
   tokens list                          List your personal access tokens
-  tokens create <name>                 Issue a long-lived API token (printed once)
+  tokens create <name> [--expires-in-days=N]
+                                       Issue a personal access token (printed once)
   tokens revoke <id>                   Revoke a token
 
-  bundle init [dir]                    Scaffold a bundle authoring project (local, no token)
+  bundle init [dir] [--name=N] [--version=V]
+                                       Scaffold a bundle authoring project (local, no token)
   bundle validate <path>               Validate a bundle manifest (schema + content hash)
   bundle sign <path> --key=<pem>       Attach a detached ed25519 signature
   bundles list                         List installed bundles (admin token)
-  bundles export <name> <version>      Export GLOBAL content to a bundle file
+  bundles export <name> <version> [--origin=TAG] [-o <path>]
+                                       Export GLOBAL content to a bundle file
   bundles install <path>               Install a bundle from a file
   bundles install-from-url <url>       Install a bundle from a URL
 
   evals list                           List eval datasets (admin token)
   evals show <id>                      Print a dataset's cases
   evals results [--source=…] [--run=…] Query captured eval signals
+  evals run <slug> --candidate=<ref> --against=<ref>
+                                       Run the regression gate (exit 1 on a regression)
 
   help                                 Show this message
 
 ENVIRONMENT
   AUTO_SWE_API_URL   Base URL of the gateway (default: http://localhost:8080)
-  AUTO_SWE_TOKEN     Bearer token: JWT or phase-8 \`ats_*\` personal access token
+  AUTO_SWE_TOKEN     Bearer token: an \`ats_*\` personal access token or a JWT
                      Mint one at Settings → API tokens in the dashboard
 
 EXIT CODES
   0  success
-  1  user error (missing arg, no token, etc.)
-  2  remote error (HTTP non-2xx from the gateway)
+  1  user error (missing arg, no token, etc.) — or, for evals run, a regression
+  2  remote error (HTTP non-2xx from the gateway) — or, for runs tail, a run that
+     ended in a non-success status
 `;
 
 async function main(argv: string[]): Promise<number> {
