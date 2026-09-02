@@ -3,10 +3,10 @@ import type {
   WorkflowRunSummary,
   WorkflowStepRecord,
 } from '@auto-swe/shared/types/api';
-import { apiRequest, GatewayError } from '../lib/api.js';
+import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
+import { missingValue, parseFlags } from '../lib/flags.js';
 import { pad, parsePositiveInt } from '../lib/format.js';
-import { parseFlags } from './workflows.js';
 
 /**
  * `auto-swe runs` — list and inspect workflow runs from the terminal.
@@ -33,7 +33,7 @@ export async function runRunsCommand(args: string[], env: CliEnv): Promise<numbe
     process.stdout.write(SUB_HELP);
     return 0;
   }
-  try {
+  const handled = await runWithExitCodes(async () => {
     if (sub === 'list') {
       return await cmdList(rest, env);
     }
@@ -43,13 +43,10 @@ export async function runRunsCommand(args: string[], env: CliEnv): Promise<numbe
     if (sub === 'tail') {
       return await cmdTail(rest, env);
     }
-  } catch (err) {
-    if (err instanceof GatewayError) {
-      process.stderr.write(`${err.code}: ${err.message}\n`);
-      return 2;
-    }
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    return 1;
+    return UNKNOWN_SUBCOMMAND;
+  });
+  if (handled !== UNKNOWN_SUBCOMMAND) {
+    return handled;
   }
   process.stderr.write(`Unknown subcommand: runs ${sub}\n${SUB_HELP}`);
   return 1;
@@ -60,6 +57,11 @@ async function cmdList(args: string[], env: CliEnv): Promise<number> {
   const limit = parsePositiveInt(flags.limit, 20);
   if (limit === 'invalid') {
     process.stderr.write('--limit must be a positive integer\n');
+    return 1;
+  }
+  const bare = missingValue(flags, 'status', 'template-id', 'work-request-id');
+  if (bare) {
+    process.stderr.write(`--${bare} requires a value\n`);
     return 1;
   }
   const params = new URLSearchParams();

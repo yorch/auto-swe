@@ -76,6 +76,32 @@ export async function apiRequestFull<T>(
   return (await requestEnvelope(env, method, path, body)) as T;
 }
 
+/**
+ * Returned from a dispatcher's `runWithExitCodes` body when no branch matched,
+ * so the caller can fall through to its "Unknown subcommand" message. Negative
+ * so it can never collide with a real exit code.
+ */
+export const UNKNOWN_SUBCOMMAND = -1;
+
+/**
+ * Run a subcommand and map its failure modes onto the documented exit codes:
+ * a `GatewayError` (HTTP non-2xx) is 2, anything else is a user error, 1.
+ * Every gateway-backed command funnels through here so the mapping is defined
+ * exactly once.
+ */
+export async function runWithExitCodes(fn: () => Promise<number>): Promise<number> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof GatewayError) {
+      process.stderr.write(`${err.code}: ${err.message}\n`);
+      return 2;
+    }
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
 function safeParseJson(text: string): unknown {
   try {
     return JSON.parse(text);

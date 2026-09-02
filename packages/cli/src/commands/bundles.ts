@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs';
 import type { BundleManifest } from '@auto-swe/shared/bundle';
-import { apiRequest, GatewayError } from '../lib/api.js';
+import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
+import { parseFlags } from '../lib/flags.js';
 import { pad } from '../lib/format.js';
-import { parseFlags } from './workflows.js';
 
 /**
  * `auto-swe bundles` — gateway-backed bundle distribution (admin token required).
@@ -42,7 +42,7 @@ export async function runBundlesCommand(args: string[], env: CliEnv): Promise<nu
     process.stdout.write(SUB_HELP);
     return 0;
   }
-  try {
+  const handled = await runWithExitCodes(async () => {
     if (sub === 'list') {
       return await cmdList(env);
     }
@@ -55,13 +55,10 @@ export async function runBundlesCommand(args: string[], env: CliEnv): Promise<nu
     if (sub === 'install-from-url') {
       return await cmdInstallFromUrl(rest, env);
     }
-  } catch (err) {
-    if (err instanceof GatewayError) {
-      process.stderr.write(`${err.code}: ${err.message}\n`);
-      return 2;
-    }
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    return 1;
+    return UNKNOWN_SUBCOMMAND;
+  });
+  if (handled !== UNKNOWN_SUBCOMMAND) {
+    return handled;
   }
   process.stderr.write(`Unknown subcommand: bundles ${sub}\n${SUB_HELP}`);
   return 1;

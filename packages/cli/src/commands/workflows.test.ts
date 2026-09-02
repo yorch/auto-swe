@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { parseFlags, runWorkflowsCommand } from './workflows.js';
+import { parseFlags } from '../lib/flags.js';
+import { runWorkflowsCommand } from './workflows.js';
 
 const ENV = { apiUrl: 'http://gw', token: 't' };
 
@@ -98,6 +99,12 @@ describe('runWorkflowsCommand flag validation', () => {
     const code = await runWorkflowsCommand(['export', 'name', '-o'], ENV);
     expect(code).toBe(1);
     expect(stderrWrites.join('')).toContain('requires a file path');
+  });
+
+  it('rejects generate --team with no value instead of using "true" as the slug', async () => {
+    const code = await runWorkflowsCommand(['generate', 'do a thing', '--team'], ENV);
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('--team requires a value');
   });
 
   it('rejects generate with no description', async () => {

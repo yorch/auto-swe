@@ -21,17 +21,8 @@ export function pad(s: string, w: number): string {
  * Callers print a usage hint + `return 1` on `'invalid'`.
  */
 export function parsePositiveInt(raw: string | undefined, fallback: number): number | 'invalid' {
-  if (raw === undefined) {
-    return fallback;
-  }
-  if (raw === 'true') {
-    return 'invalid';
-  }
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1 || String(n) !== raw.trim()) {
-    return 'invalid';
-  }
-  return n;
+  const parsed = parseOptionalPositiveInt(raw);
+  return parsed === undefined ? fallback : parsed;
 }
 
 /** Same as {@link parsePositiveInt} but treats a missing value as

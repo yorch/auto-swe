@@ -60,6 +60,12 @@ describe('runRunsCommand', () => {
     expect(stderrWrites.join('')).toContain('Usage: runs show');
   });
 
+  it('list rejects a filter flag passed without a value', async () => {
+    const code = await runRunsCommand(['list', '--status'], ENV);
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('--status requires a value');
+  });
+
   it('list rejects --limit=0', async () => {
     const code = await runRunsCommand(['list', '--limit=0'], ENV);
     expect(code).toBe(1);

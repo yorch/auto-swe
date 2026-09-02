@@ -1,6 +1,7 @@
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
-import { apiRequest, GatewayError } from '../lib/api.js';
+import { apiRequest, runWithExitCodes } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
+import { missingValue, parseFlags } from '../lib/flags.js';
 
 const SUB_HELP = `auto-swe run — submit a work request
 
@@ -24,68 +25,6 @@ interface WorkRequestResponse {
   workflowIds: string[];
 }
 
-interface ParsedRunFlags {
-  ticket: string | undefined;
-  description: string | undefined;
-  repo: string | undefined;
-  repoId: string | undefined;
-  budget: string | undefined;
-  /** Set when the removed `--workflow` flag is passed, so we can say why it is rejected. */
-  workflow: string | undefined;
-}
-
-function parseRunFlags(args: string[]): ParsedRunFlags {
-  const flags: ParsedRunFlags = {
-    budget: undefined,
-    description: undefined,
-    repo: undefined,
-    repoId: undefined,
-    ticket: undefined,
-    workflow: undefined,
-  };
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] ?? '';
-    const eqIdx = arg.indexOf('=');
-    const key = eqIdx !== -1 ? arg.slice(2, eqIdx) : arg.slice(2);
-    const val = eqIdx !== -1 ? arg.slice(eqIdx + 1) : (args[i + 1] ?? '');
-    if (eqIdx === -1 && !arg.startsWith('--')) {
-      continue;
-    }
-    if (key === 'ticket') {
-      flags.ticket = val;
-      if (eqIdx === -1) {
-        i++;
-      }
-    } else if (key === 'description') {
-      flags.description = val;
-      if (eqIdx === -1) {
-        i++;
-      }
-    } else if (key === 'repo') {
-      flags.repo = val;
-      if (eqIdx === -1) {
-        i++;
-      }
-    } else if (key === 'repo-id') {
-      flags.repoId = val;
-      if (eqIdx === -1) {
-        i++;
-      }
-    } else if (key === 'workflow') {
-      flags.workflow = val;
-      if (eqIdx === -1) {
-        i++;
-      }
-    } else if (key === 'budget') {
-      flags.budget = val;
-      if (eqIdx === -1) {
-        i++;
-      }
-    }
-  }
-  return flags;
-}
-
 export async function runWorkRequestsCommand(args: string[], env: CliEnv): Promise<number> {
   const [sub, ...rest] = args;
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
@@ -93,17 +32,7 @@ export async function runWorkRequestsCommand(args: string[], env: CliEnv): Promi
     return 0;
   }
   // Top-level `auto-swe run` treats all args as flags (no sub-subcommand).
-  const allArgs = [sub, ...rest];
-  try {
-    return await cmdRun(allArgs, env);
-  } catch (err) {
-    if (err instanceof GatewayError) {
-      process.stderr.write(`${err.code}: ${err.message}\n`);
-      return 2;
-    }
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    return 1;
-  }
+  return runWithExitCodes(() => cmdRun([sub, ...rest], env));
 }
 
 async function cmdRun(args: string[], env: CliEnv): Promise<number> {
@@ -112,7 +41,12 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     return 0;
   }
 
-  const flags = parseRunFlags(args);
+  const { flags } = parseFlags(args);
+  const bare = missingValue(flags, 'ticket', 'description', 'repo', 'repo-id', 'budget');
+  if (bare) {
+    process.stderr.write(`--${bare} requires a value\n`);
+    return 1;
+  }
 
   if (flags.workflow !== undefined) {
     // The work-request endpoint has no template field — it always runs the
@@ -131,11 +65,11 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Missing required flag: --description=<text>\n');
     return 1;
   }
-  if (!flags.repo && !flags.repoId) {
+  if (!flags.repo && !flags['repo-id']) {
     process.stderr.write('Missing required flag: --repo=<org/name> or --repo-id=<uuid>\n');
     return 1;
   }
-  if (flags.repo && flags.repoId) {
+  if (flags.repo && flags['repo-id']) {
     process.stderr.write('--repo and --repo-id are mutually exclusive; provide only one.\n');
     return 1;
   }
@@ -150,14 +84,14 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   // Resolve the repo ID — skip the lookup when --repo-id is already a UUID.
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let resolvedRepoId: string;
-  if (flags.repoId) {
-    if (!UUID_RE.test(flags.repoId)) {
+  if (flags['repo-id']) {
+    if (!UUID_RE.test(flags['repo-id'])) {
       process.stderr.write(
         '--repo-id must be a valid UUID (e.g. 550e8400-e29b-41d4-a716-446655440000)\n'
       );
       return 1;
     }
-    resolvedRepoId = flags.repoId;
+    resolvedRepoId = flags['repo-id'];
   } else {
     const [org, repoName] = (flags.repo as string).split('/');
     if (!org || !repoName) {

@@ -4,9 +4,9 @@ import type {
   EvalResultDto,
   EvalRunDto,
 } from '@auto-swe/shared/types/api';
-import { apiRequest, apiRequestFull, GatewayError } from '../lib/api.js';
+import { apiRequest, apiRequestFull, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
-import { parseFlags } from './workflows.js';
+import { parseFlags } from '../lib/flags.js';
 
 const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regression gate
 
@@ -24,7 +24,7 @@ export async function runEvalsCommand(args: string[], env: CliEnv): Promise<numb
     process.stdout.write(SUB_HELP);
     return 0;
   }
-  try {
+  const handled = await runWithExitCodes(async () => {
     if (sub === 'list') {
       return await cmdList(env);
     }
@@ -37,13 +37,10 @@ export async function runEvalsCommand(args: string[], env: CliEnv): Promise<numb
     if (sub === 'run') {
       return await cmdRun(rest, env);
     }
-  } catch (err) {
-    if (err instanceof GatewayError) {
-      process.stderr.write(`${err.code}: ${err.message}\n`);
-      return 2;
-    }
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    return 1;
+    return UNKNOWN_SUBCOMMAND;
+  });
+  if (handled !== UNKNOWN_SUBCOMMAND) {
+    return handled;
   }
   process.stderr.write(`Unknown subcommand: evals ${sub}\n${SUB_HELP}`);
   return 1;

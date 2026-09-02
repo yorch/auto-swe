@@ -4,8 +4,9 @@ import type {
   WorkflowTemplateSummary,
   WorkflowTemplateVersionDetail,
 } from '@auto-swe/shared/types/api';
-import { apiRequest, apiRequestFull, GatewayError } from '../lib/api.js';
+import { apiRequest, apiRequestFull, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
+import { missingValue, parseFlags } from '../lib/flags.js';
 import { pad, parseOptionalPositiveInt } from '../lib/format.js';
 
 const SUB_HELP = `auto-swe workflows — manage workflow templates
@@ -28,7 +29,7 @@ export async function runWorkflowsCommand(args: string[], env: CliEnv): Promise<
     process.stdout.write(SUB_HELP);
     return 0;
   }
-  try {
+  const handled = await runWithExitCodes(async () => {
     if (sub === 'list') {
       return await cmdList(env);
     }
@@ -50,13 +51,10 @@ export async function runWorkflowsCommand(args: string[], env: CliEnv): Promise<
     if (sub === 'run') {
       return await cmdRun(rest, env);
     }
-  } catch (err) {
-    if (err instanceof GatewayError) {
-      process.stderr.write(`${err.code}: ${err.message}\n`);
-      return 2;
-    }
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    return 1;
+    return UNKNOWN_SUBCOMMAND;
+  });
+  if (handled !== UNKNOWN_SUBCOMMAND) {
+    return handled;
   }
   process.stderr.write(`Unknown subcommand: workflows ${sub}\n${SUB_HELP}`);
   return 1;
@@ -157,6 +155,11 @@ async function cmdImport(args: string[], env: CliEnv): Promise<number> {
     return 1;
   }
 
+  const bare = missingValue(flags, 'name', 'team');
+  if (bare) {
+    process.stderr.write(`--${bare} requires a value\n`);
+    return 1;
+  }
   const name = flags.name ?? deriveNameFromPath(path);
   const existing = await findTemplateByName(env, name);
 
@@ -213,6 +216,11 @@ async function cmdGenerate(args: string[], env: CliEnv): Promise<number> {
     return 1;
   }
 
+  const bare = missingValue(flags, 'name', 'team');
+  if (bare) {
+    process.stderr.write(`--${bare} requires a value\n`);
+    return 1;
+  }
   let teamId: string | null = null;
   if (flags.team) {
     teamId = await resolveTeamIdBySlug(env, flags.team);
@@ -371,45 +379,4 @@ async function resolveTeamIdBySlug(env: CliEnv, slug: string): Promise<string | 
 function deriveNameFromPath(p: string): string {
   const base = p.split('/').pop() ?? p;
   return base.replace(/\.json$/i, '').replace(/[^a-zA-Z0-9_\- ]/g, '-');
-}
-
-interface ParsedFlags {
-  positional: string[];
-  flags: Record<string, string>;
-}
-
-export function parseFlags(args: string[]): ParsedFlags {
-  const positional: string[] = [];
-  const flags: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === undefined) {
-      continue;
-    }
-    if (a.startsWith('--')) {
-      const eq = a.indexOf('=');
-      if (eq > -1) {
-        flags[a.slice(2, eq)] = a.slice(eq + 1);
-      } else {
-        const next = args[i + 1];
-        if (next !== undefined && !next.startsWith('-')) {
-          flags[a.slice(2)] = next;
-          i++;
-        } else {
-          flags[a.slice(2)] = 'true';
-        }
-      }
-    } else if (a.startsWith('-') && a.length === 2) {
-      const next = args[i + 1];
-      if (next !== undefined && !next.startsWith('-')) {
-        flags[a.slice(1)] = next;
-        i++;
-      } else {
-        flags[a.slice(1)] = 'true';
-      }
-    } else {
-      positional.push(a);
-    }
-  }
-  return { flags, positional };
 }

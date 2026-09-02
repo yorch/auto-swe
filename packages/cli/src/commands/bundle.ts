@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { signBundle, validateBundle } from '@auto-swe/sdk';
-import { parseFlags } from './workflows.js';
+import { parseFlags } from '../lib/flags.js';
 
 /**
  * `auto-swe bundle` — token-free local authoring loop over `@auto-swe/sdk`:
