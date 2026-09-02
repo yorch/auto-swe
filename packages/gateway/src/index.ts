@@ -1,3 +1,4 @@
+import { getCorsOrigins, getPort } from './lib/env.js';
 import { initTelemetry } from './lib/telemetry.js';
 
 // Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
@@ -86,7 +87,7 @@ async function start() {
   await app.register(cors, {
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) ?? ['http://localhost:3000'],
+    origin: getCorsOrigins(),
   });
 
   // Raw body for HMAC webhook verification (opt-in per route)
@@ -366,7 +367,7 @@ async function start() {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  const port = Number(process.env.PORT ?? 8080);
+  const port = getPort();
   await app.listen({ host: '0.0.0.0', port });
 }
 

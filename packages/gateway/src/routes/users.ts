@@ -1,15 +1,17 @@
 import crypto from 'node:crypto';
+import { Role } from '@auto-swe/shared';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import bcrypt from 'bcrypt';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { getDefaultClientOrigin } from '../lib/env.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateUserSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).optional(), // Auto-generated if not provided
-  role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+  role: z.enum([Role.ADMIN, Role.LEAD, Role.ENGINEER]).default(Role.ENGINEER),
   // Non-empty so the truthiness guards on slackId can't be bypassed with "".
   slackId: z.string().min(1).optional(),
 });
@@ -19,7 +21,7 @@ const UserParamsSchema = z.object({ id: z.string().uuid() });
 const UpdateUserSchema = z.object({
   email: z.string().email().optional(),
   isActive: z.boolean().optional(),
-  role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).optional(),
+  role: z.enum([Role.ADMIN, Role.LEAD, Role.ENGINEER]).optional(),
   // Non-empty when present; null explicitly unlinks. "" can't slip past the
   // truthiness guard on the uniqueness pre-check.
   slackId: z.string().min(1).nullable().optional(),
@@ -61,7 +63,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
     },
     async () => {
       const users = await fastify.prisma.user.findMany({
@@ -86,7 +88,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
       schema: { body: CreateUserSchema },
     },
     async (request, reply) => {
@@ -161,11 +163,11 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/invite',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
       schema: {
         body: z.object({
           email: z.string().email(),
-          role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+          role: z.enum([Role.ADMIN, Role.LEAD, Role.ENGINEER]).default(Role.ENGINEER),
         }),
       },
     },
@@ -197,7 +199,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       if (defaultTeam) {
         await fastify.prisma.teamMembership
           .upsert({
-            create: { role: 'ENGINEER', teamId: defaultTeam.id, userId: user.id },
+            create: { role: Role.ENGINEER, teamId: defaultTeam.id, userId: user.id },
             update: {},
             where: { userId_teamId: { teamId: defaultTeam.id, userId: user.id } },
           })
@@ -212,8 +214,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       // PrismaClient already in scope here).
       try {
         const { getAuth } = await import('../lib/betterAuth.js');
-        const clientOrigin =
-          process.env.CORS_ORIGIN?.split(',')[0]?.trim() ?? 'http://localhost:3000';
+        const clientOrigin = getDefaultClientOrigin();
         await getAuth().api.signInMagicLink({
           body: { callbackURL: `${clientOrigin}/login?bridge=1`, email },
           // better-auth's typing requires a Headers object even for purely
@@ -232,7 +233,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
       schema: { body: UpdateUserSchema, params: UserParamsSchema },
     },
     async (request, reply) => {
@@ -259,7 +260,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
             },
           });
         }
-        if (request.body.role !== undefined && request.body.role !== 'ADMIN') {
+        if (request.body.role !== undefined && request.body.role !== Role.ADMIN) {
           return reply.status(400).send({
             error: {
               code: 'CANNOT_SELF_DEMOTE',

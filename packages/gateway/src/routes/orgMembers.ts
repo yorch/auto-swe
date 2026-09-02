@@ -11,6 +11,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { getDefaultClientOrigin } from '../lib/env.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
@@ -166,8 +167,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
 
       try {
         const { getAuth } = await import('../lib/betterAuth.js');
-        const clientOrigin =
-          process.env.CORS_ORIGIN?.split(',')[0]?.trim() ?? 'http://localhost:3000';
+        const clientOrigin = getDefaultClientOrigin();
         await getAuth().api.signInMagicLink({
           body: { callbackURL: `${clientOrigin}/login?bridge=1`, email },
           headers: new Headers(),
