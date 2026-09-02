@@ -126,6 +126,18 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/trackerSync.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/trackerWrite',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/trackerWrite.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/telemetry',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/telemetry.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/syncBuiltins',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/syncBuiltins.ts'),
+      },
+      {
         // Broad alias covers registry, adf, providers/*, and any future subpaths.
         // Must come before the bare @auto-swe/shared catch-all.
         find: '@auto-swe/shared/lib/integrations',
