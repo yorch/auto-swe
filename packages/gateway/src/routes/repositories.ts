@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { sendConflict } from '../lib/conflict.js';
+import { redactConnection } from '../lib/connectionRedaction.js';
 import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -24,7 +25,13 @@ const CreateRepoSchema = z.object({
   organizationName: z.string().min(1).optional(),
   repoName: z.string().min(1).optional(),
   teamId: z.string().uuid(),
-  type: ConnectionTypeSchema.default('git_repo'),
+  // MCP servers are a tool source for agents, not a workspace target, and
+  // carry their own ADMIN-only, SSRF-checked routes (/admin/mcp-connections).
+  // A team LEAD must not be able to create or point one at an arbitrary URL
+  // through the repository onboarding path.
+  type: ConnectionTypeSchema.refine((t) => t !== 'mcp', {
+    message: 'MCP connections are managed at /admin/mcp-connections',
+  }).default('git_repo'),
 });
 
 const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 });
@@ -155,7 +162,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           ])
       );
 
-      return { data: repos, meta: { limit, offset, total } };
+      return { data: repos.map(redactConnection), meta: { limit, offset, total } };
     }
   );
 
@@ -245,7 +252,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         throw err;
       }
 
-      return reply.status(201).send({ data: repo });
+      return reply.status(201).send({ data: redactConnection(repo) });
     }
   );
 
@@ -259,10 +266,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const repo = await fastify.prisma.connection.findUnique({
-        select: { id: true, teamId: true },
+        select: { id: true, teamId: true, type: true },
         where: { id: request.params.id },
       });
-      if (!repo) {
+      // MCP rows are invisible to this route (see CreateRepoSchema.type): their
+      // `config.url` is only editable through the admin MCP routes.
+      if (!repo || repo.type === 'mcp') {
         return reply.status(404).send({
           error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
         });
@@ -344,7 +353,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
 
-      return { data: updated };
+      return { data: redactConnection(updated) };
     }
   );
 };

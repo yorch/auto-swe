@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { redactConnection } from '../lib/connectionRedaction.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -55,7 +56,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         where: { isActive: true, type: 'mcp' },
       })
     );
-    return { data: rows };
+    return { data: rows.map(redactConnection) };
   });
 
   app.post(
@@ -92,7 +93,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: conn.id,
         entityType: 'Connection',
       });
-      return reply.status(201).send({ data: conn });
+      return reply.status(201).send({ data: redactConnection(conn) });
     }
   );
 
@@ -136,7 +137,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: conn.id,
         entityType: 'Connection',
       });
-      return reply.send({ data: updated });
+      return reply.send({ data: redactConnection(updated) });
     }
   );
 

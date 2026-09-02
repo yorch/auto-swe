@@ -1,6 +1,11 @@
 import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import {
+  type ConnectionEnvelopeColumns,
+  type RedactedConnection,
+  redactConnection,
+} from '../lib/connectionRedaction.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -11,14 +16,20 @@ const ListWorkflowsQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 })
 // The token counters are `BigInt` in the DB (they can exceed Int32 on large
 // runs). Fastify's JSON serializer throws on a bare BigInt, so coerce the two
 // columns to Number before returning a raw ActiveWorkflow row.
-function serializeWorkflow<T extends { tokensInputUsed: bigint; tokensOutputUsed: bigint }>(
+function serializeWorkflow<
+  R extends Partial<ConnectionEnvelopeColumns>,
+  T extends { tokensInputUsed: bigint; tokensOutputUsed: bigint; repository: R | null },
+>(
   workflow: T
-): Omit<T, 'tokensInputUsed' | 'tokensOutputUsed'> & {
+): Omit<T, 'tokensInputUsed' | 'tokensOutputUsed' | 'repository'> & {
+  repository: RedactedConnection<R> | null;
   tokensInputUsed: number;
   tokensOutputUsed: number;
 } {
   return {
     ...workflow,
+    // The joined connection carries the API-token envelope — strip it.
+    repository: workflow.repository ? redactConnection(workflow.repository) : null,
     tokensInputUsed: Number(workflow.tokensInputUsed),
     tokensOutputUsed: Number(workflow.tokensOutputUsed),
   };
