@@ -304,7 +304,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
 
       // Standing WorkRequest — every fire's WorkflowRun links to it, so
       // scheduled runs are attributable in /runs and the work-request list.
-      await fastify.prisma.runInput.create({
+      // All three rows land in one transaction: a failure on the second or
+      // third create must not leave an orphan RunInput/ActiveWorkflow behind.
+      const runInputCreate = fastify.prisma.runInput.create({
         data: {
           description: body.description,
           externalTicketId: ticketId,
@@ -325,7 +327,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       // suffix), so it never collides. It exists so worker activities that
       // join workRequestId → ActiveWorkflow (PR reuse, budget display) find a
       // row carrying the repo / branch / budget tier.
-      await fastify.prisma.activeWorkflow.create({
+      const activeWorkflowCreate = fastify.prisma.activeWorkflow.create({
         data: {
           assignedBranch: branch,
           budgetTier: body.budgetTier,
@@ -336,7 +338,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         },
       });
 
-      const row = await fastify.prisma.scheduledWorkRequest.create({
+      const scheduleCreate = fastify.prisma.scheduledWorkRequest.create({
         data: {
           budgetTier: body.budgetTier,
           createdById: user.sub,
@@ -353,6 +355,11 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         },
         include: scheduleInclude,
       });
+      const [, , row] = await fastify.prisma.$transaction([
+        runInputCreate,
+        activeWorkflowCreate,
+        scheduleCreate,
+      ]);
 
       try {
         await fastify.temporal.syncWorkRequestSchedule(
@@ -363,11 +370,13 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         // row with no backing Temporal Schedule (the inverse — a zombie
         // schedule firing against missing rows — would be much worse).
         request.log.error({ err }, 'failed to create Temporal schedule; rolling back');
-        await fastify.prisma.scheduledWorkRequest.delete({ where: { id: scheduleId } });
-        await fastify.prisma.activeWorkflow.deleteMany({
-          where: { temporalWorkflowId: `sched-${scheduleId}` },
-        });
-        await fastify.prisma.runInput.delete({ where: { id: workRequestId } });
+        await fastify.prisma.$transaction([
+          fastify.prisma.scheduledWorkRequest.delete({ where: { id: scheduleId } }),
+          fastify.prisma.activeWorkflow.deleteMany({
+            where: { temporalWorkflowId: `sched-${scheduleId}` },
+          }),
+          fastify.prisma.runInput.delete({ where: { id: workRequestId } }),
+        ]);
         return reply.status(502).send({
           error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not create Temporal schedule' },
         });

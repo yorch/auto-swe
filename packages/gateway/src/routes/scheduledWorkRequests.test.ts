@@ -84,6 +84,8 @@ describe('/api/v1/scheduled-work-requests', () => {
     } as unknown as never);
 
     app.decorate('prisma', {
+      // Batch form only: the route hands over already-issued fake promises.
+      $transaction: async (ops: unknown) => Promise.all(ops as Promise<unknown>[]),
       activeWorkflow: {
         create: async (args: { data: Record<string, unknown> }) => {
           createdActiveWorkflows.push(args.data);
