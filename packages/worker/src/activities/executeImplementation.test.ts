@@ -250,4 +250,12 @@ describe('executeImplementation retry safety', () => {
       repoId: 'repo-1',
     });
   });
+
+  it('gives the test run the long timeout instead of the 2-minute exec default', async () => {
+    await executeImplementation(REQUEST);
+    const testCall = workspaceMock.exec.mock.calls.find(
+      (c) => (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === 600_000
+    );
+    expect(testCall).toBeDefined();
+  });
 });

@@ -6,6 +6,14 @@ import type { FileChange, TestRunResult } from '@auto-swe/shared/types/workflow'
  * scripts and devDependencies. Falls back to 'npm test' if no recognizable
  * test script is found.
  */
+/**
+ * Wall-clock cap for a full test-suite run inside the workspace. `Workspace.exec`
+ * defaults to the 2-minute child-process timeout, which suits git and file
+ * operations but kills a legitimate test run on any non-trivial repository —
+ * the same 10-minute ceiling the agent's `bash` tool and `execCapture` use.
+ */
+export const TEST_RUN_TIMEOUT_MS = 600_000;
+
 export function detectTestCommand(packageJsonStr: string): string {
   try {
     const pkg = JSON.parse(packageJsonStr);

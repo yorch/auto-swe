@@ -16,7 +16,12 @@ import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
-import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
+import {
+  detectTestCommand,
+  parseDiffToFileChanges,
+  parseTestOutput,
+  TEST_RUN_TIMEOUT_MS,
+} from './utils.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX';
@@ -200,7 +205,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     let testResult: TestRunResult;
     const testStart = Date.now();
     try {
-      const testOutput = await workspace.exec(testCommand);
+      const testOutput = await workspace.exec(testCommand, { timeoutMs: TEST_RUN_TIMEOUT_MS });
       testResult = parseTestOutput(testOutput, Date.now() - testStart);
     } catch (err: unknown) {
       testResult = {

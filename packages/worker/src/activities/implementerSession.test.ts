@@ -252,6 +252,15 @@ describe('runImplementerFixSession', () => {
     expect(out.headSha).toBe('abc123');
   });
 
+  it('gives the test run the long timeout instead of the 2-minute exec default', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    await runImplementerFixSession(input());
+    const testCall = execMock.mock.calls.find(
+      (c) => (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === 600_000
+    );
+    expect(testCall).toBeDefined();
+  });
+
   it('shell-quotes the repository defaultBranch in the diff command', async () => {
     findRepo.mockResolvedValue({ ...REPO, defaultBranch: 'main; touch /pwned' } as never);
     await runImplementerFixSession(input());

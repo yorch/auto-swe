@@ -34,7 +34,12 @@ import {
 } from '../lib/repoDependencyContext.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
-import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
+import {
+  detectTestCommand,
+  parseDiffToFileChanges,
+  parseTestOutput,
+  TEST_RUN_TIMEOUT_MS,
+} from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
 /**
@@ -343,7 +348,7 @@ export async function executeImplementation(
       // Run tests
       const testStart = Date.now();
       try {
-        const testOutput = await workspace.exec(testCommand);
+        const testOutput = await workspace.exec(testCommand, { timeoutMs: TEST_RUN_TIMEOUT_MS });
         testResult = parseTestOutput(testOutput, Date.now() - testStart);
         tracer.addActivityEvent({
           durationMs: Date.now() - testStart,
