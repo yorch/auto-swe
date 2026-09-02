@@ -444,15 +444,36 @@ async function loadLastRuns(
   if (templateIds.length === 0) {
     return new Map();
   }
-  // One query per template using groupBy would also work, but findMany distinct on
-  // (templateId) ordered by startedAt desc is the simpler portable pattern.
+  // Prisma applies `distinct` in memory after fetching every matching row (no
+  // DISTINCT ON is emitted), so the naive findMany({ distinct }) loaded the full
+  // run history of every visible template on each list call. Two bounded
+  // queries instead: the newest startedAt per template, then just those rows.
+  const heads = await fastify.prisma.workflowRun.groupBy({
+    _max: { startedAt: true },
+    by: ['templateId'],
+    where: { templateId: { in: templateIds } },
+  });
+  const keys = heads.flatMap((h) =>
+    h.templateId && h._max.startedAt
+      ? [{ startedAt: h._max.startedAt, templateId: h.templateId }]
+      : []
+  );
+  if (keys.length === 0) {
+    return new Map();
+  }
   const rows = (await fastify.prisma.workflowRun.findMany({
-    distinct: ['templateId'],
     orderBy: { startedAt: 'desc' },
     select: { endedAt: true, id: true, startedAt: true, status: true, templateId: true },
-    where: { templateId: { in: templateIds } },
+    where: { OR: keys },
   })) as unknown as LastRunRow[];
-  return new Map(rows.map((r) => [r.templateId, r]));
+  // Newest first; a tie on startedAt keeps the first one seen.
+  const map = new Map<string, LastRunRow>();
+  for (const r of rows) {
+    if (!map.has(r.templateId)) {
+      map.set(r.templateId, r);
+    }
+  }
+  return map;
 }
 
 function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefined) {
@@ -545,7 +566,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const windowStart = new Date(Date.now() - request.query.window * 24 * 60 * 60 * 1000);
       const ANALYTICS_ROW_CAP = 10_000;
-      const rows = await fastify.prisma.workflowRun.findMany({
+      const rowsQuery = fastify.prisma.workflowRun.findMany({
         orderBy: { startedAt: 'desc' },
         select: {
           costUsdAccrued: true,
@@ -579,7 +600,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       const [runs, baselines] = await Promise.all([
-        rows,
+        rowsQuery,
         fastify.prisma.humanErrorBaseline.findMany({
           select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
           where: { organization: { memberships: { some: { userId: user.sub } } } },

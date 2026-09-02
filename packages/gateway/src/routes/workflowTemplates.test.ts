@@ -130,25 +130,39 @@ function buildApp(state: {
       workflowRun: {
         count: async ({ where }: { where?: Mutable }) =>
           state.runs.filter((r) => !where?.templateId || r.templateId === where.templateId).length,
-        findMany: async ({ where, distinct }: { where?: Mutable; distinct?: string[] }) => {
-          const filtered = state.runs.filter((r) => {
+        findMany: async ({ where }: { where?: Mutable }) => {
+          // Two shapes: a templateId filter, or the last-run lookup's
+          // `OR: [{ templateId, startedAt }]` keys.
+          const keys = where?.OR as Array<{ templateId: string; startedAt: Date }> | undefined;
+          if (keys) {
+            return state.runs.filter((r) =>
+              keys.some((k) => k.templateId === r.templateId && k.startedAt === r.startedAt)
+            );
+          }
+          return state.runs.filter((r) => {
             if (!where?.templateId) {
               return true;
             }
             const ids = (where.templateId as { in?: string[] }).in;
             return ids ? ids.includes(r.templateId) : where.templateId === r.templateId;
           });
-          if (!distinct) {
-            return filtered;
-          }
-          const seen = new Set<string>();
-          return filtered.filter((r) => {
-            if (seen.has(r.templateId)) {
-              return false;
+        },
+        groupBy: async ({ where }: { where?: Mutable }) => {
+          const ids = (where?.templateId as { in?: string[] } | undefined)?.in;
+          const max = new Map<string, Date>();
+          for (const r of state.runs) {
+            if (ids && !ids.includes(r.templateId)) {
+              continue;
             }
-            seen.add(r.templateId);
-            return true;
-          });
+            const prev = max.get(r.templateId);
+            if (!prev || r.startedAt > prev) {
+              max.set(r.templateId, r.startedAt);
+            }
+          }
+          return [...max].map(([templateId, startedAt]) => ({
+            _max: { startedAt },
+            templateId,
+          }));
         },
       },
       workflowShellAudit: {
