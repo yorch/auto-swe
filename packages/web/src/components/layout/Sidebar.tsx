@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useInbox } from '@/hooks/useInbox';
+import { useInboxCount } from '@/hooks/useInbox';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -266,8 +266,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
   const userLevel = ROLE_HIERARCHY[user?.role ?? 'ENGINEER'] ?? 1;
-  const { data: inboxSteps } = useInbox();
-  const inboxCount = (inboxSteps ?? []).length;
+  const inboxCount = useInboxCount();
 
   const avatarLetter = (user?.email ?? 'G')[0].toUpperCase();
 

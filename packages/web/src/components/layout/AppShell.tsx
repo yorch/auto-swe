@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
+import { useInboxStream } from '@/hooks/useInbox';
 
 const CHROMELESS_ROUTES = ['/login'];
 
@@ -22,6 +23,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const fullscreen = isFullscreenRoute(pathname);
+
+  return <Chrome fullscreen={fullscreen}>{children}</Chrome>;
+}
+
+// Split out so the inbox stream only mounts (and its hook only runs) on
+// chromed routes — a hook cannot sit behind the early return above.
+function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscreen: boolean }) {
+  useInboxStream();
 
   return (
     <div

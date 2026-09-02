@@ -1,21 +1,35 @@
 'use client';
 
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { api } from '@/lib/api';
 import { API_BASE } from '@/lib/config';
 
 export type InboxFilter = 'PENDING' | 'ALL';
 
-export function useInbox(filter: InboxFilter = 'PENDING') {
+function inboxQueryOptions(filter: InboxFilter) {
+  return queryOptions({
+    queryFn: () =>
+      api
+        .get<{ data: HumanStepSummary[] }>(`/api/v1/inbox${filter === 'ALL' ? '?status=ALL' : ''}`)
+        .then((r) => r.data),
+    queryKey: ['inbox', filter] as const,
+    // Keep a fallback poll (30 s for pending, disabled for history).
+    refetchInterval: filter === 'PENDING' ? 30_000 : false,
+  });
+}
+
+/**
+ * Owns the single SSE subscription for inbox change notifications and keeps
+ * the pending query warm so the sidebar / top-bar badges have data on every
+ * page. Mount it exactly once, in the app shell — every extra mount is
+ * another EventSource connection against the gateway.
+ */
+export function useInboxStream() {
   const qc = useQueryClient();
 
-  // SSE subscription — real-time change notifications for the pending view.
   useEffect(() => {
-    if (filter !== 'PENDING') {
-      return;
-    }
     if (typeof EventSource === 'undefined') {
       return;
     }
@@ -30,17 +44,22 @@ export function useInbox(filter: InboxFilter = 'PENDING') {
     es.onerror = () => {};
 
     return () => es.close();
-  }, [filter, qc]);
+  }, [qc]);
 
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: HumanStepSummary[] }>(`/api/v1/inbox${filter === 'ALL' ? '?status=ALL' : ''}`)
-        .then((r) => r.data),
-    queryKey: ['inbox', filter],
-    // Keep a fallback poll (30 s for pending, disabled for history).
-    refetchInterval: filter === 'PENDING' ? 30_000 : false,
-  });
+  useQuery(inboxQueryOptions('PENDING'));
+}
+
+export function useInbox(filter: InboxFilter = 'PENDING') {
+  return useQuery(inboxQueryOptions(filter));
+}
+
+/**
+ * Number of pending human steps, read from the query cache only — the fetch
+ * and the SSE subscription belong to `useInboxStream()` in the app shell.
+ */
+export function useInboxCount(): number {
+  const { data } = useQuery({ ...inboxQueryOptions('PENDING'), enabled: false });
+  return data?.length ?? 0;
 }
 
 export function useRespondToHumanStep() {
