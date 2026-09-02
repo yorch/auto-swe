@@ -1061,7 +1061,7 @@ export default function RunDetailPage({ params }: PageProps) {
           )}
           <Link
             className="text-paper-500 hover:text-ember-400 transition-colors"
-            href={`/templates/${run.templateId}`}
+            href={`/workflows/library/${run.templateId}`}
             style={{
               fontFamily: 'var(--font-mono)',
               fontSize: '10.5px',

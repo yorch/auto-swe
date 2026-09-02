@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useMemo } from 'react';
 import { useInboxCount } from '@/hooks/useInbox';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -71,174 +72,120 @@ type NavGroup = {
 
 const NAV_GROUPS: NavGroup[] = [
   {
+    items: [{ href: '/', icon: 'dashboard', label: 'Home', roles: ['ENGINEER', 'LEAD', 'ADMIN'] }],
+    label: 'Start',
+  },
+  {
     items: [
-      { href: '/', icon: 'dashboard', label: 'Home', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
+      { href: '/workflows', icon: 'canvas', label: 'Queue', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
+    ],
+    label: 'Requests',
+  },
+  {
+    items: [
       {
-        href: '/templates',
+        href: '/workflows/library',
         icon: 'templates',
-        label: 'My workflows',
+        label: 'Library',
         roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
-      {
-        href: '/workflows',
-        icon: 'canvas',
-        label: 'Work requests',
-        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
-      },
-      { href: '/epics', icon: 'epics', label: 'Outcomes', roles: ['LEAD', 'ADMIN'] },
-    ],
-    label: 'Work',
-  },
-  {
-    items: [
-      { href: '/runs', icon: 'runs', label: 'Runs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
-      { href: '/inbox', icon: 'inbox', label: 'Inbox', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
-    ],
-    label: 'Operate',
-  },
-  {
-    items: [
-      {
-        href: '/analytics',
-        icon: 'analytics',
-        label: 'Analytics',
-        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
-      },
-      {
-        href: '/lessons',
-        icon: 'memory',
-        label: 'Memory',
-        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
-      },
-    ],
-    label: 'Insights',
-  },
-  {
-    items: [
       {
         href: '/connections',
         icon: 'connections',
         label: 'Connections',
         roles: ['LEAD', 'ADMIN'],
       },
-      // The agent-library and skills routes are ADMIN-only on the gateway and the
-      // /admin layout redirects everyone else, so a LEAD entry would be a dead link.
+      { href: '/runs', icon: 'runs', label: 'Runs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
+    ],
+    label: 'Workflows',
+  },
+  {
+    items: [
       {
-        href: '/admin/agents/library',
+        href: '/studio/agents/library',
         icon: 'agents',
         label: 'Agents',
-        roles: ['ADMIN'],
+        roles: ['LEAD', 'ADMIN'],
       },
-      { href: '/admin/skills', icon: 'skills', label: 'Skills', roles: ['ADMIN'] },
-      { href: '/teams', icon: 'teams', label: 'Teams', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
-      { href: '/users', icon: 'users', label: 'Users', roles: ['ADMIN'] },
+      { href: '/studio/skills', icon: 'skills', label: 'Skills', roles: ['LEAD', 'ADMIN'] },
+      { href: '/studio/mcp', icon: 'connections', label: 'MCP', roles: ['LEAD', 'ADMIN'] },
       {
-        href: '/admin/integrations',
+        href: '/studio/integrations',
         icon: 'connections',
         label: 'Integrations',
         roles: ['ADMIN'],
       },
+      { href: '/studio/models', icon: 'admin', label: 'Model config', roles: ['ADMIN'] },
+      { href: '/studio/bundles', icon: 'templates', label: 'Bundles', roles: ['ADMIN'] },
+    ],
+    label: 'Studio',
+  },
+  {
+    items: [
+      { href: '/govern/security', icon: 'security', label: 'Security', roles: ['ADMIN'] },
+      { href: '/govern/scanner', icon: 'security', label: 'Scanner', roles: ['ADMIN'] },
+      { href: '/govern/evals', icon: 'analytics', label: 'Evals', roles: ['ADMIN'] },
+      { href: '/govern/schedules', icon: 'clock', label: 'Schedules', roles: ['ADMIN'] },
       {
-        href: '/admin/model-config',
-        icon: 'admin',
-        label: 'Model Config',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/mcp-connections',
-        icon: 'connections',
-        label: 'MCP Connections',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/bundles',
-        icon: 'templates',
-        label: 'Bundles',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/scanner',
+        href: '/govern/budget-alerts',
         icon: 'security',
-        label: 'Scanner',
+        label: 'Budget alerts',
         roles: ['ADMIN'],
       },
       {
-        href: '/admin/security',
-        icon: 'security',
-        label: 'Security',
-        roles: ['ADMIN'],
+        href: '/govern/teams',
+        icon: 'teams',
+        label: 'Teams',
+        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
       {
-        href: '/admin/evals',
-        icon: 'analytics',
-        label: 'Evals',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/organizations',
+        href: '/govern/organizations',
         icon: 'teams',
         label: 'Organizations',
         roles: ['ADMIN'],
       },
+      { href: '/govern/users', icon: 'users', label: 'Users', roles: ['ADMIN'] },
+      { href: '/govern/api-tokens', icon: 'key', label: 'API tokens', roles: ['ADMIN'] },
       {
-        href: '/admin/baselines',
+        href: '/govern/approvals',
+        icon: 'inbox',
+        label: 'Approvals',
+        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
+      },
+      { href: '/govern/lessons', icon: 'memory', label: 'Lessons', roles: ['ADMIN'] },
+      {
+        href: '/govern/analytics',
         icon: 'analytics',
-        label: 'Error Baselines',
-        roles: ['ADMIN'],
+        label: 'Analytics',
+        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
       {
-        href: '/admin/budget-alerts',
-        icon: 'security',
-        label: 'Budget Alerts',
+        href: '/govern/baselines',
+        icon: 'analytics',
+        label: 'Error baselines',
         roles: ['ADMIN'],
       },
+      { href: '/govern/sessions', icon: 'clock', label: 'Sessions', roles: ['ADMIN'] },
       {
-        href: '/admin/workflow',
-        icon: 'workflows',
-        label: 'Workflow Defaults',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/schedules',
-        icon: 'templates',
-        label: 'Schedules',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/sessions',
-        icon: 'clock',
-        label: 'Sessions',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/access-tokens',
-        icon: 'key',
-        label: 'API Tokens',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/lessons',
-        icon: 'memory',
-        label: 'Lessons',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/admin/slack-channels',
+        href: '/govern/slack-channels',
         icon: 'teams',
-        label: 'Slack Channels',
+        label: 'Slack channels',
         roles: ['ADMIN'],
       },
       {
-        href: '/admin/settings',
+        href: '/govern/workflow-defaults',
+        icon: 'workflows',
+        label: 'Workflow defaults',
+        roles: ['ADMIN'],
+      },
+      {
+        href: '/govern/platform-settings',
         icon: 'settings',
-        label: 'Admin Settings',
-        // Not ADMIN-only: the page authorises per setting, so a lead holding a
-        // grant needs to be able to reach it.
+        label: 'Platform settings',
         roles: ['ADMIN', 'LEAD'],
       },
-      { href: '/docs', icon: 'docs', label: 'Docs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
     ],
-    label: 'Administration',
+    label: 'Govern',
   },
   {
     items: [
@@ -255,18 +202,34 @@ const NAV_GROUPS: NavGroup[] = [
 
 const ROLE_HIERARCHY: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
 
-function isActive(pathname: string, href: string): boolean {
-  if (href === '/') {
-    return pathname === '/';
-  }
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
+// Active item is computed in the Sidebar component so the most-specific
+// matching nav item wins (e.g. /workflows/library over /workflows).
 
 export function Sidebar() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
   const userLevel = ROLE_HIERARCHY[user?.role ?? 'ENGINEER'] ?? 1;
   const inboxCount = useInboxCount();
+
+  const allowed = useMemo(
+    () =>
+      NAV_GROUPS.flatMap((group) =>
+        group.items.filter((item) => item.roles.some((r) => (ROLE_HIERARCHY[r] ?? 0) <= userLevel))
+      ),
+    [userLevel]
+  );
+  const activeHref = useMemo(() => {
+    if (pathname === '/') {
+      return '/';
+    }
+    const match = allowed
+      .filter(
+        (item) =>
+          item.href !== '/' && (pathname === item.href || pathname.startsWith(`${item.href}/`))
+      )
+      .sort((a, b) => b.href.length - a.href.length)[0];
+    return match?.href ?? '';
+  }, [pathname, allowed]);
 
   const avatarLetter = (user?.email ?? 'G')[0].toUpperCase();
 
@@ -401,7 +364,7 @@ export function Sidebar() {
                 {group.label}
               </div>
               {visible.map((item) => {
-                const active = isActive(pathname, item.href);
+                const active = activeHref === item.href;
                 return (
                   <Link
                     className={cn(
@@ -420,7 +383,7 @@ export function Sidebar() {
                   >
                     <NavIcon name={item.icon} />
                     <span className="flex-1">{item.label}</span>
-                    {item.href === '/inbox' && inboxCount > 0 && (
+                    {item.href === '/govern/approvals' && inboxCount > 0 && (
                       <span
                         style={{
                           background: 'var(--color-ember-400)',

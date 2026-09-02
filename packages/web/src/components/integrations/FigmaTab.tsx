@@ -68,8 +68,7 @@ export function FigmaTab() {
           compact design summary (frames, text, tokens) that the implementer matches against. The
           connector is read-only — it never writes to Figma. To give agents live, on-demand design
           access during a run, add the Figma Dev Mode endpoint as an MCP connection under{' '}
-          <span className="font-mono text-[10px] text-paper-400">/admin/mcp-connections</span>{' '}
-          instead.
+          <span className="font-mono text-[10px] text-paper-400">/studio/mcp</span> instead.
         </p>
         <div className="space-y-4">
           <ConfigField

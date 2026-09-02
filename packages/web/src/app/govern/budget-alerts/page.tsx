@@ -75,7 +75,7 @@ export default function BudgetAlertsPage() {
                           <Td className="px-4 py-2">
                             <Link
                               className="text-ember-400 hover:underline"
-                              href={`/admin/organizations/${org.id}`}
+                              href={`/govern/budgets/${org.id}`}
                             >
                               {org.name}
                             </Link>

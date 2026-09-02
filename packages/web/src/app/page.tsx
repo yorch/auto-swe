@@ -1,6 +1,6 @@
 'use client';
 
-import type { HumanStepSummary } from '@auto-swe/shared/types/api';
+import type { HumanStepSummary, WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
@@ -15,6 +15,8 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { NewRequestModal } from '@/components/workflow/NewRequestModal';
+import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { useInbox } from '@/hooks/useInbox';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useWorkflows } from '@/hooks/useRuns';
@@ -64,7 +66,7 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
           <div className="border-t border-ink-600 px-4 py-2 text-right">
             <Link
               className="font-mono text-[11px] uppercase tracking-wider text-ember-400 hover:text-ember-300"
-              href="/inbox"
+              href="/govern/approvals"
             >
               View all {steps.length} →
             </Link>
@@ -85,7 +87,8 @@ export default function DashboardPage() {
   const { data: inboxSteps } = useInbox();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const [submitOpen, setSubmitOpen] = useState(false);
-  const canSubmit = (repos ?? []).length > 0;
+  const [newOpen, setNewOpen] = useState(false);
+  const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
 
   const all = workflows ?? [];
   const active = all.filter((w) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
@@ -132,25 +135,35 @@ export default function DashboardPage() {
         <PageHeader
           actions={
             <div className="flex items-center gap-2">
-              <Button onClick={() => router.push('/templates')} size="sm" variant="secondary">
+              <Button
+                onClick={() => router.push('/workflows/library')}
+                size="sm"
+                variant="secondary"
+              >
                 Browse workflows
               </Button>
-              <Button
-                disabled={!canSubmit}
-                onClick={() => setSubmitOpen(true)}
-                title={canSubmit ? undefined : 'Connect a repository first'}
-                variant="primary"
-              >
-                + Run SWE agent
+              <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
+                + New request
               </Button>
             </div>
           }
           chapter={`§ Home · ${today}`}
-          subtitle="Active runs, pending approvals, and platform health at a glance."
-          title="Command centre."
+          subtitle="Start from a request and let the platform reach a validated outcome."
+          title="What can auto-swe handle for you?"
         />
       </div>
       <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
+      <NewRequestModal
+        onClose={() => setNewOpen(false)}
+        onSelect={(t) => {
+          setRunTarget(t);
+          setNewOpen(false);
+        }}
+        open={newOpen}
+      />
+      {runTarget && (
+        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
+      )}
 
       {/* HITL inbox — shown first so approvals are never missed */}
       <InboxWidget steps={pendingApprovals} />

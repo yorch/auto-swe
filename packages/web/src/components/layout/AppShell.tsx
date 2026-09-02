@@ -9,7 +9,7 @@ const CHROMELESS_ROUTES = ['/login'];
 
 // Run detail and template diff pages manage their own full-height layout.
 function isFullscreenRoute(pathname: string): boolean {
-  return /^\/runs\/[^/]+$/.test(pathname) || /^\/templates\/[^/]+\/diff/.test(pathname);
+  return /^\/runs\/[^/]+$/.test(pathname) || /^\/workflows\/library\/[^/]+\/diff/.test(pathname);
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {

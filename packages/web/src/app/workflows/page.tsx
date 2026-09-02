@@ -1,103 +1,85 @@
 'use client';
 
+import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
-import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequestModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Pagination } from '@/components/ui/Pagination';
-import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { useRepositories } from '@/hooks/useRepositories';
+import { NewRequestModal } from '@/components/workflow/NewRequestModal';
+import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { useWorkflows } from '@/hooks/useRuns';
 import { formatCost, formatRelativeTime } from '@/lib/utils';
 
-const PAGE_SIZE = 50;
-
 export default function WorkflowsPage() {
-  const [offset, setOffset] = useState(0);
-  const {
-    data: workflows,
-    meta,
-    isLoading,
-    isError,
-    error: loadError,
-  } = useWorkflows({ limit: PAGE_SIZE, offset });
-  const { data: repos } = useRepositories();
-  const [submitOpen, setSubmitOpen] = useState(false);
-  const canSubmit = (repos ?? []).length > 0;
-  const total = meta?.total ?? 0;
+  const { data: workflows, isLoading } = useWorkflows();
+  const [newOpen, setNewOpen] = useState(false);
+  const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
 
-  if (isLoading || isError) {
-    return (
-      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="workflows" />
-    );
+  if (isLoading) {
+    return <LoadingState />;
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
         actions={
-          <Button
-            disabled={!canSubmit}
-            onClick={() => setSubmitOpen(true)}
-            title={canSubmit ? undefined : 'Connect a repository first'}
-            variant="primary"
-          >
-            + Submit
+          <Button onClick={() => setNewOpen(true)} variant="primary">
+            + New request
           </Button>
         }
-        chapter={`§ Workflows · ${total} total`}
-        title="Workflows"
+        chapter={`§ Requests · ${(workflows ?? []).length} total`}
+        title="Request queue"
       />
-      <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
+      <NewRequestModal
+        onClose={() => setNewOpen(false)}
+        onSelect={(t) => {
+          setRunTarget(t);
+          setNewOpen(false);
+        }}
+        open={newOpen}
+      />
+      {runTarget && (
+        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
+      )}
 
       <Card className="p-0 overflow-hidden">
-        <Table>
-          <THead className="bg-ink-800">
-            <Th variant="plain">Repository</Th>
-            <Th variant="plain">Branch</Th>
-            <Th variant="plain">Status</Th>
-            <Th variant="plain">Updated</Th>
-            <Th align="right" variant="plain">
-              Cost
-            </Th>
-          </THead>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-ink-600 bg-ink-800">
+              <th className="text-left px-4 py-3 font-medium">Repository</th>
+              <th className="text-left px-4 py-3 font-medium">Branch</th>
+              <th className="text-left px-4 py-3 font-medium">Status</th>
+              <th className="text-left px-4 py-3 font-medium">Updated</th>
+              <th className="text-right px-4 py-3 font-medium">Cost</th>
+            </tr>
+          </thead>
           <tbody>
             {(workflows ?? []).map((w) => (
-              <TRow hover key={w.id}>
-                <Td className="px-4 py-3">
+              <tr className="border-b border-ink-600 hover:bg-ink-800 transition-colors" key={w.id}>
+                <td className="px-4 py-3">
                   <Link
                     className="text-ember-400 hover:underline font-medium"
                     href={`/workflows/${w.id}`}
                   >
                     {w.repository?.organizationName}/{w.repository?.repoName}
                   </Link>
-                </Td>
-                <Td className="px-4 py-3 text-paper-400">{w.assignedBranch}</Td>
-                <Td className="px-4 py-3">
+                </td>
+                <td className="px-4 py-3 text-paper-400">{w.assignedBranch}</td>
+                <td className="px-4 py-3">
                   <StatusBadge status={w.currentStatus} />
-                </Td>
-                <Td className="px-4 py-3 text-paper-400">{formatRelativeTime(w.updatedAt)}</Td>
-                <Td className="px-4 py-3 text-right text-xs text-paper-400">
+                </td>
+                <td className="px-4 py-3 text-paper-400">{formatRelativeTime(w.updatedAt)}</td>
+                <td className="px-4 py-3 text-right text-xs text-paper-400">
                   {formatCost(w.costUsdAccrued)}
-                </Td>
-              </TRow>
+                </td>
+              </tr>
             ))}
           </tbody>
-        </Table>
+        </table>
       </Card>
-      <Pagination
-        hasNext={offset + PAGE_SIZE < total}
-        hasPrev={offset > 0}
-        onNext={() => setOffset(offset + PAGE_SIZE)}
-        onPrev={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-        rangeEnd={Math.min(offset + PAGE_SIZE, total)}
-        rangeStart={total === 0 ? 0 : offset + 1}
-        total={total}
-      />
     </div>
   );
 }

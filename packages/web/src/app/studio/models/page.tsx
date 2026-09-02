@@ -27,7 +27,7 @@ export default function AdminModelConfigPage() {
           <>
             Encrypted provider credentials, the embedding model, and the audit trail. Per-role
             model, prompt, skill, and tool config now lives in the{' '}
-            <Link className="text-ember-400 hover:text-ember-300" href="/admin/agents/library">
+            <Link className="text-ember-400 hover:text-ember-300" href="/studio/agents/library">
               Agent library
             </Link>
             .
