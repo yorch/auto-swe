@@ -64,14 +64,17 @@ jobs:
       - name: Resolve Dockerfile
         if: steps.repo.outputs.id != ''
         id: dockerfile
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONTROL_PLANE_REPO: ${{ github.repository }}
         run: |
           if [ -f ".auto-swe/Dockerfile" ]; then
             echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
           else
             # Fetch default executor Dockerfile from the control-plane repo
             mkdir -p .auto-swe
-            curl -sf -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://raw.githubusercontent.com/${{ github.repository }}/main/defaults/Dockerfile.node24" \
+            curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
+              "https://raw.githubusercontent.com/${CONTROL_PLANE_REPO}/main/defaults/Dockerfile.node24" \
               -o .auto-swe/Dockerfile
             echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
           fi
