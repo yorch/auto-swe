@@ -197,7 +197,7 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | `BRANCH_PREFIX`             | Optional  | Git branch prefix (default: `auto`)                                                            |
 | `GITHUB_URL`                | Optional  | Override for GitHub Enterprise Server                                                          |
 | `GITHUB_API_URL`            | Optional  | Override for GitHub Enterprise Server API                                                      |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional | OTLP/HTTP endpoint for traces + logs (set when running `yarn docker:app:up`)                       |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional | OTLP/gRPC endpoint (`:4317`) for traces, metrics + logs (set when running `yarn docker:app:up`)  |
 | `ARTIFACT_S3_*`             | Optional  | S3-compatible artifact store; falls back to Postgres-inline when unset. `yarn docker:infra:up` ships a Garage container at `localhost:9000` that provisions its key and bucket on first boot, or point it at AWS S3 / R2 / B2 instead (see `.env.example`) |
 
 ¹ JWT auth has two modes: HS256 (default — set `JWT_SECRET`) or RS256 (set `JWT_PRIVATE_KEY_PATH` + `JWT_PUBLIC_KEY_PATH`).
@@ -255,4 +255,4 @@ See [AGENTS.md](./AGENTS.md) for full conventions, critical implementation notes
 | Human-governed merges         | Nothing the platform ships merges a PR; a human always merges                   |
 | PAT or GitHub App             | PAT for simplicity; GitHub App (short-lived installation tokens) for production — see [`docs/github-app-setup.md`](./docs/github-app-setup.md) |
 | pgvector for agent memory     | Semantic similarity search surfaces relevant past lessons into agent context    |
-| Mastra + Vercel AI SDK        | Mastra uses AI SDK under the hood; direct `@ai-sdk/anthropic` import is simpler |
+| Mastra + Vercel AI SDK        | Mastra agents bind models through the AI SDK provider adapters; `getModel(key, ctx)` picks the provider from DB config, so agent code never imports a provider directly |

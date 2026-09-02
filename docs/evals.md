@@ -101,7 +101,8 @@ deployment at `/admin/workflow`.
 **Golden-set re-validation.** `ScheduledRevalidationWorkflow` fans out over datasets due for
 re-validation and quarantines cases that have gone stale, so the benchmark does not silently decay
 into measuring the wrong thing. Managed at `/admin/workflow`, with
-`GET`/`PUT /api/v1/config/revalidation` and a manual trigger endpoint.
+`GET`/`PUT /api/v1/admin/config/revalidation` and a manual trigger endpoint
+(`POST /api/v1/admin/config/revalidation/trigger`).
 
 **Canary routing.** `resolveCanaryConfig()` reads the canary agent key and version from
 `WorkflowDefaults`; `shouldRouteToCanary()` hashes the work-request ID (FNV-1a) for a deterministic

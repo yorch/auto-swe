@@ -83,9 +83,10 @@ JWT_SECRET=<openssl rand -base64 48>
 # JWT_PRIVATE_KEY_PATH=/etc/auto-swe/jwt-private.pem
 # JWT_PUBLIC_KEY_PATH=/etc/auto-swe/jwt-public.pem
 
-# Web app — runtime URL the browser bundle calls (baked at build time)
+# Web app — read at request time by the root Server Component and injected
+# into window.__APP_CONFIG__, so a change is a container restart, not a rebuild
 NEXT_PUBLIC_API_URL=https://api.example.com
-NEXT_PUBLIC_APP_VERSION=<git sha / release>
+NEXT_PUBLIC_TEMPORAL_UI_URL=https://temporal.example.com   # optional; omit to hide the link
 
 # Browser-facing gateway
 CORS_ORIGIN=https://app.example.com,https://admin.example.com  # first entry = better-auth client origin
@@ -135,8 +136,9 @@ AUTH_FROM_EMAIL=auth@example.com
 # ARTIFACT_S3_ENDPOINT=https://...   # only if not AWS S3 — Garage, R2, B2, …
 # ARTIFACT_S3_FORCE_PATH_STYLE=true  # true for Garage and B2; false for AWS S3 and R2
 
-# Observability
-OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+# Observability — OTLP over gRPC (the exporters are the *-otlp-grpc packages),
+# so point this at the collector's gRPC port, not the HTTP one
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 
 # Worker (optional tuning)
 WEB_URL=https://app.example.com      # base URL for the "Open inbox" link in Slack HITL
@@ -164,12 +166,12 @@ Several categories of credentials that were previously env-only are now stored e
 | `/admin/workflow` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
 
 **Bootstrap order** (first deployment):
-1. Start gateway + web only (`yarn dev:gateway && yarn dev:web`).
+1. Start gateway + web only — `docker compose -f docker-compose.infra.yml -f docker-compose.prod.yml up -d gateway web` in the compose stack (locally, `yarn dev:gateway` and `yarn dev:web`).
 2. Sign in as admin.
 3. `/admin/model-config` → Credentials → add a provider credential (the seed already created the agents + embedding config).
 4. `/admin/integrations` → GitHub tab → enter your PAT and webhook secret → Save.
 5. `/admin/integrations` → any other tabs you need (Slack, Storage, OAuth).
-6. Start the worker (`yarn dev:worker`). The worker now reads all config from the DB.
+6. Start the worker (`… up -d worker`, or `yarn dev:worker` locally). The worker reads all config from the DB.
 7. Optionally clear the `GITHUB_TOKEN` and `GITHUB_WEBHOOK_SECRET` env vars — the DB config is now the source of truth.
 
 > **"Restart required" changes.** Changes to OAuth credentials (GitHub/Google social sign-in) and Slack OAuth credentials take effect only after restarting the gateway. The UI shows a yellow banner reminding you. All other config changes (GitHub token, webhook secret, Slack bot token/signing secret, storage, workflow defaults) take effect on the next activity call — no restart needed.
@@ -205,7 +207,7 @@ yarn db:seed
 #      so the seeded admin can sign in via the password tab on /login.
 ```
 
-**Inside Docker.** If you build the gateway image and run migrations from there, the runtime image needs the full `prisma` CLI plus the `.bin/prisma` symlink intact — declare `prisma` in the package's `dependencies` (not `devDependencies`) so `yarn workspaces focus --production` resolves the CLI's own transitive deps. The simplest pattern is a one-shot init container. Details in the [`prisma-docker-migrations`](../.claude/skills/prisma-docker-migrations/SKILL.md) skill.
+**Inside Docker.** The gateway image's entrypoint runs `node node_modules/prisma/build/index.js migrate deploy` before starting Fastify, so the runtime image needs the full `prisma` CLI and its transitive dependencies — `prisma` is declared in the package's `dependencies` (not `devDependencies`) so `yarn workspaces focus --production` keeps them. The CLI is invoked by path, so no `.bin` symlink is involved. The simplest pattern for a separate migration step is a one-shot init container. Details in the [`prisma-docker-migrations`](../.claude/skills/prisma-docker-migrations/SKILL.md) skill.
 
 For routine application thereafter, `prisma migrate deploy` is idempotent. **Never use `prisma migrate dev` in production** — it will silently try to drop the HNSW index every time unrelated schema changes are made. See the [`prisma-pgvector-hnsw`](../.claude/skills/prisma-pgvector-hnsw/SKILL.md) skill.
 
@@ -221,7 +223,7 @@ The shipped `docker-compose.infra.yml` provisions:
 - `postgres-temporal` (a *separate* Postgres from the app DB — needed because Temporal owns the schema)
 - `temporal-setup` (one-shot container that installs the Temporal schema)
 - `temporal` (the server)
-- `temporal-admin-tools` and `temporal-ui` (port `8233`)
+- `temporal-setup-namespace` (one-shot container that creates the namespace) and `temporal-ui` (port `8233`)
 
 For real production, run these on dedicated infrastructure (not on the gateway/worker hosts). At minimum:
 - Multiple Temporal server replicas behind an internal load balancer.
@@ -230,7 +232,7 @@ For real production, run these on dedicated infrastructure (not on the gateway/w
 
 ### b. Temporal Cloud
 
-Point `TEMPORAL_ADDRESS` at your Temporal Cloud endpoint and supply the namespace + mTLS certs via the SDK. This removes the Postgres/server burden entirely. The auto-swe codebase doesn't yet wire up the mTLS path — that's a small change in `packages/gateway/src/plugins/temporal.ts` and `packages/worker/src/index.ts` when you need it.
+Point `TEMPORAL_ADDRESS` at your Temporal Cloud endpoint and supply the namespace + mTLS certs via the SDK. This removes the Postgres/server burden entirely. The codebase does not wire up the mTLS path — that is a small change in `packages/gateway/src/plugins/temporal.ts` and `packages/worker/src/index.ts` when you need it.
 
 ---
 
@@ -250,16 +252,13 @@ For a real registry push, the typical CI flow is:
 SHA=$(git rev-parse --short HEAD)
 docker build -f packages/gateway/Dockerfile -t registry.example.com/auto-swe/gateway:$SHA .
 docker build -f packages/worker/Dockerfile  -t registry.example.com/auto-swe/worker:$SHA  .
-docker build \
-  --build-arg NEXT_PUBLIC_API_URL=https://api.example.com \
-  --build-arg NEXT_PUBLIC_APP_VERSION=$SHA \
-  -f packages/web/Dockerfile -t registry.example.com/auto-swe/web:$SHA .
+docker build -f packages/web/Dockerfile    -t registry.example.com/auto-swe/web:$SHA     .
 docker push registry.example.com/auto-swe/gateway:$SHA
 docker push registry.example.com/auto-swe/worker:$SHA
 docker push registry.example.com/auto-swe/web:$SHA
 ```
 
-> **Why the web image takes build args.** `NEXT_PUBLIC_*` vars are inlined into the JS bundle at build time. Changing them later requires a rebuild, not just a restart.
+> **The web image takes no URL build args.** `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_TEMPORAL_UI_URL` are read at request time by the root Server Component (`app/layout.tsx`) and injected into `window.__APP_CONFIG__`, so one image serves every environment — set them as runtime env on the container. The exception is `NEXT_PUBLIC_APP_VERSION`, the login-footer label: it is inlined by `next build`, and the shipped Dockerfile does not thread it through as a build arg, so the containerised dashboard shows `0.0.0` unless you build the web bundle with that variable set.
 
 ---
 
@@ -341,7 +340,7 @@ The simplest production layout maps the local Docker Compose 1:1 onto the produc
 | `gateway-1..N`            | `gateway`                                   | Behind your HTTPS reverse proxy. Stateless; scale horizontally.    |
 | `worker-1..N`             | `worker` + Docker daemon                    | **Isolated.** Worker mounts `/var/run/docker.sock`.                |
 | `web-1..N`                | `web`                                       | Behind HTTPS reverse proxy. Stateless; scale horizontally.         |
-| `obs-1` (optional)        | `otel-lgtm` or your collector + Grafana    | OTLP/HTTP on `:4318`.                                              |
+| `obs-1` (optional)        | `otel-lgtm` or your collector + Grafana    | OTLP/gRPC on `:4317`.                                              |
 
 Reverse proxy routing:
 
