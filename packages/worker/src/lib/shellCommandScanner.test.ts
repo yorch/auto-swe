@@ -375,10 +375,20 @@ describe('scanShellCommand — pattern loading behavior', () => {
     expect(await scanShellCommand('mkfs /dev/sda1')).toContain('[g-flag-rule]');
   });
 
-  it('propagates DB errors (the bash tool call site is responsible for handling)', async () => {
+  it('fails closed with a block message when the pattern store is unavailable', async () => {
     findMany.mockReset();
     findMany.mockRejectedValue(new Error('db down'));
-    await expect(scanShellCommand('ls')).rejects.toThrow('db down');
+    const result = await scanShellCommand('ls');
+    expect(result).toContain('Command blocked');
+    expect(result).toContain('could not be loaded');
+  });
+
+  it('recovers on the next call once the pattern store is back', async () => {
+    findMany.mockReset();
+    findMany.mockRejectedValueOnce(new Error('db down'));
+    expect(await scanShellCommand('ls')).toContain('Command blocked');
+    mockPatternRows(BUILTIN_SHELL_PATTERNS);
+    expect(await scanShellCommand('ls')).toBeNull();
   });
 });
 

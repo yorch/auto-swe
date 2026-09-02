@@ -6,6 +6,7 @@ import {
   toRegexSpecs,
 } from '@auto-swe/shared/lib/regexExec';
 import { chunkScanText } from '@auto-swe/shared/lib/regexSafety';
+import { logError } from './activityLog.js';
 import { makePatternLoader } from './scannerPatternLoader.js';
 
 const { load: loadSensitiveFilePatterns, invalidate } = makePatternLoader(
@@ -20,6 +21,8 @@ interface SensitiveFileScan {
   hitIndex: number | null;
   hitPatternKey: string | null;
   incomplete: boolean;
+  /** The pattern set itself could not be loaded (DB failure) — nothing was scanned. */
+  loadFailed: boolean;
 }
 
 /**
@@ -31,7 +34,18 @@ interface SensitiveFileScan {
  * round trip per write target it found in a command.
  */
 async function scanSensitiveFilePaths(filePaths: string[]): Promise<SensitiveFileScan> {
-  const patterns = await loadSensitiveFilePatterns();
+  let patterns: Awaited<ReturnType<typeof loadSensitiveFilePatterns>>;
+  try {
+    patterns = await loadSensitiveFilePatterns();
+  } catch (err) {
+    // Blocking scanner, so a policy that cannot be loaded is reported as
+    // "could not clear this path" rather than thrown — the tool call sites
+    // treat a throw as a generic error, which is neither a block nor a pass.
+    logError('[sensitiveFileScanner] failed to load patterns; failing closed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { hitIndex: null, hitPatternKey: null, incomplete: true, loadFailed: true };
+  }
   const targets: RegexTarget[] = [];
   filePaths.forEach((filePath, i) => {
     const normalized = normalizeScanPath(filePath);
@@ -59,7 +73,7 @@ async function scanSensitiveFilePaths(filePaths: string[]): Promise<SensitiveFil
       hitPatternKey = hit.patternKey;
     }
   }
-  return { hitIndex, hitPatternKey, incomplete };
+  return { hitIndex, hitPatternKey, incomplete, loadFailed: false };
 }
 
 /**
@@ -91,11 +105,17 @@ export function normalizeScanPath(filePath: string): string {
  * absurdly long path) — truncating either would be a place to hide a suffix.
  */
 export async function checkSensitiveFilePath(filePath: string): Promise<string | null> {
-  const { hitPatternKey, incomplete } = await scanSensitiveFilePaths([filePath]);
+  const { hitPatternKey, incomplete, loadFailed } = await scanSensitiveFilePaths([filePath]);
   if (hitPatternKey) {
     return (
       `Write blocked: '${filePath}' matches sensitive file pattern [${hitPatternKey}].\n` +
       'Store secrets in environment variables or a secrets manager, not in source files.'
+    );
+  }
+  if (loadFailed) {
+    return (
+      `Write blocked: the sensitive-file policy could not be loaded, so '${filePath}' ` +
+      'could not be cleared. Retry shortly.'
     );
   }
   if (incomplete) {

@@ -157,10 +157,20 @@ describe('checkSensitiveFilePath — pattern loading behavior', () => {
     expect(await checkSensitiveFilePath('a.pem')).toContain('[g-flag-rule]');
   });
 
-  it('propagates DB errors (the writeFile tool call site is responsible for handling)', async () => {
+  it('fails closed with a block message when the pattern store is unavailable', async () => {
     findMany.mockReset();
     findMany.mockRejectedValue(new Error('db down'));
-    await expect(checkSensitiveFilePath('.env')).rejects.toThrow('db down');
+    const result = await checkSensitiveFilePath('README.md');
+    expect(result).toContain('Write blocked');
+    expect(result).toContain('could not be loaded');
+  });
+
+  it('recovers on the next call once the pattern store is back', async () => {
+    findMany.mockReset();
+    findMany.mockRejectedValueOnce(new Error('db down'));
+    expect(await checkSensitiveFilePath('README.md')).toContain('Write blocked');
+    mockPatternRows(BUILTIN_SENSITIVE_FILE_PATTERNS);
+    expect(await checkSensitiveFilePath('README.md')).toBeNull();
   });
 });
 

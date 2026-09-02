@@ -1,6 +1,7 @@
 import { resolveRegexBudgetMs, runRegexBatch, toRegexSpecs } from '@auto-swe/shared/lib/regexExec';
 import { capScanText } from '@auto-swe/shared/lib/regexSafety';
 import type { CodeSecurityFinding } from '@auto-swe/shared/types/workflow';
+import { logError } from './activityLog.js';
 import { makePatternLoader } from './scannerPatternLoader.js';
 
 export type { CodeSecurityFinding };
@@ -52,7 +53,17 @@ function parseDiffAddedLines(diff: string): Array<{ content: string; file: strin
  * rather than the whole scan.
  */
 export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityFinding[]> {
-  const patterns = await loadCodeSecurityPatterns();
+  let patterns: Awaited<ReturnType<typeof loadCodeSecurityPatterns>>;
+  try {
+    patterns = await loadCodeSecurityPatterns();
+  } catch (err) {
+    // Advisory scanner: a policy that cannot be loaded costs the findings for
+    // this diff, never the run that has already pushed it.
+    logError('[codeSecurityScanner] failed to load patterns; skipping the diff scan', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
   if (patterns.length === 0) {
     return [];
   }

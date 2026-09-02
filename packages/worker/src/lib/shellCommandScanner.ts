@@ -4,6 +4,7 @@ import {
   checkContentSecurity,
   SECURITY_CHECK_FAILED_PREFIX,
 } from '../agents/preWriteSecurityCheck.js';
+import { logError } from './activityLog.js';
 import { makePatternLoader } from './scannerPatternLoader.js';
 import { checkSensitiveFilePaths } from './sensitiveFileScanner.js';
 
@@ -155,8 +156,23 @@ export function extractShellWrites(command: string): ShellWrite[] {
  *   the scanner cannot say the command is clean, so it does not.
  */
 export async function scanShellCommand(command: string): Promise<string | null> {
-  const patterns = await loadShellPatterns();
   const truncate = () => (command.length > 200 ? `${command.slice(0, 200)}…` : command);
+
+  let patterns: Awaited<ReturnType<typeof loadShellPatterns>>;
+  try {
+    patterns = await loadShellPatterns();
+  } catch (err) {
+    // Blocking scanner: a policy that cannot be loaded cannot clear the
+    // command, so block — as a message the agent can act on, not a throw the
+    // tool would surface as a generic error.
+    logError('[shellCommandScanner] failed to load patterns; failing closed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return (
+      `Command blocked: the shell security policy could not be loaded.\n  ${truncate()}\n` +
+      'Retry shortly; if this persists, an administrator must check the scanner pattern store.'
+    );
+  }
 
   const budgetMs = await resolveRegexBudgetMs();
   const { hits, incomplete } = await runRegexBatch(

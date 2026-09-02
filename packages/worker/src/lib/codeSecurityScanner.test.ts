@@ -207,10 +207,20 @@ describe('scanDiffForCodeIssues — flags risky added lines', () => {
     await expect(scanDiffForCodeIssues(diff)).resolves.toEqual([]);
   });
 
-  it('propagates DB errors (the post-commit activity call site handles them)', async () => {
+  it('degrades to no findings when the pattern store is unavailable (advisory)', async () => {
     findMany.mockReset();
     findMany.mockRejectedValue(new Error('db down'));
-    await expect(scanDiffForCodeIssues('+x')).rejects.toThrow('db down');
+    const diff = diffFor('src/x.ts', '@@ -0,0 +1,1 @@', [`+const x = ${EVAL_CALL};`]);
+    await expect(scanDiffForCodeIssues(diff)).resolves.toEqual([]);
+  });
+
+  it('recovers on the next call once the pattern store is back', async () => {
+    findMany.mockReset();
+    findMany.mockRejectedValueOnce(new Error('db down'));
+    await expect(scanDiffForCodeIssues('+x')).resolves.toEqual([]);
+    mockPatternRows(BUILTIN_CODE_SECURITY_PATTERNS);
+    const diff = diffFor('src/x.ts', '@@ -0,0 +1,1 @@', [`+const x = ${EVAL_CALL};`]);
+    await expect(scanDiffForCodeIssues(diff)).resolves.not.toEqual([]);
   });
 });
 
