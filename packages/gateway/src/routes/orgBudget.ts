@@ -3,7 +3,6 @@
  * Mounted at /api/v1/platform/organizations.
  */
 import type { FastifyPluginAsync } from 'fastify';
-import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { type AuditEntityType, writeAuditLog } from '../lib/auditLog.js';
@@ -175,7 +174,4 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   );
 };
 
-export const orgBudgetRoutes = fp(orgBudgetPlugin, {
-  fastify: '5.x',
-  name: 'org-budget-routes',
-});
+export const orgBudgetRoutes: FastifyPluginAsync = orgBudgetPlugin;

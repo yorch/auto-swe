@@ -8,7 +8,6 @@
  * pattern, so the gate is visible in each route's options rather than inline.
  */
 import type { FastifyPluginAsync } from 'fastify';
-import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { getDefaultClientOrigin } from '../lib/env.js';
@@ -256,7 +255,4 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   );
 };
 
-export const orgMembersRoutes = fp(orgMembersPlugin, {
-  fastify: '5.x',
-  name: 'org-members-routes',
-});
+export const orgMembersRoutes: FastifyPluginAsync = orgMembersPlugin;
