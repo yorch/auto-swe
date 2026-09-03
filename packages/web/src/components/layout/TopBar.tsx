@@ -20,6 +20,7 @@ function pageTitle(pathname: string): string {
     ['/connections', 'Connections'],
     ['/govern/security', 'Security'],
     ['/govern/scanner', 'Scanner'],
+    ['/govern/policies', 'Autonomy policies'],
     ['/govern/evals', 'Evals'],
     ['/govern/schedules', 'Schedules'],
     ['/govern/budget-alerts', 'Budget alerts'],
