@@ -124,6 +124,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/govern/security', icon: 'security', label: 'Security', roles: ['ADMIN'] },
       { href: '/govern/scanner', icon: 'security', label: 'Scanner', roles: ['ADMIN'] },
+      { href: '/govern/policies', icon: 'security', label: 'Autonomy policies', roles: ['ADMIN'] },
       { href: '/govern/evals', icon: 'analytics', label: 'Evals', roles: ['ADMIN'] },
       { href: '/govern/schedules', icon: 'clock', label: 'Schedules', roles: ['ADMIN'] },
       {
