@@ -111,8 +111,9 @@ flowchart TB
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |
 | **Memory** | pgvector (HNSW) semantic lessons; per-repo cosine retrieval at run start; weekly consolidation ("dreaming") of similar lessons |
 | **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 62 built-in admin-extensible regex patterns (13 INJECTION, 11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE, 4 PII); locked-down ephemeral shell containers |
-| **HITL** | 4 node types (approval / decision / input / review); inbox UI + Slack buttons; atomic resolution, timeout routing, cancellation cleanup. See [hitl-workflows.md](./hitl-workflows.md). |
-| **Auth / RBAC** | 3 auth paths (JWT, PAT, better-auth sessions); 3 platform roles + team-scoped roles; OAuth (GitHub/Google), Okta OIDC SSO, magic-link, account linking, new-user approval |
+| **HITL** | 4 node types (approval / decision / input / review); sortable inbox with overdue and multi-approver progress; Slack buttons; idempotent atomic resolution, timeout routing, and cancellation cleanup. See [hitl-workflows.md](./hitl-workflows.md). |
+| **Governance** | Global/team/template autonomy policies with fail-closed runtime validation; searchable autonomy-decision and lifecycle audit logs; completed-vs-running analytics with truncation and sample-size disclosure; bounded configuration grants with effective-permission preview |
+| **Auth / RBAC** | 3 auth paths (JWT, PAT, better-auth sessions); 3 platform roles + team-scoped roles; per-page server guards; OAuth (GitHub/Google), Okta OIDC SSO, magic-link, account linking, new-user approval |
 | **Integrations** | GitHub (PAT *or* GitHub App), Slack (slash command + interactive), issue trackers (Jira / Linear / GitHub Issues), S3-compatible object storage, email (SMTP/Resend) — all DB-configured, encrypted, with connection tests + audit log |
 | **Observability** | AgentTracer (tool calls / LLM responses / events per attempt); OTel → Grafana LGTM; 3-mode run viewer (split / transcript / flight-recorder replay) |
 | **Surfaces** | Web dashboard, full CLI, REST API, Slack |
