@@ -1,4 +1,9 @@
-import { SETTING_SCOPE_ORDER } from '@auto-swe/shared/config';
+import {
+  getSettingDefinition,
+  keyPatternMatches,
+  SETTING_KEYS,
+  SETTING_SCOPE_ORDER,
+} from '@auto-swe/shared/config';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -59,6 +64,22 @@ function selectorFrom(query: z.infer<typeof ScopeQuery>): ScopeSelector {
 /// the caller got wrong is a 400; one that says they lack authority is a 403.
 function denialStatus(code: string): 400 | 403 {
   return code === 'UNKNOWN_SETTING' || code === 'SCOPE_NOT_ALLOWED' ? 400 : 403;
+}
+
+const SETTING_GROUPS = new Set(SETTING_KEYS.map((key) => key.split('.')[0]));
+
+/// Validates that a grant keyPattern is one of the allowed forms: the universal
+/// wildcard `*`, a known-group wildcard (`<group>.*`), or an exact known setting
+/// key. This keeps grants coarse-but-readable; no arbitrary globs or unknown keys.
+function isValidKeyPattern(pattern: string): boolean {
+  if (pattern === '*') {
+    return true;
+  }
+  if (pattern.endsWith('.*')) {
+    const group = pattern.slice(0, -2);
+    return SETTING_GROUPS.has(group);
+  }
+  return SETTING_KEYS.includes(pattern as (typeof SETTING_KEYS)[number]);
 }
 
 export const configSettingsRoutes: FastifyPluginAsync = async (
@@ -257,6 +278,15 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
           error: { code: 'GRANT_INVALID', message: 'An ORGANIZATION grant needs an orgId.' },
         });
       }
+      if (!isValidKeyPattern(body.keyPattern)) {
+        return reply.status(400).send({
+          error: {
+            code: 'GRANT_INVALID_KEY_PATTERN',
+            message:
+              "keyPattern must be '*', a known group wildcard (<group>.*), or an exact known setting key.",
+          },
+        });
+      }
 
       const actor = requireUser(req);
       const grant = await fastify.prisma.configPermission.create({
@@ -279,6 +309,51 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
         entityType: 'ConfigPermission',
       });
       return reply.send({ data: grant });
+    }
+  );
+
+  /// Preview which setting keys a grant pattern would cover, and the most
+  /// restrictive role floor among them. Register before the dynamic grant-id
+  /// route so `preview` can never be interpreted as an id.
+  f.get(
+    '/config/grants/preview',
+    {
+      preHandler: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: {
+        querystring: z.object({ keyPattern: z.string().min(1).max(120) }),
+        response: { 200: z.any(), 400: z.any() },
+      },
+    },
+    async (req, reply) => {
+      const { keyPattern } = req.query;
+      if (!isValidKeyPattern(keyPattern)) {
+        return reply.status(400).send({
+          error: {
+            code: 'GRANT_INVALID_KEY_PATTERN',
+            message:
+              "keyPattern must be '*', a known group wildcard (<group>.*), or an exact known setting key.",
+          },
+        });
+      }
+      const keys = SETTING_KEYS.filter((key) => keyPatternMatches(keyPattern, key)).sort((a, b) =>
+        a.localeCompare(b)
+      );
+      const definitions = keys.map((key) => {
+        const def = getSettingDefinition(key);
+        return {
+          group: def.group,
+          key,
+          label: def.label,
+          requiredRole: def.requiredRole,
+        };
+      });
+      const rank = { ADMIN: 3, ENGINEER: 1, LEAD: 2 } as const;
+      type GrantRole = keyof typeof rank;
+      const requiredRole = definitions.reduce<GrantRole | null>((highest, def) => {
+        const role: GrantRole = def.requiredRole;
+        return highest === null || rank[role] > rank[highest] ? role : highest;
+      }, null);
+      return reply.send({ data: { keyPattern, keys, requiredRole, settings: definitions } });
     }
   );
 

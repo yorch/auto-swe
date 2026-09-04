@@ -505,4 +505,87 @@ describe('grants', () => {
     );
     await app.close();
   });
+
+  it('rejects a keyPattern that is not *, a known group wildcard, or an exact known key', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { keyPattern: 'unknown.*', role: 'LEAD', scope: 'GLOBAL' },
+      headers: auth('ADMIN'),
+      method: 'POST',
+      url: '/api/v1/platform/config/grants',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('GRANT_INVALID_KEY_PATTERN');
+    expect(configPermission.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('accepts the universal wildcard keyPattern', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { keyPattern: '*', role: 'ADMIN', scope: 'GLOBAL' },
+      headers: auth('ADMIN'),
+      method: 'POST',
+      url: '/api/v1/platform/config/grants',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(configPermission.create).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('accepts an exact known setting key', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { keyPattern: 'channel.historyMessageLimit', role: 'LEAD', scope: 'GLOBAL' },
+      headers: auth('ADMIN'),
+      method: 'POST',
+      url: '/api/v1/platform/config/grants',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(configPermission.create).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('previews the keys covered by a group wildcard and reports the highest role floor', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'GET',
+      url: '/api/v1/platform/config/grants/preview?keyPattern=channel.*',
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json().data;
+    expect(body.keyPattern).toBe('channel.*');
+    expect(body.keys.length).toBeGreaterThan(0);
+    expect(body.keys.every((k: string) => k.startsWith('channel.'))).toBe(true);
+    expect(body.requiredRole).toBeDefined();
+    expect(body.settings.length).toBe(body.keys.length);
+    await app.close();
+  });
+
+  it('previews the universal wildcard covering all known keys', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'GET',
+      url: '/api/v1/platform/config/grants/preview?keyPattern=*',
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json().data;
+    expect(body.keys.length).toBeGreaterThan(0);
+    expect(body.requiredRole).toBe('ADMIN');
+    await app.close();
+  });
+
+  it('rejects an invalid keyPattern in the preview endpoint', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'GET',
+      url: '/api/v1/platform/config/grants/preview?keyPattern=not-a-pattern',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('GRANT_INVALID_KEY_PATTERN');
+    await app.close();
+  });
 });

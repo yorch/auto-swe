@@ -43,6 +43,15 @@ const UpdateSchema = z.object({
 
 const IdParams = z.object({ id: z.string().uuid() });
 
+function sanitizeAuditUrl(rawUrl: string): string {
+  const url = new URL(rawUrl);
+  url.username = '';
+  url.password = '';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
 export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
@@ -88,7 +97,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'CREATE',
         actor,
-        after: { name, type: 'mcp', ...config },
+        after: { ...config, name, type: 'mcp', url: sanitizeAuditUrl(url) },
         entityId: conn.id,
         entityType: 'Connection',
       });
@@ -118,6 +127,12 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'UNSAFE_URL', message: `url rejected: ${safety.reason}` } });
       }
       const before = conn.config as Record<string, unknown> | null;
+      const beforeAudit = {
+        ...(before ?? {}),
+        name: conn.name,
+        type: 'mcp',
+        ...(typeof before?.url === 'string' ? { url: sanitizeAuditUrl(before.url) } : {}),
+      };
       const config = {
         url,
         ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
@@ -131,8 +146,8 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: { name, type: 'mcp', ...config },
-        before: { name: conn.name, type: 'mcp', ...(before ?? {}) },
+        after: { ...config, name, type: 'mcp', url: sanitizeAuditUrl(url) },
+        before: beforeAudit,
         entityId: conn.id,
         entityType: 'Connection',
       });

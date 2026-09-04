@@ -88,6 +88,33 @@ describe('mcpConnectionRoutes', () => {
     await app.close();
   });
 
+  it('sanitizes credentials, query parameters, and fragments from the audit payload', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
+    mockPrisma.connection.create.mockResolvedValue({ id: ID, name: 'docs', type: 'mcp' });
+    const res = await app.inject({
+      body: {
+        name: 'docs',
+        teamId: TEAM,
+        url: 'https://user:password@mcp.example.com/mcp?token=secret#private',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/mcp-connections',
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: expect.objectContaining({ url: 'https://mcp.example.com/mcp' }),
+      }),
+    });
+    const audit = mockPrisma.configAuditLog.create.mock.calls[0]?.[0];
+    expect(JSON.stringify(audit)).not.toContain('password');
+    expect(JSON.stringify(audit)).not.toContain('secret');
+    await app.close();
+  });
+
   it('creates an mcp connection with optional list/call timeouts persisted in config', async () => {
     const { app, mockPrisma } = await buildApp();
     mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });

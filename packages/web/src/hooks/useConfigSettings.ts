@@ -128,3 +128,23 @@ export function useRevokeConfigGrant() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['config-grants'] }),
   });
 }
+
+export interface GrantPreview {
+  keyPattern: string;
+  keys: string[];
+  requiredRole: string | null;
+  settings: { group: string; key: string; label: string; requiredRole: string }[];
+}
+
+export function useConfigGrantPreview(keyPattern: string) {
+  return useQuery({
+    enabled: keyPattern.length > 0,
+    queryFn: () =>
+      api
+        .get<{ data: GrantPreview }>(
+          `/api/v1/platform/config/grants/preview?keyPattern=${encodeURIComponent(keyPattern)}`
+        )
+        .then((r) => r.data),
+    queryKey: ['config-grant-preview', keyPattern],
+  });
+}

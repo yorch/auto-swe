@@ -36,6 +36,8 @@ function pageTitle(pathname: string): string {
     ['/govern/slack-channels', 'Slack channels'],
     ['/govern/workflow-defaults', 'Workflow defaults'],
     ['/govern/platform-settings', 'Platform settings'],
+    ['/govern/config-grants', 'Config grants'],
+    ['/govern/audit', 'Audit log'],
     ['/govern', 'Govern'],
     ['/studio/agents', 'Agents'],
     ['/studio/skills', 'Skills'],

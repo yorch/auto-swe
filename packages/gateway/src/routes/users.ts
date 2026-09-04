@@ -5,6 +5,7 @@ import bcrypt from 'bcrypt';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -35,6 +36,30 @@ const UpdateUserSchema = z.object({
  * constraints on email + slackId are the real guarantee. Shared by the create
  * and update handlers so the mapping lives in one place.
  */
+type UserRow = {
+  createdAt: Date;
+  email: string;
+  id: string;
+  isActive: boolean;
+  role: string;
+  slackId: string | null;
+};
+
+type UserAuditRow = UserRow & { emailVerified?: boolean };
+
+/// Auditable subset of a user row. Password hashes and other credential
+/// material are intentionally omitted — the audit log answers "who changed what
+/// about this account", not "what is the hash".
+function safeUserAuditFields(row: Partial<UserAuditRow>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of ['id', 'email', 'emailVerified', 'isActive', 'role', 'slackId'] as const) {
+    if (row[key] !== undefined) {
+      out[key] = row[key];
+    }
+  }
+  return out;
+}
+
 function replyOnUserUniqueViolation(err: unknown, reply: FastifyReply): FastifyReply | null {
   if (typeof err !== 'object' || err === null) {
     return null;
@@ -115,14 +140,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       const plainPassword = password ?? crypto.randomBytes(16).toString('base64url');
       const passwordHash = await bcrypt.hash(plainPassword, 12);
 
-      let user: {
-        createdAt: Date;
-        email: string;
-        id: string;
-        isActive: boolean;
-        role: string;
-        slackId: string | null;
-      };
+      let user: UserRow;
       try {
         user = await fastify.prisma.user.create({
           data: { email, passwordHash, role, slackId },
@@ -144,6 +162,15 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         }
         throw err;
       }
+
+      const actor = requireUser(request);
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor,
+        after: safeUserAuditFields(user),
+        entityId: user.id,
+        entityType: 'User',
+      });
 
       return reply.status(201).send({
         data: {
@@ -187,7 +214,16 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           isActive: true, // Admin-invited → skip the approval queue
           role,
         },
-        select: { email: true, id: true, isActive: true, role: true },
+        select: { email: true, emailVerified: true, id: true, isActive: true, role: true },
+      });
+
+      const actor = requireUser(request);
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor,
+        after: safeUserAuditFields(user),
+        entityId: user.id,
+        entityType: 'User',
       });
 
       // Pre-attach to the default team so the new user sees something on
@@ -287,6 +323,20 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           data: request.body,
           select: { email: true, id: true, isActive: true, role: true, slackId: true },
           where: { id: request.params.id },
+        });
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor,
+          after: safeUserAuditFields(updated),
+          before: safeUserAuditFields({
+            email: user.email,
+            id: user.id,
+            isActive: user.isActive,
+            role: user.role,
+            slackId: user.slackId,
+          }),
+          entityId: updated.id,
+          entityType: 'User',
         });
         return { data: updated };
       } catch (err) {

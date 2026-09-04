@@ -41,6 +41,9 @@ async function buildApp() {
   const authState: AuthState = { role: 'ADMIN', sub: 'admin-1' };
 
   const mockPrisma = {
+    configAuditLog: {
+      create: vi.fn().mockResolvedValue({}),
+    },
     team: {
       findUnique: vi.fn(),
     },
@@ -87,6 +90,7 @@ describe('userRoutes', () => {
   beforeEach(() => {
     ctx.authState.role = 'ADMIN';
     ctx.authState.sub = 'admin-1';
+    ctx.mockPrisma.configAuditLog.create.mockReset();
     ctx.mockPrisma.team.findUnique.mockReset();
     ctx.mockPrisma.teamMembership.upsert.mockReset().mockResolvedValue({});
     ctx.mockPrisma.user.create.mockReset();
@@ -648,6 +652,106 @@ describe('userRoutes', () => {
         expect(res.statusCode).toBe(200);
         expect(ctx.mockPrisma.user.update).toHaveBeenCalled();
       });
+    });
+  });
+
+  describe('audit logging', () => {
+    it('POST / writes a CREATE audit entry without password hash or plaintext password', async () => {
+      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.create.mockResolvedValueOnce({
+        createdAt: new Date('2026-01-01'),
+        email: 'audit@example.com',
+        id: USER_ID,
+        isActive: true,
+        role: 'ENGINEER',
+        slackId: null,
+      });
+
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { email: 'audit@example.com', password: 'hunter2-secret' },
+        url: '/api/v1/users',
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+      const auditCall = ctx.mockPrisma.configAuditLog.create.mock.calls[0]?.[0];
+      const serialized = JSON.stringify(auditCall);
+      expect(serialized).not.toContain('hunter2-secret');
+      expect(serialized).not.toContain('passwordHash');
+      expect(auditCall?.data).toMatchObject({
+        action: 'CREATE',
+        actorId: 'admin-1',
+        entityId: USER_ID,
+        entityType: 'User',
+      });
+      expect(auditCall?.data.afterJson.email).toBe('audit@example.com');
+    });
+
+    it('POST /invite writes a CREATE audit entry with safe fields', async () => {
+      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.create.mockResolvedValueOnce({
+        email: 'invite-audit@example.com',
+        emailVerified: true,
+        id: USER_ID,
+        isActive: true,
+        role: 'LEAD',
+      });
+      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce(null);
+
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { email: 'invite-audit@example.com', role: 'LEAD' },
+        url: '/api/v1/users/invite',
+      });
+
+      const auditCall = ctx.mockPrisma.configAuditLog.create.mock.calls[0]?.[0];
+      expect(auditCall?.data).toMatchObject({
+        action: 'CREATE',
+        entityType: 'User',
+      });
+      expect(auditCall?.data.afterJson).toMatchObject({
+        email: 'invite-audit@example.com',
+        emailVerified: true,
+        isActive: true,
+        role: 'LEAD',
+      });
+    });
+
+    it('PATCH /:id writes an UPDATE audit entry with before and after snapshots', async () => {
+      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({
+        email: 'before@example.com',
+        id: USER_ID,
+        isActive: true,
+        role: 'ENGINEER',
+        slackId: null,
+      });
+      ctx.mockPrisma.user.update.mockResolvedValueOnce({
+        email: 'before@example.com',
+        id: USER_ID,
+        isActive: true,
+        role: 'LEAD',
+        slackId: null,
+      });
+
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload: { role: 'LEAD' },
+        url: `/api/v1/users/${USER_ID}`,
+      });
+
+      const auditCall = ctx.mockPrisma.configAuditLog.create.mock.calls[0]?.[0];
+      const serialized = JSON.stringify(auditCall);
+      expect(serialized).not.toContain('passwordHash');
+      expect(auditCall?.data).toMatchObject({
+        action: 'UPDATE',
+        entityType: 'User',
+      });
+      expect(auditCall?.data.beforeJson).toMatchObject({ role: 'ENGINEER' });
+      expect(auditCall?.data.afterJson).toMatchObject({ role: 'LEAD' });
     });
   });
 });
