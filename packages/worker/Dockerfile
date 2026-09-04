@@ -15,7 +15,7 @@ COPY packages/worker/package.json packages/worker/
 # native dependency builds working.
 COPY packages/shared/prisma.config.ts packages/shared/
 COPY packages/shared/src/prisma packages/shared/src/prisma
-RUN yarn install --immutable
+RUN yarn workspaces focus auto-swe @auto-swe/shared @auto-swe/worker
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
@@ -25,8 +25,8 @@ COPY packages/worker/ packages/worker/
 # so a placeholder is required (prisma-7-ci-generate-database-url pattern).
 ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
 RUN yarn workspace @auto-swe/shared db:generate \
- && yarn workspace @auto-swe/shared build \
- && yarn workspace @auto-swe/worker build
+    && yarn workspace @auto-swe/shared build \
+    && yarn workspace @auto-swe/worker build
 
 # ── Stage 2: Production dependencies only ──
 FROM node:24-alpine AS prod-deps
@@ -41,7 +41,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
 RUN yarn workspaces focus @auto-swe/worker --production \
- && mkdir -p packages/shared/node_modules packages/worker/node_modules
+    && mkdir -p packages/shared/node_modules packages/worker/node_modules
 
 # ── Stage 3: Runtime ──
 # glibc base, NOT alpine. @temporalio/core-bridge ships only `-gnu` prebuilds

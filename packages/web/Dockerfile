@@ -12,8 +12,8 @@ COPY .yarn/releases ./.yarn/releases
 # native dependency builds working.
 COPY packages/shared/prisma.config.ts packages/shared/
 COPY packages/shared/src/prisma packages/shared/src/prisma
-# Workspace package.json files — all 6 needed for `yarn install --immutable`
-# to satisfy the `workspaces: ["packages/*"]` topology check.
+# Workspace package.json files — all 6 needed for Yarn to satisfy the
+# `workspaces: ["packages/*"]` topology check.
 COPY packages/cli/package.json packages/cli/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/sdk/package.json packages/sdk/
@@ -21,7 +21,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
 
-RUN yarn install --immutable
+RUN yarn workspaces focus auto-swe @auto-swe/shared @auto-swe/web
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
@@ -39,9 +39,9 @@ COPY docs/*.md docs/
 # (see the prisma-7-ci-generate-database-url pattern).
 ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
 RUN yarn workspace @auto-swe/shared db:generate \
- && yarn workspace @auto-swe/shared build \
- && yarn workspace @auto-swe/web build \
- && mkdir -p packages/web/public
+  && yarn workspace @auto-swe/shared build \
+  && yarn workspace @auto-swe/web build \
+  && mkdir -p packages/web/public
 
 # ── Runtime ──
 FROM node:24-alpine AS runtime
