@@ -214,10 +214,9 @@ async function fetchBetterAuthSession(): Promise<SessionProbe> {
 
 export const useAuthStore = create<AuthState>((set) => ({
   checkAuth: async () => {
-    // The in-memory access token never survives a page reload, so there's no
-    // local JWT left to trust on load — clear any stale legacy cookie/
-    // localStorage remnants and go straight to the session probe below.
-    api.clearToken();
+    // The in-memory access token never survives a page reload, but keep the
+    // middleware-visible cookie until the session probe finishes so guarded
+    // server navigations cannot race a temporary cookie deletion.
 
     // Probe the gateway for a better-auth session. credentials: 'include'
     // sends the cross-origin session cookie if one exists.

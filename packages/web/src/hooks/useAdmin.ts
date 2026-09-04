@@ -132,6 +132,30 @@ export function useAdminRevokeSession() {
   });
 }
 
+// ── Platform audit log ──
+
+export interface AuditLogRow {
+  id: string;
+  entityType: string;
+  entityId: string;
+  action: 'CREATE' | 'DELETE' | 'UPDATE';
+  actorId: string | null;
+  beforeJson: unknown;
+  afterJson: unknown;
+  createdAt: string;
+}
+
+export function useAuditLog(limit = 200) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: AuditLogRow[] }>(`/api/v1/platform/audit-log?limit=${limit}`)
+        .then((r) => r.data),
+    queryKey: ['audit-log', limit],
+    refetchInterval: 30_000,
+  });
+}
+
 export type SecurityEventType =
   | 'SHELL_BLOCK'
   | 'FILE_BLOCK'

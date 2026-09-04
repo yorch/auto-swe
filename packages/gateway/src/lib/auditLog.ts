@@ -5,6 +5,7 @@ export type AuditEntityType =
   | 'Agent'
   | 'AutonomyPolicy'
   | 'Bundle'
+  | 'ConfigPermission'
   | 'Connection'
   | 'EmbeddingConfig'
   | 'EvalDataset'
@@ -13,12 +14,15 @@ export type AuditEntityType =
   | 'GoogleOAuthConfig'
   | 'MemoryItem'
   | 'OktaOAuthConfig'
+  | 'PersonalAccessToken'
   | 'ProviderCredential'
   | 'ScannerPattern'
+  | 'Session'
   | 'Skill'
   | 'SlackChannel'
   | 'SlackConfig'
   | 'StorageConfig'
+  | 'User'
   | 'WorkflowRun';
 
 export async function writeAuditLog(

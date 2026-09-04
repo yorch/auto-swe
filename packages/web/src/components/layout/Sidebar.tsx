@@ -185,6 +185,18 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Platform settings',
         roles: ['ADMIN', 'LEAD'],
       },
+      {
+        href: '/govern/config-grants',
+        icon: 'settings',
+        label: 'Config grants',
+        roles: ['ADMIN'],
+      },
+      {
+        href: '/govern/audit',
+        icon: 'analytics',
+        label: 'Audit log',
+        roles: ['ADMIN'],
+      },
     ],
     label: 'Govern',
   },

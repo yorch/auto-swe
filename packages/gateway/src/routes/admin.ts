@@ -2,7 +2,8 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { invalidateSessionCache, requireAuth } from '../plugins/auth.js';
+import { writeAuditLog } from '../lib/auditLog.js';
+import { invalidateSessionCache, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
  * Platform-admin routes.
@@ -12,6 +13,9 @@ import { invalidateSessionCache, requireAuth } from '../plugins/auth.js';
  *
  *   GET    /api/v1/platform/access-tokens          — list all users' PATs
  *   DELETE /api/v1/platform/access-tokens/:id      — revoke any PAT
+ *   GET    /api/v1/platform/sessions               — list active browser sessions
+ *   DELETE /api/v1/platform/sessions/:id           — revoke a session
+ *   GET    /api/v1/platform/audit-log               — recent config-audit rows
  *   POST   /api/v1/platform/shell-audit/prune      — delete old WorkflowShellAudit rows
  */
 
@@ -20,6 +24,63 @@ const SessionIdParam = z.object({ id: z.string().uuid() });
 const PruneQuery = z.object({
   days: z.coerce.number().int().min(1).max(3650).default(90),
 });
+const AuditJsonSchema = z.json();
+const AuditLogResponseSchema = z.object({
+  data: z.array(
+    z.object({
+      action: z.string(),
+      actorId: z.string().nullable(),
+      afterJson: AuditJsonSchema.nullable().optional(),
+      beforeJson: AuditJsonSchema.nullable().optional(),
+      createdAt: z.string(),
+      entityId: z.string().optional(),
+      entityType: z.string(),
+      id: z.string(),
+    })
+  ),
+});
+
+/// Auditable subset of a personal access token row. Never includes the plaintext
+/// token or the stored sha-256 hash.
+function safePatAuditFields(row: {
+  expiresAt?: Date | null;
+  id: string;
+  name: string;
+  prefix: string;
+  revokedAt?: Date | null;
+  userId: string;
+}): Record<string, unknown> {
+  return {
+    expiresAt: row.expiresAt ?? null,
+    id: row.id,
+    name: row.name,
+    prefix: row.prefix,
+    revokedAt: row.revokedAt ?? null,
+    userId: row.userId,
+  };
+}
+
+/// Auditable subset of a browser session row. The full session token is a bearer
+/// secret, so it is never placed in the audit log.
+function safeSessionAuditFields(row: {
+  createdAt: Date;
+  expiresAt: Date;
+  id: string;
+  ipAddress: string | null;
+  updatedAt: Date;
+  userAgent: string | null;
+  userId: string;
+}): Record<string, unknown> {
+  return {
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    id: row.id,
+    ipAddress: row.ipAddress,
+    updatedAt: row.updatedAt,
+    userAgent: row.userAgent,
+    userId: row.userId,
+  };
+}
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -62,6 +123,29 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const updated = await fastify.prisma.personalAccessToken.update({
         data: { revokedAt: new Date() },
         where: { id: existing.id },
+      });
+      const actor = requireUser(request);
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: safePatAuditFields({
+          expiresAt: updated.expiresAt,
+          id: updated.id,
+          name: updated.name,
+          prefix: updated.prefix,
+          revokedAt: updated.revokedAt,
+          userId: updated.userId,
+        }),
+        before: safePatAuditFields({
+          expiresAt: existing.expiresAt,
+          id: existing.id,
+          name: existing.name,
+          prefix: existing.prefix,
+          revokedAt: existing.revokedAt,
+          userId: existing.userId,
+        }),
+        entityId: updated.id,
+        entityType: 'PersonalAccessToken',
       });
       return { data: { id: updated.id, revokedAt: updated.revokedAt } };
     }
@@ -108,11 +192,45 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'SESSION_NOT_FOUND', message: 'Session not found' },
         });
       }
+      const before = safeSessionAuditFields(existing);
       await fastify.prisma.session.delete({ where: { id: existing.id } });
       // Also drop the in-memory cache entry so the revoked session can't
       // satisfy another /api/v1/* call within the 60s TTL window.
       invalidateSessionCache(existing.token);
+      const actor = requireUser(request);
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor,
+        after: { revoked: true },
+        before,
+        entityId: existing.id,
+        entityType: 'Session',
+      });
       return { data: { id: existing.id, revoked: true } };
+    }
+  );
+
+  // ── Audit log ─────────────────────────────────────────────────────────────
+
+  app.get(
+    '/audit-log',
+    {
+      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { response: { 200: AuditLogResponseSchema } },
+    },
+    async () => {
+      const rows = await fastify.prisma.configAuditLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      });
+      return {
+        data: rows.map((row) => ({
+          ...row,
+          afterJson: row.afterJson as z.infer<typeof AuditJsonSchema> | null,
+          beforeJson: row.beforeJson as z.infer<typeof AuditJsonSchema> | null,
+          createdAt: row.createdAt.toISOString(),
+        })),
+      };
     }
   );
 
