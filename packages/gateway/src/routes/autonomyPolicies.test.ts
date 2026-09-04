@@ -9,19 +9,33 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { autonomyPolicyRoutes } from './autonomyPolicies.js';
 
 const EXISTING = {
+  createdAt: new Date('2026-01-01T00:00:00.000Z'),
   description: 'Default',
   id: '11111111-1111-4111-8111-111111111111',
   isDefault: true,
   name: 'Default',
   rules: { external_communication: { action: 'require_approval' } },
+  team: null,
   teamId: null,
+  template: null,
   templateId: null,
+  updatedAt: new Date('2026-01-01T00:00:00.000Z'),
 };
 
 function newMockPrisma() {
   return {
     autonomyPolicy: {
-      create: vi.fn().mockImplementation(({ data }: { data: object }) => ({ id: 'new', ...data })),
+      create: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => ({
+        id: '22222222-2222-4222-8222-222222222222',
+        ...data,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        description: data.description ?? null,
+        team: null,
+        teamId: data.teamId ?? null,
+        template: null,
+        templateId: data.templateId ?? null,
+        updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      })),
       delete: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(EXISTING),
@@ -40,6 +54,17 @@ async function buildApp(role: string = 'ADMIN') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  app.setErrorHandler(async (error, _request, reply) => {
+    const typedError = error as { code?: string; message?: string; statusCode?: number };
+    const statusCode = typedError.statusCode ?? 500;
+    return reply.status(statusCode).send({
+      error: {
+        code: typedError.code ?? 'INTERNAL_ERROR',
+        message:
+          statusCode >= 500 ? 'Internal server error' : (typedError.message ?? 'Bad request'),
+      },
+    });
+  });
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
@@ -165,6 +190,40 @@ describe('POST /admin/autonomy-policies', () => {
     expect(body.data.teamId).toBeNull();
     expect(body.data.templateId).toBe('22222222-2222-4222-8222-222222222222');
     expect(prisma.autonomyPolicy.create).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('rejects a malformed rule action', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: {
+        isDefault: true,
+        name: 'Bad action',
+        rules: { external_communication: { action: 'maybe_later' } },
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/autonomy-policies',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(prisma.autonomyPolicy.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects an invalid approverCount', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: {
+        isDefault: true,
+        name: 'Bad count',
+        rules: { external_communication: { action: 'require_approval', approverCount: 0 } },
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/autonomy-policies',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(prisma.autonomyPolicy.create).not.toHaveBeenCalled();
     await app.close();
   });
 });
