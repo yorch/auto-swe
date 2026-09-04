@@ -159,11 +159,29 @@ export default function GlobalAnalyticsPage() {
         <LoadingState />
       ) : (
         <>
+          {data.isTruncated && (
+            <div className="rounded-md bg-amber-900/30 border border-amber-700 px-4 py-3 text-sm text-amber-200">
+              Results capped at the 10,000 most recent runs. Totals and rates reflect the capped
+              window — older runs are omitted.
+            </div>
+          )}
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiTile label="Total runs" value={String(data.totalRuns)} />
-            <KpiTile label="Success rate" value={formatPercent(data.successRate)} />
+            <KpiTile label="Completed runs" value={String(data.completedRuns)} />
+            <KpiTile label="Running runs" value={String(data.runningRuns)} />
+            <KpiTile
+              label="Success rate (completed)"
+              value={formatPercent(data.successRate)}
+              valueClass="text-moss-400"
+            />
             <KpiTile label="Succeeded" value={String(data.succeeded)} valueClass="text-moss-400" />
+            <KpiTile label="Failed" value={String(data.failed)} valueClass="text-brick-400" />
             <KpiTile label="Total cost" value={fmtCost(data.totalCost)} />
+            <KpiTile
+              label="Avg cost/run"
+              value={data.totalRuns > 0 ? fmtCost(data.totalCost / data.totalRuns) : '—'}
+            />
             <KpiTile
               label="Time saved"
               value={`${Math.round(data.estimatedHumanTimeSavedTotal ?? 0)} min`}
@@ -171,10 +189,6 @@ export default function GlobalAnalyticsPage() {
             />
             <KpiTile label="Autonomy rate" value={formatPercent(data.autonomyRate)} />
             <KpiTile label="Human review rate" value={formatPercent(data.humanReviewRate)} />
-            <KpiTile
-              label="Avg cost/run"
-              value={data.totalRuns > 0 ? fmtCost(data.totalCost / data.totalRuns) : '—'}
-            />
           </div>
 
           <Card>
@@ -334,9 +348,15 @@ export default function GlobalAnalyticsPage() {
                           {d.humanErrorRate != null ? `${fmt(d.humanErrorRate * 100, 1)}%` : '—'}
                         </td>
                         <td className="px-4 py-2 text-right tabular-nums">
-                          {d.errorRateVsHuman != null
-                            ? `${fmt(d.errorRateVsHuman * 100, 1)}pp`
-                            : '—'}
+                          {d.errorRateVsHuman != null ? (
+                            `${fmt(d.errorRateVsHuman * 100, 1)}pp`
+                          ) : d.baselineSampleSize != null && d.baselineSampleSize < 30 ? (
+                            <span className="text-paper-400" title="Baseline sample too small">
+                              n={d.baselineSampleSize}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
                         </td>
                       </tr>
                     ))}

@@ -134,9 +134,12 @@ function buildApp(state: FakeState): FastifyInstance {
   } as unknown as never);
 
   app.decorate('prisma', {
-    $transaction: async (ops: Promise<unknown>[]) => {
+    $transaction: async (arg: unknown) => {
+      if (typeof arg === 'function') {
+        return (arg as (tx: unknown) => unknown)(app.prisma);
+      }
       state.launchOrder.push('ledger');
-      return Promise.all(ops);
+      return Promise.all(arg as Promise<unknown>[]);
     },
     activeWorkflow: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -151,7 +154,11 @@ function buildApp(state: FakeState): FastifyInstance {
       },
       delete: async () => ({}),
     },
-    autonomyDecision: { create: async () => ({}) },
+    autonomyDecision: {
+      create: async () => ({ id: 'audit-1' }),
+      deleteMany: async () => ({ count: 1 }),
+      updateMany: async () => ({ count: 1 }),
+    },
     channelThreadSession: {
       findUnique: async () => null,
     },

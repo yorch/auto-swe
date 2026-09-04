@@ -3,12 +3,19 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const StepIdParam = z.object({ id: z.string().uuid() });
 
-const ListQuery = z.object({ status: z.enum(['PENDING', 'ALL']).default('PENDING') });
+const ListQuery = z.object({
+  overdue: booleanQueryParam(false),
+  sort: z
+    .enum(['requestedAt:asc', 'requestedAt:desc', 'timeoutAt:asc', 'timeoutAt:desc'])
+    .default('requestedAt:desc'),
+  status: z.enum(['PENDING', 'ALL']).default('PENDING'),
+});
 
 const RespondBody = z.object({
   action: z.string().min(1).max(50),
@@ -137,7 +144,15 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { status } = request.query;
+      const { overdue, sort, status } = request.query;
+      const orderBy =
+        sort === 'requestedAt:asc'
+          ? { requestedAt: 'asc' as const }
+          : sort === 'timeoutAt:asc'
+            ? { timeoutAt: 'asc' as const }
+            : sort === 'timeoutAt:desc'
+              ? { timeoutAt: 'desc' as const }
+              : { requestedAt: 'desc' as const };
       const steps = await fastify.prisma.workflowHumanStep.findMany({
         include: {
           _count: { select: { humanApprovals: true } },
@@ -150,10 +165,11 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             },
           },
         },
-        orderBy: { requestedAt: 'desc' },
+        orderBy,
         take: status === 'ALL' ? 200 : 100,
         where: {
           ...(status === 'ALL' ? {} : { status: 'PENDING' }),
+          ...(overdue ? { timeoutAt: { lt: new Date() } } : {}),
           ...buildWorkflowHumanStepVisibilityFilter(user),
         },
       });

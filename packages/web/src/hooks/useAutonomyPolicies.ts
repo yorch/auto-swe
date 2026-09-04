@@ -1,3 +1,4 @@
+import type { AutonomyDecisionDto } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -59,5 +60,49 @@ export function useDeleteAutonomyPolicy() {
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/platform/autonomy-policies/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['autonomy-policies'] }),
+  });
+}
+
+export interface AutonomyDecisionFilters {
+  actorId?: string;
+  event?: string;
+  limit?: number;
+  offset?: number;
+  policyName?: string;
+  riskClass?: string;
+  runId?: string;
+}
+
+export interface AutonomyDecisionListResponse {
+  data: AutonomyDecisionDto[];
+  meta: { limit: number; offset: number; total: number };
+}
+
+export function useAutonomyDecisions(filters: AutonomyDecisionFilters = {}) {
+  const params = new URLSearchParams();
+  if (filters.policyName) {
+    params.set('policyName', filters.policyName);
+  }
+  if (filters.riskClass) {
+    params.set('riskClass', filters.riskClass);
+  }
+  if (filters.event) {
+    params.set('event', filters.event);
+  }
+  if (filters.actorId) {
+    params.set('actorId', filters.actorId);
+  }
+  if (filters.runId) {
+    params.set('runId', filters.runId);
+  }
+  params.set('limit', String(filters.limit ?? 50));
+  params.set('offset', String(filters.offset ?? 0));
+  const qs = params.toString();
+  return useQuery<AutonomyDecisionListResponse>({
+    queryFn: () =>
+      api.get<AutonomyDecisionListResponse>(
+        `/api/v1/platform/autonomy-decisions${qs ? `?${qs}` : ''}`
+      ),
+    queryKey: ['autonomy-decisions', filters],
   });
 }

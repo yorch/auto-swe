@@ -35,7 +35,12 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
   const id = validateRouteParam(rawId);
   const [windowDays, setWindowDays] = useState<number>(30);
   const { data: template } = useWorkflowTemplate(id ?? '');
-  const { data: stats, isLoading } = useWorkflowTemplateAnalytics(id ?? '', windowDays);
+  const {
+    data: stats,
+    error,
+    isError,
+    isLoading,
+  } = useWorkflowTemplateAnalytics(id ?? '', windowDays);
 
   const handleTabChange = (tab: SubTab) => {
     if (tab === 'editor') {
@@ -95,13 +100,22 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
 
       <TabBar active="analytics" className="fade-up" onChange={handleTabChange} tabs={SUB_TABS} />
 
-      {isLoading || !stats ? (
+      {isError ? (
+        <Alert>
+          Unable to load analytics: {error instanceof Error ? error.message : 'request failed'}
+        </Alert>
+      ) : isLoading || !stats ? (
         <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
           <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
           loading analytics…
         </div>
       ) : (
         <>
+          {stats.isTruncated && (
+            <Alert>
+              Analytics are limited to the most recent 10,000 runs or steps in this window.
+            </Alert>
+          )}
           <section className="fade-up stagger-1 grid grid-cols-2 gap-y-8 border-y border-ink-600 py-8 sm:grid-cols-4">
             <Stat label="Total runs" tone="ember" unit="runs" value={stats.totalRuns} />
             <Stat label="Success rate" tone="moss" value={formatPercent(stats.successRate)} />

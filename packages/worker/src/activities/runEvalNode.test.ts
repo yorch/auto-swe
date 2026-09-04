@@ -9,7 +9,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    autonomyPolicy: { findFirst: mocks.autonomyPolicyFindFirst },
+    autonomyPolicy: {
+      findMany: vi.fn(async (args) => {
+        const row = await mocks.autonomyPolicyFindFirst(args);
+        return row ? [row] : [];
+      }),
+    },
     evalRubric: { findFirst: mocks.evalRubricFindFirst },
     scannerPattern: { findMany: mocks.scannerPatternFindMany },
     workflowRun: { findUnique: mocks.workflowRunFindUnique },

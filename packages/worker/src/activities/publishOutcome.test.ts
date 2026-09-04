@@ -1,15 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { publishOutcome } from './publishOutcome.js';
 
-vi.mock('@auto-swe/shared/db', () => ({
-  prisma: {
-    autonomyDecision: { create: vi.fn().mockResolvedValue({}) },
-    autonomyPolicy: { findFirst: vi.fn() },
-    workflowRun: {
-      findUnique: vi.fn(),
+vi.mock('@auto-swe/shared/db', () => {
+  const findFirst = vi.fn();
+  return {
+    prisma: {
+      autonomyDecision: { create: vi.fn().mockResolvedValue({}) },
+      autonomyPolicy: {
+        findFirst,
+        findMany: vi.fn(async (args) => {
+          const row = await findFirst(args);
+          return row ? [row] : [];
+        }),
+      },
+      workflowRun: {
+        findUnique: vi.fn(),
+      },
     },
-  },
-}));
+  };
+});
 
 const { prisma } = await import('@auto-swe/shared/db');
 

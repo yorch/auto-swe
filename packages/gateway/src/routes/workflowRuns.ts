@@ -10,10 +10,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import {
+  AutonomyDecisionSchema,
   projectAutonomyDecision,
   projectEvalResult,
   projectRunSummary,
@@ -43,7 +45,8 @@ const CancelRunResponseSchema = z.object({
 });
 
 const EvalResultsResponseSchema = z.object({ data: z.array(z.unknown()) });
-const AutonomyDecisionsResponseSchema = z.object({ data: z.array(z.unknown()) });
+const AutonomyDecisionsResponseSchema = z.object({ data: z.array(AutonomyDecisionSchema) });
+const AutonomyDecisionsQuery = paginationQuery({ defaultLimit: 100, maxLimit: 200 });
 
 /** Max chars per string field in trace payloads returned by the polled run view. */
 const TRACE_FIELD_CAP = 4_000;
@@ -339,6 +342,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         params: RunIdParam,
+        querystring: AutonomyDecisionsQuery,
         response: { 200: AutonomyDecisionsResponseSchema, 404: ErrorResponseSchema },
       },
     },
@@ -355,6 +359,8 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const rows = await fastify.prisma.autonomyDecision.findMany({
         orderBy: { createdAt: 'asc' },
+        skip: request.query.offset,
+        take: request.query.limit,
         where: { runId: run.id },
       });
       const data = rows.map(projectAutonomyDecision);

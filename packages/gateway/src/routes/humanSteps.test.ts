@@ -73,8 +73,13 @@ describe('human step routes', () => {
       },
     } as unknown as never);
 
-    app.decorate('prisma', {
-      autonomyDecision: { create: vi.fn().mockResolvedValue({}) },
+    const prismaMock = {
+      $transaction: async (fn: (tx: unknown) => unknown) => fn(prismaMock),
+      autonomyDecision: {
+        create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       configAuditLog: {
         create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
       },
@@ -86,7 +91,9 @@ describe('human step routes', () => {
           return { count: updateManyCount };
         },
       },
-    } as unknown as never);
+    };
+
+    app.decorate('prisma', prismaMock as unknown as never);
 
     app.decorate('temporal', {
       signalWorkflow: async (workflowId: string, signalName: string, args: unknown[]) => {

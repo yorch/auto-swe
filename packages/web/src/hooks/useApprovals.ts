@@ -1,67 +1,73 @@
 'use client';
 
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
-import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { api } from '@/lib/api';
 import { API_BASE } from '@/lib/config';
 
 export type ApprovalFilter = 'PENDING' | 'ALL';
+export type ApprovalSort =
+  | 'requestedAt:asc'
+  | 'requestedAt:desc'
+  | 'timeoutAt:asc'
+  | 'timeoutAt:desc';
 
-function approvalsQueryOptions(filter: ApprovalFilter) {
-  return queryOptions({
+export function useApprovals(
+  filter: ApprovalFilter = 'PENDING',
+  sort: ApprovalSort = 'requestedAt:desc',
+  overdueOnly = false
+) {
+  const params = new URLSearchParams();
+  if (filter === 'ALL') {
+    params.set('status', 'ALL');
+  }
+  if (sort !== 'requestedAt:desc') {
+    params.set('sort', sort);
+  }
+  if (overdueOnly) {
+    params.set('overdue', 'true');
+  }
+  const qs = params.toString();
+
+  return useQuery({
     queryFn: () =>
       api
-        .get<{ data: HumanStepSummary[] }>(
-          `/api/v1/human-steps${filter === 'ALL' ? '?status=ALL' : ''}`
-        )
+        .get<{ data: HumanStepSummary[] }>(`/api/v1/human-steps${qs ? `?${qs}` : ''}`)
         .then((r) => r.data),
-    queryKey: ['approvals', filter] as const,
+    queryKey: ['approvals', filter, sort, overdueOnly],
     // Keep a fallback poll (30 s for pending, disabled for history).
     refetchInterval: filter === 'PENDING' ? 30_000 : false,
   });
 }
 
 /**
- * Owns the single SSE subscription for approval change notifications and keeps
- * the pending query warm so the sidebar / top-bar badges have data on every
- * page. Mount it exactly once, in the app shell — every extra mount is
- * another EventSource connection against the gateway.
+ * SSE subscription for the pending-approvals set. Mounted ONCE in AppShell —
+ * every consumer of `useApprovals()` (sidebar badge, top bar, approvals page)
+ * previously opened its own EventSource, i.e. three long-lived connections per
+ * page. A change event invalidates every approvals query; the 30 s poll in
+ * `useApprovals` remains as the fallback.
  */
 export function useApprovalsStream() {
   const qc = useQueryClient();
-
   useEffect(() => {
     if (typeof EventSource === 'undefined') {
       return;
     }
-
     const es = new EventSource(`${API_BASE}/api/v1/human-steps/stream`, { withCredentials: true });
-
     es.addEventListener('change', () => {
-      qc.invalidateQueries({ queryKey: ['approvals', 'PENDING'] });
+      qc.invalidateQueries({ queryKey: ['approvals'] });
     });
-
     // Suppress noise — EventSource auto-reconnects on error.
     es.onerror = () => {};
-
     return () => es.close();
   }, [qc]);
-
-  useQuery(approvalsQueryOptions('PENDING'));
 }
 
-export function useApprovals(filter: ApprovalFilter = 'PENDING') {
-  return useQuery(approvalsQueryOptions(filter));
-}
-
-/**
- * Number of pending human steps, read from the query cache only — the fetch
- * and the SSE subscription belong to `useApprovalsStream()` in the app shell.
- */
+/** Pending-approval count for the chrome; shares the default `useApprovals` cache entry. */
 export function useApprovalsCount(): number {
-  const { data } = useQuery({ ...approvalsQueryOptions('PENDING'), enabled: false });
-  return data?.length ?? 0;
+  const { data } = useApprovals();
+  return (data ?? []).length;
 }
 
 export function useRespondToApproval() {
