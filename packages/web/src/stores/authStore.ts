@@ -265,6 +265,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       throw new Error('Sign-in succeeded but no session was established — try again.');
     }
     setSessionMarkerCookie();
+    await api.refreshToken();
     set({ isAuthenticated: true, user });
   },
 

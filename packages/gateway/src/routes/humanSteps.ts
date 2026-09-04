@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { getCorsOrigins } from '../lib/env.js';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
 import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -113,6 +114,12 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       reply.hijack();
 
       const res = reply.raw;
+      const origin = request.headers.origin;
+      if (origin && getCorsOrigins().includes(origin)) {
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');

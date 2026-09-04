@@ -91,7 +91,7 @@ export default function DashboardPage() {
   const { data: myOutcomes } = useAllWorkflowRuns({
     limit: 10,
     scope: 'MINE',
-    status: 'COMPLETED',
+    status: 'SUCCESS',
   });
   const outcomes = myOutcomes?.data ?? [];
 
