@@ -121,7 +121,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   const [showContext, setShowContext] = useState(false);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
   const [inputError, setInputError] = useState<string | null>(null);
-  const [reviewText, setReviewText] = useState(() => String(step.context ?? ''));
+  const [reviewText, setReviewText] = useState('');
   // Guard against double-submit: isPending from TanStack Query updates asynchronously
   // (after the next render), so a rapid second click reaches this handler before
   // respond.isPending flips to true in the component's closure.
@@ -179,6 +179,14 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 <span>·</span>
                 <span className={getTimeoutColor(String(step.timeoutAt))}>
                   {formatTimeRemaining(String(step.timeoutAt))}
+                </span>
+              </>
+            )}
+            {step.kind === 'APPROVAL' && step.requiredApprovers && step.requiredApprovers > 1 && (
+              <>
+                <span>·</span>
+                <span className="text-paper-400">
+                  {step.currentApprovers ?? 0} / {step.requiredApprovers} approvals
                 </span>
               </>
             )}

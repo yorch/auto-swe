@@ -6,7 +6,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    autonomyPolicy: { findFirst: mocks.findFirst },
+    autonomyPolicy: {
+      findMany: vi.fn(async (args) => {
+        const row = await mocks.findFirst(args);
+        return row ? [row] : [];
+      }),
+    },
   },
 }));
 
@@ -130,6 +135,29 @@ describe('resolveAutonomyPolicy', () => {
 
     const result = await resolveAutonomyPolicy(TEMPLATE_ID, null, 'internal_read');
     expect(result.rules.internal_read).toEqual({ action: 'require_approval' });
+  });
+
+  it('fails closed when a scope has multiple matching rows and bounds the query', async () => {
+    const duplicate = {
+      isDefault: false,
+      name: 'Duplicate',
+      rules: { internal_read: { action: 'auto' } },
+      teamId: null,
+      templateId: TEMPLATE_ID,
+    };
+    const { prisma } = await import('@auto-swe/shared/db');
+    vi.mocked(prisma.autonomyPolicy.findMany).mockResolvedValueOnce([
+      duplicate,
+      duplicate,
+    ] as never);
+
+    const result = await resolveAutonomyPolicy(TEMPLATE_ID, null, 'internal_read');
+
+    expect(result.name).toBe('ambiguous policy scope');
+    expect(result.rules.internal_read).toEqual({ action: 'require_approval' });
+    expect(prisma.autonomyPolicy.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 2 })
+    );
   });
 
   it('skips a template-scoped row that has invalid scope fields', async () => {

@@ -7,13 +7,23 @@ import { api } from '@/lib/api';
 import { API_BASE } from '@/lib/config';
 
 export type ApprovalFilter = 'PENDING' | 'ALL';
+export type ApprovalSort =
+  | 'requestedAt:asc'
+  | 'requestedAt:desc'
+  | 'timeoutAt:asc'
+  | 'timeoutAt:desc';
 
-export function useApprovals(filter: ApprovalFilter = 'PENDING') {
+export function useApprovals(
+  filter: ApprovalFilter = 'PENDING',
+  sort: ApprovalSort = 'requestedAt:desc',
+  overdueOnly = false
+) {
   const qc = useQueryClient();
+  const useSse = filter === 'PENDING' && !overdueOnly && sort === 'requestedAt:desc';
 
-  // SSE subscription — real-time change notifications for the pending view.
+  // SSE subscription — real-time change notifications for the default pending view.
   useEffect(() => {
-    if (filter !== 'PENDING') {
+    if (!useSse) {
       return;
     }
     if (typeof EventSource === 'undefined') {
@@ -23,23 +33,33 @@ export function useApprovals(filter: ApprovalFilter = 'PENDING') {
     const es = new EventSource(`${API_BASE}/api/v1/human-steps/stream`, { withCredentials: true });
 
     es.addEventListener('change', () => {
-      qc.invalidateQueries({ queryKey: ['approvals', 'PENDING'] });
+      qc.invalidateQueries({ queryKey: ['approvals'] });
     });
 
     // Suppress noise — EventSource auto-reconnects on error.
     es.onerror = () => {};
 
     return () => es.close();
-  }, [filter, qc]);
+  }, [useSse, qc]);
+
+  const params = new URLSearchParams();
+  if (filter === 'ALL') {
+    params.set('status', 'ALL');
+  }
+  if (sort !== 'requestedAt:desc') {
+    params.set('sort', sort);
+  }
+  if (overdueOnly) {
+    params.set('overdue', 'true');
+  }
+  const qs = params.toString();
 
   return useQuery({
     queryFn: () =>
       api
-        .get<{ data: HumanStepSummary[] }>(
-          `/api/v1/human-steps${filter === 'ALL' ? '?status=ALL' : ''}`
-        )
+        .get<{ data: HumanStepSummary[] }>(`/api/v1/human-steps${qs ? `?${qs}` : ''}`)
         .then((r) => r.data),
-    queryKey: ['approvals', filter],
+    queryKey: ['approvals', filter, sort, overdueOnly],
     // Keep a fallback poll (30 s for pending, disabled for history).
     refetchInterval: filter === 'PENDING' ? 30_000 : false,
   });

@@ -1,10 +1,17 @@
+import { Prisma } from '@auto-swe/shared';
 import { AutonomyRulesSchema } from '@auto-swe/shared/lib/autonomyPolicy';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import {
+  AutonomyDecisionSchema,
+  PaginationMetaSchema,
+  projectAutonomyDecision,
+} from './workflowProjections.js';
 
 const CreateSchema = z.object({
   description: z.string().max(500).optional(),
@@ -56,6 +63,19 @@ const PolicySchema = z.object({
 const PolicyListResponseSchema = z.object({ data: z.array(PolicySchema) });
 const PolicyDetailResponseSchema = z.object({ data: PolicySchema });
 const DeletePolicyResponseSchema = z.object({ data: z.object({ deleted: z.boolean() }) });
+
+const DecisionsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend({
+  actorId: z.string().uuid().optional(),
+  event: z.string().max(100).optional(),
+  policyName: z.string().max(200).optional(),
+  riskClass: z.string().max(200).optional(),
+  runId: z.string().uuid().optional(),
+});
+
+const AutonomyDecisionListResponseSchema = z.object({
+  data: z.array(AutonomyDecisionSchema),
+  meta: PaginationMetaSchema,
+});
 
 function scopeError(): { code: string; message: string } {
   return {
@@ -115,6 +135,39 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // ── Global autonomy-decision audit (ADMIN only) ──
+  app.get(
+    '/autonomy-decisions',
+    {
+      onRequest: adminOnly,
+      schema: {
+        querystring: DecisionsQuery,
+        response: { 200: AutonomyDecisionListResponseSchema },
+      },
+    },
+    async (request) => {
+      const { actorId, event, limit, offset, policyName, riskClass, runId } = request.query;
+      const where: Prisma.AutonomyDecisionWhereInput = {
+        ...(actorId ? { actorId } : {}),
+        ...(event ? { event: { contains: event, mode: 'insensitive' } } : {}),
+        ...(policyName ? { policyName: { contains: policyName, mode: 'insensitive' } } : {}),
+        ...(riskClass ? { riskClass: { contains: riskClass, mode: 'insensitive' } } : {}),
+        ...(runId ? { runId } : {}),
+      };
+      const [rows, total] = await Promise.all([
+        fastify.prisma.autonomyDecision.findMany({
+          orderBy: { createdAt: 'desc' },
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.autonomyDecision.count({ where }),
+      ]);
+      const data = rows.map(projectAutonomyDecision);
+      return { data, meta: { limit, offset, total } };
+    }
+  );
+
   app.post(
     '/autonomy-policies',
     {
@@ -158,8 +211,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
         });
         return reply.status(201).send({ data: toPolicyResponseDto(row) });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes('Unique constraint')) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
           return reply.status(409).send({
             error: {
               code: 'DUPLICATE_POLICY',

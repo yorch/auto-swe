@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -355,6 +356,7 @@ function PolicyModal({
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AutonomyPoliciesPage() {
+  const router = useRouter();
   const { data: policies, isLoading } = useAutonomyPolicies();
   const deletePolicy = useDeleteAutonomyPolicy();
   const [open, setOpen] = useState(false);
@@ -383,9 +385,14 @@ export default function AutonomyPoliciesPage() {
     <div className="space-y-6">
       <PageHeader
         actions={
-          <Button onClick={startCreate} variant="primary">
-            New Policy
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={() => router.push('/govern/policies/decisions')} variant="secondary">
+              Audit decisions
+            </Button>
+            <Button onClick={startCreate} variant="primary">
+              New Policy
+            </Button>
+          </div>
         }
         chapter="§ Govern"
         title="Autonomy Policies"

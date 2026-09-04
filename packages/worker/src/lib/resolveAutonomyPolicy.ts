@@ -5,8 +5,20 @@ export type { AutonomyRules };
 
 interface AutonomyPolicyScope {
   isDefault: boolean;
+  name: string;
+  rules: unknown;
   teamId: string | null;
   templateId: string | null;
+}
+
+function ambiguousPolicy(requestedRiskClass: string): { name: string; rules: AutonomyRules } {
+  return {
+    name: 'ambiguous policy scope',
+    rules: {
+      ...getSafeAutonomyRules(null),
+      [requestedRiskClass]: { action: 'require_approval' },
+    },
+  };
 }
 
 function isTemplateScope(policy: AutonomyPolicyScope, templateId: string): boolean {
@@ -34,9 +46,14 @@ export async function resolveAutonomyPolicy(
   teamId: string | null,
   requestedRiskClass: string
 ): Promise<{ name: string; rules: AutonomyRules }> {
-  const templatePolicy = await prisma.autonomyPolicy.findFirst({
-    where: { templateId },
+  const templatePolicies = await prisma.autonomyPolicy.findMany({
+    take: 2,
+    where: { isDefault: false, teamId: null, templateId },
   });
+  if (templatePolicies.length > 1) {
+    return ambiguousPolicy(requestedRiskClass);
+  }
+  const templatePolicy = templatePolicies[0];
   if (templatePolicy && isTemplateScope(templatePolicy, templateId)) {
     return {
       name: templatePolicy.name,
@@ -45,9 +62,14 @@ export async function resolveAutonomyPolicy(
   }
 
   if (teamId) {
-    const teamPolicy = await prisma.autonomyPolicy.findFirst({
+    const teamPolicies = await prisma.autonomyPolicy.findMany({
+      take: 2,
       where: { isDefault: true, teamId, templateId: null },
     });
+    if (teamPolicies.length > 1) {
+      return ambiguousPolicy(requestedRiskClass);
+    }
+    const teamPolicy = teamPolicies[0];
     if (teamPolicy && isTeamScope(teamPolicy, teamId)) {
       return {
         name: teamPolicy.name,
@@ -56,9 +78,14 @@ export async function resolveAutonomyPolicy(
     }
   }
 
-  const globalPolicy = await prisma.autonomyPolicy.findFirst({
+  const globalPolicies = await prisma.autonomyPolicy.findMany({
+    take: 2,
     where: { isDefault: true, teamId: null, templateId: null },
   });
+  if (globalPolicies.length > 1) {
+    return ambiguousPolicy(requestedRiskClass);
+  }
+  const globalPolicy = globalPolicies[0];
   if (globalPolicy && isGlobalScope(globalPolicy)) {
     return {
       name: globalPolicy.name,

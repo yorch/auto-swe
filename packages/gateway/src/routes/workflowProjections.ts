@@ -7,9 +7,28 @@
  * wire shape stays in lockstep.
  */
 import type { AutonomyDecisionDto, EvalResultDto } from '@auto-swe/shared/types/api';
+import { z } from 'zod';
 import { paginationQuery } from '../lib/pagination.js';
 
 export const RunListPaginationQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 });
+
+export const PaginationMetaSchema = z.object({
+  limit: z.number(),
+  offset: z.number(),
+  total: z.number(),
+});
+
+export const AutonomyDecisionSchema = z.object({
+  actorId: z.string().uuid().nullable(),
+  createdAt: z.string(),
+  event: z.string(),
+  id: z.string().uuid(),
+  payload: z.unknown().nullable(),
+  policyName: z.string().nullable(),
+  requiredApprovers: z.number().int().nullable(),
+  riskClass: z.string().nullable(),
+  runId: z.string().uuid(),
+});
 
 export interface RunWithWorkRequest {
   id: string;

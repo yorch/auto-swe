@@ -24,6 +24,10 @@ const EXISTING = {
 
 function newMockPrisma() {
   return {
+    autonomyDecision: {
+      count: vi.fn().mockResolvedValue(0),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     autonomyPolicy: {
       create: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => ({
         id: '22222222-2222-4222-8222-222222222222',
@@ -287,6 +291,72 @@ describe('DELETE /admin/autonomy-policies/:id', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.deleted).toBe(true);
     expect(prisma.autonomyPolicy.delete).toHaveBeenCalled();
+    await app.close();
+  });
+});
+
+describe('GET /autonomy-decisions', () => {
+  const DECISION = {
+    actorId: '11111111-1111-4111-8111-111111111111',
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    event: 'publish',
+    id: '33333333-3333-4333-8333-333333333333',
+    payload: { decision: 'auto' },
+    policyName: 'Default',
+    requiredApprovers: 1,
+    riskClass: 'external_communication',
+    runId: '44444444-4444-4444-8444-444444444444',
+  };
+
+  it('lists autonomy decisions for ADMIN', async () => {
+    const app = await buildApp();
+    prisma.autonomyDecision.findMany.mockResolvedValue([DECISION]);
+    prisma.autonomyDecision.count.mockResolvedValue(1);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/autonomy-decisions',
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0].id).toBe(DECISION.id);
+    expect(body.meta).toEqual({ limit: 50, offset: 0, total: 1 });
+    await app.close();
+  });
+
+  it('applies text and UUID filters', async () => {
+    const app = await buildApp();
+    prisma.autonomyDecision.findMany.mockResolvedValue([DECISION]);
+    prisma.autonomyDecision.count.mockResolvedValue(1);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/autonomy-decisions?policyName=Default&riskClass=external&event=publish&actorId=${DECISION.actorId}&runId=${DECISION.runId}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.autonomyDecision.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          actorId: DECISION.actorId,
+          event: { contains: 'publish', mode: 'insensitive' },
+          policyName: { contains: 'Default', mode: 'insensitive' },
+          riskClass: { contains: 'external', mode: 'insensitive' },
+          runId: DECISION.runId,
+        },
+      })
+    );
+    await app.close();
+  });
+
+  it('enforces ADMIN only', async () => {
+    const app = await buildApp('ENGINEER');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/autonomy-decisions',
+    });
+    expect(res.statusCode).toBe(403);
     await app.close();
   });
 });
