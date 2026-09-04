@@ -104,7 +104,8 @@ async function evaluateScorer(
       });
       const policy = await resolveAutonomyPolicy(
         run?.templateId ?? '',
-        run?.template?.teamId ?? null
+        run?.template?.teamId ?? null,
+        scorer.riskClass
       );
       const rule = policy.rules[scorer.riskClass] ?? { action: 'require_approval' };
       const passed = rule.action === 'auto';

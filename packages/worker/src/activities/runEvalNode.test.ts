@@ -131,8 +131,11 @@ describe('runEvalNode (policy scorer)', () => {
       templateId: 'tpl-1',
     });
     mocks.autonomyPolicyFindFirst.mockResolvedValue({
+      isDefault: false,
       name: 'comms',
       rules: { mass_communication: { action: 'require_approval', approverCount: 2 } },
+      teamId: null,
+      templateId: 'tpl-1',
     });
     const r = await runEvalNode({
       scorers: [{ kind: 'policy', riskClass: 'mass_communication' } as EvalScorer],

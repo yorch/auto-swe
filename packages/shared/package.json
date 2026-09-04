@@ -27,6 +27,7 @@
     "./lib/connectionGuards": "./dist/lib/connectionGuards.js",
     "./lib/connectionTypes": "./dist/lib/connectionTypes.js",
     "./lib/outcomePublishers": "./dist/lib/outcomePublishers.js",
+    "./lib/autonomyPolicy": "./dist/lib/autonomyPolicy.js",
     "./lib/workspaceProviders": "./dist/lib/workspaceProviders.js",
     "./lib/manifestParsers": "./dist/lib/manifestParsers.js",
     "./lib/repoDependency": "./dist/lib/repoDependency.js",

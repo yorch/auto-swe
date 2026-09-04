@@ -84,6 +84,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/outcomePublishers.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/autonomyPolicy',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/autonomyPolicy.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/workspaceProviders',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/workspaceProviders.ts'),
       },

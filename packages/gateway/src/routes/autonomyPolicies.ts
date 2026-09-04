@@ -1,3 +1,4 @@
+import { AutonomyRulesSchema } from '@auto-swe/shared/lib/autonomyPolicy';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -5,19 +6,11 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
-const RuleSchema = z.record(
-  z.string().min(1),
-  z.object({
-    action: z.enum(['auto', 'require_approval']),
-    approverCount: z.number().int().min(1).optional(),
-  })
-);
-
 const CreateSchema = z.object({
   description: z.string().max(500).optional(),
   isDefault: z.boolean().default(false),
   name: z.string().min(1).max(200),
-  rules: RuleSchema,
+  rules: AutonomyRulesSchema,
   teamId: z.string().uuid().nullable().optional(),
   templateId: z.string().uuid().nullable().optional(),
 });
@@ -26,7 +19,7 @@ const UpdateSchema = z.object({
   description: z.string().max(500).optional(),
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(200).optional(),
-  rules: RuleSchema.optional(),
+  rules: AutonomyRulesSchema.optional(),
 });
 
 const IdParams = z.object({ id: z.string().uuid() });
@@ -35,8 +28,33 @@ const ErrorResponseSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
 
-const PolicyListResponseSchema = z.object({ data: z.array(z.unknown()) });
-const PolicyDetailResponseSchema = z.object({ data: z.unknown() });
+const PolicyTeamSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  slug: z.string(),
+});
+
+const PolicyTemplateSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+});
+
+const PolicySchema = z.object({
+  createdAt: z.string(),
+  description: z.string().nullable(),
+  id: z.string().uuid(),
+  isDefault: z.boolean(),
+  name: z.string(),
+  rules: AutonomyRulesSchema,
+  team: PolicyTeamSchema.nullable(),
+  teamId: z.string().uuid().nullable(),
+  template: PolicyTemplateSchema.nullable(),
+  templateId: z.string().uuid().nullable(),
+  updatedAt: z.string(),
+});
+
+const PolicyListResponseSchema = z.object({ data: z.array(PolicySchema) });
+const PolicyDetailResponseSchema = z.object({ data: PolicySchema });
 const DeletePolicyResponseSchema = z.object({ data: z.object({ deleted: z.boolean() }) });
 
 function scopeError(): { code: string; message: string } {
@@ -67,6 +85,15 @@ function validateScope(body: {
   return false;
 }
 
+function toPolicyResponseDto(row: object): z.infer<typeof PolicySchema> {
+  const r = row as Record<string, unknown>;
+  return {
+    ...r,
+    createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+    updatedAt: r.updatedAt instanceof Date ? r.updatedAt.toISOString() : r.updatedAt,
+  } as z.infer<typeof PolicySchema>;
+}
+
 export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
@@ -84,7 +111,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
           orderBy: { name: 'asc' },
         })
       );
-      return { data: rows };
+      return { data: rows.map(toPolicyResponseDto) };
     }
   );
 
@@ -129,7 +156,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
           entityId: row.id,
           entityType: 'AutonomyPolicy',
         });
-        return reply.status(201).send({ data: row });
+        return reply.status(201).send({ data: toPolicyResponseDto(row) });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes('Unique constraint')) {
@@ -167,7 +194,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Policy not found' } });
       }
-      return { data: row };
+      return { data: toPolicyResponseDto(row) };
     }
   );
 
@@ -215,7 +242,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: existing.id,
         entityType: 'AutonomyPolicy',
       });
-      return { data: updated };
+      return { data: toPolicyResponseDto(updated) };
     }
   );
 
