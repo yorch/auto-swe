@@ -259,12 +259,16 @@ describe('humanDecision', () => {
     expect(result.result.edge).toBe('aborted');
   });
 
-  it('falls back to onTimeout when the selected value matches no option', async () => {
-    const { dispatcher } = makeHitlDispatcher({
+  it('fails the run when the selected value matches no option', async () => {
+    // The gateway rejects such a value before signalling; a payload that gets
+    // here is malformed, and routing it to onTimeout would fabricate a decision.
+    const { dispatcher, records } = makeHitlDispatcher({
       hitl_pick: [{ action: 'select', value: 'not-an-option' }],
     });
-    const result = await runSpec(decisionSpec, baseCtx(), dispatcher);
-    expect(result.status).toBe('TIMED_OUT');
+    await expect(runSpec(decisionSpec, baseCtx(), dispatcher)).rejects.toThrow(
+      /"not-an-option" is not one of ship, abort/
+    );
+    expect(records).toContainEqual({ nodeId: 'pick', status: 'FAILED' });
   });
 
   it('routes to onTimeout and marks the step TIMED_OUT on timeout', async () => {

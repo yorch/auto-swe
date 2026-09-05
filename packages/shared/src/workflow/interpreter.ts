@@ -1034,7 +1034,17 @@ async function runHumanNode(
   }
   if (node.type === 'humanDecision') {
     const chosen = node.options.find((o) => o.value === p.value);
-    return chosen?.next ?? node.onTimeout;
+    if (!chosen) {
+      // The gateway validates the value against the step's options before it
+      // signals, so this is a malformed signal, not a human choice. Silently
+      // taking the onTimeout edge would report a decision nobody made.
+      throw new Error(
+        `humanDecision '${recordingId}': value ${JSON.stringify(p.value)} is not one of ${node.options
+          .map((o) => o.value)
+          .join(', ')}`
+      );
+    }
+    return chosen.next;
   }
   // humanInput + humanReview
   return node.onSubmit;
