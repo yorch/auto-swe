@@ -126,5 +126,9 @@ async function main() {
 }
 
 main()
-  .catch(console.error)
+  .catch((err) => {
+    // A failed seed must fail the step that ran it, not exit 0 with a log line.
+    console.error(err);
+    process.exitCode = 1;
+  })
   .finally(() => prisma.$disconnect());
