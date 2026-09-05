@@ -7,10 +7,11 @@ async function db() {
   return prisma;
 }
 
-/// Shared resolvers for system-level config stored in the five singleton
-/// tables added in migration 20260604000000. Each resolver reads from the DB
-/// and falls back to the matching environment variable so that deployments
-/// that haven't visited the admin UI yet continue to work unchanged.
+/// Shared resolvers for system-level config stored in the singleton config
+/// tables (one row each, `id = 'default'`, enforced by a CHECK constraint).
+/// Each resolver reads from the DB and falls back to the matching environment
+/// variable so that deployments that haven't visited the admin UI yet continue
+/// to work unchanged.
 ///
 /// All resolvers are thin async functions with no in-process cache — callers
 /// that need caching (worker activities, gateway request handlers) should wrap
@@ -335,8 +336,8 @@ export interface ResolvedWorkflowDefaults {
   /**
    * CI-wait strategy. `signal` (default) blocks for a GitHub webhook; `poll`
    * actively queries the GitHub CI APIs — use it where no inbound webhook can
-   * reach the gateway (local dev, air-gapped). Env-driven for now (`CI_WAIT_MODE`);
-   * a DB-backed admin toggle is a follow-up.
+   * reach the gateway (local dev, air-gapped). Stored on the `WorkflowDefaults`
+   * row (edited at `/admin/workflow`); a null column falls back to `CI_WAIT_MODE`.
    */
   ciWaitMode: CiWaitMode;
   ciPollIntervalSec: number;

@@ -24,7 +24,7 @@ export interface TrackerStory {
   repoHint?: string;
 }
 
-/** @deprecated Use `CreatedIssue` from `@auto-swe/shared/lib/integrations/types`. */
+/** @deprecated Use `CreatedIssue` from `@auto-swe/shared`. */
 export interface CreatedTrackerItem {
   id: string;
   url: string | null;
