@@ -12,9 +12,12 @@
  *     number is a planning aid, not an invoice.
  *   - Nodes without a `costHint` contribute zero (consistent with the existing
  *     palette behavior).
- *   - Cycles (cond → back-edge) are guarded by a visited set, so a step in a
- *     retry loop is counted once. Phase 5 may want to multiply by a
- *     `Repository`-configured "retry budget" once that signal exists.
+ *   - Each node's downstream cost is memoised, so a node reached by several
+ *     arms (a diamond) counts fully in every arm and the max is the true worst
+ *     case regardless of which arm is walked first. Cycles (cond → back-edge)
+ *     are cut by the walk stack, so a step in a retry loop is counted once; a
+ *     `Repository`-configured "retry budget" could multiply it once that
+ *     signal exists.
  */
 import type { Node, StepMetadata, WorkflowSpec } from './index.js';
 
@@ -22,7 +25,7 @@ export type CostRole = NonNullable<NonNullable<StepMetadata['costHint']>['role']
 
 /**
  * USD per 1M tokens by role. Rough mid-market priced as of model-pricing
- * snapshot in Q1 2026 — Opus 4.7 for implementer/reviewer roles, Sonnet 4.6
+ * snapshot in Q1 2026 — Opus 4.8 for implementer/reviewer roles, Sonnet 4.6
  * for planner/validateContext/commitToMemory. Override at call time if a team
  * wants their own pricing table.
  */
@@ -73,19 +76,37 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
   const fanOutWidth = options.fanOutWidth ?? DEFAULT_FANOUT_WIDTH;
   const perStep: CostEstimate['perStep'] = [];
 
-  // Per-node USD, recursive walker with a visited set to break cycles.
-  // We capture both the total and the per-step breakdown so the editor can
-  // surface a tooltip / drill-down later.
-  const visited = new Set<string>();
+  // Per-node USD, recursive walker memoised per node. A plain visited set
+  // made the branch max order-dependent: the second arm to reach a shared
+  // join saw it as "already counted" and came back cheaper than it is. The
+  // walk stack (not the memo) breaks cycles, so a back-edge contributes zero
+  // while every other path to a node gets its full cost. We capture both the
+  // total and the per-step breakdown so the editor can surface a tooltip /
+  // drill-down later; each node is pushed once, on first computation.
+  const memo = new Map<string, number>();
+  const onStack = new Set<string>();
   const walk = (nodeId: string | undefined): number => {
-    if (!nodeId || visited.has(nodeId)) {
+    if (!nodeId) {
+      return 0;
+    }
+    const known = memo.get(nodeId);
+    if (known !== undefined) {
+      return known;
+    }
+    if (onStack.has(nodeId)) {
       return 0;
     }
     const node = spec.nodes[nodeId] as Node | undefined;
     if (!node) {
       return 0;
     }
-    visited.add(nodeId);
+    onStack.add(nodeId);
+    const usd = costOf(nodeId, node);
+    onStack.delete(nodeId);
+    memo.set(nodeId, usd);
+    return usd;
+  };
+  const costOf = (nodeId: string, node: Node): number => {
     switch (node.type) {
       case 'step': {
         const meta = options.stepLookup(node.step);

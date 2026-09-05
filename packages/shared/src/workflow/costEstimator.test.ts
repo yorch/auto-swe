@@ -138,6 +138,28 @@ describe('estimateSpecCost', () => {
     expect(result.totalUsd).toBeCloseTo(900, 6);
   });
 
+  it('counts a join shared by both arms in each arm, whichever arm is walked first', () => {
+    // Diamond: the cheap arm reaches the join first. A visited-set walker
+    // then saw the join as "already counted" from the expensive arm and
+    // returned $90 instead of $90 + $18.
+    const result = estimateSpecCost(
+      spec({
+        entry: 'c',
+        nodes: {
+          c: { expr: 'true', onFalse: 'i', onTrue: 'skip', type: 'cond' },
+          i: { next: 'join', step: 'implement', type: 'step' },
+          join: { next: 't', step: 'cheapPlanner', type: 'step' },
+          skip: { next: 'join', step: 'noHint', type: 'step' },
+          t: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      { stepLookup: lookup }
+    );
+    expect(result.totalUsd).toBeCloseTo(108, 6);
+    // Each priced node appears once in the breakdown even though two arms reach it.
+    expect(result.perStep.map((s) => s.nodeId).sort()).toEqual(['i', 'join']);
+  });
+
   it('terminates on cycles instead of running forever', () => {
     const result = estimateSpecCost(
       spec({
