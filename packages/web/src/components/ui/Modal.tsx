@@ -31,7 +31,9 @@ export function Modal({
   }, []);
 
   useEffect(() => {
-    const dialog = dialogRef.current;
+    // The dialog element only exists once the portal has mounted; the first
+    // run of this effect (before `mounted` flips) has nothing to open.
+    const dialog = mounted ? dialogRef.current : null;
     if (!dialog) {
       return;
     }
@@ -41,8 +43,6 @@ export function Modal({
     if (!open && dialog.open) {
       dialog.close();
     }
-    // `mounted` is a dependency because the dialog element only exists after
-    // the portal mounts; the first run of this effect sees a null ref.
   }, [open, mounted]);
 
   const width = size === 'lg' ? 'w-[min(720px,92vw)]' : 'w-[min(560px,92vw)]';

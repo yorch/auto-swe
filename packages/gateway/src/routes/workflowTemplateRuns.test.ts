@@ -30,6 +30,7 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
     const activeWorkflowCreates: Array<Record<string, unknown>> = [];
 
     const prismaMock = {
+      $executeRaw: async () => 1,
       $queryRaw: async () => [],
       $transaction: async (arg: unknown) => {
         if (Array.isArray(arg)) {

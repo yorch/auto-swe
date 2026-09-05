@@ -98,6 +98,7 @@ async function buildHarness(): Promise<Harness> {
     },
   };
   prismaMock.$queryRaw = async () => [];
+  prismaMock.$executeRaw = async () => 1;
   prismaMock.$transaction = async (arg: unknown) => {
     if (Array.isArray(arg)) {
       h.order.push('ledger');
