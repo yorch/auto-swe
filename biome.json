@@ -29,7 +29,7 @@
       "!**/coverage",
       "!**/output",
       "!**/tmp",
-      "!**/mocks",
+      "!docs/history/mocks",
       "!**/.claude/worktrees",
       "!**/.claude",
       "!**/packages/shared/src/generated",

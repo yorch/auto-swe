@@ -33,7 +33,7 @@
    (`securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer`) become ordinary
    Agents resolved by key.
 7. **Library UI + API.** `/admin/agents` becomes the Agents **library** (target mock:
-   `mocks/agents.html`); CRUD + cascade editing via the gateway.
+   `docs/history/mocks/agents.html`); CRUD + cascade editing via the gateway.
 8. **Parity (the contract).** Reference-by-key resolution produces **byte-identical** model / skills
    / tools / prompt to today's `resolveAgentSpec` output for all six SWE agent roles + the four
    sub-roles. The full existing suite stays green; new tests are additive.
@@ -72,7 +72,7 @@ behavior.
 | Sub-roles | `SkillOnlyRole` union (`lib/config/types.ts`) | Deleted — keys are just Agents |
 | Identity set | `AgentRole` 6-role union + `ALL_ROLES` | Stays as the SWE seed key set; `assertConfigReady` resolves Agents by those keys |
 | Gateway | `lib/modelConfigService.ts`, `lib/skillAssignmentService.ts`, `routes/modelConfig.ts`, `routes/skills.ts` | New `agentLibraryService.ts` + `routes/agents.ts`; old services kept until UI cuts over |
-| Web | `/admin/model-config` (RolesTab/Credentials/…), `/admin/agents/[role]` | `/admin/agents` library list + per-Agent editor (mock `mocks/agents.html`) |
+| Web | `/admin/model-config` (RolesTab/Credentials/…), `/admin/agents/[role]` | `/admin/agents` library list + per-Agent editor (mock `docs/history/mocks/agents.html`) |
 
 ---
 
@@ -174,7 +174,7 @@ unchanged prompt leaves verification intact.
 - Gateway: `lib/agentLibraryService.ts` + `routes/agents.ts` — list/get/create/update/version/delete
   with the WS4 RBAC + WS5 scan hooks; cascade-aware read (effective Agent per scope).
 - Web: `/admin/agents` becomes the library list; per-Agent editor (model, prompt, skills, tools,
-  versions, scope overrides). Target visual: `mocks/agents.html`. Team/template override editors
+  versions, scope overrides). Target visual: `docs/history/mocks/agents.html`. Team/template override editors
   reuse the existing `TeamModelConfigSection`/`TemplateModelConfigSection` shells.
 
 **Acceptance:** route tests (CRUD + cascade + RBAC); the existing `/admin/model-config` keeps working

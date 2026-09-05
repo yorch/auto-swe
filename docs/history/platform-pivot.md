@@ -234,7 +234,7 @@ pack" P0 — without inventing a pack abstraction.
 ### What ships
 - **`Agent` entity** consolidating `ModelRoleConfig` + `AgentSkillAssignment` + `AgentToolConfig`
   into one versioned row + layered override rows for the cascade.
-- **Library UI + API** (the current dashboard's "Roles & models" page becomes the **Agents** library — mocked in `mocks/agents.html`).
+- **Library UI + API** (the current dashboard's "Roles & models" page becomes the **Agents** library — mocked in `docs/history/mocks/agents.html`).
 - **Reference + reuse:** `agentRef: "<key>"` from any number of templates; or inline for one-offs.
 - **Override cascade** `GLOBAL → TEAM → TEMPLATE` per Agent.
 - **Versioning** (pin `@v` or float), **prompt-edit security scan** (injection/exfil; resets

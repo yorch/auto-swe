@@ -23,12 +23,17 @@ node_modules
 # ── Local infra state ───────────────────────────────────────────
 # Local infra volumes created by `docker:infra:up` (root-owned).
 # Anchored to the repo root so it never shadows a source dir named `data`.
-# NOTE: `docs/` is intentionally NOT ignored — the web image's build stage runs
-# `COPY docs docs` to statically render the /docs pages (packages/web reads
-# ../../docs at build time). Excluding it breaks the web Docker build.
-# container: sending it as build context bloats the context and can fail with
+# Root-owned volumes: sending them as build context bloats it and can fail with
 # "error from sender: ... permission denied".
 data/
+
+# ── Docs ────────────────────────────────────────────────────────────────
+# The web image's build stage runs `COPY docs/*.md docs/` — only the top level
+# is served (`lib/docs.ts`), so the top-level `.md` files must stay in the
+# context. `history/` (frozen plans, the HTML mocks) and `redesign/`
+# (screenshots) are never copied into an image; keep them out of the context.
+docs/history/
+docs/redesign/
 
 # ── Editor / IDE ────────────────────────────────────────────────
 # Share project editor config; ignore everything else the editor writes.
