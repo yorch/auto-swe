@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export function Modal({
   open,
@@ -20,6 +21,14 @@ export function Modal({
   size?: 'md' | 'lg';
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // The dialog is portalled to document.body: callers often own a modal from
+  // inside a table row or list item, and a <dialog> under <tbody> is invalid
+  // HTML that React reports as a hydration error. Portals need the DOM, so
+  // render nothing until mounted.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -32,14 +41,20 @@ export function Modal({
     if (!open && dialog.open) {
       dialog.close();
     }
-  }, [open]);
+    // `mounted` is a dependency because the dialog element only exists after
+    // the portal mounts; the first run of this effect sees a null ref.
+  }, [open, mounted]);
 
   const width = size === 'lg' ? 'w-[min(720px,92vw)]' : 'w-[min(560px,92vw)]';
   // Names the dialog from its own heading, so it is announced as more than
   // "dialog". Derived from the title so callers cannot forget it.
   const titleId = `modal-title-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
-  return (
+  if (!mounted) {
+    return null;
+  }
+
+  return createPortal(
     <dialog
       aria-labelledby={titleId}
       className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/80`}
@@ -61,6 +76,7 @@ export function Modal({
         </header>
         {children}
       </div>
-    </dialog>
+    </dialog>,
+    document.body
   );
 }
