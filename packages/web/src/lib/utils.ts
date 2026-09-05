@@ -141,6 +141,17 @@ const percent = lazy(
     })
 );
 
+/** Traffic-light colour for a 0–1 quality score (eval means, review signals). */
+export function scoreColor(value: number): string {
+  if (value >= 0.9) {
+    return 'var(--color-moss-400)';
+  }
+  if (value >= 0.5) {
+    return 'var(--color-amber-400)';
+  }
+  return 'var(--color-brick-400)';
+}
+
 export function formatPercent(p: number | null): string {
   if (p === null) {
     return '—';

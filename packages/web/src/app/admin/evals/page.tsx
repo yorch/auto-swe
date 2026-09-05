@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useEvalDatasets, useEvalResults } from '@/hooks/useAdmin';
+import { scoreColor } from '@/lib/utils';
 
 /** Group results by scorer → { n, passRate or mean }. The per-scorer trend the
  *  RFC §2 keeps decomposable (no blended number). */
@@ -19,16 +20,6 @@ function summarizeByScorer(results: EvalResultDto[]) {
   return [...by.entries()]
     .map(([scorer, { n, sum }]) => ({ mean: sum / n, n, scorer }))
     .sort((a, b) => a.scorer.localeCompare(b.scorer));
-}
-
-function meanColor(mean: number): string {
-  if (mean >= 0.9) {
-    return 'var(--color-moss-400)';
-  }
-  if (mean >= 0.5) {
-    return 'var(--color-amber-400)';
-  }
-  return 'var(--color-brick-400)';
 }
 
 export default function AdminEvalsPage() {
@@ -62,7 +53,7 @@ export default function AdminEvalsPage() {
                   <span className="font-mono text-xs text-paper-400">{s.scorer}</span>
                   <span className="flex items-center gap-3">
                     <span className="text-xs text-paper-600">n={s.n}</span>
-                    <span className="font-mono text-xs num" style={{ color: meanColor(s.mean) }}>
+                    <span className="font-mono text-xs num" style={{ color: scoreColor(s.mean) }}>
                       {s.mean.toFixed(2)}
                     </span>
                   </span>

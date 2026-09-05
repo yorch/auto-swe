@@ -2,17 +2,7 @@
 
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { useEvalResultsForRun } from '@/hooks/useRuns';
-
-/** Color a normalized 0..1 score: green high, amber mid, red low. */
-function scoreColor(value: number): string {
-  if (value >= 0.9) {
-    return 'var(--color-moss-400)';
-  }
-  if (value >= 0.5) {
-    return 'var(--color-amber-400)';
-  }
-  return 'var(--color-brick-400)';
-}
+import { scoreColor } from '@/lib/utils';
 
 function SignalRow({ row }: { row: EvalResultDto }) {
   return (
