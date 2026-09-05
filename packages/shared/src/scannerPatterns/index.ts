@@ -235,12 +235,15 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   // agent so it can self-correct. Patterns target destructive or persistence ops
   // that have no legitimate use inside the agent's Docker workspace.
 
-  // Destructive filesystem operations on system paths (incl. paths nested under them)
+  // Destructive filesystem operations on the root or a system path (incl. paths
+  // nested under them). Flags may be split (`-r -f`) or long (`--no-preserve-root`)
+  // in any order — the lookahead only asks that one of them carries r/f. Both
+  // flag loops are bounded so an attempt is constant work, never a scan.
   {
     flags: 'i',
     label: 'shell-rm-system-paths',
     pattern:
-      'rm\\s+-[rRfF]{1,4}\\s+\\/(?:etc|usr|var|bin|lib|boot|root|home|sys|proc)(?:\\/[^\\s]*)?(?:\\s|$)',
+      '\\brm\\s+(?=(?:-[\\w-]+\\s+){0,4}-[a-z]*[rf])(?:-[\\w-]+\\s+){1,5}\\/(?:\\*|(?:etc|usr|var|bin|lib|boot|root|home|sys|proc)(?:\\/\\S*)?)?(?=\\s|$)',
     type: 'SHELL_COMMAND',
   },
   // World-writable chmod — security misconfiguration (last octal digit with the
@@ -520,7 +523,10 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   {
     flags: 'i',
     label: 'pii-us-phone',
-    pattern: '\\b(?:\\+1\\s?)?(?:\\([0-9]{3}\\)|[0-9]{3})[\\s.-]?[0-9]{3}[\\s.-]?[0-9]{4}\\b',
+    // A lookbehind, not `\b`: `\b` before `(` or `+` needs a word character on
+    // the left, so `(555) 123-4567` and `+1 555…` never matched at all.
+    pattern:
+      '(?<![\\w+])(?:\\+1\\s?)?(?:\\([0-9]{3}\\)|[0-9]{3})[\\s.-]?[0-9]{3}[\\s.-]?[0-9]{4}\\b',
     type: 'PII',
   },
   {
