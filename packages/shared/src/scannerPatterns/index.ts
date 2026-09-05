@@ -321,11 +321,12 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   // outbound movement of *local data* instead of network access as such, so a
   // normal `curl https://registry.npmjs.org/...` or `git clone` stays clean.
 
-  // curl/wget uploading a local file: -T/--upload-file, or @-prefixed data args.
+  // curl/wget uploading a local file: -T/--upload-file, or @-prefixed data args —
+  // bare (`-d @file`) or as a multipart field (`-F name=@file`, `--form name=@file`).
   {
     flags: 'i',
     label: 'shell-curl-uploads-local-file',
-    pattern: `\\b(?:${DOWNLOADERS})\\b${restOfSegment(DOWNLOADERS)}?(?:\\s-T\\s|--upload-file|(?:-d|-F|--data(?:-binary|-raw|-urlencode)?)\\s*['"]?@)`,
+    pattern: `\\b(?:${DOWNLOADERS})\\b${restOfSegment(DOWNLOADERS)}?(?:\\s-T\\s|--upload-file|(?:-d|-F|--form|--data(?:-binary|-raw|-urlencode)?)\\s*['"]?(?:[\\w.-]+=)?@)`,
     type: 'SHELL_COMMAND',
   },
   // Request-capture services — no legitimate use from a build workspace.
