@@ -2,6 +2,8 @@ import type { InputSchema } from '../lib/inputSchema.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
 
+export type { BudgetTier } from './workflow.js';
+
 export interface ApiResponse<T> {
   data: T;
   error?: { code: string; message: string };
@@ -175,11 +177,14 @@ export interface RefreshBody {
 
 // ── Work Requests ──
 
+/** Body of POST /api/v1/work-requests — mirrors the gateway's `CreateWorkRequestSchema`. */
 export interface CreateWorkRequestBody {
   externalTicketId: string;
   description: string;
+  /** Exactly one connection id today (single-repo work requests). */
   repoIds: string[];
-  slackChannel?: string;
+  /** Defaults to STANDARD when omitted. */
+  budgetTier?: BudgetTier;
 }
 
 export interface CreateWorkRequestResponse {
