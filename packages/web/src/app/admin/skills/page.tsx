@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -282,49 +283,6 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
   );
 }
 
-// ── Delete Confirm Modal ─────────────────────────────────────────────────────
-
-function DeleteConfirmModal({ skill, onClose }: { skill: Skill | null; onClose: () => void }) {
-  const deleteSkill = useDeleteSkill();
-  const [error, setError] = useState<string | null>(null);
-
-  if (!skill) {
-    return null;
-  }
-
-  async function handleDelete() {
-    if (!skill) {
-      return;
-    }
-    setError(null);
-    try {
-      await deleteSkill.mutateAsync(skill.id);
-      onClose();
-    } catch (err) {
-      setError(errMsg(err, 'Failed to delete skill'));
-    }
-  }
-
-  return (
-    <Modal onClose={onClose} open={!!skill} title={`Delete "${skill.name}"?`}>
-      <div className="space-y-4">
-        <p className="text-sm text-paper-400">
-          This will remove the skill and all its assignments. This cannot be undone.
-        </p>
-        {error && <Alert variant="error">{error}</Alert>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={deleteSkill.isPending} onClick={handleDelete} variant="danger">
-            {deleteSkill.isPending ? 'Deleting…' : 'Delete'}
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 // ── Effectiveness Card ────────────────────────────────────────────────────────
 
 function EffectivenessCard() {
@@ -387,6 +345,7 @@ export default function AdminSkillsPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
+  const deleteSkill = useDeleteSkill();
   const { data: skills, isLoading, isError, error: loadError } = useSkills();
   const update = useUpdateSkill();
 
@@ -485,7 +444,20 @@ export default function AdminSkillsPage() {
 
       <SkillFormModal onClose={() => setNewOpen(false)} open={newOpen} />
       <SkillDetailModal onClose={() => setViewTarget(null)} skill={viewTarget} />
-      <DeleteConfirmModal onClose={() => setDeleteTarget(null)} skill={deleteTarget} />
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message="This will remove the skill and all its assignments. This cannot be undone."
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (deleteTarget) {
+            await deleteSkill.mutateAsync(deleteTarget.id);
+          }
+        }}
+        open={deleteTarget !== null}
+        pendingLabel="Deleting…"
+        title={`Delete "${deleteTarget?.name ?? ''}"?`}
+      />
     </div>
   );
 }

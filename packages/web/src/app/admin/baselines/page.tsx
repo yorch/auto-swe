@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -151,57 +152,11 @@ function CreateBaselineModal({
   );
 }
 
-function DeleteBaselineModal({
-  baseline,
-  onClose,
-}: {
-  baseline: { id: string; domain: string } | null;
-  onClose: () => void;
-}) {
-  const del = useDeleteHumanErrorBaseline();
-  const [error, setError] = useState<string | null>(null);
-
-  if (!baseline) {
-    return null;
-  }
-
-  async function handleDelete() {
-    if (!baseline) {
-      return;
-    }
-    setError(null);
-    try {
-      await del.mutateAsync(baseline.id);
-      onClose();
-    } catch (err) {
-      setError(errMsg(err, 'Failed to delete baseline'));
-    }
-  }
-
-  return (
-    <Modal onClose={onClose} open={!!baseline} title={`Delete "${baseline.domain}" baseline?`}>
-      <div className="space-y-4">
-        <p className="text-sm text-paper-400">
-          This will remove the recorded baseline. It cannot be undone.
-        </p>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={del.isPending} onClick={handleDelete} variant="danger">
-            {del.isPending ? 'Deleting…' : 'Delete'}
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 export default function AdminBaselinesPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<string>('all');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; domain: string } | null>(null);
+  const deleteBaseline = useDeleteHumanErrorBaseline();
   const { data: orgs, isLoading: orgsLoading } = useUserOrgs();
   const { data: baselines, isLoading: baselinesLoading } = useHumanErrorBaselines(
     selectedOrgId === 'all' ? undefined : selectedOrgId
@@ -297,7 +252,20 @@ export default function AdminBaselinesPage() {
         open={newOpen}
         orgs={(orgs ?? []).map((o) => ({ id: o.id, name: o.name }))}
       />
-      <DeleteBaselineModal baseline={deleteTarget} onClose={() => setDeleteTarget(null)} />
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message="This will remove the recorded baseline. It cannot be undone."
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (deleteTarget) {
+            await deleteBaseline.mutateAsync(deleteTarget.id);
+          }
+        }}
+        open={deleteTarget !== null}
+        pendingLabel="Deleting…"
+        title={`Delete "${deleteTarget?.domain ?? ''}" baseline?`}
+      />
     </div>
   );
 }

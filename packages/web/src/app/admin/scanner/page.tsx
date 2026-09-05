@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -287,61 +288,13 @@ function PatternDetailModal({
   );
 }
 
-// ── Delete Modal ──────────────────────────────────────────────────────────────
-
-function DeletePatternModal({
-  onClose,
-  pattern,
-}: {
-  onClose: () => void;
-  pattern: ScannerPattern | null;
-}) {
-  const del = useDeleteScannerPattern();
-  const [error, setError] = useState<string | null>(null);
-
-  if (!pattern) {
-    return null;
-  }
-
-  async function handleDelete() {
-    if (!pattern) {
-      return;
-    }
-    setError(null);
-    try {
-      await del.mutateAsync(pattern.id);
-      onClose();
-    } catch (err) {
-      setError(errMsg(err, 'Failed to delete pattern'));
-    }
-  }
-
-  return (
-    <Modal onClose={onClose} open={!!pattern} title={`Delete "${pattern.label}"?`}>
-      <div className="space-y-4">
-        <p className="text-sm text-paper-400">
-          This will permanently remove the scanner pattern. This cannot be undone.
-        </p>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={del.isPending} onClick={handleDelete} variant="danger">
-            {del.isPending ? 'Deleting…' : 'Delete'}
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 // ── Pattern Row ───────────────────────────────────────────────────────────────
 
 function PatternRow({ pattern }: { pattern: ScannerPattern }) {
   const update = useUpdateScannerPattern();
   const [viewTarget, setViewTarget] = useState<ScannerPattern | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScannerPattern | null>(null);
+  const deletePattern = useDeleteScannerPattern();
 
   function toggleActive() {
     update.mutate({ id: pattern.id, isActive: !pattern.isActive });
@@ -397,7 +350,20 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
         </td>
       </tr>
       <PatternDetailModal onClose={() => setViewTarget(null)} pattern={viewTarget} />
-      <DeletePatternModal onClose={() => setDeleteTarget(null)} pattern={deleteTarget} />
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message="This will permanently remove the scanner pattern. This cannot be undone."
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (deleteTarget) {
+            await deletePattern.mutateAsync(deleteTarget.id);
+          }
+        }}
+        open={deleteTarget !== null}
+        pendingLabel="Deleting…"
+        title={`Delete "${deleteTarget?.label ?? ''}"?`}
+      />
     </>
   );
 }
