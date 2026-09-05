@@ -37,7 +37,7 @@ export default function TeamsPage() {
       />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {(teams ?? []).map((t) => (
-          <Link href={`/teams/${t.id}`} key={t.id}>
+          <Link href={`/govern/teams/${t.id}`} key={t.id}>
             <Card className="hover:shadow-md transition-shadow cursor-pointer">
               <h3 className="font-semibold text-lg">{t.name}</h3>
               <p className="text-sm text-paper-400 mt-1">{t.description || 'No description'}</p>
