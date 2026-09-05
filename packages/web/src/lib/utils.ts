@@ -51,18 +51,22 @@ const relativeTime = lazy(
 );
 
 export function formatRelativeTime(date: string | Date): string {
+  // Signed so a future timestamp (token expiry, schedule next run, HITL
+  // deadline) reads "in 90 days" rather than collapsing to "now".
   const diff = Date.now() - new Date(date).getTime();
+  const abs = Math.abs(diff);
+  const sign = diff > 0 ? -1 : 1;
 
-  if (diff < 60_000) {
+  if (abs < 60_000) {
     return relativeTime().format(0, 'second');
   }
-  if (diff < 3600_000) {
-    return relativeTime().format(-Math.floor(diff / 60_000), 'minute');
+  if (abs < 3600_000) {
+    return relativeTime().format(sign * Math.floor(abs / 60_000), 'minute');
   }
-  if (diff < 86400_000) {
-    return relativeTime().format(-Math.floor(diff / 3600_000), 'hour');
+  if (abs < 86400_000) {
+    return relativeTime().format(sign * Math.floor(abs / 3600_000), 'hour');
   }
-  return relativeTime().format(-Math.floor(diff / 86400_000), 'day');
+  return relativeTime().format(sign * Math.floor(abs / 86400_000), 'day');
 }
 
 // Costs are denominated in USD (MODEL_PRICES is USD per MTok), so the currency
