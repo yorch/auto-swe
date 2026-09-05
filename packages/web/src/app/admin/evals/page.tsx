@@ -2,6 +2,7 @@
 
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useEvalDatasets, useEvalResults } from '@/hooks/useAdmin';
@@ -42,7 +43,7 @@ export default function AdminEvalsPage() {
         </CardHeader>
         <div className="px-4 pb-4">
           {summary.length === 0 ? (
-            <p className="text-sm text-paper-400">No eval signals captured yet.</p>
+            <EmptyState className="py-0 text-left" title="No eval signals captured yet." />
           ) : (
             <div className="space-y-1">
               {summary.map((s) => (

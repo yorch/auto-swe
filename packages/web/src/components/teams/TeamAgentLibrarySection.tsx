@@ -9,6 +9,7 @@ import {
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -155,7 +156,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       {isLoading ? (
         <LoadingState />
       ) : (agents ?? []).length === 0 ? (
-        <p className="py-3 text-center text-xs text-paper-500">No team overrides yet.</p>
+        <EmptyState className="py-3 text-xs text-paper-500" title="No team overrides yet." />
       ) : (
         <table className="w-full text-sm">
           <thead>

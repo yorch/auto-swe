@@ -10,6 +10,7 @@ import { RepoDependencySuggestions } from '@/components/repositories/RepoDepende
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
@@ -153,12 +154,15 @@ export default function ConnectionsPage() {
           </p>
         )}
         {(repos ?? []).length === 0 && (
-          <p className="col-span-full py-12 text-center text-sm text-paper-400">
-            No connections yet.
-            {canManage
-              ? ' Use "Import from GitHub" or "Add connection" above.'
-              : ' Ask a team lead or admin to add one.'}
-          </p>
+          <EmptyState
+            className="col-span-full py-12"
+            hint={
+              canManage
+                ? 'Use "Import from GitHub" or "Add connection" above.'
+                : 'Ask a team lead or admin to add one.'
+            }
+            title="No connections yet."
+          />
         )}
       </div>
 

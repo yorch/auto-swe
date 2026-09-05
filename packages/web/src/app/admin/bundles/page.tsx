@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -125,7 +126,7 @@ export default function AdminBundlesPage() {
         </CardHeader>
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="bundles">
           {!bundles || bundles.length === 0 ? (
-            <div className="py-4 text-center text-sm text-paper-400">No bundles installed yet.</div>
+            <EmptyState className="py-4" title="No bundles installed yet." />
           ) : (
             <table className="w-full text-sm">
               <thead>

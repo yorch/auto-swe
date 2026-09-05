@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import {
   type SlackConfigInput,
@@ -214,7 +215,7 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
       {isLoading ? (
         <LoadingState compact message="loading workspaces…" />
       ) : !workspaces || workspaces.length === 0 ? (
-        <p className="text-sm text-paper-500">No workspaces yet.</p>
+        <EmptyState className="py-0 text-left text-paper-500" title="No workspaces yet." />
       ) : (
         <div className="space-y-2">
           {workspaces.map((w) => (

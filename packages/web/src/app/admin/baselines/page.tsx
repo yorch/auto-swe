@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -205,7 +206,7 @@ export default function AdminBaselinesPage() {
             <CardTitle>Recorded baselines</CardTitle>
           </CardHeader>
           {baselines?.length === 0 ? (
-            <p className="px-4 pb-4 text-sm text-paper-400">No baselines recorded yet.</p>
+            <EmptyState className="px-4 pt-0 pb-4 text-left" title="No baselines recorded yet." />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

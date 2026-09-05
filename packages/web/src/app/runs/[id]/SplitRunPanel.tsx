@@ -1,6 +1,7 @@
 'use client';
 
 import type { AgentTraceRecord, WorkflowStepRecord } from '@auto-swe/shared/types/api';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { formatDate } from '@/lib/utils';
 import { TracesTab } from './TracesTab';
@@ -35,7 +36,7 @@ export function SplitRunPanel({
           Steps · {steps.length}
         </div>
         {steps.length === 0 ? (
-          <div className="py-8 text-center text-paper-500 text-sm">No steps recorded yet.</div>
+          <EmptyState className="text-paper-500" title="No steps recorded yet." />
         ) : (
           <div className="divide-y divide-ink-600/30">
             {steps.map((s) => {

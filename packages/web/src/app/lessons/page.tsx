@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { LessonsByTypeChart } from '@/components/charts/LessonsByTypeChart';
 import { LessonsOverTimeChart } from '@/components/charts/LessonsOverTimeChart';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -129,9 +130,10 @@ export default function LessonsPage() {
           </Card>
         ))}
         {visible.length === 0 && (
-          <p className="text-center text-paper-400 py-12">
-            {searchEnabled ? 'No matches.' : 'No lessons recorded yet'}
-          </p>
+          <EmptyState
+            className="py-12"
+            title={searchEnabled ? 'No matches.' : 'No lessons recorded yet'}
+          />
         )}
       </div>
     </div>

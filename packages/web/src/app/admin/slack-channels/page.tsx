@@ -5,6 +5,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
@@ -843,9 +844,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
           label="channel memory"
         >
           {!items || items.length === 0 ? (
-            <div className="py-6 text-center text-sm text-paper-400">
-              No memory yet for this channel.
-            </div>
+            <EmptyState className="py-6" title="No memory yet for this channel." />
           ) : (
             <ul className="divide-y divide-ink-600">
               {items.map((item) => {

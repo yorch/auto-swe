@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -336,9 +337,7 @@ export default function AdminSchedulesPage() {
         </CardHeader>
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="schedules">
           {!schedules?.length ? (
-            <div className="py-8 text-center text-sm text-paper-400">
-              No schedules yet. Create one with the button above.
-            </div>
+            <EmptyState title="No schedules yet. Create one with the button above." />
           ) : (
             <table className="w-full text-sm">
               <thead>

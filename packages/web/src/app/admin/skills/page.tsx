@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -306,9 +307,7 @@ function EffectivenessCard() {
         label="skill effectiveness"
       >
         {!data?.perSkill.length ? (
-          <div className="py-6 text-center text-sm text-paper-400">
-            No runs with active skills in this window yet.
-          </div>
+          <EmptyState className="py-6" title="No runs with active skills in this window yet." />
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -368,9 +367,7 @@ export default function AdminSkillsPage() {
         </CardHeader>
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="skills">
           {!skills?.length ? (
-            <div className="py-8 text-center text-sm text-paper-400">
-              No skills yet. Create one with the button above.
-            </div>
+            <EmptyState title="No skills yet. Create one with the button above." />
           ) : (
             <table className="w-full text-sm">
               <thead>

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useUserOrgs } from '@/hooks/useAdmin';
@@ -45,7 +46,7 @@ export default function AdminOrganizationsPage() {
               <CardTitle>All organizations</CardTitle>
             </CardHeader>
             {(orgs ?? []).length === 0 ? (
-              <p className="px-4 pb-4 text-sm text-paper-400">No organizations found.</p>
+              <EmptyState className="px-4 pt-0 pb-4 text-left" title="No organizations found." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">

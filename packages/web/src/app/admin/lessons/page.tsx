@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
@@ -168,7 +169,7 @@ export default function AdminLessonsPage() {
         {statsLoading ? (
           <LoadingState compact />
         ) : !stats || stats.length === 0 ? (
-          <p className="text-sm text-paper-600">No repositories found.</p>
+          <EmptyState className="py-0 text-left text-paper-600" title="No repositories found." />
         ) : (
           <table className="w-full">
             <thead>
@@ -206,7 +207,7 @@ export default function AdminLessonsPage() {
         {lessonsLoading ? (
           <LoadingState compact />
         ) : !lessons || lessons.length === 0 ? (
-          <p className="text-sm text-paper-600">No active lessons.</p>
+          <EmptyState className="py-0 text-left text-paper-600" title="No active lessons." />
         ) : (
           <div className="divide-y divide-ink-700">
             {lessons.slice(0, 20).map((lesson) => (
