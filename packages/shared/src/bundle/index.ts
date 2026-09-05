@@ -111,7 +111,9 @@ export const BundleTemplateSchema = z.object({
     .unknown()
     .nullable()
     .optional()
-    .refine((v) => v == null || isInputSchema(v), {
+    // Typed as a plain boolean predicate on purpose: a type-guard refine would
+    // narrow the field to `InputSchema`, and the exporter feeds it a Prisma Json.
+    .refine((v): boolean => v == null || isInputSchema(v), {
       message: "inputSchema must be `{ type: 'object', properties: { … } }`",
     }),
   name: z.string().min(1),
