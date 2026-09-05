@@ -102,6 +102,8 @@ never shipped, known limitations — and promote those into a living doc first. 
 an item on it that was never built is current state.
 
 The original 4-phase plan and its status matrix ([`PLAN.md`](./history/PLAN.md),
-[`STATUS.md`](./history/STATUS.md)), the configurable-workflow-engine and platform-pivot roadmaps
-with their per-phase build plans, the evals phase plans, the 2026-06 and 2026-07 repository
+[`STATUS.md`](./history/STATUS.md)), the horizontal-platform PRD
+([`agentic-workflow-platform-prd.md`](./history/agentic-workflow-platform-prd.md)) and the
+configurable-workflow-engine and platform-pivot roadmaps that carried it out, with their per-phase
+build plans, the evals phase plans, the 2026-06 and 2026-07 repository
 reviews, and research on agent dreaming, skills, and Claude Tag all live there.

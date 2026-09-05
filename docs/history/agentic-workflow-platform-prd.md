@@ -1,6 +1,6 @@
 # Product Requirements Document — auto-swe as an Agentic Workflow Platform
 
-> Status: direction document, not yet implemented. Captures the reframed product thesis, target users, core concepts, gap analysis, and roadmap agreed in 2026-08-27. For the current system see [architecture.md](./architecture.md), [product-overview.md](./product-overview.md), and [agents.md](./agents.md).
+> Status: direction document, not yet implemented. Captures the reframed product thesis, target users, core concepts, gap analysis, and roadmap agreed in 2026-08-27. For the current system see [architecture.md](../architecture.md), [product-overview.md](../product-overview.md), and [agents.md](../agents.md).
 
 ---
 

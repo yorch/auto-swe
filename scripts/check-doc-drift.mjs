@@ -332,6 +332,10 @@ const FORBIDDEN_PROSE = [
   { hint: 'roadmap promise', re: /\b(?:it'?ll|it will) come\b/i },
   { hint: 'roadmap promise', re: /\bwill come in\b/i },
   { hint: 'roadmap section', re: /\bfuture refinements?\b/i },
+  // A "Status:" header is how a direction document announces it is not describing
+  // the system as built — that document belongs in docs/history/.
+  { hint: 'status header', re: /^\s*(?:>\s*)?\**status\**\s*:/i },
+  { hint: 'roadmap promise', re: /\bnot yet (?:implemented|built|shipped|wired(?: up)?)\b/i },
 ];
 
 const stripQuoted = (line) => line.replace(/`[^`]*`/g, '').replace(/"[^"]*"/g, '');

@@ -197,6 +197,7 @@ What sets auto-swe apart from simpler "AI coding" tools:
 Most of these are architecturally enforced rather than policy; where a boundary rests on shipped
 content instead, it says so.
 
+- **Not a no-code automation tool, a BPM suite, an RPA tool, a chatbot platform, or a personal coding assistant.** Templates, agents, and skills are authored, versioned, governed content — programmable rather than drag-and-drop. It augments execution with agents rather than modelling formal processes. It acts through APIs, connectors, and MCP servers, never by driving a third party's UI. Slack is a control surface, not the product. And it is a team platform for repeatable workflows, not an editor assistant for one engineer.
 - **No auto-merge.** Nothing the platform ships merges a pull request: no activity calls the GitHub merge API, and no seeded template merges. The SWE flow opens a PR and parks until a Temporal signal bridges the GitHub merge webhook to the waiting workflow. This is a property of the activity catalog and the shipped templates — a team that allowlists the GitHub API host for a `shell` or `containerStep` node can author a DAG that merges (see [architecture.md §10](./architecture.md#10-limitations)).
 - **No Kubernetes.** Docker-in-Docker is the workspace isolation model; works inside Docker Compose.
 - **No repo-admin actions.** auto-swe acts as a contributor — no branch-protection bypass, approval, or auto-merge on target repos.
@@ -238,6 +239,28 @@ a `RepoWorkRequest` — the ticket→PR struct — passing `repoId: ''` when the
 `RunInput.externalTicketId` remains non-nullable in the schema (auto-filled rather than demanded of
 the caller). Event→input mappings for external triggers are configuration rather than a persisted
 `Trigger` table.
+
+**The non-engineering verticals are seeded content, not proven flows.** The horizontal
+abstractions exist — workspace providers (`git_repo`, `document`, `issue_tracker`, `record`,
+`api_only`), outcome publishers, connection types (`git_repo`, `issue_tracker`, `notion`, `zendesk`,
+`hubspot`, `slack_workspace`, `http_api`, `mcp`), autonomy policies, and the support, product, and
+content skill and agent packs — but only the engineering flow has a complete, exercised
+end-to-end path. Where the platform stops today:
+
+- The `document` provider is backed by Notion only, reading and writing through the connector API
+  per step; there is no local document cache and no headless editor.
+- Salesforce, Workday, Google Docs, Intercom, and Confluence-as-a-workspace are not connection
+  types; they are reachable only through a generic `http_api` connection or an `mcp` server. There
+  is no connector marketplace — bundles install from a file or a URL against trust anchors set in
+  the environment.
+- The run viewer is built around a code diff and CI status. A document, record change, or message
+  produced by a non-code workflow is shown as raw step output, not rendered.
+- `estimatedHumanTimeSaved` is self-reported per template (`estimatedHumanTimeSavedMinutes`) and
+  multiplied out per run; it is not measured.
+- Execution is a DAG only; there is no linear or case-management mode.
+- Enterprise controls stop at Okta SSO and org/team RBAC: no per-org SSO scoping, no
+  data-residency controls, and no retention policy beyond the manual shell-audit prune and manual
+  `memory_items` deletion.
 
 Two limitations in §7 are deliberate rather than pending: shell-step egress filtering is DNS-based,
 so IP-direct connections are unfiltered and wildcard entries are informational only. Both would
