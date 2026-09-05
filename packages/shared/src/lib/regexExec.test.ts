@@ -9,9 +9,11 @@ import {
   DEFAULT_REGEX_BUDGET_MS,
   isRegexQuarantined,
   probeRegexBacktracking,
+  REGEX_QUARANTINE_TTL_MS,
   resetRegexExecutor,
   resolveRegexBudgetMs,
   runRegexBatch,
+  toRegexSpecs,
 } from './regexExec.js';
 
 /** The catastrophic pattern every reviewer reaches for, plus its input. */
@@ -20,6 +22,7 @@ const EVIL_INPUT = `${'a'.repeat(40)}!`;
 
 afterEach(() => {
   resetRegexExecutor();
+  vi.useRealTimers();
 });
 
 beforeEach(() => {
@@ -183,6 +186,18 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
     expect(result.incomplete).toBe(true);
   });
 
+  it('confirms an overrun with a second isolated run before blaming the pattern', async () => {
+    const started = Date.now();
+    const result = await runRegexBatch([EVIL], [{ key: 't', text: EVIL_INPUT }], {
+      budgetMs: 150,
+    });
+    // Two strikes: the lone pattern is re-run on a fresh thread and only a
+    // second overrun counts, so a confirmed timeout costs at least two budgets.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2 * 150 - 20);
+    expect(result.timedOutPatternKeys).toEqual(['evil']);
+    expect(result.incomplete).toBe(true);
+  });
+
   it('quarantines the offender so it cannot deny every later scan', async () => {
     await runRegexBatch([EVIL], [{ key: 't', text: EVIL_INPUT }], { budgetMs: 150 });
     expect(isRegexQuarantined(EVIL.source, EVIL.flags)).toBe(true);
@@ -195,12 +210,116 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
     );
     expect(Date.now() - started).toBeLessThan(1_000);
     // KNOWN LIMITATION, pinned deliberately: a quarantined rule is NOT enforced
-    // on later scans, and those scans report themselves complete. The
-    // alternative — refusing every scan forever — turns one bad admin pattern
-    // into a total outage. Changing this is a visible test change.
+    // on later scans inside the TTL, and the executor does not mark those scans
+    // incomplete — it reports the skipped keys and leaves the fail-open /
+    // fail-closed decision to the caller. Refusing every scan forever would
+    // turn one bad admin pattern into a total outage. Changing this is a
+    // visible test change.
     expect(second.quarantinedPatternKeys).toEqual(['evil']);
     expect(second.incomplete).toBe(false);
     expect(second.hits.map((h) => h.patternKey)).toEqual(['ok']);
+  });
+
+  it('lets the quarantine lapse after its TTL so a fixed host or pattern is enforced again', async () => {
+    await runRegexBatch([EVIL], [{ key: 't', text: EVIL_INPUT }], { budgetMs: 150 });
+    expect(isRegexQuarantined(EVIL.source, EVIL.flags)).toBe(true);
+
+    // Fake only the clock — the budget timer must keep running for real.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + REGEX_QUARANTINE_TTL_MS + 1);
+    expect(isRegexQuarantined(EVIL.source, EVIL.flags)).toBe(false);
+
+    const again = await runRegexBatch([EVIL], [{ key: 't', text: EVIL_INPUT }], {
+      budgetMs: 150,
+    });
+    expect(again.quarantinedPatternKeys).toEqual([]);
+    expect(again.timedOutPatternKeys).toEqual(['evil']);
+    expect(isRegexQuarantined(EVIL.source, EVIL.flags)).toBe(true);
+  });
+
+  it('gives every target its own budget rather than one budget for the whole batch', async () => {
+    // Calibrate a linear-in-targets, quadratic-in-length pattern so one target
+    // costs a fraction of the budget while the batch as a whole costs several
+    // budgets. Measured, not assumed, so the test is not hostage to CI speed.
+    const budgetMs = 300;
+    const text = `${'a'.repeat(300)}!`;
+    const startedProbe = performance.now();
+    /a+a+$/.exec(text);
+    const perTargetMs = performance.now() - startedProbe;
+    expect(perTargetMs).toBeLessThan(budgetMs / 2);
+    const count = Math.min(100, Math.ceil((3 * budgetMs) / perTargetMs));
+    // Sanity: the batch as a whole really does cost more than one budget.
+    expect(count * perTargetMs).toBeGreaterThan(budgetMs);
+    const targets = Array.from({ length: count }, (_, i) => ({ key: String(i), text }));
+
+    const result = await runRegexBatch([{ flags: '', key: 'quad', source: 'a+a+$' }], targets, {
+      budgetMs,
+    });
+    expect(result.incomplete).toBe(false);
+    expect(result.timedOutPatternKeys).toEqual([]);
+    expect(isRegexQuarantined('a+a+$', '')).toBe(false);
+  });
+
+  it('drops a confirmed offender for the remaining targets and keeps the other patterns running', async () => {
+    const started = Date.now();
+    const result = await runRegexBatch(
+      [EVIL, { flags: '', key: 'ok', source: 'hello' }],
+      [
+        { key: 't1', text: EVIL_INPUT },
+        { key: 't2', text: `hello ${EVIL_INPUT}` },
+        { key: 't3', text: `hello ${EVIL_INPUT}` },
+      ],
+      { budgetMs: 150 }
+    );
+    expect(result.timedOutPatternKeys).toEqual(['evil']);
+    expect(result.incomplete).toBe(true);
+    expect(result.hits.map((h) => `${h.patternKey}@${h.targetKey}`)).toEqual(['ok@t2', 'ok@t3']);
+    // t1 pays the bisection + confirmation; t2/t3 must not pay a budget each
+    // for a pattern that has already been blamed.
+    expect(Date.now() - started).toBeLessThan(6 * 150);
+  });
+
+  it('H1: runs every built-in pattern over a 20k adversarial window well inside the default budget', async () => {
+    // Windows built from the SHELL_COMMAND patterns' own command words, with no
+    // separator, so a `\bword\b[^;&|]*` scan is attempted at every word and
+    // runs to the end of the window each time. Before the shell patterns were
+    // bounded to the next command word this cost ~300 ms in-thread for the
+    // 18-pattern set alone — over the budget for a single blocking scan, which
+    // then blocked the agent and quarantined a real rule.
+    const windows = [
+      'nc '.repeat(6_666),
+      'scp '.repeat(5_000),
+      'curl '.repeat(4_000),
+      'cat '.repeat(5_000),
+      'base64 '.repeat(2_857),
+      'pkill '.repeat(3_333),
+      'nc -a '.repeat(3_333),
+      'curl nc scp cat base64 tar pkill '.repeat(606),
+    ].map((w) => w.slice(0, 20_000));
+    const specs = toRegexSpecs(
+      BUILTIN_SCANNER_PATTERNS.map((p) => ({ flags: p.flags, label: p.label, source: p.pattern }))
+    );
+
+    // In-thread, per window: the sum over all 62 patterns must be a small
+    // fraction of the budget, or a modestly loaded host will overrun it.
+    for (const text of windows) {
+      const started = performance.now();
+      for (const spec of specs) {
+        new RegExp(spec.source, spec.flags).exec(text);
+      }
+      expect(performance.now() - started, text.slice(0, 12)).toBeLessThan(
+        DEFAULT_REGEX_BUDGET_MS / 5
+      );
+    }
+
+    // And through the executor, under the default budget, nothing times out.
+    const result = await runRegexBatch(
+      specs,
+      windows.map((text, i) => ({ key: String(i), text }))
+    );
+    expect(result.timedOutPatternKeys).toEqual([]);
+    expect(result.incomplete).toBe(false);
+    expect(result.quarantinedPatternKeys).toEqual([]);
   });
 
   it('recovers a working executor after a termination', async () => {

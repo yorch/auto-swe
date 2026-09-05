@@ -17,10 +17,44 @@ export function scannerPatternOrigin(type: BuiltinScannerPatternDef['type']): st
 }
 
 /**
+ * The rest of a shell segment after a command word, for the SHELL_COMMAND
+ * patterns of the form `\b(?:word…)\b <anything in this segment> <tail>`.
+ *
+ * A plain `[^;&|]*` there is quadratic: the regex is attempted at every
+ * occurrence of the word, and each attempt scans to the end of the segment and
+ * backtracks looking for the tail, so 20k of `curl curl curl …` costs
+ * occurrences × segment length — over the whole scan budget for a single
+ * built-in pattern, which then reads as a hang. This scan stops at the NEXT
+ * occurrence of any of the same words as well as at a separator, so the
+ * attempts partition the segment and their total is linear in its length. It
+ * loses nothing: a tail that sits after a later occurrence is found by that
+ * occurrence's own attempt. Keeping `\b` (rather than anchoring the word to a
+ * command position) is deliberate — `sudo curl`, `$(curl …)`, `bash -c "curl …"`
+ * and a second line of a script all stay in scope.
+ *
+ * `stop` is the separator class; `words` is the alternation of the command
+ * words the pattern opens with.
+ */
+function restOfSegment(words: string, stop = ';&|'): string {
+  return `(?:(?!\\b(?:${words})\\b)[^${stop}])*`;
+}
+
+const NETWORK_CLIENTS = 'curl|wget|nc|netcat|ncat';
+const DOWNLOADERS = 'curl|wget';
+const REMOTE_COPY = 'scp|sftp|rsync';
+const FILE_READERS = 'cat|less|more|head|tail|strings|xxd|od|base64';
+const ENCODERS = 'base64|gzip|bzip2|xz|tar|xxd|openssl';
+
+/**
  * Built-in scanner patterns seeded into the scanner_patterns table on yarn db:seed.
  * All are isBuiltIn=true and cannot be deleted via the admin UI (only disabled).
  *
  * Safe flag subset: i, m, s, u, v — g/y are rejected at the API layer.
+ *
+ * Every SHELL_COMMAND pattern must stay linear on a 20k window — they run on
+ * every `bash` call, all in one budget per window, and a super-linear one turns
+ * a padded command into a spurious block and then a quarantined rule.
+ * `regexExec.test.ts` times the whole set against adversarial windows.
  */
 export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   // ── Injection patterns ────────────────────────────────────────────────────
@@ -221,7 +255,7 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   {
     flags: 'i',
     label: 'shell-curl-pipe-to-shell',
-    pattern: '\\b(?:curl|wget)\\b[^|;&]*\\|\\s*(?:ba|z|da)?sh\\b',
+    pattern: `\\b(?:${DOWNLOADERS})\\b${restOfSegment(DOWNLOADERS)}\\|\\s*(?:ba|z|da)?sh\\b`,
     type: 'SHELL_COMMAND',
   },
   // Crontab modification — persistence mechanism
@@ -242,7 +276,7 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   {
     flags: 'i',
     label: 'shell-kill-init',
-    pattern: '\\bkill\\s+(?:-9\\s+)?1\\b|\\bpkill\\s+.*\\binit\\b',
+    pattern: `\\bkill\\s+(?:-9\\s+)?1\\b|\\bpkill\\b${restOfSegment('pkill', ';&|\\n')}\\binit\\b`,
     type: 'SHELL_COMMAND',
   },
   // dd to/from raw device — disk overwrite
@@ -291,24 +325,21 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   {
     flags: 'i',
     label: 'shell-curl-uploads-local-file',
-    pattern:
-      '\\b(?:curl|wget)\\b[^;&|]*?(?:\\s-T\\s|--upload-file|(?:-d|-F|--data(?:-binary|-raw|-urlencode)?)\\s*[\'"]?@)',
+    pattern: `\\b(?:${DOWNLOADERS})\\b${restOfSegment(DOWNLOADERS)}?(?:\\s-T\\s|--upload-file|(?:-d|-F|--data(?:-binary|-raw|-urlencode)?)\\s*['"]?@)`,
     type: 'SHELL_COMMAND',
   },
   // Request-capture services — no legitimate use from a build workspace.
   {
     flags: 'i',
     label: 'shell-request-capture-sink',
-    pattern:
-      '\\b(?:curl|wget|nc|netcat|ncat)\\b[^;&|]*\\b(?:webhook\\.site|requestbin\\.\\w+|hookbin\\.com|beeceptor\\.com|pipedream\\.net|ngrok\\.io|burpcollaborator\\.net|interact\\.sh)',
+    pattern: `\\b(?:${NETWORK_CLIENTS})\\b${restOfSegment(NETWORK_CLIENTS)}\\b(?:webhook\\.site|requestbin\\.\\w+|hookbin\\.com|beeceptor\\.com|pipedream\\.net|ngrok\\.io|burpcollaborator\\.net|interact\\.sh)`,
     type: 'SHELL_COMMAND',
   },
   // Cloud instance-metadata endpoints — credential theft, never legitimate here.
   {
     flags: 'i',
     label: 'shell-cloud-metadata-fetch',
-    pattern:
-      '\\b(?:curl|wget|nc|netcat|ncat)\\b[^;&|]*(?:169\\.254\\.169\\.254|169\\.254\\.170\\.2|metadata\\.google\\.internal|\\[?fd00:ec2::254\\]?)',
+    pattern: `\\b(?:${NETWORK_CLIENTS})\\b${restOfSegment(NETWORK_CLIENTS)}(?:169\\.254\\.169\\.254|169\\.254\\.170\\.2|metadata\\.google\\.internal|\\[?fd00:ec2::254\\]?)`,
     type: 'SHELL_COMMAND',
   },
   // Raw socket egress: netcat to an explicit host and port.
@@ -322,23 +353,23 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   {
     flags: 'i',
     label: 'shell-remote-file-copy',
-    pattern: '\\b(?:scp|sftp|rsync)\\b[^;&|]*\\s[\\w.-]+@[\\w.-]+:',
+    pattern: `\\b(?:${REMOTE_COPY})\\b${restOfSegment(REMOTE_COPY)}\\s[\\w.-]+@[\\w.-]+:`,
     type: 'SHELL_COMMAND',
   },
   // Reading credential-bearing system files.
   {
     flags: 'i',
     label: 'shell-reads-system-credentials',
-    pattern:
-      '\\b(?:cat|less|more|head|tail|strings|xxd|od|base64)\\b[^;&|]*/etc/(?:passwd|shadow|sudoers)\\b',
+    pattern: `\\b(?:${FILE_READERS})\\b${restOfSegment(FILE_READERS)}/etc/(?:passwd|shadow|sudoers)\\b`,
     type: 'SHELL_COMMAND',
   },
   // Encode/compress then pipe straight to a network client — chunked exfiltration.
+  // The scan after the pipe is plain: at most one attempt (the last encoder
+  // before it) reaches a given pipe, so those scans partition the text too.
   {
     flags: 'i',
     label: 'shell-encode-then-network',
-    pattern:
-      '\\b(?:base64|gzip|bzip2|xz|tar|xxd|openssl)\\b[^;&|]*\\|[^;&|]*\\b(?:curl|wget|nc|netcat|ncat)\\b',
+    pattern: `\\b(?:${ENCODERS})\\b${restOfSegment(ENCODERS)}\\|[^;&|]*\\b(?:${NETWORK_CLIENTS})\\b`,
     type: 'SHELL_COMMAND',
   },
 

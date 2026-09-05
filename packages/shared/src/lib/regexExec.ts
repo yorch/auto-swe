@@ -23,6 +23,11 @@
  *   which is noise next to the Docker exec or LLM call every call site already
  *   pays. Batches are serialised through the worker so a wedged batch never
  *   corrupts a concurrent one.
+ * - **The budget is per target.** Every target in a batch gets the full budget
+ *   against every pattern, so a long command that a blocking scanner splits
+ *   into overlapping windows is not held to one budget for the sum of its
+ *   windows. The bound on a scan is therefore `targets × budget` on the happy
+ *   path, which is proportional to the input the caller chose to scan.
  * - **Compiled-pattern cache inside the worker.** The worker keeps its own
  *   `Map<identity, RegExp>` so a pattern is compiled once per process, not once
  *   per batch — every `bash` call and `writeFile` re-sends the same 58+
@@ -34,31 +39,42 @@
  *   that hung is identified and the results of the well-behaved patterns are
  *   still returned. This costs a handful of extra spawns, and only on the
  *   failure path.
- * - **Quarantine.** A pattern that overruns is added to a process-local
- *   quarantine set and skipped by subsequent batches, so one bad row cannot
- *   permanently deny agent shell access. See the limitation note below.
+ * - **Two strikes before quarantine.** An overrun is only believed once the
+ *   isolated pattern has been re-run alone on a fresh thread and overran
+ *   again. One observation is not evidence: a starved host, a GC pause, or a
+ *   linear-but-heavy pattern on a large window can push past a 250 ms budget
+ *   once, and quarantining on that single miss would silently drop a real
+ *   rule for every later scan.
+ * - **Quarantine with a TTL.** A pattern that overran twice is added to a
+ *   process-local quarantine and skipped by subsequent batches for
+ *   {@link REGEX_QUARANTINE_TTL_MS}, so one bad row cannot deny agent shell
+ *   access — and an admin's fix, or the end of a transient stall, takes effect
+ *   without a restart. See the limitation note below.
  * - **Never throws.** A scan must never abort the calling activity, so every
  *   failure mode resolves to a result with `incomplete: true` and the caller
  *   decides (blocking scanners fail closed; advisory ones degrade to a warning).
  *
  * Residual risk, stated plainly:
  *
- * - Quarantine is **fail-open for the quarantined rule**. The scan during which
- *   a pattern overran fails closed, but every later scan silently proceeds
- *   without that rule (loudly logged each time). The alternative — refusing
- *   every scan forever — turns one bad admin pattern into a total outage.
- * - The quarantine set is per-process and per-lifetime; gateway and worker
- *   quarantine independently and both forget on restart.
- * - A pattern can still burn a full budget per scan before being quarantined,
- *   and quarantine is keyed on pattern source, so N distinct bad patterns cost
- *   N budgets. This bounds a hang; it does not make scanning free.
+ * - Quarantine is **fail-open for the quarantined rule** for the length of the
+ *   TTL. The scan during which a pattern overran fails closed, but every scan
+ *   inside the window silently proceeds without that rule (loudly logged each
+ *   time, and reported in `quarantinedPatternKeys` so a blocking caller can
+ *   choose to fail closed instead). The alternative — refusing every scan
+ *   forever — turns one bad admin pattern into a total outage.
+ * - The quarantine is per-process; gateway and worker quarantine independently
+ *   and both forget on restart.
+ * - A pattern can still burn two budgets per target before being quarantined,
+ *   and again once the TTL lapses; quarantine is keyed on pattern source, so N
+ *   distinct bad patterns cost N times that. This bounds a hang; it does not
+ *   make scanning free.
  */
 
 import { Worker } from 'node:worker_threads';
 import { resolveSetting } from '../config/resolveSetting.js';
 
 /**
- * Default per-batch wall-clock budget — the value the `workspace.regexScanBudgetMs`
+ * Default per-target wall-clock budget — the value the `workspace.regexScanBudgetMs`
  * setting falls back to when nothing overrides it, so it stays the effective
  * budget for an unconfigured deployment and is what {@link runRegexBatch} uses
  * when a caller omits `opts.budgetMs` (as the tests in this file do, to exercise
@@ -67,6 +83,14 @@ import { resolveSetting } from '../config/resolveSetting.js';
  * value and pass it explicitly, so an operator's override actually takes effect.
  */
 export const DEFAULT_REGEX_BUDGET_MS = 250;
+
+/**
+ * How long a pattern that overran its budget twice stays quarantined in this
+ * process. Long enough that a genuinely catastrophic pattern cannot burn a
+ * budget on every scan; short enough that an admin's corrected pattern — or the
+ * end of a transient stall on the host — is enforced again without a restart.
+ */
+export const REGEX_QUARANTINE_TTL_MS = 10 * 60_000;
 
 /**
  * Resolves the operator-tunable `workspace.regexScanBudgetMs` setting for one
@@ -148,9 +172,17 @@ export interface RegexBatchResult {
    * "cannot clear" and block; advisory scanners degrade to a warning.
    */
   incomplete: boolean;
-  /** Keys of patterns that individually overran the budget on this batch. */
+  /**
+   * Keys of patterns that overran the budget on this batch — twice, in
+   * isolation, on the same target — and have now been quarantined.
+   */
   timedOutPatternKeys: string[];
-  /** Keys skipped because an earlier batch quarantined their source. */
+  /**
+   * Keys skipped because an earlier batch quarantined their source and the
+   * quarantine has not yet lapsed. These rules were NOT enforced on this scan;
+   * `incomplete` does not cover them, so a blocking caller that would rather
+   * fail closed than run without a rule must check this list itself.
+   */
   quarantinedPatternKeys: string[];
 }
 
@@ -203,11 +235,26 @@ let worker: Worker | null = null;
 let workerReady: Promise<boolean> | null = null;
 /** Serialises batches: one in flight at a time on the shared worker. */
 let queue: Promise<unknown> = Promise.resolve();
-/** Pattern sources (`flags\x00source`) that overran and are now skipped. */
-const quarantine = new Set<string>();
+/**
+ * Pattern identities (`flags\x00source`) that overran twice, mapped to the
+ * epoch-ms at which their quarantine lapses. Entries are reaped lazily on read.
+ */
+const quarantine = new Map<string, number>();
 
 function identity(source: string, flags: string): string {
   return `${flags}\x00${source}`;
+}
+
+function isQuarantined(id: string, now: number): boolean {
+  const until = quarantine.get(id);
+  if (until === undefined) {
+    return false;
+  }
+  if (now >= until) {
+    quarantine.delete(id);
+    return false;
+  }
+  return true;
 }
 
 function getWorker(): Worker | null {
@@ -314,8 +361,17 @@ const EMPTY: RegexBatchResult = {
   timedOutPatternKeys: [],
 };
 
-/** Bisect a batch that overran to find which pattern(s) actually hang. */
-async function evaluate(
+/**
+ * Run `patterns` against a group of targets that share ONE budget, bisecting
+ * on an overrun to find which pattern(s) actually hang.
+ *
+ * An isolated overrun is confirmed before it is reported: the lone pattern is
+ * re-run by itself on a fresh thread (the hung one was just terminated), and
+ * only a second overrun lands in `timedOutPatternKeys` — which is what the
+ * caller quarantines on. If the re-run completes, its hits are returned and the
+ * pattern is treated as evaluated: the first miss was the host, not the rule.
+ */
+async function evaluateGroup(
   patterns: RegexSpec[],
   targets: RegexTarget[],
   budgetMs: number
@@ -327,23 +383,65 @@ async function evaluate(
   if (outcome.ok) {
     return { ...EMPTY, hits: outcome.hits };
   }
-  if (outcome.reason === 'fault' || patterns.length === 1) {
-    // A single pattern that overruns is the culprit; a fault is not attributable
-    // to any pattern, so nothing is quarantined for it.
-    const timedOut = outcome.reason === 'timeout' ? patterns.map((p) => p.key) : [];
+  if (outcome.reason === 'fault') {
+    // Not attributable to any pattern, so nothing is quarantined for it.
+    return { ...EMPTY, incomplete: true };
+  }
+  if (patterns.length === 1) {
+    // Second strike, alone, on a fresh thread.
+    const again = await runOnce(patterns, targets, budgetMs);
+    if (again.ok) {
+      return { ...EMPTY, hits: again.hits };
+    }
+    const timedOut = again.reason === 'timeout' ? patterns.map((p) => p.key) : [];
     return { ...EMPTY, incomplete: true, timedOutPatternKeys: timedOut };
   }
   // Sequentially — the halves share one worker, so overlapping them would both
   // interleave their replies and blame the innocent half for the other's hang.
   const mid = Math.floor(patterns.length / 2);
-  const a = await evaluate(patterns.slice(0, mid), targets, budgetMs);
-  const b = await evaluate(patterns.slice(mid), targets, budgetMs);
+  const a = await evaluateGroup(patterns.slice(0, mid), targets, budgetMs);
+  const b = await evaluateGroup(patterns.slice(mid), targets, budgetMs);
   return {
     hits: [...a.hits, ...b.hits],
+    // The whole group overran; even if both halves then completed, the batch
+    // as observed did not, and a blocking caller must not clear on it.
     incomplete: true,
     quarantinedPatternKeys: [],
     timedOutPatternKeys: [...a.timedOutPatternKeys, ...b.timedOutPatternKeys],
   };
+}
+
+/**
+ * Give every target its own budget. A pattern confirmed to overrun on one
+ * target is dropped for the remaining targets — it has already been blamed and
+ * would only burn two more budgets per target.
+ */
+async function evaluatePerTarget(
+  patterns: RegexSpec[],
+  targets: RegexTarget[],
+  budgetMs: number
+): Promise<RegexBatchResult> {
+  const result: RegexBatchResult = {
+    hits: [],
+    incomplete: false,
+    quarantinedPatternKeys: [],
+    timedOutPatternKeys: [],
+  };
+  let live = patterns;
+  for (const target of targets) {
+    if (live.length === 0) {
+      break;
+    }
+    const r = await evaluateGroup(live, [target], budgetMs);
+    result.hits.push(...r.hits);
+    result.incomplete = result.incomplete || r.incomplete;
+    if (r.timedOutPatternKeys.length > 0) {
+      result.timedOutPatternKeys.push(...r.timedOutPatternKeys);
+      const dead = new Set(r.timedOutPatternKeys);
+      live = live.filter((p) => !dead.has(p.key));
+    }
+  }
+  return result;
 }
 
 /**
@@ -361,8 +459,9 @@ export async function runRegexBatch(
   const scope = opts.label ?? 'regexExec';
   const runnable: RegexSpec[] = [];
   const skipped: string[] = [];
+  const now = Date.now();
   for (const p of patterns) {
-    if (quarantine.has(identity(p.source, p.flags))) {
+    if (isQuarantined(identity(p.source, p.flags), now)) {
       skipped.push(p.key);
     } else {
       runnable.push(p);
@@ -371,25 +470,28 @@ export async function runRegexBatch(
   if (skipped.length > 0) {
     console.error(
       `[${scope}] skipping quarantined pattern(s) — they exceeded the ${budgetMs}ms ` +
-        `execution budget and are NOT being enforced: ${skipped.join(', ')}`
+        'execution budget twice and are NOT being enforced until the quarantine lapses: ' +
+        skipped.join(', ')
     );
   }
   if (runnable.length === 0 || targets.length === 0) {
     return { ...EMPTY, quarantinedPatternKeys: skipped };
   }
 
-  const result = await enqueue(() => evaluate(runnable, targets, budgetMs));
+  const result = await enqueue(() => evaluatePerTarget(runnable, targets, budgetMs));
 
-  for (const key of result.timedOutPatternKeys) {
-    const spec = runnable.find((p) => p.key === key);
-    if (spec) {
-      quarantine.add(identity(spec.source, spec.flags));
-    }
-  }
   if (result.timedOutPatternKeys.length > 0) {
+    const until = Date.now() + REGEX_QUARANTINE_TTL_MS;
+    for (const key of result.timedOutPatternKeys) {
+      const spec = runnable.find((p) => p.key === key);
+      if (spec) {
+        quarantine.set(identity(spec.source, spec.flags), until);
+      }
+    }
     console.error(
-      `[${scope}] pattern(s) exceeded the ${budgetMs}ms execution budget and were ` +
-        `quarantined for this process: ${result.timedOutPatternKeys.join(', ')}`
+      `[${scope}] pattern(s) exceeded the ${budgetMs}ms execution budget twice in isolation ` +
+        `and are quarantined in this process for ${REGEX_QUARANTINE_TTL_MS / 60_000} min: ` +
+        result.timedOutPatternKeys.join(', ')
     );
   }
   return { ...result, quarantinedPatternKeys: skipped };
@@ -474,8 +576,11 @@ export async function probeRegexBacktracking(
   // `g`/`y` are stateful across `exec` calls; strip them so the probe measures
   // the pattern, not `lastIndex` bookkeeping.
   const safeFlags = flags.replace(/[gy]/g, '');
+  // One budget for the whole corpus, deliberately: the probe is a write-time
+  // stress test, and a pattern that is merely slow on every string should fail
+  // it even though no single string would overrun on its own.
   const result = await enqueue(() =>
-    evaluate([{ flags: safeFlags, key: 'probe', source }], probeCorpus(source), budgetMs)
+    evaluateGroup([{ flags: safeFlags, key: 'probe', source }], probeCorpus(source), budgetMs)
   );
   if (!result.incomplete) {
     return null;
@@ -498,7 +603,7 @@ export function resetRegexExecutor(): void {
   killWorker();
 }
 
-/** True when this exact pattern source has been quarantined in this process. */
+/** True while this exact pattern source is quarantined in this process. */
 export function isRegexQuarantined(source: string, flags = ''): boolean {
-  return quarantine.has(identity(source, flags));
+  return isQuarantined(identity(source, flags), Date.now());
 }
