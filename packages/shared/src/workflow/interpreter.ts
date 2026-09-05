@@ -1025,6 +1025,27 @@ async function runHumanNode(
     return node.onTimeout;
   }
 
+  const p = payload as { action?: string; value?: unknown };
+  const chosen =
+    node.type === 'humanDecision' ? node.options.find((o) => o.value === p.value) : undefined;
+  if (node.type === 'humanDecision' && !chosen) {
+    // The gateway validates the value against the step's options before it
+    // signals, so this is a malformed signal, not a human choice. Record the
+    // step as FAILED — not PASSED, which reported a decision nobody made — and
+    // take the onTimeout edge, the node's "no usable answer" route. This must
+    // stay a record + route rather than a throw: the recorded replay history
+    // for humanDecision walks exactly this path.
+    await safeRecord(dispatcher, {
+      error: `humanDecision '${recordingId}': value ${JSON.stringify(p.value)} is not one of ${node.options
+        .map((o) => o.value)
+        .join(', ')}`,
+      nodeId: recordingId,
+      outputs: payload,
+      status: 'FAILED',
+    });
+    return node.onTimeout;
+  }
+
   // Store result in context if requested
   const storeAs = 'storeAs' in node ? node.storeAs : undefined;
   if (storeAs) {
@@ -1034,23 +1055,12 @@ async function runHumanNode(
   await safeRecord(dispatcher, { nodeId: recordingId, outputs: payload, status: 'PASSED' });
 
   // Route based on node type
-  const p = payload as { action?: string; value?: unknown };
   if (node.type === 'humanApproval') {
     return p.action === 'reject' ? node.onReject : node.onApprove;
   }
   if (node.type === 'humanDecision') {
-    const chosen = node.options.find((o) => o.value === p.value);
-    if (!chosen) {
-      // The gateway validates the value against the step's options before it
-      // signals, so this is a malformed signal, not a human choice. Silently
-      // taking the onTimeout edge would report a decision nobody made.
-      throw new Error(
-        `humanDecision '${recordingId}': value ${JSON.stringify(p.value)} is not one of ${node.options
-          .map((o) => o.value)
-          .join(', ')}`
-      );
-    }
-    return chosen.next;
+    // `chosen` is defined here: the unknown-value case returned above.
+    return chosen?.next ?? node.onTimeout;
   }
   // humanInput + humanReview
   return node.onSubmit;
