@@ -175,6 +175,42 @@ describe('resolveAgent — run-start version pin', () => {
     expect(capturedWhere).toMatchObject({ key: 'reviewer', scope: 'GLOBAL', version: 2 });
     expect(r.version).toBe(2);
   });
+
+  it('does not apply the GLOBAL pin to a scoped override (TEAM v1 + GLOBAL v2, pin 2)', async () => {
+    // The pin is snapshotted from the GLOBAL lineage; a TEAM row numbered v1
+    // is a different lineage, not an older version. Filtering the TEAM query
+    // by version=2 found nothing and silently fell through to GLOBAL.
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    const wheres: any[] = [];
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) => {
+      wheres.push(args.where);
+      if (args.where.scope === 'TEAM') {
+        return args.where.version === undefined
+          ? agentRow({ scope: 'TEAM', teamId: 't1', version: 1 })
+          : null;
+      }
+      return agentRow({ version: 2 });
+    });
+
+    const r = await resolveAgent('reviewer', { agentVersions: { reviewer: 2 }, teamId: 't1' });
+    expect(r.model.scope).toBe('TEAM');
+    expect(r.version).toBe(1);
+    expect(wheres.find((w) => w.scope === 'TEAM')).not.toHaveProperty('version');
+  });
+
+  it('still freezes a run that falls through to GLOBAL at the pinned version', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    const wheres: any[] = [];
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) => {
+      wheres.push(args.where);
+      return args.where.scope === 'GLOBAL' ? agentRow({ version: 2 }) : null;
+    });
+    const r = await resolveAgent('reviewer', { agentVersions: { reviewer: 2 }, teamId: 't1' });
+    expect(r.version).toBe(2);
+    expect(wheres.find((w) => w.scope === 'GLOBAL')).toMatchObject({ version: 2 });
+  });
 });
 
 describe('resolveAgent — scope cascade', () => {

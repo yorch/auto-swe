@@ -40,9 +40,13 @@ export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>
  * when `ctx.channelId` is set, and the ORGANIZATION tier only when `ctx.orgId` is
  * present, so existing TEAM/GLOBAL behavior is intact.
  *
- * When the run carries a version pin for `key` (`ctx.agentVersions`), the exact
- * pinned version is resolved instead of the latest — freezing an in-flight run
- * against later Agent edits (the run-start snapshot).
+ * When the run carries a version pin for `key` (`ctx.agentVersions`), the pin
+ * applies to the GLOBAL row only: it was snapshotted from the GLOBAL lineage at
+ * run start (`createWorkflowRun`), and a version number is meaningless across
+ * lineages — TEAM v1 is not "older" than GLOBAL v2. Applying it at every tier
+ * silently defeated every scoped override whose version happened to differ. So
+ * a scoped override still wins and resolves its latest active version; a run
+ * that falls through to GLOBAL is frozen at the pinned version.
  *
  * Exported so the skill/tool shims can read an Agent row without forcing model
  * + credential resolution.
@@ -64,7 +68,6 @@ export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
         key,
         scope: 'WORKFLOW_TEMPLATE',
         workflowTemplateId: ctx.workflowTemplateId,
-        ...versionClause,
       },
     });
     if (row) {
@@ -76,7 +79,7 @@ export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
     const row = await prisma.agent.findFirst({
       include,
       orderBy,
-      where: { channelId: ctx.channelId, isActive: true, key, scope: 'CHANNEL', ...versionClause },
+      where: { channelId: ctx.channelId, isActive: true, key, scope: 'CHANNEL' },
     });
     if (row) {
       return row;
@@ -87,7 +90,7 @@ export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
     const row = await prisma.agent.findFirst({
       include,
       orderBy,
-      where: { isActive: true, key, scope: 'TEAM', teamId: ctx.teamId, ...versionClause },
+      where: { isActive: true, key, scope: 'TEAM', teamId: ctx.teamId },
     });
     if (row) {
       return row;
@@ -98,7 +101,7 @@ export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
     const row = await prisma.agent.findFirst({
       include,
       orderBy,
-      where: { isActive: true, key, orgId: ctx.orgId, scope: 'ORGANIZATION', ...versionClause },
+      where: { isActive: true, key, orgId: ctx.orgId, scope: 'ORGANIZATION' },
     });
     if (row) {
       return row;

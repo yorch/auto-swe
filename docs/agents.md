@@ -90,9 +90,12 @@ model-backed agent above.
 
 `Agent` is the versioned, governed, single source of truth for an agent's model, prompt, skills, and
 tools. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) resolves the most-specific active
-version through the cascade, pinned per run by the `WorkflowRun.agentVersions` snapshot or an
-explicit `key@version` ref, then binds the model (chasing `inheritsModelFrom`) plus credential,
-skills from `skillRefs`, and tools from `toolKeys`. `getModel` / `getModelSpec` / `loadAgentSkills`
+version through the cascade, then binds the model (chasing `inheritsModelFrom`) plus credential,
+skills from `skillRefs`, and tools from `toolKeys`. The per-run `WorkflowRun.agentVersions`
+snapshot pins the GLOBAL row only: it is taken from the GLOBAL lineage at run start, so a run that
+falls through to GLOBAL is frozen against later library edits, while a TEAM / ORGANIZATION /
+CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active version. An explicit
+`key@version` ref on an agent node feeds the same pin, so it too names a GLOBAL version. `getModel` / `getModelSpec` / `loadAgentSkills`
 / `loadAgentToolConfig` are thin shims over it.
 
 - **Resolution → execution:** `resolveAgentSpec` composes the result into an `AgentSpec`, which the
