@@ -26,7 +26,7 @@ import { useCancelWorkflowRun, useRetryWorkRequest, useWorkflowRun } from '@/hoo
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
-import { cn, formatDuration, formatRelativeTime } from '@/lib/utils';
+import { cn, formatClock, formatDuration, formatRelativeTime } from '@/lib/utils';
 import { SplitRunPanel } from './SplitRunPanel';
 import { TracesTab } from './TracesTab';
 
@@ -600,13 +600,6 @@ function LayoutC({
       }
     };
   }, [playing, speed]);
-
-  const formatClock = (ms: number) => {
-    const total = Math.floor(ms / 1000);
-    const m = Math.floor(total / 60);
-    const s = total % 60;
-    return `${m}:${String(s).padStart(2, '0')}`;
-  };
 
   const currentStepName = useMemo(() => {
     if (!run.startedAt || totalMs === 0) {

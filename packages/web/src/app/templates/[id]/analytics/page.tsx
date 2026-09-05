@@ -29,8 +29,6 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 
 const WINDOWS = [7, 14, 30, 90] as const;
 
-const formatUsdNullable = (n: number | null) => (n === null ? '—' : formatCost(n));
-
 export default function TemplateAnalyticsPage({ params }: PageProps) {
   const router = useRouter();
   const { id: rawId } = use(params);
@@ -109,12 +107,8 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
             <Stat label="Success rate" tone="moss" value={formatPercent(stats.successRate)} />
             <Stat label="p50 duration" value={formatDuration(stats.p50DurationMs)} />
             <Stat label="p95 duration" value={formatDuration(stats.p95DurationMs)} />
-            <Stat
-              label="Avg cost / run"
-              tone="amber"
-              value={formatUsdNullable(stats.avgCostPerRun)}
-            />
-            <Stat label="Total cost" value={formatUsdNullable(stats.totalCost)} />
+            <Stat label="Avg cost / run" tone="amber" value={formatCost(stats.avgCostPerRun)} />
+            <Stat label="Total cost" value={formatCost(stats.totalCost)} />
             <Stat label="Succeeded" tone="moss" value={stats.succeeded} />
             <Stat label="Failed" tone="brick" value={stats.failed} />
             <Stat

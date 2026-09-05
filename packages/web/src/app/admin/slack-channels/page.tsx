@@ -32,6 +32,7 @@ import {
 import { useTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -679,13 +680,6 @@ function EditChannelModal({
 
 // ── Memory modal ──────────────────────────────────────────────────────────────
 
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
-}
-
 // ── Memory item inline edit form ──────────────────────────────────────────────
 
 interface MemoryEditForm {
@@ -875,7 +869,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
                           <div className="flex items-center gap-3">
                             {consolidatedAt && (
                               <span className="rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-paper-500">
-                                consolidated {fmtDate(consolidatedAt)}
+                                consolidated {formatDate(consolidatedAt)}
                               </span>
                             )}
                             {item.agentKey && (
@@ -884,7 +878,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
                               </span>
                             )}
                             <span className="font-mono text-[10px] text-paper-600">
-                              {fmtDate(item.createdAt)}
+                              {formatDate(item.createdAt)}
                             </span>
                           </div>
                         </div>
@@ -958,18 +952,6 @@ const STATUS_COLORS: Record<ChannelOpenItemStatus, string> = {
   OPEN: 'text-amber-400',
   RESOLVED: 'text-moss-400',
 };
-
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const h = Math.floor(ms / 3_600_000);
-  if (h < 1) {
-    return 'less than an hour ago';
-  }
-  if (h < 24) {
-    return `${h}h ago`;
-  }
-  return `${Math.floor(h / 24)}d ago`;
-}
 
 function OpenItemsModal({
   channel,
@@ -1048,7 +1030,7 @@ function OpenItemsModal({
                           {STATUS_LABELS[item.status]}
                         </span>
                         <span>·</span>
-                        <span>{relativeTime(item.createdAt)}</span>
+                        <span>{formatRelativeTime(item.createdAt)}</span>
                         {item.ownerUserId && (
                           <>
                             <span>·</span>
@@ -1058,7 +1040,7 @@ function OpenItemsModal({
                         {item.lastNudgedAt && (
                           <>
                             <span>·</span>
-                            <span>nudged {relativeTime(item.lastNudgedAt)}</span>
+                            <span>nudged {formatRelativeTime(item.lastNudgedAt)}</span>
                           </>
                         )}
                       </div>
@@ -1159,7 +1141,7 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
                       <span>·</span>
                       <span>{e.userSlackId ? `by ${e.userSlackId}` : 'system'}</span>
                       <span>·</span>
-                      <span>{relativeTime(e.createdAt)}</span>
+                      <span>{formatRelativeTime(e.createdAt)}</span>
                       <span>·</span>
                       <span>{e.status}</span>
                       <span>·</span>

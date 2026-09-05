@@ -69,8 +69,8 @@ export function formatRelativeTime(date: string | Date): string {
 // is fixed and only its presentation follows the locale.
 const usd = lazy(() => new Intl.NumberFormat(undefined, { currency: 'USD', style: 'currency' }));
 
-export function formatCost(usdAmount: number): string {
-  if (usdAmount === 0) {
+export function formatCost(usdAmount: number | null): string {
+  if (usdAmount === null || usdAmount === 0) {
     return '—';
   }
   if (usdAmount < 0.01) {
@@ -108,6 +108,15 @@ const durationUnit = (unit: 'second' | 'minute' | 'hour', maximumFractionDigits:
 const seconds = durationUnit('second', 0);
 const minutes = durationUnit('minute', 1);
 const hours = durationUnit('hour', 2);
+
+/** `m:ss` playback position for the run scrubber — a clock, not a duration label,
+ *  so it deliberately does not go through `formatDuration`. */
+export function formatClock(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
 export function formatDuration(ms: number | null): string {
   if (ms === null) {

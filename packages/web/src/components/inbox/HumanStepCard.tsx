@@ -7,7 +7,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { useRespondToHumanStep } from '@/hooks/useInbox';
-import { formatRelativeTime } from '@/lib/utils';
+import { formatDuration, formatRelativeTime } from '@/lib/utils';
 import { DiffRenderer } from './DiffRenderer';
 
 const KIND_LABEL: Record<string, string> = {
@@ -90,13 +90,7 @@ function formatTimeRemaining(timeoutAt: string): string {
   if (msLeft <= 0) {
     return `expired ${formatRelativeTime(timeoutAt)}`;
   }
-  if (msLeft < 3_600_000) {
-    return `expires in ${Math.ceil(msLeft / 60_000)}m`;
-  }
-  if (msLeft < 86_400_000) {
-    return `expires in ${Math.ceil(msLeft / 3_600_000)}h`;
-  }
-  return `expires in ${Math.ceil(msLeft / 86_400_000)}d`;
+  return `expires in ${formatDuration(msLeft)}`;
 }
 
 function getTimeoutColor(timeoutAt: string): string {
