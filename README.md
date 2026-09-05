@@ -2,7 +2,7 @@
 
 [![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](./LICENSE)
 
-A durable, governed multi-agent workflow platform for software engineering teams. Workflows are versioned JSON DAGs executed on Temporal; agents run inside isolated Docker workspaces, with human approval gates, security scanning, and cost control applied to every run.
+A durable, governed multi-agent workflow platform for engineering and non-engineering teams. Workflows are versioned JSON DAGs executed on Temporal; agents run inside isolated Docker workspaces, with human approval gates, security scanning, and cost control applied to every run.
 
 Its flagship use case — and what the default template ships for — is **ticket in, reviewed and tested draft pull request out**. That flow is an ordinary workflow template built from the same node types any team can author, not privileged runtime code, so it is a starting point rather than the boundary.
 
@@ -113,11 +113,11 @@ For production deployment, see [`docs/deployment.md`](./docs/deployment.md) — 
 
 ## Usage
 
-### Submit a work request
+### Start a workflow
 
 Four equivalent entry points — pick the one that fits the workflow:
 
-1. **Web dashboard** (recommended) — open <http://localhost:3000>, sign in, click **+ Submit work request** in the header (or in the onboarding panel if you have no runs yet). The repo dropdown, brief, and budget tier are all there; on submit it routes you to the new run.
+1. **Web dashboard** (recommended) — open <http://localhost:3000>, sign in, and click **+ New request**. Pick a workflow template (for example the default engineering template), fill the inputs it asks for, and run it. The run appears in **Active runs** immediately.
 2. **Slack** — ask the channel teammate in a channel it is installed in, or use the slash command. It also posts run progress and HITL prompts back into the channel. See [`docs/slack-app-setup.md`](./docs/slack-app-setup.md).
 3. **CLI** (`auto-swe`) — export `AUTO_SWE_TOKEN` (mint one at Settings → API tokens) and run the CLI's `workflows` subcommands. See `packages/cli/README.md`.
 4. **Raw HTTP** — useful for scripting / CI. Use a PAT (mint one at Settings → API tokens) as the bearer:

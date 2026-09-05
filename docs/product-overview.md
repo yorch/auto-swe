@@ -6,10 +6,10 @@
 
 ## 1. Product Thesis
 
-**auto-swe is a durable, governed multi-agent workflow platform for software engineering teams.** A
-workflow is a versioned JSON DAG executed on Temporal, with agents running inside isolated Docker
-workspaces, human approval gates wherever a team wants them, and cost, security, and observability
-applied to every run.
+**auto-swe is a durable, governed multi-agent workflow platform for engineering and non-engineering
+teams.** A workflow is a versioned JSON DAG executed on Temporal, with agents running inside isolated
+Docker workspaces, human approval gates wherever a team wants them, and cost, security, and
+observability applied to every run.
 
 The flagship use case — and the one the default template ships for — is **ticket in, reviewed and
 tested draft pull request out.** That flow is not privileged runtime code: it is an ordinary
@@ -34,10 +34,11 @@ it. (§7 states precisely how far that guarantee reaches.)
 
 | Persona | What they get | Primary surfaces |
 |---|---|---|
-| **Engineering teams** (more tickets than engineers) | Autonomous implementation of well-specified tickets, with quality gates and review applied by default | Dashboard submit flow, Slack teammate, Epics |
-| **Tech leads** | Guaranteed human-governed merge, full visibility into what the agent did and why, HITL approval gates | Run viewer, HITL inbox, review network output |
+| **Engineering teams** | Autonomous implementation of well-specified tickets, with quality gates and review applied by default | Dashboard new-request flow, Slack teammate, Epics |
+| **Support / Ops, Product, Content, and other teams** | Domain-specific workflows over Zendesk, Notion, Slack, Jira/Linear, and other integrations, governed by the same autonomy and approval controls | Dashboard new-request flow, Slack teammate, workflow library |
+| **Tech leads** | Guaranteed human-governed outcomes, full visibility into what the agent did and why, HITL approval gates | Run viewer, HITL inbox, review network output |
 | **Platform / DevOps engineers** | Run auto-swe as shared infrastructure for other teams: integrations, model config, RBAC, security policy | Admin console, team config, scanner patterns |
-| **Workflow authors** | Automate team-specific engineering processes as versioned DAGs — no code change, no redeploy | Visual template editor, NL authoring, [CLI bundles](./bundles.md) |
+| **Workflow authors** | Automate team-specific processes as versioned DAGs — no code change, no redeploy | Visual template editor, NL authoring, [CLI bundles](./bundles.md) |
 | **CI/CD pipeline authors** | A scriptable pipeline step (PAT + CLI/REST) that fires on issue creation | CLI, REST API, scheduled work requests |
 
 The Slack teammate cuts across all of these: it answers questions in-channel with repo and run
