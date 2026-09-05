@@ -178,11 +178,25 @@ async function resolveModelForAgent(
  * when the agent (or its model) is absent.
  */
 export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<ResolvedAgent> {
-  // Version pin is part of the cache key so two runs pinned to different
-  // versions of the same key+scope don't collide within the TTL.
-  const pin = ctx?.agentVersions?.[key] ?? '';
-  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.channelId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pin}`;
+  // The whole version-pin map is part of the cache key, not just this key's
+  // pin: an `inheritsModelFrom` chain resolves the PARENT under the same ctx,
+  // so two canary arms pinning different parent versions would otherwise share
+  // one entry for the child within the TTL.
+  const pins = stablePins(ctx?.agentVersions);
+  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.channelId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pins}`;
   return withCache(cacheKey, configCacheTtlMs(), () => resolveAgentUncached(key, ctx));
+}
+
+/** Key-sorted JSON of the pin map, so insertion order cannot split the cache. */
+function stablePins(pins: Record<string, number> | undefined): string {
+  if (!pins) {
+    return '';
+  }
+  return JSON.stringify(
+    Object.keys(pins)
+      .sort()
+      .map((k) => [k, pins[k]])
+  );
 }
 
 async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<ResolvedAgent> {

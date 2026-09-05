@@ -1,14 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { agentFindFirst } = vi.hoisted(() => ({ agentFindFirst: vi.fn() }));
+const { agentFindFirst, cacheKeys } = vi.hoisted(() => ({
+  agentFindFirst: vi.fn(),
+  cacheKeys: [] as string[],
+}));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: { agent: { findFirst: agentFindFirst } },
 }));
 
-// Pass-through cache so resolution isn't memoized across cases.
+// Pass-through cache so resolution isn't memoized across cases; records the
+// keys so a test can assert what would (not) collide within the TTL.
 vi.mock('@auto-swe/shared/config/cache', () => ({
   configCacheTtlMs: () => 0,
-  withCache: (_k: string, _t: number, fn: () => unknown) => fn(),
+  withCache: (k: string, _t: number, fn: () => unknown) => {
+    cacheKeys.push(k);
+    return fn();
+  },
 }));
 
 vi.mock('../providerUtils.js', () => ({
@@ -210,6 +217,28 @@ describe('resolveAgent — run-start version pin', () => {
     const r = await resolveAgent('reviewer', { agentVersions: { reviewer: 2 }, teamId: 't1' });
     expect(r.version).toBe(2);
     expect(wheres.find((w) => w.scope === 'GLOBAL')).toMatchObject({ version: 2 });
+  });
+});
+
+describe('resolveAgent — cache key', () => {
+  it('keys on the whole pin map so inheritsModelFrom arms do not share an entry', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) =>
+      args.where.key === 'securityReviewer'
+        ? agentRow({ inheritsModelFrom: 'reviewer', key: 'securityReviewer', modelSpec: null })
+        : agentRow({ key: 'reviewer', version: args.where.version ?? 1 })
+    );
+    cacheKeys.length = 0;
+    await resolveAgent('securityReviewer', { agentVersions: { reviewer: 2, securityReviewer: 1 } });
+    await resolveAgent('securityReviewer', { agentVersions: { reviewer: 3, securityReviewer: 1 } });
+    // Same child pin, different parent pin → different entries.
+    expect(cacheKeys[0]).not.toBe(cacheKeys[1]);
+
+    // Insertion order of the pin map must not split the cache.
+    cacheKeys.length = 0;
+    await resolveAgent('securityReviewer', { agentVersions: { reviewer: 2, securityReviewer: 1 } });
+    await resolveAgent('securityReviewer', { agentVersions: { reviewer: 2, securityReviewer: 1 } });
+    expect(cacheKeys[0]).toBe(cacheKeys[1]);
   });
 });
 
