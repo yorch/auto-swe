@@ -490,7 +490,7 @@ export const WorkflowSpecSchema = z
         path: ['entry'],
       });
     }
-    const isNodeId = (id: string): boolean => id in spec.nodes;
+    const isNodeId = (id: string): boolean => Object.hasOwn(spec.nodes, id);
     for (const [id, node] of Object.entries(spec.nodes)) {
       for (const [field, ref] of nodeEdges(node)) {
         if (!isNodeId(ref)) {
