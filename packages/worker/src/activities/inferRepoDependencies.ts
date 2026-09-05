@@ -2,12 +2,12 @@ import type { ModelBackedAgentKey } from '@auto-swe/shared/agentKeys';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { EDGE_KINDS, repoLabel } from '@auto-swe/shared/lib/repoDependency';
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { findEdgeWriteTarget } from '../lib/repoDependencyEdgeWrite.js';
 import { runAgent } from './runAgent.js';
 
@@ -234,26 +234,15 @@ export async function inferRepoDependencies(
     });
     const rawEdges = result.object?.edges ?? [];
 
-    // Advisory scan of the model's free-text rationale — non-blocking; mirrors
-    // implementerSession.ts's post-generate output scan. A DB failure here
-    // must not abort the activity.
+    // Advisory scan of the model's free-text rationale — the same non-blocking
+    // post-generate scan the implementer paths run (the helper never throws).
     const rationaleText = rawEdges
       .map((e) => e.rationale)
       .filter((r): r is string => !!r)
       .join('\n');
-    if (rationaleText) {
-      try {
-        const scan = await scanSkillContent(rationaleText);
-        if (!scan.safe) {
-          tracer.addActivityEvent({
-            name: 'repoDependency.suspicious_inference',
-            outputJson: { warnings: scan.warnings },
-          });
-        }
-      } catch {
-        // Scan failure is non-fatal — inference still proceeds.
-      }
-    }
+    await recordSuspiciousLlmOutput(tracer, rationaleText, {
+      name: 'repoDependency.suspicious_inference',
+    });
 
     const accepted = acceptEdges(rawEdges, connection.id, candidateIds);
     const threshold = await resolveSetting('repoDependency.autoPromoteThreshold', ctx);

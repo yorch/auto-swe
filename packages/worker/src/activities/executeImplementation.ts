@@ -1,6 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { FigmaDesignSummary } from '@auto-swe/shared/lib/integrations/figmaDesign';
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import {
   resolveIssueTrackerConfig,
   resolveWorkflowDefaults,
@@ -24,6 +23,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
+import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import {
   type CrossRepoStepOptions,
@@ -313,22 +313,8 @@ export async function executeImplementation(
         );
       }
 
-      // LLM output scanner — advisory, non-blocking. A DB/network failure here
-      // must not abort the implementation activity.
-      if (genResult.text) {
-        try {
-          const outputScan = await scanSkillContent(genResult.text);
-          if (!outputScan.safe) {
-            tracer.addActivityEvent({
-              inputJson: { iteration },
-              name: 'llm.suspicious_output',
-              outputJson: { warnings: outputScan.warnings },
-            });
-          }
-        } catch {
-          // Scan failure is non-fatal — implementation continues without the advisory check
-        }
-      }
+      // LLM output scanner — advisory, non-blocking (the helper never throws).
+      await recordSuspiciousLlmOutput(tracer, genResult.text ?? '', { inputJson: { iteration } });
 
       // Always record the LLM call per TDD iteration, even when the model only
       // makes tool calls and produces no text output.

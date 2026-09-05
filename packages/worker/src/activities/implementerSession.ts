@@ -1,5 +1,4 @@
 import { prisma } from '@auto-swe/shared/db';
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type {
   CodeResult,
   CodeSecurityFinding,
@@ -14,6 +13,7 @@ import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
+import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import {
@@ -161,22 +161,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       );
     }
 
-    // LLM output scanner — advisory, non-blocking; mirrors the initial
-    // implementation path. A DB failure here must not abort the activity.
-    if (genResult.text) {
-      try {
-        const outputScan = await scanSkillContent(genResult.text);
-        if (!outputScan.safe) {
-          tracer.addActivityEvent({
-            inputJson: { mode },
-            name: 'llm.suspicious_output',
-            outputJson: { warnings: outputScan.warnings },
-          });
-        }
-      } catch {
-        // Scan failure is non-fatal — the fix continues without the advisory check
-      }
-    }
+    // LLM output scanner — advisory, non-blocking (the helper never throws).
+    await recordSuspiciousLlmOutput(tracer, genResult.text ?? '', { inputJson: { mode } });
 
     // Always record the LLM call, even when the model only makes tool calls
     // and produces no text output.

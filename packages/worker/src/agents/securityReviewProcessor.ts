@@ -1,12 +1,7 @@
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
-import {
-  currentActivityType,
-  currentAttempt,
-  currentWorkflowId,
-  currentWorkflowRunId,
-} from '../lib/activityContext.js';
+import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
@@ -122,12 +117,9 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
       throw e;
     } finally {
       span.end();
-      await tracer.persist(
-        await currentWorkflowRunId(),
-        currentActivityType(),
-        'securityReview',
-        currentAttempt()
-      );
+      // Same persist path as every other activity, so the rows carry the OTel
+      // trace/span ids and any future change to run/attempt resolution lands here.
+      await persistActivityTrace(tracer, 'securityReview');
     }
   });
 }
