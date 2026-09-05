@@ -11,13 +11,6 @@ import type {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-export interface CreateWorkRequestBody {
-  externalTicketId: string;
-  description: string;
-  repoIds: string[];
-  budgetTier?: 'STANDARD' | 'LARGE' | 'EPIC';
-}
-
 export interface CreateWorkRequestResponse {
   data: { workflowIds: string[]; workRequestId: string };
 }
@@ -154,14 +147,5 @@ export function useRetryWorkRequest() {
       qc.invalidateQueries({ queryKey: ['workflows'] });
       qc.invalidateQueries({ queryKey: ['workflow-runs'] });
     },
-  });
-}
-
-export function useCreateWorkRequest() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateWorkRequestBody) =>
-      api.post<CreateWorkRequestResponse>('/api/v1/work-requests', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflows'] }),
   });
 }
