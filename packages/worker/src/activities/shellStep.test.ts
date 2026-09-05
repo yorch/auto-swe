@@ -117,6 +117,7 @@ describe('runShellStep — token redaction', () => {
     // The command itself still succeeded — only the push failed.
     expect(result.passed).toBe(true);
     expect(result.summary).toMatch(/git push failed/);
+    expect(result.persisted).toBe(false);
     expect(result.summary).not.toContain(TOKEN);
     expect(result.summary).not.toContain(CLONE_URL);
   });

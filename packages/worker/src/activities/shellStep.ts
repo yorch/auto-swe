@@ -66,6 +66,13 @@ export interface ShellStepResult {
   artifactId?: string;
   /** SHA of the auto-commit, if any changes were made. */
   committedSha?: string;
+  /**
+   * False when the command succeeded but the auto-commit push failed, so the
+   * changes exist only in the discarded volume. `passed` stays true in that
+   * case (the command itself did not fail); specs that need the changes on
+   * the branch can `cond` on this instead of parsing the summary.
+   */
+  persisted: boolean;
   /** Files touched relative to the prior HEAD. Empty when the command made no changes. */
   filesChanged: string[];
 }
@@ -312,6 +319,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
         exitCode: 126, // POSIX "command invoked cannot execute"
         filesChanged: [],
         passed: false,
+        persisted: false,
         summary: err.message,
       };
     }
@@ -429,6 +437,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       exitCode: result.exitCode,
       filesChanged: finalize.filesChanged,
       passed,
+      persisted: !pushError,
       ...(result.signal ? { signal: result.signal } : {}),
       ...(finalize.committedSha ? { committedSha: finalize.committedSha } : {}),
       // Defense in depth: every summary built from `tail`/`passSummary` below
