@@ -107,8 +107,32 @@ export default function DashboardPage() {
     );
   }
 
+  // The request modals live outside both branches: the onboarding view's
+  // "+ New request" button toggles `newOpen` too, and an early return that
+  // omitted the modal left that button doing nothing on a fresh deployment.
+  const requestModals = (
+    <>
+      <NewRequestModal
+        onClose={() => setNewOpen(false)}
+        onSelect={(t) => {
+          setRunTarget(t);
+          setNewOpen(false);
+        }}
+        open={newOpen}
+      />
+      {runTarget && (
+        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
+      )}
+    </>
+  );
+
   if (all.length === 0) {
-    return <DashboardOnboarding onNewRequest={() => setNewOpen(true)} role={role} />;
+    return (
+      <>
+        <DashboardOnboarding onNewRequest={() => setNewOpen(true)} role={role} />
+        {requestModals}
+      </>
+    );
   }
 
   const now = new Date();
@@ -142,17 +166,7 @@ export default function DashboardPage() {
           title="What do you want to achieve?"
         />
       </div>
-      <NewRequestModal
-        onClose={() => setNewOpen(false)}
-        onSelect={(t) => {
-          setRunTarget(t);
-          setNewOpen(false);
-        }}
-        open={newOpen}
-      />
-      {runTarget && (
-        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
-      )}
+      {requestModals}
 
       {/* HITL inbox — shown first so approvals are never missed */}
       <InboxWidget steps={pendingApprovals} />
