@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useCreateEpic, useEpics } from '@/hooks/useEpics';
 import { useRepositories } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
@@ -86,61 +87,56 @@ export default function EpicsPage() {
       </Card>
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-ink-600 bg-ink-800">
-              <th className="text-left px-4 py-3 font-medium">Ticket</th>
-              <th className="text-left px-4 py-3 font-medium">Description</th>
-              <th className="text-left px-4 py-3 font-medium">Repos</th>
-              <th className="text-left px-4 py-3 font-medium">Status</th>
-              <th className="text-left px-4 py-3 font-medium">Created</th>
-            </tr>
-          </thead>
+        <Table>
+          <THead className="bg-ink-800">
+            <Th variant="plain">Ticket</Th>
+            <Th variant="plain">Description</Th>
+            <Th variant="plain">Repos</Th>
+            <Th variant="plain">Status</Th>
+            <Th variant="plain">Created</Th>
+          </THead>
           <tbody>
             {epicsLoading && (
-              <tr>
-                <td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+              <TRow>
+                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
                   Loading…
-                </td>
-              </tr>
+                </Td>
+              </TRow>
             )}
             {!epicsLoading && epicsError && (
-              <tr>
-                <td className="px-4 py-6 text-center text-xs text-brick-400" colSpan={5}>
+              <TRow>
+                <Td className="px-4 py-6 text-center text-xs text-brick-400" colSpan={5}>
                   {errMsg(epicsError, 'Failed to load epics')}
-                </td>
-              </tr>
+                </Td>
+              </TRow>
             )}
             {!epicsLoading && !epicsError && epics.length === 0 && (
-              <tr>
-                <td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+              <TRow>
+                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
                   No epics yet. Launch one to fan work out across repositories.
-                </td>
-              </tr>
+                </Td>
+              </TRow>
             )}
             {epics.map((epic) => (
-              <tr
-                className="border-b border-ink-600 hover:bg-ink-800 transition-colors"
-                key={epic.workRequestId}
-              >
-                <td className="px-4 py-3">
+              <TRow hover key={epic.workRequestId}>
+                <Td className="px-4 py-3">
                   <Link
                     className="text-ember-400 hover:underline font-medium"
                     href={`/epics/${encodeURIComponent(epic.epicWorkflowId)}`}
                   >
                     {epic.externalTicketId}
                   </Link>
-                </td>
-                <td className="px-4 py-3 text-paper-400 truncate max-w-md">{epic.description}</td>
-                <td className="px-4 py-3 font-mono text-xs text-paper-400">{epic.repoCount}</td>
-                <td className="px-4 py-3">
+                </Td>
+                <Td className="px-4 py-3 text-paper-400 truncate max-w-md">{epic.description}</Td>
+                <Td className="px-4 py-3 font-mono text-xs text-paper-400">{epic.repoCount}</Td>
+                <Td className="px-4 py-3">
                   <StatusBadge status={epic.status} />
-                </td>
-                <td className="px-4 py-3 text-paper-400">{formatRelativeTime(epic.createdAt)}</td>
-              </tr>
+                </Td>
+                <Td className="px-4 py-3 text-paper-400">{formatRelativeTime(epic.createdAt)}</Td>
+              </TRow>
             ))}
           </tbody>
-        </table>
+        </Table>
       </Card>
 
       <Modal

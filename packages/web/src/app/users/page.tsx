@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/Input';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Th } from '@/components/ui/Th';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
@@ -199,35 +199,33 @@ export default function UsersPage() {
           title="Active members"
         />
         <Card className="overflow-hidden p-0" variant="inset">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ink-600">
-                <Th>Email</Th>
-                <Th>Role</Th>
-                <Th>Slack</Th>
-                <Th>Teams</Th>
-                <Th align="right">Actions</Th>
-              </tr>
-            </thead>
+          <Table>
+            <THead>
+              <Th>Email</Th>
+              <Th>Role</Th>
+              <Th>Slack</Th>
+              <Th>Teams</Th>
+              <Th align="right">Actions</Th>
+            </THead>
             <tbody>
               {active.map((u) => (
-                <tr className="border-b border-ink-600 last:border-b-0" key={u.id}>
-                  <td className="px-4 py-3 text-sm text-paper-100">{u.email}</td>
-                  <td className="px-4 py-3">
+                <TRow key={u.id}>
+                  <Td className="px-4 py-3 text-sm text-paper-100">{u.email}</Td>
+                  <Td className="px-4 py-3">
                     <span className="rounded border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
                       {u.role}
                     </span>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-paper-400">
+                  </Td>
+                  <Td className="px-4 py-3 font-mono text-xs text-paper-400">
                     {u.slackId ?? <span className="text-paper-500">—</span>}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-paper-400">
+                  </Td>
+                  <Td className="px-4 py-3 font-mono text-xs text-paper-400">
                     {(u.memberships ?? [])
                       .map((m) => m.team?.name)
                       .filter(Boolean)
                       .join(', ') || <span className="text-paper-500">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-right">
+                  </Td>
+                  <Td className="px-4 py-3 text-right">
                     <Button
                       disabled={updateUser.isPending}
                       onClick={() => handleSuspend(u.id)}
@@ -236,21 +234,21 @@ export default function UsersPage() {
                     >
                       Suspend
                     </Button>
-                  </td>
-                </tr>
+                  </Td>
+                </TRow>
               ))}
               {active.length === 0 && (
-                <tr>
-                  <td
+                <TRow>
+                  <Td
                     className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
                     colSpan={5}
                   >
                     no active members
-                  </td>
-                </tr>
+                  </Td>
+                </TRow>
               )}
             </tbody>
-          </table>
+          </Table>
         </Card>
       </section>
 

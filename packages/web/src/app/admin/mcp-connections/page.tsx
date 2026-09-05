@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type McpConnectionRow,
   useCreateMcpConnection,
@@ -344,33 +345,29 @@ export default function AdminMcpConnectionsPage() {
                 No MCP connections yet. Create one to enable MCP tools for an agent.
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-ink-600">
-                    <th className="py-2 text-left text-xs text-paper-500">Name</th>
-                    <th className="py-2 text-left text-xs text-paper-500">URL</th>
-                    <th className="py-2 text-left text-xs text-paper-500">
-                      Timeouts (list/call ms)
-                    </th>
-                    <th className="py-2 text-left text-xs text-paper-500">Team</th>
-                    <th className="py-2" />
-                  </tr>
-                </thead>
+              <Table>
+                <THead>
+                  <Th variant="compact">Name</Th>
+                  <Th variant="compact">URL</Th>
+                  <Th variant="compact">Timeouts (list/call ms)</Th>
+                  <Th variant="compact">Team</Th>
+                  <Th variant="compact" />
+                </THead>
                 <tbody>
                   {connections.map((c) => (
-                    <tr className="border-b border-ink-600 last:border-0" key={c.id}>
-                      <td className="py-2 pr-4 font-mono text-xs text-paper-100">{c.name}</td>
-                      <td className="max-w-xs py-2 pr-4">
+                    <TRow key={c.id}>
+                      <Td className="py-2 pr-4 font-mono text-xs text-paper-100">{c.name}</Td>
+                      <Td className="max-w-xs py-2 pr-4">
                         <code className="block truncate font-mono text-[11px] text-paper-300">
                           {c.config?.url}
                         </code>
-                      </td>
-                      <td className="py-2 pr-4 text-xs text-paper-300">
+                      </Td>
+                      <Td className="py-2 pr-4 text-xs text-paper-300">
                         {c.config?.listTimeoutMs ?? 'default'} /{' '}
                         {c.config?.callTimeoutMs ?? 'default'}
-                      </td>
-                      <td className="py-2 pr-4 text-xs text-paper-300">{c.team?.name ?? '—'}</td>
-                      <td className="py-2 text-right">
+                      </Td>
+                      <Td className="py-2 pr-4 text-xs text-paper-300">{c.team?.name ?? '—'}</Td>
+                      <Td className="py-2 text-right">
                         <div className="flex justify-end gap-2">
                           <Button onClick={() => setEditTarget(c)} size="sm" variant="secondary">
                             Edit
@@ -379,11 +376,11 @@ export default function AdminMcpConnectionsPage() {
                             Delete
                           </Button>
                         </div>
-                      </td>
-                    </tr>
+                      </Td>
+                    </TRow>
                   ))}
                 </tbody>
-              </table>
+              </Table>
             )}
           </Card>
         }

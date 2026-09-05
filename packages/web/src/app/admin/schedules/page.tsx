@@ -12,6 +12,7 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRepositories } from '@/hooks/useRepositories';
 import {
@@ -245,21 +246,21 @@ function ScheduleRow({
 
   return (
     <>
-      <tr className="border-b border-ink-600 last:border-0">
-        <td className="py-2 pr-4">
+      <TRow>
+        <Td className="py-2 pr-4">
           <div className="font-medium text-paper-100">{schedule.name}</div>
           <div className="font-mono text-[10px] text-paper-500">{schedule.externalTicketId}</div>
-        </td>
-        <td className="py-2 pr-4 text-paper-400">
+        </Td>
+        <Td className="py-2 pr-4 text-paper-400">
           {schedule.repository.organizationName}/{schedule.repository.repoName}
-        </td>
-        <td className="py-2 pr-4 font-mono text-xs text-paper-300">{schedule.cronExpression}</td>
-        <td className="py-2 pr-4 text-paper-400">
+        </Td>
+        <Td className="py-2 pr-4 font-mono text-xs text-paper-300">{schedule.cronExpression}</Td>
+        <Td className="py-2 pr-4 text-paper-400">
           {schedule.template
             ? `${schedule.template.name} v${schedule.templateVersion ?? '?'}`
             : 'team default'}
-        </td>
-        <td className="py-2 pr-4">
+        </Td>
+        <Td className="py-2 pr-4">
           <span
             className={`font-mono text-[10px] uppercase tracking-wider ${
               schedule.isActive ? 'text-ember-400' : 'text-paper-500'
@@ -272,12 +273,12 @@ function ScheduleRow({
               missing in temporal
             </span>
           )}
-        </td>
-        <td className="py-2 pr-4 text-xs text-paper-400">{fmtTime(schedule.schedule.nextRunAt)}</td>
-        <td className="py-2 pr-4 text-xs text-paper-400">
+        </Td>
+        <Td className="py-2 pr-4 text-xs text-paper-400">{fmtTime(schedule.schedule.nextRunAt)}</Td>
+        <Td className="py-2 pr-4 text-xs text-paper-400">
           {fmtTime(schedule.schedule.lastRunAt ?? schedule.lastFiredAt)}
-        </td>
-        <td className="py-2 text-right">
+        </Td>
+        <Td className="py-2 text-right">
           <div className="flex justify-end gap-1">
             <Button
               disabled={fire.isPending}
@@ -301,14 +302,14 @@ function ScheduleRow({
               Delete
             </Button>
           </div>
-        </td>
-      </tr>
+        </Td>
+      </TRow>
       {error && (
-        <tr>
-          <td className="pb-2 text-xs text-brick-400" colSpan={8}>
+        <TRow>
+          <Td className="pb-2 text-xs text-brick-400" colSpan={8}>
             {error}
-          </td>
-        </tr>
+          </Td>
+        </TRow>
       )}
     </>
   );
@@ -339,25 +340,23 @@ export default function AdminSchedulesPage() {
           {!schedules?.length ? (
             <EmptyState title="No schedules yet. Create one with the button above." />
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
-                  <th className="py-2 text-left text-xs text-paper-500">Name</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Repository</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Cron</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Template</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Status</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Next fire</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Last fire</th>
-                  <th className="py-2" />
-                </tr>
-              </thead>
+            <Table>
+              <THead>
+                <Th variant="compact">Name</Th>
+                <Th variant="compact">Repository</Th>
+                <Th variant="compact">Cron</Th>
+                <Th variant="compact">Template</Th>
+                <Th variant="compact">Status</Th>
+                <Th variant="compact">Next fire</Th>
+                <Th variant="compact">Last fire</Th>
+                <Th variant="compact" />
+              </THead>
               <tbody>
                 {schedules.map((s) => (
                   <ScheduleRow key={s.id} onDelete={() => setDeleteTarget(s)} schedule={s} />
                 ))}
               </tbody>
-            </table>
+            </Table>
           )}
         </QueryBoundary>
       </Card>

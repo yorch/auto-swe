@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useExportBundle, useInstallBundleFromUrl, useInstalledBundles } from '@/hooks/useBundles';
 import { errMsg } from '@/lib/errors';
 
@@ -128,33 +129,31 @@ export default function AdminBundlesPage() {
           {!bundles || bundles.length === 0 ? (
             <EmptyState className="py-4" title="No bundles installed yet." />
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
-                  <th className="py-2 text-left text-xs text-paper-500">Name</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Version</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Trust</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Source</th>
-                </tr>
-              </thead>
+            <Table>
+              <THead>
+                <Th variant="compact">Name</Th>
+                <Th variant="compact">Version</Th>
+                <Th variant="compact">Trust</Th>
+                <Th variant="compact">Source</Th>
+              </THead>
               <tbody>
                 {bundles.map((b) => (
-                  <tr className="border-b border-ink-600 last:border-0" key={b.name}>
-                    <td className="py-2 pr-4 font-mono text-xs text-paper-100">{b.name}</td>
-                    <td className="py-2 pr-4 text-paper-300">{b.version}</td>
-                    <td className="py-2 pr-4">
+                  <TRow key={b.name}>
+                    <Td className="py-2 pr-4 font-mono text-xs text-paper-100">{b.name}</Td>
+                    <Td className="py-2 pr-4 text-paper-300">{b.version}</Td>
+                    <Td className="py-2 pr-4">
                       <span
                         className={b.trustState === 'VERIFIED' ? 'text-moss-400' : 'text-amber-400'}
                       >
                         {b.trustState}
                         {b.signedBy ? ` · ${b.signedBy}` : ''}
                       </span>
-                    </td>
-                    <td className="py-2 pr-4 text-xs text-paper-400">{b.source ?? '—'}</td>
-                  </tr>
+                    </Td>
+                    <Td className="py-2 pr-4 text-xs text-paper-400">{b.source ?? '—'}</Td>
+                  </TRow>
                 ))}
               </tbody>
-            </table>
+            </Table>
           )}
         </QueryBoundary>
       </Card>

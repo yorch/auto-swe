@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useWorkflows } from '@/hooks/useRuns';
 import { formatCost, formatRelativeTime } from '@/lib/utils';
@@ -54,39 +55,39 @@ export default function WorkflowsPage() {
       <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-ink-600 bg-ink-800">
-              <th className="text-left px-4 py-3 font-medium">Repository</th>
-              <th className="text-left px-4 py-3 font-medium">Branch</th>
-              <th className="text-left px-4 py-3 font-medium">Status</th>
-              <th className="text-left px-4 py-3 font-medium">Updated</th>
-              <th className="text-right px-4 py-3 font-medium">Cost</th>
-            </tr>
-          </thead>
+        <Table>
+          <THead className="bg-ink-800">
+            <Th variant="plain">Repository</Th>
+            <Th variant="plain">Branch</Th>
+            <Th variant="plain">Status</Th>
+            <Th variant="plain">Updated</Th>
+            <Th align="right" variant="plain">
+              Cost
+            </Th>
+          </THead>
           <tbody>
             {(workflows ?? []).map((w) => (
-              <tr className="border-b border-ink-600 hover:bg-ink-800 transition-colors" key={w.id}>
-                <td className="px-4 py-3">
+              <TRow hover key={w.id}>
+                <Td className="px-4 py-3">
                   <Link
                     className="text-ember-400 hover:underline font-medium"
                     href={`/workflows/${w.id}`}
                   >
                     {w.repository?.organizationName}/{w.repository?.repoName}
                   </Link>
-                </td>
-                <td className="px-4 py-3 text-paper-400">{w.assignedBranch}</td>
-                <td className="px-4 py-3">
+                </Td>
+                <Td className="px-4 py-3 text-paper-400">{w.assignedBranch}</Td>
+                <Td className="px-4 py-3">
                   <StatusBadge status={w.currentStatus} />
-                </td>
-                <td className="px-4 py-3 text-paper-400">{formatRelativeTime(w.updatedAt)}</td>
-                <td className="px-4 py-3 text-right text-xs text-paper-400">
+                </Td>
+                <Td className="px-4 py-3 text-paper-400">{formatRelativeTime(w.updatedAt)}</Td>
+                <Td className="px-4 py-3 text-right text-xs text-paper-400">
                   {formatCost(w.costUsdAccrued)}
-                </td>
-              </tr>
+                </Td>
+              </TRow>
             ))}
           </tbody>
-        </table>
+        </Table>
       </Card>
       <Pagination
         hasNext={offset + PAGE_SIZE < total}

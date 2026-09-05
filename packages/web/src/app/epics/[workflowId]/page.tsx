@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEpic } from '@/hooks/useEpics';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -89,40 +90,35 @@ export default function EpicDetailPage({ params }: PageProps) {
         <CardHeader className="px-4 pt-4">
           <CardTitle>Child workflows ({epic.children.length})</CardTitle>
         </CardHeader>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-ink-600 bg-ink-800">
-              <th className="text-left px-4 py-3 font-medium">Repository</th>
-              <th className="text-left px-4 py-3 font-medium">Status</th>
-              <th className="text-left px-4 py-3 font-medium">Branch</th>
-              <th className="text-left px-4 py-3 font-medium">Workflow</th>
-            </tr>
-          </thead>
+        <Table>
+          <THead className="bg-ink-800">
+            <Th variant="plain">Repository</Th>
+            <Th variant="plain">Status</Th>
+            <Th variant="plain">Branch</Th>
+            <Th variant="plain">Workflow</Th>
+          </THead>
           <tbody>
             {epic.children.length === 0 && (
-              <tr>
-                <td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={4}>
+              <TRow>
+                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={4}>
                   No child workflows yet — the Planner agent is still decomposing the epic.
-                </td>
-              </tr>
+                </Td>
+              </TRow>
             )}
             {epic.children.map((child) => (
-              <tr
-                className="border-b border-ink-600 hover:bg-ink-800 transition-colors"
-                key={child.temporalWorkflowId ?? child.repoId ?? child.status}
-              >
-                <td className="px-4 py-3 text-paper-100">
+              <TRow hover key={child.temporalWorkflowId ?? child.repoId ?? child.status}>
+                <Td className="px-4 py-3 text-paper-100">
                   {child.repoName
                     ? `${child.organizationName}/${child.repoName}`
                     : (child.repoId ?? '—')}
-                </td>
-                <td className="px-4 py-3">
+                </Td>
+                <Td className="px-4 py-3">
                   <StatusBadge status={child.status} />
-                </td>
-                <td className="px-4 py-3 font-mono text-xs text-paper-400">
+                </Td>
+                <Td className="px-4 py-3 font-mono text-xs text-paper-400">
                   {child.branch ?? '—'}
-                </td>
-                <td className="px-4 py-3">
+                </Td>
+                <Td className="px-4 py-3">
                   {child.workflowId ? (
                     <Link
                       className="text-ember-400 hover:underline font-mono text-xs"
@@ -133,11 +129,11 @@ export default function EpicDetailPage({ params }: PageProps) {
                   ) : (
                     <span className="font-mono text-xs text-paper-500">not started</span>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </TRow>
             ))}
           </tbody>
-        </table>
+        </Table>
       </Card>
     </div>
   );

@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Th } from '@/components/ui/Th';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
 import { cn, formatDate, formatRelativeTime } from '@/lib/utils';
@@ -115,19 +115,17 @@ export default function AdminAccessTokensPage() {
               no tokens issued yet
             </p>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
-                  <Th>User</Th>
-                  <Th>Name</Th>
-                  <Th>Prefix</Th>
-                  <Th>Created</Th>
-                  <Th>Last used</Th>
-                  <Th>Expires</Th>
-                  <Th>Status</Th>
-                  <Th align="right">Actions</Th>
-                </tr>
-              </thead>
+            <Table>
+              <THead>
+                <Th>User</Th>
+                <Th>Name</Th>
+                <Th>Prefix</Th>
+                <Th>Created</Th>
+                <Th>Last used</Th>
+                <Th>Expires</Th>
+                <Th>Status</Th>
+                <Th align="right">Actions</Th>
+              </THead>
               <tbody>
                 {rows.map((t) => {
                   const status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' = t.revokedAt
@@ -136,23 +134,23 @@ export default function AdminAccessTokensPage() {
                       ? 'EXPIRED'
                       : 'ACTIVE';
                   return (
-                    <tr className="border-b border-ink-600 last:border-b-0" key={t.id}>
-                      <td className="px-4 py-3 text-sm text-paper-100">{t.user.email}</td>
-                      <td className="px-4 py-3 text-sm text-paper-200">{t.name}</td>
-                      <td className="px-4 py-3 font-mono text-[10px] text-paper-400">{t.prefix}</td>
-                      <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                    <TRow key={t.id}>
+                      <Td className="px-4 py-3 text-sm text-paper-100">{t.user.email}</Td>
+                      <Td className="px-4 py-3 text-sm text-paper-200">{t.name}</Td>
+                      <Td className="px-4 py-3 font-mono text-[10px] text-paper-400">{t.prefix}</Td>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
                         {formatRelativeTime(t.createdAt)}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
                         {t.lastUsedAt ? formatRelativeTime(t.lastUsedAt) : '—'}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
                         {t.expiresAt ? formatDate(t.expiresAt) : 'never'}
-                      </td>
-                      <td className="px-4 py-3">
+                      </Td>
+                      <Td className="px-4 py-3">
                         <StatusChip status={status} />
-                      </td>
-                      <td className="px-4 py-3 text-right">
+                      </Td>
+                      <Td className="px-4 py-3 text-right">
                         {!t.revokedAt && (
                           <Button
                             disabled={revokeToken.isPending}
@@ -163,12 +161,12 @@ export default function AdminAccessTokensPage() {
                             Revoke
                           </Button>
                         )}
-                      </td>
-                    </tr>
+                      </Td>
+                    </TRow>
                   );
                 })}
               </tbody>
-            </table>
+            </Table>
           )}
         </Card>
       </section>

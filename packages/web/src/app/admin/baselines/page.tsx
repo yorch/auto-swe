@@ -11,6 +11,7 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   useCreateHumanErrorBaseline,
   useDeleteHumanErrorBaseline,
@@ -209,40 +210,46 @@ export default function AdminBaselinesPage() {
             <EmptyState className="px-4 pt-0 pb-4 text-left" title="No baselines recorded yet." />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
-                    <th className="px-4 py-2 font-medium">Domain</th>
-                    <th className="px-4 py-2 font-medium">Outcome</th>
-                    <th className="px-4 py-2 font-medium text-right">Sample</th>
-                    <th className="px-4 py-2 font-medium text-right">Errors</th>
-                    <th className="px-4 py-2 font-medium text-right">Rate</th>
-                    <th className="px-4 py-2 font-medium text-right">Recorded</th>
-                    <th className="px-4 py-2" />
-                  </tr>
-                </thead>
+              <Table>
+                <THead className="text-left text-xs text-paper-400">
+                  <Th variant="dense">Domain</Th>
+                  <Th variant="dense">Outcome</Th>
+                  <Th align="right" variant="dense">
+                    Sample
+                  </Th>
+                  <Th align="right" variant="dense">
+                    Errors
+                  </Th>
+                  <Th align="right" variant="dense">
+                    Rate
+                  </Th>
+                  <Th align="right" variant="dense">
+                    Recorded
+                  </Th>
+                  <Th variant="dense" />
+                </THead>
                 <tbody>
                   {(baselines ?? []).map((b) => (
-                    <tr className="border-b border-ink-600 last:border-0" key={b.id}>
-                      <td className="px-4 py-2">{b.domain}</td>
-                      <td className="px-4 py-2 text-paper-400">{b.outcomeType ?? '—'}</td>
-                      <td className="px-4 py-2 text-right tabular-nums">{b.sampleSize}</td>
-                      <td className="px-4 py-2 text-right tabular-nums">{b.errorCount}</td>
-                      <td className="px-4 py-2 text-right tabular-nums">
+                    <TRow key={b.id}>
+                      <Td className="px-4 py-2">{b.domain}</Td>
+                      <Td className="px-4 py-2 text-paper-400">{b.outcomeType ?? '—'}</Td>
+                      <Td className="px-4 py-2 text-right tabular-nums">{b.sampleSize}</Td>
+                      <Td className="px-4 py-2 text-right tabular-nums">{b.errorCount}</Td>
+                      <Td className="px-4 py-2 text-right tabular-nums">
                         {(b.errorRate * 100).toFixed(1)}%
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums">
+                      </Td>
+                      <Td className="px-4 py-2 text-right tabular-nums">
                         {formatDate(b.recordedAt)}
-                      </td>
-                      <td className="px-4 py-2 text-right">
+                      </Td>
+                      <Td className="px-4 py-2 text-right">
                         <Button onClick={() => setDeleteTarget(b)} size="sm" variant="danger">
                           Delete
                         </Button>
-                      </td>
-                    </tr>
+                      </Td>
+                    </TRow>
                   ))}
                 </tbody>
-              </table>
+              </Table>
             </div>
           )}
         </Card>

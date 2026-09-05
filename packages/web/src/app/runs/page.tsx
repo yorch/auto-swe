@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAllWorkflowRuns } from '@/hooks/useRuns';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { formatRelativeTime } from '@/lib/utils';
@@ -87,55 +88,53 @@ export default function WorkflowRunsPage() {
       </Card>
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-ink-600 bg-ink-800">
-              <th className="text-left px-4 py-3 font-medium">Ticket</th>
-              <th className="text-left px-4 py-3 font-medium">Description</th>
-              <th className="text-left px-4 py-3 font-medium">Template</th>
-              <th className="text-left px-4 py-3 font-medium">Status</th>
-              <th className="text-left px-4 py-3 font-medium">Started</th>
-            </tr>
-          </thead>
+        <Table>
+          <THead className="bg-ink-800">
+            <Th variant="plain">Ticket</Th>
+            <Th variant="plain">Description</Th>
+            <Th variant="plain">Template</Th>
+            <Th variant="plain">Status</Th>
+            <Th variant="plain">Started</Th>
+          </THead>
           <tbody>
             {isLoading && (
-              <tr>
-                <td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+              <TRow>
+                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
                   Loading…
-                </td>
-              </tr>
+                </Td>
+              </TRow>
             )}
             {!isLoading && runs.length === 0 && (
-              <tr>
-                <td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+              <TRow>
+                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
                   No runs match these filters.
-                </td>
-              </tr>
+                </Td>
+              </TRow>
             )}
             {runs.map((r) => (
-              <tr className="border-b border-ink-600 hover:bg-ink-800 transition-colors" key={r.id}>
-                <td className="px-4 py-3">
+              <TRow hover key={r.id}>
+                <Td className="px-4 py-3">
                   <Link
                     className="text-ember-400 hover:underline font-medium"
                     href={`/runs/${r.id}`}
                   >
                     {r.workRequest?.externalTicketId ?? '—'}
                   </Link>
-                </td>
-                <td className="px-4 py-3 text-paper-400 truncate max-w-md">
+                </Td>
+                <Td className="px-4 py-3 text-paper-400 truncate max-w-md">
                   {r.workRequest?.description ?? '—'}
-                </td>
-                <td className="px-4 py-3 font-mono text-xs text-paper-400">
+                </Td>
+                <Td className="px-4 py-3 font-mono text-xs text-paper-400">
                   {r.templateName ?? '—'} v{r.templateVersion}
-                </td>
-                <td className="px-4 py-3">
+                </Td>
+                <Td className="px-4 py-3">
                   <StatusBadge status={r.status} />
-                </td>
-                <td className="px-4 py-3 text-paper-400">{formatRelativeTime(r.startedAt)}</td>
-              </tr>
+                </Td>
+                <Td className="px-4 py-3 text-paper-400">{formatRelativeTime(r.startedAt)}</Td>
+              </TRow>
             ))}
           </tbody>
-        </table>
+        </Table>
       </Card>
 
       <Pagination

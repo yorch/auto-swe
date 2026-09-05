@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useUserOrgs } from '@/hooks/useAdmin';
 
 function fmtCents(n: number | null): string {
@@ -49,47 +50,53 @@ export default function AdminOrganizationsPage() {
               <EmptyState className="px-4 pt-0 pb-4 text-left" title="No organizations found." />
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
-                      <th className="px-4 py-2 font-medium">Name</th>
-                      <th className="px-4 py-2 font-medium">Slug</th>
-                      <th className="px-4 py-2 font-medium">Role</th>
-                      <th className="px-4 py-2 font-medium text-right">Monthly cap</th>
-                      <th className="px-4 py-2 font-medium text-right">Spent</th>
-                      <th className="px-4 py-2 font-medium text-right">Threshold</th>
-                      <th className="px-4 py-2 font-medium text-right">Status</th>
-                    </tr>
-                  </thead>
+                <Table>
+                  <THead className="text-left text-xs text-paper-400">
+                    <Th variant="dense">Name</Th>
+                    <Th variant="dense">Slug</Th>
+                    <Th variant="dense">Role</Th>
+                    <Th align="right" variant="dense">
+                      Monthly cap
+                    </Th>
+                    <Th align="right" variant="dense">
+                      Spent
+                    </Th>
+                    <Th align="right" variant="dense">
+                      Threshold
+                    </Th>
+                    <Th align="right" variant="dense">
+                      Status
+                    </Th>
+                  </THead>
                   <tbody>
                     {(orgs ?? []).map((org) => (
-                      <tr className="border-b border-ink-600 last:border-0" key={org.id}>
-                        <td className="px-4 py-2">
+                      <TRow key={org.id}>
+                        <Td className="px-4 py-2">
                           <Link
                             className="text-ember-400 hover:underline"
                             href={`/admin/organizations/${org.id}`}
                           >
                             {org.name}
                           </Link>
-                        </td>
-                        <td className="px-4 py-2 font-mono text-[11px] text-paper-400">
+                        </Td>
+                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
                           {org.slug}
-                        </td>
-                        <td className="px-4 py-2">{org.role}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
+                        </Td>
+                        <Td className="px-4 py-2">{org.role}</Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
                           {fmtCents(org.monthlyBudgetUsdCents)}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
                           {org.currentMonthUsage
                             ? `$${org.currentMonthUsage.costUsdAccrued.toFixed(2)}`
                             : '$0.00'}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
                           {org.budgetAlertThresholdPercent != null
                             ? `${org.budgetAlertThresholdPercent}%`
                             : '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right">
+                        </Td>
+                        <Td className="px-4 py-2 text-right">
                           {org.alert.triggered ? (
                             <span className="rounded bg-brick-900/40 px-1.5 py-0.5 text-[11px] text-brick-400">
                               {org.alert.percent != null
@@ -101,11 +108,11 @@ export default function AdminOrganizationsPage() {
                               OK
                             </span>
                           )}
-                        </td>
-                      </tr>
+                        </Td>
+                      </TRow>
                     ))}
                   </tbody>
-                </table>
+                </Table>
               </div>
             )}
           </Card>

@@ -10,6 +10,7 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   type ScannerPattern,
@@ -302,8 +303,8 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
 
   return (
     <>
-      <tr className="border-b border-ink-600 last:border-0">
-        <td className="py-2 pr-4">
+      <TRow>
+        <Td className="py-2 pr-4">
           <button
             className="text-left font-mono text-xs text-paper-100 hover:underline"
             onClick={() => setViewTarget(pattern)}
@@ -316,27 +317,27 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
               {pattern.origin}
             </span>
           )}
-        </td>
-        <td className="max-w-xs py-2 pr-4">
+        </Td>
+        <Td className="max-w-xs py-2 pr-4">
           <code className="block truncate font-mono text-[11px] text-paper-300">
             /{pattern.pattern}/{pattern.flags}
           </code>
-        </td>
-        <td className="py-2 pr-4">
+        </Td>
+        <Td className="py-2 pr-4">
           {pattern.isBuiltIn && (
             <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
               built-in
             </span>
           )}
-        </td>
-        <td className="py-2 pr-4">
+        </Td>
+        <Td className="py-2 pr-4">
           <ToggleSwitch
             checked={pattern.isActive}
             disabled={update.isPending}
             onChange={toggleActive}
           />
-        </td>
-        <td className="py-2 text-right">
+        </Td>
+        <Td className="py-2 text-right">
           <div className="flex items-center justify-end gap-2">
             <Button onClick={() => setViewTarget(pattern)} size="sm" variant="ghost">
               View
@@ -347,8 +348,8 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
               </Button>
             )}
           </div>
-        </td>
-      </tr>
+        </Td>
+      </TRow>
       <PatternDetailModal onClose={() => setViewTarget(null)} pattern={viewTarget} />
       <ConfirmModal
         confirmLabel="Delete"
@@ -388,22 +389,20 @@ function PatternSection({
       {patterns.length === 0 ? (
         <div className="py-4 text-center text-sm text-paper-400">No patterns in this category.</div>
       ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-ink-600">
-              <th className="py-2 text-left text-xs text-paper-500">Label</th>
-              <th className="py-2 text-left text-xs text-paper-500">Pattern / Flags</th>
-              <th className="py-2 text-left text-xs text-paper-500">Built-in</th>
-              <th className="py-2 text-left text-xs text-paper-500">Active</th>
-              <th className="py-2" />
-            </tr>
-          </thead>
+        <Table>
+          <THead>
+            <Th variant="compact">Label</Th>
+            <Th variant="compact">Pattern / Flags</Th>
+            <Th variant="compact">Built-in</Th>
+            <Th variant="compact">Active</Th>
+            <Th variant="compact" />
+          </THead>
           <tbody>
             {patterns.map((p) => (
               <PatternRow key={p.id} pattern={p} />
             ))}
           </tbody>
-        </table>
+        </Table>
       )}
     </Card>
   );

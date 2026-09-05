@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   type Skill,
@@ -309,30 +310,34 @@ function EffectivenessCard() {
         {!data?.perSkill.length ? (
           <EmptyState className="py-6" title="No runs with active skills in this window yet." />
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ink-600">
-                <th className="py-2 text-left text-xs text-paper-500">Skill</th>
-                <th className="py-2 text-right text-xs text-paper-500">Runs</th>
-                <th className="py-2 text-right text-xs text-paper-500">Success rate</th>
-                <th className="py-2 text-right text-xs text-paper-500">Avg cost</th>
-              </tr>
-            </thead>
+          <Table>
+            <THead>
+              <Th variant="compact">Skill</Th>
+              <Th align="right" variant="compact">
+                Runs
+              </Th>
+              <Th align="right" variant="compact">
+                Success rate
+              </Th>
+              <Th align="right" variant="compact">
+                Avg cost
+              </Th>
+            </THead>
             <tbody>
               {data.perSkill.map((s) => (
-                <tr className="border-b border-ink-600 last:border-0" key={s.name}>
-                  <td className="py-2 pr-4 font-medium text-paper-100">{s.name}</td>
-                  <td className="py-2 text-right tabular-nums text-paper-400">{s.runs}</td>
-                  <td className="py-2 text-right tabular-nums text-paper-400">
+                <TRow key={s.name}>
+                  <Td className="py-2 pr-4 font-medium text-paper-100">{s.name}</Td>
+                  <Td className="py-2 text-right tabular-nums text-paper-400">{s.runs}</Td>
+                  <Td className="py-2 text-right tabular-nums text-paper-400">
                     {pct(s.successRate)}
-                  </td>
-                  <td className="py-2 text-right tabular-nums text-paper-400">
+                  </Td>
+                  <Td className="py-2 text-right tabular-nums text-paper-400">
                     {s.avgCostUsd == null ? '—' : `$${s.avgCostUsd.toFixed(2)}`}
-                  </td>
-                </tr>
+                  </Td>
+                </TRow>
               ))}
             </tbody>
-          </table>
+          </Table>
         )}
       </QueryBoundary>
     </Card>
@@ -369,20 +374,18 @@ export default function AdminSkillsPage() {
           {!skills?.length ? (
             <EmptyState title="No skills yet. Create one with the button above." />
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
-                  <th className="py-2 text-left text-xs text-paper-500">Name</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Description</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Used by</th>
-                  <th className="py-2 text-left text-xs text-paper-500">Active</th>
-                  <th className="py-2" />
-                </tr>
-              </thead>
+            <Table>
+              <THead>
+                <Th variant="compact">Name</Th>
+                <Th variant="compact">Description</Th>
+                <Th variant="compact">Used by</Th>
+                <Th variant="compact">Active</Th>
+                <Th variant="compact" />
+              </THead>
               <tbody>
                 {skills.map((skill) => (
-                  <tr className="border-b border-ink-600 last:border-0" key={skill.id}>
-                    <td className="py-2 pr-4">
+                  <TRow key={skill.id}>
+                    <Td className="py-2 pr-4">
                       <button
                         className="text-left hover:underline"
                         onClick={() => setViewTarget(skill)}
@@ -404,21 +407,21 @@ export default function AdminSkillsPage() {
                           <span className="font-mono text-[10px] text-amber-400">unverified</span>
                         )}
                       </div>
-                    </td>
-                    <td className="max-w-xs py-2 pr-4">
+                    </Td>
+                    <Td className="max-w-xs py-2 pr-4">
                       <span className="line-clamp-1 text-paper-400">
                         {skill.description ?? '—'}
                       </span>
-                    </td>
-                    <td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</td>
-                    <td className="py-2 pr-4">
+                    </Td>
+                    <Td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</Td>
+                    <Td className="py-2 pr-4">
                       <ToggleSwitch
                         checked={skill.isActive}
                         disabled={update.isPending}
                         onChange={() => update.mutate({ id: skill.id, isActive: !skill.isActive })}
                       />
-                    </td>
-                    <td className="py-2 text-right">
+                    </Td>
+                    <Td className="py-2 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
                           View / Edit
@@ -429,11 +432,11 @@ export default function AdminSkillsPage() {
                           </Button>
                         )}
                       </div>
-                    </td>
-                  </tr>
+                    </Td>
+                  </TRow>
                 ))}
               </tbody>
-            </table>
+            </Table>
           )}
         </QueryBoundary>
       </Card>

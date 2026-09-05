@@ -15,6 +15,7 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
@@ -502,39 +503,20 @@ export default function TemplatesPage() {
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="templates">
           {
             <Card className="overflow-hidden p-0" variant="inset">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-ink-600">
-                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                      Name
-                    </th>
-                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                      Team
-                    </th>
-                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                      Status
-                    </th>
-                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                      Active version
-                    </th>
-                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                      Last run
-                    </th>
-                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                      Updated
-                    </th>
-                    <th className="px-4 py-3 text-right font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
+              <Table>
+                <THead>
+                  <Th>Name</Th>
+                  <Th>Team</Th>
+                  <Th>Status</Th>
+                  <Th>Active version</Th>
+                  <Th>Last run</Th>
+                  <Th>Updated</Th>
+                  <Th align="right">Actions</Th>
+                </THead>
                 <tbody>
                   {(templates ?? []).map((t) => (
-                    <tr
-                      className="border-b border-ink-600 transition-colors hover:bg-ink-700/40"
-                      key={t.id}
-                    >
-                      <td className="px-4 py-3">
+                    <TRow className="transition-colors hover:bg-ink-700/40" key={t.id}>
+                      <Td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Link
                             className="font-medium text-paper-100 hover:text-ember-400"
@@ -559,17 +541,17 @@ export default function TemplatesPage() {
                         {t.description && (
                           <div className="text-xs text-paper-500">{t.description}</div>
                         )}
-                      </td>
-                      <td className="px-4 py-3 text-paper-400">
+                      </Td>
+                      <Td className="px-4 py-3 text-paper-400">
                         {t.team?.name ?? <em className="text-paper-500">global</em>}
-                      </td>
-                      <td className="px-4 py-3">
+                      </Td>
+                      <Td className="px-4 py-3">
                         <StatusBadge status={t.status} />
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-paper-300">
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-xs text-paper-300">
                         {t.activeVersion !== null ? `v${t.activeVersion}` : '—'}
-                      </td>
-                      <td className="px-4 py-3">
+                      </Td>
+                      <Td className="px-4 py-3">
                         {t.lastRun ? (
                           <Link
                             className="inline-flex items-center gap-2"
@@ -585,11 +567,11 @@ export default function TemplatesPage() {
                             never
                           </span>
                         )}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-[11px] text-paper-500">
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-500">
                         {formatRelativeTime(t.updatedAt)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
+                      </Td>
+                      <Td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
                           {t.status === 'ARCHIVED' ? null : t.status === 'ACTIVE' &&
                             t.activeVersion !== null ? (
@@ -627,21 +609,21 @@ export default function TemplatesPage() {
                             </Button>
                           )}
                         </div>
-                      </td>
-                    </tr>
+                      </Td>
+                    </TRow>
                   ))}
                   {(templates ?? []).length === 0 && (
-                    <tr>
-                      <td
+                    <TRow>
+                      <Td
                         className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
                         colSpan={7}
                       >
                         no templates yet — fork a starter above or create a blank template
-                      </td>
-                    </tr>
+                      </Td>
+                    </TRow>
                   )}
                 </tbody>
-              </table>
+              </Table>
             </Card>
           }
         </QueryBoundary>
