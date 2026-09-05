@@ -6,6 +6,7 @@ import {
   verify as cryptoVerify,
 } from 'node:crypto';
 import { z } from 'zod';
+import { isInputSchema } from '../lib/inputSchema.js';
 import {
   checkRegexSafety,
   MAX_PATTERN_SOURCE_LENGTH,
@@ -13,6 +14,8 @@ import {
   SAFE_FLAGS_MESSAGE,
   SAFE_FLAGS_RE,
 } from '../lib/regexSafety.js';
+import { WorkflowSpecSchema } from '../workflow/spec.js';
+import { formatValidationIssue, validateSpec } from '../workflow/validateSpec.js';
 
 /**
  * Bundle format (P4/WS1) — a versioned, self-describing export of a *tagged set*
@@ -99,7 +102,18 @@ export const BundleScannerPatternSchema = z.object({
 
 export const BundleTemplateSchema = z.object({
   description: z.string().optional(),
-  inputSchema: z.unknown().nullable().optional(),
+  /**
+   * Run-input contract, validated against the same `InputSchema` subset the
+   * template API accepts. Checked but NOT transformed — the value is inside the
+   * content hash, so the schema must never rewrite it.
+   */
+  inputSchema: z
+    .unknown()
+    .nullable()
+    .optional()
+    .refine((v) => v == null || isInputSchema(v), {
+      message: "inputSchema must be `{ type: 'object', properties: { … } }`",
+    }),
   name: z.string().min(1),
   origin: z.string().nullable().optional(),
   /**
@@ -107,8 +121,21 @@ export const BundleTemplateSchema = z.object({
    * deployment-local references — e.g. an `mcp` node's `connectionRef` (a local
    * Connection id) — which won't resolve on another deployment; the `dependencies`
    * manifest flags the required connection types so the installer can re-wire them.
+   *
+   * Shape-checked against `WorkflowSpecSchema` but kept as the raw value: the
+   * spec is inside the content hash, and a parse that applied defaults would
+   * make a manifest hash differently from the bytes its author signed. A bundle
+   * installs a template as ACTIVE, so an unparseable spec must be refused here
+   * rather than discovered by the first run that tries to load it.
    */
-  spec: z.unknown(),
+  spec: z.unknown().superRefine((v, ctx) => {
+    const parsed = WorkflowSpecSchema.safeParse(v);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({ code: 'custom', message: issue.message, path: issue.path });
+      }
+    }
+  }),
 });
 
 export const BundleEntitiesSchema = z.object({
@@ -350,6 +377,34 @@ export function validateBundleScannerPatterns(manifest: BundleManifest): string[
     const issue = checkRegexSafety(p.pattern, p.flags ?? '');
     if (issue) {
       errors.push(`scanner pattern '${p.label}' [${issue.code}]: ${issue.message}`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * Check every template the bundle carries with `validateSpec` — the graph-level
+ * lint (unparseable expressions, no reachable `terminate`) that the schema
+ * cannot see. Only `errors` are reported; warnings (unknown steps, unreachable
+ * nodes) are advisory, exactly as on the template save path. Install activates
+ * a template immediately, so an unrunnable spec must be refused before any
+ * write rather than fail its first run. Pure and synchronous, like the scanner
+ * pattern gate above, so the SDK can share it.
+ *
+ * Returns one message per offending template; empty means all are runnable.
+ */
+export function validateBundleTemplates(manifest: BundleManifest): string[] {
+  const errors: string[] = [];
+  for (const t of manifest.entities.templates) {
+    const parsed = WorkflowSpecSchema.safeParse(t.spec);
+    if (!parsed.success) {
+      errors.push(
+        `template '${t.name}': ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`
+      );
+      continue;
+    }
+    for (const issue of validateSpec(parsed.data).errors) {
+      errors.push(`template '${t.name}' [${issue.code}]: ${formatValidationIssue(issue)}`);
     }
   }
   return errors;

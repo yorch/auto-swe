@@ -48,6 +48,15 @@ function manifestFor(
 
 const EMPTY: BundleEntities = { agents: [], scannerPatterns: [], skills: [], templates: [] };
 
+/** Smallest runnable spec: entry straight into a terminate node. */
+const RUNNABLE_SPEC = {
+  description: '',
+  entry: 'end',
+  name: 'std',
+  nodes: { end: { status: 'SUCCESS', type: 'terminate' } },
+  schemaVersion: 1,
+};
+
 describe('exportBundle', () => {
   it('serializes GLOBAL content, strips locals, and derives the mcp dependency', async () => {
     const prisma = {
@@ -158,7 +167,7 @@ describe('installBundle', () => {
         ],
         scannerPatterns: [{ label: 'p1', pattern: 'x', type: 'INJECTION' }],
         skills: [{ name: 'careful', promptText: 'p' }],
-        templates: [{ name: 'std', spec: { entry: 'a', nodes: {} } }],
+        templates: [{ name: 'std', spec: RUNNABLE_SPEC }],
       } as unknown as BundleEntities,
       [{ connectionType: 'mcp' }]
     );
@@ -265,6 +274,52 @@ describe('installBundle', () => {
     await expect(installBundle(asArg(), m)).rejects.toBeInstanceOf(BundleIntegrityError);
     await expect(installBundle(asArg(), m)).rejects.toThrow(/INVALID_REGEX/);
     expect(prisma.scannerPattern.upsert).not.toHaveBeenCalled();
+    expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects a template whose spec does not parse, before any write', async () => {
+    const m = manifestFor({
+      ...EMPTY,
+      templates: [{ name: 'broken', spec: { entry: 'a', nodes: {} } }],
+    } as unknown as BundleEntities);
+    await expect(installBundle(asArg(), m, { allowUnverified: true })).rejects.toThrow();
+    expect(prisma.workflowTemplate.create).not.toHaveBeenCalled();
+    expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects a template that parses but cannot run (no reachable terminate), before any write', async () => {
+    const m = manifestFor({
+      ...EMPTY,
+      templates: [
+        {
+          name: 'loop',
+          spec: {
+            ...RUNNABLE_SPEC,
+            entry: 'c',
+            nodes: { c: { expr: 'true', onFalse: 'c', onTrue: 'c', type: 'cond' } },
+          },
+        },
+      ],
+    } as unknown as BundleEntities);
+    await expect(installBundle(asArg(), m, { allowUnverified: true })).rejects.toBeInstanceOf(
+      BundleIntegrityError
+    );
+    await expect(installBundle(asArg(), m, { allowUnverified: true })).rejects.toThrow(
+      /NO_TERMINAL/
+    );
+    expect(prisma.workflowTemplate.create).not.toHaveBeenCalled();
+    expect(prisma.workflowTemplateVersion.upsert).not.toHaveBeenCalled();
+    expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects a template whose inputSchema is not an object schema', async () => {
+    const m = manifestFor({
+      ...EMPTY,
+      templates: [{ inputSchema: { type: 'string' }, name: 'std', spec: RUNNABLE_SPEC }],
+    } as unknown as BundleEntities);
+    await expect(installBundle(asArg(), m, { allowUnverified: true })).rejects.toThrow(
+      /inputSchema/
+    );
     expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
   });
 

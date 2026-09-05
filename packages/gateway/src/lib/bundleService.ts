@@ -12,6 +12,7 @@ import {
   parseBundle,
   type TrustedKey,
   validateBundleScannerPatterns,
+  validateBundleTemplates,
   verifyBundleSignature,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
@@ -256,6 +257,17 @@ export async function installBundle(
   if (patternErrors.length > 0) {
     throw new BundleIntegrityError(
       `bundle contains unsafe scanner pattern(s):\n  - ${patternErrors.join('\n  - ')}`
+    );
+  }
+
+  // Templates install as ACTIVE, so a spec that cannot run — no reachable
+  // `terminate`, an expression that does not parse — must be refused here
+  // rather than by the first run that loads it. Same advisory/error split as
+  // the template save path: only `errors` block.
+  const templateErrors = validateBundleTemplates(manifest);
+  if (templateErrors.length > 0) {
+    throw new BundleIntegrityError(
+      `bundle contains unrunnable workflow template(s):\n  - ${templateErrors.join('\n  - ')}`
     );
   }
 
