@@ -733,8 +733,41 @@ describe('runSpec', () => {
       },
       schemaVersion: SPEC_SCHEMA_VERSION,
     });
-    const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+    const { dispatcher, records } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
     await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(/must resolve to an array/);
+    expect(records.filter((r) => r.nodeId === 'fan' && r.status === 'FAILED')).toHaveLength(1);
+  });
+
+  it('fanOut: a block-mode failure records exactly ONE FAILED row for the fanOut', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-block-single-record',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: { next: 'branchDone', step: 'boom', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        boom: () => {
+          throw new Error('kaboom');
+        },
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('kaboom');
+    // runFanOut records the aggregate FAILED row itself; walk's catch must not
+    // add a second one without the aggregate.
+    expect(records.filter((r) => r.nodeId === 'fan' && r.status === 'FAILED')).toHaveLength(1);
   });
 
   it('fanOut: empty array short-circuits to the join (count=0, no branch records)', async () => {

@@ -26,8 +26,9 @@ import type {
 } from './spec.js';
 
 /**
- * Node types dispatched through runRetryable, which records its own
- * per-attempt FAILED rows — the walk catch must not double-record.
+ * Node types that record their own FAILED rows — the walk catch must not
+ * double-record. The dispatch-style nodes do it per attempt in runRetryable;
+ * fanOut records the aggregate (with every branch's outcome) before it throws.
  */
 const SELF_RECORDING_NODE_TYPES: ReadonlySet<string> = new Set([
   'step',
@@ -36,6 +37,7 @@ const SELF_RECORDING_NODE_TYPES: ReadonlySet<string> = new Set([
   'mcp',
   'eval',
   'containerStep',
+  'fanOut',
 ]);
 
 function normalizeApproverCount(raw: unknown): number {
@@ -1077,9 +1079,11 @@ async function runFanOut(
 ): Promise<string> {
   const resolved = resolveBinding(node.over, ctx);
   if (!Array.isArray(resolved)) {
-    throw new Error(
-      `fanOut '${recordingId}': 'over' must resolve to an array (got ${describeOperand(resolved)})`
-    );
+    const message = `fanOut '${recordingId}': 'over' must resolve to an array (got ${describeOperand(resolved)})`;
+    // fanOut is self-recording (see SELF_RECORDING_NODE_TYPES), so this early
+    // exit has to write its own FAILED row.
+    await safeRecord(dispatcher, { error: message, nodeId: recordingId, status: 'FAILED' });
+    throw new Error(message);
   }
   const raw: unknown[] = resolved;
 
