@@ -139,6 +139,16 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       reply.hijack();
 
       const res = reply.raw;
+      // Hijacking bypasses Fastify's send path, so headers other plugins set on
+      // the *reply* (notably @fastify/cors's Access-Control-Allow-Origin from
+      // its onRequest hook) would never reach the socket. Without them the
+      // browser's EventSource is blocked by CORS on every cross-origin
+      // deployment, reconnects in a tight loop and trips the rate limiter.
+      for (const [name, value] of Object.entries(reply.getHeaders())) {
+        if (value !== undefined) {
+          res.setHeader(name, value as string | number | string[]);
+        }
+      }
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
