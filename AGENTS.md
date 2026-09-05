@@ -472,11 +472,14 @@ Limitations of this arrangement, stated so nothing above reads as more than it i
 - A pattern that overruns twice in isolation is **quarantined per process for
   `REGEX_QUARANTINE_TTL_MS`** (10 min) and skipped by scans inside that window. The executor
   reports the skipped keys in `quarantinedPatternKeys` and does not mark those scans `incomplete`,
-  so whether a skipped rule is fail-open or fail-closed is the caller's decision, not the
-  executor's. Refusing every scan forever would turn one bad admin row into a total outage. It is
-  logged loudly on every skip; the quarantine is per-process, so gateway and worker quarantine
-  independently and both forget on restart. When the TTL lapses the pattern runs again, and a
-  still-bad one costs another two budgets before it is re-quarantined.
+  so the caller decides: `scanShellCommand` and `checkSensitiveFilePath` block on a non-empty
+  list (a rule they never ran cannot clear the input), while the advisory scanners proceed without
+  the rule. For a blocking scanner the quarantine therefore turns "two burned budgets per scan" into
+  an immediate block, and an admin must fix or disable the row at `/admin/scanner` to restore
+  agent `bash` access; it does not silently drop the rule. It is logged loudly on every skip; the
+  quarantine is per-process, so gateway and worker quarantine independently and both forget on
+  restart. When the TTL lapses the pattern runs again, and a still-bad one costs another two
+  budgets before it is re-quarantined.
 - The scan during which a pattern overran fails closed, so an agent can see one spurious block
   before the quarantine takes effect.
 - N distinct pathological patterns cost N × two budgets per target before they are all

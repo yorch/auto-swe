@@ -361,10 +361,14 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
 
     await waitForReady(`${baseUrl}${readinessPath}`, readyTimeoutMs);
 
+    // The sidecar runs author-supplied code: a request it never answers must
+    // not hold the activity open forever. The step's own wall-clock cap bounds
+    // the request, exactly as it bounds a foreground container.
     const res = await fetch(`${baseUrl}${requestPath}`, {
       body: JSON.stringify(input.body ?? {}),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
+      signal: AbortSignal.timeout(input.timeoutMs ?? 600_000),
     });
     const text = await res.text();
     if (!res.ok) {
@@ -386,13 +390,23 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
   }
 }
 
+/** Upper bound on one readiness probe, so a stalled accept cannot eat the whole deadline. */
+const READINESS_PROBE_TIMEOUT_MS = 5_000;
+
 /** Poll a readiness URL until it answers 2xx or the deadline passes. */
 async function waitForReady(url: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastErr = 'no response';
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url, { method: 'GET' });
+      // Each probe is bounded by the shorter of the per-probe cap and what is
+      // left of the overall deadline; a sidecar that accepts the connection but
+      // never responds otherwise blocks the loop past `timeoutMs`.
+      const remaining = Math.max(1, deadline - Date.now());
+      const res = await fetch(url, {
+        method: 'GET',
+        signal: AbortSignal.timeout(Math.min(READINESS_PROBE_TIMEOUT_MS, remaining)),
+      });
       if (res.ok) {
         return;
       }

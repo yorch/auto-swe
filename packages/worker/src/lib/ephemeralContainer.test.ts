@@ -1,8 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// `runSidecarContainer` shells out to docker and polls the sidecar over HTTP;
+// both boundaries are faked so the request-shaping can be asserted.
+vi.mock('./execUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./execUtils.js')>();
+  return {
+    ...actual,
+    execShellAsync: vi.fn(async (cmd: string) =>
+      cmd.startsWith('docker port') ? '127.0.0.1:49162\n' : ''
+    ),
+    spawnCaptureAsync: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'cid\n' })),
+  };
+});
+vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
+
 import {
   buildDockerArgs,
   buildSidecarDockerArgs,
   isAllowedHostMountPath,
+  runSidecarContainer,
 } from './ephemeralContainer.js';
 
 const BASE = {
@@ -257,4 +273,48 @@ describe('isAllowedHostMountPath', () => {
     'rejects %s',
     (p) => expect(isAllowedHostMountPath(p)).toBe(false)
   );
+});
+
+describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => '{"ok":true}' });
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('bounds both the readiness probe and the request with an abort signal', async () => {
+    const out = await runSidecarContainer({
+      body: { q: 1 },
+      image: 'node:24-alpine',
+      port: 8080,
+      timeoutMs: 120_000,
+      workspaceMount: 'cstep-abc',
+    });
+    expect(out).toEqual({ result: { ok: true }, status: 200 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [readiness, request] = fetchMock.mock.calls as [string, RequestInit][];
+    expect(readiness[0]).toBe('http://127.0.0.1:49162/');
+    expect(readiness[1].method).toBe('GET');
+    expect(readiness[1].signal).toBeInstanceOf(AbortSignal);
+    expect(request[1].method).toBe('POST');
+    expect(request[1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('gives up on readiness at the deadline instead of polling forever', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+    await expect(
+      runSidecarContainer({
+        image: 'node:24-alpine',
+        port: 8080,
+        readyTimeoutMs: 300,
+        workspaceMount: 'cstep-abc',
+      })
+    ).rejects.toThrow(/sidecar not ready within 300ms/);
+  });
 });

@@ -563,15 +563,21 @@ Writes cut a new immutable `version`.
 - **Soft-block scanners are advisory.** A soft block returns an error string for the model to
   self-correct against; a model that ignores it is not stopped. Only the sensitive-file scanner —
   now on both the `writeFile` and `bash` paths — and CRITICAL pre-write findings hard-block.
-- **A catastrophic scanner pattern is bounded, then dropped.** Scanner regexes execute in a pooled
-  worker thread under a wall-clock budget (`shared/lib/regexExec.ts`) resolved from the
-  `workspace.regexScanBudgetMs` setting (default 250 ms; ADMIN-only, platform-wide), so a pattern
-  that backtracks catastrophically is terminated instead of wedging the process. The scan it overran
-  fails closed for a blocking scanner and degrades for an advisory one; the pattern is then
-  quarantined for the life of that process and **skipped** by later scans, which report themselves
-  complete. That is fail-open for the quarantined rule, chosen so one bad admin row cannot deny
-  every agent `bash` call. It is logged on every skip, and quarantine is per-process, so gateway and
-  worker decide independently and both forget on restart.
+- **A catastrophic scanner pattern is bounded, then dropped for a while.** Scanner regexes execute
+  in a pooled worker thread under a wall-clock budget (`shared/lib/regexExec.ts`) resolved from the
+  `workspace.regexScanBudgetMs` setting (default 250 ms; ADMIN-only, platform-wide) and applied per
+  scanned window, so a pattern that backtracks catastrophically is terminated instead of wedging
+  the process. The scan it overran fails closed for a blocking scanner and degrades for an advisory
+  one. An overrun is confirmed by re-running the isolated pattern alone on a fresh thread — one
+  observation on a starved host is not evidence — and only a second overrun quarantines it, for
+  `REGEX_QUARANTINE_TTL_MS` (10 min) in that process. Inside that window later scans **skip** the
+  rule and the executor reports it in `quarantinedPatternKeys` without marking the scan incomplete;
+  the caller decides what that means. The blocking scanners (`scanShellCommand`,
+  `checkSensitiveFilePath`) block on a non-empty list — a rule they never ran cannot clear the
+  input — so a quarantined shell or sensitive-file rule denies `bash` and `writeFile` until an admin
+  fixes or disables the row at `/admin/scanner`, instead of costing two budgets per call. The
+  advisory scanners proceed without the rule. It is logged on every skip, and quarantine is
+  per-process, so gateway and worker decide independently and both forget on restart.
 - **The write-time backtracking probe is sound but incomplete.** `POST /admin/scanner-patterns`
   executes a candidate against repetition-heavy input built from its own alphabet and rejects it if
   it overruns the budget. It cannot see a merely polynomial pattern (`a+a+$` is fine at 40
