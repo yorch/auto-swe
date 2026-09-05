@@ -8,7 +8,13 @@
  */
 
 import type { Context } from './expr.js';
-import { describeOperand, evalBoolean, lookupPath, resolveBinding } from './expr.js';
+import {
+  describeOperand,
+  evalBoolean,
+  lookupPath,
+  RESERVED_SEGMENTS,
+  resolveBinding,
+} from './expr.js';
 import type {
   CondNode,
   FanOutNode,
@@ -1314,8 +1320,6 @@ async function safeDispatch(fn: (() => Promise<void>) | undefined): Promise<void
     // best-effort
   }
 }
-
-const RESERVED_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function setPath(ctx: Context, path: string, value: unknown): void {
   // NB: write paths are split on '.' only — bracket notation (`a[0]`, `a["k"]`)

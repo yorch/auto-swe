@@ -19,6 +19,19 @@ import type { Binding } from './spec.js';
 
 export type Context = Record<string, unknown>;
 
+/**
+ * Path segments that must never be read or written through: a spec is
+ * team-authored JSON, and walking `constructor.prototype` in a lookup — or
+ * writing through `__proto__` — turns a bad binding into prototype pollution of
+ * the workflow context. Shared by `lookupPath` (reads) and the interpreter's
+ * `setPath` (writes).
+ */
+export const RESERVED_SEGMENTS: ReadonlySet<string> = new Set([
+  '__proto__',
+  'prototype',
+  'constructor',
+]);
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 export function resolveBinding(binding: Binding, ctx: Context): unknown {
@@ -142,6 +155,13 @@ function tokenizePath(path: string): Array<string | number> {
     }
     out.push(id);
     i = j;
+  }
+  for (const seg of out) {
+    if (typeof seg === 'string' && RESERVED_SEGMENTS.has(seg)) {
+      // A syntax error rather than a runtime one so checkExprSyntax rejects the
+      // spec at save time, not on the first run that evaluates it.
+      throw new ExprSyntaxError(`reserved segment '${seg}' in path: ${path}`);
+    }
   }
   return out;
 }
@@ -444,9 +464,8 @@ export function describeOperand(v: unknown): string {
   if (Array.isArray(v)) {
     return `array(${v.length})`;
   }
-  if (typeof v === 'string') {
-    return `string '${v.slice(0, 32)}'`;
-  }
+  // Type only — never the content. Operands come from step outputs and request
+  // payloads, and these messages land in step rows, logs and the run page.
   return `${typeof v}`;
 }
 

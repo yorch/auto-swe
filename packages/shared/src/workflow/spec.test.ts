@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Node } from './spec.js';
 import {
+  MAX_EXPR_LENGTH,
   nodeEdges,
   parseWorkflowSpec,
   readNodeEdge,
@@ -347,6 +348,28 @@ describe('parseWorkflowSpec', () => {
         schemaVersion: SPEC_SCHEMA_VERSION,
       })
     ).toThrow(/unknown node/);
+  });
+});
+
+describe('expression length cap', () => {
+  const base = {
+    entry: 'c',
+    name: 'long-expr',
+    nodes: {
+      c: { expr: '', onFalse: 'done', onTrue: 'done', type: 'cond' },
+      done: { status: 'SUCCESS', type: 'terminate' },
+    },
+    schemaVersion: SPEC_SCHEMA_VERSION,
+  };
+  it('accepts an expression at the cap and rejects one past it', () => {
+    const at = 'a'.repeat(MAX_EXPR_LENGTH);
+    const over = 'a'.repeat(MAX_EXPR_LENGTH + 1);
+    expect(() =>
+      parseWorkflowSpec({ ...base, nodes: { ...base.nodes, c: { ...base.nodes.c, expr: at } } })
+    ).not.toThrow();
+    expect(() =>
+      parseWorkflowSpec({ ...base, nodes: { ...base.nodes, c: { ...base.nodes.c, expr: over } } })
+    ).toThrow();
   });
 });
 

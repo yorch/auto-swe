@@ -39,6 +39,27 @@ describe('lookupPath', () => {
   });
 });
 
+describe('lookupPath — reserved segments', () => {
+  it('refuses to walk through __proto__ / prototype / constructor', () => {
+    const ctx = { nodes: { a: { output: 1 } } };
+    expect(() => lookupPath(ctx, 'nodes.__proto__.polluted')).toThrow(/reserved segment/);
+    expect(() => lookupPath(ctx, 'nodes.constructor.prototype')).toThrow(/reserved segment/);
+    expect(() => lookupPath(ctx, 'nodes["__proto__"]')).toThrow(/reserved segment/);
+  });
+
+  it('flags a reserved segment as a SYNTAX error so a spec save rejects it', () => {
+    expect(checkExprSyntax('nodes.constructor.prototype == 1')).not.toBeNull();
+  });
+});
+
+describe('describeOperand', () => {
+  it('names the type of a string operand without echoing its content', () => {
+    expect(() => evalExpr('context.secret > 1', { context: { secret: 'hunter2' } })).toThrow(
+      /requires a number, got string$/
+    );
+  });
+});
+
 describe('evalExpr', () => {
   const ctx = {
     counters: { ci: 0, review: 2 },

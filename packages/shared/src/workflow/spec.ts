@@ -29,6 +29,13 @@ export const SPEC_SCHEMA_VERSION = 1 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
 
+/**
+ * Upper bound on an expression's source length. The expression grammar is
+ * tiny and evaluated on every transition; a binding this long is a mistake
+ * (or a payload), not a workflow condition.
+ */
+export const MAX_EXPR_LENGTH = 2000;
+
 /** A binding reads a value from the run context. Conventionally exactly one of
  *  `from` / `literal` / `expr` is present; an ambiguous object resolves to
  *  whichever union member zod matches first. Kept non-strict on purpose so
@@ -40,7 +47,7 @@ export const BindingSchema = z.union([
     from: z.string().min(1),
   }),
   z.object({ literal: z.unknown() }),
-  z.object({ expr: z.string().min(1) }),
+  z.object({ expr: z.string().min(1).max(MAX_EXPR_LENGTH) }),
 ]);
 export type Binding = z.infer<typeof BindingSchema>;
 
@@ -144,7 +151,7 @@ const McpNodeSchema = z.object({
  */
 const EvalScorerSchema = z.discriminatedUnion('kind', [
   z.object({ command: z.string().optional(), gate: z.string().min(1), kind: z.literal('gate') }),
-  z.object({ expr: z.string().min(1), kind: z.literal('assert') }),
+  z.object({ expr: z.string().min(1).max(MAX_EXPR_LENGTH), kind: z.literal('assert') }),
   z.object({ from: z.string().optional(), kind: z.literal('trajectory') }),
   z.object({
     baselineFrom: z.string().optional(),
@@ -179,7 +186,7 @@ const SetNodeSchema = z.object({
 });
 
 const CondNodeSchema = z.object({
-  expr: z.string().min(1),
+  expr: z.string().min(1).max(MAX_EXPR_LENGTH),
   onFalse: NodeIdSchema,
   onTrue: NodeIdSchema,
   type: z.literal('cond'),
