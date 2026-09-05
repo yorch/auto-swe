@@ -14,6 +14,10 @@ interface GitHubIssuesConfig {
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
 
+function isDotSegment(segment: string): boolean {
+  return segment === '.' || segment === '..';
+}
+
 /// Parses `owner/repo#123`, `123`, or `#123` (the latter two resolved against
 /// `defaultRepo`). Returns null when the ID doesn't look like a GitHub issue.
 export function parseGitHubTicketId(
@@ -22,6 +26,11 @@ export function parseGitHubTicketId(
 ): { owner: string; repo: string; number: number } | null {
   const qualified = /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(ticketId);
   if (qualified?.[1] && qualified[2] && qualified[3]) {
+    // `.`/`..` are legal for the character class but not as GitHub names, and
+    // they would rewrite the request path once interpolated.
+    if (isDotSegment(qualified[1]) || isDotSegment(qualified[2])) {
+      return null;
+    }
     return { number: Number(qualified[3]), owner: qualified[1], repo: qualified[2] };
   }
   const bare = /^#?(\d+)$/.exec(ticketId);

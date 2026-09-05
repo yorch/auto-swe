@@ -103,7 +103,7 @@ export class JiraProvider implements IssueTrackerProvider {
         raw: issue,
         status: issue.fields?.status?.name ?? 'unknown',
         title: issue.fields?.summary ?? id,
-        url: `${(this.client as unknown as { config: { baseUrl: string } }).config?.baseUrl?.replace(/\/+$/, '') ?? ''}/browse/${encodeURIComponent(issue.key ?? id)}`,
+        url: `${this.client.baseUrl}/browse/${encodeURIComponent(issue.key ?? id)}`,
       };
     } catch (err) {
       if (err instanceof AtlassianError && err.code === 'not_found') {
@@ -129,18 +129,11 @@ export class JiraProvider implements IssueTrackerProvider {
 
       const created = await this.client.post<JiraCreateResponse>('/rest/api/3/issue', body);
 
-      // Build browse URL — we need the base URL; access via the client config
-      const baseUrl =
-        (this.client as unknown as { config: { baseUrl: string } }).config?.baseUrl?.replace(
-          /\/+$/,
-          ''
-        ) ?? '';
-
       return {
         id: created.id,
         title: fields.title,
         type: fields.issueType === this.epicIssueType ? 'epic' : 'story',
-        url: `${baseUrl}/browse/${created.key}`,
+        url: `${this.client.baseUrl}/browse/${created.key}`,
       };
     } catch (err) {
       this.log?.warn({ err, fields }, 'Jira createIssue failed');

@@ -50,12 +50,7 @@ export class ConfluenceProvider implements KnowledgeBaseProvider {
   }
 
   private baseUrl(): string {
-    return (
-      (this.client as unknown as { config: { baseUrl: string } }).config?.baseUrl?.replace(
-        /\/+$/,
-        ''
-      ) ?? ''
-    );
+    return this.client.baseUrl;
   }
 
   async fetchPage(id: string, _opts?: SearchOptions): Promise<KnowledgePage | null> {
@@ -101,11 +96,14 @@ export class ConfluenceProvider implements KnowledgeBaseProvider {
   ): Promise<KnowledgePage[]> {
     const limit = opts?.maxPages ?? this.maxPages;
     try {
-      const spaceList = spaces.map((s) => `"${s}"`).join(',');
+      // CQL string literal: escape the escape character first, then the quotes,
+      // so a `\` in the input cannot un-escape the quote that follows it.
+      const cqlString = (v: string) => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+      const spaceList = spaces.map(cqlString).join(',');
       const cql =
         spaces.length > 0
-          ? `space in (${spaceList}) AND text~"${query.replace(/"/g, '\\"')}"`
-          : `text~"${query.replace(/"/g, '\\"')}"`;
+          ? `space in (${spaceList}) AND text~${cqlString(query)}`
+          : `text~${cqlString(query)}`;
       const result = await this.client.get<ConfluenceSearchResult>(
         `/wiki/rest/api/content/search?cql=${encodeURIComponent(cql)}&limit=${limit}&expand=body.storage,space,history.lastUpdated`
       );

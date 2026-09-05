@@ -39,6 +39,11 @@ export class AtlassianClient {
     this.authHeader = `Basic ${Buffer.from(`${config.email}:${config.apiToken}`).toString('base64')}`;
   }
 
+  /** Site base URL without a trailing slash — for building browse/webui links. */
+  get baseUrl(): string {
+    return this.config.baseUrl.replace(/\/+$/, '');
+  }
+
   async get<T>(path: string): Promise<T> {
     return this.request<T>('GET', path, undefined);
   }
@@ -52,8 +57,7 @@ export class AtlassianClient {
   }
 
   private async request<T>(method: string, path: string, body: unknown): Promise<T> {
-    const base = this.config.baseUrl.replace(/\/+$/, '');
-    const url = `${base}${path}`;
+    const url = `${this.baseUrl}${path}`;
 
     return tracer.startActiveSpan(`atlassian.${method} ${path}`, async (span) => {
       span.setAttributes({
