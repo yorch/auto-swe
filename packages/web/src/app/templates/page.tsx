@@ -499,62 +499,65 @@ export default function TemplatesPage() {
           number="02"
           title="Existing templates"
         />
-        {isLoading ? (
-          <LoadingState />
-        ) : (
-          <Card className="overflow-hidden p-0" variant="inset">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
-                  <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                    Name
-                  </th>
-                  <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                    Team
-                  </th>
-                  <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                    Status
-                  </th>
-                  <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                    Active version
-                  </th>
-                  <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                    Last run
-                  </th>
-                  <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                    Updated
-                  </th>
-                  <th className="px-4 py-3 text-right font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {(templates ?? []).map((t) => (
-                  <tr
-                    className="border-b border-ink-600 transition-colors hover:bg-ink-700/40"
-                    key={t.id}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <Link
-                          className="font-medium text-paper-100 hover:text-ember-400"
-                          href={`/templates/${t.id}`}
-                        >
-                          {t.name}
-                        </Link>
-                        {t.isDefault && (
-                          <span className="rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
-                            default
-                          </span>
-                        )}
-                        {t.webhookConfigured && (
-                          <span
-                            className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-violet-400"
-                            title="Webhook trigger active"
+        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="templates">
+          {
+            <Card className="overflow-hidden p-0" variant="inset">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-ink-600">
+                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
+                      Name
+                    </th>
+                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
+                      Team
+                    </th>
+                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
+                      Status
+                    </th>
+                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
+                      Active version
+                    </th>
+                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
+                      Last run
+                    </th>
+                    <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
+                      Updated
+                    </th>
+                    <th className="px-4 py-3 text-right font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(templates ?? []).map((t) => (
+                    <tr
+                      className="border-b border-ink-600 transition-colors hover:bg-ink-700/40"
+                      key={t.id}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Link
+                            className="font-medium text-paper-100 hover:text-ember-400"
+                            href={`/templates/${t.id}`}
                           >
-                            webhook
-                          </span>
+                            {t.name}
+                          </Link>
+                          {t.isDefault && (
+                            <span className="rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
+                              default
+                            </span>
+                          )}
+                          {t.webhookConfigured && (
+                            <span
+                              className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-violet-400"
+                              title="Webhook trigger active"
+                            >
+                              webhook
+                            </span>
+                          )}
+                        </div>
+                        {t.description && (
+                          <div className="text-xs text-paper-500">{t.description}</div>
                         )}
                       </td>
                       <td className="px-4 py-3 text-paper-400">
