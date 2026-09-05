@@ -1096,6 +1096,47 @@ describe('runSpec', () => {
     expect(slowResolvers.length).toBeGreaterThan(0);
   });
 
+  it('fanOut block-mode stops a sibling that is between activities', async () => {
+    // The cancellation token only reaches an activity that is in flight. A
+    // sibling whose current step has already settled when the block fires must
+    // not go on to dispatch its next one.
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-block-between',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          concurrency: 2,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1] },
+          subgraph: 'first',
+          type: 'fanOut',
+        },
+        first: { inputs: { i: { from: 'subtask' } }, next: 'second', step: 'first', type: 'step' },
+        second: { next: 'branchDone', step: 'second', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        // Branch 0 fails at once; branch 1's first step settles a tick later,
+        // after the block has fired, and its branch must then stop.
+        first: (i: Record<string, unknown>) =>
+          i.i === 0
+            ? Promise.reject(new Error('branch 0 boom'))
+            : new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 10)),
+        second: { ok: true },
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('branch 0 boom');
+    expect(calls.filter((c) => c.step === 'second')).toHaveLength(0);
+    // Branch 1's first step did complete — it was between activities, not cancelled mid-flight.
+    expect(records).toContainEqual({ nodeId: 'fan[1]/first', status: 'PASSED' });
+  });
+
   it('fanOut block-mode without dispatcher cancellation support still drains in-flight work', async () => {
     const spec = parseWorkflowSpec({
       entry: 'fan',

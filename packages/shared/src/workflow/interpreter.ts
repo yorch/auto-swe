@@ -349,12 +349,20 @@ async function walk(
   dispatcher: Dispatcher,
   cursor: Cursor,
   nodeIdPrefix: string,
-  cancellationSink?: { token?: CancellationToken }
+  cancellationSink?: { token?: CancellationToken },
+  shouldAbort?: () => boolean
 ): Promise<BranchOutcome> {
   let currentNodeId: string | undefined = entry;
   let terminal: { status: string; result: Record<string, unknown> } | null = null;
 
   while (currentNodeId) {
+    // A block-mode sibling failure cancels the activity this branch is inside
+    // (via the cancellation sink); this check stops a branch that is BETWEEN
+    // activities — on a set/cond, or about to dispatch its next step — from
+    // carrying on after the fan-out has already been decided.
+    if (shouldAbort?.()) {
+      throw new BranchCancelledError();
+    }
     if (++cursor.count > cursor.cap) {
       throw new Error(
         `workflow exceeded MAX_NODE_TRANSITIONS (${cursor.cap}) — likely an infinite loop in spec '${spec.name}'`
@@ -1049,9 +1057,9 @@ function runTerminate(
  *
  * Branches run through a `concurrency`-bounded worker pool (default
  * {@link DEFAULT_FANOUT_CONCURRENCY}). `onBranchFail: 'block'` stops
- * scheduling new branches but lets in-flight ones drain — Temporal activity
- * cancellation isn't plumbed through the dispatcher, so we can't abort
- * mid-flight without losing replay determinism.
+ * scheduling new branches, cancels the activity each in-flight sibling is
+ * inside (through the {@link CancellationToken} the dispatcher installs), and
+ * makes a sibling that is between activities stop at its next node.
  *
  * Determinism: Temporal workflows run on a single-threaded event loop, so
  * the worker pool's shared `nextIndex` counter and `Promise.all` of N
@@ -1143,7 +1151,8 @@ async function runFanOut(
           dispatcher,
           cursor,
           branchPrefix,
-          sink
+          sink,
+          () => stop
         );
         const exports = collectExports(node.exports, childCtx);
         slots[i] = {

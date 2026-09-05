@@ -1009,6 +1009,11 @@ async function runWithCancellation<T>(
       throw new BranchCancelledError();
     }
     throw err;
+  } finally {
+    // The token belongs to this call's scope. Leaving it behind would let a
+    // later block-mode cancel target a scope that has already settled instead
+    // of the branch's actual in-flight work.
+    cancellation.token = undefined;
   }
 }
 
