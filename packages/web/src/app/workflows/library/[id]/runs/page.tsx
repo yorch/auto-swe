@@ -252,7 +252,7 @@ export default function TemplateRunsPage({ params }: PageProps) {
                       colSpan={5}
                     >
                       {rows.length === 0
-                        ? 'no runs yet — submit a work request to trigger one'
+                        ? 'no runs yet — start a new request to trigger one'
                         : 'no runs match the current filters'}
                     </td>
                   </tr>
