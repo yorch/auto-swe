@@ -2,7 +2,7 @@
 
 import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
-import { formatDuration } from '@/lib/utils';
+import { formatDuration, formatTokens } from '@/lib/utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -337,7 +337,7 @@ function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
   }
 
   const tokenLabel = hasTokens
-    ? `↑${(trace.inputTokens ?? 0).toLocaleString()} ↓${(trace.outputTokens ?? 0).toLocaleString()}`
+    ? `↑${formatTokens(trace.inputTokens ?? 0)} ↓${formatTokens(trace.outputTokens ?? 0)}`
     : null;
   const costLabel = hasCost
     ? `$${(typeof trace.costUsd === 'number' ? trace.costUsd : Number(trace.costUsd ?? 0)).toFixed(4)}`

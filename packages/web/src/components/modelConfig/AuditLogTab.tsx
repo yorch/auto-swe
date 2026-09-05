@@ -2,6 +2,7 @@
 
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useAdminConfigAuditLog } from '@/hooks/useModelConfig';
+import { formatDate } from '@/lib/utils';
 
 export function AuditLogTab() {
   const { data: rows, isLoading } = useAdminConfigAuditLog({ limit: 100 });
@@ -29,7 +30,7 @@ export function AuditLogTab() {
           {(rows ?? []).map((r) => (
             <tr className="border-t border-ink-700" key={r.id}>
               <td className="py-2 font-mono text-[11px] text-paper-400">
-                {new Date(r.createdAt).toISOString().slice(0, 19).replace('T', ' ')}
+                {formatDate(r.createdAt, { showSeconds: true })}
               </td>
               <td className="py-2">
                 <span

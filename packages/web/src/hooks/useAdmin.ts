@@ -1,6 +1,10 @@
 'use client';
 
-import type { AdminTokenSummary } from '@auto-swe/shared/types/api';
+import type {
+  AdminTokenSummary,
+  EvalDatasetSummary,
+  EvalResultDto,
+} from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -177,8 +181,6 @@ export function useSecurityEvents(params?: {
 }
 
 // ── Evals (P3 drift dashboard) ──
-
-import type { EvalDatasetSummary, EvalResultDto } from '@auto-swe/shared/types/api';
 
 export function useEvalDatasets() {
   return useQuery({

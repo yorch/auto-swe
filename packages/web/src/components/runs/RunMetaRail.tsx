@@ -2,7 +2,7 @@
 
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { formatCost, formatDate, formatDuration, formatTokens } from '@/lib/utils';
+import { formatCost, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
 import { AutonomyDecisionsPanel } from './AutonomyDecisionsPanel';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
 import { FailureCard } from './FailureCard';
@@ -88,7 +88,7 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
             <MetaRow label="Tokens">
               <span
                 className="text-paper-300"
-                title={`${run.tokensInputTotal.toLocaleString()} in / ${run.tokensOutputTotal.toLocaleString()} out`}
+                title={`${formatCount(run.tokensInputTotal)} in / ${formatCount(run.tokensOutputTotal)} out`}
               >
                 <MonoValue>{formatTokens(totalTokens)} total</MonoValue>
               </span>

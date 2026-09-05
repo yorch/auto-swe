@@ -87,6 +87,14 @@ export function formatTokens(n: number): string {
   return compact().format(n);
 }
 
+const grouped = lazy(() => new Intl.NumberFormat(undefined));
+
+/** Exact integer with locale digit grouping — for tooltips where the compact
+ *  `formatTokens` form would lose precision. */
+export function formatCount(n: number): string {
+  return grouped().format(n);
+}
+
 const durationUnit = (unit: 'second' | 'minute' | 'hour', maximumFractionDigits: number) =>
   lazy(
     () =>
