@@ -301,7 +301,9 @@ export async function installBundle(
     async (tx) => {
       // Skills first — agents reference them by name.
       for (const s of manifest.entities.skills) {
-        const existing = await tx.skill.findFirst({ where: { name: s.name } });
+        // Skill names are only unique per scope: a TEAM/ORG custom skill with the
+        // same name must not be overwritten and rebranded as the managed GLOBAL layer.
+        const existing = await tx.skill.findFirst({ where: { name: s.name, scope: 'GLOBAL' } });
         if (existing) {
           await tx.skill.update({
             data: {
@@ -361,7 +363,11 @@ export async function installBundle(
           // rather than leaving the prior value on the managed base-layer row.
           toolKeys: a.toolKeys ?? Prisma.DbNull,
         };
+        // GLOBAL agents are versioned and the resolver reads the highest version,
+        // so a re-install must update the lineage head — not whichever version
+        // Postgres happens to return first.
         const existing = await tx.agent.findFirst({
+          orderBy: { version: 'desc' },
           where: { key: a.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
         });
         const agent = existing
@@ -380,7 +386,7 @@ export async function installBundle(
         // Reconcile skill refs from the bundle (clear + recreate by skill name).
         await tx.agentSkillRef.deleteMany({ where: { agentId: agent.id } });
         for (const ref of a.skills ?? []) {
-          const skill = await tx.skill.findFirst({ where: { name: ref.skill } });
+          const skill = await tx.skill.findFirst({ where: { name: ref.skill, scope: 'GLOBAL' } });
           if (skill) {
             await tx.agentSkillRef.create({
               data: { agentId: agent.id, skillId: skill.id, sortOrder: ref.sortOrder ?? 0 },
