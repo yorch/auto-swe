@@ -45,6 +45,9 @@ interface RawLesson {
  * lessons. Source lessons are soft-deleted (consolidated_at = now()); the new
  * consolidated rows carry provenance in their metadata.
  */
+/** Max clusters consolidated concurrently — each is one LLM call plus embeddings. */
+const CLUSTER_CONCURRENCY = 3;
+
 export async function consolidateLessons(
   input: ConsolidateLessonsInput
 ): Promise<ConsolidateLessonsResult> {
@@ -131,105 +134,121 @@ export async function consolidateLessons(
   const tracer = new AgentTracer();
 
   try {
-    // Process clusters in parallel — each is independent (different source rows, different inserts).
-    const clusterOutcomes = await Promise.all(
-      qualifying.map(async (cluster) => {
-        const clusterLessons = cluster.map((idx) => rows[idx]);
-        const sourceIds = clusterLessons.map((l) => l.id);
+    // Clusters are independent (different source rows, different inserts), but
+    // each costs one LLM call plus embeddings, so run them through a bounded
+    // pool rather than firing every cluster at once on a repo with many.
+    const processCluster = async (cluster: number[]) => {
+      const clusterLessons = cluster.map((idx) => rows[idx]);
+      const sourceIds = clusterLessons.map((l) => l.id);
 
-        const prompt = clusterLessons
-          .map(
-            (l, i) =>
-              `Lesson ${i + 1} [${l.failureType ?? 'GENERAL'}]:\n` +
-              `Rationale: ${l.rationale}\n` +
-              `Summary: ${l.lessonSummary}`
-          )
-          .join('\n\n');
+      const prompt = clusterLessons
+        .map(
+          (l, i) =>
+            `Lesson ${i + 1} [${l.failureType ?? 'GENERAL'}]:\n` +
+            `Rationale: ${l.rationale}\n` +
+            `Summary: ${l.lessonSummary}`
+        )
+        .join('\n\n');
 
-        const start = Date.now();
-        const result = await agent.generate([{ content: prompt, role: 'user' }], {
-          structuredOutput: { schema: ConsolidatorOutputSchema },
-        });
+      const start = Date.now();
+      const result = await agent.generate([{ content: prompt, role: 'user' }], {
+        structuredOutput: { schema: ConsolidatorOutputSchema },
+      });
 
-        let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
-        if (result.usage) {
-          attribution = await recordLlmUsage(
-            'consolidateLessons',
-            'commitToMemory',
-            result.usage,
-            'llm.consolidate_lessons'
-          );
-        }
+      let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
+      if (result.usage) {
+        attribution = await recordLlmUsage(
+          'consolidateLessons',
+          'commitToMemory',
+          result.usage,
+          'llm.consolidate_lessons'
+        );
+      }
 
-        if (!result.object) {
+      if (!result.object) {
+        return { consolidated: 0, created: 0 };
+      }
+
+      const { lessons } = ConsolidatorOutputSchema.parse(result.object);
+
+      tracer.addLlmResponse({
+        costUsd: attribution.costUsd,
+        durationMs: Date.now() - start,
+        inputJson: { systemPrompt: consolidatorPrompt, userMessage: prompt },
+        inputTokens: attribution.inputTokens,
+        model: attribution.modelSpec || undefined,
+        outputJson: { lessonsOut: lessons.length, sourceIds },
+        outputTokens: attribution.outputTokens,
+        role: 'commitToMemory',
+      });
+
+      // Determine dominant failureType across the cluster (null if mixed).
+      const types = [...new Set(clusterLessons.map((l) => l.failureType))];
+      const sharedFailureType = types.length === 1 ? types[0] : null;
+
+      // Generate embeddings before opening the transaction to avoid holding a
+      // DB connection open during an external HTTP round-trip.
+      const newEmbeddings = await Promise.all(
+        lessons.map((l) => generateEmbeddingWithSpec(l.lessonSummary))
+      );
+
+      await prisma.$transaction(async (tx) => {
+        // Serialise consolidation per repo. The read + LLM work happened
+        // outside the transaction; re-check that the source rows are still
+        // unconsolidated before writing, otherwise an overlapping scheduled
+        // run would insert duplicate consolidated lessons.
+        await tx.$queryRaw`
+            SELECT pg_advisory_xact_lock(hashtextextended(${repoId}, 0))
+          `;
+        const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(
+          `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
+          sourceIds
+        );
+        if (stillActive.length < sourceIds.length) {
           return { consolidated: 0, created: 0 };
         }
 
-        const { lessons } = ConsolidatorOutputSchema.parse(result.object);
-
-        tracer.addLlmResponse({
-          costUsd: attribution.costUsd,
-          durationMs: Date.now() - start,
-          inputJson: { systemPrompt: consolidatorPrompt, userMessage: prompt },
-          inputTokens: attribution.inputTokens,
-          model: attribution.modelSpec || undefined,
-          outputJson: { lessonsOut: lessons.length, sourceIds },
-          outputTokens: attribution.outputTokens,
-          role: 'commitToMemory',
-        });
-
-        // Determine dominant failureType across the cluster (null if mixed).
-        const types = [...new Set(clusterLessons.map((l) => l.failureType))];
-        const sharedFailureType = types.length === 1 ? types[0] : null;
-
-        // Generate embeddings before opening the transaction to avoid holding a
-        // DB connection open during an external HTTP round-trip.
-        const newEmbeddings = await Promise.all(
-          lessons.map((l) => generateEmbeddingWithSpec(l.lessonSummary))
-        );
-
-        await prisma.$transaction(async (tx) => {
-          // Serialise consolidation per repo. The read + LLM work happened
-          // outside the transaction; re-check that the source rows are still
-          // unconsolidated before writing, otherwise an overlapping scheduled
-          // run would insert duplicate consolidated lessons.
-          await tx.$queryRaw`
-            SELECT pg_advisory_xact_lock(hashtextextended(${repoId}, 0))
-          `;
-          const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(
-            `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
-            sourceIds
-          );
-          if (stillActive.length < sourceIds.length) {
-            return { consolidated: 0, created: 0 };
-          }
-
-          for (let i = 0; i < lessons.length; i++) {
-            const lesson = lessons[i];
-            await tx.$executeRawUnsafe(
-              `INSERT INTO memory_items
+        for (let i = 0; i < lessons.length; i++) {
+          const lesson = lessons[i];
+          await tx.$executeRawUnsafe(
+            `INSERT INTO memory_items
                (id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type, metadata, created_at)
              VALUES
                (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6, $7::jsonb, now())`,
-              repoId,
-              lesson.rationale,
-              lesson.lessonSummary,
-              JSON.stringify(newEmbeddings[i]?.embedding),
-              newEmbeddings[i]?.spec ?? null,
-              lesson.failureType ?? sharedFailureType,
-              JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds })
-            );
-          }
-
-          // Soft-delete source rows.
-          await tx.$executeRawUnsafe(
-            `UPDATE memory_items SET consolidated_at = now() WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
-            sourceIds
+            repoId,
+            lesson.rationale,
+            lesson.lessonSummary,
+            JSON.stringify(newEmbeddings[i]?.embedding),
+            newEmbeddings[i]?.spec ?? null,
+            lesson.failureType ?? sharedFailureType,
+            JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds })
           );
-        });
+        }
 
-        return { consolidated: cluster.length, created: lessons.length };
-      })
+        // Soft-delete source rows.
+        await tx.$executeRawUnsafe(
+          `UPDATE memory_items SET consolidated_at = now() WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
+          sourceIds
+        );
+      });
+
+      return { consolidated: cluster.length, created: lessons.length };
+    };
+    const clusterOutcomes: Array<Awaited<ReturnType<typeof processCluster>>> = new Array(
+      qualifying.length
+    );
+    let nextCluster = 0;
+    const poolWorker = async (): Promise<void> => {
+      while (true) {
+        const i = nextCluster++;
+        if (i >= qualifying.length) {
+          return;
+        }
+        clusterOutcomes[i] = await processCluster(qualifying[i] as number[]);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(CLUSTER_CONCURRENCY, qualifying.length) }, poolWorker)
     );
 
     const totalConsolidated = clusterOutcomes.reduce((s, o) => s + o.consolidated, 0);
