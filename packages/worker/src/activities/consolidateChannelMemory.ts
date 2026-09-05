@@ -276,7 +276,10 @@ export async function consolidateChannelMemory(
           // Serialise consolidation per channel and re-check that the source
           // rows are still unconsolidated before writing. The read + LLM work
           // happens outside the transaction so the lock is held briefly.
-          await tx.$queryRaw`
+          // CLAUDE.md §7 exception: transaction-scoped advisory lock (Prisma has no
+          // API for it). `$executeRaw` because the lock returns void, which the
+          // Prisma 7 driver adapter cannot deserialise as a result column.
+          await tx.$executeRaw`
             SELECT pg_advisory_xact_lock(hashtextextended(${channelId}, 0))
           `;
           const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(

@@ -197,7 +197,10 @@ export async function consolidateLessons(
         // outside the transaction; re-check that the source rows are still
         // unconsolidated before writing, otherwise an overlapping scheduled
         // run would insert duplicate consolidated lessons.
-        await tx.$queryRaw`
+        // CLAUDE.md §7 exception: transaction-scoped advisory lock (Prisma has no
+        // API for it). `$executeRaw` because the lock returns void, which the
+        // Prisma 7 driver adapter cannot deserialise as a result column.
+        await tx.$executeRaw`
             SELECT pg_advisory_xact_lock(hashtextextended(${repoId}, 0))
           `;
         const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(

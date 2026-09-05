@@ -104,6 +104,7 @@ describe('epic routes', () => {
     } as unknown as never);
 
     const prismaMock = {
+      $executeRaw: async () => 1,
       $queryRaw: async () => [],
       $transaction: async (arg: unknown) => {
         if (Array.isArray(arg)) {
