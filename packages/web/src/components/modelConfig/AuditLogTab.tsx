@@ -1,64 +1,27 @@
 'use client';
 
+import { AuditLogTable } from '@/components/AuditLogTable';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useAdminConfigAuditLog } from '@/hooks/useModelConfig';
-import { formatDate } from '@/lib/utils';
 
 export function AuditLogTab() {
-  const { data: rows, isLoading } = useAdminConfigAuditLog({ limit: 100 });
+  const { data: rows, isLoading, isError, error } = useAdminConfigAuditLog({ limit: 100 });
 
   return (
     <Card>
       <CardHeader>
         <CardTitle eyebrow="Audit log">Recent config changes</CardTitle>
       </CardHeader>
-      {isLoading && <p className="text-sm text-paper-400">Loading…</p>}
-      {!isLoading && (rows ?? []).length === 0 && (
-        <p className="text-sm text-paper-500">No config changes recorded yet.</p>
-      )}
-      <table className="w-full text-xs">
-        <thead className="text-left uppercase tracking-wide text-paper-500">
-          <tr>
-            <th className="pb-2">When</th>
-            <th className="pb-2">Action</th>
-            <th className="pb-2">Entity</th>
-            <th className="pb-2">Actor</th>
-            <th className="pb-2">Summary</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(rows ?? []).map((r) => (
-            <tr className="border-t border-ink-700" key={r.id}>
-              <td className="py-2 font-mono text-[11px] text-paper-400">
-                {formatDate(r.createdAt, { showSeconds: true })}
-              </td>
-              <td className="py-2">
-                <span
-                  className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
-                    r.action === 'CREATE'
-                      ? 'bg-moss-400/15 text-moss-400 border-moss-400/30'
-                      : r.action === 'UPDATE'
-                        ? 'bg-dust-400/15 text-dust-400 border-dust-400/30'
-                        : 'bg-brick-500/15 text-brick-300 border-brick-500/30'
-                  }`}
-                >
-                  {r.action}
-                </span>
-              </td>
-              <td className="py-2 font-mono text-[11px]">
-                {r.entityType}
-                <span className="text-paper-500"> · {r.entityId.slice(0, 8)}…</span>
-              </td>
-              <td className="py-2 font-mono text-[11px] text-paper-400">
-                {r.actorId ? `${r.actorId.slice(0, 8)}…` : 'system'}
-              </td>
-              <td className="py-2 font-mono text-[10px] text-paper-400">
-                {summarize(r.beforeJson, r.afterJson)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <AuditLogTable
+        emptyMessage="No config changes recorded yet."
+        entries={rows}
+        error={error}
+        isError={isError}
+        isLoading={isLoading}
+        showEntityId
+        summary={(r) => summarize(r.beforeJson, r.afterJson)}
+        summaryHeader="Summary"
+      />
     </Card>
   );
 }

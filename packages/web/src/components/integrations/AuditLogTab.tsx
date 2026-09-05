@@ -1,37 +1,7 @@
 'use client';
 
-import { Badge, type BadgeTone } from '@/components/ui/Badge';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { AuditLogTable } from '@/components/AuditLogTable';
 import { useConfigAuditLog } from '@/hooks/useAdminConfig';
-import { formatDate } from '@/lib/utils';
-
-const ACTION_TONES: Record<string, BadgeTone> = {
-  CREATE: 'moss',
-  DELETE: 'brick',
-  UPDATE: 'amber',
-};
-
-const ENTITY_LABELS: Record<string, string> = {
-  AgentSkillAssignment: 'Agent skill assignment',
-  AgentToolConfig: 'Agent tool config',
-  CanaryConfig: 'Canary routing',
-  ConfigSetting: 'Setting',
-  ConsolidationConfig: 'Consolidation schedule',
-  EmbeddingConfig: 'Embedding config',
-  EvalScheduleConfig: 'Eval schedule',
-  FigmaConfig: 'Figma',
-  GitHubConfig: 'GitHub',
-  GoogleOAuthConfig: 'Google OAuth',
-  IssueTrackerConfig: 'Issue tracker',
-  KnowledgeBaseConfig: 'Knowledge base',
-  ModelRoleConfig: 'Model config',
-  ProviderCredential: 'Provider credential',
-  RevalidationConfig: 'Revalidation schedule',
-  Skill: 'Skill',
-  SlackConfig: 'Slack',
-  StorageConfig: 'Storage',
-  WorkflowDefaults: 'Workflow defaults',
-};
 
 function ChangedFields({ json }: { json: unknown }) {
   if (!json || typeof json !== 'object') {
@@ -46,74 +16,22 @@ function ChangedFields({ json }: { json: unknown }) {
 }
 
 export function AuditLogTab() {
-  const { data: entries, isLoading, error } = useConfigAuditLog(200);
-
-  if (isLoading) {
-    return <LoadingState />;
-  }
-
-  if (error) {
-    return <p className="text-sm text-brick-400">Failed to load audit log.</p>;
-  }
-
-  if (!entries || entries.length === 0) {
-    return (
-      <p className="text-sm text-paper-500">
-        No config changes recorded yet. Changes to model config, credentials, and integration
-        settings will appear here.
-      </p>
-    );
-  }
+  const { data: entries, isLoading, isError, error } = useConfigAuditLog(200);
 
   return (
-    <div className="space-y-2">
-      <p className="text-xs text-paper-500">
-        Showing the last {entries.length} config changes. Secret values are never recorded.
-      </p>
-      <div className="overflow-x-auto rounded-sm border border-ink-700">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-ink-700 bg-ink-900 text-left">
-              <th className="px-3 py-2 font-mono uppercase tracking-wider text-paper-500">Time</th>
-              <th className="px-3 py-2 font-mono uppercase tracking-wider text-paper-500">What</th>
-              <th className="px-3 py-2 font-mono uppercase tracking-wider text-paper-500">
-                Action
-              </th>
-              <th className="px-3 py-2 font-mono uppercase tracking-wider text-paper-500">By</th>
-              <th className="px-3 py-2 font-mono uppercase tracking-wider text-paper-500">
-                Fields
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((entry) => (
-              <tr className="border-b border-ink-800 hover:bg-ink-800/50" key={entry.id}>
-                <td className="whitespace-nowrap px-3 py-2 font-mono text-paper-400">
-                  {formatDate(entry.createdAt, { showSeconds: true })}
-                </td>
-                <td className="px-3 py-2 text-paper-300">
-                  {ENTITY_LABELS[entry.entityType] ?? entry.entityType}
-                </td>
-                <td className="px-3 py-2">
-                  <Badge
-                    className="text-xs font-semibold"
-                    tone={ACTION_TONES[entry.action] ?? 'neutral'}
-                    variant="text"
-                  >
-                    {entry.action}
-                  </Badge>
-                </td>
-                <td className="px-3 py-2 text-paper-400">
-                  {entry.actorEmail ?? (entry.actorId ? entry.actorId.slice(0, 8) : '—')}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  <ChangedFields json={entry.afterJson} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <AuditLogTable
+      caption={
+        entries
+          ? `Showing the last ${entries.length} config changes. Secret values are never recorded.`
+          : undefined
+      }
+      emptyMessage="No config changes recorded yet. Changes to model config, credentials, and integration settings will appear here."
+      entries={entries}
+      error={error}
+      isError={isError}
+      isLoading={isLoading}
+      summary={(entry) => <ChangedFields json={entry.afterJson} />}
+      summaryHeader="Fields"
+    />
   );
 }
