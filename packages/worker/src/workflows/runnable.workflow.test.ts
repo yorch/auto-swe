@@ -36,6 +36,7 @@ const calls: {
   readSource: unknown[];
   writeOutcome: unknown[];
   runTool: unknown[];
+  implementations: unknown[];
 } = {
   cancelledHumanSteps: [],
   contextOverflowBatches: 0,
@@ -43,6 +44,7 @@ const calls: {
   createWorkflowRun: [],
   domainStates: [],
   finalize: [],
+  implementations: [],
   readSource: [],
   resolveWorkspace: [],
   runTool: [],
@@ -84,6 +86,10 @@ const fakeActivities = {
   createWorkflowRun: async (input: unknown) => {
     calls.createWorkflowRun.push(input);
     return { pinnedSettings: currentPinnedSettings, runId: 'run-test-1', spec: currentSpec };
+  },
+  executeImplementation: async (_request: unknown, subtask: unknown) => {
+    calls.implementations.push(subtask);
+    return { branch: 'auto/T-1', headSha: 'sha' };
   },
   finalizeWorkflowRun: async (runId: string, status: string) => {
     calls.finalize.push({ runId, status });
@@ -360,6 +366,35 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
         calls.domainStates.push(status);
       };
     }
+  }, 120_000);
+
+  it('passes the branch item to executeImplementation under a custom fanOut itemKey', async () => {
+    calls.implementations.length = 0;
+    currentSpec = makeSpec(
+      {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          itemKey: 'story',
+          join: 'done',
+          over: { literal: [{ id: 's1' }, { id: 's2' }] },
+          subgraph: 'impl',
+          type: 'fanOut',
+        },
+        impl: { next: 'branchDone', step: 'executeImplementation', type: 'step' },
+      },
+      'fan'
+    );
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-item-key')
+    )) as { status: string };
+    expect(result.status).toBe('SUCCESS');
+    // The executor used to hard-code `subtask`, so a node with any other
+    // itemKey ran the implementer with no subtask at all. Branches run
+    // concurrently, so compare as a set.
+    expect(calls.implementations).toHaveLength(2);
+    expect(calls.implementations).toEqual(expect.arrayContaining([{ id: 's1' }, { id: 's2' }]));
   }, 120_000);
 
   it('answers a HITL node inside each fanOut branch through its own signal', async () => {

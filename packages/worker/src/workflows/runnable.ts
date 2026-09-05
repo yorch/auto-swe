@@ -603,10 +603,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     ({ ctx, request, config, inputs }) => {
       const systemPromptOverride = config.systemPrompt as string | undefined;
       const crossRepo = crossRepoOptions(config);
-      // Inside a fanOut, the per-branch element is bound at `ctx[itemKey]`.
+      // Inside a fanOut, the per-branch element is bound at `ctx[itemKey]`; the
+      // interpreter names that key at `fanOut.itemKey` (default `subtask`).
+      const itemKey = (lookupPath(ctx, 'fanOut.itemKey') as string | undefined) ?? 'subtask';
       const subtask =
         (inputs.subtask as Subtask | undefined) ??
-        (lookupPath(ctx, 'subtask') as Subtask | undefined);
+        (lookupPath(ctx, itemKey) as Subtask | undefined);
       // `subtask` is already `Subtask | undefined`, so both arms of the ternary
       // this replaced passed the same thing.
       return agentActivities.executeImplementation(

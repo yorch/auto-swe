@@ -1273,12 +1273,16 @@ async function runFanOut(
  *   - fresh `nodes` and `context` so branch-local writes never leak into the
  *     parent (only `exports` flow back, at join time)
  *   - inject `<itemKey>` and `<itemKey>Index` for the subgraph to bind to
+ *   - describe the branch at `fanOut` (`{ index, itemKey }`) so a step executor
+ *     that defaults an input from the branch item can find it under whatever
+ *     key the node chose, instead of assuming `subtask`
  */
 function makeChildContext(parent: Context, itemKey: string, item: unknown, index: number): Context {
   const child: Context = {
     [itemKey]: item,
     [`${itemKey}Index`]: index,
     context: { ...((parent.context as Record<string, unknown> | undefined) ?? {}) },
+    fanOut: { index, itemKey },
     nodes: {},
     request: parent.request,
     workflow: parent.workflow,

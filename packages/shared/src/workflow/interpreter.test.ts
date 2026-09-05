@@ -571,6 +571,40 @@ describe('runSpec', () => {
     expect(records.some((r) => r.nodeId === 'work')).toBe(false);
   });
 
+  it('fanOut: describes the branch at `fanOut.{itemKey,index}` for executors', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-item-key',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          itemKey: 'story',
+          join: 'done',
+          over: { literal: ['a', 'b'] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: {
+          inputs: { i: { from: 'fanOut.index' }, k: { from: 'fanOut.itemKey' } },
+          next: 'branchDone',
+          step: 'echo',
+          type: 'step',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { echo: { ok: true } },
+    });
+    await runSpec(spec, baseCtx(), dispatcher);
+    expect(calls.map((c) => [c.inputs.k, c.inputs.i])).toEqual([
+      ['story', 0],
+      ['story', 1],
+    ]);
+  });
+
   it('fanOut: sealed child context — branch writes do not leak to parent', async () => {
     const spec = parseWorkflowSpec({
       entry: 'fan',
