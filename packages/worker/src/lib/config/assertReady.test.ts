@@ -157,6 +157,20 @@ describe('requiredAgentKeysForDeployment', () => {
     expect(keys).toEqual(['channelAssistant']);
   });
 
+  it('counts an eval node as the runEvalNode step so evalJudge is gated', async () => {
+    installTemplates([
+      {
+        nodes: {
+          e: { scorers: [{ kind: 'judge', rubric: 'r' }], target: { from: 'x' }, type: 'eval' },
+        },
+      },
+    ]);
+    slackChannelCount.mockResolvedValue(0);
+
+    await expect(installedStepNames()).resolves.toEqual(new Set(['runEvalNode']));
+    await expect(requiredAgentKeysForDeployment()).resolves.toEqual(['evalJudge']);
+  });
+
   it('requires nothing when nothing runnable is installed', async () => {
     templateFindMany.mockResolvedValue([]);
     versionFindMany.mockResolvedValue([]);

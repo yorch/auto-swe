@@ -65,6 +65,10 @@ export async function installedStepNames(): Promise<Set<string>> {
     for (const node of Object.values(nodes)) {
       if (node?.type === 'step') {
         steps.add(node.step);
+      } else if (node?.type === 'eval') {
+        // The interpreter dispatches an `eval` node through the `runEvalNode`
+        // step, whose judge scorer binds `evalJudge` — the gate must see it.
+        steps.add('runEvalNode');
       }
     }
   }
