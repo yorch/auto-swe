@@ -16,7 +16,6 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { NewRequestModal } from '@/components/workflow/NewRequestModal';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { useApprovals } from '@/hooks/useApprovals';
-import { useRepositories } from '@/hooks/useRepositories';
 import { useAllWorkflowRuns, useWorkflows } from '@/hooks/useRuns';
 import { groupWorkflowsByDate, groupWorkflowsByStatus } from '@/lib/chartUtils';
 import { formatRelativeTime } from '@/lib/utils';
@@ -74,7 +73,6 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
 export default function DashboardPage() {
   const router = useRouter();
   const { data: workflows, isLoading } = useWorkflows();
-  const { data: repos, isLoading: reposLoading } = useRepositories();
   const { data: approvalSteps } = useApprovals();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const [newOpen, setNewOpen] = useState(false);
@@ -95,14 +93,12 @@ export default function DashboardPage() {
   });
   const outcomes = myOutcomes?.data ?? [];
 
-  if (isLoading || reposLoading) {
+  if (isLoading) {
     return <LoadingState message="loading…" />;
   }
 
   if (all.length === 0) {
-    return (
-      <DashboardOnboarding onNewRequest={() => setNewOpen(true)} repos={repos ?? []} role={role} />
-    );
+    return <DashboardOnboarding onNewRequest={() => setNewOpen(true)} role={role} />;
   }
 
   const now = new Date();

@@ -1,24 +1,24 @@
 'use client';
 
-import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { useRepositories } from '@/hooks/useRepositories';
 import { API_BASE, TEMPORAL_UI_URL } from '@/lib/config';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER' | string;
 
 export function DashboardOnboarding({
-  repos,
   role,
   onNewRequest,
 }: {
-  repos: RepositorySummary[];
   role: Role;
   onNewRequest?: () => void;
 }) {
+  const { data: repos = [], isLoading: connectionsLoading } = useRepositories();
+
   // Start empty so SSR output is stable regardless of runtime env. After mount,
   // window.__APP_CONFIG__ is set and TEMPORAL_UI_URL holds the runtime value.
   const [temporalUiUrl, setTemporalUiUrl] = useState('');
@@ -27,13 +27,7 @@ export function DashboardOnboarding({
   }, []);
 
   const canManageRepos = role === 'ADMIN' || role === 'LEAD';
-  const hasRepo = repos.length > 0;
-  const sampleRepo = repos[0];
-  const sampleRepoLabel = sampleRepo
-    ? sampleRepo.organizationName && sampleRepo.repoName
-      ? `${sampleRepo.organizationName}/${sampleRepo.repoName}`
-      : (sampleRepo.name ?? 'your workspace')
-    : 'your workspace';
+  const hasConnections = repos.length > 0;
 
   const curlExample = `curl -X POST ${API_BASE}/api/v1/workflow-templates/<template-id>/runs \\
   -H 'Authorization: Bearer <your-token>' \\
@@ -91,10 +85,30 @@ export function DashboardOnboarding({
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <OnboardingStep
             body={
-              hasRepo ? (
+              <div className="space-y-3">
                 <p>
-                  <span className="text-moss-400">{repos.length}</span> workspace{' '}
-                  {repos.length === 1 ? 'connection' : 'connections'} connected.
+                  Pick a workflow template and provide the inputs it expects — some need a
+                  connection, others only free text.
+                </p>
+                {onNewRequest && (
+                  <Button onClick={onNewRequest} size="sm" type="button" variant="primary">
+                    + New request
+                  </Button>
+                )}
+              </div>
+            }
+            index={1}
+            title="Start a request"
+          />
+          <OnboardingStep
+            body={
+              connectionsLoading ? (
+                <p>Loading connections…</p>
+              ) : hasConnections ? (
+                <p>
+                  <span className="text-moss-400">{repos.length}</span>{' '}
+                  {repos.length === 1 ? 'connection' : 'connections'} ready for templates that need
+                  them.
                   {canManageRepos && (
                     <>
                       {' '}
@@ -107,52 +121,22 @@ export function DashboardOnboarding({
                 </p>
               ) : canManageRepos ? (
                 <p>
-                  Add a workspace connection for the workflows you want to run.{' '}
+                  Add Notion pages, Zendesk accounts, Slack workspaces, repositories, or other
+                  integrations when a template asks for one.{' '}
                   <Link className="text-ember-400 hover:underline" href="/connections">
                     Open connections →
                   </Link>
                 </p>
               ) : (
                 <p>
-                  No workspace connections yet. Ask an{' '}
-                  <span className="text-paper-200">admin or team lead</span> to add one — only they
-                  can connect workspaces.
+                  No connections yet. Ask an{' '}
+                  <span className="text-paper-200">admin or team lead</span> to add one when a
+                  template needs it.
                 </p>
               )
             }
-            done={hasRepo}
-            index={1}
-            title="Connect a workspace"
-          />
-          <OnboardingStep
-            body={
-              <div className="space-y-3">
-                <p>
-                  {hasRepo ? (
-                    <>
-                      Pick a template and describe what you need from{' '}
-                      <span className="text-paper-200">{sampleRepoLabel}</span>.
-                    </>
-                  ) : (
-                    <>Step 01 unlocks this — connect a workspace first.</>
-                  )}
-                </p>
-                {onNewRequest && (
-                  <Button
-                    disabled={!hasRepo}
-                    onClick={onNewRequest}
-                    size="sm"
-                    type="button"
-                    variant="primary"
-                  >
-                    + New request
-                  </Button>
-                )}
-              </div>
-            }
-            disabled={!hasRepo}
             index={2}
-            title="Start a request"
+            title="Connect integrations"
           />
           <OnboardingStep
             body={
