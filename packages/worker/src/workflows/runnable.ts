@@ -364,14 +364,10 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       await stateActivities.resolveHumanStep({ ...args, runId });
     },
     async waitSignal(name, timeout) {
-      // Clear any stale payload so we never satisfy this wait with a previous
-      // send (mirrors the `ciResult = null` reset at the top of the engineering
-      // workflow's CI loop).
-      slots.clear(name);
-      // Register AFTER the clear: a branch-local name may already have a
-      // buffered signal, which the SDK delivers synchronously inside
-      // setHandler — clearing afterwards would drop it and park the wait until
-      // its timeout.
+      // No stale-payload reset here: a signal that lands before the interpreter
+      // reaches its wait node (a CI webhook racing the PR-open step is the
+      // common case) is kept and satisfies that wait. `take()` consumes the
+      // payload, so a wait never sees a value an earlier wait already used.
       ensureSignalHandler(name);
       const received = await condition(() => slots.hasPending(name), timeout as Duration);
       return received ? slots.take(name) : undefined;

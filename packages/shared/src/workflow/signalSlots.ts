@@ -4,10 +4,10 @@
  * and the interpreter's `await waitSignal(name, timeout)` calls.
  *
  * Why a class: the interpreter is pure and signal-name-agnostic. The dispatcher
- * needs a slot per signal name where the handler can deliver a payload, and
- * where each new `wait` clears any stale payload from a previous signal so that
- * we don't satisfy the new wait with an old send (this matches the
- * `ciResult = null` reset at the top of the engineering workflow's loop).
+ * needs a slot per signal name where the handler can deliver a payload and
+ * where a `wait` can consume it. A payload that arrives before anyone waits is
+ * kept — a CI webhook can land before the interpreter reaches its wait node —
+ * and `take()` consumes it, so no wait ever sees a payload an earlier wait used.
  *
  * Slot states:
  *   - unset            : no payload received since last `take()` / `clear()`

@@ -226,9 +226,8 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
   }, 120_000);
 
   it('delivers a registered signal and routes onReceive', async () => {
-    // waitSignal clears stale payloads when the interpreter REACHES the
-    // wait node — a signal sent before that is intentionally dropped. Park
-    // the workflow at the wait first (marker step + drain), then signal.
+    // Park the workflow at the wait first (marker step + drain), then signal —
+    // the ordinary case where the human answers after the run asks.
     currentSpec = makeSpec(
       {
         failed: { status: 'TIMED_OUT', type: 'terminate' },
@@ -261,6 +260,51 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     await handle.signal('humanMergeSignal', true);
     const result = (await handle.result()) as { status: string };
     expect(result.status).toBe('SUCCESS');
+  }, 120_000);
+
+  it('keeps a signal that arrives before the interpreter reaches the wait node', async () => {
+    // The CI webhook can land before the PR-open step returns and the run
+    // reaches `waitForCI`. Clearing the slot on arrival at the wait dropped
+    // that payload and parked the run until its 4h timeout.
+    updateDomainStateImpl = async (_wf, status) => {
+      calls.domainStates.push(status);
+      // Hold the step so the signal is guaranteed to land before the wait.
+      await new Promise((r) => setTimeout(r, 1500));
+    };
+    try {
+      currentSpec = makeSpec(
+        {
+          failed: { status: 'TIMED_OUT', type: 'terminate' },
+          merged: { status: 'SUCCESS', type: 'terminate' },
+          slow: {
+            config: { status: 'OPENING_PR' },
+            next: 'wait',
+            step: 'updateDomainState',
+            type: 'step',
+          },
+          wait: {
+            name: 'ciPipelineSignal',
+            onReceive: 'merged',
+            onTimeout: 'failed',
+            timeout: '4h',
+            type: 'signal',
+          },
+        },
+        'slow'
+      );
+      const handle = await env.client.workflow.start('RunnableWorkflow', startArgs('wf-early'));
+      const deadline = Date.now() + 15_000;
+      while (!calls.domainStates.includes('OPENING_PR') && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      await handle.signal('ciPipelineSignal', { passed: true });
+      const result = (await handle.result()) as { status: string };
+      expect(result.status).toBe('SUCCESS');
+    } finally {
+      updateDomainStateImpl = async (_wf, status) => {
+        calls.domainStates.push(status);
+      };
+    }
   }, 120_000);
 
   it('routes onTimeout when the signal never arrives (time-skipping)', async () => {
