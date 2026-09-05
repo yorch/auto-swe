@@ -266,11 +266,18 @@ function getWorker(): Worker | null {
     // Never hold the process open: a pending batch is kept alive by its own
     // budget timer, and an idle executor must not block a clean exit.
     next.unref();
-    next.on('error', () => {
+    // Either event means the thread is gone. An `exit` without a preceding
+    // `error` (OOM kill, resource-limit exit) must also drop the handle, or
+    // every later batch posts to a dead worker and times out — with the blame
+    // landing on whichever innocent pattern happened to be in the batch.
+    const dropIfCurrent = () => {
       if (worker === next) {
         worker = null;
+        workerReady = null;
       }
-    });
+    };
+    next.on('error', dropIfCurrent);
+    next.on('exit', dropIfCurrent);
     // Starting a thread is not regex execution. Charging spawn to the budget
     // would fail the first scan of every process closed on a busy host — a
     // spurious block on the agent's first `bash` call, not a real overrun.
