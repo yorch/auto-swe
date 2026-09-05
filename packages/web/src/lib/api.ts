@@ -48,7 +48,12 @@ export class ApiClient {
   async fetch<T>(path: string, options: RequestInit = {}): Promise<T> {
     const token = this.getToken();
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      // Only label a body that exists. Fastify rejects a JSON content-type
+      // with an empty body (400 "Body cannot be empty"), which made every
+      // DELETE from the dashboard fail against the real gateway.
+      ...(options.body !== undefined && options.body !== null
+        ? { 'Content-Type': 'application/json' }
+        : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...((options.headers as Record<string, string>) ?? {}),
     };
