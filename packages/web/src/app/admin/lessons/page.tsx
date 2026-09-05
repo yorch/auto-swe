@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
 import {
@@ -165,7 +166,7 @@ export default function AdminLessonsPage() {
         </CardHeader>
 
         {statsLoading ? (
-          <p className="text-sm text-paper-400">Loading…</p>
+          <LoadingState compact />
         ) : !stats || stats.length === 0 ? (
           <p className="text-sm text-paper-600">No repositories found.</p>
         ) : (
@@ -203,7 +204,7 @@ export default function AdminLessonsPage() {
         </CardHeader>
 
         {lessonsLoading ? (
-          <p className="text-sm text-paper-400">Loading…</p>
+          <LoadingState compact />
         ) : !lessons || lessons.length === 0 ? (
           <p className="text-sm text-paper-600">No active lessons.</p>
         ) : (

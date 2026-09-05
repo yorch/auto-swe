@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { useTeamShellAllowlist, useUpdateTeamShellAllowlist } from '@/hooks/useTeams';
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
@@ -52,7 +53,7 @@ export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
         disallow custom shell-step images entirely.
       </p>
       {isLoading ? (
-        <p className="text-xs text-paper-500">Loading…</p>
+        <LoadingState compact />
       ) : (
         <>
           <textarea

@@ -2,6 +2,7 @@
 
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import {
   type CanaryConfig,
   type CanaryConfigInput,
@@ -65,7 +66,7 @@ export function CanaryForm() {
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-paper-400">Loading…</p>
+        <LoadingState compact />
       ) : (
         <form className="space-y-6" onSubmit={submit}>
           <Card>

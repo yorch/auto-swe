@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import {
   type PatCreated,
@@ -70,7 +71,7 @@ export function AccessTokensSection() {
         </CardHeader>
 
         {isLoading ? (
-          <p className="text-xs text-paper-500">Loading…</p>
+          <LoadingState compact />
         ) : (tokens ?? []).length === 0 ? (
           <p className="text-xs text-paper-500">
             No tokens yet. Create one to authenticate the <code>auto-swe</code> CLI via

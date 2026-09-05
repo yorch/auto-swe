@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { Select } from '@/components/ui/Select';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
@@ -50,7 +51,7 @@ export function EmbeddingsTab() {
       <CardHeader>
         <CardTitle eyebrow="Embeddings">System-wide model</CardTitle>
       </CardHeader>
-      {isLoading && <p className="text-sm text-paper-400">Loading…</p>}
+      {isLoading && <LoadingState compact />}
       <p className="mb-4 text-xs text-paper-500">
         Used by the semantic-memory commit step. Singleton — no per-team or per-template overrides.
         The model MUST produce 1536-dimensional vectors (the <code>agent_lessons.embedding</code>{' '}

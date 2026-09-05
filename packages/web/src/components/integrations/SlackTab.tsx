@@ -212,7 +212,7 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-paper-400">Loading workspaces…</p>
+        <LoadingState compact message="loading workspaces…" />
       ) : !workspaces || workspaces.length === 0 ? (
         <p className="text-sm text-paper-500">No workspaces yet.</p>
       ) : (

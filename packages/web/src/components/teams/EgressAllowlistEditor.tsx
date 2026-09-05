@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { useTeamEgressAllowlist, useUpdateTeamEgressAllowlist } from '@/hooks/useTeams';
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
@@ -51,7 +52,7 @@ export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
         only — DNS filtering applies to exact lookups; IP-direct connections are not blocked.
       </p>
       {isLoading ? (
-        <p className="text-xs text-paper-500">Loading…</p>
+        <LoadingState compact />
       ) : (
         <>
           <textarea

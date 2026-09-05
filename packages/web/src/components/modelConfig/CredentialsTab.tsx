@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
@@ -75,7 +76,7 @@ export function CredentialsTab() {
           + New credential
         </Button>
       </CardHeader>
-      {isLoading && <p className="text-sm text-paper-400">Loading…</p>}
+      {isLoading && <LoadingState compact />}
       <table className="w-full text-sm">
         <thead className="text-left text-[11px] uppercase tracking-wide text-paper-500">
           <tr>
