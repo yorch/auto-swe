@@ -28,6 +28,24 @@ vi.mock('../lib/config/mcpConnection.js', () => ({
   resolveAgentMcpUrl: vi.fn(async () => undefined),
 }));
 vi.mock('../lib/models.js', () => ({ resolveModel: vi.fn(() => ({})) }));
+const persistActivityTrace = vi.fn(async () => {});
+vi.mock('../lib/activityContext.js', () => ({
+  currentWorkflowId: vi.fn(() => 'eval-wf-1'),
+  persistActivityTrace: (...args: unknown[]) => persistActivityTrace(...(args as [])),
+}));
+const assertBudgetAvailable = vi.fn(async () => {});
+const recordLlmUsage = vi.fn(async () => ({
+  costUsd: 0.01,
+  inputTokens: 10,
+  modelSpec: 'anthropic/x',
+  outputTokens: 5,
+}));
+vi.mock('../lib/costTracking.js', () => ({
+  assertBudgetAvailable: (...args: unknown[]) => assertBudgetAvailable(...(args as [])),
+  recordLlmUsage: (...args: unknown[]) => recordLlmUsage(...(args as [])),
+}));
+vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput: vi.fn(async () => {}) }));
+vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({ maxEvalIterations: 3 })),
 }));
@@ -136,6 +154,33 @@ describe('runCaseDefault iteration cap', () => {
     generate.mockClear();
     execCapture.mockClear();
     execCapture.mockResolvedValue({ exitCode: 1, stderr: 'fail', stdout: '' });
+    persistActivityTrace.mockClear();
+    assertBudgetAvailable.mockClear();
+    recordLlmUsage.mockClear();
+  });
+
+  it('traces and bills every implementer call and persists the trace', async () => {
+    generate.mockResolvedValue({ text: 'done', usage: { inputTokens: 10, outputTokens: 5 } });
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 2 } as never);
+
+    await runCaseDefault(cases[0], 'implementer@3');
+
+    expect(assertBudgetAvailable).toHaveBeenCalledTimes(2);
+    expect(recordLlmUsage).toHaveBeenCalledTimes(2);
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      'eval-wf-1',
+      'implementer',
+      { inputTokens: 10, outputTokens: 5 },
+      'llm.eval.implementer.iteration_0'
+    );
+    expect(persistActivityTrace).toHaveBeenCalledWith(expect.anything(), 'implementer');
+  });
+
+  it('persists the trace even when the agent throws', async () => {
+    generate.mockRejectedValueOnce(new Error('LLM exploded'));
+    await expect(runCaseDefault(cases[0], 'implementer')).rejects.toThrow('LLM exploded');
+    expect(persistActivityTrace).toHaveBeenCalledTimes(1);
+    expect(destroy).toHaveBeenCalled();
   });
 
   it('runs at most maxEvalIterations refine attempts before scoring 0', async () => {

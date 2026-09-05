@@ -20,12 +20,16 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
+import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ResolveCtx } from '../lib/config/types.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
+import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { type LanguageModel, resolveModel } from '../lib/models.js';
 import { createWorkspace, type Workspace } from './workspace.js';
 
@@ -109,6 +113,10 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
   // LLM boundary).
   const maxEvalIterations = (await resolveWorkflowDefaults()).maxEvalIterations;
 
+  // Every implementer run in the harness is an LLM call like any other: it is
+  // traced (tool calls, responses, test runs), its usage is recorded against the
+  // eval run's ledger, and it is refused once that ledger is exhausted.
+  const tracer = new AgentTracer();
   let workspace: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;
   try {
@@ -129,7 +137,7 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
     const mcpTarget = await resolveAgentMcpUrl(parsed.key, ctx);
     const built = await createImplementerAgent(
       workspace,
-      undefined,
+      tracer,
       resolved.toolKeys,
       resolved.skills,
       {
@@ -153,14 +161,50 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
         iteration: i,
         ...(i > 0 ? { previousTestOutput: lastTestOutput.slice(-4000) } : {}),
       });
-      await built.agent.generate(
+      const usageEvent = `llm.eval.${parsed.key}.iteration_${i}`;
+      await assertBudgetAvailable(usageEvent);
+      const agentStart = Date.now();
+      const genResult = await built.agent.generate(
         [
           { content: systemPrompt, role: 'system' as const },
           { content: userMessage, role: 'user' as const },
         ],
         { toolChoice: 'auto' as const }
       );
+
+      let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
+      if (genResult.usage) {
+        attribution = await recordLlmUsage(
+          currentWorkflowId(),
+          parsed.key,
+          genResult.usage,
+          usageEvent
+        );
+      }
+      await recordSuspiciousLlmOutput(tracer, genResult.text ?? '', {
+        inputJson: { caseId: caseRow.id, iteration: i, ref },
+      });
+      tracer.addLlmResponse({
+        costUsd: attribution.costUsd,
+        durationMs: Date.now() - agentStart,
+        inputJson: { caseId: caseRow.id, iteration: i, ref, systemPrompt, userMessage },
+        inputTokens: attribution.inputTokens,
+        model: attribution.modelSpec || undefined,
+        outputJson: genResult.text
+          ? { text: genResult.text }
+          : { toolCallCount: genResult.steps?.length ?? 0 },
+        outputTokens: attribution.outputTokens,
+        role: parsed.key,
+      });
+
+      const testStart = Date.now();
       const gt = await workspace.execCapture(caseRow.goldenTest);
+      tracer.addActivityEvent({
+        durationMs: Date.now() - testStart,
+        inputJson: { caseId: caseRow.id, iteration: i, ref },
+        name: 'eval.golden_test',
+        outputJson: { exitCode: gt.exitCode, passed: gt.exitCode === 0 },
+      });
       // Feed both streams back — test/lint runners print failure detail (stack
       // traces, assertion diffs, compiler errors) to stderr, so stdout alone
       // gives the next iteration an empty repair signal.
@@ -172,6 +216,8 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
     return 0;
   } finally {
     await closeMcp?.();
+    // Always — a case that threw is exactly the one whose trace is needed.
+    await persistActivityTrace(tracer, parsed.key);
     await workspace?.destroy();
   }
 }
