@@ -423,9 +423,10 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
 
   // Side-effects to external systems (Notion, Zendesk, issue tracker, Slack) are
   // not idempotent by default. A Temporal activity retry after a successful write
-  // would duplicate the write unless we remember it. Record the result keyed by
-  // (run, node, connection, activity attempt); a duplicate call returns the
-  // stored result instead of hitting the provider again.
+  // would duplicate the write unless we remember it. The ledger is looked up by
+  // (run, node, connection) — deliberately NOT by attempt: a retry is by
+  // definition a new attempt number, so keying on it could never find the row
+  // the previous attempt wrote. `attempt` is still stored for audit.
   const info = Context.current().info;
   const attempt = info.attempt;
   const workflowId = info.workflowExecution?.workflowId;
@@ -467,8 +468,9 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
     return perform();
   }
 
-  const existing = await prisma.workflowOutcomeReference.findUnique({
-    where: { runId_nodeId_connectionId_attempt: { attempt, connectionId, nodeId, runId } },
+  const existing = await prisma.workflowOutcomeReference.findFirst({
+    orderBy: { attempt: 'asc' },
+    where: { connectionId, nodeId, runId },
   });
   if (existing) {
     return existing.result as unknown as WriteOutcomeResult;

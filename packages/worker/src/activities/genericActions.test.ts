@@ -29,7 +29,7 @@ vi.mock('@auto-swe/shared', async (importOriginal) => {
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     connection: { findUnique: vi.fn() },
-    workflowOutcomeReference: { create: vi.fn(), findUnique: vi.fn() },
+    workflowOutcomeReference: { create: vi.fn(), findFirst: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
   },
 }));
@@ -275,7 +275,7 @@ describe('writeOutcome', () => {
     (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: '11111111-1111-4111-8111-111111111111',
     });
-    (prisma.workflowOutcomeReference.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (prisma.workflowOutcomeReference.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
       result: {
         connectionType: 'notion',
         ok: true,
@@ -295,6 +295,16 @@ describe('writeOutcome', () => {
 
     expect(result).toEqual({ connectionType: 'notion', ok: true, reference: 'stored-page' });
     expect(appendNotionBlocks).not.toHaveBeenCalled();
+    // The lookup must not key on the Temporal attempt: a retry is a new attempt
+    // number, so an attempt-scoped key could never find the previous write.
+    expect(prisma.workflowOutcomeReference.findFirst).toHaveBeenCalledWith({
+      orderBy: { attempt: 'asc' },
+      where: {
+        connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
+        nodeId: 'node-1',
+        runId: '11111111-1111-4111-8111-111111111111',
+      },
+    });
   });
 
   it('returns the stored result on the second call and does not repeat the external write', async () => {
@@ -304,7 +314,7 @@ describe('writeOutcome', () => {
     (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: '11111111-1111-4111-8111-111111111111',
     });
-    (prisma.workflowOutcomeReference.findUnique as ReturnType<typeof vi.fn>)
+    (prisma.workflowOutcomeReference.findFirst as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         result: {
