@@ -204,7 +204,8 @@ yarn workspace @auto-swe/shared exec prisma migrate deploy
 
 # 3. Seed the admin user, default team, default workflow template
 yarn db:seed
-#    ↳ also runs provisionAuthAdmin to set up the better-auth credential account
+#    ↳ builds @auto-swe/shared first (the gateway half resolves it through its compiled
+#      dist/), then runs provisionAuthAdmin to set up the better-auth credential account
 #      so the seeded admin can sign in via the password tab on /login.
 ```
 
