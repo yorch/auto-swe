@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BUILTIN_STEPS } from '@auto-swe/shared/workflow/registry-types';
 import { describe, expect, it } from 'vitest';
 import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
 
@@ -54,6 +55,14 @@ describe('STEP_REQUIRED_AGENTS tracks the step executors', () => {
     expect(steps).toContain('executeImplementation'); // multi-line
     expect(steps).toContain('runTests'); // single-line, shared executor
     expect(steps).toContain('planDecomposition');
+  });
+
+  it('BUILTIN_STEPS and the executor table name the same steps', () => {
+    // BUILTIN_STEPS is what assertBuiltinStepsRegistered checks at boot and what
+    // validateSpec treats as known; an executor missing from it makes a shipped
+    // template warn UNKNOWN_STEP, and a BUILTIN_STEPS entry with no executor
+    // fails at dispatch.
+    expect([...steps].sort()).toEqual([...BUILTIN_STEPS].sort());
   });
 
   it('names only steps that still exist', () => {

@@ -88,6 +88,22 @@ describe('stepRegistry', () => {
     }
   });
 
+  it('registers the CI-wait steps the default engineering spec dispatches', () => {
+    expect(getStepMetadata('resolveCiWaitConfig').category).toBe('control');
+    expect(getStepMetadata('waitForCiByPolling').category).toBe('gate');
+  });
+
+  it('registers the executors behind the declarative eval / mcp / containerStep nodes', () => {
+    expect(getStepMetadata('runEvalNode').costHint?.role).toBe('evalJudge');
+    expect(getStepMetadata('mcpCallTool').configFields.map((f) => f.key)).toEqual(
+      expect.arrayContaining(['connectionRef', 'tool'])
+    );
+    expect(getStepMetadata('runContainerStep').category).toBe('shell');
+    expect(
+      getStepMetadata('runContainerStep').configFields.find((f) => f.key === 'image')?.required
+    ).toBe(true);
+  });
+
   it('resolveWorkspace exposes the workspace provider enum', () => {
     const fields = getStepMetadata('resolveWorkspace').configFields;
     const provider = fields.find((f) => f.key === 'workspaceProvider');

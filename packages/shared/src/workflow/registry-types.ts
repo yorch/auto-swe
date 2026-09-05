@@ -1,9 +1,10 @@
 /**
  * Step registry — shared types for steps that can appear in WorkflowSpec nodes.
  *
- * The full registry (with activity wiring) lives in the worker package
- * (packages/worker/src/lib/stepRegistry.ts). Web + gateway only need the
- * metadata defined here to render the editor UI and validate templates.
+ * The metadata registry lives next door in `stepRegistry.ts`; the activity
+ * wiring is the worker's `STEP_EXECUTORS` table (packages/worker/src/workflows/
+ * runnable.ts). Web + gateway only need the metadata to render the editor UI
+ * and validate templates.
  */
 
 export type StepCategory = 'agent' | 'gate' | 'control' | 'vcs' | 'shell';
@@ -35,7 +36,8 @@ export interface StepMetadata {
       | 'planner'
       | 'securityReview'
       | 'validateContext'
-      | 'commitToMemory';
+      | 'commitToMemory'
+      | 'evalJudge';
     tokensIn?: number;
     tokensOut?: number;
   };
@@ -52,6 +54,9 @@ export const BUILTIN_STEPS = [
   'executeCIFixImplementation',
   'createOrUpdatePullRequest',
   'fetchCILogs',
+  // CI wait strategy: resolve signal-vs-poll config, then poll when configured
+  'resolveCiWaitConfig',
+  'waitForCiByPolling',
   'commitToMemory',
   // Quality gates + the gate-fix loop
   'runLint',
@@ -71,6 +76,10 @@ export const BUILTIN_STEPS = [
   'resolveMergeConflict',
   // Declarative agent node — runs a library Agent by reference
   'runAgentNode',
+  // Executors behind the declarative eval / mcp / containerStep nodes
+  'runEvalNode',
+  'mcpCallTool',
+  'runContainerStep',
   // PRD decomposition workflow steps
   'analyzePrd',
   'decomposePrd',

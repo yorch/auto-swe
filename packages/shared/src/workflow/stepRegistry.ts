@@ -12,7 +12,12 @@
  *   2. Export it from activities/index.ts.
  *   3. Add the name to `BUILTIN_STEPS` in registry-types.ts.
  *   4. Register a StepMetadata entry here.
- *   5. Add a dispatch case to dispatchStep() in workflows/runnable.ts.
+ *   5. Add an entry to the `STEP_EXECUTORS` map in workflows/runnable.ts
+ *      (and to `STEP_REQUIRED_AGENTS` if the step resolves a model).
+ *
+ * The worker calls `assertBuiltinStepsRegistered()` at boot, and
+ * `stepRequiredAgents.coverage.test.ts` checks `BUILTIN_STEPS` against the
+ * executor table, so a step missing from either list fails before it ships.
  */
 
 import { WORKSPACE_PROVIDER_TYPES } from '../lib/workspaceProviders.js';
@@ -161,6 +166,55 @@ register({
   description: 'Fetch and truncate CI logs from the given URL.',
   label: 'Fetch CI logs',
   name: 'fetchCILogs',
+});
+
+// ── CI wait strategy ─────────────────────────────────────────────────────────
+
+register({
+  category: 'control',
+  configFields: [],
+  description:
+    'Read the CI wait strategy (webhook signal vs. active polling) from the workflow defaults. ' +
+    'Returns { mode, intervalSec, graceSec, deadlineSec } for a downstream cond + poll step.',
+  label: 'Resolve CI wait config',
+  name: 'resolveCiWaitConfig',
+});
+
+register({
+  category: 'gate',
+  configFields: [
+    {
+      description:
+        'Git ref (branch or SHA) whose CI status to poll. Defaults to context.currentCodeResult.branch.',
+      key: 'ref',
+      label: 'Ref',
+      type: 'string',
+    },
+    {
+      description: 'Seconds between status polls.',
+      key: 'intervalSec',
+      label: 'Poll interval (s)',
+      type: 'number',
+    },
+    {
+      description:
+        'Seconds to wait for the first check run to appear before treating CI as absent.',
+      key: 'graceSec',
+      label: 'Grace period (s)',
+      type: 'number',
+    },
+    {
+      description: 'Seconds after which polling gives up and the step fails.',
+      key: 'deadlineSec',
+      label: 'Deadline (s)',
+      type: 'number',
+    },
+  ],
+  description:
+    'Poll GitHub for the CI result of a ref instead of waiting for a webhook signal. ' +
+    'Returns the same { passed, ... } payload the ciPipelineSignal carries.',
+  label: 'Wait for CI (polling)',
+  name: 'waitForCiByPolling',
 });
 
 register({
@@ -416,6 +470,112 @@ register({
   description: 'Run a library Agent by reference (the declarative agent node).',
   label: 'Run agent',
   name: 'runAgentNode',
+});
+
+// ── Executors behind the declarative eval / mcp / containerStep nodes ────────
+//
+// The interpreter packs each node's own fields into `config` and dispatches
+// through the step path, so these appear here for validation, the palette and
+// cost estimation; templates normally author the node type, not a `step`.
+
+register({
+  category: 'gate',
+  configFields: [
+    {
+      description:
+        'Scorer list: hard `gate`/`assert` scorers run first and short-circuit; `trajectory`/`judge` are advisory.',
+      key: 'scorers',
+      label: 'Scorers',
+      required: true,
+      type: 'json',
+    },
+    {
+      description: 'The value under evaluation (the eval node binds this from `target`).',
+      key: 'targetValue',
+      label: 'Target value',
+      type: 'json',
+    },
+    {
+      description: 'When false, a calibrated judge axis may block the gate. Default: advisory.',
+      key: 'judgeAdvisory',
+      label: 'Judge is advisory',
+      type: 'boolean',
+    },
+  ],
+  costHint: { role: 'evalJudge', tokensIn: 6000, tokensOut: 800 },
+  description:
+    'Run eval scorers against a value and bind an aggregate score. The judge scorer is one evalJudge LLM call.',
+  label: 'Run eval',
+  name: 'runEvalNode',
+});
+
+register({
+  category: 'control',
+  configFields: [
+    {
+      description: 'Name of the active `mcp` Connection whose server exposes the tool.',
+      key: 'connectionRef',
+      label: 'MCP connection',
+      required: true,
+      type: 'string',
+    },
+    {
+      description: 'Tool name as listed by the MCP server.',
+      key: 'tool',
+      label: 'Tool',
+      required: true,
+      type: 'string',
+    },
+  ],
+  description: 'Call one tool on an external MCP server with the resolved inputs as arguments.',
+  label: 'Call MCP tool',
+  name: 'mcpCallTool',
+});
+
+register({
+  category: 'shell',
+  configFields: [
+    {
+      description: 'Container image to run (must be on the shell image allowlist).',
+      key: 'image',
+      label: 'Image',
+      required: true,
+      type: 'string',
+    },
+    {
+      description: 'Command to run in the container. Defaults to the image entrypoint.',
+      key: 'command',
+      label: 'Command',
+      type: 'string',
+    },
+    {
+      description: 'Network mode. `none` (default) or `egress`.',
+      enumValues: ['none', 'egress'],
+      key: 'network',
+      label: 'Network',
+      type: 'enum',
+    },
+    {
+      description:
+        'How the step returns its result: JSON on stdout, NDJSON stream, or a sidecar HTTP request.',
+      enumValues: ['stdout', 'ndjson', 'sidecar'],
+      key: 'transport',
+      label: 'Transport',
+      type: 'enum',
+    },
+    { description: 'Memory cap, e.g. "1g".', key: 'memory', label: 'Memory', type: 'string' },
+    { description: 'CPU cap.', key: 'cpus', label: 'CPUs', type: 'number' },
+    {
+      description: 'Wall-clock limit for the container run, in milliseconds.',
+      key: 'timeoutMs',
+      label: 'Timeout (ms)',
+      type: 'number',
+    },
+  ],
+  description:
+    'Run a container-contract coded step: an ephemeral image with the inputs as JSON env, output parsed from stdout.',
+  label: 'Run container step',
+  name: 'runContainerStep',
 });
 
 // ── PRD decomposition workflow ───────────────────────────────────────────────

@@ -26,14 +26,15 @@ export type CostRole = NonNullable<NonNullable<StepMetadata['costHint']>['role']
 /**
  * USD per 1M tokens by role. Rough mid-market priced as of model-pricing
  * snapshot in Q1 2026 — Opus 4.8 for implementer/reviewer roles, Sonnet 4.6
- * for planner/validateContext/commitToMemory. Override at call time if a team
- * wants their own pricing table.
+ * for planner/validateContext/commitToMemory, Haiku 4.5 for the eval judge.
+ * Override at call time if a team wants their own pricing table.
  */
 export const DEFAULT_ROLE_PRICING: Record<
   CostRole,
   { inputUsdPerM: number; outputUsdPerM: number }
 > = {
   commitToMemory: { inputUsdPerM: 3, outputUsdPerM: 15 },
+  evalJudge: { inputUsdPerM: 1, outputUsdPerM: 5 },
   implementer: { inputUsdPerM: 15, outputUsdPerM: 75 },
   planner: { inputUsdPerM: 3, outputUsdPerM: 15 },
   reviewer: { inputUsdPerM: 15, outputUsdPerM: 75 },

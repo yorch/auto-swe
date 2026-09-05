@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
+import { assertBuiltinStepsRegistered } from '@auto-swe/shared/workflow';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
@@ -38,6 +39,12 @@ async function run() {
   // (Docker Compose restart policy, K8s, etc.) keeps the worker out of the
   // rotation until config is complete.
   await assertConfigReady();
+
+  // Every step the worker promises in BUILTIN_STEPS must have registry
+  // metadata, or validateSpec flags a shipped template as UNKNOWN_STEP and the
+  // editor cannot render it. Cheap, synchronous, and better failed here than
+  // discovered on the first template save.
+  assertBuiltinStepsRegistered();
 
   // Boot-time only: Temporal reads the concurrency cap when the worker is
   // created, so a change to it needs a restart — which is what the setting's
