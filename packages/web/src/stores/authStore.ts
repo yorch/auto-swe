@@ -164,35 +164,51 @@ async function betterAuthRedirect(
   window.location.href = parsed.data.url;
 }
 
-async function fetchBetterAuthSession(): Promise<AuthState['user']> {
-  // Probe call — never throw. A network failure here just means "no session"
-  // from the UI's perspective; the user lands on /login and the page itself
-  // surfaces a friendly banner if the gateway is unreachable. Without this
-  // swallow, the unhandled rejection bubbles to React's error boundary and
-  // shows the dev-overlay "Failed to fetch" crash.
+/**
+ * Outcome of the session probe. `anonymous` is positive evidence that there is
+ * no session (401/403, or a 2xx without a user) and is the only outcome that
+ * may clear the local auth cookies. `unknown` means the gateway could not
+ * answer — a network failure, a 429 or a 5xx — and says nothing about whether
+ * the session cookie is still valid, so callers must leave the cookies alone.
+ */
+type SessionProbe =
+  | { status: 'authenticated'; user: NonNullable<AuthState['user']> }
+  | { status: 'anonymous' }
+  | { status: 'unknown' };
+
+async function fetchBetterAuthSession(): Promise<SessionProbe> {
+  // Probe call — never throw. Without this swallow the unhandled rejection
+  // bubbles to React's error boundary and shows the dev-overlay "Failed to
+  // fetch" crash; the login page surfaces its own gateway-offline banner.
   let res: Response;
   try {
     res = await fetch(`${API_BASE}/api/auth/get-session`, { credentials: 'include' });
   } catch {
-    return null;
+    return { status: 'unknown' };
+  }
+  if (res.status === 401 || res.status === 403) {
+    return { status: 'anonymous' };
   }
   if (!res.ok) {
-    return null;
+    return { status: 'unknown' };
   }
   const raw: unknown = await res.json().catch(() => null);
   const parsed = BetterAuthSessionResponseSchema.safeParse(raw);
   if (!parsed.success || !parsed.data.user) {
-    return null;
+    return { status: 'anonymous' };
   }
   const { user } = parsed.data;
   return {
-    // Default to true so a stale cache / pre-better-auth user (where
-    // isActive may be missing from the response) renders as active.
-    isActive: user.isActive ?? true,
-    role: user.role ?? 'ENGINEER',
-    sub: user.id,
-    ...(user.email ? { email: user.email } : {}),
-    ...(user.slackId ? { slackId: user.slackId } : {}),
+    status: 'authenticated',
+    user: {
+      // Default to true so a stale cache / pre-better-auth user (where
+      // isActive may be missing from the response) renders as active.
+      isActive: user.isActive ?? true,
+      role: user.role ?? 'ENGINEER',
+      sub: user.id,
+      ...(user.email ? { email: user.email } : {}),
+      ...(user.slackId ? { slackId: user.slackId } : {}),
+    },
   };
 }
 
@@ -205,28 +221,33 @@ export const useAuthStore = create<AuthState>((set) => ({
 
     // Probe the gateway for a better-auth session. credentials: 'include'
     // sends the cross-origin session cookie if one exists.
-    const user = await fetchBetterAuthSession();
-    if (user) {
+    const probe = await fetchBetterAuthSession();
+    if (probe.status === 'authenticated') {
       setSessionMarkerCookie();
       // Ensure a middleware-readable bearer token is available for server-side
       // admin route guards, not only after the first /api/v1/* call.
       await api.refreshToken().catch(() => {});
-      set({ isAuthenticated: true, user });
+      set({ isAuthenticated: true, user: probe.user });
       return;
     }
 
-    clearAllAuthCookies();
+    // Only positive evidence of "no session" may drop the cookies. A transient
+    // 429 or 5xx must not log the user out — the session cookie is still
+    // valid and the next probe will pick it up again.
+    if (probe.status === 'anonymous') {
+      clearAllAuthCookies();
+    }
     set({ isAuthenticated: false, user: null });
   },
 
   hydrateFromSession: async () => {
-    const user = await fetchBetterAuthSession();
-    if (!user) {
+    const probe = await fetchBetterAuthSession();
+    if (probe.status !== 'authenticated') {
       return false;
     }
     setSessionMarkerCookie();
     await api.refreshToken().catch(() => {});
-    set({ isAuthenticated: true, user });
+    set({ isAuthenticated: true, user: probe.user });
     return true;
   },
   isAuthenticated: false,
@@ -260,12 +281,12 @@ export const useAuthStore = create<AuthState>((set) => ({
         parsed.success && parsed.data.message ? parsed.data.message : 'Invalid email or password'
       );
     }
-    const user = await fetchBetterAuthSession();
-    if (!user) {
+    const probe = await fetchBetterAuthSession();
+    if (probe.status !== 'authenticated') {
       throw new Error('Sign-in succeeded but no session was established — try again.');
     }
     setSessionMarkerCookie();
-    set({ isAuthenticated: true, user });
+    set({ isAuthenticated: true, user: probe.user });
   },
 
   logout: async () => {
