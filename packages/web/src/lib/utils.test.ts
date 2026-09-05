@@ -82,6 +82,12 @@ describe('formatDate', () => {
 describe('formatRelativeTime', () => {
   const ago = (ms: number) => formatRelativeTime(new Date(Date.now() - ms));
 
+  it('describes future timestamps as "in …" instead of collapsing them to now', () => {
+    const inNinetyDays = formatRelativeTime(new Date(Date.now() + 90 * 86_400_000 + 5_000));
+    expect(inNinetyDays).toMatch(/^in 90/);
+    expect(formatRelativeTime(new Date(Date.now() + 2 * 3_600_000 + 5_000))).toMatch(/^in 2/);
+  });
+
   it('collapses anything under a minute to the "now" form', () => {
     expect(ago(5_000)).toBe(ref.relative.format(0, 'second'));
   });
