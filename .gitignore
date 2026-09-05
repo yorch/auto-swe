@@ -61,3 +61,7 @@ docs/superpowers/
 # Generated codebase reference artifacts
 output/
 .worktrees/
+
+# Next.js dev writes these agent-rule files into the web package on every start
+packages/web/AGENTS.md
+packages/web/CLAUDE.md
