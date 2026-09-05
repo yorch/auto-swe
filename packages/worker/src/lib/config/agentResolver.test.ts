@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { agentFindFirst, cacheKeys } = vi.hoisted(() => ({
+const { agentFindFirst, cacheKeys, invalidateMock } = vi.hoisted(() => ({
   agentFindFirst: vi.fn(),
   cacheKeys: [] as string[],
+  invalidateMock: vi.fn(),
 }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: { agent: { findFirst: agentFindFirst } },
@@ -12,6 +13,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 // keys so a test can assert what would (not) collide within the TTL.
 vi.mock('@auto-swe/shared/config/cache', () => ({
   configCacheTtlMs: () => 0,
+  invalidate: invalidateMock,
   withCache: (k: string, _t: number, fn: () => unknown) => {
     cacheKeys.push(k);
     return fn();
@@ -239,6 +241,34 @@ describe('resolveAgent — cache key', () => {
     await resolveAgent('securityReviewer', { agentVersions: { reviewer: 2, securityReviewer: 1 } });
     await resolveAgent('securityReviewer', { agentVersions: { reviewer: 2, securityReviewer: 1 } });
     expect(cacheKeys[0]).toBe(cacheKeys[1]);
+  });
+});
+
+describe('resolveAgent — cross-scope fall-through is not cached', () => {
+  it('busts the narrow key when a TEAM lookup lands on GLOBAL', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) =>
+      args.where.scope === 'GLOBAL' ? agentRow() : null
+    );
+    cacheKeys.length = 0;
+    const r = await resolveAgent('reviewer', { teamId: 't1' });
+    expect(r.model.scope).toBe('GLOBAL');
+    expect(invalidateMock).toHaveBeenCalledWith(cacheKeys[0]);
+  });
+
+  it('keeps the entry when the requested scope itself answered', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) =>
+      args.where.scope === 'TEAM' ? agentRow({ scope: 'TEAM' }) : agentRow()
+    );
+    await resolveAgent('reviewer', { teamId: 't1' });
+    expect(invalidateMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a GLOBAL entry for a GLOBAL-only lookup', async () => {
+    agentFindFirst.mockResolvedValue(agentRow());
+    await resolveAgent('reviewer');
+    expect(invalidateMock).not.toHaveBeenCalled();
   });
 });
 

@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { isMcpToolEnabled } from '../../agents/mcpTools.js';
 import { fetchActiveAgent } from './agentResolver.js';
+import { parseToolKeys } from './toolKeys.js';
 import type { ResolveCtx } from './types.js';
 
 /**
@@ -83,9 +84,7 @@ export async function resolveAgentMcpUrl(
   if (!agent) {
     return null;
   }
-  const toolKeys = Array.isArray(agent.toolKeys)
-    ? (agent.toolKeys as unknown[]).filter((v): v is string => typeof v === 'string')
-    : null;
+  const toolKeys = parseToolKeys(agent.toolKeys);
   if (!isMcpToolEnabled(toolKeys)) {
     return null;
   }

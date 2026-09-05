@@ -1,7 +1,8 @@
-import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
+import { configCacheTtlMs, invalidate, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '../providerUtils.js';
 import { ConfigMissingError, resolveProviderCredential } from './resolver.js';
+import { parseToolKeys } from './toolKeys.js';
 import type { ResolveCtx, ResolvedModelConfig, ResolvedSkill } from './types.js';
 
 /**
@@ -21,14 +22,6 @@ export interface ResolvedAgent {
   toolKeys: string[] | null;
   /** P2/WS3: the `mcp` Connection whose tools to bind when `toolKeys` includes 'mcp'. */
   mcpConnectionId: string | null;
-}
-
-/** Coerce the nullable JSON `toolKeys` column into `string[] | null`. */
-function parseToolKeys(value: unknown): string[] | null {
-  if (Array.isArray(value)) {
-    return value.filter((v): v is string => typeof v === 'string');
-  }
-  return null;
 }
 
 export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
@@ -184,7 +177,43 @@ export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<Resol
   // one entry for the child within the TTL.
   const pins = stablePins(ctx?.agentVersions);
   const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.channelId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pins}`;
-  return withCache(cacheKey, configCacheTtlMs(), () => resolveAgentUncached(key, ctx));
+  const resolved = await withCache(cacheKey, configCacheTtlMs(), () =>
+    resolveAgentUncached(key, ctx)
+  );
+  // A lookup that fell through to a broader scope cached that broader row under
+  // the narrower key, which would hide a row inserted at the requested scope
+  // for the full TTL. Bust it so the next call re-queries (same pattern as
+  // resolveProviderCredential).
+  if (SCOPE_RANK[resolved.model.scope] > mostSpecificRequestedRank(ctx)) {
+    invalidate(cacheKey);
+  }
+  return resolved;
+}
+
+/** Cascade order, most specific first. */
+const SCOPE_RANK: Record<ResolvedModelConfig['scope'], number> = {
+  CHANNEL: 1,
+  GLOBAL: 4,
+  ORGANIZATION: 3,
+  TEAM: 2,
+  WORKFLOW_TEMPLATE: 0,
+};
+
+/** The rank of the most specific tier the ctx asked the cascade to consult. */
+function mostSpecificRequestedRank(ctx: ResolveCtx | undefined): number {
+  if (ctx?.workflowTemplateId) {
+    return SCOPE_RANK.WORKFLOW_TEMPLATE;
+  }
+  if (ctx?.channelId) {
+    return SCOPE_RANK.CHANNEL;
+  }
+  if (ctx?.teamId) {
+    return SCOPE_RANK.TEAM;
+  }
+  if (ctx?.orgId) {
+    return SCOPE_RANK.ORGANIZATION;
+  }
+  return SCOPE_RANK.GLOBAL;
 }
 
 /** Key-sorted JSON of the pin map, so insertion order cannot split the cache. */

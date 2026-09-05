@@ -1,4 +1,5 @@
 import { fetchActiveAgent, skillsFromAgent } from './agentResolver.js';
+import { parseToolKeys } from './toolKeys.js';
 import type { AnySkillRole, ResolveCtx, ResolvedSkill } from './types.js';
 
 // `ResolvedSkill` now lives in ./types.js (shared by the resolver layers to
@@ -44,10 +45,5 @@ export async function loadAgentToolConfig(
   ctx?: ResolveCtx
 ): Promise<string[] | null> {
   const agent = await fetchActiveAgent(role, ctx);
-  if (!agent || agent.toolKeys == null) {
-    return null;
-  }
-  return Array.isArray(agent.toolKeys)
-    ? (agent.toolKeys as unknown[]).filter((v): v is string => typeof v === 'string')
-    : null;
+  return agent ? parseToolKeys(agent.toolKeys) : null;
 }
