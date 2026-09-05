@@ -16,7 +16,7 @@ import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { fromNodeHeaders } from 'better-auth/node';
-import Fastify, { type FastifyError } from 'fastify';
+import Fastify, { type FastifyError, type RouteHandlerMethod } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -188,62 +188,83 @@ async function start() {
   // the /api/v1/auth/session-token bridge below exchanges a valid
   // better-auth session for a short-lived JWT the rest of the API
   // already understands. ──
-  app.route({
-    // Tighter rate-limit on the wildcard auth surface. The global limit is
-    // 200/min — way too permissive for sign-in / sign-up / reset endpoints
-    // where credential-stuffing or magic-link spam should be capped.
-    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
-    async handler(request, reply) {
-      try {
-        const url = new URL(request.url, `http://${request.headers.host}`);
-        const headers = fromNodeHeaders(request.headers);
-        // Snapshot the session-cookie value BEFORE better-auth runs — on a
-        // successful /sign-out it'll clear the cookie in the response, and
-        // we want to invalidate our in-memory cache for that token regardless.
-        const sessionCookieBefore = extractSessionCookieValue(request.headers);
-        // Fastify has already parsed the body (JSON or, via the app-level
-        // parser, an urlencoded form) into an object — re-serialize it as
-        // JSON and label it as such so better-auth sees one canonical shape
-        // no matter how the browser sent it. A text/plain body arrives as a
-        // string and passes through untouched. content-length is a forbidden
-        // fetch header — the Request constructor recomputes it from the body.
-        let body: string | undefined;
-        if (request.body !== undefined && request.body !== null) {
-          if (typeof request.body === 'string') {
-            body = request.body;
-          } else {
-            body = JSON.stringify(request.body);
-            headers.set('content-type', 'application/json');
-          }
+  const betterAuthHandler: RouteHandlerMethod = async (request, reply) => {
+    try {
+      const url = new URL(request.url, `http://${request.headers.host}`);
+      const headers = fromNodeHeaders(request.headers);
+      // Snapshot the session-cookie value BEFORE better-auth runs — on a
+      // successful /sign-out it'll clear the cookie in the response, and
+      // we want to invalidate our in-memory cache for that token regardless.
+      const sessionCookieBefore = extractSessionCookieValue(request.headers);
+      // Fastify has already parsed the body (JSON or, via the app-level
+      // parser, an urlencoded form) into an object — re-serialize it as
+      // JSON and label it as such so better-auth sees one canonical shape
+      // no matter how the browser sent it. A text/plain body arrives as a
+      // string and passes through untouched. content-length is a forbidden
+      // fetch header — the Request constructor recomputes it from the body.
+      let body: string | undefined;
+      if (request.body !== undefined && request.body !== null) {
+        if (typeof request.body === 'string') {
+          body = request.body;
+        } else {
+          body = JSON.stringify(request.body);
+          headers.set('content-type', 'application/json');
         }
-        const req = new Request(url.toString(), {
-          ...(body !== undefined ? { body } : {}),
-          headers,
-          method: request.method,
-        });
-        const response = await getAuth().handler(req);
-        // Invalidate the cache for sign-out / revoke-session calls so the
-        // logged-out user is locked out immediately instead of waiting up
-        // to 60s for the cached entry to expire.
-        if (
-          response.status < 400 &&
-          sessionCookieBefore &&
-          (url.pathname.endsWith('/sign-out') || url.pathname.endsWith('/revoke-session'))
-        ) {
-          invalidateSessionCache(sessionCookieBefore);
-        }
-        reply.status(response.status);
-        response.headers.forEach((value: string, key: string) => {
-          reply.header(key, value);
-        });
-        return reply.send(response.body ? await response.text() : null);
-      } catch (error) {
-        app.log.error({ err: error }, 'better-auth handler failed');
-        return reply.status(500).send({
-          error: { code: 'AUTH_HANDLER_ERROR', message: 'Internal authentication error' },
-        });
       }
-    },
+      const req = new Request(url.toString(), {
+        ...(body !== undefined ? { body } : {}),
+        headers,
+        method: request.method,
+      });
+      const response = await getAuth().handler(req);
+      // Invalidate the cache for sign-out / revoke-session calls so the
+      // logged-out user is locked out immediately instead of waiting up
+      // to 60s for the cached entry to expire.
+      if (
+        response.status < 400 &&
+        sessionCookieBefore &&
+        (url.pathname.endsWith('/sign-out') || url.pathname.endsWith('/revoke-session'))
+      ) {
+        invalidateSessionCache(sessionCookieBefore);
+      }
+      reply.status(response.status);
+      response.headers.forEach((value: string, key: string) => {
+        reply.header(key, value);
+      });
+      return reply.send(response.body ? await response.text() : null);
+    } catch (error) {
+      app.log.error({ err: error }, 'better-auth handler failed');
+      return reply.status(500).send({
+        error: { code: 'AUTH_HANDLER_ERROR', message: 'Internal authentication error' },
+      });
+    }
+  };
+  // Tighter rate-limit on the credential endpoints only. The global limit
+  // is 200/min — too permissive for sign-in / sign-up / reset / magic-link,
+  // where credential-stuffing or link spam should be capped — but the same
+  // 20/min on the whole wildcard also throttled /get-session, which the
+  // dashboard calls on every full page load, so a user paging through the
+  // admin area was rate-limited and bounced to the login page.
+  const CREDENTIAL_AUTH_PATHS = [
+    '/api/auth/sign-in/email',
+    '/api/auth/sign-in/magic-link',
+    '/api/auth/sign-up/email',
+    '/api/auth/forget-password',
+    '/api/auth/request-password-reset',
+    '/api/auth/reset-password',
+    '/api/auth/change-password',
+    '/api/auth/send-verification-email',
+  ];
+  for (const url of CREDENTIAL_AUTH_PATHS) {
+    app.route({
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+      handler: betterAuthHandler,
+      method: 'POST',
+      url,
+    });
+  }
+  app.route({
+    handler: betterAuthHandler,
     method: ['GET', 'POST'],
     url: '/api/auth/*',
   });
