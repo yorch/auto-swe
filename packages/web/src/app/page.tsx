@@ -16,7 +16,6 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { NewRequestModal } from '@/components/workflow/NewRequestModal';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { useApprovals } from '@/hooks/useApprovals';
-import { useRepositories } from '@/hooks/useRepositories';
 import { useAllWorkflowRuns, useWorkflows } from '@/hooks/useRuns';
 import { groupWorkflowsByDate, groupWorkflowsByStatus } from '@/lib/chartUtils';
 import { formatRelativeTime } from '@/lib/utils';
@@ -74,10 +73,8 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
 export default function DashboardPage() {
   const router = useRouter();
   const workflowsQuery = useWorkflows();
-  const reposQuery = useRepositories();
   const { data: workflows, isLoading } = workflowsQuery;
-  const { data: repos, isLoading: reposLoading } = reposQuery;
-  const loadFailed = workflowsQuery.isError || reposQuery.isError;
+  const loadFailed = workflowsQuery.isError;
   const { data: approvalSteps } = useApprovals();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const [newOpen, setNewOpen] = useState(false);
@@ -98,12 +95,12 @@ export default function DashboardPage() {
   });
   const outcomes = myOutcomes?.data ?? [];
 
-  if (isLoading || reposLoading || loadFailed) {
+  if (isLoading || loadFailed) {
     return (
       <QueryBoundary
-        error={workflowsQuery.error ?? reposQuery.error}
+        error={workflowsQuery.error}
         isError={loadFailed}
-        isLoading={isLoading || reposLoading}
+        isLoading={isLoading}
         label="dashboard"
         loadingMessage="loading…"
       />
@@ -111,9 +108,7 @@ export default function DashboardPage() {
   }
 
   if (all.length === 0) {
-    return (
-      <DashboardOnboarding onNewRequest={() => setNewOpen(true)} repos={repos ?? []} role={role} />
-    );
+    return <DashboardOnboarding onNewRequest={() => setNewOpen(true)} role={role} />;
   }
 
   const now = new Date();
