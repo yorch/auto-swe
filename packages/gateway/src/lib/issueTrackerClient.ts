@@ -15,7 +15,7 @@ import {
  * block a submission.
  */
 
-/** @deprecated Use `FetchedIssue` from `@auto-swe/shared/lib/integrations/types`. */
+/** @deprecated Use `FetchedIssue` from `@auto-swe/shared`. */
 export interface FetchedTicket {
   title: string;
   description: string;
@@ -26,7 +26,7 @@ export interface FetchedTicket {
   raw: unknown;
 }
 
-/** @deprecated Use `FetchIssueOptions` from `@auto-swe/shared/lib/integrations/types`. */
+/** @deprecated Use `FetchIssueOptions` from `@auto-swe/shared`. */
 export interface FetchTicketOptions {
   defaultRepo?: { owner: string; repo: string };
   fetchLinkedPages?: boolean;
