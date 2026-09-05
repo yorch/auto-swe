@@ -133,7 +133,11 @@ export function useCreateTeamAgent(teamId: string) {
         `/api/v1/teams/${teamId}/agent-library`,
         body
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: teamKey(teamId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: teamKey(teamId) });
+      // The admin library view lists every scope, so a team change shows up there too.
+      qc.invalidateQueries({ queryKey: KEY });
+    },
   });
 }
 
@@ -145,7 +149,11 @@ export function useUpdateTeamAgent(teamId: string) {
         `/api/v1/teams/${teamId}/agent-library/${id}`,
         body
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: teamKey(teamId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: teamKey(teamId) });
+      // The admin library view lists every scope, so a team change shows up there too.
+      qc.invalidateQueries({ queryKey: KEY });
+    },
   });
 }
 
@@ -154,6 +162,10 @@ export function useDeleteTeamAgent(teamId: string) {
   return useMutation({
     mutationFn: (id: string) =>
       api.delete<{ data: { deactivated: number } }>(`/api/v1/teams/${teamId}/agent-library/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: teamKey(teamId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: teamKey(teamId) });
+      // The admin library view lists every scope, so a team change shows up there too.
+      qc.invalidateQueries({ queryKey: KEY });
+    },
   });
 }

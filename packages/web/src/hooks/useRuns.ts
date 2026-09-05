@@ -137,6 +137,7 @@ export function useCancelWorkflowRun(runId: string) {
     mutationFn: () => api.post(`/api/v1/workflow-runs/${runId}/cancel`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workflow-run', runId] });
+      qc.invalidateQueries({ queryKey: ['workflow-runs'] });
       qc.invalidateQueries({ queryKey: ['workflows'] });
     },
   });

@@ -92,6 +92,10 @@ export function useDeleteSkill() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/admin/skills/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['skills'] });
+      // Agents reference skills by key; the library view shows those refs.
+      qc.invalidateQueries({ queryKey: ['admin-agent-library'] });
+    },
   });
 }

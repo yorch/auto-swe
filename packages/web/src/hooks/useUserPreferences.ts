@@ -52,6 +52,8 @@ export function useUserPreferences() {
       qc.setQueryData(QUERY_KEY, { ...prev, runDetailLayout: layout });
       return prev;
     },
+    // Reconcile the optimistic value with what the server actually stored.
+    onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 
   return {
