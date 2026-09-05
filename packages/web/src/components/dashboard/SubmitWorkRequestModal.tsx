@@ -1,5 +1,6 @@
 'use client';
 
+import type { BudgetTier } from '@auto-swe/shared/types/api';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -9,8 +10,6 @@ import { Select } from '@/components/ui/Select';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useCreateWorkRequest } from '@/hooks/useRuns';
 import { errMsg } from '@/lib/errors';
-
-type BudgetTier = 'STANDARD' | 'LARGE' | 'EPIC';
 
 const BUDGET_TIERS: { value: BudgetTier; label: string; hint: string }[] = [
   { hint: '2M / 500K tokens', label: 'Standard', value: 'STANDARD' },

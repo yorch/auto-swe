@@ -2,6 +2,8 @@
 
 import type {
   AutonomyDecisionDto,
+  CreateWorkRequestBody,
+  CreateWorkRequestResponse,
   EvalResultDto,
   WorkflowDetail,
   WorkflowRunDetail,
@@ -11,17 +13,6 @@ import type {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { api } from '@/lib/api';
-
-export interface CreateWorkRequestBody {
-  externalTicketId: string;
-  description: string;
-  repoIds: string[];
-  budgetTier?: 'STANDARD' | 'LARGE' | 'EPIC';
-}
-
-export interface CreateWorkRequestResponse {
-  data: { workflowIds: string[]; workRequestId: string };
-}
 
 export function useWorkflows(opts: ListOptions = {}) {
   return useListQuery<WorkflowSummary>({
@@ -159,7 +150,7 @@ export function useCreateWorkRequest() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateWorkRequestBody) =>
-      api.post<CreateWorkRequestResponse>('/api/v1/work-requests', body),
+      api.post<{ data: CreateWorkRequestResponse }>('/api/v1/work-requests', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['workflows'] }),
   });
 }
