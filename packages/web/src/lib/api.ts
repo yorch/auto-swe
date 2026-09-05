@@ -14,8 +14,11 @@ export class ApiClient {
     this.accessToken = token;
     this.tokenGeneration++;
     if (typeof window !== 'undefined') {
+      // Mirror authStore's session marker: on https the cookie must not travel
+      // over plain http.
+      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
       // biome-ignore lint/suspicious/noDocumentCookie: middleware-visible bearer token cookie for server-side admin guards.
-      document.cookie = `${COOKIE_ACCESS_TOKEN}=${encodeURIComponent(token)}; path=/; max-age=3600; SameSite=Lax`;
+      document.cookie = `${COOKIE_ACCESS_TOKEN}=${encodeURIComponent(token)}; path=/; max-age=3600; SameSite=Lax${secure}`;
     }
   }
 
@@ -37,7 +40,6 @@ export class ApiClient {
     this.tokenGeneration++;
     this.refreshPromise = null;
     if (typeof window !== 'undefined') {
-      localStorage.removeItem(COOKIE_ACCESS_TOKEN);
       // biome-ignore lint/suspicious/noDocumentCookie: clears the middleware-visible cookie on sign-out
       document.cookie = `${COOKIE_ACCESS_TOKEN}=; path=/; max-age=0`;
     }

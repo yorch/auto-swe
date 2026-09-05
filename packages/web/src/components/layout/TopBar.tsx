@@ -55,8 +55,10 @@ export function TopBar() {
   const { selectedTeamId, setSelectedTeamId } = useTeamStore();
   const { data: teams } = useTeams();
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    // logout() clears the gateway session and local cookies; navigating before
+    // it settles can land on /login with the old session still valid.
+    await logout();
     router.push('/login');
   };
 
