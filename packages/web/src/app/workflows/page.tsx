@@ -38,7 +38,7 @@ function OutcomeCell({
       </span>
     );
   }
-  if (status === 'COMPLETED') {
+  if (status === 'SUCCESS') {
     return <span className="text-paper-400">completed</span>;
   }
   return <span className="text-paper-600">—</span>;
