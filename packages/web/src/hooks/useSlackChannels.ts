@@ -49,13 +49,6 @@ export interface SlackChannel {
   currentMonthUsage: SlackChannelUsage | null;
 }
 
-export interface ChannelBudget {
-  channelId: string;
-  channelName: string | null;
-  monthlyBudgetUsdCents: number | null;
-  currentMonthUsage: SlackChannelUsage | null;
-}
-
 export interface CreateSlackChannelBody {
   slackChannelId: string;
   slackTeamId: string;
@@ -159,14 +152,6 @@ export function useSlackWorkspaces() {
   return useQuery({
     queryFn: () => api.get<{ data: SlackWorkspaceRow[] }>(`${BASE}/workspaces`).then((r) => r.data),
     queryKey: ['admin-slack-workspaces'],
-  });
-}
-
-export function useChannelBudget(id: string) {
-  return useQuery({
-    enabled: !!id,
-    queryFn: () => api.get<ChannelBudget>(`${BASE}/${id}/budget`),
-    queryKey: ['admin-slack-channel-budget', id],
   });
 }
 

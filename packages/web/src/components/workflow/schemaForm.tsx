@@ -6,7 +6,7 @@ import { Select } from '@/components/ui/Select';
 import { useRepositories } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
 
-export function ConnectionPicker({
+function ConnectionPicker({
   label,
   hint,
   value,
@@ -170,7 +170,7 @@ export function buildInitialPayload(schema: InputSchema): Record<string, unknown
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function validateField(
+function validateField(
   prop: InputSchemaProperty,
   value: unknown,
   required?: boolean

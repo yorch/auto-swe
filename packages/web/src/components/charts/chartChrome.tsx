@@ -3,7 +3,7 @@ import type { ComponentProps } from 'react';
 import { Tooltip } from 'recharts';
 import { TOKEN } from '@/lib/palette';
 
-export const AXIS_TICK = {
+const AXIS_TICK = {
   fill: TOKEN.paper400,
   fontFamily: 'var(--font-mono)',
   fontSize: 10,
@@ -39,7 +39,7 @@ export function formatDateLabel(label: unknown) {
   return tickDate.format(new Date(`${String(label)}T00:00:00`));
 }
 
-export const TOOLTIP_STYLE: React.CSSProperties = {
+const TOOLTIP_STYLE: React.CSSProperties = {
   background: TOKEN.ink900,
   border: `1px solid ${TOKEN.ink500}`,
   borderRadius: 2,
@@ -50,7 +50,7 @@ export const TOOLTIP_STYLE: React.CSSProperties = {
   padding: '8px 10px',
 };
 
-export const TOOLTIP_LABEL_STYLE: React.CSSProperties = {
+const TOOLTIP_LABEL_STYLE: React.CSSProperties = {
   color: TOKEN.paper400,
   fontSize: 10,
   letterSpacing: '0.14em',
@@ -58,7 +58,7 @@ export const TOOLTIP_LABEL_STYLE: React.CSSProperties = {
   textTransform: 'uppercase',
 };
 
-export const TOOLTIP_ITEM_STYLE: React.CSSProperties = {
+const TOOLTIP_ITEM_STYLE: React.CSSProperties = {
   color: TOKEN.paper200,
 };
 

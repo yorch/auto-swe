@@ -165,14 +165,3 @@ export function specToFlow(
 
   return { edges, nodes };
 }
-
-/** Re-run auto-layout on the current node set — used by the "tidy" button in
- *  the editor after the user has dragged nodes around. */
-export function relayoutNodes(spec: WorkflowSpec): Record<string, { x: number; y: number }> {
-  const layout = layoutSpec(spec);
-  const out: Record<string, { x: number; y: number }> = {};
-  for (const n of layout.nodes) {
-    out[n.id] = { x: n.x, y: n.y };
-  }
-  return out;
-}
