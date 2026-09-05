@@ -945,11 +945,15 @@ async function runHumanNode(
   ctx: Context,
   dispatcher: Dispatcher
 ): Promise<string | undefined> {
-  // Signal name must use the unprefixed spec key so it matches the handler
-  // registered at workflow startup (which iterates spec.nodes keys directly).
-  // Inside a fanOut branch, recordingId carries a prefix but the Temporal
-  // signal handler was registered under `hitl_${specNodeId}`.
-  const signalName = `hitl_${specNodeId}`;
+  // The signal name and the human-step row are keyed by the RECORDING id, so a
+  // HITL node inside a fanOut branch gets its own slot per branch
+  // (`hitl_fan[0]/gate`, `hitl_fan[1]/gate`) instead of every branch sharing
+  // one signal and one DB row (the pending-step index is unique per
+  // (run, nodeId)), where only the first branch could ever be answered. At the
+  // top level recordingId === specNodeId, which is the name the workflow
+  // registered at startup; branch-local names are registered lazily by the
+  // dispatcher when it first waits on them.
+  const signalName = `hitl_${recordingId}`;
   const kind = HITL_KINDS[node.type];
 
   // Snapshot context if specified
@@ -977,7 +981,7 @@ async function runHumanNode(
             description: node.description,
             fields: node.type === 'humanInput' ? node.fields : undefined,
             kind,
-            nodeId: specNodeId,
+            nodeId: recordingId,
             options:
               node.type === 'humanDecision'
                 ? node.options.map((o) => ({ label: o.label, value: o.value }))
@@ -999,7 +1003,7 @@ async function runHumanNode(
     const { resolveHumanStep } = dispatcher;
     await safeDispatch(
       resolveHumanStep
-        ? () => resolveHumanStep({ nodeId: specNodeId, status: 'TIMED_OUT' })
+        ? () => resolveHumanStep({ nodeId: recordingId, status: 'TIMED_OUT' })
         : undefined
     );
     return node.onTimeout;

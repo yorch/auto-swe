@@ -318,6 +318,60 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     }
   }, 120_000);
 
+  it('answers a HITL node inside each fanOut branch through its own signal', async () => {
+    // The branch-local names (`hitl_fan[0]/gate`) do not exist when the workflow
+    // registers handlers at startup — they are registered lazily on first wait.
+    calls.domainStates.length = 0;
+    currentSpec = makeSpec(
+      {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        branchRejected: { status: 'FAILED', type: 'terminate' },
+        done: {
+          result: { failed: { from: 'nodes.fan.output.failed' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          concurrency: 2,
+          join: 'done',
+          onBranchFail: 'continue',
+          over: { literal: ['a', 'b'] },
+          subgraph: 'marker',
+          type: 'fanOut',
+        },
+        gate: {
+          onApprove: 'branchDone',
+          onReject: 'branchRejected',
+          onTimeout: 'branchRejected',
+          timeout: '24h',
+          title: 'Approve this branch?',
+          type: 'humanApproval',
+        },
+        marker: {
+          config: { status: 'BRANCH_AWAITING_HUMAN' },
+          next: 'gate',
+          step: 'updateDomainState',
+          type: 'step',
+        },
+      },
+      'fan'
+    );
+    const handle = await env.client.workflow.start('RunnableWorkflow', startArgs('wf-hitl-fan'));
+    const deadline = Date.now() + 15_000;
+    const parked = () =>
+      calls.domainStates.filter((s) => s === 'BRANCH_AWAITING_HUMAN').length >= 2;
+    while (!parked() && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(parked()).toBe(true);
+    await env.sleep('1 second');
+    await handle.signal('hitl_fan[1]/gate', { action: 'approve' });
+    await handle.signal('hitl_fan[0]/gate', { action: 'approve' });
+    const result = (await handle.result()) as { failed: number; status: string };
+    expect(result.status).toBe('SUCCESS');
+    expect(result.failed).toBe(0);
+  }, 120_000);
+
   it('finalizes a cancelled run as CANCELLED and clears its pending human steps', async () => {
     calls.cancelledHumanSteps.length = 0;
     const before = calls.finalize.length;

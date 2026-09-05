@@ -272,27 +272,33 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   // SignalSlots owns the stale-payload-reset semantics so dispatcher remains
   // a thin wrapper (see packages/shared/src/workflow/signalSlots.ts).
   // HITL nodes also get signal handlers — name is `hitl_${nodeId}`.
+  //
+  // This covers the names known statically. A HITL node reached inside a
+  // fanOut branch waits on a branch-unique name (`hitl_fan[0]/gate`) that only
+  // exists once the interpreter gets there, so `waitSignal` below registers
+  // any name it has not seen on first use. Temporal buffers a signal that
+  // arrives before its handler is set, and handler registration emits no
+  // command, so the lazy path is replay-safe.
   const slots = new SignalSlots();
+  const ensureSignalHandler = (name: string): void => {
+    if (slots.isRegistered(name)) {
+      return;
+    }
+    slots.register(name);
+    setHandler(defineSignal<[unknown]>(name), (payload: unknown) => {
+      slots.deliver(name, payload);
+    });
+  };
   for (const [nodeId, node] of Object.entries(spec.nodes)) {
-    let signalName: string | null = null;
     if (node.type === 'signal') {
-      signalName = node.name;
+      ensureSignalHandler(node.name);
     } else if (
       node.type === 'humanApproval' ||
       node.type === 'humanDecision' ||
       node.type === 'humanInput' ||
       node.type === 'humanReview'
     ) {
-      signalName = `hitl_${nodeId}`;
-    }
-    if (signalName && !slots.isRegistered(signalName)) {
-      // Capture in a local const for the closure to bind correctly
-      const name = signalName;
-      slots.register(name);
-      const def = defineSignal<[unknown]>(name);
-      setHandler(def, (payload: unknown) => {
-        slots.deliver(name, payload);
-      });
+      ensureSignalHandler(`hitl_${nodeId}`);
     }
   }
 
@@ -362,6 +368,11 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       // send (mirrors the `ciResult = null` reset at the top of the engineering
       // workflow's CI loop).
       slots.clear(name);
+      // Register AFTER the clear: a branch-local name may already have a
+      // buffered signal, which the SDK delivers synchronously inside
+      // setHandler — clearing afterwards would drop it and park the wait until
+      // its timeout.
+      ensureSignalHandler(name);
       const received = await condition(() => slots.hasPending(name), timeout as Duration);
       return received ? slots.take(name) : undefined;
     },

@@ -9,7 +9,8 @@ import { parseWorkflowSpec, SPEC_SCHEMA_VERSION, type WorkflowSpec } from './spe
  * (humanApproval, humanDecision, humanInput, humanReview) are covered here.
  *
  * Signals are answered from a FIFO queue keyed by signal name — the HITL
- * signal name is `hitl_${nodeId}` per the interpreter contract. An empty /
+ * signal name is `hitl_${recordingId}` per the interpreter contract (the spec
+ * key at the top level, the branch-prefixed id inside a fanOut). An empty /
  * missing queue means waitSignal returns undefined, which the interpreter
  * treats as a timeout.
  */
@@ -132,6 +133,71 @@ describe('humanApproval', () => {
     expect(result.status).toBe('TIMED_OUT');
     expect(records).toContainEqual({ nodeId: 'gate', status: 'SKIPPED' });
     expect(resolutions).toEqual([{ nodeId: 'gate', status: 'TIMED_OUT' }]);
+  });
+});
+
+// ── HITL inside a fanOut branch ──
+
+describe('HITL nodes inside a fanOut branch', () => {
+  const fanSpec: WorkflowSpec = parseWorkflowSpec({
+    entry: 'fan',
+    name: 'hitl-fanout',
+    nodes: {
+      branchApproved: { status: 'SUCCESS', type: 'terminate' },
+      branchRejected: { status: 'FAILED', type: 'terminate' },
+      done: {
+        result: { results: { from: 'nodes.fan.output.results' } },
+        status: 'SUCCESS',
+        type: 'terminate',
+      },
+      fan: {
+        join: 'done',
+        onBranchFail: 'continue',
+        over: { literal: ['a', 'b'] },
+        subgraph: 'gate',
+        type: 'fanOut',
+      },
+      gate: {
+        onApprove: 'branchApproved',
+        onReject: 'branchRejected',
+        onTimeout: 'branchRejected',
+        timeout: '1h',
+        title: 'Approve this branch?',
+        type: 'humanApproval',
+      },
+    },
+    schemaVersion: SPEC_SCHEMA_VERSION,
+  });
+
+  it('gives every branch its own signal name and human-step row', async () => {
+    const { dispatcher, notifications, records } = makeHitlDispatcher({
+      'hitl_fan[0]/gate': [{ action: 'approve' }],
+      'hitl_fan[1]/gate': [{ action: 'reject' }],
+    });
+    const result = await runSpec(fanSpec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect((result.result.results as Array<{ status: string }>).map((r) => r.status)).toEqual([
+      'SUCCESS',
+      'FAILED',
+    ]);
+    // Two distinct rows — the pending-step index is unique per (run, nodeId),
+    // so a shared `gate` row would let only the first branch be answered.
+    expect(notifications.map((n) => [n.nodeId, n.signalName])).toEqual([
+      ['fan[0]/gate', 'hitl_fan[0]/gate'],
+      ['fan[1]/gate', 'hitl_fan[1]/gate'],
+    ]);
+    expect(
+      records.filter((r) => r.status === 'PASSED' && r.nodeId !== 'fan').map((r) => r.nodeId)
+    ).toEqual(['fan[0]/gate', 'fan[1]/gate']);
+  });
+
+  it('times out a branch under its own prefixed id', async () => {
+    const { dispatcher, resolutions } = makeHitlDispatcher({
+      'hitl_fan[0]/gate': [{ action: 'approve' }],
+    });
+    const result = await runSpec(fanSpec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(resolutions).toEqual([{ nodeId: 'fan[1]/gate', status: 'TIMED_OUT' }]);
   });
 });
 
