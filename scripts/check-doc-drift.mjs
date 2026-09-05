@@ -263,6 +263,93 @@ const VERSIONED_DEPS = [
 
 const VERSION = '(\\d+(?:\\.\\d+)*)';
 
+// ---------------------------------------------------------------------------
+// Container image versions
+//
+// The compose files own the image tags (`temporalio/server:${TEMPORAL_VERSION:-1.31.2}`),
+// and `.node-version` owns the Node major. The tech-stack tables and the
+// deployment runbook restate both, so derive them the same way as the npm
+// versions above. A claim passes when either side is a dot-boundary prefix of
+// the other ("admin-tools 1.31" for 1.31.2; "Node.js >=24.0.0" for 24).
+// ---------------------------------------------------------------------------
+
+const composeSrc = read('docker-compose.infra.yml') + read('docker-compose.app.yml');
+/** Default tag of `<image>` in the compose files — `${VAR:-tag}` or a literal tag. */
+const imageTag = (image) => {
+  const m = composeSrc.match(
+    new RegExp(`image:\\s*${image.replace(/[./]/g, '\\$&')}:(?:\\$\\{[A-Z_]+:-([^}]+)\\}|(\\S+))`)
+  );
+  if (!m) {
+    throw new Error(`could not find an image tag for '${image}' in the compose files`);
+  }
+  return m[1] ?? m[2];
+};
+const nodeMajor = read('.node-version').trim();
+
+const IMAGE_DEPS = [
+  { actual: imageTag('temporalio/server'), name: 'temporalio/server' },
+  { actual: imageTag('temporalio/admin-tools'), name: 'temporalio/admin-tools' },
+  { actual: imageTag('temporalio/ui'), name: 'temporalio/ui' },
+  { actual: imageTag('grafana/otel-lgtm'), name: 'grafana/otel-lgtm' },
+  { actual: imageTag('pgvector/pgvector'), name: 'pgvector/pgvector' },
+  { actual: imageTag('dxflrs/garage'), name: 'dxflrs/garage' },
+];
+const IMAGE_TAG = '([\\w][\\w.-]*)';
+
+/** Either side may be the truncated one: "1.31" ~ "1.31.2", and "24.0.0" ~ "24". */
+const versionsAgree = (a, b) => isVersionPrefix(a, b) || isVersionPrefix(b, a);
+
+const checkImageVersions = (file, line, lineNo) => {
+  for (const dep of IMAGE_DEPS) {
+    const re = new RegExp(`${dep.name.replace(/[./]/g, '\\$&')}:${IMAGE_TAG}`, 'g');
+    for (const m of line.matchAll(re)) {
+      if (m[1] !== dep.actual) {
+        versionFailures.push({
+          actual: dep.actual,
+          file,
+          line: lineNo,
+          name: dep.name,
+          text: m[0],
+        });
+      }
+    }
+  }
+  // Prose shorthand for the server image: "Temporal 1.31" (never "@temporalio", the SDK).
+  const server = IMAGE_DEPS[0];
+  for (const m of line.matchAll(
+    new RegExp(`(?<![\\w@/])Temporal(?: server)?\\s+v?${VERSION}`, 'g')
+  )) {
+    if (!versionsAgree(m[1], server.actual)) {
+      versionFailures.push({
+        actual: server.actual,
+        file,
+        line: lineNo,
+        name: 'Temporal server',
+        text: m[0],
+      });
+    }
+  }
+  // Node: "Node.js >=24.0.0", "Node.js ≥ 24", "node:24-alpine".
+  for (const m of line.matchAll(
+    new RegExp(`\\bNode(?:\\.js)?\\s+(?:>=|≥)?\\s*v?${VERSION}`, 'gi')
+  )) {
+    if (!versionsAgree(m[1], nodeMajor)) {
+      versionFailures.push({ actual: nodeMajor, file, line: lineNo, name: 'Node.js', text: m[0] });
+    }
+  }
+  for (const m of line.matchAll(/\bnode:(\d+)-alpine/g)) {
+    if (m[1] !== nodeMajor) {
+      versionFailures.push({
+        actual: nodeMajor,
+        file,
+        line: lineNo,
+        name: 'node image',
+        text: m[0],
+      });
+    }
+  }
+};
+
 /** Every version-looking token in a string, e.g. "16.2.7 / 19.2.7" → both. */
 const versionsIn = (cell) => cell.match(/\d+(?:\.\d+)*/g) ?? [];
 
@@ -359,6 +446,7 @@ const checkProse = (file, line, lineNo) => {
 const targets = [
   'AGENTS.md',
   'README.md',
+  'packages/cli/README.md',
   ...readdirSync(join(ROOT, 'docs'))
     .filter((f) => f.endsWith('.md'))
     .map((f) => join('docs', f)),
@@ -370,6 +458,7 @@ for (const file of targets) {
   const lines = read(file).split('\n');
   lines.forEach((line, i) => {
     checkVersions(relative('.', file), line, i + 1);
+    checkImageVersions(relative('.', file), line, i + 1);
     checkProse(relative('.', file), line, i + 1);
     for (const check of CHECKS) {
       if (check.skipLine?.test(line)) {
@@ -475,16 +564,58 @@ const walk = (dir) => {
   return out;
 };
 
+/**
+ * GitHub-style heading slug: lowercase, drop everything but letters, digits,
+ * spaces, `_` and `-`, then every space → `-` (runs are NOT collapsed, which is
+ * why "## 8. Observability & Cost" is `8-observability--cost`). Repeated
+ * headings get `-1`, `-2`, … like GitHub.
+ */
+const headingAnchors = (src) => {
+  const seen = new Map();
+  const out = new Set();
+  for (const m of src.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gm)) {
+    const base = m[1]
+      .replace(/`([^`]*)`/g, '$1')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+      .trim()
+      .replace(/ /g, '-');
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    out.add(n === 0 ? base : `${base}-${n}`);
+  }
+  return out;
+};
+const anchorCache = new Map();
+const anchorsOf = (absPath) => {
+  if (!anchorCache.has(absPath)) {
+    anchorCache.set(absPath, headingAnchors(readFileSync(absPath, 'utf8')));
+  }
+  return anchorCache.get(absPath);
+};
+
 const brokenLinks = [];
 for (const file of walk('.')) {
   const dir = dirname(file);
   read(file)
     .split('\n')
     .forEach((line, i) => {
-      for (const m of line.matchAll(/\]\((\.[^)#\s]*?\.md)(#[^)]*)?\)/g)) {
+      // Any relative `.md` link — `./x.md`, `../x.md`, or `docs/x.md` without a
+      // leading dot — with an optional `#anchor`. Absolute URLs are skipped.
+      for (const m of line.matchAll(
+        /\]\(((?![a-z][a-z0-9+.-]*:|\/)[^)#\s]*?\.md)(#[^)\s]*)?\)/gi
+      )) {
         const target = join(ROOT, dir, m[1]);
         if (!existsSync(target)) {
           brokenLinks.push({ file: file.replace(/^\.\//, ''), line: i + 1, target: m[1] });
+          continue;
+        }
+        if (m[2] && !anchorsOf(target).has(m[2].slice(1).toLowerCase())) {
+          brokenLinks.push({
+            file: file.replace(/^\.\//, ''),
+            line: i + 1,
+            target: `${m[1]}${m[2]} (no such heading)`,
+          });
         }
       }
     });
@@ -516,7 +647,8 @@ const clean =
 if (clean) {
   console.log(
     `Doc drift check passed — ${targets.length} living docs, ${CHECKS.length} facts, ` +
-      `${VERSIONED_DEPS.length} dependency versions, no broken links.`
+      `${VERSIONED_DEPS.length} dependency versions, ${IMAGE_DEPS.length} image tags + Node, ` +
+      'no broken links or anchors.'
   );
   console.log(
     `  ${gapCheckedDocs.length} docs state their limitations ` +
@@ -567,7 +699,7 @@ if (versionFailures.length > 0) {
   for (const v of versionFailures) {
     console.error(`  ${v.file}:${v.line}`);
     console.error(`    claims "${v.text}" but ${v.name} is ${v.actual}`);
-    console.error('    source of truth: package.json\n');
+    console.error('    source of truth: package.json / docker-compose.*.yml / .node-version\n');
   }
   console.error('Bump the doc to match the manifest. A truncated version is fine when it is a');
   console.error('prefix of the real one ("Fastify 5.11" for 5.11.0).\n');
@@ -586,7 +718,9 @@ if (proseFailures.length > 0) {
 }
 
 if (brokenLinks.length > 0) {
-  console.error(`Broken links — ${brokenLinks.length} relative .md link(s) point at nothing.\n`);
+  console.error(
+    `Broken links — ${brokenLinks.length} relative .md link(s) point at nothing (or at no heading).\n`
+  );
   for (const l of brokenLinks) {
     console.error(`  ${l.file}:${l.line} → ${l.target}`);
   }

@@ -29,7 +29,7 @@ The system is delivered incrementally across four phases. Each phase produces a 
 
 > **Dedicated MVP documents:**
 >
-> - **[docs/mvp-architecture.md](docs/mvp-architecture.md)** — MVP architecture, component design, data flow, and design rationale
+> - **[docs/mvp-architecture.md](./mvp-architecture.md)** — MVP architecture, component design, data flow, and design rationale
 
 **Delivers:**
 
@@ -205,7 +205,7 @@ The workflow lifecycle uses Temporal's Parent-Child Workflow pattern. The Epic O
 
 The agent data flow, typed interfaces, Temporal workflow code, retry policies, and all activity implementations are documented in:
 
-> **[docs/workflow-and-activities.md](docs/workflow-and-activities.md)** — Full TypeScript implementations for the Temporal worker.
+> **[docs/workflow-and-activities.md](./workflow-and-activities.md)** — Full TypeScript implementations for the Temporal worker.
 
 **Key design decisions documented there:**
 
@@ -218,7 +218,7 @@ The agent data flow, typed interfaces, Temporal workflow code, retry policies, a
 
 The Prisma schema, embedding pipeline, executor image build pipeline, security guardrails, and docker-compose infrastructure are documented in:
 
-> **[docs/data-and-infra.md](docs/data-and-infra.md)** — Prisma schema, pgvector pipeline, security, and infrastructure.
+> **[docs/data-and-infra.md](./data-and-infra.md)** — Prisma schema, pgvector pipeline, security, and infrastructure.
 
 **Key design decisions documented there:**
 
@@ -231,7 +231,7 @@ The Prisma schema, embedding pipeline, executor image build pipeline, security g
 
 The full API specification, authentication implementation, RBAC middleware, and webhook handlers are documented in:
 
-> **[docs/gateway-and-auth.md](docs/gateway-and-auth.md)** — Gateway API spec, JWT/RBAC implementation, Slack OAuth.
+> **[docs/gateway-and-auth.md](./gateway-and-auth.md)** — Gateway API spec, JWT/RBAC implementation, Slack OAuth.
 
 **Key design decisions documented there:**
 

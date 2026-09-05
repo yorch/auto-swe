@@ -125,7 +125,7 @@ flowchart TB
 
 The canonical end-to-end journey, and what the default `default-engineering` template encodes. It is
 a composition of ordinary node types, not a hard-coded pipeline. (Sequence diagram in
-[architecture.md §3](./architecture.md#3-work-request-lifecycle).)
+[architecture.md §3](./architecture.md#3-run-lifecycle).)
 
 ```mermaid
 flowchart LR
