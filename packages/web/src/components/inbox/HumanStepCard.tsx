@@ -4,6 +4,7 @@ import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { useRespondToHumanStep } from '@/hooks/useInbox';
@@ -57,11 +58,11 @@ function isInputFields(value: unknown): value is InputField[] {
   );
 }
 
-const KIND_COLOR: Record<string, string> = {
-  APPROVAL: 'bg-amber-400/20 text-amber-400',
-  DECISION: 'bg-dust-400/20 text-dust-400',
-  INPUT: 'bg-moss-400/20 text-moss-400',
-  REVIEW: 'bg-violet-400/20 text-violet-400',
+const KIND_TONE: Record<string, BadgeTone> = {
+  APPROVAL: 'amber',
+  DECISION: 'dust',
+  INPUT: 'moss',
+  REVIEW: 'violet',
 };
 
 function contextToString(context: unknown): string {
@@ -154,11 +155,12 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   return (
     <div className="border border-ink-600 rounded-lg p-4 space-y-3">
       <div className="flex items-start gap-3">
-        <span
-          className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${KIND_COLOR[step.kind] ?? 'bg-ink-600 text-paper-400'}`}
+        <Badge
+          className="shrink-0 px-2 font-sans text-xs font-medium"
+          tone={KIND_TONE[step.kind] ?? 'neutral'}
         >
           {KIND_LABEL[step.kind] ?? step.kind}
-        </span>
+        </Badge>
         <div className="flex-1 min-w-0">
           <div className="font-medium text-sm">{step.title}</div>
           {step.description && (

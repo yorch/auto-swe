@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
@@ -31,9 +32,9 @@ function OriginBadge({ origin }: { origin: string | null }) {
     return null;
   }
   return (
-    <span className="ml-1.5 rounded bg-ink-600 px-1.5 py-0.5 font-mono text-[10px] text-paper-400">
+    <Badge className="ml-1.5" tone="neutral">
       {origin}
-    </span>
+    </Badge>
   );
 }
 

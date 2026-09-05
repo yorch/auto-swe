@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui/Badge';
 import type { ConfigSource } from '@/hooks/useAdminConfig';
 
 interface SourceBadgeProps {
@@ -12,11 +13,13 @@ export function SourceBadge({ source }: SourceBadgeProps) {
     return null;
   }
   return (
-    <span
-      className="inline-flex items-center rounded-sm bg-amber-900/40 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-amber-400"
+    <Badge
+      className="rounded-sm text-[9px] tracking-widest"
       title="Value comes from an environment variable. Saving here will override it."
+      tone="amber"
+      uppercase
     >
       env
-    </span>
+    </Badge>
   );
 }

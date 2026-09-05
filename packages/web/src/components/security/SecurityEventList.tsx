@@ -1,48 +1,49 @@
 'use client';
 
 import { useState } from 'react';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import type { SecurityEvent, SecurityEventType } from '@/hooks/useAdmin';
 import { formatRelativeTime } from '@/lib/utils';
 
 // ── Badge ────────────────────────────────────────────────────────────────────
 
-const EVENT_STYLE: Record<SecurityEventType, { color: string; dot: string; label: string }> = {
+const EVENT_STYLE: Record<SecurityEventType, { tone: BadgeTone; dot: string; label: string }> = {
   CHANNEL_SUSPICIOUS: {
-    color: 'bg-violet-400/20 text-violet-400',
     dot: 'bg-violet-400',
     label: 'Channel Suspicious',
+    tone: 'violet',
   },
   CODE_SECURITY: {
-    color: 'bg-dust-400/20 text-dust-400',
     dot: 'bg-dust-400',
     label: 'Code Security',
+    tone: 'dust',
   },
   CONTENT_SECURITY_BLOCK: {
-    color: 'bg-brick-400/20 text-brick-400',
     dot: 'bg-brick-500',
     label: 'Content Block',
+    tone: 'brick',
   },
   CONTENT_SECURITY_WARN: {
-    color: 'bg-amber-400/20 text-amber-400',
     dot: 'bg-amber-400',
     label: 'Content Warn',
+    tone: 'amber',
   },
-  FILE_BLOCK: { color: 'bg-brick-400/20 text-brick-400', dot: 'bg-brick-500', label: 'File Block' },
+  FILE_BLOCK: { dot: 'bg-brick-500', label: 'File Block', tone: 'brick' },
   LLM_SUSPICIOUS: {
-    color: 'bg-violet-400/20 text-violet-400',
     dot: 'bg-violet-400',
     label: 'LLM Suspicious',
+    tone: 'violet',
   },
   SHELL_BLOCK: {
-    color: 'bg-brick-400/20 text-brick-400',
     dot: 'bg-brick-500',
     label: 'Shell Block',
+    tone: 'brick',
   },
 };
 
 export function SecurityEventBadge({ type }: { type: SecurityEventType }) {
-  const { color, label } = EVENT_STYLE[type];
-  return <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${color}`}>{label}</span>;
+  const { tone, label } = EVENT_STYLE[type];
+  return <Badge tone={tone}>{label}</Badge>;
 }
 
 // ── Detail extraction ─────────────────────────────────────────────────────────

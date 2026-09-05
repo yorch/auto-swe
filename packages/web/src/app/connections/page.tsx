@@ -7,6 +7,7 @@ import { ConnectionFormModal } from '@/components/repositories/ConnectionFormMod
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -36,18 +37,12 @@ const TYPE_LABELS: Record<string, string> = {
 
 function ConnectionTypeBadge({ type }: { type: string }) {
   const label = TYPE_LABELS[type] ?? type;
-  const colors =
-    type === 'git_repo'
-      ? 'bg-moss-400/10 text-moss-400 border-moss-400/30'
-      : type === 'api_endpoint'
-        ? 'bg-violet-400/10 text-violet-400 border-violet-400/30'
-        : 'bg-amber-400/10 text-amber-400 border-amber-400/30';
+  const tone: BadgeTone =
+    type === 'git_repo' ? 'moss' : type === 'api_endpoint' ? 'violet' : 'amber';
   return (
-    <span
-      className={`inline-block rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${colors}`}
-    >
+    <Badge className="text-[9px]" tone={tone} uppercase variant="outline">
       {label}
-    </span>
+    </Badge>
   );
 }
 

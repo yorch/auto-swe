@@ -1,14 +1,15 @@
 'use client';
 
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { useConfigAuditLog } from '@/hooks/useAdminConfig';
 import { formatDate } from '@/lib/utils';
 
-const ACTION_COLORS = {
-  CREATE: 'text-moss-400',
-  DELETE: 'text-brick-400',
-  UPDATE: 'text-amber-400',
-} as const;
+const ACTION_TONES: Record<string, BadgeTone> = {
+  CREATE: 'moss',
+  DELETE: 'brick',
+  UPDATE: 'amber',
+};
 
 const ENTITY_LABELS: Record<string, string> = {
   AgentSkillAssignment: 'Agent skill assignment',
@@ -93,10 +94,14 @@ export function AuditLogTab() {
                 <td className="px-3 py-2 text-paper-300">
                   {ENTITY_LABELS[entry.entityType] ?? entry.entityType}
                 </td>
-                <td
-                  className={`px-3 py-2 font-mono font-semibold ${ACTION_COLORS[entry.action] ?? 'text-paper-300'}`}
-                >
-                  {entry.action}
+                <td className="px-3 py-2">
+                  <Badge
+                    className="text-xs font-semibold"
+                    tone={ACTION_TONES[entry.action] ?? 'neutral'}
+                    variant="text"
+                  >
+                    {entry.action}
+                  </Badge>
                 </td>
                 <td className="px-3 py-2 text-paper-400">
                   {entry.actorEmail ?? (entry.actorId ? entry.actorId.slice(0, 8) : '—')}

@@ -3,6 +3,7 @@
 import { EDGE_KINDS } from '@auto-swe/shared/lib/repoDependency';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useMemo, useState } from 'react';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -29,17 +30,7 @@ function neighborLabel(edge: DepEdgeView): string {
   return edge.toRef ?? '(unknown)';
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const color =
-    status === 'active'
-      ? 'text-moss-400'
-      : status === 'dismissed'
-        ? 'text-brick-400'
-        : 'text-amber-400';
-  return (
-    <span className={`font-mono text-[10px] uppercase tracking-wider ${color}`}>{status}</span>
-  );
-}
+const EDGE_STATUS_TONE: Record<string, BadgeTone> = { active: 'moss', dismissed: 'brick' };
 
 /** `92% confidence` for an LLM-inferred edge; nothing for a deterministic one. */
 function ConfidenceNote({ edge }: { edge: DepEdgeView }) {
@@ -88,7 +79,9 @@ function EdgeRow({
         <ConfidenceNote edge={edge} />
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <StatusBadge status={edge.status} />
+        <Badge tone={EDGE_STATUS_TONE[edge.status] ?? 'amber'} uppercase variant="text">
+          {edge.status}
+        </Badge>
         {canManage && canVeto && edge.status === 'active' && (
           <Button onClick={onDismiss} size="sm" variant="ghost">
             Dismiss

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
@@ -947,10 +948,10 @@ const STATUS_LABELS: Record<ChannelOpenItemStatus, string> = {
   RESOLVED: 'resolved',
 };
 
-const STATUS_COLORS: Record<ChannelOpenItemStatus, string> = {
-  DISMISSED: 'text-paper-600',
-  OPEN: 'text-amber-400',
-  RESOLVED: 'text-moss-400',
+const STATUS_TONES: Record<ChannelOpenItemStatus, BadgeTone> = {
+  DISMISSED: 'muted',
+  OPEN: 'amber',
+  RESOLVED: 'moss',
 };
 
 function OpenItemsModal({
@@ -1026,9 +1027,9 @@ function OpenItemsModal({
                     <div className="flex-1">
                       <p className="text-paper-100">{item.description}</p>
                       <div className="mt-1 flex flex-wrap gap-2 font-mono text-[10px] text-paper-500">
-                        <span className={STATUS_COLORS[item.status]}>
+                        <Badge tone={STATUS_TONES[item.status]} variant="text">
                           {STATUS_LABELS[item.status]}
-                        </span>
+                        </Badge>
                         <span>·</span>
                         <span>{formatRelativeTime(item.createdAt)}</span>
                         {item.ownerUserId && (
@@ -1078,10 +1079,10 @@ function OpenItemsModal({
 
 // ── Audit modal (Gap J) ─────────────────────────────────────────────────────────
 
-const AUDIT_KIND_COLORS: Record<ChannelAuditKind, string> = {
-  ambient: 'text-moss-400',
-  mention: 'text-dust-400',
-  reactive: 'text-amber-400',
+const AUDIT_KIND_TONES: Record<ChannelAuditKind, BadgeTone> = {
+  ambient: 'moss',
+  mention: 'dust',
+  reactive: 'amber',
 };
 
 function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClose: () => void }) {
@@ -1137,7 +1138,9 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
                       )}
                     </p>
                     <div className="mt-1 flex flex-wrap gap-2 font-mono text-[10px] text-paper-500">
-                      <span className={AUDIT_KIND_COLORS[e.kind]}>{e.kind}</span>
+                      <Badge tone={AUDIT_KIND_TONES[e.kind]} variant="text">
+                        {e.kind}
+                      </Badge>
                       <span>·</span>
                       <span>{e.userSlackId ? `by ${e.userSlackId}` : 'system'}</span>
                       <span>·</span>
