@@ -2,7 +2,6 @@
 
 import type {
   AutonomyDecisionDto,
-  CreateWorkRequestBody,
   CreateWorkRequestResponse,
   EvalResultDto,
   WorkflowDetail,
@@ -147,14 +146,5 @@ export function useRetryWorkRequest() {
       qc.invalidateQueries({ queryKey: ['workflows'] });
       qc.invalidateQueries({ queryKey: ['workflow-runs'] });
     },
-  });
-}
-
-export function useCreateWorkRequest() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateWorkRequestBody) =>
-      api.post<{ data: CreateWorkRequestResponse }>('/api/v1/work-requests', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflows'] }),
   });
 }
