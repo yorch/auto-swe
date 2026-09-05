@@ -46,6 +46,7 @@ vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
 
 vi.mock('@auto-swe/shared/db', () => {
   const prisma = {
+    $executeRaw: vi.fn(async () => 1),
     $queryRaw: vi.fn(async () => []),
     $transaction: vi.fn((arg: unknown) => {
       if (Array.isArray(arg)) {

@@ -371,7 +371,11 @@ export async function finalizeWorkflowRun(
   if (orgId) {
     const yearMonth = currentYearMonth();
     await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`
+      // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises
+      // concurrent finalisations for one org; Prisma has no API for it.
+      // `$executeRaw`, not `$queryRaw`: the lock function returns void, which
+      // the Prisma 7 driver adapter cannot deserialise as a result column.
+      await tx.$executeRaw`
         SELECT pg_advisory_xact_lock(hashtextextended(${orgId}, 0))
       `;
       const { count } = await tx.workflowRun.updateMany({

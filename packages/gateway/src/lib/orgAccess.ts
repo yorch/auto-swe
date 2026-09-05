@@ -66,7 +66,9 @@ export async function assertOrgBudget(
   return prisma.$transaction(async (tx) => {
     // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises
     // concurrent budget checks for one org; Prisma has no API for it.
-    await tx.$queryRaw(Prisma.sql`
+    // `$executeRaw` because the lock returns void, which the Prisma 7 driver
+    // adapter cannot deserialise as a result column (P2010).
+    await tx.$executeRaw(Prisma.sql`
       SELECT pg_advisory_xact_lock(hashtextextended(${orgId}, 0))
     `);
     const usage = await tx.orgMonthlyUsage.findUnique({

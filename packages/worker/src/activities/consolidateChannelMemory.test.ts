@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
+    $executeRaw: vi.fn(async () => 1),
     $executeRawUnsafe: vi.fn(),
     $queryRaw: vi.fn(),
     $queryRawUnsafe: vi.fn(),
