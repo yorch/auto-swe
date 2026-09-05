@@ -10,10 +10,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import {
+  AutonomyDecisionSchema,
   projectAutonomyDecision,
   projectEvalResult,
   projectRunSummary,
@@ -43,7 +45,8 @@ const CancelRunResponseSchema = z.object({
 });
 
 const EvalResultsResponseSchema = z.object({ data: z.array(z.unknown()) });
-const AutonomyDecisionsResponseSchema = z.object({ data: z.array(z.unknown()) });
+const AutonomyDecisionsResponseSchema = z.object({ data: z.array(AutonomyDecisionSchema) });
+const AutonomyDecisionsQuery = paginationQuery({ defaultLimit: 100, maxLimit: 200 });
 
 /** Max chars per string field in trace payloads returned by the polled run view. */
 const TRACE_FIELD_CAP = 4_000;
@@ -85,6 +88,7 @@ const ListRunsQuery = RunListPaginationQuery.extend({
    * engineering runs. Opt in with `?includeChannel=true`.
    */
   includeChannel: booleanQueryParam(false),
+  scope: z.enum(['ALL', 'MINE', 'TEAM']).optional(),
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
   templateId: z.string().uuid().optional(),
   workRequestId: z.string().uuid().optional(),
@@ -102,9 +106,17 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { includeChannel, limit, offset, status, templateId, workRequestId } = request.query;
+      const { includeChannel, limit, offset, scope, status, templateId, workRequestId } =
+        request.query;
+      const teamFilter = buildWorkflowRunVisibilityFilter(user);
+      const visibilityFilter: Prisma.WorkflowRunWhereInput =
+        user.role === 'ADMIN' && scope === 'ALL'
+          ? {}
+          : scope === 'MINE'
+            ? { AND: [teamFilter, { workRequest: { requestedById: user.sub } }] }
+            : teamFilter;
       const where: Prisma.WorkflowRunWhereInput = {
-        ...buildWorkflowRunVisibilityFilter(user),
+        ...visibilityFilter,
         ...(status ? { status } : {}),
         ...(templateId ? { templateId } : {}),
         ...(workRequestId ? { workRequestId } : {}),
@@ -118,7 +130,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
           include: {
-            template: { select: { name: true } },
+            template: { select: { name: true, workspaceProvider: true } },
             workRequest: {
               select: { description: true, externalTicketId: true, id: true },
             },
@@ -330,6 +342,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         params: RunIdParam,
+        querystring: AutonomyDecisionsQuery,
         response: { 200: AutonomyDecisionsResponseSchema, 404: ErrorResponseSchema },
       },
     },
@@ -346,6 +359,8 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const rows = await fastify.prisma.autonomyDecision.findMany({
         orderBy: { createdAt: 'asc' },
+        skip: request.query.offset,
+        take: request.query.limit,
         where: { runId: run.id },
       });
       const data = rows.map(projectAutonomyDecision);

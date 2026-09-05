@@ -299,6 +299,7 @@ export interface UpdateWorkflowTemplateBody {
 }
 
 export interface WorkflowTemplateAnalytics {
+  isTruncated: boolean;
   windowDays: number;
   totalRuns: number;
   succeeded: number;
@@ -337,6 +338,8 @@ export interface WorkflowTemplateAnalytics {
 export interface GlobalAnalyticsResponse {
   windowDays: number;
   totalRuns: number;
+  completedRuns: number;
+  runningRuns: number;
   succeeded: number;
   failed: number;
   successRate: number | null;
@@ -360,8 +363,10 @@ export interface GlobalAnalyticsResponse {
     agentErrorRate: number | null;
     humanErrorRate: number | null;
     errorRateVsHuman: number | null;
+    baselineSampleSize: number | null;
   }>;
   perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
+  isTruncated: boolean;
 }
 
 export interface SpecDiffResponse {
@@ -391,9 +396,13 @@ export interface WorkflowRunSummary {
   templateId: string;
   templateName?: string | null;
   templateVersion: number;
+  domain: string | null;
   status: WorkflowRunStatus;
   startedAt: string;
   endedAt: string | null;
+  outcomeDomain: string | null;
+  outcomeType: string | null;
+  costUsdAccrued: number;
   workRequest: {
     id: string;
     externalTicketId: string;
@@ -477,6 +486,12 @@ export interface HumanStepSummary {
   requestedAt: string;
   resolvedAt?: string | null;
   timeoutAt?: string | null;
+  /** Current number of distinct recorded approvers (APPROVAL steps). */
+  currentApprovers?: number;
+  /** Total number of distinct approvers required to resolve the step. */
+  requiredApprovers?: number;
+  /** How many more distinct approvals are still needed. */
+  approvalsRemaining?: number;
   run: {
     id: string;
     status: string;
@@ -509,7 +524,7 @@ export interface StepRegistryEntry {
 
 // ── Admin ──
 
-/** Shape returned by GET /api/v1/admin/access-tokens (platform ADMIN only) */
+/** Shape returned by GET /api/v1/platform/access-tokens (platform ADMIN only) */
 export interface AdminTokenSummary {
   id: string;
   name: string;

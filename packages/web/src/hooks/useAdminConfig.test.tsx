@@ -37,7 +37,7 @@ function client() {
 describe('sourcedConfigQuery', () => {
   it('GETs the slug path and returns { data, sources } whole', async () => {
     setupFetchMock({
-      'GET /api/v1/admin/config/github': () => ({
+      'GET /api/v1/platform/config/github': () => ({
         data: { token: { lastFour: 'abcd' } },
         sources: { token: 'db' },
       }),
@@ -54,7 +54,7 @@ describe('sourcedConfigQuery', () => {
 
   it('flattens a nested slug into the cache key', async () => {
     setupFetchMock({
-      'GET /api/v1/admin/config/oauth/google': () => ({ data: { clientId: 'x' }, sources: {} }),
+      'GET /api/v1/platform/config/oauth/google': () => ({ data: { clientId: 'x' }, sources: {} }),
     });
     const qc = client();
 
@@ -68,7 +68,7 @@ describe('sourcedConfigQuery', () => {
 describe('unwrappedConfigQuery', () => {
   it('strips the data envelope for the configs that carry no source badges', async () => {
     setupFetchMock({
-      'GET /api/v1/admin/config/canary': () => ({ data: { percent: 10 } }),
+      'GET /api/v1/platform/config/canary': () => ({ data: { percent: 10 } }),
     });
 
     const { result } = renderHook(() => useCanaryConfig(), { wrapper: wrapper(client()) });
@@ -81,8 +81,8 @@ describe('unwrappedConfigQuery', () => {
 describe('configMutation', () => {
   it('PUTs the body to the slug path and invalidates that slug only', async () => {
     const spy = setupFetchMock({
-      'GET /api/v1/admin/config/github': () => ({ data: { token: null }, sources: {} }),
-      'PUT /api/v1/admin/config/github': () => ({ data: { token: { lastFour: 'wxyz' } } }),
+      'GET /api/v1/platform/config/github': () => ({ data: { token: null }, sources: {} }),
+      'PUT /api/v1/platform/config/github': () => ({ data: { token: { lastFour: 'wxyz' } } }),
     });
     const qc = client();
     const invalidate = vi.spyOn(qc, 'invalidateQueries');
@@ -94,7 +94,7 @@ describe('configMutation', () => {
     if (!put) {
       throw new Error('expected a PUT');
     }
-    expect(put[0]).toContain('/api/v1/admin/config/github');
+    expect(put[0]).toContain('/api/v1/platform/config/github');
     expect(JSON.parse((put[1] as RequestInit).body as string)).toEqual({ token: 'ghp_secret' });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['admin-config-github'] });
   });
@@ -103,7 +103,7 @@ describe('configMutation', () => {
 describe('postConfigTest / postConfigTrigger', () => {
   it('POSTs an empty body when the connector needs no probe input', async () => {
     const spy = setupFetchMock({
-      'POST /api/v1/admin/config/storage/test': () => ({ detail: 'ok', ok: true }),
+      'POST /api/v1/platform/config/storage/test': () => ({ detail: 'ok', ok: true }),
     });
 
     await expect(testStorageConnection()).resolves.toEqual({ detail: 'ok', ok: true });
@@ -112,7 +112,7 @@ describe('postConfigTest / postConfigTrigger', () => {
 
   it('POSTs the probe input for the connectors that take one', async () => {
     const spy = setupFetchMock({
-      'POST /api/v1/admin/config/issue-tracker/test': () => ({ detail: 'found', ok: true }),
+      'POST /api/v1/platform/config/issue-tracker/test': () => ({ detail: 'found', ok: true }),
     });
 
     await testIssueTrackerConnection('JIRA-1');
@@ -124,10 +124,10 @@ describe('postConfigTest / postConfigTrigger', () => {
 
   it('POSTs the trigger path for a scheduled config', async () => {
     const spy = setupFetchMock({
-      'POST /api/v1/admin/config/consolidation/trigger': () => ({ data: { triggered: true } }),
+      'POST /api/v1/platform/config/consolidation/trigger': () => ({ data: { triggered: true } }),
     });
 
     await expect(triggerConsolidationNow()).resolves.toEqual({ data: { triggered: true } });
-    expect(spy.mock.calls[0][0]).toContain('/api/v1/admin/config/consolidation/trigger');
+    expect(spy.mock.calls[0][0]).toContain('/api/v1/platform/config/consolidation/trigger');
   });
 });

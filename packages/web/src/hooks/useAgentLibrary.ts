@@ -74,7 +74,7 @@ export function useAgentLibrary(filter?: { scope?: AgentScope; all?: boolean }) 
   return useQuery({
     queryFn: () =>
       api
-        .get<{ data: AgentRow[] }>(`/api/v1/admin/agent-library${query ? `?${query}` : ''}`)
+        .get<{ data: AgentRow[] }>(`/api/v1/platform/agent-library${query ? `?${query}` : ''}`)
         .then((r) => r.data),
     queryKey: [...KEY, filter?.scope ?? null, filter?.all ?? false],
   });
@@ -84,7 +84,7 @@ export function useCreateAgent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateAgentBody) =>
-      api.post<{ data: AgentRow; scanWarnings?: string[] }>('/api/v1/admin/agent-library', body),
+      api.post<{ data: AgentRow; scanWarnings?: string[] }>('/api/v1/platform/agent-library', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -94,7 +94,7 @@ export function useUpdateAgent() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateAgentBody }) =>
       api.put<{ data: AgentRow; scanWarnings?: string[] }>(
-        `/api/v1/admin/agent-library/${id}`,
+        `/api/v1/platform/agent-library/${id}`,
         body
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
@@ -105,7 +105,7 @@ export function useDeleteAgent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api.delete<{ data: { deactivated: number } }>(`/api/v1/admin/agent-library/${id}`),
+      api.delete<{ data: { deactivated: number } }>(`/api/v1/platform/agent-library/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

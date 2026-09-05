@@ -3,6 +3,15 @@ export { PrismaClient, prisma } from './db.js';
 export { Prisma } from './generated/prisma/client.js';
 export { ConfigAuditAction, ConfigScope, Role } from './generated/prisma/enums.js';
 export {
+  AUTONOMY_ACTIONS,
+  type AutonomyAction,
+  type AutonomyRules,
+  AutonomyRulesSchema,
+  FALLBACK_RULES,
+  getSafeAutonomyRules,
+  type RiskRule,
+} from './lib/autonomyPolicy.js';
+export {
   decryptConnectionApiToken,
   type EncryptedConnectionToken,
   encryptConnectionApiToken,

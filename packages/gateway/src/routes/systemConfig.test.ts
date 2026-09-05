@@ -234,7 +234,7 @@ async function buildApp() {
     triggerEvalNow: vi.fn(async () => {}),
   } as unknown as never);
 
-  await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(systemConfigRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return app;
 }
@@ -254,7 +254,7 @@ describe('POST /config/issue-tracker/detect-fields', () => {
     const res = await app.inject({
       headers: AUTH_HEADER,
       method: 'POST',
-      url: '/api/v1/admin/config/issue-tracker/detect-fields',
+      url: '/api/v1/platform/config/issue-tracker/detect-fields',
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload)).toEqual({
@@ -270,7 +270,7 @@ describe('POST /config/issue-tracker/detect-fields', () => {
     const res = await app.inject({
       headers: AUTH_HEADER,
       method: 'POST',
-      url: '/api/v1/admin/config/issue-tracker/detect-fields',
+      url: '/api/v1/platform/config/issue-tracker/detect-fields',
     });
     expect(res.statusCode).toBe(500);
     await app.close();
@@ -283,7 +283,7 @@ describe('eval-schedule config', () => {
     const res = await app.inject({
       headers: AUTH_HEADER,
       method: 'GET',
-      url: '/api/v1/admin/config/eval-schedule',
+      url: '/api/v1/platform/config/eval-schedule',
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data).toMatchObject({
@@ -301,7 +301,7 @@ describe('eval-schedule config', () => {
       body: { cronExpression: '0 6 * * 1', enabled: true },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/eval-schedule',
+      url: '/api/v1/platform/config/eval-schedule',
     });
     expect(res.statusCode).toBe(200);
     expect(app.temporal.syncEvalSchedule).toHaveBeenCalledTimes(1);
@@ -314,7 +314,7 @@ describe('eval-schedule config', () => {
       body: { cronExpression: 'not-a-cron' },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/eval-schedule',
+      url: '/api/v1/platform/config/eval-schedule',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -325,7 +325,7 @@ describe('eval-schedule config', () => {
     const res = await app.inject({
       headers: AUTH_HEADER,
       method: 'POST',
-      url: '/api/v1/admin/config/eval-schedule/trigger',
+      url: '/api/v1/platform/config/eval-schedule/trigger',
     });
     expect(res.statusCode).toBe(200);
     expect(app.temporal.triggerEvalNow).toHaveBeenCalledTimes(1);
@@ -345,7 +345,7 @@ describe('PUT /config/workflow-defaults', () => {
       },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/workflow-defaults',
+      url: '/api/v1/platform/config/workflow-defaults',
     });
     expect(res.statusCode).toBe(200);
     expect(updateWorkflowDefaultsMock).toHaveBeenCalledTimes(1);
@@ -363,7 +363,7 @@ describe('PUT /config/workflow-defaults', () => {
       body: { evalJudgeThreshold: 1.5 },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/workflow-defaults',
+      url: '/api/v1/platform/config/workflow-defaults',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -375,7 +375,7 @@ describe('PUT /config/workflow-defaults', () => {
       body: { workspaceMemory: '4g --privileged' },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/workflow-defaults',
+      url: '/api/v1/platform/config/workflow-defaults',
     });
     expect(res.statusCode).toBe(400);
     expect(updateWorkflowDefaultsMock).not.toHaveBeenCalled();
@@ -388,7 +388,7 @@ describe('PUT /config/workflow-defaults', () => {
       body: { workspaceImage: 'my image:latest' },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/workflow-defaults',
+      url: '/api/v1/platform/config/workflow-defaults',
     });
     expect(res.statusCode).toBe(400);
     expect(updateWorkflowDefaultsMock).not.toHaveBeenCalled();
@@ -410,7 +410,7 @@ describe('PUT /config/canary', () => {
       body: { agentKey: 'implementer', candidateVersion: 9, enabled: true },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/canary',
+      url: '/api/v1/platform/config/canary',
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('CANARY_VERSION_NOT_FOUND');
@@ -432,7 +432,7 @@ describe('PUT /config/canary', () => {
       body: { agentKey: 'implementer', candidateVersion: 2, enabled: true },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/canary',
+      url: '/api/v1/platform/config/canary',
     });
     expect(res.statusCode).toBe(200);
     expect(updateCanaryConfigMock).toHaveBeenCalledTimes(1);
@@ -450,7 +450,7 @@ describe('PUT /config/oauth/okta', () => {
       body: { issuer: 'https://169.254.169.254/oauth2/default' },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/oauth/okta',
+      url: '/api/v1/platform/config/oauth/okta',
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('UNSAFE_URL');
@@ -464,7 +464,7 @@ describe('PUT /config/oauth/okta', () => {
       body: { issuer: 'http://okta.example.com/oauth2/default' },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/oauth/okta',
+      url: '/api/v1/platform/config/oauth/okta',
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('UNSAFE_URL');
@@ -482,7 +482,7 @@ describe('PUT /config/oauth/okta', () => {
       },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/oauth/okta',
+      url: '/api/v1/platform/config/oauth/okta',
     });
     expect(res.statusCode).toBe(200);
     expect(updateOktaOAuthConfigMock).toHaveBeenCalledTimes(1);
@@ -505,7 +505,7 @@ describe('config audit coverage', () => {
       body: { enabled: true },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/consolidation',
+      url: '/api/v1/platform/config/consolidation',
     });
     expect(res.statusCode).toBe(200);
     expect(updateConsolidationConfigMock).toHaveBeenCalledTimes(1);
@@ -536,7 +536,7 @@ describe('config audit coverage', () => {
       body: { agentKey: 'implementer', candidateVersion: 2, enabled: true, percent: 0.1 },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/canary',
+      url: '/api/v1/platform/config/canary',
     });
     expect(res.statusCode).toBe(200);
     expect(auditConfigWriteMock).toHaveBeenCalledWith(
@@ -556,7 +556,7 @@ describe('config audit coverage', () => {
       body: { maxTddIterations: 7 },
       headers: AUTH_HEADER,
       method: 'PUT',
-      url: '/api/v1/admin/config/workflow-defaults',
+      url: '/api/v1/platform/config/workflow-defaults',
     });
     expect(res.statusCode).toBe(200);
     expect(auditConfigWriteMock).toHaveBeenCalledWith(

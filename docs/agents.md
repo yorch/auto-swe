@@ -22,7 +22,7 @@ They split by how they bind a model: an agent carries either its own `modelSpec`
 
 Each has a GLOBAL `Agent` row with its own `modelSpec`. Model, prompt, skills, and tools are edited
 — and overridden at CHANNEL / TEAM / ORGANIZATION / WORKFLOW_TEMPLATE scope — through the Agent
-library at `/admin/agents/library`.
+library at `/studio/agents/library`.
 
 | Key | Used by | Default model |
 |---|---|---|
@@ -103,8 +103,8 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
 - **Governance:** editing a system prompt runs the injection/exfiltration scan and resets
   `isVerified`. Versions are immutable — editing a base cuts a new version. RBAC is ADMIN for
   GLOBAL, team OWNER for TEAM.
-- **API + UI:** `/api/v1/admin/agent-library` (plus `/api/v1/teams/:id/agent-library`) and
-  `/admin/agents/library`.
+- **API + UI:** `/api/v1/platform/agent-library` (plus `/api/v1/teams/:id/agent-library`) and
+  `/studio/agents/library`.
 - **The `agent` node** carries an `agentRef` (`<key>` or `<key>@<version>`) plus optional
   `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
   and calls `runAgent`.
@@ -125,7 +125,7 @@ GLOBAL scope             →  (required — every referenced agent must resolve 
 
 **`systemPrompt` cascades independently from `modelSpec`.** A higher-scope row may supply the model spec but leave `systemPrompt = null`, allowing the cascade to continue looking for a system prompt at lower scopes. This means a team override can change the model without losing the global default system prompt (and vice versa).
 
-Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is found at any scope. Missing rows surface as a clear error message; credentials are managed at `/admin/model-config`, per-agent model specs at `/admin/agents/library`.
+Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is found at any scope. Missing rows surface as a clear error message; credentials are managed at `/studio/models`, per-agent model specs at `/studio/agents/library`.
 
 **Credentials** are stored AES-256-GCM encrypted in `ProviderCredential.apiKeyCiphertext`. Decryption failure also surfaces as `ConfigMissingError`. Credential resolution cascades TEAM → ORGANIZATION → GLOBAL (an Agent pins an existing credential via `Agent.credentialId`).
 
@@ -187,7 +187,7 @@ Use the `loadSkill` tool to load the full guidance for any skill before applying
 `writeFile` runs through two sequential checks before writing:
 
 1. **Sensitive file scanner** (`checkSensitiveFilePath`) — hard-block. Rejects `.env`, PEM/key files, SSH private keys, credential JSON files. Returns the block message to the agent and records a trace with `error: 'blocked by sensitive file scanner'`.
-2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/admin/security-events` can classify the event without raw SQL.
+2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/govern/security` can classify the event without raw SQL.
 
 ### 3.5 MCP Tools (first-class `mcp` Connection, opt-in)
 
@@ -215,7 +215,7 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 - Loaded tools are keyed `mcp_<toolName>` in the agent tool record (sanitized to provider-safe names); built-in tool keys always win on collision.
 - Every MCP tool call is audit-logged (`[mcp:audit] server=… tool=… args=…`, like the `bash` tool) and recorded on the `AgentTracer` with `toolName: 'mcp:<toolName>'`.
 - Successful loads record an `mcp.tools_loaded` activity event with the tool list.
-- Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts, overridable per connection via optional `listTimeoutMs`/`callTimeoutMs` on the `mcp` `Connection.config` (resolved by `mcpUrlForConnection`/`resolveAgentMcpUrl` into `loadMcpTools`; edited at `/admin/mcp-connections`).
+- Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts, overridable per connection via optional `listTimeoutMs`/`callTimeoutMs` on the `mcp` `Connection.config` (resolved by `mcpUrlForConnection`/`resolveAgentMcpUrl` into `loadMcpTools`; edited at `/studio/mcp`).
 
 **How the pieces fit:**
 - **Tool key:** the gateway `toolKeys` validation accepts `'mcp'` (via `AGENT_TOOL_KEYS`).
@@ -225,8 +225,8 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
   `resolveAgentMcpUrl` → `mcpUrlForConnection` → `loadMcpTools(config.url)` and closes the client in
   `finally`. The generic `runAgentNode` path (declarative `agent` node) binds MCP the same way, so any
   agent — not just the implementer — can use MCP.
-- **Write-path:** admins manage `mcp` Connections at `/admin/mcp-connections` (gateway CRUD
-  `/api/v1/admin/mcp-connections` — `POST` create, `PATCH :id` edit url/name/timeouts,
+- **Write-path:** admins manage `mcp` Connections at `/studio/mcp` (gateway CRUD
+  `/api/v1/studio/mcp` — `POST` create, `PATCH :id` edit url/name/timeouts,
   `DELETE :id` soft-delete; `PATCH` rebuilds `config` from the body so a blank timeout clears the
   override) and attach one to an Agent via the `mcpConnectionId` field on the
   agent-library form. `validateMcpConnectionRef` enforces that the reference is an active `mcp`
@@ -281,7 +281,7 @@ The code security scanner findings (`codeResult.codeSecurityFindings`) are forma
 
 A **skill** is a named prompt fragment (`promptText`) injected into an agent's system message. Skills control *how* an agent reasons — they do not grant new capabilities. Each skill has:
 
-Skills are an intentionally **global, ADMIN-curated library** — the `Skill` table carries no `teamId`/`orgId`/tenant column, and creation (`POST /api/v1/admin/skills`) and edits are ADMIN-only routes. Tenant isolation is enforced one layer up: which Agents (themselves tenant-scoped) reference a skill via `skillRefs`, not by row ownership on `Skill` itself.
+Skills are an intentionally **global, ADMIN-curated library** — the `Skill` table carries no `teamId`/`orgId`/tenant column, and creation (`POST /api/v1/platform/skills`) and edits are ADMIN-only routes. Tenant isolation is enforced one layer up: which Agents (themselves tenant-scoped) reference a skill via `skillRefs`, not by row ownership on `Skill` itself.
 
 | Field | Purpose |
 |---|---|
@@ -365,7 +365,7 @@ Custom skills' `promptText` is scanned by `scanSkillContent(text)` in `packages/
 - **Non-blocking advisory** — warnings are returned but never prevent saving or execution. Scan failures are caught so a DB outage cannot abort a run.
 
 The scan runs:
-1. At skill save time (gateway `POST /api/v1/admin/skills`).
+1. At skill save time (gateway `POST /api/v1/platform/skills`).
 2. After each TDD iteration in `executeImplementation` (scans LLM output for prompt injection attempts).
 
 ---
@@ -482,11 +482,11 @@ on the `Agent` payload below.
 
 | Method | Path | Min role | Purpose |
 |---|---|---|---|
-| `GET` | `/api/v1/admin/skills` | `ADMIN` | List all skills (built-in + custom) |
-| `POST` | `/api/v1/admin/skills` | `ADMIN` | Create a custom skill |
-| `GET` | `/api/v1/admin/skills/:id` | `ADMIN` | Get skill detail |
-| `PUT` | `/api/v1/admin/skills/:id` | `ADMIN` | Update name / description / promptText / isActive |
-| `DELETE` | `/api/v1/admin/skills/:id` | `ADMIN` | Delete (built-in skills are rejected with 400) |
+| `GET` | `/api/v1/platform/skills` | `ADMIN` | List all skills (built-in + custom) |
+| `POST` | `/api/v1/platform/skills` | `ADMIN` | Create a custom skill |
+| `GET` | `/api/v1/platform/skills/:id` | `ADMIN` | Get skill detail |
+| `PUT` | `/api/v1/platform/skills/:id` | `ADMIN` | Update name / description / promptText / isActive |
+| `DELETE` | `/api/v1/platform/skills/:id` | `ADMIN` | Delete (built-in skills are rejected with 400) |
 
 Updating `promptText` automatically resets `isVerified` to `false` and triggers a security scan (the scan result is returned in the response but does not block the save).
 
@@ -500,11 +500,11 @@ Writes cut a new immutable `version`.
 
 | Method | Path | Min role | Purpose |
 |---|---|---|---|
-| `GET` | `/api/v1/admin/agent-library` | `ADMIN` | List Agents (GLOBAL + overrides) with resolved fields |
-| `GET` | `/api/v1/admin/agent-library/:id` | `ADMIN` | Agent detail + version history |
-| `POST` | `/api/v1/admin/agent-library` | `ADMIN` | Create an Agent (or cut a new version) |
-| `PUT` | `/api/v1/admin/agent-library/:id` | `ADMIN` | Update an Agent → bumps `version` |
-| `DELETE` | `/api/v1/admin/agent-library/:id` | `ADMIN` | Delete / deactivate an Agent override |
+| `GET` | `/api/v1/platform/agent-library` | `ADMIN` | List Agents (GLOBAL + overrides) with resolved fields |
+| `GET` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Agent detail + version history |
+| `POST` | `/api/v1/platform/agent-library` | `ADMIN` | Create an Agent (or cut a new version) |
+| `PUT` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Update an Agent → bumps `version` |
+| `DELETE` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Delete / deactivate an Agent override |
 | `GET` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | List TEAM-scope Agent overrides |
 | `POST` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | Create a TEAM-scope Agent override |
 | `PUT` | `/api/v1/teams/:id/agent-library/:agentId` | Team `ADMIN` | Update a TEAM-scope Agent override |

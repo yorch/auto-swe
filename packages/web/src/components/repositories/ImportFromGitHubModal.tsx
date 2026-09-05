@@ -51,7 +51,7 @@ export function ImportFromGitHubModal({
         {error && !isLoading && (
           <p className="text-sm text-brick-400">
             {errMsg(error, 'Failed to load repositories.')}{' '}
-            <a className="underline" href="/admin/integrations">
+            <a className="underline" href="/studio/integrations">
               Check GitHub integration.
             </a>
           </p>

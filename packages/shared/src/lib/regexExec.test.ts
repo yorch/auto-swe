@@ -241,12 +241,15 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
     // Calibrate a linear-in-targets, quadratic-in-length pattern so one target
     // costs a fraction of the budget while the batch as a whole costs several
     // budgets. Measured, not assumed, so the test is not hostage to CI speed.
-    const budgetMs = 300;
-    const text = `${'a'.repeat(300)}!`;
+    // Keep one target far below the budget (10x headroom) so a CPU-starved
+    // worker thread under a parallel test run cannot push a single target over
+    // it; the batch still costs several budgets in total.
+    const budgetMs = 500;
+    const text = `${'a'.repeat(200)}!`;
     const startedProbe = performance.now();
     /a+a+$/.exec(text);
-    const perTargetMs = performance.now() - startedProbe;
-    expect(perTargetMs).toBeLessThan(budgetMs / 2);
+    const perTargetMs = Math.max(performance.now() - startedProbe, 0.5);
+    expect(perTargetMs).toBeLessThan(budgetMs / 10);
     const count = Math.min(100, Math.ceil((3 * budgetMs) / perTargetMs));
     // Sanity: the batch as a whole really does cost more than one budget.
     expect(count * perTargetMs).toBeGreaterThan(budgetMs);

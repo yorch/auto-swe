@@ -1,6 +1,7 @@
 'use client';
 
 import type { InputSchema, InputSchemaProperty } from '@auto-swe/shared/lib/inputSchema';
+import Link from 'next/link';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useRepositories } from '@/hooks/useRepositories';
@@ -27,6 +28,24 @@ function ConnectionPicker({
   const visible = connectionType
     ? connections.filter((c) => (c.type ?? 'git_repo') === connectionType)
     : connections;
+
+  if (visible.length === 0) {
+    return (
+      <div className="space-y-1.5">
+        <span className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+          {label}
+          {required ? ' *' : ''}
+        </span>
+        <p className="text-xs text-brick-400">
+          No {connectionType ? `${connectionType.replace(/_/g, ' ')} ` : ''}connections configured.{' '}
+          <Link className="text-ember-400 hover:underline" href="/connections">
+            Add one in Connections.
+          </Link>
+        </p>
+      </div>
+    );
+  }
+
   return (
     <Select
       error={error}

@@ -24,8 +24,9 @@ export interface AnalyticsRunRow {
   hadHumanStep?: boolean;
   wasAutonomous?: boolean;
   hasError?: boolean;
+  workflowId?: string | null;
   workRequest?: {
-    activeWorkflows: { costUsdAccrued: number }[];
+    activeWorkflows: { costUsdAccrued: number; temporalWorkflowId?: string }[];
   } | null;
 }
 
@@ -85,13 +86,18 @@ export interface SignificanceHint {
 export const MIN_SAMPLES_FOR_SIGNIFICANCE = 30;
 
 const TERMINAL_FAILURE_STATUSES = new Set(['FAILED', 'TIMED_OUT', 'CANCELLED']);
+const TERMINAL_STATUSES = new Set<string>(['SUCCESS', ...TERMINAL_FAILURE_STATUSES]);
 const STEP_STATUSES_TO_SKIP = new Set(['SKIPPED', 'PENDING', 'RUNNING']);
+
+function isTerminalStatus(status: string): boolean {
+  return TERMINAL_STATUSES.has(status);
+}
 
 function percentile(sorted: number[], p: number): number | null {
   if (sorted.length === 0) {
     return null;
   }
-  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1));
   return sorted[idx] ?? null;
 }
 
@@ -117,7 +123,9 @@ export function computeAnalytics(
   const costs = runs.map((r) =>
     typeof r.costUsdAccrued === 'number' && r.costUsdAccrued > 0
       ? r.costUsdAccrued
-      : (r.workRequest?.activeWorkflows ?? []).reduce((s, aw) => s + aw.costUsdAccrued, 0)
+      : (r.workRequest?.activeWorkflows ?? [])
+          .filter((aw) => aw.temporalWorkflowId === r.workflowId)
+          .reduce((s, aw) => s + aw.costUsdAccrued, 0)
   );
   const runCosts = costs.filter((c) => c > 0);
   const totalCost = runCosts.reduce((s, c) => s + c, 0);
@@ -297,8 +305,13 @@ export interface HumanErrorBaselineShallow {
 export interface GlobalAnalyticsResult {
   windowDays: number;
   totalRuns: number;
+  /** Terminal/completed runs (SUCCESS + FAILED/TIMED_OUT/CANCELLED). */
+  completedRuns: number;
+  /** Runs currently in RUNNING status. */
+  runningRuns: number;
   succeeded: number;
   failed: number;
+  /** Success rate computed over terminal/completed runs only. */
   successRate: number | null;
   totalCost: number;
   estimatedHumanTimeSavedTotal: number | null;
@@ -308,6 +321,7 @@ export interface GlobalAnalyticsResult {
     templateId: string;
     templateName: string;
     totalRuns: number;
+    /** Success rate computed over terminal/completed runs only. */
     successRate: number | null;
     totalCost: number;
     estimatedHumanTimeSavedTotal: number | null;
@@ -318,8 +332,12 @@ export interface GlobalAnalyticsResult {
     totalCost: number;
     estimatedHumanTimeSavedTotal: number | null;
     agentErrorRate: number | null;
+    /** Human baseline error rate when the baseline sample size is ≥30; otherwise null. */
     humanErrorRate: number | null;
+    /** Point difference between agent and human error rate when both are available. */
     errorRateVsHuman: number | null;
+    /** Baseline sample size when a baseline exists; null otherwise. */
+    baselineSampleSize: number | null;
   }>;
   perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
 }
@@ -330,16 +348,19 @@ export function computeGlobalAnalytics(
   baselines?: HumanErrorBaselineShallow[]
 ): GlobalAnalyticsResult {
   const totalRuns = rows.length;
-  const finished = rows.filter((r) => r.status !== 'RUNNING');
-  const succeeded = finished.filter((r) => r.status === 'SUCCESS').length;
-  const failed = finished.filter((r) => TERMINAL_FAILURE_STATUSES.has(r.status)).length;
-  const successRate = finished.length > 0 ? succeeded / finished.length : null;
+  const terminal = rows.filter((r) => isTerminalStatus(r.status));
+  const completedRuns = terminal.length;
+  const runningRuns = totalRuns - completedRuns;
+  const succeeded = terminal.filter((r) => r.status === 'SUCCESS').length;
+  const failed = terminal.filter((r) => TERMINAL_FAILURE_STATUSES.has(r.status)).length;
+  const successRate = completedRuns > 0 ? succeeded / completedRuns : null;
   const totalCost = rows.reduce((s, r) => s + (r.costUsdAccrued || 0), 0);
 
   const timeSaved = rows.map((r) => r.estimatedHumanTimeSaved ?? 0).filter((m) => m > 0);
   const estimatedHumanTimeSavedTotal =
     timeSaved.length > 0 ? timeSaved.reduce((s, m) => s + m, 0) : null;
 
+  const finished = rows.filter((r) => r.status !== 'RUNNING');
   const autonomyBase = finished.filter((r) => r.wasAutonomous != null);
   const autonomyRate =
     autonomyBase.length > 0
@@ -357,7 +378,7 @@ export function computeGlobalAnalytics(
       totalRuns: number;
       succeeded: number;
       totalCost: number;
-      finished: number;
+      completed: number;
       timeSaved: number;
     }
   >();
@@ -368,7 +389,7 @@ export function computeGlobalAnalytics(
   const byOutcome = new Map<string, { runCount: number; totalCost: number }>();
   for (const r of rows) {
     const tCell = byTemplate.get(r.templateId) ?? {
-      finished: 0,
+      completed: 0,
       succeeded: 0,
       templateName: r.templateName,
       timeSaved: 0,
@@ -378,8 +399,8 @@ export function computeGlobalAnalytics(
     tCell.totalRuns += 1;
     tCell.totalCost += r.costUsdAccrued || 0;
     tCell.timeSaved += r.estimatedHumanTimeSaved ?? 0;
-    if (r.status !== 'RUNNING') {
-      tCell.finished += 1;
+    if (isTerminalStatus(r.status)) {
+      tCell.completed += 1;
       if (r.status === 'SUCCESS') {
         tCell.succeeded += 1;
       }
@@ -421,14 +442,15 @@ export function computeGlobalAnalytics(
   }
   return {
     autonomyRate,
+    completedRuns,
     estimatedHumanTimeSavedTotal,
     failed,
     humanReviewRate,
     perDomain: Array.from(byDomain.entries())
       .map(([domain, cell]) => {
         const agentErrorRate = cell.finished > 0 ? cell.withError / cell.finished : null;
-        const baseline =
-          cell.finished >= MIN_SAMPLES_FOR_SIGNIFICANCE ? baselineByDomain.get(domain) : undefined;
+        const baseline = baselineByDomain.get(domain);
+        const baselineSampleSize = baseline ? baseline.sampleSize : null;
         const humanErrorRate =
           baseline && baseline.sampleSize >= MIN_SAMPLES_FOR_SIGNIFICANCE
             ? baseline.errorRate
@@ -437,6 +459,7 @@ export function computeGlobalAnalytics(
           agentErrorRate != null && humanErrorRate != null ? agentErrorRate - humanErrorRate : null;
         return {
           agentErrorRate,
+          baselineSampleSize,
           domain,
           errorRateVsHuman,
           estimatedHumanTimeSavedTotal: cell.timeSaved > 0 ? cell.timeSaved : null,
@@ -452,13 +475,14 @@ export function computeGlobalAnalytics(
     perTemplate: Array.from(byTemplate.entries())
       .map(([templateId, cell]) => ({
         estimatedHumanTimeSavedTotal: cell.timeSaved > 0 ? cell.timeSaved : null,
-        successRate: cell.finished > 0 ? cell.succeeded / cell.finished : null,
+        successRate: cell.completed > 0 ? cell.succeeded / cell.completed : null,
         templateId,
         templateName: cell.templateName,
         totalCost: cell.totalCost,
         totalRuns: cell.totalRuns,
       }))
       .sort((a, b) => b.totalRuns - a.totalRuns),
+    runningRuns,
     succeeded,
     successRate,
     totalCost,

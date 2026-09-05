@@ -9,6 +9,9 @@ async function buildApp() {
   app.setSerializerCompiler(serializerCompiler);
 
   const mockPrisma = {
+    configAuditLog: {
+      create: vi.fn().mockResolvedValue({}),
+    },
     personalAccessToken: {
       create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
@@ -53,6 +56,7 @@ describe('tokenRoutes', () => {
     // Tests share one app instance (cheap) but each one re-stubs Prisma
     // return values via `mockResolvedValueOnce`, so we need clean call
     // history between tests for the `toHaveBeenCalled` assertions.
+    ctx.mockPrisma.configAuditLog.create.mockClear();
     ctx.mockPrisma.personalAccessToken.create.mockClear();
     ctx.mockPrisma.personalAccessToken.findMany.mockClear();
     ctx.mockPrisma.personalAccessToken.findUnique.mockClear();
@@ -182,5 +186,80 @@ describe('tokenRoutes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(ctx.mockPrisma.personalAccessToken.update).not.toHaveBeenCalled();
+  });
+
+  it('POST writes a CREATE audit entry without plaintext token or tokenHash', async () => {
+    ctx.mockPrisma.personalAccessToken.create.mockResolvedValueOnce({
+      createdAt: new Date('2026-01-01'),
+      expiresAt: null,
+      id: 'pat-audit-1',
+      name: 'audit-token',
+      prefix: 'ats_abcdefgh',
+      userId: 'user-1',
+    });
+
+    const res = await ctx.app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: { name: 'audit-token' },
+      url: '/api/v1/auth/tokens',
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+    const auditCall = ctx.mockPrisma.configAuditLog.create.mock.calls[0]?.[0];
+    const serialized = JSON.stringify(auditCall);
+    const body = JSON.parse(res.payload);
+    expect(serialized).not.toContain(body.data.token);
+    expect(serialized).not.toContain('tokenHash');
+    expect(auditCall?.data).toMatchObject({
+      action: 'CREATE',
+      actorId: 'user-1',
+      entityId: 'pat-audit-1',
+      entityType: 'PersonalAccessToken',
+    });
+    expect(auditCall?.data.afterJson).toMatchObject({
+      name: 'audit-token',
+      prefix: 'ats_abcdefgh',
+    });
+  });
+
+  it('DELETE writes an UPDATE audit entry with before and after snapshots', async () => {
+    const tokenId = '44444444-4444-4444-8444-444444444444';
+    ctx.mockPrisma.personalAccessToken.findUnique.mockResolvedValueOnce({
+      expiresAt: null,
+      id: tokenId,
+      name: 'revoke-me',
+      prefix: 'ats_abcdefgh',
+      revokedAt: null,
+      userId: 'user-1',
+    });
+    const revokedAt = new Date('2026-04-01');
+    ctx.mockPrisma.personalAccessToken.update.mockResolvedValueOnce({
+      expiresAt: null,
+      id: tokenId,
+      name: 'revoke-me',
+      prefix: 'ats_abcdefgh',
+      revokedAt,
+      userId: 'user-1',
+    });
+
+    await ctx.app.inject({
+      headers: AUTH_HEADER,
+      method: 'DELETE',
+      url: `/api/v1/auth/tokens/${tokenId}`,
+    });
+
+    const auditCall = ctx.mockPrisma.configAuditLog.create.mock.calls[0]?.[0];
+    const serialized = JSON.stringify(auditCall);
+    expect(serialized).not.toContain('tokenHash');
+    expect(auditCall?.data).toMatchObject({
+      action: 'UPDATE',
+      actorId: 'user-1',
+      entityId: tokenId,
+      entityType: 'PersonalAccessToken',
+    });
+    expect(auditCall?.data.beforeJson.revokedAt).toBeNull();
+    expect(auditCall?.data.afterJson.revokedAt).toBeDefined();
   });
 });

@@ -1,103 +1,148 @@
 'use client';
 
+import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
-import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequestModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Pagination } from '@/components/ui/Pagination';
-import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { useRepositories } from '@/hooks/useRepositories';
-import { useWorkflows } from '@/hooks/useRuns';
-import { formatCost, formatRelativeTime } from '@/lib/utils';
+import { NewRequestModal } from '@/components/workflow/NewRequestModal';
+import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
+import { useAllWorkflowRuns } from '@/hooks/useRuns';
+import { cn } from '@/lib/utils';
 
-const PAGE_SIZE = 50;
+type Scope = 'ALL' | 'MINE' | 'TEAM';
+
+const SCOPE_LABELS: Record<Scope, string> = {
+  ALL: 'All',
+  MINE: 'Mine',
+  TEAM: 'Team',
+};
+
+function OutcomeCell({
+  outcomeDomain,
+  outcomeType,
+  status,
+}: {
+  outcomeDomain: string | null;
+  outcomeType: string | null;
+  status: string;
+}) {
+  if (outcomeDomain) {
+    return (
+      <span className="text-paper-400">
+        {outcomeDomain}
+        {outcomeType ? <span className="text-paper-500"> · {outcomeType}</span> : null}
+      </span>
+    );
+  }
+  if (status === 'SUCCESS') {
+    return <span className="text-paper-400">completed</span>;
+  }
+  return <span className="text-paper-600">—</span>;
+}
 
 export default function WorkflowsPage() {
-  const [offset, setOffset] = useState(0);
-  const {
-    data: workflows,
-    meta,
-    isLoading,
-    isError,
-    error: loadError,
-  } = useWorkflows({ limit: PAGE_SIZE, offset });
-  const { data: repos } = useRepositories();
-  const [submitOpen, setSubmitOpen] = useState(false);
-  const canSubmit = (repos ?? []).length > 0;
-  const total = meta?.total ?? 0;
+  const [scope, setScope] = useState<Scope>('MINE');
+  const { data, isLoading } = useAllWorkflowRuns({ limit: 50, scope });
+  const [newOpen, setNewOpen] = useState(false);
+  const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
+  const runs = data?.data ?? [];
+  const total = data?.meta.total ?? 0;
 
-  if (isLoading || isError) {
-    return (
-      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="workflows" />
-    );
+  if (isLoading) {
+    return <LoadingState />;
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
         actions={
-          <Button
-            disabled={!canSubmit}
-            onClick={() => setSubmitOpen(true)}
-            title={canSubmit ? undefined : 'Connect a repository first'}
-            variant="primary"
-          >
-            + Submit
+          <Button onClick={() => setNewOpen(true)} variant="primary">
+            + New request
           </Button>
         }
-        chapter={`§ Workflows · ${total} total`}
-        title="Workflows"
+        chapter={`§ Requests · ${total} total`}
+        title="Request queue"
       />
-      <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
+      <NewRequestModal
+        onClose={() => setNewOpen(false)}
+        onSelect={(t) => {
+          setRunTarget(t);
+          setNewOpen(false);
+        }}
+        open={newOpen}
+      />
+      {runTarget && (
+        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
+      )}
+
+      <div className="flex gap-2">
+        {(Object.keys(SCOPE_LABELS) as Scope[]).map((s) => (
+          <button
+            className={cn(
+              'rounded px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-colors',
+              s === scope
+                ? 'bg-ember-400 text-ink-900'
+                : 'border border-ink-600 text-paper-400 hover:border-ember-400 hover:text-paper-200'
+            )}
+            key={s}
+            onClick={() => setScope(s)}
+            type="button"
+          >
+            {SCOPE_LABELS[s]}
+          </button>
+        ))}
+      </div>
 
       <Card className="p-0 overflow-hidden">
-        <Table>
-          <THead className="bg-ink-800">
-            <Th variant="plain">Repository</Th>
-            <Th variant="plain">Branch</Th>
-            <Th variant="plain">Status</Th>
-            <Th variant="plain">Updated</Th>
-            <Th align="right" variant="plain">
-              Cost
-            </Th>
-          </THead>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-ink-600 bg-ink-800">
+              <th className="text-left px-4 py-3 font-medium">Label</th>
+              <th className="text-left px-4 py-3 font-medium">Workflow</th>
+              <th className="text-left px-4 py-3 font-medium">Domain</th>
+              <th className="text-left px-4 py-3 font-medium">Status</th>
+              <th className="text-left px-4 py-3 font-medium">Outcome</th>
+            </tr>
+          </thead>
           <tbody>
-            {(workflows ?? []).map((w) => (
-              <TRow hover key={w.id}>
-                <Td className="px-4 py-3">
+            {runs.length === 0 && (
+              <tr>
+                <td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+                  No requests in this scope.
+                </td>
+              </tr>
+            )}
+            {runs.map((r) => (
+              <tr className="border-b border-ink-600 hover:bg-ink-800 transition-colors" key={r.id}>
+                <td className="px-4 py-3">
                   <Link
                     className="text-ember-400 hover:underline font-medium"
-                    href={`/workflows/${w.id}`}
+                    href={`/runs/${r.id}`}
                   >
-                    {w.repository?.organizationName}/{w.repository?.repoName}
+                    {r.workRequest?.description || r.workRequest?.externalTicketId || '—'}
                   </Link>
-                </Td>
-                <Td className="px-4 py-3 text-paper-400">{w.assignedBranch}</Td>
-                <Td className="px-4 py-3">
-                  <StatusBadge status={w.currentStatus} />
-                </Td>
-                <Td className="px-4 py-3 text-paper-400">{formatRelativeTime(w.updatedAt)}</Td>
-                <Td className="px-4 py-3 text-right text-xs text-paper-400">
-                  {formatCost(w.costUsdAccrued)}
-                </Td>
-              </TRow>
+                </td>
+                <td className="px-4 py-3 text-paper-400">{r.templateName ?? '—'}</td>
+                <td className="px-4 py-3 text-paper-400">{r.domain ?? '—'}</td>
+                <td className="px-4 py-3">
+                  <StatusBadge status={r.status} />
+                </td>
+                <td className="px-4 py-3">
+                  <OutcomeCell
+                    outcomeDomain={r.outcomeDomain}
+                    outcomeType={r.outcomeType}
+                    status={r.status}
+                  />
+                </td>
+              </tr>
             ))}
           </tbody>
-        </Table>
+        </table>
       </Card>
-      <Pagination
-        hasNext={offset + PAGE_SIZE < total}
-        hasPrev={offset > 0}
-        onNext={() => setOffset(offset + PAGE_SIZE)}
-        onPrev={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-        rangeEnd={Math.min(offset + PAGE_SIZE, total)}
-        rangeStart={total === 0 ? 0 : offset + 1}
-        total={total}
-      />
     </div>
   );
 }

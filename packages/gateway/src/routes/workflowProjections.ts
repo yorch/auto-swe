@@ -7,9 +7,28 @@
  * wire shape stays in lockstep.
  */
 import type { AutonomyDecisionDto, EvalResultDto } from '@auto-swe/shared/types/api';
+import { z } from 'zod';
 import { paginationQuery } from '../lib/pagination.js';
 
 export const RunListPaginationQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 });
+
+export const PaginationMetaSchema = z.object({
+  limit: z.number(),
+  offset: z.number(),
+  total: z.number(),
+});
+
+export const AutonomyDecisionSchema = z.object({
+  actorId: z.string().uuid().nullable(),
+  createdAt: z.string(),
+  event: z.string(),
+  id: z.string().uuid(),
+  payload: z.unknown().nullable(),
+  policyName: z.string().nullable(),
+  requiredApprovers: z.number().int().nullable(),
+  riskClass: z.string().nullable(),
+  runId: z.string().uuid(),
+});
 
 export interface RunWithWorkRequest {
   id: string;
@@ -19,7 +38,10 @@ export interface RunWithWorkRequest {
   status: string;
   startedAt: Date;
   endedAt: Date | null;
-  template?: { name: string } | null;
+  costUsdAccrued: number;
+  outcomeDomain: string | null;
+  outcomeType: string | null;
+  template?: { name: string; workspaceProvider: string | null } | null;
   workRequest: {
     id: string;
     externalTicketId: string;
@@ -29,8 +51,12 @@ export interface RunWithWorkRequest {
 
 export function projectRunSummary(r: RunWithWorkRequest) {
   return {
+    costUsdAccrued: r.costUsdAccrued,
+    domain: r.template?.workspaceProvider ?? null,
     endedAt: r.endedAt,
     id: r.id,
+    outcomeDomain: r.outcomeDomain,
+    outcomeType: r.outcomeType,
     startedAt: r.startedAt,
     status: r.status,
     templateId: r.templateId,

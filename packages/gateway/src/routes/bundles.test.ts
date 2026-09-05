@@ -48,7 +48,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
-  await app.register(bundleRoutes, { prefix: '/api/v1/admin' });
+  await app.register(bundleRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return app;
 }
@@ -66,7 +66,7 @@ describe('bundleRoutes', () => {
       body: { name: 'swe', version: '1.0.0' },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/bundles/export',
+      url: '/api/v1/platform/bundles/export',
     });
     expect(res.statusCode).toBe(200);
     const m = JSON.parse(res.payload).data;
@@ -77,7 +77,7 @@ describe('bundleRoutes', () => {
 
   it('lists installed bundles for an admin', async () => {
     const app = await buildApp();
-    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/admin/bundles' });
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/bundles' });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data).toHaveLength(1);
     await app.close();
@@ -89,7 +89,7 @@ describe('bundleRoutes', () => {
       body: { name: 'swe', version: '1' },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/bundles/export',
+      url: '/api/v1/platform/bundles/export',
     });
     expect(res.statusCode).toBe(403);
     await app.close();
@@ -101,7 +101,7 @@ describe('bundleRoutes', () => {
       body: { bundle: { not: 'a bundle' } },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/bundles/install',
+      url: '/api/v1/platform/bundles/install',
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('INVALID_BUNDLE');
@@ -120,7 +120,7 @@ describe('bundleRoutes', () => {
       body: { bundle },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/bundles/install',
+      url: '/api/v1/platform/bundles/install',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -156,7 +156,7 @@ describe('bundleRoutes', () => {
       body: { bundle },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/bundles/install',
+      url: '/api/v1/platform/bundles/install',
     });
     expect(res.statusCode).toBe(400);
     const body = JSON.parse(res.payload);
@@ -183,7 +183,7 @@ describe('bundleRoutes', () => {
       body: { bundle },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/bundles/install',
+      url: '/api/v1/platform/bundles/install',
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('INVALID_BUNDLE');
@@ -212,7 +212,7 @@ describe('bundleRoutes', () => {
       body: { bundle },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/bundles/install',
+      url: '/api/v1/platform/bundles/install',
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.counts).toEqual({

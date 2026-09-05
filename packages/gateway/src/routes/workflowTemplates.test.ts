@@ -102,6 +102,19 @@ function buildApp(state: {
   app.decorate(
     'prisma',
     Object.assign(prismaMock, {
+      humanErrorBaseline: {
+        findMany: async () =>
+          (
+            state as {
+              humanErrorBaselines?: Array<{
+                domain: string;
+                errorRate: number;
+                outcomeType: string | null;
+                sampleSize: number;
+              }>;
+            }
+          ).humanErrorBaselines ?? [],
+      },
       team: {
         findUnique: async ({ where }: { where: Mutable }) => {
           // For the shell allowlist check; tests can override via state.teamAllowlist
@@ -130,22 +143,27 @@ function buildApp(state: {
       workflowRun: {
         count: async ({ where }: { where?: Mutable }) =>
           state.runs.filter((r) => !where?.templateId || r.templateId === where.templateId).length,
-        findMany: async ({ where }: { where?: Mutable }) => {
-          // Two shapes: a templateId filter, or the last-run lookup's
-          // `OR: [{ templateId, startedAt }]` keys.
-          const keys = where?.OR as Array<{ templateId: string; startedAt: Date }> | undefined;
+        findMany: async ({ where, take }: { where?: Mutable; take?: number }) => {
+          // Three shapes: a templateId filter (optionally capped with `take`), or
+          // the last-run lookup's `OR: [{ templateId, startedAt }]` keys.
+          const orClauses = where?.OR as Array<Record<string, unknown>> | undefined;
+          const keys =
+            orClauses?.length && orClauses.every((k) => 'templateId' in k && 'startedAt' in k)
+              ? (orClauses as Array<{ templateId: string; startedAt: Date }>)
+              : undefined;
           if (keys) {
             return state.runs.filter((r) =>
               keys.some((k) => k.templateId === r.templateId && k.startedAt === r.startedAt)
             );
           }
-          return state.runs.filter((r) => {
+          const filtered = state.runs.filter((r) => {
             if (!where?.templateId) {
               return true;
             }
             const ids = (where.templateId as { in?: string[] }).in;
             return ids ? ids.includes(r.templateId) : where.templateId === r.templateId;
           });
+          return typeof take === 'number' ? filtered.slice(0, take) : filtered;
         },
         groupBy: async ({ where }: { where?: Mutable }) => {
           const ids = (where?.templateId as { in?: string[] } | undefined)?.in;
@@ -1048,6 +1066,20 @@ describe('computeAnalytics', () => {
     expect(out.significanceHint).toBeNull();
   });
 
+  it('uses nearest-rank percentile indexes at small-sample edges', () => {
+    const t0 = new Date('2026-05-01T00:00:00Z');
+    const runs = [1, 2].map((seconds) => ({
+      endedAt: new Date(t0.getTime() + seconds * 1000),
+      startedAt: t0,
+      status: 'SUCCESS',
+      templateVersion: 1,
+    }));
+
+    const out = computeAnalytics(runs, [], 30);
+    expect(out.p50DurationMs).toBe(1000);
+    expect(out.p95DurationMs).toBe(2000);
+  });
+
   it('phase 8: prefers denormalized costUsdAccrued column over workRequest join', () => {
     const t0 = new Date('2026-05-01T00:00:00Z');
     const out = computeAnalytics(
@@ -1075,6 +1107,31 @@ describe('computeAnalytics', () => {
       30
     );
     expect(out.totalCost).toBe(50);
+  });
+
+  it('only uses the active workflow cost matching the specific run', () => {
+    const t0 = new Date('2026-05-01T00:00:00Z');
+    const out = computeAnalytics(
+      [
+        {
+          costUsdAccrued: 0,
+          endedAt: new Date(t0.getTime() + 1),
+          startedAt: t0,
+          status: 'SUCCESS',
+          templateVersion: 1,
+          workflowId: 'workflow-for-this-run',
+          workRequest: {
+            activeWorkflows: [
+              { costUsdAccrued: 8, temporalWorkflowId: 'workflow-for-this-run' },
+              { costUsdAccrued: 999, temporalWorkflowId: 'different-run' },
+            ],
+          },
+        },
+      ],
+      [],
+      30
+    );
+    expect(out.totalCost).toBe(8);
   });
 
   it('phase 8: emits significanceHint when both arms cross the sample threshold', () => {
@@ -1190,6 +1247,185 @@ describe('computeGlobalAnalytics', () => {
     );
     expect(out.totalRuns).toBe(1);
     expect(out.successRate).toBeNull();
+  });
+
+  it('reports completedRuns and runningRuns split', () => {
+    const t0 = new Date();
+    const out = computeGlobalAnalytics(
+      [
+        {
+          costUsdAccrued: 0,
+          endedAt: null,
+          startedAt: t0,
+          status: 'RUNNING',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+        {
+          costUsdAccrued: 0,
+          endedAt: t0,
+          startedAt: t0,
+          status: 'SUCCESS',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+        {
+          costUsdAccrued: 0,
+          endedAt: t0,
+          startedAt: t0,
+          status: 'FAILED',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+      ],
+      30
+    );
+    expect(out.totalRuns).toBe(3);
+    expect(out.completedRuns).toBe(2);
+    expect(out.runningRuns).toBe(1);
+    expect(out.succeeded).toBe(1);
+    expect(out.failed).toBe(1);
+  });
+
+  it('success rate denominator is terminal/completed runs only', () => {
+    const t0 = new Date();
+    const out = computeGlobalAnalytics(
+      [
+        {
+          costUsdAccrued: 0,
+          endedAt: null,
+          startedAt: t0,
+          status: 'RUNNING',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+        {
+          costUsdAccrued: 0,
+          endedAt: null,
+          startedAt: t0,
+          status: 'PENDING',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+        {
+          costUsdAccrued: 0,
+          endedAt: t0,
+          startedAt: t0,
+          status: 'SUCCESS',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+      ],
+      30
+    );
+    expect(out.totalRuns).toBe(3);
+    expect(out.completedRuns).toBe(1);
+    expect(out.successRate).toBe(1);
+    expect(out.perTemplate[0]?.successRate).toBe(1);
+  });
+
+  it('exposes baseline sample size and suppresses vs-human when baseline is below threshold', () => {
+    const t0 = new Date();
+    const out = computeGlobalAnalytics(
+      [
+        {
+          costUsdAccrued: 0,
+          endedAt: t0,
+          hasError: true,
+          outcomeDomain: 'code',
+          startedAt: t0,
+          status: 'FAILED',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+      ],
+      30,
+      [{ domain: 'code', errorRate: 0.1, outcomeType: null, sampleSize: 5 }]
+    );
+    const domain = out.perDomain[0];
+    expect(domain).toBeDefined();
+    expect(domain?.baselineSampleSize).toBe(5);
+    expect(domain?.humanErrorRate).toBeNull();
+    expect(domain?.errorRateVsHuman).toBeNull();
+  });
+
+  it('surfaces human error rate and vs-human when baseline has enough samples', () => {
+    const t0 = new Date();
+    const out = computeGlobalAnalytics(
+      [
+        {
+          costUsdAccrued: 0,
+          endedAt: t0,
+          hasError: true,
+          outcomeDomain: 'code',
+          startedAt: t0,
+          status: 'FAILED',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+      ],
+      30,
+      [{ domain: 'code', errorRate: 0.1, outcomeType: null, sampleSize: 30 }]
+    );
+    const domain = out.perDomain[0];
+    expect(domain).toBeDefined();
+    expect(domain?.baselineSampleSize).toBe(30);
+    expect(domain?.humanErrorRate).toBe(0.1);
+    expect(domain?.agentErrorRate).toBe(1);
+    expect(domain?.errorRateVsHuman).toBe(0.9);
+  });
+});
+
+describe('GET /workflow-templates/analytics', () => {
+  let app: FastifyInstance;
+  let state: Parameters<typeof buildApp>[0];
+
+  beforeAll(async () => {
+    state = {
+      runs: [],
+      templates: [],
+      versions: new Map(),
+    };
+    app = buildApp(state);
+    await app.ready();
+  });
+
+  afterAll(() => app.close());
+
+  it('only marks results truncated when rows exceed the 10k cap', async () => {
+    const makeRuns = (length: number) =>
+      Array.from({ length }, (_, i) => ({
+        costUsdAccrued: 0,
+        endedAt: new Date(),
+        hadHumanStep: false,
+        hasError: false,
+        id: `run-${i}`,
+        outcomeDomain: 'code',
+        outcomeType: null,
+        startedAt: new Date(),
+        status: 'SUCCESS',
+        template: { id: 'tpl-cap', name: 'cap' },
+        templateId: 'tpl-cap',
+        wasAutonomous: true,
+      })) as (typeof state.runs)[number][];
+
+    state.runs = makeRuns(10_000);
+    const exact = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: '/api/v1/workflow-templates/analytics?window=30',
+    });
+    expect(exact.json().data.isTruncated).toBe(false);
+
+    state.runs = makeRuns(10_001);
+    const over = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: '/api/v1/workflow-templates/analytics?window=30',
+    });
+    expect(over.statusCode).toBe(200);
+    expect(over.json().data.totalRuns).toBe(10_000);
+    expect(over.json().data.isTruncated).toBe(true);
   });
 });
 

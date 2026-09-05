@@ -95,7 +95,7 @@ auto-swe bundle sign ./support-pack/manifest.json --key=release-key.pem
 
 ## Installing a bundle
 
-Admin-only routes under `/api/v1/admin/bundles` support install from a file or a URL:
+Admin-only routes under `/api/v1/platform/bundles` support install from a file or a URL:
 
 ```bash
 auto-swe bundles install ./support-pack/manifest.json

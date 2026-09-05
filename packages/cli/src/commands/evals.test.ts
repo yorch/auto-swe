@@ -161,12 +161,12 @@ describe('runEvalsCommand', () => {
     const calls: Array<{ url: string; method: string }> = [];
     globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ method: init?.method ?? 'GET', url });
-      if (url.endsWith('/api/v1/admin/evals')) {
+      if (url.endsWith('/api/v1/platform/evals')) {
         return jsonResponse({
           data: [{ caseCount: 1, id: 'ds-1', name: 'Golden', scope: 'GLOBAL', slug: 'golden' }],
         });
       }
-      if (url.endsWith('/api/v1/admin/evals/runs')) {
+      if (url.endsWith('/api/v1/platform/evals/runs')) {
         return jsonResponse({ data: { id: 'run-9', status: 'RUNNING', summary: null } });
       }
       return jsonResponse({

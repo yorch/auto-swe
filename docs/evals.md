@@ -136,7 +136,7 @@ verdicts into trends per template, model, and prompt version.
 |---|---|
 | Dashboard | `/admin/evals` — datasets, runs, suite health, score trends |
 | Run detail | The eval panel on `/runs/[id]` |
-| REST | `/api/v1/admin/evals` (datasets, cases, runs, rubrics) |
+| REST | `/api/v1/platform/evals` (datasets, cases, runs, rubrics) |
 | CLI | `auto-swe evals` — list, show, and `run` a dataset |
 | Schedules | `/admin/workflow` — nightly regression and re-validation cadence |
 

@@ -1,24 +1,24 @@
 'use client';
 
-import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { useRepositories } from '@/hooks/useRepositories';
 import { API_BASE, TEMPORAL_UI_URL } from '@/lib/config';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER' | string;
 
 export function DashboardOnboarding({
-  repos,
   role,
-  onSubmit,
+  onNewRequest,
 }: {
-  repos: RepositorySummary[];
   role: Role;
-  onSubmit?: () => void;
+  onNewRequest?: () => void;
 }) {
+  const { data: repos = [], isLoading: connectionsLoading } = useRepositories();
+
   // Start empty so SSR output is stable regardless of runtime env. After mount,
   // window.__APP_CONFIG__ is set and TEMPORAL_UI_URL holds the runtime value.
   const [temporalUiUrl, setTemporalUiUrl] = useState('');
@@ -27,28 +27,22 @@ export function DashboardOnboarding({
   }, []);
 
   const canManageRepos = role === 'ADMIN' || role === 'LEAD';
-  const hasRepo = repos.length > 0;
-  const sampleRepo = repos[0];
-  const sampleRepoId = sampleRepo?.id ?? '<repo-uuid>';
-  const sampleRepoLabel = sampleRepo
-    ? `${sampleRepo.organizationName}/${sampleRepo.repoName}`
-    : 'your repo';
+  const hasConnections = repos.length > 0;
 
-  const curlExample = `curl -X POST ${API_BASE}/api/v1/work-requests \\
+  const curlExample = `curl -X POST ${API_BASE}/api/v1/workflow-templates/<template-id>/runs \\
   -H 'Authorization: Bearer <your-token>' \\
   -H 'Content-Type: application/json' \\
   -d '{
-    "externalTicketId": "JIRA-1",
-    "description": "Add a GET /health endpoint",
-    "repoIds": ["${sampleRepoId}"]
+    "label": "Short request description",
+    "payload": {}
   }'`;
 
   return (
     <div className="space-y-12">
       <div className="fade-up">
         <PageHeader
-          chapter="§ Welcome to auto-swe"
-          subtitle="No runs yet. Here's the shortest path to your first reviewed pull request."
+          chapter="§ Welcome"
+          subtitle="No runs yet. Here's the shortest path to your first validated outcome."
           title="Let's get the workshop running."
         />
       </div>
@@ -66,19 +60,19 @@ export function DashboardOnboarding({
             </div>
             <p className="text-sm leading-relaxed text-paper-400">
               The worker refuses to boot until every agent role has a model, a provider credential,
-              and GitHub access — skip this and the first run hangs silently. Two stops:
+              and a workspace connection — skip this and the first run hangs silently. Two stops:
             </p>
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <ResourceLink
                 body="Seed Anthropic defaults + add a provider credential."
                 eyebrow="models"
-                href="/admin/model-config"
+                href="/studio/models"
                 title="Model config"
               />
               <ResourceLink
-                body="GitHub token + webhook secret."
+                body="Provider credentials, tokens, and webhook secrets."
                 eyebrow="integrations"
-                href="/admin/integrations"
+                href="/studio/integrations"
                 title="Integrations"
               />
             </div>
@@ -91,10 +85,30 @@ export function DashboardOnboarding({
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <OnboardingStep
             body={
-              hasRepo ? (
+              <div className="space-y-3">
                 <p>
-                  <span className="text-moss-400">{repos.length}</span> repository
-                  {repos.length === 1 ? '' : 'ies'} connected.
+                  Pick a workflow template and provide the inputs it expects — some need a
+                  connection, others only free text.
+                </p>
+                {onNewRequest && (
+                  <Button onClick={onNewRequest} size="sm" type="button" variant="primary">
+                    + New request
+                  </Button>
+                )}
+              </div>
+            }
+            index={1}
+            title="Start a request"
+          />
+          <OnboardingStep
+            body={
+              connectionsLoading ? (
+                <p>Loading connections…</p>
+              ) : hasConnections ? (
+                <p>
+                  <span className="text-moss-400">{repos.length}</span>{' '}
+                  {repos.length === 1 ? 'connection' : 'connections'} ready for templates that need
+                  them.
                   {canManageRepos && (
                     <>
                       {' '}
@@ -107,52 +121,22 @@ export function DashboardOnboarding({
                 </p>
               ) : canManageRepos ? (
                 <p>
-                  Add the GitHub repo auto-swe should send pull requests to.{' '}
+                  Add Notion pages, Zendesk accounts, Slack workspaces, repositories, or other
+                  integrations when a template asks for one.{' '}
                   <Link className="text-ember-400 hover:underline" href="/connections">
                     Open connections →
                   </Link>
                 </p>
               ) : (
                 <p>
-                  No repositories yet. Ask an{' '}
-                  <span className="text-paper-200">admin or team lead</span> to add one — only they
-                  can connect repos.
+                  No connections yet. Ask an{' '}
+                  <span className="text-paper-200">admin or team lead</span> to add one when a
+                  template needs it.
                 </p>
               )
             }
-            done={hasRepo}
-            index={1}
-            title="Connect a repository"
-          />
-          <OnboardingStep
-            body={
-              <div className="space-y-3">
-                <p>
-                  {hasRepo ? (
-                    <>
-                      Target <span className="text-paper-200">{sampleRepoLabel}</span> with a ticket
-                      ID and a brief.
-                    </>
-                  ) : (
-                    <>Step 01 unlocks this — connect a repository first.</>
-                  )}
-                </p>
-                {onSubmit && (
-                  <Button
-                    disabled={!hasRepo}
-                    onClick={onSubmit}
-                    size="sm"
-                    type="button"
-                    variant="primary"
-                  >
-                    + Submit work request
-                  </Button>
-                )}
-              </div>
-            }
-            disabled={!hasRepo}
             index={2}
-            title="Submit a work request"
+            title="Connect integrations"
           />
           <OnboardingStep
             body={
@@ -205,13 +189,13 @@ export function DashboardOnboarding({
           <ResourceLink
             body="Customise the default engineering loop — gates, fan-out, signals."
             eyebrow="workflows"
-            href="/templates"
+            href="/workflows/library"
             title="Workflow templates"
           />
           <ResourceLink
             body="Scope repositories and lessons to the right group."
             eyebrow="people"
-            href="/teams"
+            href="/govern/teams"
             title="Teams"
           />
         </div>

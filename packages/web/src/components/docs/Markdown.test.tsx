@@ -39,9 +39,9 @@ describe('Markdown on the docs surface', () => {
   });
 
   it('leaves in-app routes alone and in the same tab', () => {
-    render(<Markdown servedSlugs={SERVED}>{'[config](/admin/model-config)'}</Markdown>);
+    render(<Markdown servedSlugs={SERVED}>{'[config](/studio/models)'}</Markdown>);
     const link = screen.getByRole('link', { name: 'config' });
-    expect(link.getAttribute('href')).toBe('/admin/model-config');
+    expect(link.getAttribute('href')).toBe('/studio/models');
     expect(link.getAttribute('target')).toBeNull();
   });
 

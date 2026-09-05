@@ -54,7 +54,7 @@ async function buildAdminApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
-  await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(modelConfigRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return { app, mockPrisma };
 }
@@ -112,7 +112,7 @@ describe('modelConfigRoutes — admin', () => {
           provider: 'anthropic',
           scope: 'GLOBAL',
         },
-        url: '/api/v1/admin/credentials',
+        url: '/api/v1/platform/credentials',
       });
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.payload);
@@ -129,7 +129,7 @@ describe('modelConfigRoutes — admin', () => {
         headers: AUTH,
         method: 'POST',
         payload: { apiKey: 'sk-x', provider: 'anthropic', scope: 'GLOBAL' },
-        url: '/api/v1/admin/credentials',
+        url: '/api/v1/platform/credentials',
       });
       expect(res.statusCode).toBe(403);
       await app.close();
@@ -141,7 +141,7 @@ describe('modelConfigRoutes — admin', () => {
         headers: AUTH,
         method: 'POST',
         payload: { apiKey: 'sk-x', provider: 'anthropic', scope: 'GLOBAL' },
-        url: '/api/v1/admin/credentials',
+        url: '/api/v1/platform/credentials',
       });
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).error.code).toBe('CREDENTIAL_EXISTS');
@@ -175,7 +175,7 @@ describe('modelConfigRoutes — admin', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'GET',
-        url: '/api/v1/admin/credentials',
+        url: '/api/v1/platform/credentials',
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
@@ -209,7 +209,7 @@ describe('modelConfigRoutes — admin', () => {
           provider: 'anthropic',
           scope: 'GLOBAL',
         },
-        url: '/api/v1/admin/credentials',
+        url: '/api/v1/platform/credentials',
       });
 
       for (const call of ctx.mockPrisma.configAuditLog.create.mock.calls) {
@@ -235,7 +235,7 @@ describe('modelConfigRoutes — admin', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'GET',
-        url: '/api/v1/admin/config-audit-log?limit=10',
+        url: '/api/v1/platform/config-audit-log?limit=10',
       });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).data).toHaveLength(1);

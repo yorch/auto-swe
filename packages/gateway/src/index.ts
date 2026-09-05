@@ -341,6 +341,8 @@ async function start() {
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
   await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
   await app.register(humanErrorBaselineRoutes, { prefix: '/api/v1/human-error-baselines' });
+  await app.register(organizationRoutes, { prefix: '/api/v1/platform/organizations' });
+  // Deprecated alias — kept for one release.
   await app.register(organizationRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
   await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
@@ -352,25 +354,57 @@ async function start() {
   await app.register(repoDependencyRoutes, { prefix: '/api/v1/repositories' });
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
+  await app.register(slackChannelRoutes, { prefix: '/api/v1/platform/slack-channels' });
+  // Deprecated alias — kept for one release.
   await app.register(slackChannelRoutes, { prefix: '/api/v1/admin/slack-channels' });
   await app.register(epicRoutes, { prefix: '/api/v1/epics' });
   await app.register(prdRunRoutes, { prefix: '/api/v1/prd-runs' });
+  await app.register(adminRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
+  await app.register(modelConfigRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(systemConfigRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(scannerPatternRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(scannerPatternRoutes, { prefix: '/api/v1/admin' });
+  await app.register(configSettingsRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(configSettingsRoutes, { prefix: '/api/v1/admin' });
+  await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/admin' });
+  await app.register(mcpConnectionRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/admin' });
+  await app.register(bundleRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(bundleRoutes, { prefix: '/api/v1/admin' });
+  await app.register(securityEventRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
+  await app.register(orgMembersRoutes, { prefix: '/api/v1/platform/organizations' });
+  // Deprecated alias — kept for one release.
   await app.register(orgMembersRoutes, { prefix: '/api/v1/admin/organizations' });
+  await app.register(orgBudgetRoutes, { prefix: '/api/v1/platform/organizations' });
+  // Deprecated alias — kept for one release.
   await app.register(orgBudgetRoutes, { prefix: '/api/v1/admin/organizations' });
+  await app.register(skillsRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
+  await app.register(agentLibraryRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/admin' });
+  await app.register(evalRoutes, { prefix: '/api/v1/platform' });
+  // Deprecated alias — kept for one release.
   await app.register(evalRoutes, { prefix: '/api/v1/admin' });
   await app.register(teamAgentSkillRoutes, { prefix: '/api/v1/teams' });
   await app.register(teamAgentLibraryRoutes, { prefix: '/api/v1/teams' });
+  await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
+  // Deprecated alias — kept for one release so existing CLI tokens and bookmarks keep working.
   await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });
 
   // Graceful shutdown: stop accepting connections, drain in-flight requests

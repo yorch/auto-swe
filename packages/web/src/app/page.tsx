@@ -1,28 +1,23 @@
 'use client';
 
-import type { HumanStepSummary } from '@auto-swe/shared/types/api';
+import type { HumanStepSummary, WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
-import { WorkflowsByRepoChart } from '@/components/charts/WorkflowsByRepoChart';
 import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
 import { DashboardOnboarding } from '@/components/dashboard/DashboardOnboarding';
-import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequestModal';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useInbox } from '@/hooks/useInbox';
-import { useRepositories } from '@/hooks/useRepositories';
-import { useWorkflows } from '@/hooks/useRuns';
-import {
-  groupWorkflowsByDate,
-  groupWorkflowsByRepo,
-  groupWorkflowsByStatus,
-} from '@/lib/chartUtils';
+import { NewRequestModal } from '@/components/workflow/NewRequestModal';
+import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
+import { useApprovals } from '@/hooks/useApprovals';
+import { useAllWorkflowRuns, useWorkflows } from '@/hooks/useRuns';
+import { groupWorkflowsByDate, groupWorkflowsByStatus } from '@/lib/chartUtils';
 import { formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -64,7 +59,7 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
           <div className="border-t border-ink-600 px-4 py-2 text-right">
             <Link
               className="font-mono text-[11px] uppercase tracking-wider text-ember-400 hover:text-ember-300"
-              href="/inbox"
+              href="/govern/approvals"
             >
               View all {steps.length} →
             </Link>
@@ -78,31 +73,34 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
 export default function DashboardPage() {
   const router = useRouter();
   const workflowsQuery = useWorkflows();
-  const reposQuery = useRepositories();
   const { data: workflows, isLoading } = workflowsQuery;
-  const { data: repos, isLoading: reposLoading } = reposQuery;
-  const loadFailed = workflowsQuery.isError || reposQuery.isError;
-  const { data: inboxSteps } = useInbox();
+  const loadFailed = workflowsQuery.isError;
+  const { data: approvalSteps } = useApprovals();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const [submitOpen, setSubmitOpen] = useState(false);
-  const canSubmit = (repos ?? []).length > 0;
+  const [newOpen, setNewOpen] = useState(false);
+  const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
 
   const all = workflows ?? [];
   const active = all.filter((w) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
   const completed = all.filter((w) => w.currentStatus === 'COMPLETED');
   const failed = all.filter((w) => w.currentStatus === 'FAILED');
-  const pendingApprovals = inboxSteps ?? [];
+  const pendingApprovals = approvalSteps ?? [];
 
   const statusData = useMemo(() => groupWorkflowsByStatus(all), [all]);
   const timeData = useMemo(() => groupWorkflowsByDate(all), [all]);
-  const repoData = useMemo(() => groupWorkflowsByRepo(all), [all]);
+  const { data: myOutcomes } = useAllWorkflowRuns({
+    limit: 10,
+    scope: 'MINE',
+    status: 'SUCCESS',
+  });
+  const outcomes = myOutcomes?.data ?? [];
 
-  if (isLoading || reposLoading || loadFailed) {
+  if (isLoading || loadFailed) {
     return (
       <QueryBoundary
-        error={workflowsQuery.error ?? reposQuery.error}
+        error={workflowsQuery.error}
         isError={loadFailed}
-        isLoading={isLoading || reposLoading}
+        isLoading={isLoading}
         label="dashboard"
         loadingMessage="loading…"
       />
@@ -110,12 +108,7 @@ export default function DashboardPage() {
   }
 
   if (all.length === 0) {
-    return (
-      <>
-        <DashboardOnboarding onSubmit={() => setSubmitOpen(true)} repos={repos ?? []} role={role} />
-        <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
-      </>
-    );
+    return <DashboardOnboarding onNewRequest={() => setNewOpen(true)} role={role} />;
   }
 
   const now = new Date();
@@ -132,25 +125,34 @@ export default function DashboardPage() {
         <PageHeader
           actions={
             <div className="flex items-center gap-2">
-              <Button onClick={() => router.push('/templates')} size="sm" variant="secondary">
+              <Button
+                onClick={() => router.push('/workflows/library')}
+                size="sm"
+                variant="secondary"
+              >
                 Browse workflows
               </Button>
-              <Button
-                disabled={!canSubmit}
-                onClick={() => setSubmitOpen(true)}
-                title={canSubmit ? undefined : 'Connect a repository first'}
-                variant="primary"
-              >
-                + Run SWE agent
+              <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
+                + New request
               </Button>
             </div>
           }
           chapter={`§ Home · ${today}`}
-          subtitle="Active runs, pending approvals, and platform health at a glance."
-          title="Command centre."
+          subtitle="Describe what you need and let the platform reach a validated outcome."
+          title="What do you want to achieve?"
         />
       </div>
-      <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
+      <NewRequestModal
+        onClose={() => setNewOpen(false)}
+        onSelect={(t) => {
+          setRunTarget(t);
+          setNewOpen(false);
+        }}
+        open={newOpen}
+      />
+      {runTarget && (
+        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
+      )}
 
       {/* HITL inbox — shown first so approvals are never missed */}
       <InboxWidget steps={pendingApprovals} />
@@ -182,34 +184,26 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* By connection */}
+      {/* My outcomes */}
       <section className="fade-up stagger-4">
-        <SectionHeader hint="topology" number="02" title="By connection" />
-        <Card>
-          <WorkflowsByRepoChart data={repoData} />
-        </Card>
-      </section>
-
-      {/* Recent runs */}
-      <section className="fade-up stagger-5">
-        <SectionHeader hint="recent · 10" number="03" title="Recent runs" />
+        <SectionHeader hint="recent · 10" number="02" title="My outcomes" />
         <Card variant="inset">
           <ul className="divide-y divide-ink-600">
-            {all.slice(0, 10).map((w) => (
-              <li key={w.id}>
+            {outcomes.slice(0, 10).map((r) => (
+              <li key={r.id}>
                 <Link
                   className="group grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 py-3 transition-colors hover:text-ember-400"
-                  href={`/workflows/${w.id}`}
+                  href={`/runs/${r.id}`}
                 >
-                  <StatusBadge showDot status={w.currentStatus} />
+                  <StatusBadge showDot status={r.status} />
                   <span className="min-w-0 truncate text-sm text-paper-200 group-hover:text-ember-400">
-                    {w.repository?.repoName ?? 'unknown'}
+                    {r.workRequest?.description || r.templateName || '—'}
                   </span>
                   <span className="hidden font-mono text-[11px] text-paper-500 sm:inline">
-                    {w.assignedBranch}
+                    {r.outcomeDomain ?? r.domain ?? '—'}
                   </span>
                   <span className="tabular font-mono text-[11px] uppercase tracking-wider text-paper-500">
-                    {formatRelativeTime(w.updatedAt)}
+                    {formatRelativeTime(r.endedAt ?? r.startedAt)}
                   </span>
                 </Link>
               </li>

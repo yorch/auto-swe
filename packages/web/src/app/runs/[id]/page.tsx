@@ -9,7 +9,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { HumanStepCard } from '@/components/inbox/HumanStepCard';
+import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { LayoutToggle } from '@/components/LayoutToggle';
 import { FailureCard } from '@/components/runs/FailureCard';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
@@ -21,7 +21,7 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
-import { useInbox } from '@/hooks/useInbox';
+import { useApprovals } from '@/hooks/useApprovals';
 import { useCancelWorkflowRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { errMsg } from '@/lib/errors';
@@ -103,7 +103,7 @@ function LayoutA({
   setSelectedNodeId: (id: string | null) => void;
   spec: WorkflowSpec;
   traces: AgentTraceRecord[];
-  pendingSteps: NonNullable<ReturnType<typeof useInbox>['data']>;
+  pendingSteps: NonNullable<ReturnType<typeof useApprovals>['data']>;
 }) {
   const [consoleMode, setConsoleMode] = useState<'split' | 'stream'>('split');
   const traceAnchorRef = useRef<HTMLDivElement>(null);
@@ -849,11 +849,11 @@ export default function RunDetailPage({ params }: PageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const { layout, setLayout } = useUserPreferences();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const { data: inboxSteps } = useInbox();
+  const { data: approvalSteps } = useApprovals();
 
   const pendingSteps = useMemo(
-    () => (inboxSteps ?? []).filter((s) => s.runId === id),
-    [inboxSteps, id]
+    () => (approvalSteps ?? []).filter((s) => s.runId === id),
+    [approvalSteps, id]
   );
 
   const dagOverlay = useMemo(() => {
@@ -1061,7 +1061,7 @@ export default function RunDetailPage({ params }: PageProps) {
           )}
           <Link
             className="text-paper-500 hover:text-ember-400 transition-colors"
-            href={`/templates/${run.templateId}`}
+            href={`/workflows/library/${run.templateId}`}
             style={{
               fontFamily: 'var(--font-mono)',
               fontSize: '10.5px',

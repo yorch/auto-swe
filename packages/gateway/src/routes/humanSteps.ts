@@ -3,12 +3,19 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const StepIdParam = z.object({ id: z.string().uuid() });
 
-const ListQuery = z.object({ status: z.enum(['PENDING', 'ALL']).default('PENDING') });
+const ListQuery = z.object({
+  overdue: booleanQueryParam(false),
+  sort: z
+    .enum(['requestedAt:asc', 'requestedAt:desc', 'timeoutAt:asc', 'timeoutAt:desc'])
+    .default('requestedAt:desc'),
+  status: z.enum(['PENDING', 'ALL']).default('PENDING'),
+});
 
 const RespondBody = z.object({
   action: z.string().min(1).max(50),
@@ -19,8 +26,70 @@ const ErrorResponseSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
 
-const StepListResponseSchema = z.object({ data: z.array(z.unknown()) });
-const StepDetailResponseSchema = z.object({ data: z.unknown() });
+const HumanStepRunSchema = z.object({
+  id: z.string().uuid(),
+  status: z.string(),
+  workflowId: z.string(),
+  workRequest: z
+    .object({
+      description: z.string().nullable(),
+      externalTicketId: z.string().nullable(),
+    })
+    .nullable(),
+});
+
+const HumanStepListItemSchema = z.object({
+  approvalsRemaining: z.number().int().min(0),
+  context: z.unknown().nullable(),
+  currentApprovers: z.number().int().min(0),
+  description: z.string().nullable(),
+  fields: z.unknown().nullable(),
+  id: z.string().uuid(),
+  kind: z.string(),
+  nodeId: z.string(),
+  options: z.unknown().nullable(),
+  requestedAt: z.string(),
+  requiredApprovers: z.number().int().min(1),
+  resolvedAt: z.string().nullable(),
+  run: HumanStepRunSchema.nullable(),
+  runId: z.string().uuid(),
+  status: z.string(),
+  timeoutAt: z.string().nullable(),
+  title: z.string(),
+});
+
+const HumanApprovalSchema = z.object({
+  action: z.string(),
+  resolvedAt: z.string().nullable(),
+  resolvedBy: z.string().uuid().nullable(),
+});
+
+const HumanStepDetailSchema = z.object({
+  _count: z.object({ humanApprovals: z.number().int() }),
+  context: z.unknown().nullable(),
+  description: z.string().nullable(),
+  fields: z.unknown().nullable(),
+  humanApprovals: z.array(HumanApprovalSchema),
+  id: z.string().uuid(),
+  kind: z.string(),
+  nodeId: z.string(),
+  options: z.unknown().nullable(),
+  payload: z.unknown().nullable(),
+  requestedAt: z.string(),
+  requiredApprovers: z.number().int().min(1),
+  resolvedAt: z.string().nullable(),
+  resolvedBy: z.string().uuid().nullable(),
+  run: HumanStepRunSchema.nullable(),
+  runId: z.string().uuid(),
+  signalName: z.string(),
+  status: z.string(),
+  timeoutAt: z.string().nullable(),
+  title: z.string(),
+});
+
+const StepListResponseSchema = z.object({ data: z.array(HumanStepListItemSchema) });
+const StepDetailResponseSchema = z.object({ data: HumanStepDetailSchema });
+
 const RespondResponseSchema = z.object({
   data: z.object({
     approvalsRemaining: z.number().int().min(0),
@@ -31,6 +100,18 @@ const RespondResponseSchema = z.object({
     status: z.string(),
   }),
 });
+
+function formatDate(value: Date): string;
+function formatDate(value: unknown): string | null;
+function formatDate(value: unknown): string | null {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  return null;
+}
 
 /**
  * HTTP status per resolve-core error code. The resolve logic itself lives in
@@ -63,7 +144,15 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { status } = request.query;
+      const { overdue, sort, status } = request.query;
+      const orderBy =
+        sort === 'requestedAt:asc'
+          ? { requestedAt: 'asc' as const }
+          : sort === 'timeoutAt:asc'
+            ? { timeoutAt: 'asc' as const }
+            : sort === 'timeoutAt:desc'
+              ? { timeoutAt: 'desc' as const }
+              : { requestedAt: 'desc' as const };
       const steps = await fastify.prisma.workflowHumanStep.findMany({
         include: {
           _count: { select: { humanApprovals: true } },
@@ -76,10 +165,11 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             },
           },
         },
-        orderBy: { requestedAt: 'desc' },
+        orderBy,
         take: status === 'ALL' ? 200 : 100,
         where: {
           ...(status === 'ALL' ? {} : { status: 'PENDING' }),
+          ...(overdue ? { timeoutAt: { lt: new Date() } } : {}),
           ...buildWorkflowHumanStepVisibilityFilter(user),
         },
       });
@@ -94,13 +184,13 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           kind: s.kind,
           nodeId: s.nodeId,
           options: s.options,
-          requestedAt: s.requestedAt,
+          requestedAt: formatDate(s.requestedAt),
           requiredApprovers: s.requiredApprovers,
-          resolvedAt: s.resolvedAt,
+          resolvedAt: formatDate(s.resolvedAt),
           run: s.run,
           runId: s.runId,
           status: s.status,
-          timeoutAt: s.timeoutAt,
+          timeoutAt: formatDate(s.timeoutAt),
           title: s.title,
         })),
       };
@@ -263,7 +353,18 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Human step not found' } });
       }
-      return { data: step };
+      return {
+        data: {
+          ...step,
+          humanApprovals: step.humanApprovals.map((a) => ({
+            ...a,
+            resolvedAt: formatDate(a.resolvedAt),
+          })),
+          requestedAt: formatDate(step.requestedAt),
+          resolvedAt: formatDate(step.resolvedAt),
+          timeoutAt: formatDate(step.timeoutAt),
+        },
+      };
     }
   );
 

@@ -129,7 +129,7 @@ Workflow interpreter
              │
              │   human acts in inbox UI or via API
              ▼
-Gateway POST /api/v1/inbox/:id/respond
+Gateway POST /api/v1/human-steps/:id/respond
   ├─ validate action against HITL_VALID_ACTIONS[kind]
   ├─ UPDATE WorkflowHumanStep SET status=RESOLVED (atomic, race-safe)
   └─ temporal.signalWorkflow(workflowId, signalName, [{ action, value, resolvedBy }])
@@ -247,7 +247,7 @@ When a workflow exits abnormally (cancelled by the user or failed), all `PENDING
 
 All endpoints require at least the `ENGINEER` role. Visibility follows the same team-membership rules as the inbox UI.
 
-### `GET /api/v1/inbox`
+### `GET /api/v1/human-steps`
 
 Returns up to 100 `PENDING` steps visible to the authenticated user, ordered by `requestedAt` descending.
 
@@ -281,13 +281,13 @@ Response:
 }
 ```
 
-### `GET /api/v1/inbox/:id`
+### `GET /api/v1/human-steps/:id`
 
 Returns a single step by ID (same shape as one element of the list above).
 
 Returns `404` if the step does not exist or is not visible to the caller.
 
-### `POST /api/v1/inbox/:id/respond`
+### `POST /api/v1/human-steps/:id/respond`
 
 Submit a response to a pending step.
 
@@ -317,6 +317,11 @@ Valid actions per kind:
 Returns `400` with `INVALID_ACTION` if the action is not valid for the step's kind.
 Returns `409` with `ALREADY_RESOLVED` if the step was already resolved or the workflow is no longer running.
 Returns `200` with `{ "data": { "id": "...", "status": "RESOLVED" } }` on success.
+For multi-approver steps, the same user's repeated approval is idempotent and does not increase the
+approval count. The Govern inbox shows current/required progress and can sort or filter overdue
+steps. Platform administrators can search policy decisions from `/govern/policies/decisions`;
+lifecycle changes and delegated configuration grants are managed under `/govern/audit` and
+`/govern/config-grants`.
 
 ---
 
@@ -327,3 +332,5 @@ Returns `200` with `{ "data": { "id": "...", "status": "RESOLVED" } }` on succes
 - **`humanDecision` takes 2–10 options.** Wider branching needs a `cond` chain downstream.
 - **A parked run holds a Temporal workflow open for its whole timeout.** Long timeouts are cheap but
   not free; a 7-day approval keeps the workflow alive for 7 days unless it is cancelled.
+- **Approval ownership is not delegated or escalated.** The inbox supports due/overdue visibility,
+  but there are no reassignment chains, on-call schedules, holiday calendars, or SLA automation.

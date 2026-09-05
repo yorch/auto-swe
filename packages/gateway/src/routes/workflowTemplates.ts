@@ -581,17 +581,18 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           template: { select: { id: true, name: true } },
           templateId: true,
           wasAutonomous: true,
+          workflowId: true,
           // Same back-compat fallback the per-template route uses: legacy +
           // RUNNING rows have `costUsdAccrued = 0` and we read through
           // workRequest → activeWorkflows so the global rollup doesn't
           // under-report cost for them.
           workRequest: {
             select: {
-              activeWorkflows: { select: { costUsdAccrued: true } },
+              activeWorkflows: { select: { costUsdAccrued: true, temporalWorkflowId: true } },
             },
           },
         },
-        take: ANALYTICS_ROW_CAP,
+        take: ANALYTICS_ROW_CAP + 1,
         where: {
           startedAt: { gte: windowStart },
           // Visibility: same run-level visibility predicate used on /runs so
@@ -599,22 +600,23 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           ...buildWorkflowRunVisibilityFilter(user),
         },
       });
-      const [runs, baselines] = await Promise.all([
+      const [rows, baselines] = await Promise.all([
         rowsQuery,
         fastify.prisma.humanErrorBaseline.findMany({
           select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
           where: { organization: { memberships: { some: { userId: user.sub } } } },
         }),
       ]);
+      const isTruncated = rows.length > ANALYTICS_ROW_CAP;
+      const runs = rows.slice(0, ANALYTICS_ROW_CAP);
       const analytics = computeGlobalAnalytics(
         runs.map((r) => ({
           costUsdAccrued:
             r.costUsdAccrued > 0
               ? r.costUsdAccrued
-              : (r.workRequest?.activeWorkflows ?? []).reduce(
-                  (sum, aw) => sum + aw.costUsdAccrued,
-                  0
-                ),
+              : (r.workRequest?.activeWorkflows ?? [])
+                  .filter((aw) => aw.temporalWorkflowId === r.workflowId)
+                  .reduce((sum, aw) => sum + aw.costUsdAccrued, 0),
           endedAt: r.endedAt,
           estimatedHumanTimeSaved: r.estimatedHumanTimeSaved,
           hadHumanStep: r.hadHumanStep,
@@ -635,7 +637,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           sampleSize: b.sampleSize,
         }))
       );
-      return { data: analytics };
+      return { data: { ...analytics, isTruncated } };
     }
   );
 
@@ -1909,17 +1911,18 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             status: true,
             templateVersion: true,
             wasAutonomous: true,
+            workflowId: true,
             // Kept for back-compat with rows that pre-date the phase-8
             // denormalization write (analytics.ts falls back to summing this
             // when costUsdAccrued is zero). Cheap because RUNNING runs are
             // bounded.
             workRequest: {
               select: {
-                activeWorkflows: { select: { costUsdAccrued: true } },
+                activeWorkflows: { select: { costUsdAccrued: true, temporalWorkflowId: true } },
               },
             },
           },
-          take: ANALYTICS_ROW_CAP,
+          take: ANALYTICS_ROW_CAP + 1,
           where: {
             startedAt: { gte: windowStart },
             templateId: tpl.id,
@@ -1931,7 +1934,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.workflowStep.findMany({
           orderBy: { startedAt: 'desc' },
           select: { nodeId: true, status: true },
-          take: ANALYTICS_ROW_CAP,
+          take: ANALYTICS_ROW_CAP + 1,
           where: {
             run: {
               startedAt: { gte: windowStart },
@@ -1942,7 +1945,17 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       ]);
 
-      return { data: computeAnalytics(runs, steps, request.query.window) };
+      const isTruncated = runs.length > ANALYTICS_ROW_CAP || steps.length > ANALYTICS_ROW_CAP;
+      return {
+        data: {
+          ...computeAnalytics(
+            runs.slice(0, ANALYTICS_ROW_CAP),
+            steps.slice(0, ANALYTICS_ROW_CAP),
+            request.query.window
+          ),
+          isTruncated,
+        },
+      };
     }
   );
 };

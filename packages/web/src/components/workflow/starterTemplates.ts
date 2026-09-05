@@ -1,5 +1,5 @@
 /**
- * Curated starter specs for the "Start from…" gallery on /templates.
+ * Curated starter specs for the "Start from…" gallery on /workflows/library.
  *
  * Each entry is a complete, valid WorkflowSpec the user can fork with one
  * click. Kept intentionally short (4-8 nodes) so the visual editor isn't

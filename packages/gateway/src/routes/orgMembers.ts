@@ -1,6 +1,6 @@
 /**
  * Org membership CRUD (P5 RBAC).
- * Mounted at /api/v1/admin/organizations.
+ * Mounted at /api/v1/platform/organizations.
  *
  * Access is enforced declaratively by the `requireAuth` onRequest hook:
  * `requiredOrgRole: 'ORG_MEMBER'` to read, `'ORG_ADMIN'` to write. Platform
@@ -65,7 +65,7 @@ async function guardOrgAdminChange(
 const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
-  // GET /api/v1/admin/organizations/:orgId/members
+  // GET /api/v1/platform/organizations/:orgId/members
   f.get(
     '/:orgId/members',
     {
@@ -90,7 +90,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // POST /api/v1/admin/organizations/:orgId/members
+  // POST /api/v1/platform/organizations/:orgId/members
   f.post(
     '/:orgId/members',
     {
@@ -130,7 +130,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // POST /api/v1/admin/organizations/:orgId/members/invite
+  // POST /api/v1/platform/organizations/:orgId/members/invite
   f.post(
     '/:orgId/members/invite',
     {
@@ -184,7 +184,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PATCH /api/v1/admin/organizations/:orgId/members/:userId
+  // PATCH /api/v1/platform/organizations/:orgId/members/:userId
   f.patch(
     '/:orgId/members/:userId',
     {
@@ -223,7 +223,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // DELETE /api/v1/admin/organizations/:orgId/members/:userId
+  // DELETE /api/v1/platform/organizations/:orgId/members/:userId
   f.delete(
     '/:orgId/members/:userId',
     {

@@ -15,7 +15,7 @@ COPY packages/worker/package.json packages/worker/
 # native dependency builds working.
 COPY packages/shared/prisma.config.ts packages/shared/
 COPY packages/shared/src/prisma packages/shared/src/prisma
-RUN yarn install --immutable
+RUN yarn workspaces focus auto-swe @auto-swe/shared @auto-swe/gateway
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
@@ -25,8 +25,8 @@ COPY packages/gateway/ packages/gateway/
 # so a placeholder is required (prisma-7-ci-generate-database-url pattern).
 ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
 RUN yarn workspace @auto-swe/shared db:generate \
- && yarn workspace @auto-swe/shared build \
- && yarn workspace @auto-swe/gateway build
+  && yarn workspace @auto-swe/shared build \
+  && yarn workspace @auto-swe/gateway build
 
 # ── Stage 2: Production dependencies only ──
 FROM node:24-alpine AS prod-deps
@@ -41,7 +41,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
 RUN yarn workspaces focus @auto-swe/gateway --production \
- && mkdir -p packages/shared/node_modules packages/gateway/node_modules
+  && mkdir -p packages/shared/node_modules packages/gateway/node_modules
 
 # ── Stage 3: Runtime ──
 FROM node:24-alpine
@@ -56,12 +56,12 @@ ARG GIT_TIMESTAMP=unknown
 ARG BUILD_NUMBER=unknown
 
 ENV APP_VERSION=${APP_VERSION} \
-    COMMIT_HASH=${COMMIT_HASH} \
-    BUILD_TIME=${BUILD_TIME} \
-    GIT_BRANCH=${GIT_BRANCH} \
-    GIT_TAG=${GIT_TAG} \
-    GIT_TIMESTAMP=${GIT_TIMESTAMP} \
-    BUILD_NUMBER=${BUILD_NUMBER}
+  COMMIT_HASH=${COMMIT_HASH} \
+  BUILD_TIME=${BUILD_TIME} \
+  GIT_BRANCH=${GIT_BRANCH} \
+  GIT_TAG=${GIT_TAG} \
+  GIT_TIMESTAMP=${GIT_TIMESTAMP} \
+  BUILD_NUMBER=${BUILD_NUMBER}
 
 # Production dependency tree only. The entrypoint runs the Prisma 7 CLI
 # (`node_modules/prisma/build/index.js migrate deploy`), and that CLI has

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { PAT_PREFIX, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -29,6 +30,27 @@ const TokenIdParam = z.object({ id: z.string().uuid() });
 
 function generateToken(): string {
   return `${PAT_PREFIX}${crypto.randomBytes(PAT_BYTES).toString('base64url')}`;
+}
+
+/// Auditable subset of a personal access token row. Never includes the plaintext
+/// token or the stored sha-256 hash — the audit log only needs identity and
+/// lifecycle metadata.
+function safePatAuditFields(row: {
+  expiresAt?: Date | null;
+  id: string;
+  name: string;
+  prefix: string;
+  revokedAt?: Date | null;
+  userId: string;
+}): Record<string, unknown> {
+  return {
+    expiresAt: row.expiresAt ?? null,
+    id: row.id,
+    name: row.name,
+    prefix: row.prefix,
+    revokedAt: row.revokedAt ?? null,
+    userId: row.userId,
+  };
 }
 
 export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
@@ -78,6 +100,20 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
           userId: user.sub,
         },
       });
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor: user,
+        after: safePatAuditFields({
+          expiresAt: created.expiresAt,
+          id: created.id,
+          name: created.name,
+          prefix: created.prefix,
+          userId: created.userId,
+        }),
+        entityId: created.id,
+        entityType: 'PersonalAccessToken',
+      });
+
       // Plaintext appears in this response and NEVER again. Clients must
       // capture it now or revoke + re-issue.
       return reply.status(201).send({
@@ -119,6 +155,28 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
       const updated = await fastify.prisma.personalAccessToken.update({
         data: { revokedAt: new Date() },
         where: { id: existing.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: safePatAuditFields({
+          expiresAt: updated.expiresAt,
+          id: updated.id,
+          name: updated.name,
+          prefix: updated.prefix,
+          revokedAt: updated.revokedAt,
+          userId: updated.userId,
+        }),
+        before: safePatAuditFields({
+          expiresAt: existing.expiresAt,
+          id: existing.id,
+          name: existing.name,
+          prefix: existing.prefix,
+          revokedAt: existing.revokedAt,
+          userId: existing.userId,
+        }),
+        entityId: updated.id,
+        entityType: 'PersonalAccessToken',
       });
       return { data: { id: updated.id, revokedAt: updated.revokedAt } };
     }

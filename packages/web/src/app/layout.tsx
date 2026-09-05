@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { IBM_Plex_Mono, Inter } from 'next/font/google';
 import './globals.css';
+import { AppConfigScript } from '@/components/AppConfigScript';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppShell } from '@/components/layout/AppShell';
 import { Providers } from '@/components/Providers';
@@ -36,10 +37,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     .replace(/&/g, '\\u0026');
 
   return (
-    <html className={`${inter.variable} ${ibmPlexMono.variable}`} lang="en">
-      <head>
-        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: operator-controlled env vars only */}
-        <script dangerouslySetInnerHTML={{ __html: `window.__APP_CONFIG__=${appConfig};` }} />
+    <html
+      className={`${inter.variable} ${ibmPlexMono.variable}`}
+      lang="en"
+      suppressHydrationWarning
+    >
+      <head suppressHydrationWarning>
+        <AppConfigScript appConfig={appConfig} />
         <style>{`
           :root {
             --font-display: var(--font-inter), 'Inter', -apple-system, sans-serif;

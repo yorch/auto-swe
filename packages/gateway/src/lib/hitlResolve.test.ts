@@ -13,15 +13,23 @@ const ADMIN = { role: 'ADMIN', sub: 'user-1' };
 function makeDeps(step: Record<string, unknown>) {
   const updateMany = vi.fn().mockResolvedValue({ count: 1 });
   const signalWorkflow = vi.fn().mockResolvedValue(undefined);
+  const prisma = {
+    autonomyDecision: {
+      create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    workflowHumanStep: {
+      findFirst: vi.fn().mockResolvedValue(step),
+      updateMany,
+    },
+  };
   const deps = {
     log: { error: vi.fn(), warn: vi.fn() },
-    prisma: {
-      autonomyDecision: { create: vi.fn().mockResolvedValue({}) },
-      workflowHumanStep: {
-        findFirst: vi.fn().mockResolvedValue(step),
-        updateMany,
-      },
-    },
+    // The resolve core wraps its writes in an interactive transaction; hand
+    // the callback the same fake so the assertions see the calls.
+    prisma: Object.assign(prisma, {
+      $transaction: async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma),
+    }),
     temporal: { signalWorkflow },
   } as unknown as HitlResolveDeps;
   return { deps, signalWorkflow, updateMany };

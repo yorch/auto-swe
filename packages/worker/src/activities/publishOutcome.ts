@@ -37,7 +37,11 @@ export async function publishOutcome(input: PublishOutcomeInput): Promise<Publis
     );
   }
 
-  const policy = await resolveAutonomyPolicy(run.templateId, run.template?.teamId ?? null);
+  const policy = await resolveAutonomyPolicy(
+    run.templateId,
+    run.template?.teamId ?? null,
+    input.action
+  );
   const rule = policy.rules[input.action] ?? { action: 'require_approval' };
   const decision = rule.action === 'auto' ? 'auto' : 'require_approval';
   const approverCount = normalizeApproverCount(rule.approverCount);

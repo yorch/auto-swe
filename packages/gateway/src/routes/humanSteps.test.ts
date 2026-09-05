@@ -11,6 +11,7 @@ vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: DB_NULL } }));
 import { humanStepRoutes } from './humanSteps.js';
 
 const STEP_ID = '00000000-0000-4000-8000-000000000001';
+const RUN_ID = '00000000-0000-4000-8000-000000000002';
 const USER_ID = 'user-1';
 const AUTH = { authorization: 'Bearer test-token' };
 
@@ -25,21 +26,25 @@ function pendingStep(overrides: Record<string, unknown> = {}): Record<string, un
     context: { plan: 'do the thing' },
     description: 'Please approve the plan',
     fields: null,
+    humanApprovals: [],
     id: STEP_ID,
     kind: 'APPROVAL',
     nodeId: 'approveGate',
     options: null,
     requestedAt: new Date('2026-06-01T00:00:00Z'),
     requiredApprovers: 1,
+    resolvedAt: null,
+    resolvedBy: null,
     run: {
-      id: 'run-1',
+      id: RUN_ID,
       status: 'RUNNING',
       workflowId: 'eng-acme-repo-JIRA-1',
       workRequest: { description: 'Add endpoint', externalTicketId: 'JIRA-1' },
     },
-    runId: 'run-1',
+    runId: RUN_ID,
     signalName: 'hitl_approveGate',
     status: 'PENDING',
+    timeoutAt: null,
     title: 'Approve plan',
     ...overrides,
   };
@@ -68,8 +73,13 @@ describe('human step routes', () => {
       },
     } as unknown as never);
 
-    app.decorate('prisma', {
-      autonomyDecision: { create: vi.fn().mockResolvedValue({}) },
+    const prismaMock = {
+      $transaction: async (fn: (tx: unknown) => unknown) => fn(prismaMock),
+      autonomyDecision: {
+        create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       configAuditLog: {
         create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
       },
@@ -81,7 +91,9 @@ describe('human step routes', () => {
           return { count: updateManyCount };
         },
       },
-    } as unknown as never);
+    };
+
+    app.decorate('prisma', prismaMock as unknown as never);
 
     app.decorate('temporal', {
       signalWorkflow: async (workflowId: string, signalName: string, args: unknown[]) => {
@@ -92,7 +104,7 @@ describe('human step routes', () => {
       },
     } as unknown as never);
 
-    await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });
+    await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
     await app.ready();
   });
 
@@ -110,7 +122,7 @@ describe('human step routes', () => {
   describe('GET /', () => {
     it('returns the pending steps visible to the user', async () => {
       listRows = [pendingStep()];
-      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/inbox' });
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.data).toHaveLength(1);
@@ -118,7 +130,7 @@ describe('human step routes', () => {
         id: STEP_ID,
         kind: 'APPROVAL',
         nodeId: 'approveGate',
-        runId: 'run-1',
+        runId: RUN_ID,
         status: 'PENDING',
         title: 'Approve plan',
       });
@@ -134,7 +146,7 @@ describe('human step routes', () => {
         headers: AUTH,
         method: 'POST',
         payload,
-        url: `/api/v1/inbox/${STEP_ID}/respond`,
+        url: `/api/v1/human-steps/${STEP_ID}/respond`,
       });
     }
 
@@ -211,7 +223,7 @@ describe('human step routes', () => {
           data: expect.objectContaining({
             action: 'UPDATE',
             afterJson: expect.objectContaining({ action: 'approve' }),
-            entityId: 'run-1',
+            entityId: RUN_ID,
             entityType: 'WorkflowRun',
           }),
         })

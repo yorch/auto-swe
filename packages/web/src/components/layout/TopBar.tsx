@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Select } from '@/components/ui/Select';
-import { useInboxCount } from '@/hooks/useInbox';
+import { useApprovalsCount } from '@/hooks/useApprovals';
 import { useTeams } from '@/hooks/useTeams';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
@@ -14,29 +14,38 @@ function pageTitle(pathname: string): string {
     ['/', 'Dashboard'],
     ['/runs/', 'Run'],
     ['/runs', 'Runs'],
-    ['/inbox', 'Inbox'],
-    ['/workflows', 'Canvas'],
-    ['/templates', 'Templates'],
-    ['/epics', 'Epics'],
-    ['/analytics', 'Analytics'],
-    ['/lessons', 'Memory'],
+    ['/govern/approvals', 'Approvals'],
+    ['/workflows/library', 'Workflow library'],
+    ['/workflows', 'Request queue'],
     ['/connections', 'Connections'],
-    ['/admin/agents', 'Agents'],
-    ['/admin/skills', 'Skills'],
-    ['/admin/security', 'Security'],
-    ['/admin/mcp-connections', 'MCP Connections'],
-    ['/admin/model-config', 'Model Config'],
-    ['/admin/integrations', 'Integrations'],
-    ['/admin/scanner', 'Scanner'],
-    ['/admin/settings', 'Settings'],
-    ['/admin/workflow', 'Workflow Defaults'],
-    ['/admin/schedules', 'Schedules'],
-    ['/admin/sessions', 'Sessions'],
-    ['/admin/access-tokens', 'API Tokens'],
-    ['/admin/lessons', 'Lessons'],
-    ['/admin', 'Admin'],
-    ['/teams', 'Teams'],
-    ['/users', 'Users'],
+    ['/govern/security', 'Security'],
+    ['/govern/scanner', 'Scanner'],
+    ['/govern/policies', 'Autonomy policies'],
+    ['/govern/evals', 'Evals'],
+    ['/govern/schedules', 'Schedules'],
+    ['/govern/budget-alerts', 'Budget alerts'],
+    ['/govern/budgets', 'Budgets'],
+    ['/govern/teams', 'Teams'],
+    ['/govern/organizations', 'Organizations'],
+    ['/govern/users', 'Users'],
+    ['/govern/api-tokens', 'API tokens'],
+    ['/govern/lessons', 'Lessons'],
+    ['/govern/analytics', 'Analytics'],
+    ['/govern/baselines', 'Error baselines'],
+    ['/govern/sessions', 'Sessions'],
+    ['/govern/slack-channels', 'Slack channels'],
+    ['/govern/workflow-defaults', 'Workflow defaults'],
+    ['/govern/platform-settings', 'Platform settings'],
+    ['/govern/config-grants', 'Config grants'],
+    ['/govern/audit', 'Audit log'],
+    ['/govern', 'Govern'],
+    ['/studio/agents', 'Agents'],
+    ['/studio/skills', 'Skills'],
+    ['/studio/mcp', 'MCP'],
+    ['/studio/integrations', 'Integrations'],
+    ['/studio/models', 'Model config'],
+    ['/studio/bundles', 'Bundles'],
+    ['/studio', 'Studio'],
     ['/settings', 'Settings'],
     ['/docs', 'Docs'],
   ];
@@ -63,7 +72,7 @@ export function TopBar() {
   };
 
   const teamLabel = teams?.find((t) => t.id === selectedTeamId)?.name ?? 'all teams';
-  const inboxCount = useInboxCount();
+  const inboxCount = useApprovalsCount();
   const title = pageTitle(pathname);
 
   return (
@@ -135,7 +144,7 @@ export function TopBar() {
       {/* Inbox badge */}
       {inboxCount > 0 && (
         <Link
-          href="/inbox"
+          href="/govern/approvals"
           style={{
             alignItems: 'center',
             background: 'rgba(246, 181, 69, 0.1)',

@@ -7,7 +7,7 @@ import { isTerminalSignalError } from './temporalErrors.js';
 
 /**
  * Shared HITL resolve core, used by:
- *   - `routes/humanSteps.ts` — POST /inbox/:id/respond (the inbox UI)
+ *   - `routes/humanSteps.ts` — POST /api/v1/human-steps/:id/respond (human step API)
  *   - `routes/slack.ts`      — `hitl_resolve` Block Kit button interactions
  *
  * Both entry points enforce the SAME authorization (team visibility via
@@ -247,10 +247,11 @@ export async function resolveHitlStep(
   if (!step) {
     return { code: 'NOT_FOUND', message: 'Human step not found', ok: false };
   }
-  if (step.status !== 'PENDING') {
+  const resolvedStep = step;
+  if (resolvedStep.status !== 'PENDING') {
     return { code: 'ALREADY_RESOLVED', message: 'This step has already been resolved', ok: false };
   }
-  if (step.run.status !== 'RUNNING') {
+  if (resolvedStep.run.status !== 'RUNNING') {
     return {
       code: 'RUN_NOT_RUNNING',
       message: 'The workflow run is no longer running',
@@ -261,14 +262,14 @@ export async function resolveHitlStep(
   // Validate action against step kind using the shared HITL_VALID_ACTIONS map.
   // The map is Record<HitlKind, …> so TypeScript enforces exhaustiveness whenever
   // a new kind is added to the interpreter — this file stays in sync automatically.
-  const allowed = HITL_VALID_ACTIONS[step.kind as HitlKind];
+  const allowed = HITL_VALID_ACTIONS[resolvedStep.kind as HitlKind];
   if (!allowed) {
-    return { code: 'UNKNOWN_KIND', message: `Unknown step kind: ${step.kind}`, ok: false };
+    return { code: 'UNKNOWN_KIND', message: `Unknown step kind: ${resolvedStep.kind}`, ok: false };
   }
   if (!allowed.includes(action)) {
     return {
       code: 'INVALID_ACTION',
-      message: `Action '${action}' is not valid for ${step.kind} steps. Expected: ${allowed.join(' or ')}`,
+      message: `Action '${action}' is not valid for ${resolvedStep.kind} steps. Expected: ${allowed.join(' or ')}`,
       ok: false,
     };
   }
@@ -280,9 +281,46 @@ export async function resolveHitlStep(
   value = validation.value;
 
   const signalPayload = { action, resolvedBy: user.sub, value };
-  const requiredApprovers = step.requiredApprovers;
-  const isMultiApprover = step.kind === 'APPROVAL' && requiredApprovers > 1 && action === 'approve';
-  let multiApproverState: { resolved: boolean; approvalCount: number } | null = null;
+  const requiredApprovers = resolvedStep.requiredApprovers;
+  const isMultiApprover =
+    resolvedStep.kind === 'APPROVAL' && requiredApprovers > 1 && action === 'approve';
+
+  const baseAuditPayload = (
+    status: 'PENDING' | 'RESOLVED',
+    signalSent: boolean
+  ): Prisma.InputJsonValue =>
+    ({
+      action,
+      signalSent,
+      status,
+      value: value !== undefined ? (value as Prisma.InputJsonValue) : null,
+    }) as Prisma.InputJsonValue;
+
+  async function rollbackResolvedStep(auditId: string | undefined): Promise<void> {
+    if (isMultiApprover) {
+      await prisma.humanApproval.deleteMany({
+        where: { resolvedBy: user.sub, stepId: resolvedStep.id },
+      });
+    }
+    if (auditId) {
+      await prisma.autonomyDecision.deleteMany({ where: { id: auditId } });
+    }
+    await prisma.workflowHumanStep.updateMany({
+      data: {
+        payload: Prisma.DbNull,
+        resolvedAt: null,
+        resolvedBy: null,
+        status: 'PENDING',
+      },
+      where: { id: resolvedStep.id, resolvedBy: user.sub, status: 'RESOLVED' },
+    });
+  }
+
+  type ResolveOutcome =
+    | { auditId: string; currentApprovers: number; resolved: true }
+    | { currentApprovers: number; resolved: false };
+
+  let outcome: ResolveOutcome;
 
   if (isMultiApprover) {
     // Multi-approver accumulation: record the approval, count distinct
@@ -290,135 +328,118 @@ export async function resolveHitlStep(
     // The row is locked so concurrent approve calls cannot double-count.
     // CLAUDE.md §7 exception: Prisma has no `SELECT … FOR UPDATE`, so the
     // row lock is the one raw query here; everything after it is Prisma.
-    try {
-      multiApproverState = await prisma.$transaction(async (tx) => {
-        const [locked] = await tx.$queryRaw<
-          Array<{ id: string; status: string; requiredApprovers: number }>
-        >(
-          Prisma.sql`
-            SELECT id, status, required_approvers AS "requiredApprovers"
-            FROM workflow_human_steps
-            WHERE id = ${stepId}::uuid
-            FOR UPDATE
-          `
-        );
-        if (locked?.status !== 'PENDING') {
-          return { approvalCount: 0, resolved: false };
-        }
+    outcome = await prisma.$transaction(async (tx) => {
+      const [locked] = await tx.$queryRaw<
+        Array<{ id: string; status: string; requiredApprovers: number }>
+      >(
+        Prisma.sql`
+          SELECT id, status, required_approvers AS "requiredApprovers"
+          FROM workflow_human_steps
+          WHERE id = ${stepId}::uuid
+          FOR UPDATE
+        `
+      );
+      if (locked?.status !== 'PENDING') {
+        return { currentApprovers: 0, resolved: false };
+      }
 
-        try {
-          await tx.humanApproval.create({
-            data: {
-              action,
-              resolvedBy: user.sub,
-              stepId,
-              value: value !== undefined ? (value as Prisma.InputJsonValue) : undefined,
-            },
-          });
-        } catch (err: unknown) {
-          // One response per approver; a duplicate from the same user does not
-          // advance the step. Count the existing rows instead.
-          if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
-            throw err;
-          }
-        }
-
-        const approvalCount = await tx.humanApproval.count({
-          where: { action: 'approve', stepId },
+      let isDuplicate = false;
+      try {
+        await tx.humanApproval.create({
+          data: {
+            action,
+            resolvedBy: user.sub,
+            stepId,
+            value: value !== undefined ? (value as Prisma.InputJsonValue) : undefined,
+          },
         });
-        if (approvalCount < locked.requiredApprovers) {
-          return { approvalCount, resolved: false };
-        }
-
-        try {
-          await tx.workflowHumanStep.update({
-            data: {
-              payload: signalPayload as Prisma.InputJsonValue,
-              resolvedAt: new Date(),
-              resolvedBy: user.sub,
-              status: 'RESOLVED',
-            },
-            where: { id: stepId, status: 'PENDING' },
-          });
-        } catch (err: unknown) {
-          // Another concurrent response resolved the row between the count and
-          // the update. The PENDING status no longer exists — report as not yet
-          // resolved so the outer code re-reads and returns ALREADY_RESOLVED.
-          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-            return { approvalCount, resolved: false };
-          }
+      } catch (err: unknown) {
+        // One response per approver; a duplicate from the same user does not
+        // advance the step. The unique constraint (stepId, resolvedBy) makes the
+        // race safe; we count the existing rows instead.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          isDuplicate = true;
+        } else {
           throw err;
         }
-        return { approvalCount, resolved: true };
-      });
-    } catch (err: unknown) {
-      log.error({ err, stepId: step.id }, 'Multi-approver HITL transaction failed');
-      return {
-        code: 'SIGNAL_FAILED',
-        message: 'Could not record the approval — please retry',
-        ok: false,
-      };
-    }
-
-    if (!multiApproverState.resolved) {
-      const approvalCount = multiApproverState.approvalCount;
-      // The step may have been resolved by a concurrent response before this
-      // transaction committed. Re-read the authoritative status to avoid telling
-      // the caller the step is still pending when it is not.
-      const current = await prisma.workflowHumanStep.findUnique({
-        select: { status: true },
-        where: { id: step.id },
-      });
-      if (current?.status !== 'PENDING') {
-        return {
-          code: 'ALREADY_RESOLVED',
-          message: 'This step has already been resolved',
-          ok: false,
-        };
       }
-      const currentApprovers = approvalCount;
-      await prisma.autonomyDecision
-        .create({
-          data: {
-            actorId: user.sub,
-            event: 'approve_partial',
-            payload: {
-              action,
-              signalSent: false,
-              status: 'PENDING',
-              value: value !== undefined ? (value as Prisma.InputJsonValue) : null,
-            } as Prisma.InputJsonValue,
-            requiredApprovers,
-            runId: step.run.id,
-          },
-        })
-        .catch((err) =>
-          log.error({ err, stepId: step.id }, 'Failed to write partial approval audit record')
-        );
-      return {
-        approvalsRemaining: Math.max(0, requiredApprovers - currentApprovers),
-        currentApprovers,
-        kind: step.kind,
-        ok: true,
-        requiredApprovers,
-        runId: step.run.id,
-        signalSent: false,
-        status: 'PENDING',
-        stepId: step.id,
-        title: step.title,
-      };
-    }
-  } else {
-    // Single-approver or non-approve action: the existing atomic guard is enough.
-    const result = await prisma.workflowHumanStep.updateMany({
-      data: {
-        payload: signalPayload as Prisma.InputJsonValue,
-        resolvedAt: new Date(),
-        resolvedBy: user.sub,
-        status: 'RESOLVED',
-      },
-      where: { id: step.id, status: 'PENDING' },
+
+      const approvalCount = await tx.humanApproval.count({
+        where: { action: 'approve', stepId },
+      });
+      if (approvalCount < locked.requiredApprovers) {
+        // Only write a partial-approval audit event for a new approval. A
+        // repeated approval from the same user must stay idempotent and must not
+        // produce duplicate autonomy-evidence rows.
+        if (!isDuplicate) {
+          await tx.autonomyDecision.create({
+            data: {
+              actorId: user.sub,
+              event: 'approve_partial',
+              payload: baseAuditPayload('PENDING', false),
+              requiredApprovers,
+              runId: resolvedStep.run.id,
+            },
+          });
+        }
+        return { currentApprovers: approvalCount, resolved: false };
+      }
+
+      const update = await tx.workflowHumanStep.updateMany({
+        data: {
+          payload: signalPayload as Prisma.InputJsonValue,
+          resolvedAt: new Date(),
+          resolvedBy: user.sub,
+          status: 'RESOLVED',
+        },
+        where: { id: stepId, status: 'PENDING' },
+      });
+      if (update.count === 0) {
+        // Another concurrent response resolved the row between the count and
+        // the update. The PENDING status no longer exists — report as not yet
+        // resolved so the outer code re-reads and returns ALREADY_RESOLVED.
+        return { currentApprovers: approvalCount, resolved: false };
+      }
+
+      const audit = await tx.autonomyDecision.create({
+        data: {
+          actorId: user.sub,
+          event: action,
+          payload: baseAuditPayload('RESOLVED', false),
+          requiredApprovers,
+          runId: resolvedStep.run.id,
+        },
+      });
+      return { auditId: audit.id, currentApprovers: approvalCount, resolved: true };
     });
+  } else {
+    // Single-approver or non-approve action: write the resolution audit atomically
+    // with the PENDING→RESOLVED guard so autonomy evidence cannot be lost silently.
+    const result = await prisma.$transaction(async (tx) => {
+      const update = await tx.workflowHumanStep.updateMany({
+        data: {
+          payload: signalPayload as Prisma.InputJsonValue,
+          resolvedAt: new Date(),
+          resolvedBy: user.sub,
+          status: 'RESOLVED',
+        },
+        where: { id: resolvedStep.id, status: 'PENDING' },
+      });
+      if (update.count === 0) {
+        return { auditId: undefined as string | undefined, count: 0 };
+      }
+      const audit = await tx.autonomyDecision.create({
+        data: {
+          actorId: user.sub,
+          event: action,
+          payload: baseAuditPayload('RESOLVED', false),
+          requiredApprovers,
+          runId: resolvedStep.run.id,
+        },
+      });
+      return { auditId: audit.id, count: update.count };
+    });
+
     if (result.count === 0) {
       return {
         code: 'ALREADY_RESOLVED',
@@ -426,6 +447,37 @@ export async function resolveHitlStep(
         ok: false,
       };
     }
+
+    outcome = { auditId: result.auditId as string, currentApprovers: 1, resolved: true };
+  }
+
+  if (!outcome.resolved) {
+    // The step may have been resolved by a concurrent response before this
+    // transaction committed. Re-read the authoritative status to avoid telling
+    // the caller the step is still pending when it is not.
+    const current = await prisma.workflowHumanStep.findUnique({
+      select: { status: true },
+      where: { id: resolvedStep.id },
+    });
+    if (current?.status !== 'PENDING') {
+      return {
+        code: 'ALREADY_RESOLVED',
+        message: 'This step has already been resolved',
+        ok: false,
+      };
+    }
+    return {
+      approvalsRemaining: Math.max(0, requiredApprovers - outcome.currentApprovers),
+      currentApprovers: outcome.currentApprovers,
+      kind: resolvedStep.kind,
+      ok: true,
+      requiredApprovers,
+      runId: resolvedStep.run.id,
+      signalSent: false,
+      status: 'PENDING',
+      stepId: resolvedStep.id,
+      title: resolvedStep.title,
+    };
   }
 
   // Deliver the Temporal signal. The workflow only unblocks via this signal, so
@@ -442,28 +494,17 @@ export async function resolveHitlStep(
   // merge webhook does with a terminal signal failure.
   let signalSent = true;
   try {
-    await temporal.signalWorkflow(step.run.workflowId, step.signalName, [signalPayload]);
+    await temporal.signalWorkflow(resolvedStep.run.workflowId, resolvedStep.signalName, [
+      signalPayload,
+    ]);
   } catch (err: unknown) {
     if (!isTerminalSignalError(err)) {
-      log.error({ err, stepId: step.id }, 'HITL Temporal signal failed; rolling back');
+      log.error({ err, stepId: resolvedStep.id }, 'HITL Temporal signal failed; rolling back');
       try {
-        if (isMultiApprover) {
-          await prisma.humanApproval.deleteMany({
-            where: { resolvedBy: user.sub, stepId: step.id },
-          });
-        }
-        await prisma.workflowHumanStep.updateMany({
-          data: {
-            payload: Prisma.DbNull,
-            resolvedAt: null,
-            resolvedBy: null,
-            status: 'PENDING',
-          },
-          where: { id: step.id, resolvedBy: user.sub, status: 'RESOLVED' },
-        });
+        await rollbackResolvedStep(outcome.auditId);
       } catch (rollbackErr: unknown) {
         log.error(
-          { err: rollbackErr, stepId: step.id },
+          { err: rollbackErr, stepId: resolvedStep.id },
           'HITL rollback failed — step stuck RESOLVED without a delivered signal'
         );
       }
@@ -475,41 +516,32 @@ export async function resolveHitlStep(
     }
     signalSent = false;
     log.warn(
-      { err, stepId: step.id },
+      { err, stepId: resolvedStep.id },
       'HITL signal target workflow no longer exists; keeping the step RESOLVED'
     );
   }
 
-  const currentApprovers =
-    isMultiApprover && multiApproverState ? multiApproverState.approvalCount : 1;
-  await prisma.autonomyDecision
-    .create({
-      data: {
-        actorId: user.sub,
-        event: action,
-        payload: {
-          action,
-          signalSent,
-          status: 'RESOLVED',
-          value: value !== undefined ? (value as Prisma.InputJsonValue) : null,
-        } as Prisma.InputJsonValue,
-        requiredApprovers,
-        runId: step.run.id,
-      },
-    })
-    .catch((err) =>
-      log.error({ err, stepId: step.id }, 'Failed to write HITL resolution audit record')
-    );
+  if (outcome.auditId) {
+    await prisma.autonomyDecision
+      .updateMany({
+        data: { payload: baseAuditPayload('RESOLVED', signalSent) },
+        where: { id: outcome.auditId },
+      })
+      .catch((err) =>
+        log.error({ auditId: outcome.auditId, err }, 'Failed to update HITL audit signal status')
+      );
+  }
+
   return {
     approvalsRemaining: 0,
-    currentApprovers,
-    kind: step.kind,
+    currentApprovers: outcome.currentApprovers,
+    kind: resolvedStep.kind,
     ok: true,
     requiredApprovers,
-    runId: step.run.id,
+    runId: resolvedStep.run.id,
     signalSent,
     status: 'RESOLVED',
-    stepId: step.id,
-    title: step.title,
+    stepId: resolvedStep.id,
+    title: resolvedStep.title,
   };
 }

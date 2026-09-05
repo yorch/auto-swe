@@ -3,13 +3,13 @@
 import { usePathname } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
-import { useInboxStream } from '@/hooks/useInbox';
+import { useApprovalsStream } from '@/hooks/useApprovals';
 
 const CHROMELESS_ROUTES = ['/login'];
 
 // Run detail and template diff pages manage their own full-height layout.
 function isFullscreenRoute(pathname: string): boolean {
-  return /^\/runs\/[^/]+$/.test(pathname) || /^\/templates\/[^/]+\/diff/.test(pathname);
+  return /^\/runs\/[^/]+$/.test(pathname) || /^\/workflows\/library\/[^/]+\/diff/.test(pathname);
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -30,7 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 // Split out so the inbox stream only mounts (and its hook only runs) on
 // chromed routes — a hook cannot sit behind the early return above.
 function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscreen: boolean }) {
-  useInboxStream();
+  useApprovalsStream();
 
   return (
     <div

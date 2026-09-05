@@ -155,10 +155,11 @@ packages/
 |------|---------|
 | `src/app/page.tsx` | Dashboard home — KPIs, "needs attention" queue, recent activity |
 | `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status; bottom panel toggles between three layouts (split console, transcript, flight recorder), persisted per user via `/api/v1/me/preferences` |
-| `src/app/templates/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
-| `src/app/inbox/` | HITL inbox — pending human steps with respond forms |
-| `src/app/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
-| `src/app/admin/` | Model config, integrations, workflow defaults, skills, agents + agent library, schedules, access tokens, sessions, memory, scanner patterns, security events, MCP connections, Slack channels, organizations, bundles, evals |
+| `src/app/workflows/library/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
+| `src/app/govern/approvals/` | HITL approvals — pending human steps with respond forms |
+| `src/app/govern/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
+| `src/app/studio/*` | Model config, integrations, workflow defaults, skills, agents + agent library, schedules, bundles, MCP connections, evals |
+| `src/app/govern/*` | Access tokens, sessions, memory, scanner patterns, security events, Slack channels, organizations, teams, budgets, users |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
 | `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team) |
 | `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `LoadingState`, `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
@@ -463,7 +464,7 @@ erDiagram
 Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost and tokens
 accrue for every terminal status. `Organization.monthlyBudgetUsdCents` caps monthly spend —
 work-request submit returns `402 ORG_BUDGET_EXCEEDED` once the month's accrued cost meets the cap.
-The cap and org membership are managed at `/api/v1/admin/organizations/:orgId/budget` and
+The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
 `/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
 so the worker writer and the gateway reader cannot disagree about which month a run lands in.
 
@@ -533,7 +534,7 @@ UI shows real overage, then throws a non-retryable `BUDGET_EXCEEDED` failure onc
 | `LARGE` | 8,000,000 | 2,000,000 |
 | `EPIC` | 20,000,000 | 5,000,000 |
 
-These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/admin/workflow`,
+These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/govern/workflow-defaults`,
 falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 
 **Agent traces.** Each LLM-calling activity records tool calls, LLM requests/responses, and named
@@ -578,7 +579,7 @@ would defeat it.
 
 **Security scanners.** Six run during agent execution at distinct stages, five backed by DB regex
 patterns with a 60 s cache. Table and rules in
-[AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/admin/security` and the
+[AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/govern/security` and the
 per-run panel on `/runs/[id]`.
 
 ---

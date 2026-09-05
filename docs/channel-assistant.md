@@ -207,7 +207,7 @@ the extra round-trips; a channel that has genuinely spent its budget — for whi
 
 The corollary is that a channel comfortably under its cap never sweeps at all, so its abandoned holds
 sit until something pushes it to the cap.
-`POST /api/v1/admin/slack-channels/:id/budget/reset` clears them on demand — API-only, with no
+`POST /api/v1/platform/slack-channels/:id/budget/reset` clears them on demand — API-only, with no
 control in the admin UI. It reports how many holds it actually released, and is deliberately not a
 "zero the month" button: it subtracts exactly what the holds added and leaves real spend alone, so
 recovering from a crash never doubles as disabling the cap.
@@ -240,14 +240,14 @@ The main `/runs` list default-excludes both chatter templates — "Channel Assis
 Code-route tasks use the team's SWE template and stay visible like any engineering run.
 
 **Audit feed.** `startChannelRun` stamps the triggering `userSlackId` and a truncated message
-snapshot onto `specSnapshot.channel`. `GET /api/v1/admin/slack-channels/:id/audit` aggregates the
+snapshot onto `specSnapshot.channel`. `GET /api/v1/platform/slack-channels/:id/audit` aggregates the
 channel's runs into a "who asked what, when, and what it touched" feed — kind, who, when, status,
 cost, tokens, run ID. The admin Audit modal renders it with a kind filter and a link through to the
 full tool-call sequence. Read access uses the same `assertChannelAccess` guard as memory and open
 items.
 
 Channels are configured at `/admin/slack-channels` over
-`/api/v1/admin/slack-channels` (plus `/:id/budget`, `/:id/budget/reset`, `/:id/audit`, and the
+`/api/v1/platform/slack-channels` (plus `/:id/budget`, `/:id/budget/reset`, `/:id/audit`, and the
 memory and open-item
 sub-resources); channel-scoped agents are created from the agent-library form with `CHANNEL` scope
 and a channel picker. `/:id/budget/reset` has no UI control — it is called directly, by an admin who

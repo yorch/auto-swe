@@ -25,7 +25,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
-  await app.register(mcpConnectionRoutes, { prefix: '/api/v1/admin' });
+  await app.register(mcpConnectionRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return { app, mockPrisma };
 }
@@ -43,7 +43,7 @@ describe('mcpConnectionRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/mcp-connections',
+      url: '/api/v1/platform/mcp-connections',
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data).toHaveLength(1);
@@ -58,7 +58,7 @@ describe('mcpConnectionRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
-      url: '/api/v1/admin/mcp-connections',
+      url: '/api/v1/platform/mcp-connections',
     });
     expect(res.statusCode).toBe(403);
     await app.close();
@@ -72,7 +72,7 @@ describe('mcpConnectionRoutes', () => {
       body: { name: 'docs', teamId: TEAM, url: 'https://mcp.example.com/mcp' },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/mcp-connections',
+      url: '/api/v1/platform/mcp-connections',
     });
     expect(res.statusCode).toBe(201);
     expect(mockPrisma.connection.create).toHaveBeenCalledWith(
@@ -85,6 +85,33 @@ describe('mcpConnectionRoutes', () => {
         },
       })
     );
+    await app.close();
+  });
+
+  it('sanitizes credentials, query parameters, and fragments from the audit payload', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
+    mockPrisma.connection.create.mockResolvedValue({ id: ID, name: 'docs', type: 'mcp' });
+    const res = await app.inject({
+      body: {
+        name: 'docs',
+        teamId: TEAM,
+        url: 'https://user:password@mcp.example.com/mcp?token=secret#private',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/mcp-connections',
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: expect.objectContaining({ url: 'https://mcp.example.com/mcp' }),
+      }),
+    });
+    const audit = mockPrisma.configAuditLog.create.mock.calls[0]?.[0];
+    expect(JSON.stringify(audit)).not.toContain('password');
+    expect(JSON.stringify(audit)).not.toContain('secret');
     await app.close();
   });
 
@@ -102,7 +129,7 @@ describe('mcpConnectionRoutes', () => {
       },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/mcp-connections',
+      url: '/api/v1/platform/mcp-connections',
     });
     expect(res.statusCode).toBe(201);
     expect(mockPrisma.connection.create).toHaveBeenCalledWith(
@@ -128,7 +155,7 @@ describe('mcpConnectionRoutes', () => {
       body: { listTimeoutMs: 0, name: 'docs', teamId: TEAM, url: 'https://mcp.example.com/mcp' },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/mcp-connections',
+      url: '/api/v1/platform/mcp-connections',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -141,7 +168,7 @@ describe('mcpConnectionRoutes', () => {
       body: { name: 'docs', teamId: TEAM, url: 'https://mcp.example.com/mcp' },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/mcp-connections',
+      url: '/api/v1/platform/mcp-connections',
     });
     expect(res.statusCode).toBe(404);
     await app.close();
@@ -153,7 +180,7 @@ describe('mcpConnectionRoutes', () => {
       body: { name: 'docs', teamId: TEAM, url: 'ftp://mcp.example.com' },
       headers: AUTH,
       method: 'POST',
-      url: '/api/v1/admin/mcp-connections',
+      url: '/api/v1/platform/mcp-connections',
     });
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -166,7 +193,7 @@ describe('mcpConnectionRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: `/api/v1/admin/mcp-connections/${ID}`,
+      url: `/api/v1/platform/mcp-connections/${ID}`,
     });
     expect(res.statusCode).toBe(200);
     expect(mockPrisma.connection.update).toHaveBeenCalledWith(
@@ -181,7 +208,7 @@ describe('mcpConnectionRoutes', () => {
     const res = await app.inject({
       headers: AUTH,
       method: 'DELETE',
-      url: `/api/v1/admin/mcp-connections/${ID}`,
+      url: `/api/v1/platform/mcp-connections/${ID}`,
     });
     expect(res.statusCode).toBe(404);
     await app.close();
@@ -204,7 +231,7 @@ describe('mcpConnectionRoutes', () => {
       },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/mcp-connections/${ID}`,
+      url: `/api/v1/platform/mcp-connections/${ID}`,
     });
     expect(res.statusCode).toBe(200);
     // config is rebuilt from the body: the old callTimeoutMs is dropped (cleared)
@@ -228,7 +255,7 @@ describe('mcpConnectionRoutes', () => {
       body: { name: 'x', url: 'https://mcp.example.com/mcp' },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/mcp-connections/${ID}`,
+      url: `/api/v1/platform/mcp-connections/${ID}`,
     });
     expect(res.statusCode).toBe(404);
     expect(mockPrisma.connection.update).not.toHaveBeenCalled();
@@ -242,7 +269,7 @@ describe('mcpConnectionRoutes', () => {
       body: { name: 'x', url: 'ftp://mcp.example.com' },
       headers: AUTH,
       method: 'PATCH',
-      url: `/api/v1/admin/mcp-connections/${ID}`,
+      url: `/api/v1/platform/mcp-connections/${ID}`,
     });
     expect(res.statusCode).toBe(400);
     await app.close();
