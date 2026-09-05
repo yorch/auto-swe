@@ -31,6 +31,13 @@ describe('crypto', () => {
     expect(decryptSecret(sealed)).toBe('sk-abcdef1234567890');
   });
 
+  it('withholds the lastFour hint for a secret shorter than eight characters', () => {
+    const sealed = encryptSecret('hunter2');
+    expect(sealed.lastFour).toBe('');
+    expect(decryptSecret(sealed)).toBe('hunter2');
+    expect(encryptSecret('12345678').lastFour).toBe('5678');
+  });
+
   it('produces a fresh nonce per call', () => {
     const a = encryptSecret('same-plaintext');
     const b = encryptSecret('same-plaintext');

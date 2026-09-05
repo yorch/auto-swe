@@ -123,7 +123,8 @@ export function encryptSecret(plaintext: string): EncryptedSecret {
     authTag: toArrayBufferUint8(authTag),
     ciphertext: toArrayBufferUint8(ciphertext),
     keyVersion: version,
-    lastFour: plaintext.slice(-4),
+    // A hint, not a leak: four characters of an eight-character secret is half of it.
+    lastFour: plaintext.length < 8 ? '' : plaintext.slice(-4),
     nonce: toArrayBufferUint8(nonce),
   };
 }
