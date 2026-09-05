@@ -21,6 +21,13 @@ export class AtlassianError extends Error {
   }
 }
 
+/**
+ * Longest a 429 may make us wait. Retry-After is server-controlled input; an
+ * unbounded value would park the calling activity (and its Temporal heartbeat)
+ * for as long as the server — or anyone who can spoof it — chooses.
+ */
+const MAX_RETRY_AFTER_SEC = 30;
+
 export class AtlassianClient {
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
@@ -66,9 +73,14 @@ export class AtlassianClient {
         }
 
         let lastError: AtlassianError | null = null;
+        // Set by a 429 so the next attempt waits the server's Retry-After
+        // instead of the exponential backoff — never both.
+        let retryAfterMs: number | null = null;
         for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
           if (attempt > 0) {
-            const delayMs = Math.min(1000 * 2 ** (attempt - 1), 16000) + Math.random() * 500;
+            const delayMs =
+              retryAfterMs ?? Math.min(1000 * 2 ** (attempt - 1), 16000) + Math.random() * 500;
+            retryAfterMs = null;
             await new Promise((r) => setTimeout(r, delayMs));
           }
           try {
@@ -87,10 +99,11 @@ export class AtlassianClient {
               if (Number.isNaN(retryAfter)) {
                 const date = Date.parse(raw);
                 retryAfter = Number.isNaN(date)
-                  ? 60
+                  ? MAX_RETRY_AFTER_SEC
                   : Math.max(0, Math.ceil((date - Date.now()) / 1000));
               }
-              await new Promise((r) => setTimeout(r, retryAfter * 1000));
+              retryAfter = Math.min(Math.max(0, retryAfter), MAX_RETRY_AFTER_SEC);
+              retryAfterMs = retryAfter * 1000;
               lastError = new AtlassianError(
                 429,
                 'rate_limited',

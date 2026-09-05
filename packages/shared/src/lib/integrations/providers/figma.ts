@@ -148,6 +148,9 @@ export class FigmaProvider implements FigmaDesignProvider {
     const res = await fetch(`${this.baseUrl}${path}`, {
       headers: { 'X-Figma-Token': this.config.apiToken ?? '' },
       method: 'GET',
+      // Fetched best-effort at submit time; a stalled upstream must not hold
+      // the submission open. Same bound as the Linear client.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       throw Object.assign(new Error(`Figma API error ${res.status}: ${await res.text()}`), {

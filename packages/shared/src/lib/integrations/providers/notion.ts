@@ -102,6 +102,9 @@ export class NotionKnowledgeBaseProvider implements KnowledgeBaseProvider {
         'Notion-Version': '2022-06-28',
       },
       method,
+      // Fetched best-effort at submit time; a stalled upstream must not hold
+      // the submission open. Same bound as the Linear client.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       if (res.status === 404) {
