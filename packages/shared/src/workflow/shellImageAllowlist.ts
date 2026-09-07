@@ -15,9 +15,13 @@
  */
 
 export const BUILTIN_SHELL_IMAGES: readonly string[] = Object.freeze([
+  // Both Node majors are permitted, and neither is redundant. node:24-alpine is
+  // still the workspace default — it is the only one of the two that carries
+  // `yarn` and `pnpm`, which agents need for Yarn and pnpm target repos — while
+  // node:26-alpine matches the Node the services themselves run on. Dropping
+  // either would reject already-stored templates that pin it, and the allowlist
+  // is re-checked at container launch, so the rejection lands mid-run.
   'node:26-alpine',
-  // The previous default. Kept because the allowlist is re-checked at container
-  // launch, so dropping it would reject already-stored templates that pin it.
   'node:24-alpine',
   'python:3.13-alpine',
   'alpine:latest',
