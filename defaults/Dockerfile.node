@@ -1,5 +1,5 @@
 # Default executor image for Node.js projects
-FROM node:24-alpine
+FROM node:26-alpine
 
 # Install git (required for workspace operations)
 RUN apk add --no-cache git

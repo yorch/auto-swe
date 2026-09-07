@@ -74,7 +74,7 @@ jobs:
             # Fetch default executor Dockerfile from the control-plane repo
             mkdir -p .auto-swe
             curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
-              "https://raw.githubusercontent.com/${CONTROL_PLANE_REPO}/main/defaults/Dockerfile.node24" \
+              "https://raw.githubusercontent.com/${CONTROL_PLANE_REPO}/main/defaults/Dockerfile.node" \
               -o .auto-swe/Dockerfile
             echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
           fi
