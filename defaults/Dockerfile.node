@@ -4,8 +4,13 @@ FROM node:26-alpine
 # Install git (required for workspace operations)
 RUN apk add --no-cache git
 
-# Pre-install common global tools
-RUN npm install -g typescript
+# Pre-install common global tools.
+#
+# Corepack is explicit now: node:24-alpine shipped `yarn`, `pnpm` and `corepack`
+# on PATH, and node:26-alpine ships none of them (removed from the Node
+# distribution in Node 25). Without this, an agent handed a Yarn or pnpm target
+# repo hits `yarn: not found` on its first install command.
+RUN npm install -g typescript corepack && corepack enable
 
 WORKDIR /workspace/target-repo
 
