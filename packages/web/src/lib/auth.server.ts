@@ -2,7 +2,8 @@ import type { Role } from '@auto-swe/shared';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { API_BASE, COOKIE_ACCESS_TOKEN } from '@/lib/config';
+import { COOKIE_ACCESS_TOKEN } from '@/lib/config';
+import { apiInternalUrl } from '@/lib/env';
 
 interface SessionUser {
   id: string;
@@ -19,7 +20,10 @@ export async function getSession(): Promise<SessionUser | null> {
     return null;
   }
 
-  const res = await fetch(`${API_BASE}/api/v1/auth/me`, {
+  // Server-side: this runs inside the web container, where the browser-facing
+  // API URL (often http://localhost:8080) points at the container's own
+  // loopback. API_INTERNAL_URL names the gateway on the compose network.
+  const res = await fetch(`${apiInternalUrl()}/api/v1/auth/me`, {
     cache: 'no-store',
     headers: { Authorization: `Bearer ${token}` },
   });
