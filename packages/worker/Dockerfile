@@ -1,5 +1,5 @@
 # ── Stage 1: Build ──
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 
 COPY package.json yarn.lock .yarnrc.yml ./
@@ -29,7 +29,7 @@ RUN yarn workspace @auto-swe/shared db:generate \
     && yarn workspace @auto-swe/worker build
 
 # ── Stage 2: Production dependencies only ──
-FROM node:24-alpine AS prod-deps
+FROM node:26-alpine AS prod-deps
 WORKDIR /app
 
 COPY package.json yarn.lock .yarnrc.yml ./
@@ -49,7 +49,7 @@ RUN yarn workspaces focus @auto-swe/worker --production \
 # worker died at startup with:
 #   Error loading shared library ld-linux-x86-64.so.2 ... core-bridge/.../index.node
 # `gcompat` is not enough: the shim loads but then fails symbol relocation.
-FROM node:24-slim
+FROM node:26-slim
 
 # Worker needs Docker CLI to manage workspace containers (DinD). Compose adds
 # the host Docker socket group at runtime with DOCKER_GID. Taken from the
