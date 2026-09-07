@@ -27,10 +27,14 @@ export const MIGRATION_SPEC: WorkflowSpec = {
       type: 'terminate',
     },
     dryRunMigration: {
-      // Customise image + command for your stack. The shell node returns
-      // { passed, summary, exitCode } — summary is shown to the approver.
+      // Customise image + command for your stack; the image must be on the
+      // team's shell allowlist or the node is rejected when its container
+      // launches, mid-run. This one shipped as `node:24-slim`, which is not a
+      // built-in, so the template could never actually run as seeded.
+      // The shell node returns { passed, summary, exitCode } — summary is shown
+      // to the approver.
       command: 'yarn db:migrate --dry-run 2>&1',
-      image: 'node:24-slim',
+      image: 'node:24-alpine',
       next: 'storeDryRunResult',
       onFail: 'warn',
       type: 'shell',
