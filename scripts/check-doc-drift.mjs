@@ -270,7 +270,7 @@ const VERSION = '(\\d+(?:\\.\\d+)*)';
 // and `.node-version` owns the Node major. The tech-stack tables and the
 // deployment runbook restate both, so derive them the same way as the npm
 // versions above. A claim passes when either side is a dot-boundary prefix of
-// the other ("admin-tools 1.31" for 1.31.2; "Node.js >=24.0.0" for 24).
+// the other ("admin-tools 1.31" for 1.31.2; "Node.js >=26.0.0" for 26).
 // ---------------------------------------------------------------------------
 
 const composeSrc = read('docker-compose.infra.yml') + read('docker-compose.app.yml');
@@ -315,7 +315,7 @@ const IMAGE_DEPS = [
 ];
 const IMAGE_TAG = '([\\w][\\w.-]*)';
 
-/** Either side may be the truncated one: "1.31" ~ "1.31.2", and "24.0.0" ~ "24". */
+/** Either side may be the truncated one: "1.31" ~ "1.31.2", and "26.0.0" ~ "26". */
 const versionsAgree = (a, b) => isVersionPrefix(a, b) || isVersionPrefix(b, a);
 
 const checkImageVersions = (file, line, lineNo) => {
@@ -348,7 +348,7 @@ const checkImageVersions = (file, line, lineNo) => {
       });
     }
   }
-  // Node: "Node.js >=24.0.0", "Node.js ≥ 24", "node:24-alpine".
+  // Node: "Node.js >=26.0.0", "Node.js ≥ 26".
   for (const m of line.matchAll(
     new RegExp(`\\bNode(?:\\.js)?\\s+(?:>=|≥)?\\s*v?${VERSION}`, 'gi')
   )) {
@@ -471,6 +471,10 @@ const checkProse = (file, line, lineNo) => {
 const targets = [
   'AGENTS.md',
   'README.md',
+  // Added after its "Node >= 24" survived a whole-repo version sweep: it is a
+  // living doc that tells a human which runtime to install, and it was the one
+  // such doc CI never read.
+  'CONTRIBUTING.md',
   'packages/cli/README.md',
   ...readdirSync(join(ROOT, 'docs'))
     .filter((f) => f.endsWith('.md'))
