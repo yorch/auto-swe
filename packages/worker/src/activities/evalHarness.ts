@@ -16,6 +16,7 @@
  * scoring a false 0.
  */
 
+import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { createImplementerAgent } from '../agents/implementer.js';
@@ -128,19 +129,30 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
       caseRow.baselineSha
     );
 
-    const resolved = await resolveAgent(parsed.key, ctx);
+    // All three depend only on the key and the scope, so they resolve together,
+    // as `buildImplementerForActivity` does on the production path.
+    //
+    // The tool-output budget is resolved here rather than left to the registry
+    // default for the same reason the model is: it changes how much of a failing
+    // test run the implementer sees, so an eval that ignored an operator's
+    // override would be grading it under conditions production never runs it in.
+    const [resolved, mcpTarget, toolOutputSettings] = await Promise.all([
+      resolveAgent(parsed.key, ctx),
+      resolveAgentMcpUrl(parsed.key, ctx),
+      resolveSettings(['workspace.maxToolOutputChars'], ctx),
+    ]);
     const model: LanguageModel = resolveModel(
       resolved.model.spec,
       resolved.model.apiKey,
       resolved.model.apiBase
     );
-    const mcpTarget = await resolveAgentMcpUrl(parsed.key, ctx);
     const built = await createImplementerAgent(
       workspace,
       tracer,
       resolved.toolKeys,
       resolved.skills,
       {
+        maxToolOutputChars: toolOutputSettings['workspace.maxToolOutputChars'],
         mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
         mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
         mcpServerRef: mcpTarget?.url,

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { getSettingDefinition, resolveSettings } from '@auto-swe/shared/config';
 import { IMPLEMENTER_TOOL_IDS } from '@auto-swe/shared/workflow/stepRegistry';
 import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
@@ -24,6 +25,7 @@ import {
   SECURITY_WARNINGS_PREFIX,
   wrapWriteToolWithSecurityCheck,
 } from './preWriteSecurityCheck.js';
+import { offloadIfLarge, packOffload } from './toolOutputOffload.js';
 
 /**
  * Validates that a relative file path stays within the workspace root.
@@ -68,6 +70,16 @@ export interface ImplementerAgentOptions {
   mcpListTimeoutMs?: number;
   /** Optional per-connection override of `loadMcpTools`'s per-call timeout (default 60 s). */
   mcpCallTimeoutMs?: number;
+  /**
+   * `workspace.maxToolOutputChars` (default 20,000), pre-resolved by the
+   * caller. Threaded in rather than resolved here so it's a single settings
+   * read per agent construction, not one per `bash`/`readFile`/`listDirectory`
+   * call — `buildImplementerForActivity` resolves it alongside the tool/skill
+   * config it already loads, and `evalHarness` resolves it for the same reason
+   * an eval resolves the model. Omitting it falls back to the registry default,
+   * which is only right for a caller with no scope to resolve against.
+   */
+  maxToolOutputChars?: number;
 }
 
 export async function createImplementerAgent(
@@ -88,6 +100,13 @@ export async function createImplementerAgent(
    */
   closeMcp?: () => Promise<void>;
 }> {
+  // Resolved once, here, rather than inside a tool's `execute` — every
+  // bash/readFile/listDirectory call in the session shares this value instead
+  // of re-hitting the (cached, but non-zero-cost) settings resolver per call.
+  const maxToolOutputChars =
+    options?.maxToolOutputChars ??
+    getSettingDefinition('workspace.maxToolOutputChars').defaultValue;
+
   // Tool: Read a file from the workspace
   const readFile = createTool({
     description: 'Read the contents of a file in the workspace',
@@ -95,11 +114,18 @@ export async function createImplementerAgent(
       const start = Date.now();
       try {
         const p = safePath(path);
-        const result = { content: await workspace.exec(`cat ${shellQuote(p)}`) };
+        const raw = await workspace.exec(`cat ${shellQuote(p)}`);
+        const offloaded = await offloadIfLarge({
+          maxChars: maxToolOutputChars,
+          output: raw,
+          toolName: 'readFile',
+          workspace,
+        });
+        const { result, outputJson } = packOffload('content', offloaded);
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           inputJson: { path },
-          outputJson: result,
+          outputJson,
           toolName: 'readFile',
         });
         return result;
@@ -196,11 +222,18 @@ export async function createImplementerAgent(
       try {
         // Mastra 1.31 types Zod `.default()` fields as string|undefined in tool execute args.
         const p = safePath(path ?? '.');
-        const result = { listing: await workspace.exec(`ls -la ${shellQuote(p)}`) };
+        const raw = await workspace.exec(`ls -la ${shellQuote(p)}`);
+        const offloaded = await offloadIfLarge({
+          maxChars: maxToolOutputChars,
+          output: raw,
+          toolName: 'listDirectory',
+          workspace,
+        });
+        const { result, outputJson } = packOffload('listing', offloaded);
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           inputJson: { path: p },
-          outputJson: result,
+          outputJson,
           toolName: 'listDirectory',
         });
         return result;
@@ -252,16 +285,26 @@ export async function createImplementerAgent(
         const { exitCode, stderr, stdout } = await workspace.execCapture(command, {
           timeoutMs: 600_000,
         });
-        const output = `Command finished (exit code ${exitCode}):\n${stdout}\n${stderr}`.trim();
+        // A non-zero exit comes back here rather than throwing, so the failure
+        // path — a full test/build log — goes through the same offload as the
+        // success path, which is where the bulk of oversized output appears.
+        const raw = `Command finished (exit code ${exitCode}):\n${stdout}\n${stderr}`.trim();
+        const offloaded = await offloadIfLarge({
+          maxChars: maxToolOutputChars,
+          output: raw,
+          toolName: 'bash',
+          workspace,
+        });
+        const { result, outputJson } = packOffload('output', offloaded);
         const error = exitCode === 0 ? undefined : `exit code ${exitCode}`;
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           error,
           inputJson: { command: auditCommand },
-          outputJson: { output },
+          outputJson,
           toolName: 'bash',
         });
-        return { output };
+        return result;
       } catch (err: unknown) {
         const error = getErrorMessage(err);
         const output = `Command failed: ${error}`;
@@ -413,9 +456,10 @@ export async function buildImplementerForActivity(
   skills: ResolvedSkill[];
   toolKeys: string[] | null;
 }> {
-  const [toolKeys, skills] = await Promise.all([
+  const [toolKeys, skills, toolOutputSettings] = await Promise.all([
     loadAgentToolConfig('implementer', ctx),
     loadAgentSkills('implementer', ctx),
+    resolveSettings(['workspace.maxToolOutputChars'], ctx),
   ]);
   const mcpTarget = await resolveAgentMcpUrl('implementer', ctx);
   const { agent, promptSuffix, closeMcp } = await createImplementerAgent(
@@ -424,6 +468,7 @@ export async function buildImplementerForActivity(
     toolKeys,
     skills,
     {
+      maxToolOutputChars: toolOutputSettings['workspace.maxToolOutputChars'],
       mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
       mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
       mcpServerRef: mcpTarget?.url,

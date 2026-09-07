@@ -237,8 +237,6 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.max(100_000),
     unit: 'transitions',
   }),
-
-  // ── Agent workspace ────────────────────────────────────────────────────────
   'workspace.blockMetadata': defineSetting({
     defaultValue: true,
     description:
@@ -281,6 +279,25 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.max(1000),
     unit: 'activities',
+  }),
+
+  // ── Agent workspace ────────────────────────────────────────────────────────
+  // Tunes the implementer's tool behaviour rather than the container itself,
+  // but there is no `implementer` group (only channel/memory/workflow/workspace
+  // exist), and every key must share its group's prefix (see the
+  // `SETTING_DEFINITIONS` integrity test), so it's named and grouped here.
+  'workspace.maxToolOutputChars': defineSetting({
+    defaultValue: 20_000,
+    description:
+      'Character ceiling on a single bash/readFile/listDirectory result handed to the implementer. Output over this limit is written in full to a file inside the workspace (outside the git repo, so it never reaches the PR diff) and replaced with a head+tail excerpt plus a pointer to read the rest. Raise it to give the model more of one large output in context at the cost of prompt size — the full output is preserved either way.',
+    group: 'workspace',
+    label: 'Max tool output size',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.min(1_000).max(200_000),
+    unit: 'characters',
   }),
   'workspace.metadataBlockImage': defineSetting({
     defaultValue: 'alpine:3.20',

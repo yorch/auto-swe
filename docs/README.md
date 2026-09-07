@@ -86,9 +86,10 @@ Writing docs? Two rules:
 2. **`yarn docs:check` enforces both.** It derives countable facts (node types, Prisma models,
    built-in skills, scanner patterns, seeded agents) and dependency versions from source, rejects
    the status prose rule 1 bans, requires every capability doc to carry a `## Limitations` section,
-   and fails on broken relative links. It runs as its own CI job with no install step. Run it after
-   changing the schema, the node-type union, the skills, the scanner patterns, the seeded agents,
-   or any dependency a doc names by version.
+   rejects a setting key no longer defined in the registry, and fails on broken relative links. It
+   runs as its own CI job with no install step. Run it after changing the schema, the node-type
+   union, the skills, the scanner patterns, the seeded agents, a setting key, or any dependency a
+   doc names by version.
 
 ## history/
 
@@ -106,4 +107,5 @@ The original 4-phase plan and its status matrix ([`PLAN.md`](./history/PLAN.md),
 ([`agentic-workflow-platform-prd.md`](./history/agentic-workflow-platform-prd.md)) and the
 configurable-workflow-engine and platform-pivot roadmaps that carried it out, with their per-phase
 build plans, the evals phase plans, the 2026-06 and 2026-07 repository
-reviews, and research on agent dreaming, skills, and Claude Tag all live there.
+reviews, and research on agent dreaming, skills, Claude Tag, and LangChain Deep Agents all live
+there.

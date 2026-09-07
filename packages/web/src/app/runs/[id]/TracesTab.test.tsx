@@ -92,15 +92,18 @@ describe('TraceOutput', () => {
   }
 
   it('renders an llm_response Response body at 2px and truncates past the cap', () => {
+    // Distinct head and tail markers so a head-only cut is visibly wrong: a
+    // truncated body's conclusion is at the end, so the cap keeps both ends.
     expand({
       ...makeTrace('implement'),
       inputJson: { systemPrompt: 'you are an implementer' },
-      outputJson: { text: 'x'.repeat(3100) },
+      outputJson: { text: `HEAD${'x'.repeat(3100)}TAIL` },
     });
 
     const pre = document.querySelector('pre') as HTMLPreElement;
     expect(pre.style.borderRadius).toBe('2px');
-    expect(pre.textContent).toBe(`${'x'.repeat(3000)}\n…`);
+    expect(pre.textContent).toMatch(/^HEADx+\n… \d+ characters hidden …\nx+TAIL$/);
+    expect((pre.textContent ?? '').length).toBeLessThan(3100);
   });
 
   it('leaves an under-cap body uncut', () => {
