@@ -4,9 +4,14 @@ WORKDIR /app
 
 # node:26 ships no Corepack: it was removed from the Node distribution in Node
 # 25, so the image has no `yarn` on PATH and every `yarn` call below exits 127.
-# Only the shim is missing — the Yarn release itself is vendored in
-# .yarn/releases and pinned by `packageManager` + `.yarnrc.yml`'s `yarnPath`, so
-# the shim's own version is immaterial and is left to float.
+#
+# Corepack does NOT reuse the vendored .yarn/releases copy, despite it being
+# right there. It resolves `packageManager` and downloads that Yarn from
+# repo.yarnpkg.com first; only once it execs does `.yarnrc.yml`'s `yarnPath`
+# redirect into the vendored file. So this line costs two build-time fetches and
+# makes the build depend on that host. What it does not affect is which Yarn
+# runs — `packageManager` and `yarnPath` pin that from both directions — which
+# is why the Corepack version itself is left to float.
 RUN npm install -g corepack@latest && corepack enable
 
 COPY package.json yarn.lock .yarnrc.yml ./
