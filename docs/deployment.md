@@ -27,6 +27,8 @@ This is a harder constraint than "some target repos use Yarn". Every built-in qu
 
 So raise this default only alongside an image that provides `yarn` — not by pointing it at a newer stock upstream tag. `defaults/Dockerfile.node`, the base for executor images built by `build-executor.yml`, is on Node 26 and installs Corepack explicitly for exactly that reason.
 
+Two things to know about the service images themselves. Their Node major is a **Current** release, not an LTS one, until Node 26 reaches LTS in October 2026. And the worker's runtime stage is Debian-based, so moving it to Node 26 also moved it from bookworm to trixie (glibc 2.36 → 2.41); that stage installs no distro packages, so there is nothing pinned to break, but an OS-level surprise there will not look Node-related.
+
 > **Local-dev shortcut.** `yarn docker:infra:up` brings up Garage (the `garage` container in `docker-compose.infra.yml`) and provisions the access key and the `auto-swe-artifacts` bucket on first boot — there is no separate bucket-create step. Uncomment the `ARTIFACT_S3_*` block in `.env.example` (defaults match the container) to flip the worker onto S3 mode locally. Garage ships no web console; use `aws s3 ls --endpoint-url http://localhost:9000` or read `./data/garage` directly.
 
 ---
