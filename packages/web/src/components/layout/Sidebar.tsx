@@ -105,7 +105,7 @@ const NAV_GROUPS: NavGroup[] = [
         href: '/studio/agents/library',
         icon: 'agents',
         label: 'Agents',
-        roles: ['LEAD', 'ADMIN'],
+        roles: ['ADMIN'],
       },
       { href: '/studio/skills', icon: 'skills', label: 'Skills', roles: ['LEAD', 'ADMIN'] },
       { href: '/studio/mcp', icon: 'connections', label: 'MCP', roles: ['LEAD', 'ADMIN'] },
