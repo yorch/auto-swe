@@ -48,7 +48,7 @@ export async function runGateStandalone(input: StandaloneGateInput): Promise<Gat
     input.authedRepoUrl,
     input.branch,
     input.defaultBranch,
-    input.image ?? 'node:24-alpine',
+    input.image,
     input.checkoutSha,
     input.existingBranch
   );

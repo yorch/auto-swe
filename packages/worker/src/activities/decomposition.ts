@@ -325,7 +325,7 @@ async function provisionMergeWorkspace(
     authedCloneUrl,
     targetBranch,
     repo.defaultBranch,
-    repo.executorImage ?? 'node:24-alpine'
+    repo.executorImage ?? undefined
   );
   heartbeat(`${label}: workspace provisioned`);
 

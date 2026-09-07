@@ -121,6 +121,13 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
   let workspace: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;
   try {
+    // The image is pinned rather than inherited, and that is deliberate — it is
+    // the same frozen-fixture reasoning as the `baselineSha` on the next line.
+    // A benchmark case is only comparable against its own history if the
+    // environment it ran in did not move, so this one workspace does NOT follow
+    // the connection's `executorImage` or the `workspaceImage` default the way
+    // every production path does. Changing it silently rebases every stored
+    // eval score onto a different environment.
     workspace = await createWorkspace(
       caseRow.repoUrl,
       'eval-candidate',

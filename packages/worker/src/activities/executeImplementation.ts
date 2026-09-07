@@ -115,7 +115,7 @@ export async function executeImplementation(
     authedCloneUrl,
     branch,
     repo.defaultBranch,
-    repo.executorImage ?? 'node:24-alpine'
+    repo.executorImage ?? undefined
   );
 
   const tracer = new AgentTracer();

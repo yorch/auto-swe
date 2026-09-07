@@ -154,7 +154,7 @@ async function provisionGateWorkspace(
     authedCloneUrl,
     branch,
     repo.defaultBranch,
-    repo.executorImage ?? 'node:24-alpine'
+    repo.executorImage ?? undefined
   );
 
   // createWorkspace produces a fresh local branch from the default branch.
