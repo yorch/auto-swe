@@ -5,18 +5,20 @@ WORKDIR /app
 # node:26 ships no Corepack — it left the Node distribution in Node 25 — so the
 # image has no `yarn` on PATH and every `yarn` call below exits 127.
 #
-# Installing it back is not free. Corepack resolves `packageManager` and fetches
-# that Yarn from repo.yarnpkg.com BEFORE anything reads .yarnrc.yml; only then
-# does `yarnPath` redirect execution into the vendored .yarn/releases copy, so
-# the fetched Yarn is downloaded and never run. The vendored release does not
-# make this build hermetic — it makes the fetched version irrelevant. Note that
-# `npmMinimalAgeGate` gates neither fetch: it is a Yarn-side resolution setting,
-# so it covers neither the npm install below nor Corepack's own download.
+# The missing piece is only the NAME. .yarn/releases/yarn-4.18.0.cjs is already
+# a complete entry point: mode 755, `#!/usr/bin/env node` shebang, and it runs
+# offline on a stock node:26-alpine with no Corepack present. So this shim is
+# the whole fix, and it keeps the build hermetic — installing Corepack instead
+# would fetch it from npm and then fetch a second Yarn from repo.yarnpkg.com
+# that `yarnPath` guarantees is never executed. Neither of those fetches is
+# covered by `npmMinimalAgeGate`, which is a Yarn-side resolution setting.
 #
-# Pinned rather than floating because this layer sits before the COPY and caches:
-# on `@latest` the version would freeze at whatever was current when the layer
-# was first built and then jump silently on any cache miss.
-RUN npm install -g corepack@0.36.0 && corepack enable
+# The glob avoids restating the version here; .yarn/releases holds exactly one
+# release, and `yarnPath` in .yarnrc.yml is the thing that pins it. The shim
+# resolves its target at invocation, not at build, so it may sit before the COPY
+# and keep this layer cacheable.
+RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+      > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases
@@ -48,9 +50,9 @@ RUN yarn workspace @auto-swe/shared db:generate \
 FROM node:26-alpine AS prod-deps
 WORKDIR /app
 
-# No Corepack in node:26, and the same unused yarnpkg.com fetch — see the
-# builder stage above.
-RUN npm install -g corepack@0.36.0 && corepack enable
+# No `yarn` in node:26 — same vendored-release shim as the builder stage above.
+RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+      > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases

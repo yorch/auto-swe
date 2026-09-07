@@ -46,14 +46,29 @@ These live in the same 3-stage build (builder → prod-deps → runtime) and bre
   rewrites every file's metadata into a new layer, storing the whole tree — `node_modules`
   included — twice.
 - **Root `package.json` must be in the runtime image** so workspace symlinks resolve.
-- **Install Corepack in every stage that runs `yarn`, and in no other.** `node:26` ships none —
-  it left the Node distribution in Node 25 — so a builder or prod-deps stage without
-  `npm install -g corepack@<pinned> && corepack enable` fails at the first `yarn` line with
-  **exit 127**. The runtime stages must NOT have it: they only run `node`.
-  Corepack does not reuse the vendored `.yarn/releases` copy — it fetches the `packageManager`
-  version from `repo.yarnpkg.com` first, and `yarnPath` only redirects afterwards — so the build
-  needs network to that host. Pin the version: the layer sits before the `COPY` and caches, so
-  `@latest` silently changes on a cache miss.
+- **Put a `yarn` on `PATH` in every stage that runs `yarn`, and in no other.** `node:26` has none —
+  Corepack left the Node distribution in Node 25, and the image ships `npm` alone — so a builder or
+  prod-deps stage without one fails at its first `yarn` line with **exit 127**. The runtime stages
+  must NOT have one: they only run `node`.
+
+  Use the vendored release, not Corepack. `.yarn/releases/yarn-*.cjs` is already a complete entry
+  point (mode 755, `#!/usr/bin/env node`) and runs offline on a stock `node:26-alpine`; only the
+  *name* is missing, so a two-line shim is the whole fix:
+
+  ```dockerfile
+  RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+        > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
+  ```
+
+  Installing Corepack instead works but is strictly more machinery: it fetches from npm, then
+  fetches a *second* Yarn from `repo.yarnpkg.com` that `yarnPath` guarantees is never executed —
+  two network dependencies and one more version to pin, for the same result. Neither fetch is
+  covered by `npmMinimalAgeGate`. The shim resolves its target at invocation, so it can sit before
+  the `COPY` and keep that layer cacheable.
+
+  The agent **executor** image (`defaults/Dockerfile.node`) is the opposite case and does install
+  Corepack: it is a sandbox where arbitrary target repos get built, so it needs a real `yarn`/`pnpm`
+  toolchain, not a launcher for this repo's own vendored Yarn.
 
 ## Preferred deployment shape
 
