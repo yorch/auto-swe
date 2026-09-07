@@ -15,6 +15,9 @@
  */
 
 export const BUILTIN_SHELL_IMAGES: readonly string[] = Object.freeze([
+  'node:26-alpine',
+  // The previous default. Kept because the allowlist is re-checked at container
+  // launch, so dropping it would reject already-stored templates that pin it.
   'node:24-alpine',
   'python:3.13-alpine',
   'alpine:latest',

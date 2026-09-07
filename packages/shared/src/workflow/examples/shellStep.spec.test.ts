@@ -11,7 +11,9 @@ describe('SHELL_STEP_EXAMPLE_SPEC', () => {
     const uploadSbom = SHELL_STEP_EXAMPLE_SPEC.nodes.uploadSbom;
     expect(uploadSbom?.type).toBe('shell');
     if (uploadSbom?.type === 'shell') {
-      expect(['node:24-alpine', 'python:3.13-alpine', 'alpine:latest']).toContain(uploadSbom.image);
+      expect(['node:26-alpine', 'node:24-alpine', 'python:3.13-alpine', 'alpine:latest']).toContain(
+        uploadSbom.image
+      );
     }
   });
 
