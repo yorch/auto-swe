@@ -198,6 +198,11 @@ yarn docker:app:build     # Rebuild app images
 - **Commit each logical change separately** — don't batch unrelated changes into one commit
 - **Push after each commit** — keep the remote up to date as you work
 - Write concise commit messages that describe the "why", not just the "what"
+- **The PR description is the permanent commit message.** Only squash merges are enabled,
+  and GitHub composes the squash body from the pull request description — branch commit
+  messages never reach `main`. Rationale written in a commit body is therefore discarded at
+  merge. When a pull request's scope changes during review or a rebase, update the
+  **description**, or the permanent history will describe work that was never merged.
 - Use conventional-style prefixes: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`
 - Never commit `.env`, credentials, or secrets
 - Never force-push to `main`
