@@ -48,7 +48,7 @@ applies to one file belongs in a skill, not in the context of every session.
 | Component             | Technology                             | Version                |
 | --------------------- | -------------------------------------- | ---------------------- |
 | Runtime               | Node.js                                | >=26.0.0               |
-| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.18.0                 |
+| Package Manager       | Yarn 4 (Berry, via corepack from npm)  | 4.18.0                 |
 | Language              | TypeScript                             | 7.0.2                  |
 | HTTP Framework        | Fastify                                | 5.12.1                 |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.2 + admin-tools 1.31 + ui 2.53.3 |
@@ -623,7 +623,7 @@ Dockerfile; it has the specific rules and what has already been tried and does n
 
 ```bash
 # 1. Install
-corepack enable && yarn install
+npm install -g corepack && corepack enable && yarn install
 
 # 2. Start infrastructure (postgres + postgres-temporal + temporal + garage)
 cp .env.example .env    # Fill in CONFIG_ENCRYPTION_KEY, SEED_ADMIN_PASSWORD, and optionally

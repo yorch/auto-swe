@@ -2,6 +2,13 @@
 FROM node:26-alpine AS builder
 WORKDIR /app
 
+# node:26 ships no Corepack: it was removed from the Node distribution in Node
+# 25, so the image has no `yarn` on PATH and every `yarn` call below exits 127.
+# Only the shim is missing — the Yarn release itself is vendored in
+# .yarn/releases and pinned by `packageManager` + `.yarnrc.yml`'s `yarnPath`, so
+# the shim's own version is immaterial and is left to float.
+RUN npm install -g corepack@latest && corepack enable
+
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases
 COPY packages/cli/package.json packages/cli/
@@ -31,6 +38,9 @@ RUN yarn workspace @auto-swe/shared db:generate \
 # ── Stage 2: Production dependencies only ──
 FROM node:26-alpine AS prod-deps
 WORKDIR /app
+
+# No Corepack in node:26 — see the builder stage above.
+RUN npm install -g corepack@latest && corepack enable
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases
