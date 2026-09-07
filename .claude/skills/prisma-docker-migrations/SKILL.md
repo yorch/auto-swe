@@ -46,7 +46,14 @@ These live in the same 3-stage build (builder → prod-deps → runtime) and bre
   rewrites every file's metadata into a new layer, storing the whole tree — `node_modules`
   included — twice.
 - **Root `package.json` must be in the runtime image** so workspace symlinks resolve.
-- **No `corepack enable` in the runtime stage** — it only runs `node`.
+- **Install Corepack in every stage that runs `yarn`, and in no other.** `node:26` ships none —
+  it left the Node distribution in Node 25 — so a builder or prod-deps stage without
+  `npm install -g corepack@<pinned> && corepack enable` fails at the first `yarn` line with
+  **exit 127**. The runtime stages must NOT have it: they only run `node`.
+  Corepack does not reuse the vendored `.yarn/releases` copy — it fetches the `packageManager`
+  version from `repo.yarnpkg.com` first, and `yarnPath` only redirects afterwards — so the build
+  needs network to that host. Pin the version: the layer sits before the `COPY` and caches, so
+  `@latest` silently changes on a cache miss.
 
 ## Preferred deployment shape
 

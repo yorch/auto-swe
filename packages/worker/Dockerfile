@@ -2,17 +2,21 @@
 FROM node:26-alpine AS builder
 WORKDIR /app
 
-# node:26 ships no Corepack: it was removed from the Node distribution in Node
-# 25, so the image has no `yarn` on PATH and every `yarn` call below exits 127.
+# node:26 ships no Corepack — it left the Node distribution in Node 25 — so the
+# image has no `yarn` on PATH and every `yarn` call below exits 127.
 #
-# Corepack does NOT reuse the vendored .yarn/releases copy, despite it being
-# right there. It resolves `packageManager` and downloads that Yarn from
-# repo.yarnpkg.com first; only once it execs does `.yarnrc.yml`'s `yarnPath`
-# redirect into the vendored file. So this line costs two build-time fetches and
-# makes the build depend on that host. What it does not affect is which Yarn
-# runs — `packageManager` and `yarnPath` pin that from both directions — which
-# is why the Corepack version itself is left to float.
-RUN npm install -g corepack@latest && corepack enable
+# Installing it back is not free. Corepack resolves `packageManager` and fetches
+# that Yarn from repo.yarnpkg.com BEFORE anything reads .yarnrc.yml; only then
+# does `yarnPath` redirect execution into the vendored .yarn/releases copy, so
+# the fetched Yarn is downloaded and never run. The vendored release does not
+# make this build hermetic — it makes the fetched version irrelevant. Note that
+# `npmMinimalAgeGate` gates neither fetch: it is a Yarn-side resolution setting,
+# so it covers neither the npm install below nor Corepack's own download.
+#
+# Pinned rather than floating because this layer sits before the COPY and caches:
+# on `@latest` the version would freeze at whatever was current when the layer
+# was first built and then jump silently on any cache miss.
+RUN npm install -g corepack@0.36.0 && corepack enable
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases
@@ -44,8 +48,9 @@ RUN yarn workspace @auto-swe/shared db:generate \
 FROM node:26-alpine AS prod-deps
 WORKDIR /app
 
-# No Corepack in node:26 — see the builder stage above.
-RUN npm install -g corepack@latest && corepack enable
+# No Corepack in node:26, and the same unused yarnpkg.com fetch — see the
+# builder stage above.
+RUN npm install -g corepack@0.36.0 && corepack enable
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases
@@ -64,6 +69,12 @@ RUN yarn workspaces focus @auto-swe/worker --production \
 # worker died at startup with:
 #   Error loading shared library ld-linux-x86-64.so.2 ... core-bridge/.../index.node
 # `gcompat` is not enough: the shim loads but then fails symbol relocation.
+#
+# Moving this tag from 24 to 26 also crossed a Debian major — bookworm (glibc
+# 2.36) to trixie (glibc 2.41) — which the diff does not show. Nothing here
+# apt-installs, so there is no pinned package to break, and glibc is backward
+# compatible so the `-gnu` core-bridge prebuild still loads; recorded because a
+# future OS-level surprise in this stage will not look Node-related.
 FROM node:26-slim
 
 # Worker needs Docker CLI to manage workspace containers (DinD). Compose adds
