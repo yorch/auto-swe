@@ -2,7 +2,7 @@
 
 `auto-swe` — a thin command-line client over the gateway REST API for submitting
 work requests and managing workflow templates, runs, personal access tokens,
-bundles, and eval datasets. ESM, Node 24+.
+bundles, and eval datasets. ESM, Node 26+.
 
 ## Install / build
 

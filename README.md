@@ -74,7 +74,7 @@ For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per
 
 ## Prerequisites
 
-- Node.js ≥ 24.0.0
+- Node.js ≥ 26.0.0
 - Yarn 4 via corepack (`corepack enable`)
 - Docker + Docker Compose
 
