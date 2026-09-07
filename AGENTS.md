@@ -251,7 +251,7 @@ accept a self-hosted base URL on a private or internal address.
 |---|---|---|
 | `budgetTiers` (6 columns → nested `{ tier: { inputTokens, outputTokens } }`) | STANDARD / LARGE / EPIC caps | `costTracking.ts` (`resolveBudgetTiers()`, falls back to `BUDGET_LIMITS`) |
 | `maxTddIterations` / `maxEvalIterations` | 5 / 3 | `executeImplementation.ts` TDD loop / `evalHarness.ts` |
-| `workspaceMemory` / `workspaceCpus` / `workspacePidsLimit` / `workspaceImage` | `4g` / 2 / 512 / `node:26-alpine` | `workspace.ts` container caps + default base image (an explicit `image` arg still wins) |
+| `workspaceMemory` / `workspaceCpus` / `workspacePidsLimit` / `workspaceImage` | `4g` / 2 / 512 / `node:24-alpine` | `workspace.ts` container caps + default base image (an explicit `image` arg still wins) |
 | `lessonRetrievalLimit` / `lessonRetrievalThreshold` | 5 / 0.7 | `executeImplementation.ts` `retrieveSimilarLessons` |
 | `evalHealthMaxFlakeRate` / `evalHealthMaxStaleRate` / `evalHealthMinKappa` / `evalJudgeThreshold` | 0.1 / 0.1 / 0.4 / 0.5 | eval health gates / `runEvalNode.ts` judge scorer |
 | `ciWaitMode` / `ciPollIntervalSec` / `ciPollGraceSec` / `ciPollDeadlineSec` | `signal` / 15 / 60 / 14400 | CI wait strategy. **Nullable** — a null column falls back to `CI_WAIT_MODE` / `CI_POLL_*`, so a deployment driving these from the environment keeps working until an admin saves |
