@@ -1,5 +1,5 @@
 # ── Stage 1: Build ──
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 
 COPY package.json yarn.lock .yarnrc.yml ./
@@ -29,7 +29,7 @@ RUN yarn workspace @auto-swe/shared db:generate \
   && yarn workspace @auto-swe/gateway build
 
 # ── Stage 2: Production dependencies only ──
-FROM node:24-alpine AS prod-deps
+FROM node:26-alpine AS prod-deps
 WORKDIR /app
 
 COPY package.json yarn.lock .yarnrc.yml ./
@@ -44,7 +44,7 @@ RUN yarn workspaces focus @auto-swe/gateway --production \
   && mkdir -p packages/shared/node_modules packages/gateway/node_modules
 
 # ── Stage 3: Runtime ──
-FROM node:24-alpine
+FROM node:26-alpine
 WORKDIR /app
 
 ARG APP_VERSION=unknown
