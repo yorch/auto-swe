@@ -117,6 +117,16 @@ export function renderAuthoringCatalog(catalog: AuthoringCatalog): string {
       for (const img of images) {
         lines.push(`- ${img}`);
       }
+      // The allowlist is a list of names, so the model cannot tell which of them
+      // carries which package manager — and the built-in gate commands are all
+      // `yarn`, so guessing wrong produces a node that exits 127 rather than one
+      // that fails honestly. Recent Node images ship npm alone; Corepack left
+      // the Node distribution in Node 25.
+      lines.push(
+        'Assume an image provides only what its base ships. Recent Node images provide ' +
+          '`npm` but NOT `yarn` or `pnpm`, so prefer `npm`/`npx` in a shell command unless ' +
+          'you have picked an image you know carries the other.'
+      );
     } else {
       lines.push('No images are allowlisted for this team — avoid shell/containerStep nodes.');
     }

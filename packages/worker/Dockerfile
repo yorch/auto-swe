@@ -1,6 +1,24 @@
 # ── Stage 1: Build ──
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
+
+# node:26 ships no Corepack — it left the Node distribution in Node 25 — so the
+# image has no `yarn` on PATH and every `yarn` call below exits 127.
+#
+# The missing piece is only the NAME. .yarn/releases/yarn-4.18.0.cjs is already
+# a complete entry point: mode 755, `#!/usr/bin/env node` shebang, and it runs
+# offline on a stock node:26-alpine with no Corepack present. So this shim is
+# the whole fix, and it keeps the build hermetic — installing Corepack instead
+# would fetch it from npm and then fetch a second Yarn from repo.yarnpkg.com
+# that `yarnPath` guarantees is never executed. Neither of those fetches is
+# covered by `npmMinimalAgeGate`, which is a Yarn-side resolution setting.
+#
+# The glob avoids restating the version here; .yarn/releases holds exactly one
+# release, and `yarnPath` in .yarnrc.yml is the thing that pins it. The shim
+# resolves its target at invocation, not at build, so it may sit before the COPY
+# and keep this layer cacheable.
+RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+      > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases
@@ -29,8 +47,12 @@ RUN yarn workspace @auto-swe/shared db:generate \
     && yarn workspace @auto-swe/worker build
 
 # ── Stage 2: Production dependencies only ──
-FROM node:24-alpine AS prod-deps
+FROM node:26-alpine AS prod-deps
 WORKDIR /app
+
+# No `yarn` in node:26 — same vendored-release shim as the builder stage above.
+RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+      > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases
@@ -49,7 +71,13 @@ RUN yarn workspaces focus @auto-swe/worker --production \
 # worker died at startup with:
 #   Error loading shared library ld-linux-x86-64.so.2 ... core-bridge/.../index.node
 # `gcompat` is not enough: the shim loads but then fails symbol relocation.
-FROM node:24-slim
+#
+# Moving this tag from 24 to 26 also crossed a Debian major — bookworm (glibc
+# 2.36) to trixie (glibc 2.41) — which the diff does not show. Nothing here
+# apt-installs, so there is no pinned package to break, and glibc is backward
+# compatible so the `-gnu` core-bridge prebuild still loads; recorded because a
+# future OS-level surprise in this stage will not look Node-related.
+FROM node:26-slim
 
 # Worker needs Docker CLI to manage workspace containers (DinD). Compose adds
 # the host Docker socket group at runtime with DOCKER_GID. Taken from the

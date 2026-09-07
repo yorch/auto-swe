@@ -39,7 +39,7 @@
     "keys:rotate": "yarn workspace @auto-swe/shared keys:rotate"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=26.0.0"
   },
   "resolutions": {
     "next/postcss": "8.5.26"

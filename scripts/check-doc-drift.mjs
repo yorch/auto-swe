@@ -270,7 +270,7 @@ const VERSION = '(\\d+(?:\\.\\d+)*)';
 // and `.node-version` owns the Node major. The tech-stack tables and the
 // deployment runbook restate both, so derive them the same way as the npm
 // versions above. A claim passes when either side is a dot-boundary prefix of
-// the other ("admin-tools 1.31" for 1.31.2; "Node.js >=24.0.0" for 24).
+// the other ("admin-tools 1.31" for 1.31.2; "Node.js >=26.0.0" for 26).
 // ---------------------------------------------------------------------------
 
 const composeSrc = read('docker-compose.infra.yml') + read('docker-compose.app.yml');
@@ -286,6 +286,25 @@ const imageTag = (image) => {
 };
 const nodeMajor = read('.node-version').trim();
 
+/**
+ * Major of the default agent workspace image, from the `resolveWorkflowDefaults`
+ * fallback that the worker actually reads. Tracked separately from `nodeMajor`
+ * because the sandbox agents work inside is not upgraded in lockstep with the
+ * services: it lagged deliberately when node:26 dropped the Corepack-provided
+ * `yarn`/`pnpm` shims that agents need for Yarn and pnpm target repos.
+ */
+const workspaceImageMajor = (() => {
+  const src = read('packages/shared/src/lib/systemConfig.ts');
+  const m = src.match(/workspaceImage:\s*row\?\.workspaceImage\s*\?\?\s*'node:(\d+)-alpine'/);
+  if (!m) {
+    throw new Error(
+      'could not find the workspaceImage default in packages/shared/src/lib/systemConfig.ts — ' +
+        'update this matcher if the resolver changed shape'
+    );
+  }
+  return m[1];
+})();
+
 const IMAGE_DEPS = [
   { actual: imageTag('temporalio/server'), name: 'temporalio/server' },
   { actual: imageTag('temporalio/admin-tools'), name: 'temporalio/admin-tools' },
@@ -296,7 +315,7 @@ const IMAGE_DEPS = [
 ];
 const IMAGE_TAG = '([\\w][\\w.-]*)';
 
-/** Either side may be the truncated one: "1.31" ~ "1.31.2", and "24.0.0" ~ "24". */
+/** Either side may be the truncated one: "1.31" ~ "1.31.2", and "26.0.0" ~ "26". */
 const versionsAgree = (a, b) => isVersionPrefix(a, b) || isVersionPrefix(b, a);
 
 const checkImageVersions = (file, line, lineNo) => {
@@ -329,7 +348,7 @@ const checkImageVersions = (file, line, lineNo) => {
       });
     }
   }
-  // Node: "Node.js >=24.0.0", "Node.js ≥ 24", "node:24-alpine".
+  // Node: "Node.js >=26.0.0", "Node.js ≥ 26".
   for (const m of line.matchAll(
     new RegExp(`\\bNode(?:\\.js)?\\s+(?:>=|≥)?\\s*v?${VERSION}`, 'gi')
   )) {
@@ -337,13 +356,19 @@ const checkImageVersions = (file, line, lineNo) => {
       versionFailures.push({ actual: nodeMajor, file, line: lineNo, name: 'Node.js', text: m[0] });
     }
   }
-  for (const m of line.matchAll(/\bnode:(\d+)-alpine/g)) {
-    if (m[1] !== nodeMajor) {
+  // The agent workspace base image is NOT the platform's Node major. It is an
+  // independent knob — the image agent-authored commands run inside — and it is
+  // deliberately allowed to lag `.node-version`, so it is checked against its
+  // own source of truth (the `resolveWorkflowDefaults` fallback) rather than
+  // against the runtime the services are built on. `-slim` counts too: the
+  // `-alpine`-only form let a stale `node:24-slim` through unnoticed.
+  for (const m of line.matchAll(/\bnode:(\d+)-(?:alpine|slim)\b/g)) {
+    if (m[1] !== workspaceImageMajor) {
       versionFailures.push({
-        actual: nodeMajor,
+        actual: workspaceImageMajor,
         file,
         line: lineNo,
-        name: 'node image',
+        name: 'workspace image',
         text: m[0],
       });
     }
@@ -514,6 +539,10 @@ const checkSettingKeys = (file, line, lineNo) => {
 const targets = [
   'AGENTS.md',
   'README.md',
+  // Added after its "Node >= 24" survived a whole-repo version sweep: it is a
+  // living doc that tells a human which runtime to install, and it was the one
+  // such doc CI never read.
+  'CONTRIBUTING.md',
   'packages/cli/README.md',
   ...readdirSync(join(ROOT, 'docs'))
     .filter((f) => f.endsWith('.md'))
@@ -770,7 +799,14 @@ if (versionFailures.length > 0) {
   for (const v of versionFailures) {
     console.error(`  ${v.file}:${v.line}`);
     console.error(`    claims "${v.text}" but ${v.name} is ${v.actual}`);
-    console.error('    source of truth: package.json / docker-compose.*.yml / .node-version\n');
+    // The workspace image is the one claim NOT derived from a manifest — it
+    // comes from the resolver the worker reads, and it tracks `.node-version`
+    // only by coincidence.
+    console.error(
+      v.name === 'workspace image'
+        ? '    source of truth: packages/shared/src/lib/systemConfig.ts (resolveWorkflowDefaults)\n'
+        : '    source of truth: package.json / docker-compose.*.yml / .node-version\n'
+    );
   }
   console.error('Bump the doc to match the manifest. A truncated version is fine when it is a');
   console.error('prefix of the real one ("Fastify 5.11" for 5.11.0).\n');

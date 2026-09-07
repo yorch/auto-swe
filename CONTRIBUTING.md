@@ -7,7 +7,7 @@ Thanks for contributing! This file is intentionally short — **[`AGENTS.md`](./
 Follow the Local Development Quickstart in [`AGENTS.md` §8](./AGENTS.md#8-local-development-quickstart) (or the shorter version in [`README.md`](./README.md)):
 
 ```bash
-corepack enable && yarn install   # Node >= 24, Yarn 4 via corepack
+npm i -g corepack && corepack enable && yarn install   # Node >= 26, Yarn 4 via corepack
 cp .env.example .env              # fill in CONFIG_ENCRYPTION_KEY + SEED_ADMIN_PASSWORD
 yarn docker:infra:up              # postgres + temporal + garage
 yarn db:migrate && yarn db:generate && yarn db:seed

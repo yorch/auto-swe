@@ -1,6 +1,24 @@
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 
 WORKDIR /app
+
+# node:26 ships no Corepack — it left the Node distribution in Node 25 — so the
+# image has no `yarn` on PATH and every `yarn` call below exits 127.
+#
+# The missing piece is only the NAME. .yarn/releases/yarn-4.18.0.cjs is already
+# a complete entry point: mode 755, `#!/usr/bin/env node` shebang, and it runs
+# offline on a stock node:26-alpine with no Corepack present. So this shim is
+# the whole fix, and it keeps the build hermetic — installing Corepack instead
+# would fetch it from npm and then fetch a second Yarn from repo.yarnpkg.com
+# that `yarnPath` guarantees is never executed. Neither of those fetches is
+# covered by `npmMinimalAgeGate`, which is a Yarn-side resolution setting.
+#
+# The glob avoids restating the version here; .yarn/releases holds exactly one
+# release, and `yarnPath` in .yarnrc.yml is the thing that pins it. The shim
+# resolves its target at invocation, not at build, so it may sit before the COPY
+# and keep this layer cacheable.
+RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+      > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
 
 # Copy root package files
 COPY package.json yarn.lock .yarnrc.yml ./
@@ -44,7 +62,7 @@ RUN yarn workspace @auto-swe/shared db:generate \
   && mkdir -p packages/web/public
 
 # ── Runtime ──
-FROM node:24-alpine AS runtime
+FROM node:26-alpine AS runtime
 
 WORKDIR /app
 

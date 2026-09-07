@@ -15,6 +15,17 @@
  */
 
 export const BUILTIN_SHELL_IMAGES: readonly string[] = Object.freeze([
+  // Both Node majors are permitted, and neither is redundant. node:26-alpine
+  // matches the Node the services run on; node:24-alpine is still the workspace
+  // default, because it is the only one of the two carrying `yarn` — and
+  // `DEFAULT_COMMANDS` in the worker's qualityGates activity makes every
+  // built-in gate a `yarn` command, so a shell step on a yarn-less image fails
+  // with 127 rather than a real result.
+  //
+  // Dropping either entry would reject already-stored templates that pin it,
+  // and the allowlist is re-checked at container launch, so that rejection
+  // lands mid-run.
+  'node:26-alpine',
   'node:24-alpine',
   'python:3.13-alpine',
   'alpine:latest',

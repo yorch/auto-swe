@@ -1,0 +1,21 @@
+# Default executor image for Node.js projects
+FROM node:26-alpine
+
+# Install git (required for workspace operations)
+RUN apk add --no-cache git
+
+# Pre-install common global tools.
+#
+# Corepack is explicit now: node:24-alpine shipped `yarn`, `pnpm` and `corepack`
+# on PATH, and node:26-alpine ships none of them (removed from the Node
+# distribution in Node 25). Without this, an agent handed a Yarn or pnpm target
+# repo hits `yarn: not found` on its first install command.
+RUN npm install -g typescript corepack && corepack enable
+
+WORKDIR /workspace/target-repo
+
+# Hand ownership of the workspace tree to `node` so the executor can write files
+# at runtime (clone, build artifacts, etc.) without hitting EACCES.
+RUN mkdir -p /workspace && chown -R node:node /workspace
+
+USER node

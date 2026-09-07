@@ -74,15 +74,15 @@ For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per
 
 ## Prerequisites
 
-- Node.js ≥ 24.0.0
-- Yarn 4 via corepack (`corepack enable`)
+- Node.js ≥ 26.0.0
+- Yarn 4 via corepack (`npm install -g corepack && corepack enable`) — Node 26 no longer bundles corepack
 - Docker + Docker Compose
 
 ## Local development
 
 ```bash
 # 1. Install dependencies
-corepack enable && yarn install
+npm install -g corepack && corepack enable && yarn install
 
 # 2. Configure environment
 cp .env.example .env

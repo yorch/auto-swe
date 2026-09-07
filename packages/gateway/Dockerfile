@@ -1,6 +1,24 @@
 # ── Stage 1: Build ──
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
+
+# node:26 ships no Corepack — it left the Node distribution in Node 25 — so the
+# image has no `yarn` on PATH and every `yarn` call below exits 127.
+#
+# The missing piece is only the NAME. .yarn/releases/yarn-4.18.0.cjs is already
+# a complete entry point: mode 755, `#!/usr/bin/env node` shebang, and it runs
+# offline on a stock node:26-alpine with no Corepack present. So this shim is
+# the whole fix, and it keeps the build hermetic — installing Corepack instead
+# would fetch it from npm and then fetch a second Yarn from repo.yarnpkg.com
+# that `yarnPath` guarantees is never executed. Neither of those fetches is
+# covered by `npmMinimalAgeGate`, which is a Yarn-side resolution setting.
+#
+# The glob avoids restating the version here; .yarn/releases holds exactly one
+# release, and `yarnPath` in .yarnrc.yml is the thing that pins it. The shim
+# resolves its target at invocation, not at build, so it may sit before the COPY
+# and keep this layer cacheable.
+RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+      > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases
@@ -29,8 +47,12 @@ RUN yarn workspace @auto-swe/shared db:generate \
   && yarn workspace @auto-swe/gateway build
 
 # ── Stage 2: Production dependencies only ──
-FROM node:24-alpine AS prod-deps
+FROM node:26-alpine AS prod-deps
 WORKDIR /app
+
+# No `yarn` in node:26 — same vendored-release shim as the builder stage above.
+RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+      > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn/releases ./.yarn/releases
@@ -44,7 +66,7 @@ RUN yarn workspaces focus @auto-swe/gateway --production \
   && mkdir -p packages/shared/node_modules packages/gateway/node_modules
 
 # ── Stage 3: Runtime ──
-FROM node:24-alpine
+FROM node:26-alpine
 WORKDIR /app
 
 ARG APP_VERSION=unknown
