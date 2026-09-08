@@ -306,6 +306,13 @@ model Connection {
   apiKeyAuthTag    Bytes? @map("api_key_auth_tag")
   apiKeyVersion    Int    @default(1) @map("api_key_version")
 
+  /// Added late: this model was one of the few without them, and their absence
+  /// made a data migration undecidable — with no `updatedAt` there was no way to
+  /// tell a column value an operator chose from one a column default wrote, so
+  /// the migration that released `executor_image` had to clear both.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
   activeWorkflows       ActiveWorkflow[]
   pullRequests          PullRequest[]
   memoryItems           MemoryItem[]
