@@ -38,6 +38,12 @@ jobs:
       - name: Check documentation drift
         run: node scripts/check-doc-drift.mjs
 
+      # Same shape and the same reason: rules the type checker cannot state and
+      # the test suite does not execute, each one added after it shipped past a
+      # green suite. No dependencies, so it runs here rather than behind install.
+      - name: Check source invariants
+        run: node scripts/check-invariants.mjs
+
   ci:
     runs-on: ubuntu-latest
     timeout-minutes: 15
