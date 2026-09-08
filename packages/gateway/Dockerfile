@@ -13,11 +13,17 @@ WORKDIR /app
 # that `yarnPath` guarantees is never executed. Neither of those fetches is
 # covered by `npmMinimalAgeGate`, which is a Yarn-side resolution setting.
 #
-# The glob avoids restating the version here; .yarn/releases holds exactly one
-# release, and `yarnPath` in .yarnrc.yml is the thing that pins it. The shim
-# resolves its target at invocation, not at build, so it may sit before the COPY
-# and keep this layer cacheable.
-RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+# The release is resolved through `yarnPath`, which is the one place the version
+# is pinned, so it is not restated here. A glob over .yarn/releases also avoids
+# restating it but breaks the day that directory holds two files — `yarn set
+# version` leaves the old release behind — because the extra path is then passed
+# as argv[1]: `yarn --version` still answers correctly while real subcommands
+# fail with "No project found in .../yarn-<old>.cjs". Reading yarnPath cannot
+# land in that state.
+#
+# Resolution happens at invocation, not at build, so this may sit before the
+# COPY and keep the layer cacheable.
+RUN printf '%s\n' '#!/bin/sh' 'exec node "/app/$(sed -n "s/^yarnPath: *//p" /app/.yarnrc.yml)" "$@"' \
       > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
 
 COPY package.json yarn.lock .yarnrc.yml ./
@@ -51,7 +57,7 @@ FROM node:26-alpine AS prod-deps
 WORKDIR /app
 
 # No `yarn` in node:26 — same vendored-release shim as the builder stage above.
-RUN printf '#!/bin/sh\nexec node /app/.yarn/releases/yarn-*.cjs "$@"\n' \
+RUN printf '%s\n' '#!/bin/sh' 'exec node "/app/$(sed -n "s/^yarnPath: *//p" /app/.yarnrc.yml)" "$@"' \
       > /usr/local/bin/yarn && chmod +x /usr/local/bin/yarn
 
 COPY package.json yarn.lock .yarnrc.yml ./

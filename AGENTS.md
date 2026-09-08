@@ -154,6 +154,21 @@ prose has no compiler and status prose rots silently.
   the seeded agents, or any dependency that a doc names by version.
 - `docs/history/` is exempt from the check and from edits.
 
+### Source invariants
+
+`yarn invariants:check` is the same idea aimed at code instead of prose: rules the type checker
+cannot state and the test suite does not execute. It runs in CI beside the doc check, needs no
+install, and every rule in it is there because that bug already shipped past a green suite.
+
+| Invariant | Why a type or a test cannot catch it |
+|---|---|
+| No `createWorkspace(…)` call writes its image argument as a string literal | A literal wins `image ?? cfg.workspaceImage`, so the operator's configured image is silently never read. Both types are `string`; a wrong image is a working image. A named constant is allowed — it forces somewhere to write down why (`EVAL_WORKSPACE_IMAGE`) |
+| Every Dockerfile stage that runs `yarn` provisions one first — and no other stage does | `node:26` ships no Corepack and no `yarn`, so the stage exits 127 at build time. Nothing else runs inside an image, so tests, typecheck, lint and the doc check all stay green while no image can be built |
+
+Add a rule only when its violation is **silent** under the existing gates and **decidable** by
+reading the source. A rule the type system can enforce belongs in the type system; a rule a unit
+test can reach belongs in a unit test.
+
 ### Testing
 
 - **Framework:** Vitest (`vitest.config.ts` at root)
@@ -183,6 +198,7 @@ yarn lint                 # Lint + format check (biome check)
 yarn lint:fix             # Auto-fix safe lint issues + format (biome check --write)
 yarn format               # Format only (biome format --write)
 yarn docs:check           # Fail on stale countable claims in the living docs
+yarn invariants:check     # Fail on source rules the types and tests cannot reach (§5)
 
 # Docker (infra = postgres + postgres-temporal + temporal + garage; app = gateway + worker + web + otel-lgtm)
 yarn docker:infra:up      # Start infra services only
