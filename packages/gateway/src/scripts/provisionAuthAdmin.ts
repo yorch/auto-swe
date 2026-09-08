@@ -39,9 +39,9 @@ const auth = getAuth();
 const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@auto-swe.local';
 
 // `createLocalAccountIssuer('credential')` from @better-auth/core/db. Inlined
-// rather than imported: that entry point is internal to better-auth, and this
-// value is also hard-coded in the 00000000000002 backfill migration, so the two
-// have to be read side by side anyway.
+// rather than imported because that entry point is internal to better-auth, so
+// importing it would couple this script to an unstable path. The same value is
+// documented on `Account.issuer` in schema.prisma; keep the two in step.
 const CREDENTIAL_ISSUER = 'local:credential';
 
 async function main() {
