@@ -306,10 +306,11 @@ model Connection {
   apiKeyAuthTag    Bytes? @map("api_key_auth_tag")
   apiKeyVersion    Int    @default(1) @map("api_key_version")
 
-  /// Added late: this model was one of the few without them, and their absence
-  /// made a data migration undecidable — with no `updatedAt` there was no way to
-  /// tell a column value an operator chose from one a column default wrote, so
-  /// the migration that released `executor_image` had to clear both.
+  /// Added late: this model was one of the few without them, and the gap has
+  /// already cost something. Without `updatedAt` there is no way to tell a
+  /// column value an operator chose from one a column default wrote, which
+  /// makes any "clear the rows nobody set" question undecidable — as it was for
+  /// `executorImage` below.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -335,7 +336,7 @@ model Connection {
 /// (`toRepoId` null, `toRef` set) — a detected dependency on a package whose repo is
 /// not onboarded yet. Uniqueness, the no-self-edge rule, the shape guard, and the
 /// status/source enums are partial-index / CHECK constraints in the hand-written
-/// migration `00000000000002_repo_dependencies` (Prisma's DSL can't express them).
+/// migration `00000000000001_custom_constraints_and_indexes` (Prisma’s DSL cannot express them).
 model RepoDependency {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   fromRepoId    String      @map("from_repo_id") @db.Uuid
