@@ -281,7 +281,12 @@ model Connection {
   githubApiUrl         String? @map("github_api_url")
   teamId               String  @map("team_id") @db.Uuid
   team                 Team    @relation(fields: [teamId], references: [id], onDelete: Restrict)
-  executorImage        String? @default("node:24-alpine") @map("executor_image")
+  /// Per-connection base image override. NULL means "inherit", and it must stay
+  /// NULL-able with NO column default: a default writes a literal into every row
+  /// the create path omits, which makes it indistinguishable from a deliberate
+  /// pin and silently shadows the `workspaceImage` Tier-2 default the worker
+  /// resolves at /admin/workflow.
+  executorImage        String? @map("executor_image")
   isActive             Boolean @default(true) @map("is_active")
   consolidationEnabled Boolean @default(true) @map("consolidation_enabled")
   /// Optional per-connection overrides for phase-2 quality-gate commands. Shape:

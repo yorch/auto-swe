@@ -93,7 +93,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     authedCloneUrl,
     previousCodeResult.branch,
     repo.defaultBranch,
-    repo.executorImage ?? 'node:24-alpine'
+    repo.executorImage ?? undefined
   );
 
   const tracer = new AgentTracer();

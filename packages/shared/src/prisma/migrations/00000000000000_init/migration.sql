@@ -144,7 +144,7 @@ CREATE TABLE "connections" (
     "github_url" TEXT,
     "github_api_url" TEXT,
     "team_id" UUID NOT NULL,
-    "executor_image" TEXT DEFAULT 'node:24-alpine',
+    "executor_image" TEXT,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "consolidation_enabled" BOOLEAN NOT NULL DEFAULT true,
     "gate_commands" JSONB,

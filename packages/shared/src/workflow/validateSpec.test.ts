@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BUILTIN_SHELL_IMAGES } from './shellImageAllowlist.js';
 import { parseWorkflowSpec } from './spec.js';
 import { BUILTIN_TEMPLATES } from './templates/index.js';
 import { validateSpec } from './validateSpec.js';
@@ -149,6 +150,31 @@ describe('validateSpec', () => {
       const r = validateSpec(tmpl.spec);
       expect(r.errors, `${tmpl.name}: ${JSON.stringify(r.errors)}`).toEqual([]);
     }
+  });
+
+  it('every built-in template picks a shell image from the built-in allowlist', () => {
+    // `validateSpec` deliberately leaves image checks to run time (see its
+    // header): the effective allowlist is per-team, so a static validator
+    // cannot decide it. That is right for user specs and wrong for seeded
+    // ones — a built-in template ships to every team, so the only allowlist it
+    // can rely on is the built-in set, and that IS decidable here.
+    //
+    // Nothing checked it before, and MIGRATION_SPEC shipped pinned to
+    // `node:24-slim`. The allowlist is enforced when the container launches,
+    // so the seeded template was rejected mid-run, every run — while the
+    // "every built-in template passes validation" test above stayed green.
+    const offenders: string[] = [];
+    for (const tmpl of BUILTIN_TEMPLATES) {
+      for (const [nodeId, node] of Object.entries(tmpl.spec.nodes)) {
+        if (node.type !== 'shell' && node.type !== 'containerStep') {
+          continue;
+        }
+        if (!BUILTIN_SHELL_IMAGES.includes(node.image)) {
+          offenders.push(`${tmpl.name}.${nodeId} → ${node.image}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   it('warns on an unknown step name', () => {

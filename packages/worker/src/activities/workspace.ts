@@ -290,6 +290,14 @@ export async function createWorkspace(
    * workflow default (`workspaceImage`, default `node:24-alpine`) is used, so a
    * caller that passes nothing gets the GLOBAL config image; callers passing an
    * explicit `executorImage` still override it.
+   *
+   * Pass `repo.executorImage ?? undefined`, never `repo.executorImage ?? '<some
+   * image>'`. A literal here is not a fallback — it is a value, so it wins the
+   * `??` below and `workspaceImage` is never consulted. Every caller used to do
+   * exactly that, which made the admin's /admin/workflow setting unreachable
+   * while both this comment and the docs said otherwise. The one deliberate
+   * exception is the eval harness, which pins its image for benchmark
+   * comparability and says so at the call site.
    */
   image?: string,
   /**

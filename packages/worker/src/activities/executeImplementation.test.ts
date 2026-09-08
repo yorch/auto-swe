@@ -104,6 +104,7 @@ vi.mock('./workspace.js', () => ({
 import { currentAttempt } from '../lib/activityContext.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { executeImplementation } from './executeImplementation.js';
+import { createWorkspace } from './workspace.js';
 
 const REQUEST: RepoWorkRequest = {
   description: 'Add a health endpoint',
@@ -152,6 +153,28 @@ describe('executeImplementation cross-repo context', () => {
   it('leaves the prompt unchanged when the graph is empty', async () => {
     await executeImplementation(REQUEST);
     expect(systemPrompt()).toBe('BASE_PROMPT');
+  });
+
+  it('leaves the image undefined when the connection pins none, so the config default applies', async () => {
+    // The 4th argument must be `undefined`, not a literal. `createWorkspace`
+    // resolves `image ?? cfg.workspaceImage`, so ANY string here wins the `??`
+    // and the operator's /admin/workflow setting is never read — which is
+    // exactly how it was silently unreachable on every workspace path.
+    await executeImplementation(REQUEST);
+    expect(vi.mocked(createWorkspace)).toHaveBeenCalled();
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[3]).toBeUndefined();
+  });
+
+  it('passes the connection executorImage through when one is pinned', async () => {
+    prismaMock.connection.findUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      executorImage: 'ghcr.io/acme/executor:9',
+      id: 'repo-1',
+      organizationName: 'acme',
+      repoName: 'api',
+    });
+    await executeImplementation(REQUEST);
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[3]).toBe('ghcr.io/acme/executor:9');
   });
 
   it('skips the graph read when the step opts out', async () => {
