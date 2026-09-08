@@ -34,6 +34,27 @@ import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { type LanguageModel, resolveModel } from '../lib/models.js';
 import { createWorkspace, type Workspace } from './workspace.js';
 
+/**
+ * Base image for eval workspaces — pinned, and the only `createWorkspace` call
+ * in the codebase that does not inherit the operator's configured image.
+ *
+ * That is the same frozen-fixture reasoning as `EvalCase.baselineSha`: a
+ * benchmark score is comparable against its own history only if the environment
+ * it ran in did not move. So this workspace deliberately ignores the
+ * connection's `executorImage` and the `workspaceImage` Tier-2 default, both of
+ * which an operator can change at any time.
+ *
+ * Changing this constant silently rebases every stored eval score onto a
+ * different environment — regressions and improvements measured across the
+ * change are not comparable. Treat it as a benchmark epoch, not a config knob:
+ * if it must move, expect to re-baseline.
+ *
+ * It is a named constant rather than an inline literal so the shape of the
+ * exception is greppable, and so `scripts/check-invariants.mjs` can hold every
+ * other call site to inheriting without maintaining a list of exemptions.
+ */
+export const EVAL_WORKSPACE_IMAGE = 'node:24-alpine';
+
 export interface EvalCaseRow {
   id: string;
   repoUrl: string;
@@ -121,18 +142,11 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
   let workspace: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;
   try {
-    // The image is pinned rather than inherited, and that is deliberate — it is
-    // the same frozen-fixture reasoning as the `baselineSha` on the next line.
-    // A benchmark case is only comparable against its own history if the
-    // environment it ran in did not move, so this one workspace does NOT follow
-    // the connection's `executorImage` or the `workspaceImage` default the way
-    // every production path does. Changing it silently rebases every stored
-    // eval score onto a different environment.
     workspace = await createWorkspace(
       caseRow.repoUrl,
       'eval-candidate',
       'main',
-      'node:24-alpine',
+      EVAL_WORKSPACE_IMAGE,
       caseRow.baselineSha
     );
 
