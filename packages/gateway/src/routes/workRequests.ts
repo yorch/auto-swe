@@ -24,6 +24,7 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -345,7 +346,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           : {
               activeWorkflows: {
                 some: {
-                  repository: { team: { memberships: { some: { userId: user.sub } } } },
+                  repository: reachableConnections(user),
                 },
               },
             }),

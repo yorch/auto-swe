@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { sendConflict } from '../lib/conflict.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
+import { memberTeams } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { teamScopedConfigRoutes } from './modelConfig.js';
 
@@ -149,7 +150,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       const where: Prisma.TeamWhereInput = {
         isActive: true,
         ...(user.role !== 'ADMIN' && {
-          memberships: { some: { userId: user.sub } },
+          ...memberTeams(user),
         }),
       };
 

@@ -5,6 +5,7 @@ import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import type { WorkRequestScheduleInput } from '../plugins/temporal.js';
 import { resolveDefaultTemplate } from './workRequests.js';
@@ -235,10 +236,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
     const rows = await fastify.prisma.scheduledWorkRequest.findMany({
       include: scheduleInclude,
       orderBy: { createdAt: 'desc' },
-      where:
-        user.role === 'ADMIN'
-          ? {}
-          : { repository: { team: { memberships: { some: { userId: user.sub } } } } },
+      where: user.role === 'ADMIN' ? {} : { repository: reachableConnections(user) },
     });
     const statuses = await Promise.all(
       rows.map(async (row) => {

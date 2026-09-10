@@ -2,6 +2,7 @@ import { Role } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { memberOrgs } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateBaselineBody = z.object({
@@ -46,7 +47,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
           user.role === Role.ADMIN
             ? { orgId: request.query.orgId }
             : {
-                organization: { memberships: { some: { userId: user.sub } } },
+                organization: memberOrgs(user),
                 orgId: request.query.orgId,
               },
       });
@@ -132,7 +133,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
             ? { id: request.params.id }
             : {
                 id: request.params.id,
-                organization: { memberships: { some: { userId: user.sub } } },
+                organization: memberOrgs(user),
               },
       });
       if (!existing) {

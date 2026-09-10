@@ -26,6 +26,7 @@ import {
   verifySlackSignature,
 } from '../lib/slack.js';
 import { isTerminalSignalError } from '../lib/temporalErrors.js';
+import { memberTeams } from '../lib/tenantScope.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
@@ -1393,7 +1394,7 @@ async function listVisibleTemplates(
     user.role === 'ADMIN'
       ? {}
       : {
-          OR: [{ teamId: null }, { team: { memberships: { some: { userId: user.id } } } }],
+          OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }],
         };
   // `where` is `{}` for a platform admin — the deliberate cross-tenant branch.
   const rows = await asPlatformAdmin(
@@ -1688,7 +1689,7 @@ async function handleRunModalSubmission(
         status: 'ACTIVE',
         ...(user.role === 'ADMIN'
           ? {}
-          : { OR: [{ teamId: null }, { team: { memberships: { some: { userId: user.id } } } }] }),
+          : { OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }] }),
       },
     });
     if (!tpl?.activeVersion) {

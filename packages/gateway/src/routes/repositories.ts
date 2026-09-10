@@ -9,6 +9,7 @@ import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
+import { memberTeams } from '../lib/tenantScope.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -152,7 +153,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       const where: Prisma.ConnectionWhereInput = {
         isActive: true,
         ...(user.role !== Role.ADMIN && {
-          team: { memberships: { some: { userId: user.sub } } },
+          team: memberTeams(user),
         }),
       };
 

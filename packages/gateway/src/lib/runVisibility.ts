@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { memberTeams, reachableConnections } from './tenantScope.js';
 
 /** A caller that needs a run- or step-level visibility predicate. */
 export interface VisibilityActor {
@@ -21,12 +22,12 @@ export function buildWorkflowRunVisibilityFilter(
   return {
     OR: [
       { template: { teamId: null } },
-      { template: { team: { memberships: { some: { userId: actor.sub } } } } },
+      { template: { team: memberTeams(actor) } },
       {
         workRequest: {
           activeWorkflows: {
             some: {
-              repository: { team: { memberships: { some: { userId: actor.sub } } } },
+              repository: reachableConnections(actor),
             },
           },
         },

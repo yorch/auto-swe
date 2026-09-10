@@ -32,6 +32,7 @@ import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
+import { memberOrgs, memberTeams } from '../lib/tenantScope.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
@@ -405,7 +406,7 @@ function teamMembershipFilter(user: {
   return {
     OR: [
       { teamId: null }, // Global templates visible to everyone
-      { team: { memberships: { some: { userId: user.sub } } } },
+      { team: memberTeams(user) },
     ],
   };
 }
@@ -424,7 +425,7 @@ function templateWriteFilter(user: {
     return {};
   }
   return {
-    team: { memberships: { some: { userId: user.sub } } },
+    team: memberTeams(user),
     teamId: { not: null },
   };
 }
@@ -604,7 +605,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         rowsQuery,
         fastify.prisma.humanErrorBaseline.findMany({
           select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
-          where: { organization: { memberships: { some: { userId: user.sub } } } },
+          where: { organization: memberOrgs(user) },
         }),
       ]);
       const isTruncated = rows.length > ANALYTICS_ROW_CAP;
