@@ -642,6 +642,37 @@ const missingGaps = gapCheckedDocs.filter((d) => !GAP_HEADING.test(read(d)));
 const staleExemptions = [...GAP_EXEMPT_DOCS].filter((d) => !existsSync(join(ROOT, d)));
 
 // ---------------------------------------------------------------------------
+// Repository paths named in prose
+//
+// A doc that says "see `packages/worker/src/lib/config/cache.ts`" is pointing
+// at a file, and moving that file leaves the sentence reading perfectly while
+// the path resolves to nothing. The relative-link check below covers markdown
+// links; it never looks inside backticks, which is where most of these live.
+// ---------------------------------------------------------------------------
+
+/** A backticked path rooted at a real top-level directory in this repo. */
+const REPO_PATH = /`((?:packages|scripts|infra|site|docs)\/[A-Za-z0-9_./@-]+)`/g;
+
+const pathFailures = [];
+for (const file of targets) {
+  read(file)
+    .split('\n')
+    .forEach((line, i) => {
+      for (const m of line.matchAll(REPO_PATH)) {
+        const p = m[1].replace(/\/$/, '');
+        // A trailing `*` is a glob standing in for a set of files.
+        if (p.includes('*')) {
+          continue;
+        }
+        if (existsSync(join(ROOT, p))) {
+          continue;
+        }
+        pathFailures.push({ file, line: i + 1, path: p });
+      }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard routes named in prose
 //
 // A doc that tells an operator to go to `/admin/integrations` is quoting a URL
@@ -860,6 +891,7 @@ const clean =
   versionFailures.length === 0 &&
   proseFailures.length === 0 &&
   routeFailures.length === 0 &&
+  pathFailures.length === 0 &&
   settingFailures.length === 0;
 
 if (clean) {
@@ -875,6 +907,7 @@ if (clean) {
   console.log(`  no forbidden status prose (${FORBIDDEN_PROSE.length} rules).`);
   console.log(`  every setting key named in prose resolves (${settingKeys.size} registered).`);
   console.log(`  every dashboard route named in prose exists (${appRoutes.size} rendered).`);
+  console.log('  every repository path named in prose exists.');
   for (const [label, value] of facts) {
     console.log(`  ${String(value).padStart(3)}  ${label}`);
   }
@@ -912,6 +945,15 @@ if (missingGaps.length > 0) {
     '\nEvery capability doc states its own known gaps, so they stay next to the feature.'
   );
   console.error('Add a "## Limitations" section, or "Not built" if nothing else fits.\n');
+}
+
+if (pathFailures.length > 0) {
+  console.error(`Stale repository paths — ${pathFailures.length} in the living docs.\n`);
+  for (const p of pathFailures) {
+    console.error(`  ${p.file}:${p.line}`);
+    console.error(`    names ${p.path}, which does not exist`);
+  }
+  console.error('\n  Point at where the file lives now, or drop the reference.\n');
 }
 
 if (routeFailures.length > 0) {

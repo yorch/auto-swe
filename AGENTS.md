@@ -80,7 +80,7 @@ Run `ls packages/<name>/src` for the actual layout — only non-obvious rules li
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
 | `packages/cli`     | `auto-swe` CLI                                       | ESM Node 26+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API. `bundle init/validate/sign` is token-free local authoring over `@auto-swe/sdk`; `bundles list/export/install` hits the admin API |
 | `packages/sdk`     | `@auto-swe/sdk` — bundle authoring SDK               | Pure, I/O-free helpers over `@auto-swe/shared/bundle`: `defineAgent`/`defineSkill`/`defineTemplate`/`defineContainerStep`, `defineBundle` (+ content hash), `signBundle` (ed25519), `validateBundle` |
-| `site`             | Public docs site (Astro + Starlight), published to GitHub Pages | **A workspace, not a package** — the only one outside `packages/*`. Owns no content: `scripts/syncDocs.mjs` copies `docs/`, the root `README.md`, and `packages/cli/README.md` into `src/content/docs/` at build time, and that output is gitignored. `scripts/manifest.mjs` is the single source of what is published and where; a doc missing from its `SIDEBAR` fails the build |
+| `site`             | Public docs site (Astro + Starlight), published to GitHub Pages | **A workspace, not a package** — the only one outside `packages/*`. Owns no content: `site/scripts/syncDocs.mjs` copies `docs/`, the root `README.md`, and `packages/cli/README.md` into `site/src/content/docs/` at build time, and that output is gitignored. `site/scripts/manifest.mjs` is the single source of what is published and where; a doc missing from its `SIDEBAR` fails the build |
 
 Top-level files that matter:
 
@@ -252,7 +252,7 @@ fallback. **Never read these from `process.env` directly in new code.**
 | `/studio/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds | `resolveGitHubConfig()` |
 | `/studio/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
 | `/studio/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
-| `/studio/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveTrackerConfig()` |
+| `/studio/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveIssueTrackerConfig()` |
 | `/studio/integrations → Knowledge Base` | Confluence / Notion connector | `resolveKnowledgeBaseConfig()` |
 | `/studio/integrations → Figma` | read-only Figma design connector | `resolveFigmaConfig()` |
 | `/studio/integrations → OAuth` | Google OAuth client ID/secret; Okta SSO issuer + client ID/secret | `resolveGoogleOAuthConfig()`, `resolveOktaOAuthConfig()` |

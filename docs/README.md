@@ -88,7 +88,7 @@ built, not proven, or deliberately constrained, and `yarn docs:check` fails if o
 | Overall maturity and what is unproven | [product-overview.md §8](./product-overview.md#8-maturity) |
 | A specific capability's gaps | That capability's own **Limitations** section |
 
-So: for "what are the known gaps in X", read `docs/X.md` and jump to the end. For "what is this
+So: for "what are the known gaps in X", open that capability’s own doc and jump to the end. For "what is this
 system not, and what has not been proven", read `product-overview.md` §7 and §8.
 
 ## Conventions
