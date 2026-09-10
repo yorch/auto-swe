@@ -145,6 +145,11 @@ does not empty anyone's dashboard — rows keep their previous answers until the
 stopped refreshing disappears from listings rather than being served indefinitely from a cache
 nobody is updating.
 
+**An unreadable gate configuration does not silently disable the gate.** Each process remembers the
+last configuration it read successfully and keeps applying it, so a database hiccup cannot turn
+enforcement off underneath a running deployment. Only a process that has never managed to read the
+configuration falls back to `off`, and such a process has nothing to enforce yet.
+
 ---
 
 ## 8. What is gated
@@ -161,6 +166,8 @@ Gating a single route would leave the others as ways around it.
 | `POST /scheduled-work-requests` | yes | `write` |
 | `POST /scheduled-work-requests/:id/fire` | yes | `write` |
 | `POST /prd-runs` (per repository) | yes | `write` |
+| Slack `/auto-swe run` modal | yes | `write` |
+| `POST /human-steps/:id/respond` and the Slack HITL buttons | yes | `read` |
 | `GET /repositories` | yes | `read` |
 | `GET /workflows`, `GET /workflows/:id` | yes | `read` |
 | `GET /runs` and the run viewer | yes | `read` |
@@ -169,6 +176,7 @@ Gating a single route would leave the others as ways around it.
 | `GET /repo-dependencies` | yes | `read` |
 | `GET /lessons` and lesson search | yes | `read` |
 | `GET /epics` | yes | `read` |
+| Slack run-status buttons (`canSeeRun`) | yes | `read` |
 
 Platform `ADMIN`s bypass the gate, consistent with every other check in the gateway.
 
@@ -203,6 +211,16 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   all.
 - **Team membership remains the outer bound.** The gate can only remove access. A user with GitHub
   admin rights on a repository still sees nothing unless they are a member of the owning team.
+- **Non-git connections are exempt, necessarily.** A `Connection` is also how an MCP server and
+  other non-git integrations are stored, and none of them can ever have a permission row — the
+  sweep, the webhook refresh and the lookup all restrict to `git_repo`. They are therefore matched
+  unconditionally. This is not a strictness the gate declines to apply; requiring a row would make
+  every non-git connection vanish for every non-admin with no way to get it back.
+- **Some repository-access decisions are made in JavaScript, not in a `where` clause.** Roughly a
+  dozen call sites select membership rows and test the array length in code rather than filtering
+  the query. Extending the shared predicate does not reach those, so each had to be gated by hand
+  — which is exactly the shape of mistake that produced the gaps this change had to fix twice.
+  Converting them to predicates would make the next such change safe by construction.
 - **Editing or deleting a schedule is not gated.** Neither causes a push, and refusing a delete
   would strand a schedule its owner can no longer stop. A schedule created before access was
   revoked keeps firing until someone deletes it — the gate is checked when it is created and when

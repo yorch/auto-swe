@@ -90,8 +90,14 @@ export interface ScmProvider {
   createOrUpdatePullRequest(input: CreatePullRequestInput): Promise<PullRequestRef>;
   /** Web URL for an existing PR. */
   prUrl(repo: RepoRef, prNumber: number): Promise<string>;
-  /** Fetch CI logs for the fix loop (provider-specific URL/auth handling). */
-  fetchCiLogs(logsUrl: string): Promise<string>;
+  /**
+   * Fetch CI logs for the fix loop (provider-specific URL/auth handling).
+   *
+   * `repo` is optional because a logs URL can reach the fix loop without one,
+   * but passing it is what lets the credential come from that repository's own
+   * installation rather than the instance default.
+   */
+  fetchCiLogs(logsUrl: string, repo?: RepoRef): Promise<string>;
   /**
    * Fetch the current CI verdict for a ref (branch or SHA) by combining the
    * Checks API and the legacy Statuses API. Used by the poll-based CI wait when

@@ -151,9 +151,11 @@ export async function resolveGitHubToken(
 
   if (useApp) {
     if (!installationId) {
-      throw new Error(
-        'GitHub App auth requires appId, appPrivateKey, and an installation id to all be configured'
-      );
+      // Typed, not a plain Error. A repository with no installation of its own
+      // in a deployment that leaves the singleton id empty is a configuration
+      // condition, and the worker maps only this class to a non-retryable
+      // Temporal failure — a plain Error would be retried to exhaustion.
+      throw new GitHubTokenMissingError();
     }
     const apiUrl = target.apiUrl ?? config.apiUrl;
     // Key on the installation *and* where it lives: the same numeric id on two

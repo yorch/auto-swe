@@ -1,6 +1,11 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchGithubLogin, storeGithubLogin, syncGithubLoginForAccount } from './githubIdentity.js';
+import {
+  clearGithubLogin,
+  fetchGithubLogin,
+  storeGithubLogin,
+  syncGithubLoginForAccount,
+} from './githubIdentity.js';
 
 const API = 'https://api.github.com';
 
@@ -74,13 +79,33 @@ describe('storeGithubLogin', () => {
     });
   });
 
-  it('refuses to move a login already held by another user', async () => {
+  it('refuses to move a login already held by another user, and clears the old one', async () => {
     // Stealing it would transfer that user's repository access to this one —
-    // the precise thing the unique index exists to stop.
-    const update = vi.fn().mockRejectedValue(Object.assign(new Error('unique'), { code: 'P2002' }));
+    // the precise thing the unique index exists to stop. Clearing matters just
+    // as much: keeping the previous login would leave this user authenticating
+    // as the account they just linked while the platform resolved their
+    // repository permissions as the previous one. That is fail-closed for the
+    // other user and fail-OPEN for this one.
+    const update = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('unique'), { code: 'P2002' }))
+      .mockResolvedValueOnce({});
     await expect(storeGithubLogin(prismaWith(update), 'user-2', 'octocat')).resolves.toEqual({
       login: null,
       reason: 'claimed-by-another-user',
+    });
+    expect(update).toHaveBeenNthCalledWith(2, {
+      data: { githubLogin: null },
+      where: { id: 'user-2' },
+    });
+  });
+
+  it('clears a login outright', async () => {
+    const update = vi.fn().mockResolvedValue({});
+    await clearGithubLogin(prismaWith(update), 'user-1');
+    expect(update).toHaveBeenCalledWith({
+      data: { githubLogin: null },
+      where: { id: 'user-1' },
     });
   });
 

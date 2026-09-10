@@ -36,10 +36,15 @@ function installationTarget(
   repo: RepoRef,
   ghConfig: { apiUrl: string }
 ): { installationId: string | null; apiUrl: string } {
-  return {
-    apiUrl: repo.apiUrl ?? ghConfig.apiUrl,
-    installationId: repo.installationId ?? null,
-  };
+  // The host has to match the installation, not the repository. A repo with a
+  // GitHub Enterprise `apiUrl` override but no installation of its own takes
+  // its id from the singleton, and the singleton's installation lives on the
+  // singleton's host — sending that id to the enterprise host asks a different
+  // GitHub instance about an installation it has never heard of.
+  if (!repo.installationId) {
+    return { apiUrl: ghConfig.apiUrl, installationId: null };
+  }
+  return { apiUrl: repo.apiUrl ?? ghConfig.apiUrl, installationId: repo.installationId };
 }
 
 /**
@@ -188,7 +193,7 @@ export class GitHubScmProvider implements ScmProvider {
     };
   }
 
-  async fetchCiLogs(logsUrl: string): Promise<string> {
+  async fetchCiLogs(logsUrl: string, repo?: RepoRef): Promise<string> {
     const ghConfig = await resolveGitHubConfig();
     const target = resolveCiLogsTarget(logsUrl, trustedGitHubOrigins(ghConfig));
     if (!target.ok) {
@@ -197,7 +202,14 @@ export class GitHubScmProvider implements ScmProvider {
     let githubToken: string | null = null;
     if (target.trusted) {
       try {
-        githubToken = await resolveGitHubToken(ghConfig);
+        // `repo` is optional because a logs URL can arrive without one, but
+        // when it is available the token must come from that repository's
+        // installation — the singleton's credential cannot read a repo on a
+        // different installation, and the fix loop would run blind on a 404.
+        githubToken = await resolveGitHubToken(
+          ghConfig,
+          repo ? installationTarget(repo, ghConfig) : {}
+        );
       } catch (err) {
         if (!(err instanceof GitHubTokenMissingError)) {
           // Real auth error (e.g. malformed App credentials) — surface it so the

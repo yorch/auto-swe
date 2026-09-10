@@ -41,12 +41,42 @@ export interface RepoAccessGate {
  * Behind the setting registry's ~30s cache, so calling this per request is a
  * memory read in the steady state rather than a query.
  */
+/**
+ * The last gate this process successfully read.
+ *
+ * A config read that fails must not silently turn enforcement off. Defaulting
+ * to `off` on a blip would allow launches that were being refused a second
+ * earlier, which is the opposite of what §7 of the doc promises and is
+ * invisible to the person it lets through. Reusing the last known-good value
+ * keeps a deployment enforcing across a database hiccup, and a process that has
+ * never read the config has nothing to enforce anyway.
+ */
+let lastKnownGate: RepoAccessGate | null = null;
+
+/** Drop the remembered gate. Exported for tests. */
+export function resetRepoAccessGateCache(): void {
+  lastKnownGate = null;
+}
+
 export async function resolveRepoAccessGate(): Promise<RepoAccessGate> {
   const cfg = await resolveSettings(['repoAccess.mode', 'repoAccess.viewStaleAfterHours'], {});
-  return {
+  lastKnownGate = {
     mode: cfg['repoAccess.mode'] as RepoAccessMode,
     staleAfterHours: cfg['repoAccess.viewStaleAfterHours'],
   };
+  return lastKnownGate;
+}
+
+/**
+ * Resolve the gate, falling back to the last value this process read rather
+ * than to `off`. Returns null only when the config has never been readable.
+ */
+export async function resolveRepoAccessGateOrLastKnown(): Promise<RepoAccessGate | null> {
+  try {
+    return await resolveRepoAccessGate();
+  } catch {
+    return lastKnownGate;
+  }
 }
 
 /** The verdict a launch attempt produced. */

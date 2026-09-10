@@ -1,6 +1,7 @@
+import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { getScmProvider } from '../lib/scm/index.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
 
 /**
@@ -8,11 +9,22 @@ import { runImplementerFixSession } from './implementerSession.js';
  * (and truncation to the last 50KB to fit in LLM context) lives in the
  * ScmProvider implementation.
  */
-export async function fetchCILogs(logsUrl?: string): Promise<string> {
+export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<string> {
   if (!logsUrl) {
     return 'No logs URL provided by CI webhook';
   }
-  return getScmProvider().fetchCiLogs(logsUrl);
+  // Resolve the repository so the credential comes from ITS installation. A
+  // repo on a non-default installation is unreadable with the singleton's
+  // token, and the failure is a 404 that leaves the fix loop reasoning about
+  // an error message instead of the build output.
+  const repo = repoId
+    ? await prisma.connection.findUnique({
+        include: { installation: { select: { installationId: true } } },
+        where: { id: repoId },
+      })
+    : null;
+  const repoRef = repo?.organizationName && repo.repoName ? toRepoRef(repo) : undefined;
+  return getScmProvider(repoRef).fetchCiLogs(logsUrl, repoRef);
 }
 
 /**

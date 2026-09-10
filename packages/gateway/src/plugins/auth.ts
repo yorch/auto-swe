@@ -6,7 +6,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import type { RepoAccessGate } from '../lib/repoAccessGate.js';
-import { resolveRepoAccessGate } from '../lib/repoAccessGate.js';
+import { resolveRepoAccessGateOrLastKnown } from '../lib/repoAccessGate.js';
 
 // ── JWT Configuration ──
 
@@ -412,16 +412,17 @@ export function requireAuth(options: RBACOptions = {}) {
     }
     request.user = payload;
 
-    // A failure to read the gate must not fail the request: defaulting to
-    // `off` keeps the pre-existing team-membership behaviour, which is the
-    // safe direction here — the alternative is a config blip emptying every
-    // authenticated user's dashboard at once.
-    try {
-      request.repoAccessGate = await resolveRepoAccessGate();
-    } catch (err) {
-      request.log.warn({ err }, 'repo access gate config unreadable; treating as off');
-      request.repoAccessGate = { mode: 'off', staleAfterHours: 0 };
+    // A failure to read the gate must not fail the request, but it must not
+    // silently disable enforcement either — that would allow launches that were
+    // being refused a second earlier, invisibly to the person it lets through.
+    // The resolver falls back to the last value this process read; only a
+    // process that has never managed to read it falls all the way to `off`,
+    // and such a process has nothing to enforce yet.
+    const gate = await resolveRepoAccessGateOrLastKnown();
+    if (!gate) {
+      request.log.warn('repo access gate config has never been readable; treating as off');
     }
+    request.repoAccessGate = gate ?? { mode: 'off', staleAfterHours: 0 };
 
     // Platform role check
     if (options.requiredRole && !hasRole(payload.role, options.requiredRole)) {

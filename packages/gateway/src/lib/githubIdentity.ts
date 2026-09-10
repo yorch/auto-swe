@@ -76,10 +76,28 @@ export async function storeGithubLogin(
     return { login };
   } catch (err) {
     if (isUniqueConstraintError(err)) {
+      // Clear rather than keep. Keeping would leave this user authenticating as
+      // the account they just linked while the platform resolved their
+      // repository permissions as the previous one — fail-closed for the other
+      // user and fail-OPEN for this one. A null login denies under enforcement
+      // and is visible to the operator, which is the right side to land on.
+      await clearGithubLogin(prisma, userId);
       return { login: null, reason: 'claimed-by-another-user' };
     }
     throw err;
   }
+}
+
+/**
+ * Forget a user's GitHub identity.
+ *
+ * Called when the GitHub account is unlinked and when a login turns out to be
+ * held by someone else. A login left behind keeps backing repository access
+ * with nothing standing behind it, and GitHub usernames are re-registrable
+ * after release — so a stale one can eventually name a different person.
+ */
+export async function clearGithubLogin(prisma: PrismaClient, userId: string): Promise<void> {
+  await prisma.user.update({ data: { githubLogin: null }, where: { id: userId } });
 }
 
 /**

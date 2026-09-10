@@ -115,12 +115,24 @@ export function permissionRequirement(
     return {};
   }
   return {
-    repoAccess: {
-      some: {
-        checkedAt: { gte: staleCutoff(gate.staleAfterHours) },
-        permission: { in: [...VIEWABLE] },
-        userId: actor.sub,
+    // The requirement applies to git repositories only. A `Connection` is also
+    // how an MCP server, an HTTP API and other non-git integrations are stored,
+    // and none of them can ever have a permission row: the sweep, the webhook
+    // refresh and the lookup all restrict to `git_repo`. Requiring a row from
+    // them would not be strict, it would be broken — every non-git connection
+    // would disappear for every non-admin the moment enforcement is switched
+    // on, with no way to get it back.
+    OR: [
+      { type: { not: 'git_repo' } },
+      {
+        repoAccess: {
+          some: {
+            checkedAt: { gte: staleCutoff(gate.staleAfterHours) },
+            permission: { in: [...VIEWABLE] },
+            userId: actor.sub,
+          },
+        },
       },
-    },
+    ],
   };
 }

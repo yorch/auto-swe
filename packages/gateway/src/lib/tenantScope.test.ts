@@ -4,6 +4,17 @@ import { memberOrgs, memberTeams, reachableConnections } from './tenantScope.js'
 
 const actor = { sub: '11111111-1111-1111-1111-111111111111' };
 
+/** The `repoAccess` branch of the enforced filter's OR. */
+function permissionBranch(filter: { OR?: unknown[] }): { some?: Record<string, unknown> } {
+  const branch = (filter.OR ?? []).find(
+    (b) => typeof b === 'object' && b !== null && 'repoAccess' in b
+  ) as { repoAccess: { some?: Record<string, unknown> } } | undefined;
+  if (!branch) {
+    throw new Error('enforced filter has no repoAccess branch');
+  }
+  return branch.repoAccess;
+}
+
 /**
  * These are one-line predicates; what is worth pinning is not their shape but
  * the property the rest of the system leans on — that a query carrying one
@@ -54,10 +65,20 @@ describe('tenant scope predicates', () => {
     // they do not belong to, whatever GitHub says.
     const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 });
     expect(filter.team).toEqual(memberTeams(actor));
-    expect(filter.repoAccess?.some).toMatchObject({
+    expect(permissionBranch(filter).some).toMatchObject({
       permission: { in: ['READ', 'WRITE', 'ADMIN'] },
       userId: actor.sub,
     });
+  });
+
+  it('exempts non-git connections, which can never have a permission row', () => {
+    // A Connection is also how an MCP server and other non-git integrations are
+    // stored, and the sweep, the webhook refresh and the lookup all restrict to
+    // git_repo. Requiring a row from them would not be strict, it would make
+    // every one of them vanish for every non-admin on the day enforcement is
+    // switched on, with no way to get it back.
+    const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 });
+    expect(filter.OR).toContainEqual({ type: { not: 'git_repo' } });
   });
 
   it('excludes a cached answer older than the staleness bound', () => {
@@ -65,14 +86,14 @@ describe('tenant scope predicates', () => {
     // credential, a paused sweep — would be served from a cache nobody updates.
     const before = Date.now();
     const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 24 });
-    const cutoff = filter.repoAccess?.some?.checkedAt as { gte: Date };
+    const cutoff = permissionBranch(filter).some?.checkedAt as { gte: Date };
     expect(cutoff.gte.getTime()).toBeGreaterThanOrEqual(before - 24 * 3600_000 - 5_000);
     expect(cutoff.gte.getTime()).toBeLessThanOrEqual(Date.now() - 24 * 3600_000 + 5_000);
   });
 
   it('never treats a recorded NONE as viewable', () => {
     const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 });
-    const levels = (filter.repoAccess?.some?.permission as { in: string[] }).in;
+    const levels = (permissionBranch(filter).some?.permission as { in: string[] }).in;
     expect(levels).not.toContain('NONE');
   });
 

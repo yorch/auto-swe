@@ -398,7 +398,12 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       const { action, value } = request.body;
 
       const result = await resolveHitlStep(
-        { log: request.log, prisma: fastify.prisma, temporal: fastify.temporal },
+        {
+          gate: request.repoAccessGate,
+          log: request.log,
+          prisma: fastify.prisma,
+          temporal: fastify.temporal,
+        },
         request.params.id,
         action,
         value,

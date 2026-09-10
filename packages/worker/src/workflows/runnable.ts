@@ -673,7 +673,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'fetchCILogs',
-    ({ inputs }) => githubActivities.fetchCILogs(inputs.logsUrl as string | undefined),
+    ({ request, inputs }) =>
+      githubActivities.fetchCILogs(
+        inputs.logsUrl as string | undefined,
+        request.repoId ?? undefined
+      ),
   ],
   ['resolveCiWaitConfig', () => ciConfigActivities.resolveCiWaitConfig()],
   [
