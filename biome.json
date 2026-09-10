@@ -127,6 +127,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["site/src/**/*.astro"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "off"
+          }
+        }
+      }
     }
   ],
   "root": true,

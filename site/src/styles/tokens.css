@@ -1,0 +1,111 @@
+/*
+ * Design tokens.
+ *
+ * The palette is drawn from what this system actually does rather than from a
+ * brand colour picked in the abstract. A run here is a durable state machine
+ * that advances, halts at a gate, and waits for a person; the colours name
+ * those states, and the one that carries the site's identity is the gate —
+ * amber, the colour of stopped-and-waiting. That is the product's whole
+ * argument, so it is the thing the eye should learn first.
+ *
+ * The surface is a cool technical paper rather than a warm cream. This is a
+ * document people read for a long time about infrastructure that runs in a
+ * cold room, and warm paper says something the software does not.
+ */
+
+/* Self-hosted, so the published site makes no third-party font request. */
+@import '@fontsource-variable/ibm-plex-sans';
+@import '@fontsource/ibm-plex-sans-condensed/600.css';
+@import '@fontsource/ibm-plex-sans-condensed/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+
+:root {
+  /* --- Surface and ink ------------------------------------------------- */
+  --paper: #f0f2f1;
+  --paper-raised: #f8f9f9;
+  --paper-sunk: #e4e8e7;
+  --ink: #14181b;
+  --ink-muted: #4a5459;
+  /* 4.93:1 on --paper. The obvious lighter grey measured 4.08 and fails AA at
+     the sizes this is actually used at — sidebar group headings, table-of-
+     contents links, the run caption. */
+  --ink-faint: #5f696e;
+  --rule: #cdd3d1;
+  --rule-strong: #aab3b0;
+
+  /* --- Run states ------------------------------------------------------ */
+  /*
+   * The gate is the identity colour: a run stopped, waiting for a person.
+   *
+   * It comes in two values because one cannot do both jobs. `--gate` is the
+   * signal — marks, rules, and display type, where 3:1 is the bar and the
+   * colour needs to stay bright enough to read as a warning. `--gate-text` is
+   * for the same colour used as ordinary running text, where the bar is 4.5:1
+   * and the brighter value measures 3.74.
+   */
+  --gate: #b26b00;
+  --gate-text: #8f5600;
+  --gate-bright: #d98a12;
+  --gate-wash: #f7ecd8;
+  /* Text sitting on a gate-coloured fill. 6.0:1 here, 8.1:1 in dark. */
+  --on-gate: #ffffff;
+  /* The machine half — durable execution, infrastructure, the parts that run
+     without anyone watching. */
+  --steel: #3e5c6b;
+  --steel-wash: #e2eaee;
+  --pass: #3f6b4a;
+  --halt: #9c3c30;
+
+  --focus: var(--gate);
+
+  /* --- Type ------------------------------------------------------------ */
+  --font-body: 'IBM Plex Sans Variable', 'IBM Plex Sans', system-ui, sans-serif;
+  --font-display: 'IBM Plex Sans Condensed', 'IBM Plex Sans Variable', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+
+  /*
+   * A modular scale at 1.25, quantised to whole pixels at the small end where
+   * fractional sizes blur stems. Display sizes are condensed, so they can run
+   * larger than the scale would normally allow without eating the measure.
+   */
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.1875rem;
+  --step-2: 1.4375rem;
+  --step-3: 1.75rem;
+  --step-4: 2.25rem;
+  --step-5: clamp(2.5rem, 1.6rem + 4vw, 4rem);
+  --step-6: clamp(3rem, 1.4rem + 7vw, 6rem);
+
+  --measure: 68ch;
+}
+
+:root[data-theme='dark'] {
+  /*
+   * Not an inversion. A dark control room is blue-black rather than grey, the
+   * gate has to gain luminance to stay a signal at low ambient contrast, and
+   * the washes become tints of the ink rather than tints of white.
+   */
+  --paper: #0f1417;
+  --paper-raised: #161c20;
+  --paper-sunk: #0a0e10;
+  --ink: #e6eceb;
+  --ink-muted: #9aa8ac;
+  --ink-faint: #74838a;
+  --rule: #263036;
+  --rule-strong: #3a474e;
+
+  /* On a dark ground the signal value already measures 8.59:1, so the two
+     gate values converge and no separate text variant is needed. */
+  --gate: #e8a33c;
+  --gate-text: #e8a33c;
+  --gate-bright: #f5bc63;
+  --gate-wash: #2a2013;
+  --on-gate: #14181b;
+  --steel: #8fb4c6;
+  --steel-wash: #16242c;
+  --pass: #7fb08c;
+  --halt: #d98276;
+}

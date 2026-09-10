@@ -42,6 +42,41 @@ Adding a doc to `docs/` is enough to publish it, but it must also be placed in `
 still builds and still resolves by URL, so without that check nothing would notice that no reader
 can reach it.
 
+## The design
+
+The palette is named after what a run does rather than after a brand colour picked in the abstract.
+A run advances, halts at a gate, and waits for a person, and **amber is the gate** — stopped, waiting.
+It is the only accent with identity, and it appears where a person is involved: the halt in the hero,
+the current page on the sidebar rail, a doc's Limitations heading. Steel is the machine half. The
+surface is a cool technical paper rather than a warm cream, because this is a long document about
+infrastructure that runs in a cold room.
+
+Type is IBM Plex, all three widths: Condensed for headings, where a heavy condensed face reads as
+signage and buys width back so a long technical heading can be set large; Sans for body at a
+reading measure; Mono for code and nothing else. A monospaced micro-label is the reflex on a
+developer site and it says nothing true when the thing it labels is not code.
+
+Structure is used to carry meaning rather than to decorate:
+
+- **The sidebar is a rail with stops.** The current page is a solid bar on it in the gate colour,
+  the same language as a halted run, rather than a highlighted pill.
+- **Limitations sections are marked.** Every capability doc ends by stating what is not built, not
+  proven, or deliberately constrained, and CI fails a doc that drops it. That is an unusual promise
+  for a project to make, so it gets an amber rule instead of looking like one more heading near the
+  bottom of a long page.
+- **One heading rule, not two.** The docs put a `---` above most section headings and the heading
+  already carries a rule; the loose one is hidden, because the heading's rule belongs to a section
+  and a bare horizontal rule belongs to nothing.
+
+There is exactly one non-user-triggered animation on the site: the hero's rail draws itself down to
+the gate on load and stops there. It runs once, it is short, and it says the same thing the page
+says. `prefers-reduced-motion` skips it entirely.
+
+Every text and background pair is checked against WCAG AA. Two values exist only because of it:
+`--ink-faint` is darker than it looks like it wants to be (4.93:1, where the obvious lighter grey
+measured 4.08), and `--gate-text` is a darker gate for running text (5.25:1, where the signal value
+measures 3.74 and is fine for a mark but not for words).
+
 ## How it fits together
 
 | File | Does |
@@ -50,6 +85,9 @@ can reach it.
 | [`scripts/syncDocs.mjs`](./scripts/syncDocs.mjs) | Copies each source in, derives frontmatter from its H1 and lead paragraph, points "Edit this page" at the true source |
 | [`scripts/docLinks.mjs`](./scripts/docLinks.mjs) | Rewrites every filesystem-relative link: published targets become site URLs, everything else becomes a GitHub URL |
 | [`src/scripts/mermaidZoom.js`](./src/scripts/mermaidZoom.js) | Wraps each rendered diagram in a figure and adds the full-screen pan-and-zoom viewer |
+| [`src/styles/tokens.css`](./src/styles/tokens.css) | Colour, type, and scale, for both themes. Dark is designed, not inverted |
+| [`src/styles/custom.css`](./src/styles/custom.css) | Spends the tokens: Starlight variable mapping, then chrome and content |
+| [`src/components/Landing.astro`](./src/components/Landing.astro) | The landing page, hero included. The only hand-authored page on the site |
 | [`astro.config.mjs`](./astro.config.mjs) | Starlight and mermaid configuration; builds the sidebar from the manifest |
 
 The link policy is the opposite of the dashboard's, deliberately. `packages/web/src/lib/docLinks.ts`
