@@ -115,12 +115,15 @@ describe('verifyGithubLoginOwnership', () => {
     expect(deleteMany).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
   });
 
-  it('clears a login with no linked GitHub account behind it', async () => {
-    // The unlink case. A login left behind backs repository access with nothing
-    // standing behind it.
+  it('clears a login with no linked account, and calls it unlinked, not a takeover', async () => {
+    // A login left behind backs repository access with nothing standing behind
+    // it, so clearing is right. Reporting it as `reassigned` would not be: the
+    // caller raises a takeover alarm on that status, and an unlink whose hook
+    // failed is benign.
     findFirst.mockResolvedValue(null);
-    await expect(verifyGithubLoginOwnership(prisma(), args)).resolves.toMatchObject({
-      status: 'reassigned',
+    await expect(verifyGithubLoginOwnership(prisma(), args)).resolves.toEqual({
+      clearedLogin: 'octocat',
+      status: 'unlinked',
     });
     expect(update).toHaveBeenCalled();
   });

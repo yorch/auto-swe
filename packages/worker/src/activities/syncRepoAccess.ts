@@ -13,7 +13,10 @@
  * proportional to real reachability rather than to the size of the deployment.
  */
 import { prisma } from '@auto-swe/shared/db';
-import { verifyGithubLoginOwnership } from '@auto-swe/shared/lib/githubIdentityCheck';
+import {
+  GITHUB_ACCOUNT_API_URL,
+  verifyGithubLoginOwnership,
+} from '@auto-swe/shared/lib/githubIdentityCheck';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -45,6 +48,12 @@ export interface SyncRepoAccessResult {
    * by a re-registered username, which is worth an operator's attention.
    */
   reassignedLogins: number;
+  /**
+   * Users whose stored login had no GitHub account behind it — an unlink whose
+   * hook failed. Also cleared, but counted separately so a benign case does not
+   * inflate the takeover number above.
+   */
+  unlinkedLogins: number;
 }
 
 /**
@@ -65,6 +74,7 @@ export async function syncRepoAccess(
     reassignedLogins: 0,
     refreshed: 0,
     skippedRepos: 0,
+    unlinkedLogins: 0,
     unresolvedUsers: 0,
   };
 
@@ -142,19 +152,27 @@ export async function syncRepoAccess(
           continue;
         }
         const ownership = await verifyGithubLoginOwnership(prisma, {
-          // The singleton's host, never the repository's. A GitHub account is
-          // not repository-scoped: the stored account id came from the OAuth
-          // provider better-auth is configured against, which is this host. A
-          // repository with a GitHub Enterprise `githubApiUrl` override would
-          // otherwise have that host asked about a github.com account id, get
-          // a different answer or none, and the mismatch would CLEAR a
-          // perfectly valid login.
-          apiUrl: ghConfig.apiUrl,
+          // A fixed github.com base, not the repository's host and not the
+          // instance's. The stored account id comes from better-auth's built-in
+          // `github` provider, which always talks to github.com, while both of
+          // the other two are admin-settable to a GitHub Enterprise base — and
+          // asking Enterprise about a github.com account id compares different
+          // id spaces, which reads as a mismatch and CLEARS a valid login.
+          apiUrl: GITHUB_ACCOUNT_API_URL,
           login: user.githubLogin,
           token: platformToken,
           userId: user.id,
         });
-        verified.set(user.id, ownership.status !== 'reassigned');
+        verified.set(user.id, ownership.status === 'ok' || ownership.status === 'unverifiable');
+        if (ownership.status === 'unlinked') {
+          // A login with no account behind it — an unlink whose hook failed.
+          // Cleared, but not the takeover alarm below.
+          result.unlinkedLogins++;
+          log.info('repo access sync: cleared a GitHub login with no linked account behind it', {
+            clearedLogin: ownership.clearedLogin,
+            userId: user.id,
+          });
+        }
         if (ownership.status === 'reassigned') {
           result.reassignedLogins++;
           // Logged, not only traced. This activity runs from a Temporal

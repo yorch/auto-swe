@@ -14,7 +14,7 @@ function config(over: Partial<ResolvedGitHubConfig> = {}): ResolvedGitHubConfig 
   return {
     apiUrl: 'https://api.github.com',
     appId: '111',
-    appInstallationId: 'default-install',
+    appInstallationId: '900001',
     appPrivateKey: PEM,
     baseUrl: 'https://github.com',
     ...over,
@@ -50,15 +50,15 @@ afterEach(() => {
 describe('installation token resolution', () => {
   it('mints against the installation the caller names, not the singleton', async () => {
     const { calls } = mintingFetch();
-    await expect(resolveGitHubToken(config(), { installationId: 'acme-install' })).resolves.toBe(
-      'tok-acme-install'
+    await expect(resolveGitHubToken(config(), { installationId: '900002' })).resolves.toBe(
+      'tok-900002'
     );
-    expect(calls[0]).toContain('/app/installations/acme-install/access_tokens');
+    expect(calls[0]).toContain('/app/installations/900002/access_tokens');
   });
 
   it('falls back to the singleton installation when the caller names none', async () => {
     mintingFetch();
-    await expect(resolveGitHubToken(config())).resolves.toBe('tok-default-install');
+    await expect(resolveGitHubToken(config())).resolves.toBe('tok-900001');
   });
 
   it('caches per installation rather than in one shared slot', async () => {
@@ -66,8 +66,8 @@ describe('installation token resolution', () => {
     // installations evicted each other, so every alternating call paid a fresh
     // round-trip to GitHub — and under load, the rate limit.
     const { spy } = mintingFetch();
-    const a = { installationId: 'install-a' };
-    const b = { installationId: 'install-b' };
+    const a = { installationId: '900003' };
+    const b = { installationId: '900004' };
 
     await resolveGitHubToken(config(), a);
     await resolveGitHubToken(config(), b);
@@ -79,10 +79,10 @@ describe('installation token resolution', () => {
 
   it('never serves one installation the token of another', async () => {
     mintingFetch();
-    const a = await resolveGitHubToken(config(), { installationId: 'install-a' });
-    const b = await resolveGitHubToken(config(), { installationId: 'install-b' });
-    expect(a).toBe('tok-install-a');
-    expect(b).toBe('tok-install-b');
+    const a = await resolveGitHubToken(config(), { installationId: '900003' });
+    const b = await resolveGitHubToken(config(), { installationId: '900004' });
+    expect(a).toBe('tok-900003');
+    expect(b).toBe('tok-900004');
   });
 
   it('treats the same installation id on a different host as a different installation', async () => {
@@ -97,11 +97,11 @@ describe('installation token resolution', () => {
 
   it('re-mints when the App private key rotates', async () => {
     const { spy } = mintingFetch();
-    await resolveGitHubToken(config(), { installationId: 'install-a' });
+    await resolveGitHubToken(config(), { installationId: '900003' });
     const { privateKey: rotated } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const rotatedPem = rotated.export({ format: 'pem', type: 'pkcs8' }).toString();
     await resolveGitHubToken(config({ appPrivateKey: rotatedPem }), {
-      installationId: 'install-a',
+      installationId: '900003',
     });
     expect(spy).toHaveBeenCalledTimes(2);
   });
@@ -122,8 +122,8 @@ describe('installation token resolution', () => {
         );
       })
     );
-    await resolveGitHubToken(config(), { installationId: 'install-a' });
-    await resolveGitHubToken(config(), { installationId: 'install-a' });
+    await resolveGitHubToken(config(), { installationId: '900003' });
+    await resolveGitHubToken(config(), { installationId: '900003' });
     expect(calls).toHaveLength(2);
   });
 
@@ -131,7 +131,7 @@ describe('installation token resolution', () => {
     const { spy } = mintingFetch();
     await expect(
       resolveGitHubToken(config({ authMode: 'pat', token: 'ghp_x' }), {
-        installationId: 'install-a',
+        installationId: '900003',
       })
     ).resolves.toBe('ghp_x');
     expect(spy).not.toHaveBeenCalled();
@@ -153,6 +153,29 @@ describe('installation token resolution', () => {
     ).rejects.toBeInstanceOf(GitHubTokenMissingError);
   });
 
+  it('refuses a non-numeric installation id rather than interpolating it', async () => {
+    // GitHub installation ids are numeric. The per-installation rows are
+    // validated at the API, but the singleton `appInstallationId` is only
+    // length-checked, and a value with slashes would redirect the App JWT to a
+    // different path on the configured host.
+    const spy = mintingFetch().spy;
+    await expect(resolveGitHubToken(config({ appInstallationId: '1/../../evil' }))).rejects.toThrow(
+      /must be numeric/
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('does not double the slash when the api base ends in one', async () => {
+    const { spy } = mintingFetch();
+    await resolveGitHubToken(config({ apiUrl: 'https://ghe.example.com/api/v3/' }), {
+      apiUrl: 'https://ghe.example.com/api/v3/',
+      installationId: '900007',
+    });
+    expect(spy.mock.calls[0][0]).toBe(
+      'https://ghe.example.com/api/v3/app/installations/900007/access_tokens'
+    );
+  });
+
   it('surfaces a GitHub rejection rather than caching a failure', async () => {
     vi.stubGlobal(
       'fetch',
@@ -164,7 +187,7 @@ describe('installation token resolution', () => {
           })
       )
     );
-    await expect(resolveGitHubToken(config(), { installationId: 'x' })).rejects.toThrow(
+    await expect(resolveGitHubToken(config(), { installationId: '900009' })).rejects.toThrow(
       /installation token request failed: 401/
     );
   });

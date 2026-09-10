@@ -7,7 +7,10 @@
  * side that has the row in hand.
  */
 import type { PrismaClient } from '@auto-swe/shared';
-import { verifyGithubLoginOwnership } from '@auto-swe/shared/lib/githubIdentityCheck';
+import {
+  GITHUB_ACCOUNT_API_URL,
+  verifyGithubLoginOwnership,
+} from '@auto-swe/shared/lib/githubIdentityCheck';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { fetchRepoPermission, type PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -108,12 +111,12 @@ export async function verifiedGithubLoginFor(
     return null;
   }
   const ghConfig = await resolveGitHubConfig();
-  // The singleton's host and credential. A GitHub account is not
-  // repository-scoped, and the stored account id came from the OAuth provider
-  // configured against this host.
   const token = await resolveGitHubToken(ghConfig).catch(() => null);
   const ownership = await verifyGithubLoginOwnership(prisma, {
-    apiUrl: ghConfig.apiUrl,
+    // A fixed github.com base: the stored account id comes from better-auth's
+    // built-in `github` provider, which always talks to github.com, while the
+    // instance `apiUrl` is admin-settable to a GitHub Enterprise base.
+    apiUrl: GITHUB_ACCOUNT_API_URL,
     login,
     token,
     userId,

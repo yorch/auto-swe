@@ -32,6 +32,7 @@ vi.mock('../lib/githubAuth.js', () => ({
 
 const verifyGithubLoginOwnership = vi.fn();
 vi.mock('@auto-swe/shared/lib/githubIdentityCheck', () => ({
+  GITHUB_ACCOUNT_API_URL: 'https://api.github.com',
   verifyGithubLoginOwnership: (...a: unknown[]) => verifyGithubLoginOwnership(...a),
 }));
 
@@ -183,10 +184,12 @@ describe('syncRepoAccess', () => {
     });
   });
 
-  it('asks the instance host about a user, never a repository’s Enterprise host', async () => {
-    // A GitHub account is not repository-scoped. Asking a GHE host about a
-    // github.com account id yields a different answer or none, and the
-    // mismatch would clear a perfectly valid login.
+  it('asks github.com about a user, never a repository’s or the instance’s host', async () => {
+    // The stored account id comes from better-auth's built-in `github`
+    // provider, which always talks to github.com, while both the repository's
+    // and the instance's hosts are admin-settable to GitHub Enterprise. Asking
+    // Enterprise about a github.com account id compares different id spaces,
+    // which reads as a mismatch and clears a valid login.
     findMany.mockResolvedValue([
       repo([{ githubLogin: 'octocat', id: 'user-1' }], {
         githubApiUrl: 'https://ghe.example.com/api/v3',

@@ -22,11 +22,33 @@ import type { PrismaClient } from '../index.js';
 /** Wall-clock cap. This runs inside a sweep, so it must not stall it. */
 const LOOKUP_TIMEOUT_MS = 8_000;
 
+/**
+ * The host that answers about a GitHub *account*, as opposed to a repository.
+ *
+ * Fixed, not taken from configuration. `accounts.account_id` is written by
+ * better-auth's built-in `github` social provider, which takes only a client id
+ * and secret and always talks to github.com. The instance-wide `apiUrl` is
+ * admin-settable to a GitHub Enterprise `/api/v3` base, and asking that host
+ * about a github.com account id compares two different id spaces — which reads
+ * as a mismatch, and a mismatch clears a valid login.
+ *
+ * A consequence worth stating: on a GitHub Enterprise deployment no login is
+ * ever stored (the OAuth token 401s against the Enterprise API), so this check
+ * has nothing to verify there rather than verifying it wrongly.
+ */
+export const GITHUB_ACCOUNT_API_URL = 'https://api.github.com';
+
 export type LoginOwnershipResult =
   /** The login still resolves to this user's GitHub account. */
   | { status: 'ok' }
   /** The login now belongs to a different account. It has been cleared. */
   | { status: 'reassigned'; clearedLogin: string }
+  /**
+   * A login with no GitHub account behind it — an unlink whose hook failed.
+   * Cleared, but deliberately distinct from `reassigned`: the caller raises an
+   * alarm on a takeover, and a benign failed unlink must not trip it.
+   */
+  | { status: 'unlinked'; clearedLogin: string }
   /** GitHub could not be asked. Nothing was changed. */
   | { status: 'unverifiable'; reason: string };
 
@@ -100,11 +122,13 @@ export async function verifyGithubLoginOwnership(
     where: { providerId: 'github', userId: args.userId },
   });
   if (!account?.accountId) {
-    // No linked GitHub account, yet a login is recorded. That is the unlink
-    // case the account-delete hook is meant to handle; if one slipped past it,
-    // the login is backing access with nothing behind it.
+    // No linked GitHub account, yet a login is recorded. The account-delete
+    // hook handles the unlink and swallows its own failures, so this is the
+    // safety net for one that slipped past — the login would otherwise back
+    // repository access with nothing behind it. Reported as `unlinked` rather
+    // than `reassigned` so a failed unlink does not raise the takeover alarm.
     await clearGithubLogin(prisma, args.userId);
-    return { clearedLogin: args.login, status: 'reassigned' };
+    return { clearedLogin: args.login, status: 'unlinked' };
   }
 
   const currentOwner = await fetchGithubUserId(args.login, args.apiUrl, args.token);
