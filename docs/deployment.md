@@ -6,7 +6,7 @@ End-to-end runbook for taking auto-swe from a fresh clone to a running productio
 
 ## 0. What you're deploying
 
-Five long-running processes plus one Docker daemon:
+Six long-running processes plus one Docker daemon, and two more that are optional:
 
 | Service                    | Image                                              | Purpose                                                                |
 | -------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------- |
