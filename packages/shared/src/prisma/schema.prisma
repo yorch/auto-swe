@@ -800,6 +800,16 @@ model User {
   emailVerified Boolean  @default(false) @map("email_verified")
   image         String?
   slackId       String?  @unique @map("slack_id")
+  /// GitHub username (the `login`, not the numeric id), captured when the user
+  /// links a GitHub identity. The repo-permission projection is keyed on this:
+  /// GitHub's collaborator-permission endpoint addresses a user by login, and
+  /// better-auth stores only the numeric account id on `Account.accountId`, so
+  /// without this column there is no way to ask GitHub about a platform user
+  /// without first spending a round-trip to translate the id.
+  ///
+  /// Unique because one GitHub identity must not map to two platform users —
+  /// the projection would then grant one user's access to the other.
+  githubLogin   String?  @unique @map("github_login")
   role          Role     @default(ENGINEER)
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
