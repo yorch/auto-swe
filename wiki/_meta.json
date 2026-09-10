@@ -1,0 +1,175 @@
+{
+  "commit_sha": "b1d8930",
+  "commit_sha_full": "b1d893057ddb97835bbb37807122c8cf2a2d1126",
+  "framework": "Fastify 5 + Temporal + Next.js 16 (Yarn 4 monorepo)",
+  "generated_at": "2026-09-09",
+  "indexed_at": "2026-09-08T13:02:27-04:00",
+  "pages": [
+    {
+      "slug": "README",
+      "type": "overview"
+    },
+    {
+      "slug": "1-repository-structure",
+      "type": "category"
+    },
+    {
+      "slug": "2-shared-library",
+      "type": "category"
+    },
+    {
+      "slug": "2.1-data-model",
+      "type": "detail"
+    },
+    {
+      "slug": "2.2-workflow-spec-and-interpreter",
+      "type": "detail"
+    },
+    {
+      "slug": "2.3-configuration-and-settings",
+      "type": "detail"
+    },
+    {
+      "slug": "2.4-skills-and-security-scanners",
+      "type": "detail"
+    },
+    {
+      "slug": "3-gateway-api",
+      "type": "category"
+    },
+    {
+      "slug": "3.1-http-routes",
+      "type": "detail"
+    },
+    {
+      "slug": "3.2-authentication-and-rbac",
+      "type": "detail"
+    },
+    {
+      "slug": "3.3-github-and-webhooks",
+      "type": "detail"
+    },
+    {
+      "slug": "4-temporal-worker",
+      "type": "category"
+    },
+    {
+      "slug": "4.1-temporal-workflows",
+      "type": "detail"
+    },
+    {
+      "slug": "4.2-activities",
+      "type": "detail"
+    },
+    {
+      "slug": "4.3-agent-layer",
+      "type": "detail"
+    },
+    {
+      "slug": "4.4-docker-workspaces",
+      "type": "detail"
+    },
+    {
+      "slug": "4.5-observability-and-cost",
+      "type": "detail"
+    },
+    {
+      "slug": "5-web-dashboard",
+      "type": "category"
+    },
+    {
+      "slug": "5.1-app-routes-and-pages",
+      "type": "detail"
+    },
+    {
+      "slug": "5.2-components-and-state",
+      "type": "detail"
+    },
+    {
+      "slug": "6-cli",
+      "type": "category"
+    },
+    {
+      "slug": "7-bundle-sdk",
+      "type": "category"
+    },
+    {
+      "slug": "glossary",
+      "type": "glossary"
+    }
+  ],
+  "primary_language": "TypeScript",
+  "repo_url": "https://github.com/yorch/auto-swe",
+  "scope": "full",
+  "stats": {
+    "broken_citations": 0,
+    "broken_page_links": 0,
+    "citations": 1764,
+    "mermaid_diagrams": 37,
+    "pages": 24
+  },
+  "subsystems": [
+    {
+      "file_count": 211,
+      "has_tests": true,
+      "loc_estimate": 31613,
+      "name": "@auto-swe/shared",
+      "paths": ["packages/shared"],
+      "slug": "shared"
+    },
+    {
+      "file_count": 128,
+      "has_tests": true,
+      "loc_estimate": 42566,
+      "name": "@auto-swe/gateway",
+      "paths": ["packages/gateway"],
+      "slug": "gateway"
+    },
+    {
+      "file_count": 252,
+      "has_tests": true,
+      "loc_estimate": 45094,
+      "name": "@auto-swe/worker",
+      "paths": ["packages/worker"],
+      "slug": "worker"
+    },
+    {
+      "file_count": 254,
+      "has_tests": true,
+      "loc_estimate": 38419,
+      "name": "@auto-swe/web",
+      "paths": ["packages/web"],
+      "slug": "web"
+    },
+    {
+      "file_count": 22,
+      "has_tests": true,
+      "loc_estimate": 2793,
+      "name": "@auto-swe/cli",
+      "paths": ["packages/cli"],
+      "slug": "cli"
+    },
+    {
+      "file_count": 4,
+      "has_tests": true,
+      "loc_estimate": 344,
+      "name": "@auto-swe/sdk",
+      "paths": ["packages/sdk"],
+      "slug": "sdk"
+    }
+  ],
+  "verified_counts": {
+    "builtin_skills": 35,
+    "builtin_steps": 36,
+    "builtin_templates": 27,
+    "gateway_route_handlers": 228,
+    "prisma_enums": 13,
+    "prisma_models": 61,
+    "replay_fixtures": 13,
+    "scanner_patterns": 62,
+    "setting_registry_keys": 19,
+    "temporal_workflows": 17,
+    "workflow_node_types": 15
+  },
+  "version": "private/unversioned"
+}
