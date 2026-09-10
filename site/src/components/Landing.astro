@@ -11,6 +11,8 @@
  * The steps are the flagship template's real steps, not an illustration.
  */
 
+import SystemDiagram from './SystemDiagram.astro';
+
 const BASE = '/auto-swe';
 
 const run = [
@@ -122,6 +124,15 @@ const starting = [
         </li>
       </ol>
     </div>
+  </section>
+
+  <section class="band">
+    <h2 class="band__title">How it fits together</h2>
+    <p class="band__lede">
+      Your team works where it already works. auto-swe runs the workflow durably in between, and
+      touches your systems on the far side.
+    </p>
+    <SystemDiagram />
   </section>
 
   <section class="band">
@@ -411,6 +422,14 @@ const starting = [
 
   .band {
     margin-top: clamp(4rem, 8vw, 7rem);
+  }
+
+  .band__lede {
+    max-width: 58ch;
+    margin: -1rem 0 2rem;
+    font-size: var(--step-0);
+    line-height: 1.6;
+    color: var(--ink-muted);
   }
 
   .band__title {

@@ -1,0 +1,275 @@
+---
+/**
+ * High-level system diagram for the landing page.
+ *
+ * Hand-authored SVG rather than mermaid, for one measured reason: mermaid's
+ * chunks total ~1.1 MB and the landing page currently loads none of them. A
+ * diagram here would pull all of that onto the first page an evaluator opens,
+ * to draw nine boxes. This is a few KB, needs no JavaScript, and themes from
+ * the site's own variables.
+ *
+ * It is deliberately not the diagram in `docs/architecture.md`. That one is
+ * complete — sixteen nodes, every edge labelled — and belongs in a reference
+ * doc. This one answers a different question, which is the only one a first-time
+ * reader has: what are the pieces, and where does a person stand in relation to
+ * them.
+ *
+ * The three bands are the whole idea. Your surfaces on top, the platform in the
+ * middle, your systems underneath, and the one amber note where the platform
+ * deliberately stops short of acting on its own.
+ */
+
+const surfaces = [
+  { label: 'Dashboard', x: 16 },
+  { label: 'Slack', x: 232 },
+  { label: 'CLI', x: 448 },
+  { label: 'REST API', x: 664 },
+];
+
+const platform = [
+  { label: 'Gateway', sub: 'Fastify, auth and RBAC', x: 16 },
+  { label: 'Temporal', sub: 'durable execution', x: 232 },
+  { label: 'Worker', sub: 'runs the workflow', x: 448 },
+  { label: 'Agent workspace', sub: 'isolated container', x: 664 },
+];
+
+const external = [
+  { label: 'GitHub', w: 272, x: 16 },
+  { label: 'Jira, Linear, Notion, Zendesk', w: 272, x: 304 },
+  { label: 'LLM providers', w: 272, x: 592 },
+];
+---
+
+<figure class="sysdiagram">
+  <div class="sysdiagram__scroll">
+    <svg
+      viewBox="0 0 880 470"
+      role="img"
+      aria-labelledby="sysdiagram-title sysdiagram-desc"
+      class="sysdiagram__svg"
+    >
+      <title id="sysdiagram-title">How auto-swe fits together</title>
+      <desc id="sysdiagram-desc">
+        Three layers. On top, the surfaces a team uses: dashboard, Slack, CLI, and REST API. Work
+        starts from there and travels down into auto-swe, and auto-swe sends questions back up
+        whenever a person has to decide something. In the middle, auto-swe itself: a Fastify
+        gateway, Temporal for durable execution, a worker that runs the workflow, and an isolated
+        container workspace, all backed by PostgreSQL with pgvector holding runs, approvals, memory,
+        configuration, and cost. Underneath, the systems it touches: GitHub, connected tools such as
+        Jira, Linear, Notion and Zendesk, and LLM providers. auto-swe opens a pull request on GitHub
+        and waits; it never merges one.
+      </desc>
+
+      <defs>
+        <marker
+          id="sysdiagram-arrow"
+          viewBox="0 0 8 8"
+          refX="7"
+          refY="4"
+          markerWidth="7"
+          markerHeight="7"
+          orient="auto"
+        >
+          <path d="M0 0 L8 4 L0 8 z" class="d-arrowhead" />
+        </marker>
+        <marker
+          id="sysdiagram-arrow-gate"
+          viewBox="0 0 8 8"
+          refX="7"
+          refY="4"
+          markerWidth="7"
+          markerHeight="7"
+          orient="auto"
+        >
+          <path d="M0 0 L8 4 L0 8 z" class="d-arrowhead d-arrowhead--gate" />
+        </marker>
+      </defs>
+
+      <!-- Band 1 — the surfaces a team already works in -->
+      <rect x="0" y="0" width="880" height="92" class="d-band" />
+      <text x="16" y="24" class="d-bandlabel">People and tools</text>
+      {
+        surfaces.map((s) => (
+          <>
+            <rect x={s.x} y="40" width="200" height="36" class="d-box" />
+            <text x={s.x + 100} y="58" class="d-label" text-anchor="middle" dominant-baseline="middle">
+              {s.label}
+            </text>
+          </>
+        ))
+      }
+
+      <text x="368" y="112" class="d-edge" text-anchor="end">Starts work</text>
+      <line x1="380" y1="94" x2="380" y2="122" class="d-flow" marker-end="url(#sysdiagram-arrow)" />
+      <line x1="500" y1="122" x2="500" y2="94" class="d-flow d-flow--back" marker-end="url(#sysdiagram-arrow-gate)" />
+      <text x="512" y="112" class="d-edge d-edge--gate">Asks when a person has to decide</text>
+
+      <!-- Band 2 — the platform -->
+      <rect x="0" y="126" width="880" height="206" class="d-band d-band--self" />
+      <text x="16" y="150" class="d-bandlabel">auto-swe</text>
+      {
+        platform.map((p) => (
+          <>
+            <rect x={p.x} y="172" width="200" height="48" class="d-box" />
+            <text x={p.x + 100} y="189" class="d-label" text-anchor="middle" dominant-baseline="middle">
+              {p.label}
+            </text>
+            <text x={p.x + 100} y="207" class="d-sub" text-anchor="middle" dominant-baseline="middle">
+              {p.sub}
+            </text>
+          </>
+        ))
+      }
+      <line x1="218" y1="196" x2="230" y2="196" class="d-flow" marker-end="url(#sysdiagram-arrow)" />
+      <line x1="434" y1="196" x2="446" y2="196" class="d-flow" marker-end="url(#sysdiagram-arrow)" />
+      <line x1="650" y1="196" x2="662" y2="196" class="d-flow" marker-end="url(#sysdiagram-arrow)" />
+
+      <rect x="16" y="256" width="848" height="48" class="d-box d-box--wide" />
+      <text x="440" y="273" class="d-label" text-anchor="middle" dominant-baseline="middle">
+        PostgreSQL + pgvector
+      </text>
+      <text x="440" y="291" class="d-sub" text-anchor="middle" dominant-baseline="middle">
+        runs, approvals, memory, configuration, cost
+      </text>
+
+      <line x1="440" y1="334" x2="440" y2="362" class="d-flow" marker-end="url(#sysdiagram-arrow)" />
+      <text x="456" y="352" class="d-note">Opens a pull request. Never merges one.</text>
+
+      <!-- Band 3 — what it touches -->
+      <rect x="0" y="366" width="880" height="92" class="d-band" />
+      <text x="16" y="390" class="d-bandlabel">Your systems</text>
+      {
+        external.map((e) => (
+          <>
+            <rect x={e.x} y="406" width={e.w} height="36" class="d-box" />
+            <text x={e.x + e.w / 2} y="424" class="d-label" text-anchor="middle" dominant-baseline="middle">
+              {e.label}
+            </text>
+          </>
+        ))
+      }
+    </svg>
+  </div>
+  <figcaption class="sysdiagram__hint">Scroll sideways to see the whole diagram.</figcaption>
+</figure>
+
+<style>
+  .sysdiagram {
+    margin: 0;
+  }
+
+  /*
+   * Below the diagram's natural width the text would scale with it, so a phone
+   * would render 13px labels at about 6px. The box scrolls instead and the type
+   * stays the size it was drawn at.
+   */
+  .sysdiagram__scroll {
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+  }
+
+  .sysdiagram__svg {
+    display: block;
+    width: 100%;
+    min-width: 44rem;
+    height: auto;
+  }
+
+  /*
+   * Only shown where the diagram actually overflows. Without it the bands look
+   * cropped rather than scrollable, and a reader has no reason to try dragging
+   * them. Tied to the same width the SVG stops shrinking at.
+   */
+  .sysdiagram__hint {
+    display: none;
+    margin-top: 0.5rem;
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+  }
+
+  @media (max-width: 48rem) {
+    .sysdiagram__hint {
+      display: block;
+    }
+  }
+
+  .d-band {
+    fill: var(--paper-sunk);
+    stroke: none;
+  }
+
+  /* The platform band is the subject, so it sits a shade apart from the two
+     bands describing everything that is not auto-swe. */
+  .d-band--self {
+    fill: var(--paper-raised);
+    stroke: var(--rule);
+    stroke-width: 1;
+  }
+
+  .d-box {
+    fill: var(--paper);
+    stroke: var(--rule-strong);
+    stroke-width: 1;
+  }
+
+  .d-box--wide {
+    fill: var(--paper-sunk);
+  }
+
+  .d-bandlabel {
+    fill: var(--ink-faint);
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .d-label {
+    fill: var(--ink);
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .d-sub {
+    fill: var(--ink-muted);
+    font-family: var(--font-body);
+    font-size: 12px;
+  }
+
+  .d-flow {
+    stroke: var(--ink-faint);
+    stroke-width: 1.5;
+  }
+
+  .d-arrowhead {
+    fill: var(--ink-faint);
+  }
+
+  .d-flow--back {
+    stroke: var(--gate-text);
+  }
+
+  .d-arrowhead--gate {
+    fill: var(--gate-text);
+  }
+
+  .d-edge {
+    fill: var(--ink-muted);
+    font-family: var(--font-body);
+    font-size: 12px;
+  }
+
+  .d-edge--gate {
+    fill: var(--gate-text);
+    font-weight: 600;
+  }
+
+  /* The one place the gate colour appears in this diagram, for the one place
+     the system deliberately stops. */
+  .d-note {
+    fill: var(--gate-text);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+  }
+</style>
