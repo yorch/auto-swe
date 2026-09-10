@@ -16,7 +16,7 @@ The `slack-app-manifest.json` next to this file is a [Slack app manifest](https:
 5. **Create**, then **Install to Workspace** to grant the bot scopes (or use the
    one-click "Add to Slack" install flow below for multi-workspace installs).
 
-> **Event URL verification.** When you set the Event Subscriptions request URL, Slack sends a one-time `url_verification` challenge to it. The `/events` endpoint echoes the challenge automatically, so the URL verifies as soon as the gateway is reachable — no manual step. Note: the handshake is signature-verified like every other event, so the **signing secret must be saved in the admin UI (`/admin/integrations → Slack`) before** you complete Slack's Events URL verification — otherwise the challenge is rejected with a 401/503.
+> **Event URL verification.** When you set the Event Subscriptions request URL, Slack sends a one-time `url_verification` challenge to it. The `/events` endpoint echoes the challenge automatically, so the URL verifies as soon as the gateway is reachable — no manual step. Note: the handshake is signature-verified like every other event, so the **signing secret must be saved in the admin UI (`/studio/integrations → Slack`) before** you complete Slack's Events URL verification — otherwise the challenge is rejected with a 401/503.
 
 ## Endpoints the manifest assumes
 
@@ -35,7 +35,7 @@ All under the gateway's `/api/v1/auth/slack` prefix:
 ## Multi-workspace install ("Add to Slack")
 
 One Slack app can be installed into **many workspaces**, each with its own bot
-token, via the install flow (`/admin/integrations → Slack → Add to Slack`):
+token, via the install flow (`/studio/integrations → Slack → Add to Slack`):
 
 1. An admin clicks **Add to Slack**, which hits `GET /api/v1/auth/slack/install`
    and redirects to Slack's `oauth/v2/authorize` with the app's bot scopes.
@@ -66,7 +66,7 @@ The gateway acks Slack within the 3-second window and starts the workflow (or se
 
 > **Why `message.channels` does not make the bot a firehose.** The bot receives every public-channel message via `message.channels`, but it acts on a plain (non-mention) channel message **only** when it is a thread reply *and* an in-flight task run is bound to that thread (a successful `steer` signal). A non-thread message, or a thread reply with no matching active task, is ignored — it never starts a turn or otherwise responds. So ambient channel chatter stays silent; the subscription exists solely to enable steering an active task by replying in its thread.
 
-The first @mention in a channel auto-creates the channel mapping using the default team from `/admin/workflow → Default team slug` (and that team's owning organization). If the default team is missing, the turn is dropped and a warning is logged — run `yarn db:seed` or create the team first.
+The first @mention in a channel auto-creates the channel mapping using the default team from `/govern/workflow-defaults → Default team slug` (and that team's owning organization). If the default team is missing, the turn is dropped and a warning is logged — run `yarn db:seed` or create the team first.
 
 ## App Home tab (Gap I — packaged UX)
 
@@ -94,7 +94,7 @@ The bot now reads the current thread's recent messages via `conversations.replie
 
 ## After install
 
-Configure the credentials via the admin UI at `/admin/integrations → Slack tab`:
+Configure the credentials via the admin UI at `/studio/integrations → Slack tab`:
 
 | Field | Source | Effect |
 |---|---|---|

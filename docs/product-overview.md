@@ -165,7 +165,7 @@ Teams author their own workflow DAGs on a visual canvas without code changes, ve
 
 ### 5.7 Scheduled work requests
 
-Admins configure standing automations backed by Temporal Schedules (nightly dependency checks, recurring lint sweeps, periodic doc generation) at `/admin/schedules`.
+Admins configure standing automations backed by Temporal Schedules (nightly dependency checks, recurring lint sweeps, periodic doc generation) at `/govern/schedules`.
 
 ### 5.8 Team-scoped configuration
 

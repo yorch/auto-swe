@@ -2,7 +2,7 @@
 
 Step-by-step for wiring **GitHub**, **Google**, and **Okta** (enterprise SSO) sign-in via better-auth. Magic-link works out of the box and needs no provider registration.
 
-All three providers follow the same shape: register an OAuth app on the provider's developer console, copy the client id + secret into the admin dashboard at `/admin/integrations` (GitHub credentials on the **GitHub tab**, Google and Okta credentials on the **OAuth tab**), restart the gateway, and the buttons appear on `/login` automatically. The login page reads `GET /api/v1/auth/providers` at load time and only renders buttons for providers whose credentials are present (in the DB or env).
+All three providers follow the same shape: register an OAuth app on the provider's developer console, copy the client id + secret into the admin dashboard at `/studio/integrations` (GitHub credentials on the **GitHub tab**, Google and Okta credentials on the **OAuth tab**), restart the gateway, and the buttons appear on `/login` automatically. The login page reads `GET /api/v1/auth/providers` at load time and only renders buttons for providers whose credentials are present (in the DB or env).
 
 > **Env var fallback.** `GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`, and `OKTA_ISSUER` / `OKTA_CLIENT_ID` / `OKTA_CLIENT_SECRET` are still accepted as environment variables for backwards compatibility, but the admin UI is the preferred path. If both are set, the DB row wins.
 
@@ -30,7 +30,7 @@ All three providers follow the same shape: register an OAuth app on the provider
 
 ### 2. Add credentials via the admin UI
 
-1. Sign in as admin and go to `/admin/integrations → GitHub tab`.
+1. Sign in as admin and go to `/studio/integrations → GitHub tab`.
 2. Enter the **OAuth App Client ID** and **OAuth App Client Secret** (in the OAuth section of the GitHub tab — not the GitHub App fields, which are for repo access).
 3. Click **Save**. The tab also displays the exact callback URL to register, with a copy button.
 
@@ -100,7 +100,7 @@ Refresh the login page. The **Continue with GitHub** button should now appear. C
 
 ### 4. Add credentials via the admin UI
 
-1. Sign in as admin and go to `/admin/integrations → OAuth tab`.
+1. Sign in as admin and go to `/studio/integrations → OAuth tab`.
 2. Enter the **Google OAuth Client ID** and **Google OAuth Client Secret**.
 3. Click **Save**. The tab also displays the exact callback URL to register, with a copy button.
 
@@ -160,7 +160,7 @@ https://dev-12345.okta.com/oauth2/default/.well-known/openid-configuration
 
 ### 3. Add credentials via the admin UI
 
-1. Sign in as admin and go to `/admin/integrations → OAuth tab`.
+1. Sign in as admin and go to `/studio/integrations → OAuth tab`.
 2. In the **Sign in with Okta** card, enter the **Issuer URL**, **Client ID**, and **Client secret**.
 3. Click **Save**. The card echoes back the discovery URL the gateway will fetch and the callback URL to register, each with a copy button.
 
@@ -183,7 +183,7 @@ If Okta is unreachable at that moment, the gateway still boots — the discovery
 ### Notes
 
 - **Account linking.** Okta joins GitHub and Google in better-auth's trusted-provider set when configured, so a user who already exists under the same verified email is linked to that existing account rather than duplicated. Email+password deliberately stays untrusted.
-- **Approval queue.** Okta sign-ups land with `isActive=false` like every other new user and wait for an admin to approve them at `/admin/users`. Group-based auto-approval is not implemented — Okta group claims are not read.
+- **Approval queue.** Okta sign-ups land with `isActive=false` like every other new user and wait for an admin to approve them at `/govern/users`. Group-based auto-approval is not implemented — Okta group claims are not read.
 - **SAML.** Only OIDC is supported. Okta's SAML app type will not work; create an **OIDC — Web Application** integration.
 
 ---
@@ -197,9 +197,9 @@ Before flipping a deployment from dev to prod, confirm:
 | `BETTER_AUTH_URL` matches the deployed URL | Required — used as the OAuth callback base                               |
 | `BETTER_AUTH_SECRET` set, ≥ 32 chars       | Required — gateway throws at boot otherwise                              |
 | `JWT_SECRET` (or key pair) set             | Required — gateway throws at boot otherwise                              |
-| GitHub OAuth credentials configured        | Optional — button hides when absent. Set via `/admin/integrations → GitHub` or env var. |
-| Google OAuth credentials configured        | Optional — button hides when absent. Set via `/admin/integrations → OAuth` or env var. |
-| Okta issuer + credentials configured       | Optional — button hides unless all three are present. Set via `/admin/integrations → OAuth` or env var. |
+| GitHub OAuth credentials configured        | Optional — button hides when absent. Set via `/studio/integrations → GitHub` or env var. |
+| Google OAuth credentials configured        | Optional — button hides when absent. Set via `/studio/integrations → OAuth` or env var. |
+| Okta issuer + credentials configured       | Optional — button hides unless all three are present. Set via `/studio/integrations → OAuth` or env var. |
 | `RESEND_API_KEY` + `AUTH_FROM_EMAIL`       | Required if you want magic-link emails sent for real (else stdout-only)  |
 | OAuth callbacks point at the prod URL      | GitHub, Google, and Okta consoles must list the right callback URL       |
 | Okta discovery URL reachable from the gateway | Fetched at boot; an unreachable issuer leaves Okta sign-in broken until the next restart |
@@ -222,7 +222,7 @@ Hit `GET /api/v1/auth/providers` directly:
 curl http://localhost:8080/api/v1/auth/providers
 ```
 
-You should see `{"github":true,"google":true,"magicLink":true,"okta":true}` for the providers whose credentials are configured. If a provider shows `false`, the gateway didn't pick up its credentials — confirm they're saved in `/admin/integrations` (GitHub tab for GitHub, OAuth tab for Google and Okta), then restart `yarn dev:gateway` (a restart is always required for OAuth credential changes to take effect). `okta` reports `false` unless the issuer, client id **and** client secret are all set.
+You should see `{"github":true,"google":true,"magicLink":true,"okta":true}` for the providers whose credentials are configured. If a provider shows `false`, the gateway didn't pick up its credentials — confirm they're saved in `/studio/integrations` (GitHub tab for GitHub, OAuth tab for Google and Okta), then restart `yarn dev:gateway` (a restart is always required for OAuth credential changes to take effect). `okta` reports `false` unless the issuer, client id **and** client secret are all set.
 
 **"Access blocked: this app's request is invalid" (Google)**
 Usually the consent screen is incomplete (missing support email, missing scopes, etc.) — finish the OAuth consent screen flow in step 2 above.

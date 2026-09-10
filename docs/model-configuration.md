@@ -2,7 +2,7 @@
 
 > How LLM model selection and provider credentials work in auto-swe.
 
-The DB is the sole source of truth for LLM config — no env vars for models or API keys. The worker calls `assertConfigReady()` at boot and refuses to start until the required rows exist. All edits go through `/admin/model-config` (admins) or `/teams/<id>` (team owners).
+The DB is the sole source of truth for LLM config — no env vars for models or API keys. The worker calls `assertConfigReady()` at boot and refuses to start until the required rows exist. All edits go through `/studio/models` (admins) or `/teams/<id>` (team owners).
 
 ---
 
@@ -67,7 +67,7 @@ The worker keeps a process-local 30-second cache of resolved `Agent`, `ProviderC
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
 2. Start gateway + web only (not the worker yet).
-3. The DB seed already created the built-in `Agent` rows — 17 model-backed with default model specs, plus 11 sub-role personas that inherit a parent's model — along with the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/admin/model-config` → Credentials.
+3. The DB seed already created the built-in `Agent` rows — 17 model-backed with default model specs, plus 11 sub-role personas that inherit a parent's model — along with the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/studio/models` → Credentials.
 4. Add at least one `ProviderCredential` on the Credentials tab. For the seeded defaults you need at minimum `anthropic` (for the agent roles) and `openai` (for embeddings).
 5. Start the worker. `assertConfigReady()` walks the DB; missing pieces are listed in a single rolled-up error pointing back to the dashboard.
 
@@ -111,7 +111,7 @@ Removes via the **Reset** button. Resetting causes the next activity call for th
 
 ### Overriding a model for one workflow template
 
-Admin-only, from the Agent library at `/admin/agents/library`. Create an Agent for the key with scope `WORKFLOW_TEMPLATE` and supply the template ID. The template editor itself carries no model section — template-scoped overrides are edited in the Agent library.
+Admin-only, from the Agent library at `/studio/agents/library`. Create an Agent for the key with scope `WORKFLOW_TEMPLATE` and supply the template ID. The template editor itself carries no model section — template-scoped overrides are edited in the Agent library.
 
 ### Rotating an API key
 
@@ -238,7 +238,7 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 | Worker integration | `packages/worker/src/lib/models.ts` | Async `getModel` / `getModelSpec` (per-role chat models) |
 | Embeddings | `packages/worker/src/lib/embeddings.ts` | Reads the singleton `EmbeddingConfig` via `resolveEmbeddingConfig` |
 | Gateway routes | `packages/gateway/src/routes/modelConfig.ts` | Admin + team-scoped credential CRUD, embedding-config CRUD, audit log, credential probe |
-| Dashboard | `packages/web/src/app/admin/model-config/page.tsx`, `packages/web/src/components/modelConfig/*` | Tabbed admin UI (Roles / Credentials / Embeddings / Audit log) + team detail integration |
+| Dashboard | `packages/web/src/app/studio/models/page.tsx`, `packages/web/src/components/modelConfig/*` | Tabbed admin UI (Roles / Credentials / Embeddings / Audit log) + team detail integration |
 
 ---
 
