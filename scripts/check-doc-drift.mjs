@@ -642,6 +642,37 @@ const missingGaps = gapCheckedDocs.filter((d) => !GAP_HEADING.test(read(d)));
 const staleExemptions = [...GAP_EXEMPT_DOCS].filter((d) => !existsSync(join(ROOT, d)));
 
 // ---------------------------------------------------------------------------
+// Seeded agents named in the roster
+//
+// The counts above catch a *number* going stale. They do not catch a roster
+// that lists ten of seventeen agents and reads as though it lists them all —
+// which is what happened: the seven agents seeded for content, support and
+// product work were absent from the summary in AGENTS.md while the count
+// beside it stayed correct.
+//
+// Only the two docs that claim to enumerate the roster are checked. Every other
+// doc mentions agents in passing and has no business listing all of them.
+// ---------------------------------------------------------------------------
+
+const ROSTER_DOCS = ['AGENTS.md', 'docs/agents.md'];
+
+const seededAgentKeys = [...builtinAgentsSrc.matchAll(/^\s+key: '([a-zA-Z]+)',$/gm)].map(
+  (m) => m[1]
+);
+
+const rosterFailures = [];
+for (const doc of ROSTER_DOCS) {
+  if (!existsSync(join(ROOT, doc))) {
+    continue;
+  }
+  const src = read(doc);
+  const missingKeys = seededAgentKeys.filter((k) => !src.includes(`\`${k}\``));
+  if (missingKeys.length > 0) {
+    rosterFailures.push({ doc, keys: missingKeys });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Repository paths named in prose
 //
 // A doc that says "see `packages/worker/src/lib/config/cache.ts`" is pointing
@@ -892,6 +923,7 @@ const clean =
   proseFailures.length === 0 &&
   routeFailures.length === 0 &&
   pathFailures.length === 0 &&
+  rosterFailures.length === 0 &&
   settingFailures.length === 0;
 
 if (clean) {
@@ -908,6 +940,7 @@ if (clean) {
   console.log(`  every setting key named in prose resolves (${settingKeys.size} registered).`);
   console.log(`  every dashboard route named in prose exists (${appRoutes.size} rendered).`);
   console.log('  every repository path named in prose exists.');
+  console.log(`  the agent roster names all ${seededAgentKeys.length} seeded agents.`);
   for (const [label, value] of facts) {
     console.log(`  ${String(value).padStart(3)}  ${label}`);
   }
@@ -945,6 +978,17 @@ if (missingGaps.length > 0) {
     '\nEvery capability doc states its own known gaps, so they stay next to the feature.'
   );
   console.error('Add a "## Limitations" section, or "Not built" if nothing else fits.\n');
+}
+
+if (rosterFailures.length > 0) {
+  console.error(`Incomplete agent roster — ${rosterFailures.length} doc(s).\n`);
+  for (const r of rosterFailures) {
+    console.error(`  ${r.doc} does not name: ${r.keys.join(', ')}`);
+  }
+  console.error(
+    '\n  source of truth: packages/shared/src/lib/syncBuiltins.ts\n' +
+      '  A roster that lists most of the agents reads as though it lists them all.\n'
+  );
 }
 
 if (pathFailures.length > 0) {

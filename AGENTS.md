@@ -342,13 +342,18 @@ skills via `skillRefs` and tools via `toolKeys`. `getModel` / `getModelSpec` / `
 **Agent identity is a free-form `string`** (`AnySkillRole = string`) — there is no enum. New agents
 are added as data, not code. Seeded built-ins split by how they bind a model:
 
-- **Model-backed** (own `modelSpec`): `implementer`, `reviewer`, `planner`, `securityReview`,
-  `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`, `workflowAuthor`,
-  `workflowExplainer`.
-- **Sub-role personas** (`inheritsModelFrom`): `securityReviewer` / `domainLogicReviewer` /
-  `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` / `prdDecomposer` (← `planner`);
-  `ciFixer` / `reviewFixer` / `gateFixer` / `mergeConflictResolver` (← `implementer`);
-  `lessonConsolidator` (← `commitToMemory`).
+- **Model-backed** (own `modelSpec`), 17 of them. The engineering set is `implementer`, `reviewer`,
+  `planner`, `securityReview`, `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`,
+  `workflowAuthor`, `workflowExplainer`, `repoDependencyInferrer`. The rest exist because the
+  platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
+  `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
+- **Sub-role personas** (`inheritsModelFrom`), 11 of them: `securityReviewer` /
+  `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
+  `prdDecomposer` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
+  `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
+
+Both lists are complete as written, and `yarn docs:check` fails if one stops being — see
+[`docs/agents.md`](./docs/agents.md) for what calls each agent and its default model.
 
 `securityReview` is **not** legacy, despite what it used to say here. It backs
 `scanDiffForSecurityIssues`, the post-diff gate that runs on `executeImplementation` and on all
