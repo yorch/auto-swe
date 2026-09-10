@@ -120,12 +120,12 @@ function EditInstallationModal({
           <Input onChange={(e) => setAccountLogin(e.target.value)} value={accountLogin} />
         </FieldWrapper>
         <FieldWrapper
-          hint="An inactive installation stays on its repositories; it is a label, not a disconnect."
-          label="Active"
+          hint="Bookkeeping only. Nothing reads this: a repository pointing at an installation marked retired still uses it, and marking one retired does not disconnect anything on GitHub or here."
+          label="Operator note"
         >
           <Select onChange={(e) => setIsActive(e.target.value)} value={isActive}>
-            <option value="true">Active</option>
-            <option value="false">Inactive</option>
+            <option value="true">In use</option>
+            <option value="false">Retired</option>
           </Select>
         </FieldWrapper>
         {error && <p className="text-xs text-brick-400">{error}</p>}
@@ -235,7 +235,7 @@ export default function StudioGithubInstallationsPage() {
                 <Th variant="compact">Account</Th>
                 <Th variant="compact">Installation ID</Th>
                 <Th variant="compact">Repositories</Th>
-                <Th variant="compact">Status</Th>
+                <Th variant="compact">Note</Th>
                 <Th variant="compact" />
               </THead>
               <tbody>
@@ -249,7 +249,7 @@ export default function StudioGithubInstallationsPage() {
                       {i._count?.connections ?? 0}
                     </Td>
                     <Td className="py-2 pr-4 text-xs text-paper-300">
-                      {i.isActive ? 'Active' : 'Inactive'}
+                      {i.isActive ? 'In use' : 'Retired'}
                     </Td>
                     <Td className="py-2 text-right">
                       <div className="flex justify-end gap-2">
@@ -269,13 +269,28 @@ export default function StudioGithubInstallationsPage() {
         </Card>
       </QueryBoundary>
 
-      <CreateInstallationModal onClose={() => setNewOpen(false)} open={newOpen} />
+      {/*
+        Every modal is keyed. Returning null does not unmount a component, so
+        without a key its `error` state survives: read the 409 naming the
+        repositories that still use one installation, cancel, open Delete on a
+        different one, and the old error is still sitting under the new title.
+        The create modal keeps its error across close and reopen the same way.
+      */}
+      <CreateInstallationModal
+        key={newOpen ? 'create-open' : 'create-closed'}
+        onClose={() => setNewOpen(false)}
+        open={newOpen}
+      />
       <EditInstallationModal
         installation={editTarget}
         key={editTarget?.id}
         onClose={() => setEditTarget(null)}
       />
-      <DeleteInstallationModal installation={deleteTarget} onClose={() => setDeleteTarget(null)} />
+      <DeleteInstallationModal
+        installation={deleteTarget}
+        key={deleteTarget?.id}
+        onClose={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

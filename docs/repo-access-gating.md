@@ -132,8 +132,9 @@ Multiple GitHub organizations are reached through multiple App installations. `G
 rows name them and `connections.installation_id` points a repository at one; null means the
 singleton `GitHubConfig.appInstallationId`, so an existing single-org deployment needs no change.
 
-Installations are managed at `/studio/github-installations` in the dashboard, or at
-`/api/v1/admin/github-installations` (list, create, update, delete),
+Installations are managed at `/studio/github-installations` in the dashboard, or over the API at
+`/api/v1/platform/github-installations` — which the dashboard itself calls, and which is also
+registered under `/api/v1/admin` like the other admin routes (list, create, update, delete),
 and a repository is pointed at one through `installationId` on the repository create and update
 routes. Both are ADMIN-only: the installation decides which GitHub account answers permission
 questions about a repository, and every other credential-shaped knob in this codebase is
@@ -240,6 +241,9 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   attributed to the requester. Delegating execution to a user identity would need per-user token
   refresh and a service identity for webhook- and schedule-triggered runs, which have no user at
   all.
+- **An installation's in-use/retired mark is bookkeeping.** Nothing reads it: a repository
+  pointing at an installation marked retired still uses it, and marking one retired disconnects
+  nothing. It records an operator's intent so a stale row is recognisable, and the page says so.
 - **Team membership remains the outer bound.** The gate can only remove access. A user with GitHub
   admin rights on a repository still sees nothing unless they are a member of the owning team.
 - **Non-git connections are exempt, necessarily.** A `Connection` is also how an MCP server and
