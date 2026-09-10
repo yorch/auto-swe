@@ -5,6 +5,13 @@ template: splash
 tableOfContents: false
 editUrl: false
 lastUpdated: false
+# Starlight builds every document title as `<page title> | <site title>`, and
+# this page's title is the site title — so the tab read "auto-swe | auto-swe".
+# A `title` tag here replaces the generated one outright rather than appending
+# to it (`hasTag` in Starlight's head builder dedupes on tag name).
+head:
+  - tag: title
+    content: auto-swe — durable, governed multi-agent workflows
 ---
 
 import Landing from '../../components/Landing.astro';

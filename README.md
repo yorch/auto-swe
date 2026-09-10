@@ -109,7 +109,7 @@ yarn dev:worker      # Terminal 2
 yarn dev:web   # → http://localhost:3000
 ```
 
-Temporal Web UI is available at <http://localhost:8233>.
+Temporal Web UI is available at `http://localhost:8233`.
 
 For production deployment, see [`docs/deployment.md`](./docs/deployment.md) — end-to-end runbook covering env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, backup, and a hardening checklist.
 
@@ -119,7 +119,7 @@ For production deployment, see [`docs/deployment.md`](./docs/deployment.md) — 
 
 Four equivalent entry points — pick the one that fits the workflow:
 
-1. **Web dashboard** (recommended) — open <http://localhost:3000>, sign in, and click **+ New request**. Pick a workflow template (for example the default engineering template), fill the inputs it asks for, and run it. The run appears in **Active runs** immediately.
+1. **Web dashboard** (recommended) — open `http://localhost:3000`, sign in, and click **+ New request**. Pick a workflow template (for example the default engineering template), fill the inputs it asks for, and run it. The run appears in **Active runs** immediately.
 2. **Slack** — ask the channel teammate in a channel it is installed in, or use the slash command. It also posts run progress and HITL prompts back into the channel. See [`docs/slack-app-setup.md`](./docs/slack-app-setup.md).
 3. **CLI** (`auto-swe`) — export `AUTO_SWE_TOKEN` (mint one at Settings → API tokens) and run the CLI's `workflows` subcommands. See `packages/cli/README.md`.
 4. **Raw HTTP** — useful for scripting / CI. Use a PAT (mint one at Settings → API tokens) as the bearer:

@@ -224,12 +224,32 @@ body {
   letter-spacing: 0.01em;
 }
 
-/* The rail itself. */
+/*
+ * The rail itself.
+ *
+ * Starlight already draws one, as `ul ul li { border-inline-start }` in
+ * `SidebarSublist.astro`. Adding this one to the list without removing that one
+ * from the items produced two parallel lines 9px apart on every page — subtle
+ * enough to read as deliberate, which is why it survived a redesign and a
+ * review. One rail is the design; the item borders are turned off just below.
+ */
 .sidebar-content ul ul {
   position: relative;
   padding-left: 0;
   margin-inline-start: 0.15rem;
   border-inline-start: 1px solid var(--rule);
+}
+
+/*
+ * Drop Starlight's second line, and the indentation that existed only to clear
+ * it. Without that the item sits 16px off the rail, and the current-page stop —
+ * which is positioned on the link — floats beside the rail instead of on it.
+ * The link's own padding is what spaces the text from the rail.
+ */
+.sidebar-content ul ul li {
+  padding-inline-start: 0;
+  margin-inline-start: 0;
+  border-inline-start: 0;
 }
 
 .sidebar-content ul ul > li > a {
