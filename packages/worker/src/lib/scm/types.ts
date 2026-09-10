@@ -4,12 +4,16 @@
  * Everything the execution path needs from a source-control host is expressed
  * through `ScmProvider`. GitHub is the first (and currently only)
  * implementation — see `github.ts`. The interface is intentionally tight:
- * clone credentials, idempotent PR create-or-reuse, PR URL construction, and
- * CI log fetching. Webhook payload parsing stays provider-specific in the
- * gateway (`packages/gateway/src/routes/webhooks.ts`); only its
- * payload→domain-event mapping is factored out there for reuse by a future
- * GitLab route.
+ * clone credentials, idempotent PR create-or-reuse, PR URL construction, CI log
+ * fetching, and one user's permission on a repository. Webhook payload parsing
+ * stays provider-specific in the gateway
+ * (`packages/gateway/src/routes/webhooks.ts`); only its payload→domain-event
+ * mapping is factored out there for reuse by a future GitLab route.
  */
+
+import type { PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
+
+export type { PermissionLookup, RepoPermission } from '@auto-swe/shared/lib/githubPermission';
 
 /** Provider-agnostic reference to a remote repository. */
 export interface RepoRef {
@@ -102,4 +106,14 @@ export interface ScmProvider {
    * repo without a given manifest is a normal, non-throwing outcome.
    */
   fetchFileContent(repo: RepoRef, path: string, ref?: string): Promise<string | null>;
+  /**
+   * What access `username` — a host login, not a platform user id — has to
+   * `repo`.
+   *
+   * Answers with a level rather than a boolean so one lookup can serve both
+   * "may start a run here" and "may look at one". Never throws: a lookup that
+   * could not be made is reported as a typed failure, because "no access" and
+   * "could not ask" must not be recorded as the same thing.
+   */
+  repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup>;
 }

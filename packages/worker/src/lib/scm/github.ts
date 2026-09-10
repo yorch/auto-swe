@@ -11,6 +11,7 @@
  * `../githubAuth.ts` — it is a GitHub-internal concern behind this provider.
  */
 
+import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
@@ -19,19 +20,12 @@ import type {
   CiStatusResult,
   CloneCredentials,
   CreatePullRequestInput,
+  PermissionLookup,
   PullRequestRef,
   RepoRef,
   ScmProvider,
 } from './types.js';
 
-/**
- * Build an authenticated Octokit for `repo`.
- *
- * The token and the GHE base URL both come from DB-backed config, so every API
- * call resolves them the same way; this is the one place that knows how. The
- * import is dynamic because `@octokit/rest` is ESM-heavy and only a subset of
- * worker activities ever reach GitHub.
- */
 /**
  * Which installation, and at which API host, a repository's credential comes
  * from. A null `installationId` on the ref means the singleton's installation,
@@ -48,6 +42,14 @@ function installationTarget(
   };
 }
 
+/**
+ * Build an authenticated Octokit for `repo`.
+ *
+ * The token and the GHE base URL both come from DB-backed config, so every API
+ * call resolves them the same way; this is the one place that knows how. The
+ * import is dynamic because `@octokit/rest` is ESM-heavy and only a subset of
+ * worker activities ever reach GitHub.
+ */
 async function octokitFor(repo: RepoRef) {
   const { Octokit } = await import('@octokit/rest');
   const ghConfig = await resolveGitHubConfig();
@@ -245,5 +247,26 @@ export class GitHubScmProvider implements ScmProvider {
       }
       throw err;
     }
+  }
+
+  async repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup> {
+    const ghConfig = await resolveGitHubConfig();
+    const target = installationTarget(repo, ghConfig);
+    let token: string;
+    try {
+      token = await resolveGitHubToken(ghConfig, target);
+    } catch {
+      // No usable credential is "could not ask", not "no access". Resolving it
+      // to a verdict would write a denial into the projection that GitHub never
+      // made, and it would look identical to a real one.
+      return { failure: 'credential-rejected', ok: false };
+    }
+    return fetchRepoPermission({
+      apiUrl: target.apiUrl,
+      organizationName: repo.organizationName,
+      repoName: repo.repoName,
+      token,
+      username,
+    });
   }
 }
