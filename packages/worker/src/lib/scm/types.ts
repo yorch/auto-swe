@@ -22,6 +22,13 @@ export interface RepoRef {
   baseUrl?: string | null;
   /** Per-repo REST API base URL override. Null/undefined → instance default. */
   apiUrl?: string | null;
+  /**
+   * The host's numeric installation id for the App that reaches this repo, when
+   * the host has such a concept. Null means the instance-wide default
+   * installation, which is what every repo meant before a deployment could span
+   * more than one GitHub organization.
+   */
+  installationId?: string | null;
 }
 
 /** Result of resolving clone credentials for a repository. */

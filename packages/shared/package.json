@@ -63,6 +63,7 @@
     "./workflow/costEstimator": "./dist/workflow/costEstimator.js",
     "./workflow/testHelpers": "./dist/workflow/testHelpers.js",
     "./lib/tenantGuard": "./dist/lib/tenantGuard.js",
+    "./lib/githubInstallation": "./dist/lib/githubInstallation.js",
     "./lib/keyRotation": "./dist/lib/keyRotation.js",
     "./config": "./dist/config/index.js",
     "./config/cache": "./dist/config/cache.js",

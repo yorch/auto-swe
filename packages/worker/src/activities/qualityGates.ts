@@ -142,7 +142,10 @@ async function provisionGateWorkspace(
   branch: string;
 }> {
   const [repo, workflowDefaults] = await Promise.all([
-    prisma.connection.findUniqueOrThrow({ where: { id: requireRepoId(request, 'qualityGate') } }),
+    prisma.connection.findUniqueOrThrow({
+      include: { installation: { select: { installationId: true } } },
+      where: { id: requireRepoId(request, 'qualityGate') },
+    }),
     resolveWorkflowDefaults(),
   ]);
   const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;

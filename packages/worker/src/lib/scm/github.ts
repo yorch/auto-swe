@@ -32,10 +32,26 @@ import type {
  * import is dynamic because `@octokit/rest` is ESM-heavy and only a subset of
  * worker activities ever reach GitHub.
  */
+/**
+ * Which installation, and at which API host, a repository's credential comes
+ * from. A null `installationId` on the ref means the singleton's installation,
+ * which is what every repository meant before a deployment could span more than
+ * one GitHub organization.
+ */
+function installationTarget(
+  repo: RepoRef,
+  ghConfig: { apiUrl: string }
+): { installationId: string | null; apiUrl: string } {
+  return {
+    apiUrl: repo.apiUrl ?? ghConfig.apiUrl,
+    installationId: repo.installationId ?? null,
+  };
+}
+
 async function octokitFor(repo: RepoRef) {
   const { Octokit } = await import('@octokit/rest');
   const ghConfig = await resolveGitHubConfig();
-  const token = await requireGitHubToken(ghConfig);
+  const token = await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
   const apiUrl =
     repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
   return new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
@@ -87,7 +103,7 @@ export class GitHubScmProvider implements ScmProvider {
     const ghConfig = await resolveGitHubConfig();
     const baseUrl = repo.baseUrl ?? ghConfig.baseUrl;
     const cloneUrl = `${baseUrl}/${repo.organizationName}/${repo.repoName}.git`;
-    const token = await requireGitHubToken(ghConfig);
+    const token = await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
     return {
       authedCloneUrl: cloneUrl.replace('https://', `https://x-access-token:${token}@`),
       cloneUrl,

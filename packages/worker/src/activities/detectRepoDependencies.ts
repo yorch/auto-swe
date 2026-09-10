@@ -130,6 +130,7 @@ export async function detectRepoDependencies(
       githubApiUrl: true,
       githubUrl: true,
       id: true,
+      installation: { select: { installationId: true } },
       isActive: true,
       organizationName: true,
       repoName: true,
