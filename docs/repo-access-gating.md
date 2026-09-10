@@ -160,12 +160,15 @@ Gating a single route would leave the others as ways around it.
 | `POST /workflow-templates/:id/runs` | yes | `write` |
 | `POST /scheduled-work-requests` | yes | `write` |
 | `POST /scheduled-work-requests/:id/fire` | yes | `write` |
+| `POST /prd-runs` (per repository) | yes | `write` |
 | `GET /repositories` | yes | `read` |
 | `GET /workflows`, `GET /workflows/:id` | yes | `read` |
 | `GET /runs` and the run viewer | yes | `read` |
 | `GET /inbox` and human steps | yes | `read` |
 | `GET /scheduled-work-requests` | yes | `read` |
 | `GET /repo-dependencies` | yes | `read` |
+| `GET /lessons` and lesson search | yes | `read` |
+| `GET /epics` | yes | `read` |
 
 Platform `ADMIN`s bypass the gate, consistent with every other check in the gateway.
 
