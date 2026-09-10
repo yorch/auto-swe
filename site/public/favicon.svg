@@ -1,0 +1,20 @@
+<svg aria-label="auto-swe" role="img" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" >
+  <!--
+    A three-node workflow: one input fanning into two branches that rejoin.
+    Drawn with heavy strokes and only four shapes, because the size that
+    actually matters is 16px in a browser tab.
+  -->
+  <rect fill="#1a1815" height="32" rx="7" width="32" />
+  <g fill="none" stroke="#c2410c" stroke-linecap="round" stroke-width="2.4" >
+    <path d="M9 16h4"/>
+    <path d="M19 10.5h4"/>
+    <path d="M19 21.5h4"/>
+    <path d="M14.5 14.5 17.5 11.5"/>
+    <path d="M14.5 17.5 17.5 20.5"/>
+  </g>
+  <g fill="#fdba74">
+    <circle cx="7" cy="16" r="3"/>
+    <circle cx="25" cy="10.5" r="3"/>
+    <circle cx="25" cy="21.5" r="3"/>
+  </g>
+</svg>

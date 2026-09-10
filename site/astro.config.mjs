@@ -1,8 +1,31 @@
 // @ts-check
+import { readFileSync } from 'node:fs';
 import starlight from '@astrojs/starlight';
 import { defineConfig } from 'astro/config';
 import mermaid from 'astro-mermaid';
 import { BASE, REPO_URL, SIDEBAR } from './scripts/manifest.mjs';
+
+/**
+ * Adds the diagram viewer to every page's bundle.
+ *
+ * Starlight has a slot for custom CSS but none for custom JavaScript, and the
+ * two documented alternatives are worse: a `head` tag pointing at `public/`
+ * skips the bundler and so never gets a content hash to bust caches with, and
+ * overriding a Starlight component to carry one `<script>` tag means owning a
+ * component in order to own a script. `injectScript('page')` is the hook meant
+ * for exactly this.
+ */
+const mermaidViewer = {
+  hooks: {
+    'astro:config:setup': ({ injectScript }) => {
+      injectScript(
+        'page',
+        readFileSync(new URL('./src/scripts/mermaidZoom.js', import.meta.url), 'utf8')
+      );
+    },
+  },
+  name: 'auto-swe:mermaid-viewer',
+};
 
 /**
  * The site is served from `https://yorch.github.io/auto-swe/`, so `site` and
@@ -23,13 +46,19 @@ export default defineConfig({
       // The integration narrates each render to the browser console. Useful
       // while wiring it up, noise on a published site.
       enableLog: false,
+      // No `themeVariables` here, deliberately. The integration spreads this
+      // whole object into `mermaid.initialize()` and then overrides only
+      // `theme`, so a palette tuned for light mode would survive the switch to
+      // dark and leak light fills and label backgrounds into a dark diagram.
+      // Per-theme tinting is done in `custom.css`, where it can be scoped.
       mermaidConfig: {
-        // Draw at natural size. Mermaid's default scales a diagram down until
-        // it fits its container, which for the widest flowchart here means 16px
-        // labels rendered at an effective 5.4px. `custom.css` bounds and scrolls
-        // the block that holds it instead.
-        flowchart: { useMaxWidth: false },
-        sequence: { useMaxWidth: false },
+        // Tightened spacing. These diagrams are drawn once and read in a
+        // documentation column, so mermaid's default gaps — sized for a canvas
+        // with room to spare — buy nothing and cost width, and width is what
+        // decides how far the diagram has to be scaled down to fit.
+        er: { entityPadding: 10, minEntityWidth: 80 },
+        flowchart: { diagramPadding: 8, nodeSpacing: 30, padding: 8, rankSpacing: 45 },
+        sequence: { actorMargin: 40, boxMargin: 8, diagramMarginX: 8, diagramMarginY: 8 },
       },
     }),
     starlight({
@@ -52,6 +81,7 @@ export default defineConfig({
       social: [{ href: REPO_URL, icon: 'github', label: 'GitHub' }],
       title: 'auto-swe',
     }),
+    mermaidViewer,
   ],
   site: 'https://yorch.github.io',
 });

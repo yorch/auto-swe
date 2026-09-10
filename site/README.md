@@ -49,6 +49,7 @@ can reach it.
 | [`scripts/manifest.mjs`](./scripts/manifest.mjs) | The single answer to "is this file on the site, and where?" — routes, sidebar, base path, GitHub fallback ref |
 | [`scripts/syncDocs.mjs`](./scripts/syncDocs.mjs) | Copies each source in, derives frontmatter from its H1 and lead paragraph, points "Edit this page" at the true source |
 | [`scripts/docLinks.mjs`](./scripts/docLinks.mjs) | Rewrites every filesystem-relative link: published targets become site URLs, everything else becomes a GitHub URL |
+| [`src/scripts/mermaidZoom.js`](./src/scripts/mermaidZoom.js) | Wraps each rendered diagram in a figure and adds the full-screen pan-and-zoom viewer |
 | [`astro.config.mjs`](./astro.config.mjs) | Starlight and mermaid configuration; builds the sidebar from the manifest |
 
 The link policy is the opposite of the dashboard's, deliberately. `packages/web/src/lib/docLinks.ts`
@@ -72,8 +73,14 @@ one job that should not hold it.
 - **Diagrams render in the browser.** A reader with JavaScript disabled sees the diagram source
   rather than the diagram. Build-time rendering was not taken on: it needs a headless Chromium in
   CI and produces a single-theme image that cannot follow the reader's light/dark toggle.
-- **Wide diagrams scroll inside their own frame** rather than scaling to the column. The widest
-  flowchart here is 2049px, which the prose column would scale to an effective 5px type size.
+- **A diagram is only readable in the viewer, not in the page.** These diagrams are far wider than
+  a documentation column — the entity diagram is 2850px against 720px — so the copy in the page is
+  an overview at roughly a quarter scale and the **Expand** control is how it is actually read.
+  Tightening mermaid's layout spacing recovers 7–16% on the flowcharts and nothing on the entity
+  diagram, which is not the order of magnitude that would change this.
+- **The expand control is decided once, at render.** A diagram that fits its column when the page
+  loads does not gain the control if the window is later made narrower. Re-checking on resize was
+  not worth an observer per diagram; every diagram in this tree overflows at every viewport.
 - **The `docs/` set is not versioned.** The site publishes the current `main`, with no archive of
   what the docs said at an earlier release.
 - **There is no `typecheck` script here, and adding one is not a small fix.** `astro check` needs

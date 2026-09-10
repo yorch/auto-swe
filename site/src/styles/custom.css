@@ -52,40 +52,194 @@
   overflow-x: auto;
 }
 
-/*
- * Diagrams are drawn at natural size and scrolled inside a bounded box, rather
- * than scaled down to the prose column.
+/* ---------------------------------------------------------------------------
+ * Diagrams
  *
- * Scaling is mermaid's default and it fails badly here. The system-context
- * flowchart is 2049px of natural width; in a 720px column that is a scale
- * factor of 0.34, which renders its 16px labels at an effective 5.4px. There is
- * no viewport wide enough to fix that — the column is capped by the reading
- * measure, not by the window — so the diagram has to overflow something.
+ * The page shows a diagram scaled to the column, which is the right thing for a
+ * reader scanning past it and hopeless for a reader trying to read one: the
+ * widest diagram here is 2850px of natural width against a 720px column, so its
+ * 16px labels land at an effective 4px. No viewport fixes that — the column is
+ * capped by reading measure, not by window width.
  *
- * It overflows this box and nothing else. Letting it overflow the page instead
- * was tried: it painted over the table of contents and put the whole document
- * on a horizontal scrollbar to read one diagram. The height cap keeps a tall
- * diagram from swallowing the page it is illustrating.
+ * Drawing them at natural size and scrolling the block was tried instead. It
+ * makes the labels legible and the diagram unreadable, because the reader sees
+ * a sixth of it through a letterbox with no sense of the whole.
  *
- * The border earns its place: it tells the reader the diagram continues past
- * the edge, rather than letting a scrolled diagram look like a cropped one.
- */
-.sl-markdown-content pre.mermaid {
-  justify-content: flex-start;
-  max-height: min(70vh, 40rem);
-  padding: 1rem;
-  overflow: auto;
+ * So: the whole diagram in the page, and a viewer to actually read it in.
+ * `src/scripts/mermaidZoom.js` builds both.
+ * ------------------------------------------------------------------------- */
+
+.mermaid-figure {
+  position: relative;
+  /* Top padding is the control strip. Overlaying the button on the diagram was
+   * tried and it covers a node — which node depends on the diagram, so there is
+   * no safe corner to put it in. */
+  padding: 2.5rem 0 0;
+  margin: 1.5rem 0;
+  background: var(--sl-color-gray-6);
   border: 1px solid var(--sl-color-gray-5);
   border-radius: 0.5rem;
 }
 
+.mermaid-figure pre.mermaid {
+  padding: 0 1.25rem 1.25rem;
+  margin: 0;
+  background: none;
+}
+
 /*
- * The block is a flex container, so the diagram is a flex item and shrinks to
- * fit by default — which quietly undoes everything above. Both the shrink and
- * the inherited `max-width: 100%` have to go.
+ * The control lives in the figure rather than in the `pre`, because a theme
+ * change re-renders the diagram by assigning to `pre.innerHTML` and would take
+ * anything inside it with it.
  */
-.sl-markdown-content pre.mermaid > svg {
-  flex-shrink: 0;
+.mermaid-figure__expand {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.7rem;
+  padding: 0.25rem 0.7rem;
+  /* Starlight's markdown rhythm gives a following sibling `margin-top: 1rem`,
+   * and on an absolutely positioned element that margin is added to `top` —
+   * silently pushing the control down into the diagram it is meant to clear. */
+  margin: 0;
+  font-family: var(--sl-font);
+  font-size: var(--sl-text-xs);
+  line-height: 1.4;
+  color: var(--sl-color-gray-2);
+  cursor: pointer;
+  background: var(--sl-color-black);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.35rem;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.mermaid-figure:hover .mermaid-figure__expand,
+.mermaid-figure__expand:focus-visible,
+.mermaid-figure__expand:hover {
+  border-color: var(--sl-color-accent);
+  opacity: 1;
+}
+
+.mermaid-viewer {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  color: var(--sl-color-white);
+  background: var(--sl-color-black);
+  border: none;
+}
+
+.mermaid-viewer::backdrop {
+  background: rgb(0 0 0 / 70%);
+}
+
+.mermaid-viewer__bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0.6rem 0.8rem;
+  background: linear-gradient(var(--sl-color-black), transparent);
+}
+
+.mermaid-viewer__bar button {
+  min-width: 2.2rem;
+  padding: 0.35rem 0.7rem;
+  font-family: var(--sl-font);
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-1);
+  cursor: pointer;
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.35rem;
+}
+
+.mermaid-viewer__bar button:hover,
+.mermaid-viewer__bar button:focus-visible {
+  border-color: var(--sl-color-accent);
+}
+
+.mermaid-viewer__close {
+  margin-left: 0.6rem;
+}
+
+.mermaid-viewer__stage {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  /* The stage owns the wheel, so the page behind it must not scroll and a
+   * trackpad pinch must not zoom the browser instead of the diagram. */
+  touch-action: none;
+  cursor: grab;
+}
+
+.mermaid-viewer__stage.is-grabbing {
+  cursor: grabbing;
+}
+
+.mermaid-viewer__canvas {
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.mermaid-viewer__canvas svg {
+  display: block;
   max-width: none;
-  height: auto;
+}
+
+/*
+ * Diagram palette.
+ *
+ * This is CSS rather than mermaid's own `themeVariables` because the
+ * integration spreads one config object into `mermaid.initialize()` and then
+ * overrides only `theme` — so a palette written for light mode survives the
+ * switch to dark and leaks light fills into a dark diagram. Scoping by
+ * `data-theme` is the only place the two can differ.
+ *
+ * Deliberately narrow. Mermaid's stock themes are legible in both modes and
+ * only the subgraph fill actually clashes here: a saturated yellow plate on a
+ * warm-grey page. Nodes are neutralised alongside it so a diagram reads as one
+ * object rather than two palettes stacked. Everything else — edges, labels,
+ * sequence and entity diagrams — is left as mermaid draws it.
+ *
+ * `!important` throughout because mermaid injects both a <style> block and
+ * inline attributes into the SVG it renders.
+ */
+.mermaid-figure .cluster rect,
+.mermaid-viewer .cluster rect {
+  fill: var(--diagram-cluster-bg) !important;
+  stroke: var(--diagram-cluster-line) !important;
+}
+
+.mermaid-figure .node rect,
+.mermaid-figure .node polygon,
+.mermaid-figure .node path,
+.mermaid-viewer .node rect,
+.mermaid-viewer .node polygon,
+.mermaid-viewer .node path {
+  fill: var(--diagram-node-bg) !important;
+  stroke: var(--diagram-node-line) !important;
+}
+
+:root {
+  --diagram-cluster-bg: #f5f4f2;
+  --diagram-cluster-line: #d6d3ce;
+  --diagram-node-bg: #ffffff;
+  --diagram-node-line: #b4afa8;
+}
+
+:root[data-theme='dark'] {
+  --diagram-cluster-bg: #211e1a;
+  --diagram-cluster-line: #3c3831;
+  --diagram-node-bg: #2d2924;
+  --diagram-node-line: #56514a;
 }
