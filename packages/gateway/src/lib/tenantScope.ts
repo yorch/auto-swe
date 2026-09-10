@@ -1,0 +1,154 @@
+/**
+ * The membership predicates that decide which tenants' rows a caller may read.
+ *
+ * These were written out by hand at every call site — thirteen files spelling
+ * `{ team: { memberships: { some: { userId } } } }` and its relatives. That was
+ * fine while "may this user reach this repo" had exactly one answer. It stops
+ * being fine the moment the answer gains a second term, because a term added in
+ * twelve places and missed in the thirteenth is a silent hole, and the thing it
+ * would leak is the repository list.
+ *
+ * So there is one definition of each predicate here, and the call sites nest it
+ * under the relation they reach tenancy through.
+ *
+ * **Nest these; do not spread them.** `{ team: memberTeams(user) }` is right,
+ * `{ ...memberTeams(user) }` is wrong, and the reason is not style.
+ * `tenantGuard.coverage.test.ts` reads this repository's source through the
+ * TypeScript parser and grades each `where` with the guard's own
+ * `hasTenantPredicate`. It renders a call expression as an opaque placeholder,
+ * which still reads as narrowing under a tenant key — but it drops spreads
+ * entirely, because `{ ...(filter.teamId && { teamId }) }` really is `{}` when
+ * the caller passes nothing. A spread here would therefore turn a filtered call
+ * site into an unaccounted one.
+ *
+ * The platform-ADMIN branch stays at the call sites. Folding it in would mean
+ * returning `{}` for an admin, and `{ team: {} }` is not "any team" on a
+ * nullable relation — it excludes the rows with no team at all, which is
+ * exactly how the GLOBAL workflow templates would vanish from an admin's list.
+ */
+import type { Prisma } from '@auto-swe/shared';
+
+/** The subset of an authenticated caller these predicates read. */
+export interface ScopeActor {
+  /** User UUID — `JwtPayload.sub`. */
+  sub: string;
+}
+
+/** Teams the actor is a member of. Nest under a `team` relation key. */
+export function memberTeams(actor: ScopeActor): Prisma.TeamWhereInput {
+  return { memberships: { some: { userId: actor.sub } } };
+}
+
+/** Organizations the actor is a member of. Nest under an `organization` key. */
+export function memberOrgs(actor: ScopeActor): Prisma.OrganizationWhereInput {
+  return { memberships: { some: { userId: actor.sub } } };
+}
+
+/** Levels that let a user see a repository at all. */
+const VIEWABLE = ['READ', 'WRITE', 'ADMIN'] as const;
+
+/**
+ * How the GitHub permission gate is configured, as far as a filter cares.
+ *
+ * Passed in rather than resolved here so these stay pure and synchronous —
+ * they are called inside `where` literals, and an async predicate would make
+ * every call site await mid-expression.
+ */
+export interface ConnectionScopeGate {
+  mode: 'off' | 'advisory' | 'enforce';
+  staleAfterHours: number;
+}
+
+/**
+ * The gate argument is **required, and may be undefined**.
+ *
+ * That combination is deliberate. Optional, it defaulted to "no gate", so
+ * `reachableConnections(user)` compiled and silently ran ungated — which is
+ * how the Slack routes and the human-step resolver ended up outside the gate
+ * twice, in exactly the way this module's docstring warns about. Required,
+ * every call site has to name what it is passing, and a new one that forgets is
+ * a compile error rather than a hole nobody sees.
+ *
+ * `undefined` remains a legitimate value: it means the caller has no gate,
+ * which is what an unconfigured deployment and every pre-gate caller mean. The
+ * point is that saying so is now a decision someone made on purpose.
+ */
+export type MaybeGate = ConnectionScopeGate | undefined;
+
+/**
+ * Repositories (`Connection` rows) the actor may reach.
+ *
+ * This is the one function the GitHub permission gate extends, which is the
+ * whole point of routing every repo-reachability question through it: team
+ * membership and real GitHub access have to be checked together or the weaker
+ * of the two wins somewhere.
+ *
+ * The two conditions are ANDed, so a permission row can only ever take access
+ * away. Nobody reaches a repository whose team they do not belong to, whatever
+ * GitHub says.
+ *
+ * Only `enforce` changes the filter. Under `advisory` a listing is unchanged,
+ * because reporting what it would have hidden means running it twice on every
+ * page render; the launch path carries the advisory signal instead.
+ *
+ * The staleness bound matters as much as the permission value. Without it a
+ * repository whose answers stopped refreshing — a revoked credential, a paused
+ * sweep, an installation pointed at the wrong account — would be served from a
+ * cache nobody is updating, indefinitely.
+ */
+export function reachableConnections(
+  actor: ScopeActor,
+  gate: MaybeGate
+): Prisma.ConnectionWhereInput {
+  return { team: memberTeams(actor), ...permissionRequirement(actor, gate) };
+}
+
+/** The oldest `checkedAt` a cached answer may carry and still count. */
+export function staleCutoff(staleAfterHours: number): Date {
+  return new Date(Date.now() - staleAfterHours * 60 * 60 * 1000);
+}
+
+/**
+ * The permission half of {@link reachableConnections}, on its own.
+ *
+ * For the few call sites where a `Connection` filter IS the whole `where`
+ * rather than being nested under a relation. `where: reachableConnections(…)`
+ * would be correct at run time but opaque to `tenantGuard.coverage.test.ts`,
+ * which can only read an object literal — so those sites spell the tenant key
+ * out and spread this alongside it:
+ *
+ *   where: { team: memberTeams(actor), ...permissionRequirement(actor, gate) }
+ *
+ * The permission term still has one definition; only the `team` key is
+ * repeated, and repeating it is the point — it is what keeps the call site
+ * legible to the audit.
+ */
+export function permissionRequirement(
+  actor: ScopeActor,
+  gate: MaybeGate
+): Prisma.ConnectionWhereInput {
+  if (gate?.mode !== 'enforce') {
+    return {};
+  }
+  return {
+    // The requirement applies to git repositories only. A `Connection` is also
+    // how an MCP server, an HTTP API and other non-git integrations are stored,
+    // and none of them can ever have a permission row: the sweep, the webhook
+    // refresh and the lookup all restrict to `git_repo`. Requiring a row from
+    // them would not be strict, it would be broken — every non-git connection
+    // would disappear for every non-admin the moment enforcement is switched
+    // on, with no way to get it back.
+    OR: [
+      { type: { not: 'git_repo' } },
+      {
+        repoAccess: {
+          some: {
+            checkedAt: { gte: staleCutoff(gate.staleAfterHours) },
+            permission: { in: [...VIEWABLE] },
+            userId: actor.sub,
+          },
+        },
+      },
+    ],
+  };
+}

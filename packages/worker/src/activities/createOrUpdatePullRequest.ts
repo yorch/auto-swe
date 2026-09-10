@@ -35,6 +35,7 @@ async function doCreateOrUpdatePullRequest(
   tracer: AgentTracer
 ): Promise<{ prNumber: number; prUrl: string }> {
   const repo = await prisma.connection.findUniqueOrThrow({
+    include: { installation: { select: { installationId: true } } },
     where: { id: requireRepoId(request, 'createOrUpdatePullRequest') },
   });
 

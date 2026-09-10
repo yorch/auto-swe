@@ -11,6 +11,7 @@
  * `../githubAuth.ts` — it is a GitHub-internal concern behind this provider.
  */
 
+import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
@@ -19,10 +20,32 @@ import type {
   CiStatusResult,
   CloneCredentials,
   CreatePullRequestInput,
+  PermissionLookup,
   PullRequestRef,
   RepoRef,
   ScmProvider,
 } from './types.js';
+
+/**
+ * Which installation, and at which API host, a repository's credential comes
+ * from. A null `installationId` on the ref means the singleton's installation,
+ * which is what every repository meant before a deployment could span more than
+ * one GitHub organization.
+ */
+function installationTarget(
+  repo: RepoRef,
+  ghConfig: { apiUrl: string }
+): { installationId: string | null; apiUrl: string } {
+  // The host has to match the installation, not the repository. A repo with a
+  // GitHub Enterprise `apiUrl` override but no installation of its own takes
+  // its id from the singleton, and the singleton's installation lives on the
+  // singleton's host — sending that id to the enterprise host asks a different
+  // GitHub instance about an installation it has never heard of.
+  if (!repo.installationId) {
+    return { apiUrl: ghConfig.apiUrl, installationId: null };
+  }
+  return { apiUrl: repo.apiUrl ?? ghConfig.apiUrl, installationId: repo.installationId };
+}
 
 /**
  * Build an authenticated Octokit for `repo`.
@@ -35,7 +58,7 @@ import type {
 async function octokitFor(repo: RepoRef) {
   const { Octokit } = await import('@octokit/rest');
   const ghConfig = await resolveGitHubConfig();
-  const token = await requireGitHubToken(ghConfig);
+  const token = await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
   const apiUrl =
     repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
   return new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
@@ -87,7 +110,7 @@ export class GitHubScmProvider implements ScmProvider {
     const ghConfig = await resolveGitHubConfig();
     const baseUrl = repo.baseUrl ?? ghConfig.baseUrl;
     const cloneUrl = `${baseUrl}/${repo.organizationName}/${repo.repoName}.git`;
-    const token = await requireGitHubToken(ghConfig);
+    const token = await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
     return {
       authedCloneUrl: cloneUrl.replace('https://', `https://x-access-token:${token}@`),
       cloneUrl,
@@ -170,7 +193,7 @@ export class GitHubScmProvider implements ScmProvider {
     };
   }
 
-  async fetchCiLogs(logsUrl: string): Promise<string> {
+  async fetchCiLogs(logsUrl: string, repo?: RepoRef): Promise<string> {
     const ghConfig = await resolveGitHubConfig();
     const target = resolveCiLogsTarget(logsUrl, trustedGitHubOrigins(ghConfig));
     if (!target.ok) {
@@ -179,7 +202,14 @@ export class GitHubScmProvider implements ScmProvider {
     let githubToken: string | null = null;
     if (target.trusted) {
       try {
-        githubToken = await resolveGitHubToken(ghConfig);
+        // `repo` is optional because a logs URL can arrive without one, but
+        // when it is available the token must come from that repository's
+        // installation — the singleton's credential cannot read a repo on a
+        // different installation, and the fix loop would run blind on a 404.
+        githubToken = await resolveGitHubToken(
+          ghConfig,
+          repo ? installationTarget(repo, ghConfig) : {}
+        );
       } catch (err) {
         if (!(err instanceof GitHubTokenMissingError)) {
           // Real auth error (e.g. malformed App credentials) — surface it so the
@@ -229,5 +259,26 @@ export class GitHubScmProvider implements ScmProvider {
       }
       throw err;
     }
+  }
+
+  async repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup> {
+    const ghConfig = await resolveGitHubConfig();
+    const target = installationTarget(repo, ghConfig);
+    let token: string;
+    try {
+      token = await resolveGitHubToken(ghConfig, target);
+    } catch {
+      // No usable credential is "could not ask", not "no access". Resolving it
+      // to a verdict would write a denial into the projection that GitHub never
+      // made, and it would look identical to a real one.
+      return { failure: 'credential-rejected', ok: false };
+    }
+    return fetchRepoPermission({
+      apiUrl: target.apiUrl,
+      organizationName: repo.organizationName,
+      repoName: repo.repoName,
+      token,
+      username,
+    });
   }
 }

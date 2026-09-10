@@ -2,10 +2,12 @@ import crypto from 'node:crypto';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
+import { reachableConnections } from '../lib/tenantScope.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import type { WorkRequestScheduleInput } from '../plugins/temporal.js';
 import { resolveDefaultTemplate } from './workRequests.js';
 
@@ -81,6 +83,8 @@ interface RepoWithMembership {
   isActive: boolean;
   organizationName: string;
   repoName: string;
+  githubApiUrl: string | null;
+  installation: { installationId: string } | null;
   teamId: string;
   team: { memberships: Array<{ role: string; userId: string }> };
 }
@@ -95,6 +99,7 @@ async function loadRepoWithMembership(
   // the caller rejects it like a missing/forbidden repo.
   return (await prisma.connection.findFirst({
     include: {
+      installation: { select: { installationId: true } },
       team: {
         select: {
           memberships: { select: { role: true, userId: true }, where: { userId } },
@@ -103,6 +108,45 @@ async function loadRepoWithMembership(
     },
     where: { id: repoId, type: 'git_repo' },
   })) as RepoWithMembership | null;
+}
+
+/**
+ * The GitHub permission gate, for the endpoints that cause a push.
+ *
+ * A schedule is a standing instruction to push and open pull requests, so
+ * creating one and firing one are launch paths in exactly the same sense as
+ * submitting a work request. Gating only the interactive submit would leave a
+ * schedule as a way to keep acting on a repository after GitHub access was
+ * revoked. Editing and deleting are not gated: neither causes a push, and
+ * refusing a delete would strand a schedule that its owner can no longer stop.
+ *
+ * Returns false having already sent the reply.
+ */
+async function passesRepoLaunchGate(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  user: JwtPayload,
+  repo: RepoWithMembership,
+  reply: FastifyReply
+): Promise<boolean> {
+  const decision = await decideRepoLaunch(
+    fastify.prisma,
+    user,
+    repo,
+    request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
+    request.log
+  );
+  if (decision.allowed) {
+    return true;
+  }
+  await reply.status(403).send({
+    error: {
+      code: 'REPO_ACCESS_DENIED',
+      message: LAUNCH_REFUSAL_MESSAGE[decision.reason],
+      reason: decision.reason,
+    },
+  });
+  return false;
 }
 
 /** ADMIN platform role, or LEAD/ADMIN membership on the repo's team. */
@@ -238,7 +282,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       where:
         user.role === 'ADMIN'
           ? {}
-          : { repository: { team: { memberships: { some: { userId: user.sub } } } } },
+          : { repository: reachableConnections(user, request.repoAccessGate) },
     });
     const statuses = await Promise.all(
       rows.map(async (row) => {
@@ -278,6 +322,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             message: 'Requires ADMIN role or LEAD membership on the repository team',
           },
         });
+      }
+      if (!(await passesRepoLaunchGate(fastify, request, user, repo, reply))) {
+        return;
       }
 
       // IDs generated upfront: the synthetic ticket / branch / Temporal
@@ -528,6 +575,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             message: 'Requires ADMIN role or LEAD membership on the repository team',
           },
         });
+      }
+      if (!(await passesRepoLaunchGate(fastify, request, user, repo, reply))) {
+        return;
       }
 
       try {

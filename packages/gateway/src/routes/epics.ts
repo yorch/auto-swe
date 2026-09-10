@@ -5,6 +5,12 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
+import {
+  type ConnectionScopeGate,
+  memberTeams,
+  permissionRequirement,
+} from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -46,14 +52,15 @@ export function parseRepoIdsFromPayload(payload: string): string[] {
   return [];
 }
 
-/** Repo IDs the user can see through team membership (non-admin visibility). */
+/** Repo IDs the user can reach, for non-admin epic visibility. */
 async function accessibleRepoIds(
   prisma: FastifyInstance['prisma'],
-  userId: string
+  actor: { sub: string },
+  gate: ConnectionScopeGate | undefined
 ): Promise<Set<string>> {
   const rows = await prisma.connection.findMany({
     select: { id: true },
-    where: { team: { memberships: { some: { userId } } } },
+    where: { team: memberTeams(actor), ...permissionRequirement(actor, gate) },
   });
   return new Set(rows.map((r: { id: string }) => r.id));
 }
@@ -85,7 +92,15 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         () =>
           fastify.prisma.connection.findMany({
             select: {
+              // `githubApiUrl` is what points the permission lookup at a GitHub
+              // Enterprise host. Omitting it is silent: `PermissionRepo` makes
+              // it optional, so the lookup falls back to the global API URL and
+              // asks github.com about a repository that lives on GHE — then
+              // writes that answer into the projection under the GHE
+              // connection's id, where the viewing filter reads it.
+              githubApiUrl: true,
               id: true,
+              installation: { select: { installationId: true } },
               organizationName: true,
               repoName: true,
               team: {
@@ -129,6 +144,29 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
               message: `You do not have access to: ${inaccessible
                 .map((r) => `${r.organizationName}/${r.repoName}`)
                 .join(', ')}`,
+            },
+          });
+        }
+      }
+
+      // GitHub permission gate, per repo. An epic fans out into a push and a
+      // pull request on every repository it names, so each one is a launch in
+      // exactly the sense the single-repo route means, and gating only that
+      // route would leave the epic as a way around it.
+      for (const r of repos) {
+        const decision = await decideRepoLaunch(
+          fastify.prisma,
+          user,
+          r,
+          request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
+          request.log
+        );
+        if (!decision.allowed) {
+          return reply.status(403).send({
+            error: {
+              code: 'REPO_ACCESS_DENIED',
+              message: `${r.organizationName}/${r.repoName}: ${LAUNCH_REFUSAL_MESSAGE[decision.reason]}`,
+              reason: decision.reason,
             },
           });
         }
@@ -244,7 +282,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         wr,
       }));
       if (user.role !== 'ADMIN') {
-        const allowed = await accessibleRepoIds(fastify.prisma, user.sub);
+        const allowed = await accessibleRepoIds(fastify.prisma, user, request.repoAccessGate);
         visible = visible.filter(({ repoIds }) => repoIds.some((id) => allowed.has(id)));
       }
 
@@ -361,7 +399,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       // repos on their team. 404 (not 403) so existence isn't probeable —
       // mirrors the list endpoint's silent filtering.
       if (user.role !== 'ADMIN') {
-        const allowed = await accessibleRepoIds(fastify.prisma, user.sub);
+        const allowed = await accessibleRepoIds(fastify.prisma, user, request.repoAccessGate);
         if (!knownRepoIds.some((id) => allowed.has(id))) {
           return notFound();
         }

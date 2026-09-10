@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { memberTeams } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { CRON_5_FIELD_RE } from './scheduledWorkRequests.js';
 
@@ -264,7 +265,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   app.get('/', { onRequest: authed }, async (request) => {
     const user = requireUser(request);
     const where: Prisma.SlackChannelWhereInput =
-      user.role === 'ADMIN' ? {} : { team: { memberships: { some: { userId: user.sub } } } };
+      user.role === 'ADMIN' ? {} : { team: memberTeams(user) };
     const rows = await asPlatformAdmin(
       user,
       "admin lists every team's channels",

@@ -101,6 +101,7 @@ export async function executeImplementation(
   crossRepoOptions?: CrossRepoStepOptions
 ): Promise<CodeResult> {
   const repo = await prisma.connection.findUniqueOrThrow({
+    include: { installation: { select: { installationId: true } } },
     where: { id: requireRepoId(request, 'executeImplementation') },
   });
 

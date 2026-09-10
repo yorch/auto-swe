@@ -28,6 +28,7 @@ import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { magicLink } from 'better-auth/plugins';
 import { genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import nodemailer, { type Transporter } from 'nodemailer';
+import { clearGithubLogin, syncGithubLoginForAccount } from './githubIdentity.js';
 
 // Share the gateway's single Prisma client (one pool, tenant guard attached)
 // instead of opening a second, unguarded connection pool for auth.
@@ -332,6 +333,39 @@ function oktaConfigured(): boolean {
 }
 
 function buildAuth() {
+  /**
+   * Record (or re-record) the GitHub username behind a linked GitHub account.
+   *
+   * Runs on link and on every account update. Swallowed on failure, like the
+   * team hook below: the repo-permission projection needs this login, but a
+   * GitHub outage must not stop someone signing in. An unresolved user shows up
+   * in the advisory-mode logs.
+   */
+  const refreshGithubLogin = async (account: {
+    providerId: string;
+    userId: string;
+    accessToken?: string | null;
+  }): Promise<void> => {
+    if (account.providerId !== 'github') {
+      return;
+    }
+    try {
+      const { apiUrl } = await resolveGitHubConfig();
+      const result = await syncGithubLoginForAccount(prisma, {
+        accessToken: account.accessToken,
+        apiUrl,
+        userId: account.userId,
+      });
+      if (!result.login) {
+        console.warn(
+          `[better-auth] could not record a GitHub login for user ${account.userId} (${result.reason}); repository permission checks cannot resolve this user until it is set.`
+        );
+      }
+    } catch (err) {
+      console.error(`[better-auth] github-login hook failed for user ${account.userId}:`, err);
+    }
+  };
+
   return betterAuth({
     // Link sign-ins by verified email so a user who's already in the system
     // via GitHub and then signs in with Google (same verified email) ends up
@@ -379,6 +413,43 @@ function buildAuth() {
     // missing default team doesn't block the sign-up — the user can still be
     // assigned manually.
     databaseHooks: {
+      // Post-create hook: capture the GitHub username behind a newly linked
+      // GitHub account. This fires both when a GitHub sign-in creates a user
+      // and when an existing user links GitHub later, which is why it hangs off
+      // the account rather than the user — the second case creates no user row.
+      //
+      // Swallowed on failure, like the team hook below: the repo-permission
+      // projection needs this login, but a GitHub outage must not stop someone
+      // signing in. An unresolved user shows up in the advisory-mode logs.
+      account: {
+        create: { after: async (account) => refreshGithubLogin(account) },
+        // Unlinking must forget the identity. A login left behind keeps
+        // resolving repository permissions for an account that is no longer
+        // connected to this user at all.
+        delete: {
+          after: async (account) => {
+            if (account.providerId !== 'github') {
+              return;
+            }
+            try {
+              await clearGithubLogin(prisma, account.userId);
+            } catch (err) {
+              console.error(
+                `[better-auth] failed to clear the GitHub login for user ${account.userId} on unlink; it may still authorise repository access:`,
+                err
+              );
+            }
+          },
+        },
+        // Re-verified on every account update, not only on create.
+        // `updateAccountOnSignIn` refreshes the stored token on each GitHub
+        // sign-in, so this is where a renamed GitHub account gets picked up.
+        // Without it the login is frozen at link time, and GitHub usernames are
+        // released on rename and immediately re-registrable — a stale one can
+        // eventually name a different person while still backing this user's
+        // repository access.
+        update: { after: async (account) => refreshGithubLogin(account) },
+      },
       user: {
         create: {
           after: async (user) => {
@@ -486,6 +557,10 @@ function buildAuth() {
     // The seeded admin is pre-active via the shared seed.
     user: {
       additionalFields: {
+        // Written by the account-create hook above, never by a client — a user
+        // who could set their own GitHub login could claim another person's
+        // repository access.
+        githubLogin: { input: false, required: false, type: 'string' },
         isActive: { defaultValue: false, input: false, required: false, type: 'boolean' },
         role: { defaultValue: 'ENGINEER', input: false, required: false, type: 'string' },
         slackId: { input: false, required: false, type: 'string' },

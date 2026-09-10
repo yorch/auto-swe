@@ -5,6 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
+import { reachableConnections } from '../lib/tenantScope.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 import { canManageTeamRepos } from './repositories.js';
 
@@ -145,7 +146,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
               status: 'unresolved',
               toRef: { not: null },
               ...(user.role !== 'ADMIN' && {
-                fromRepo: { team: { memberships: { some: { userId: user.sub } } } },
+                fromRepo: reachableConnections(user, request.repoAccessGate),
               }),
             },
           })

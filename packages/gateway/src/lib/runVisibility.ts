@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { type MaybeGate, memberTeams, reachableConnections } from './tenantScope.js';
 
 /** A caller that needs a run- or step-level visibility predicate. */
 export interface VisibilityActor {
@@ -13,7 +14,8 @@ export interface VisibilityActor {
  * teams.
  */
 export function buildWorkflowRunVisibilityFilter(
-  actor: VisibilityActor
+  actor: VisibilityActor,
+  gate: MaybeGate
 ): Prisma.WorkflowRunWhereInput {
   if (actor.role === 'ADMIN') {
     return {};
@@ -21,12 +23,12 @@ export function buildWorkflowRunVisibilityFilter(
   return {
     OR: [
       { template: { teamId: null } },
-      { template: { team: { memberships: { some: { userId: actor.sub } } } } },
+      { template: { team: memberTeams(actor) } },
       {
         workRequest: {
           activeWorkflows: {
             some: {
-              repository: { team: { memberships: { some: { userId: actor.sub } } } },
+              repository: reachableConnections(actor, gate),
             },
           },
         },
@@ -37,10 +39,11 @@ export function buildWorkflowRunVisibilityFilter(
 
 /** Build the human-step visibility predicate used by `/inbox` and Slack actions. */
 export function buildWorkflowHumanStepVisibilityFilter(
-  actor: VisibilityActor
+  actor: VisibilityActor,
+  gate: MaybeGate
 ): Prisma.WorkflowHumanStepWhereInput {
   if (actor.role === 'ADMIN') {
     return {};
   }
-  return { run: buildWorkflowRunVisibilityFilter(actor) };
+  return { run: buildWorkflowRunVisibilityFilter(actor, gate) };
 }

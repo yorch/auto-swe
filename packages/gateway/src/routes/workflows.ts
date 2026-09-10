@@ -8,6 +8,7 @@ import {
   redactConnection,
 } from '../lib/connectionRedaction.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 // Default high enough that the dashboard's KPI view covers recent history,
@@ -55,9 +56,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
         user.role === 'ADMIN'
           ? {}
           : {
-              repository: {
-                team: { memberships: { some: { userId: user.sub } } },
-              },
+              repository: reachableConnections(user, request.repoAccessGate),
             };
 
       const [workflows, total] = await Promise.all([
@@ -86,7 +85,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
       const where: Prisma.ActiveWorkflowWhereInput = {
         id: request.params.id,
         ...(user.role !== 'ADMIN' && {
-          repository: { team: { memberships: { some: { userId: user.sub } } } },
+          repository: reachableConnections(user, request.repoAccessGate),
         }),
       };
 

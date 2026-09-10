@@ -178,7 +178,13 @@ describe('runImplementerFixSession', () => {
   it('resolves the repo from CodeResult.repoId without a branch lookup', async () => {
     findRepo.mockResolvedValue(REPO as never);
     const out = await runImplementerFixSession(input());
-    expect(findRepo).toHaveBeenCalledWith({ where: { id: 'repo-1' } });
+    // The installation must be selected, not merely allowed to be: a fix
+    // session that resolved its repo without one clones through the default
+    // installation, which 404s for a repo in another GitHub organization.
+    expect(findRepo).toHaveBeenCalledWith({
+      include: { installation: { select: { installationId: true } } },
+      where: { id: 'repo-1' },
+    });
     expect(findWorkflow).not.toHaveBeenCalled();
     expect(out.repoId).toBe('repo-1');
     expect(out.headSha).toBe('abc123');

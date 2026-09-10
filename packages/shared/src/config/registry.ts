@@ -164,6 +164,60 @@ export const SETTING_DEFINITIONS = {
     schema: ratio,
     unit: '0–1',
   }),
+
+  // ── Repository permission gating ───────────────────────────────────────────
+  // Team membership says which repositories a user may reach; these decide
+  // whether the source-control host has to agree. Deployment-wide, because a
+  // per-team override would let one team opt out of the check that keeps the
+  // platform's idea of access aligned with GitHub's.
+  'repoAccess.mode': defineSetting({
+    defaultValue: 'off',
+    description:
+      "How the cached GitHub permission answers are used. 'off' ignores them entirely and access is team membership alone. 'advisory' logs every decision that would change but changes nothing — run here until the log is quiet and every active user has a GitHub login recorded. 'enforce' applies them.",
+    group: 'repoAccess',
+    label: 'GitHub permission gating',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(['off', 'advisory', 'enforce']),
+  }),
+  'repoAccess.syncCron': defineSetting({
+    defaultValue: '23 * * * *',
+    description:
+      'Cron expression (UTC) for the sweep that refreshes cached GitHub permission answers. Webhooks handle revocation in seconds; this bounds how long a missed webhook can hide one.',
+    group: 'repoAccess',
+    label: 'Permission sync schedule',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.string().min(9),
+  }),
+  'repoAccess.syncEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether the scheduled permission sweep runs. Off by default: it needs a GitHub App or PAT that can see every configured repository, and it spends API quota proportional to team members times repositories.',
+    group: 'repoAccess',
+    label: 'Run the permission sync on a schedule',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'repoAccess.viewStaleAfterHours': defineSetting({
+    defaultValue: 72,
+    description:
+      'How old a cached answer may be and still be trusted for viewing. Beyond this the row is ignored, so a repository whose answers stopped refreshing disappears from listings rather than being served indefinitely from a cache nobody is updating.',
+    group: 'repoAccess',
+    label: 'Cached answer lifetime (hours)',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().positive().max(8760),
+  }),
   'repoDependency.autoPromoteThreshold': defineSetting({
     defaultValue: 0.9,
     description:

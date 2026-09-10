@@ -26,8 +26,16 @@ import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX';
 
-/** Connection (git_repo) row shape (the shared index doesn't export Prisma model types). */
-type Connection = Awaited<ReturnType<typeof prisma.connection.findUniqueOrThrow>>;
+/**
+ * Connection (git_repo) row shape (the shared index doesn't export Prisma model
+ * types). The installation relation is part of the shape because `toRepoRef`
+ * requires it — a fix session that resolved its repo without one would clone
+ * through the default installation, which for a repo in another GitHub
+ * organization 404s as if the repository did not exist.
+ */
+type Connection = Awaited<ReturnType<typeof prisma.connection.findUniqueOrThrow>> & {
+  installation: { installationId: string } | null;
+};
 
 export interface FixSessionInput {
   mode: FixMode;
@@ -62,10 +70,15 @@ export interface FixSessionInput {
  */
 async function resolveSessionRepo(previousCodeResult: CodeResult): Promise<Connection> {
   if (previousCodeResult.repoId) {
-    return prisma.connection.findUniqueOrThrow({ where: { id: previousCodeResult.repoId } });
+    return prisma.connection.findUniqueOrThrow({
+      include: { installation: { select: { installationId: true } } },
+      where: { id: previousCodeResult.repoId },
+    });
   }
   const workflow = await prisma.activeWorkflow.findFirst({
-    include: { repository: true },
+    include: {
+      repository: { include: { installation: { select: { installationId: true } } } },
+    },
     orderBy: { updatedAt: 'desc' },
     where: { assignedBranch: previousCodeResult.branch },
   });

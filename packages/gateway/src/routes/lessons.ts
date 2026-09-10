@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const ConsolidateBody = z.object({
@@ -44,7 +45,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       const accessFilter: Prisma.MemoryItemWhereInput =
         user.role === 'ADMIN'
           ? {}
-          : { repository: { team: { memberships: { some: { userId: user.sub } } } } };
+          : { repository: reachableConnections(user, request.repoAccessGate) };
 
       const where: Prisma.MemoryItemWhereInput = {
         ...accessFilter,
@@ -101,7 +102,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
           select: { id: true },
           where: {
             id: repoId,
-            team: { memberships: { some: { userId: user.sub } } },
+            ...reachableConnections(user, request.repoAccessGate),
           },
         });
         if (!accessibleRepo) {

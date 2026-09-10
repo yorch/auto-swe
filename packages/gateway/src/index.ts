@@ -37,6 +37,7 @@ import { bundleRoutes } from './routes/bundles.js';
 import { configSettingsRoutes } from './routes/configSettings.js';
 import { epicRoutes } from './routes/epics.js';
 import { evalRoutes } from './routes/evals.js';
+import { githubInstallationRoutes } from './routes/githubInstallations.js';
 import { humanErrorBaselineRoutes } from './routes/humanErrorBaselines.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
@@ -152,6 +153,18 @@ async function start() {
       })
     )
     .catch((err) => app.log.warn({ err }, 'repo dependency scan schedule sync failed at startup'));
+
+  // Same for the permission sweep that refreshes cached GitHub answers. Paused
+  // unless an admin has enabled it: it spends GitHub quota proportional to team
+  // members times repositories, so it must be a deliberate choice.
+  resolveSettings(['repoAccess.syncCron', 'repoAccess.syncEnabled'], {})
+    .then((cfg) =>
+      app.temporal.syncRepoAccessSyncSchedule({
+        cronExpression: cfg['repoAccess.syncCron'],
+        enabled: cfg['repoAccess.syncEnabled'],
+      })
+    )
+    .catch((err) => app.log.warn({ err }, 'repo access sync schedule sync failed at startup'));
 
   // Same for the eval-regression Temporal Schedule (the nightly benchmark).
   // Off by default — needs a seeded dataset + a worker that can reach Docker.
@@ -377,6 +390,8 @@ async function start() {
   await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/admin' });
+  await app.register(githubInstallationRoutes, { prefix: '/api/v1/platform' });
+  await app.register(githubInstallationRoutes, { prefix: '/api/v1/admin' });
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/admin' });

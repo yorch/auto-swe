@@ -36,6 +36,18 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/tenantGuard.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/githubInstallation',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubInstallation.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/githubPermission',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubPermission.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/repoAccessProjection',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoAccessProjection.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/keyRotation',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/keyRotation.ts'),
       },

@@ -316,6 +316,7 @@ async function provisionMergeWorkspace(
   label: string
 ): Promise<{ workspace: Workspace; log: string[] }> {
   const repo = await prisma.connection.findUniqueOrThrow({
+    include: { installation: { select: { installationId: true } } },
     where: { id: requireRepoId(request, 'decomposition') },
   });
   const repoRef = toRepoRef(repo);

@@ -4,6 +4,7 @@ import { HITL_VALID_ACTIONS, type HitlKind } from '@auto-swe/shared/workflow/int
 import { z } from 'zod';
 import { buildWorkflowHumanStepVisibilityFilter } from './runVisibility.js';
 import { isTerminalSignalError } from './temporalErrors.js';
+import type { ConnectionScopeGate } from './tenantScope.js';
 
 /**
  * Shared HITL resolve core, used by:
@@ -34,6 +35,21 @@ export interface HitlResolveDeps {
     signalWorkflow(workflowId: string, signalName: string, args?: unknown[]): Promise<void>;
   };
   log: { error(obj: unknown, msg?: string): void; warn(obj: unknown, msg?: string): void };
+  /**
+   * The GitHub permission gate, supplied by the caller.
+   *
+   * Answering a step signals the workflow to continue, which is an action on
+   * the repository rather than a read of it, so it is gated like the inbox that
+   * offered it. It arrives as a dependency rather than being resolved here
+   * because the two callers get it differently: the HTTP route inherits
+   * `request.repoAccessGate`, while the Slack button authenticates by request
+   * signature and has to resolve it. Resolving it inside this core would also
+   * make it read config the caller has mocked away.
+   *
+   * Undefined means the gate is off, which is what an unconfigured deployment
+   * and every pre-existing caller mean.
+   */
+  gate?: ConnectionScopeGate;
 }
 
 export type HitlResolveErrorCode =
@@ -242,7 +258,7 @@ export async function resolveHitlStep(
 
   const step = await prisma.workflowHumanStep.findFirst({
     include: { run: { select: { id: true, status: true, workflowId: true } } },
-    where: { id: stepId, ...buildWorkflowHumanStepVisibilityFilter(user) },
+    where: { id: stepId, ...buildWorkflowHumanStepVisibilityFilter(user, deps.gate) },
   });
   if (!step) {
     return { code: 'NOT_FOUND', message: 'Human step not found', ok: false };

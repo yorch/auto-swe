@@ -164,7 +164,10 @@ async function evaluateScorer(
         if (!connectionId || !externalTicketId) {
           return gateFailed;
         }
-        const repo = await prisma.connection.findUniqueOrThrow({ where: { id: connectionId } });
+        const repo = await prisma.connection.findUniqueOrThrow({
+          include: { installation: { select: { installationId: true } } },
+          where: { id: connectionId },
+        });
         const defaults = await resolveWorkflowDefaults();
         const branch = `${defaults.branchPrefix}/${externalTicketId}`;
         const repoRef = toRepoRef(repo);

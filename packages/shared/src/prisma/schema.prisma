@@ -15,6 +15,15 @@ enum Role {
   ENGINEER
 }
 
+/// A source-control host's answer about one user's access to one repository.
+/// Mirrors GitHub's collaborator permission levels, weakest first.
+enum RepoPermissionLevel {
+  NONE
+  READ
+  WRITE
+  ADMIN
+}
+
 enum OrgRole {
   ORG_ADMIN
   ORG_MEMBER
@@ -281,6 +290,17 @@ model Connection {
   githubApiUrl         String? @map("github_api_url")
   teamId               String  @map("team_id") @db.Uuid
   team                 Team    @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  /// Which GitHub App installation reaches this repository. Null means "the
+  /// singleton `GitHubConfig.appInstallationId`", which is what every row meant
+  /// before more than one installation was expressible — so an existing
+  /// single-org deployment keeps working with every row null.
+  ///
+  /// `Restrict` rather than `SetNull`: silently reverting a repository to the
+  /// default installation would send its clone and permission lookups to a
+  /// different GitHub account, and a permission answer from the wrong account
+  /// is worse than an error.
+  installationId       String?             @map("installation_id") @db.Uuid
+  installation         GitHubInstallation? @relation(fields: [installationId], references: [id], onDelete: Restrict)
   /// Per-connection base image override. NULL means "inherit", and it must stay
   /// NULL-able with NO column default: a default writes a literal into every row
   /// the create path omits, which makes it indistinguishable from a deliberate
@@ -324,9 +344,83 @@ model Connection {
   /// are edges where this repo is the dependent; `dependenciesTo` where it is depended upon.
   dependenciesFrom      RepoDependency[]       @relation("RepoDependencyFrom")
   dependenciesTo        RepoDependency[]       @relation("RepoDependencyTo")
+  /// Cached host permission answers for this repository (see `RepoAccess`).
+  repoAccess            RepoAccess[]
 
   @@index([teamId])
+  @@index([installationId])
   @@map("connections")
+}
+
+/// What the source-control host last said about one user's access to one
+/// repository.
+///
+/// **This is a cache, not a grant table.** Nothing here is authored: every row
+/// is an answer GitHub gave, and the only writer is the sync. Editing a row by
+/// hand grants access that GitHub does not back, until the next sweep silently
+/// takes it away again. To change someone's access, change it on GitHub.
+///
+/// Rows exist only for (user, repository) pairs that team membership already
+/// allows — the projection is the second of two conditions, never a way to
+/// reach a repository whose team you do not belong to.
+///
+/// Not tenant-scoped in `tenantGuard`'s sense: it carries no `teamId`/`orgId`,
+/// and every query against it is narrowed by `userId` or `connectionId`, which
+/// are stronger.
+model RepoAccess {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String     @map("user_id") @db.Uuid
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectionId String     @map("connection_id") @db.Uuid
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  permission RepoPermissionLevel
+
+  /// When the host last answered. A failed lookup does not update this — the
+  /// row keeps saying what was last actually known, and grows stale rather than
+  /// recording an outage as a denial.
+  checkedAt DateTime @default(now()) @map("checked_at") @db.Timestamptz
+
+  @@unique([userId, connectionId])
+  @@index([connectionId])
+  @@index([checkedAt])
+  @@map("repo_access")
+}
+
+/// A GitHub App installation on one GitHub account (organization or user).
+///
+/// The singleton `GitHubConfig` carries the App's own credentials, which are
+/// genuinely instance-wide. *Where* the App is installed is not: reaching
+/// repositories across several GitHub organizations means several installations,
+/// each minting its own token and each answering permission questions only about
+/// its own account.
+///
+/// Not tenant-scoped. An installation is platform infrastructure, like the App
+/// credentials themselves — teams reach one by owning a Connection that points
+/// at it, not by owning the installation.
+model GitHubInstallation {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// GitHub's numeric installation id, as a string (it is an opaque identifier
+  /// and every use of it is URL interpolation).
+  ///
+  /// Unique, and deliberately not scoped by host: a deployment points at one
+  /// GitHub host, whose URLs live on the `GitHubConfig` singleton with per-repo
+  /// overrides on `Connection`. A third place to override the host would be
+  /// speculative, and making uniqueness conditional on it would need a partial
+  /// unique index — DDL Prisma cannot express, which every later `migrate diff`
+  /// would then propose dropping.
+  installationId String @unique @map("installation_id")
+  /// The organization or user login the App is installed on. Display only —
+  /// GitHub is authoritative, and this is not used to route lookups.
+  accountLogin   String @map("account_login")
+  isActive       Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  connections Connection[]
+
+  @@map("github_installations")
 }
 
 /// A directed edge in the repo dependency graph: `fromRepo` depends on `toRepo`.
@@ -800,6 +894,16 @@ model User {
   emailVerified Boolean  @default(false) @map("email_verified")
   image         String?
   slackId       String?  @unique @map("slack_id")
+  /// GitHub username (the `login`, not the numeric id), captured when the user
+  /// links a GitHub identity. The repo-permission projection is keyed on this:
+  /// GitHub's collaborator-permission endpoint addresses a user by login, and
+  /// better-auth stores only the numeric account id on `Account.accountId`, so
+  /// without this column there is no way to ask GitHub about a platform user
+  /// without first spending a round-trip to translate the id.
+  ///
+  /// Unique because one GitHub identity must not map to two platform users —
+  /// the projection would then grant one user's access to the other.
+  githubLogin   String?  @unique @map("github_login")
   role          Role     @default(ENGINEER)
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -818,6 +922,7 @@ model User {
   workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
   configPermissions     ConfigPermission[]
+  repoAccess            RepoAccess[]
 
   @@map("users")
 }

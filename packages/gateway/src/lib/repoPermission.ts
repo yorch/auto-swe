@@ -1,0 +1,81 @@
+/**
+ * The gateway's side of "what access does this user have to this repository".
+ *
+ * The worker asks the same question through the `ScmProvider` seam. Both end up
+ * in `@auto-swe/shared/lib/githubPermission`; what differs is only how each
+ * process gets from a `Connection` row to a credential, and the gateway is the
+ * side that has the row in hand.
+ */
+import type { PrismaClient } from '@auto-swe/shared';
+import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
+import { fetchRepoPermission, type PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+
+/** The `Connection` columns a permission lookup needs. */
+export interface PermissionRepo {
+  organizationName: string | null;
+  repoName: string | null;
+  githubApiUrl?: string | null;
+  installation: { installationId: string } | null;
+}
+
+/** Select exactly the columns `lookupRepoPermission` reads. */
+export const PERMISSION_REPO_SELECT = {
+  githubApiUrl: true,
+  installation: { select: { installationId: true } },
+  organizationName: true,
+  repoName: true,
+} as const;
+
+/**
+ * Ask GitHub what `username` may do with `repo`.
+ *
+ * Returns a typed failure rather than throwing, and never resolves a failure to
+ * a verdict — a caller has to decide what an unanswered question means, and
+ * that decision differs between launching (fail closed) and viewing (serve what
+ * is already known).
+ */
+export async function lookupRepoPermission(
+  repo: PermissionRepo,
+  username: string
+): Promise<PermissionLookup> {
+  if (!(repo.organizationName && repo.repoName)) {
+    // A non-git connection has no repository to ask about. This is a caller
+    // error rather than a denial, so it is not reported as `none`.
+    return { failure: 'repo-not-found', ok: false };
+  }
+  const ghConfig = await resolveGitHubConfig();
+  const apiUrl = repo.githubApiUrl ?? ghConfig.apiUrl;
+  let token: string;
+  try {
+    token = await resolveGitHubToken(ghConfig, {
+      apiUrl,
+      installationId: repo.installation?.installationId ?? null,
+    });
+  } catch {
+    return { failure: 'credential-rejected', ok: false };
+  }
+  return fetchRepoPermission({
+    apiUrl,
+    organizationName: repo.organizationName,
+    repoName: repo.repoName,
+    token,
+    username,
+  });
+}
+
+/**
+ * Resolve a platform user's GitHub login.
+ *
+ * Null means the user has never linked a GitHub identity, which is a different
+ * condition from having no access: there is nobody to ask GitHub about. The
+ * advisory rollout exists so these users are found before enforcement makes
+ * them undeniable.
+ */
+export async function githubLoginFor(prisma: PrismaClient, userId: string): Promise<string | null> {
+  const user = await prisma.user.findUnique({
+    select: { githubLogin: true },
+    where: { id: userId },
+  });
+  return user?.githubLogin ?? null;
+}

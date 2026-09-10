@@ -29,9 +29,11 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
+import { memberOrgs, memberTeams } from '../lib/tenantScope.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
@@ -405,7 +407,7 @@ function teamMembershipFilter(user: {
   return {
     OR: [
       { teamId: null }, // Global templates visible to everyone
-      { team: { memberships: { some: { userId: user.sub } } } },
+      { team: memberTeams(user) },
     ],
   };
 }
@@ -424,7 +426,7 @@ function templateWriteFilter(user: {
     return {};
   }
   return {
-    team: { memberships: { some: { userId: user.sub } } },
+    team: memberTeams(user),
     teamId: { not: null },
   };
 }
@@ -597,14 +599,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           startedAt: { gte: windowStart },
           // Visibility: same run-level visibility predicate used on /runs so
           // global templates do not leak cross-team work-request runs.
-          ...buildWorkflowRunVisibilityFilter(user),
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
         },
       });
       const [rows, baselines] = await Promise.all([
         rowsQuery,
         fastify.prisma.humanErrorBaseline.findMany({
           select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
-          where: { organization: { memberships: { some: { userId: user.sub } } } },
+          where: { organization: memberOrgs(user) },
         }),
       ]);
       const isTruncated = rows.length > ANALYTICS_ROW_CAP;
@@ -1646,6 +1648,44 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (!connectionResult.ok) {
         return;
       }
+      // GitHub permission gate. A template run against a git repository pushes
+      // and opens a pull request like any other launch, so gating only
+      // POST /work-requests would leave this as the way around it. Templates
+      // with no connection (api_only) have no repository to check, and the
+      // public/webhook caller has no user to check against — it is scoped to
+      // the template's own team instead, as `validateRunConnection` enforces.
+      if (user && connectionId) {
+        const gateRepo = await fastify.prisma.connection.findUnique({
+          select: {
+            githubApiUrl: true,
+            id: true,
+            installation: { select: { installationId: true } },
+            organizationName: true,
+            repoName: true,
+            type: true,
+          },
+          where: { id: connectionId },
+        });
+        if (gateRepo?.type === 'git_repo') {
+          const decision = await decideRepoLaunch(
+            fastify.prisma,
+            user,
+            gateRepo,
+            request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
+            request.log
+          );
+          if (!decision.allowed) {
+            return reply.status(403).send({
+              error: {
+                code: 'REPO_ACCESS_DENIED',
+                message: LAUNCH_REFUSAL_MESSAGE[decision.reason],
+                reason: decision.reason,
+              },
+            });
+          }
+        }
+      }
+
       const budgetOrgId = connectionResult.budgetOrgId ?? tpl.team?.organization?.id;
       const budgetCap = connectionResult.budgetCap ?? tpl.team?.organization?.monthlyBudgetUsdCents;
 
@@ -1747,10 +1787,16 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           orderBy: { startedAt: 'desc' },
           skip: offset,
           take: limit,
-          where: { templateId: tpl.id, ...buildWorkflowRunVisibilityFilter(user) },
+          where: {
+            templateId: tpl.id,
+            ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+          },
         }),
         fastify.prisma.workflowRun.count({
-          where: { templateId: tpl.id, ...buildWorkflowRunVisibilityFilter(user) },
+          where: {
+            templateId: tpl.id,
+            ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+          },
         }),
       ]);
       return {
@@ -1928,7 +1974,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: tpl.id,
             // Visibility: same predicate used on /runs so a global template's
             // runs are not exposed through a different team's work request.
-            ...buildWorkflowRunVisibilityFilter(user),
+            ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
           },
         }),
         fastify.prisma.workflowStep.findMany({
@@ -1939,7 +1985,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             run: {
               startedAt: { gte: windowStart },
               templateId: tpl.id,
-              ...buildWorkflowRunVisibilityFilter(user),
+              ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
             },
           },
         }),

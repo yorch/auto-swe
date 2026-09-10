@@ -5,6 +5,8 @@ import { roleMeets } from '@auto-swe/shared/config/permissions';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
+import type { RepoAccessGate } from '../lib/repoAccessGate.js';
+import { resolveRepoAccessGateOrLastKnown } from '../lib/repoAccessGate.js';
 
 // ── JWT Configuration ──
 
@@ -31,6 +33,16 @@ declare module 'fastify' {
   interface FastifyRequest {
     user?: JwtPayload;
     teamRole?: string;
+    /**
+     * How the GitHub permission gate is configured for this request.
+     *
+     * Resolved once here rather than in each handler: the visibility filters
+     * are pure synchronous functions called inside `where` literals, so making
+     * them resolve their own config would mean awaiting mid-expression at
+     * around twenty call sites. Behind the setting registry's ~30s cache, so
+     * this is a memory read in the steady state.
+     */
+    repoAccessGate?: RepoAccessGate;
   }
 }
 
@@ -399,6 +411,18 @@ export function requireAuth(options: RBACOptions = {}) {
       });
     }
     request.user = payload;
+
+    // A failure to read the gate must not fail the request, but it must not
+    // silently disable enforcement either — that would allow launches that were
+    // being refused a second earlier, invisibly to the person it lets through.
+    // The resolver falls back to the last value this process read; only a
+    // process that has never managed to read it falls all the way to `off`,
+    // and such a process has nothing to enforce yet.
+    const gate = await resolveRepoAccessGateOrLastKnown();
+    if (!gate) {
+      request.log.warn('repo access gate config has never been readable; treating as off');
+    }
+    request.repoAccessGate = gate ?? { mode: 'off', staleAfterHours: 0 };
 
     // Platform role check
     if (options.requiredRole && !hasRole(payload.role, options.requiredRole)) {

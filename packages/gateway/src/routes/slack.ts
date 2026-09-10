@@ -17,6 +17,11 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastif
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
+import {
+  decideRepoLaunch,
+  LAUNCH_REFUSAL_MESSAGE,
+  resolveRepoAccessGateOrLastKnown,
+} from '../lib/repoAccessGate.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import {
   fetchSlackChannelIsPrivate,
@@ -26,8 +31,15 @@ import {
   verifySlackSignature,
 } from '../lib/slack.js';
 import { isTerminalSignalError } from '../lib/temporalErrors.js';
+import { memberTeams } from '../lib/tenantScope.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
-import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
+import {
+  getErrorName,
+  hasRole,
+  type JwtPayload,
+  requireAuth,
+  requireUser,
+} from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
 
 interface SlackOAuthResponse {
@@ -125,9 +137,17 @@ async function canSeeRun(
   user: { id: string; role: string },
   workflowId: string
 ): Promise<boolean> {
+  // Slack routes authenticate by request signature rather than `requireAuth`,
+  // so there is no `request.repoAccessGate` to inherit — the gate is resolved
+  // here instead. Leaving it out would make every Slack button a way past a
+  // check the dashboard applies, and these buttons signal workflows.
+  const gate = (await resolveRepoAccessGateOrLastKnown()) ?? undefined;
   const run = await fastify.prisma.workflowRun.findFirst({
     select: { id: true },
-    where: { workflowId, ...buildWorkflowRunVisibilityFilter({ role: user.role, sub: user.id }) },
+    where: {
+      workflowId,
+      ...buildWorkflowRunVisibilityFilter({ role: user.role, sub: user.id }, gate),
+    },
   });
   return run !== null;
 }
@@ -1266,7 +1286,15 @@ async function handleHitlResolveAction(
   }
 
   const result = await resolveHitlStep(
-    { log: request.log, prisma: fastify.prisma, temporal: fastify.temporal },
+    {
+      // Slack authenticates by request signature, not `requireAuth`, so there
+      // is no `request.repoAccessGate` to inherit — resolve it here or the
+      // button becomes the way past a check the dashboard applies.
+      gate: (await resolveRepoAccessGateOrLastKnown()) ?? undefined,
+      log: request.log,
+      prisma: fastify.prisma,
+      temporal: fastify.temporal,
+    },
     parsed.stepId,
     parsed.action,
     parsed.value,
@@ -1393,7 +1421,7 @@ async function listVisibleTemplates(
     user.role === 'ADMIN'
       ? {}
       : {
-          OR: [{ teamId: null }, { team: { memberships: { some: { userId: user.id } } } }],
+          OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }],
         };
   // `where` is `{}` for a platform admin — the deliberate cross-tenant branch.
   const rows = await asPlatformAdmin(
@@ -1654,7 +1682,10 @@ async function handleRunModalSubmission(
   }
 
   const repo = await fastify.prisma.connection.findUnique({
-    include: { team: { select: { memberships: { where: { userId: user.id } } } } },
+    include: {
+      installation: { select: { installationId: true } },
+      team: { select: { memberships: { where: { userId: user.id } } } },
+    },
     where: { id: repoId },
   });
   if (!repo?.isActive) {
@@ -1676,6 +1707,21 @@ async function handleRunModalSubmission(
     };
   }
 
+  // The same GitHub permission gate the dashboard's submit applies. Without it
+  // the Slack modal is simply the way around it.
+  const launchDecision = await decideRepoLaunch(
+    fastify.prisma,
+    { exp: 0, iat: 0, role: user.role as JwtPayload['role'], sub: user.id },
+    repo,
+    (await resolveRepoAccessGateOrLastKnown()) ?? { mode: 'off', staleAfterHours: 0 }
+  );
+  if (!launchDecision.allowed) {
+    return {
+      errors: { repo_block: LAUNCH_REFUSAL_MESSAGE[launchDecision.reason] },
+      response_action: 'errors',
+    };
+  }
+
   // Resolve workflow template — explicit choice wins, else default resolver.
   let resolvedTemplate: { templateId: string; version: number } | null = null;
   if (templateId) {
@@ -1688,7 +1734,7 @@ async function handleRunModalSubmission(
         status: 'ACTIVE',
         ...(user.role === 'ADMIN'
           ? {}
-          : { OR: [{ teamId: null }, { team: { memberships: { some: { userId: user.id } } } }] }),
+          : { OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }] }),
       },
     });
     if (!tpl?.activeVersion) {
