@@ -153,6 +153,18 @@ async function start() {
     )
     .catch((err) => app.log.warn({ err }, 'repo dependency scan schedule sync failed at startup'));
 
+  // Same for the permission sweep that refreshes cached GitHub answers. Paused
+  // unless an admin has enabled it: it spends GitHub quota proportional to team
+  // members times repositories, so it must be a deliberate choice.
+  resolveSettings(['repoAccess.syncCron', 'repoAccess.syncEnabled'], {})
+    .then((cfg) =>
+      app.temporal.syncRepoAccessSyncSchedule({
+        cronExpression: cfg['repoAccess.syncCron'],
+        enabled: cfg['repoAccess.syncEnabled'],
+      })
+    )
+    .catch((err) => app.log.warn({ err }, 'repo access sync schedule sync failed at startup'));
+
   // Same for the eval-regression Temporal Schedule (the nightly benchmark).
   // Off by default — needs a seeded dataset + a worker that can reach Docker.
   resolveEvalScheduleConfig()

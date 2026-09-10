@@ -15,6 +15,15 @@ enum Role {
   ENGINEER
 }
 
+/// A source-control host's answer about one user's access to one repository.
+/// Mirrors GitHub's collaborator permission levels, weakest first.
+enum RepoPermissionLevel {
+  NONE
+  READ
+  WRITE
+  ADMIN
+}
+
 enum OrgRole {
   ORG_ADMIN
   ORG_MEMBER
@@ -335,10 +344,47 @@ model Connection {
   /// are edges where this repo is the dependent; `dependenciesTo` where it is depended upon.
   dependenciesFrom      RepoDependency[]       @relation("RepoDependencyFrom")
   dependenciesTo        RepoDependency[]       @relation("RepoDependencyTo")
+  /// Cached host permission answers for this repository (see `RepoAccess`).
+  repoAccess            RepoAccess[]
 
   @@index([teamId])
   @@index([installationId])
   @@map("connections")
+}
+
+/// What the source-control host last said about one user's access to one
+/// repository.
+///
+/// **This is a cache, not a grant table.** Nothing here is authored: every row
+/// is an answer GitHub gave, and the only writer is the sync. Editing a row by
+/// hand grants access that GitHub does not back, until the next sweep silently
+/// takes it away again. To change someone's access, change it on GitHub.
+///
+/// Rows exist only for (user, repository) pairs that team membership already
+/// allows — the projection is the second of two conditions, never a way to
+/// reach a repository whose team you do not belong to.
+///
+/// Not tenant-scoped in `tenantGuard`'s sense: it carries no `teamId`/`orgId`,
+/// and every query against it is narrowed by `userId` or `connectionId`, which
+/// are stronger.
+model RepoAccess {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String     @map("user_id") @db.Uuid
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectionId String     @map("connection_id") @db.Uuid
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  permission RepoPermissionLevel
+
+  /// When the host last answered. A failed lookup does not update this — the
+  /// row keeps saying what was last actually known, and grows stale rather than
+  /// recording an outage as a denial.
+  checkedAt DateTime @default(now()) @map("checked_at") @db.Timestamptz
+
+  @@unique([userId, connectionId])
+  @@index([connectionId])
+  @@index([checkedAt])
+  @@map("repo_access")
 }
 
 /// A GitHub App installation on one GitHub account (organization or user).
@@ -876,6 +922,7 @@ model User {
   workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
   configPermissions     ConfigPermission[]
+  repoAccess            RepoAccess[]
 
   @@map("users")
 }

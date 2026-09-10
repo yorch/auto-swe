@@ -26,6 +26,7 @@ export const CONSOLIDATION_SCHEDULE_ID = 'auto-swe-lesson-consolidation';
 export const EVAL_SCHEDULE_ID = 'auto-swe-eval-regression';
 export const REVALIDATION_SCHEDULE_ID = 'auto-swe-eval-revalidation';
 export const REPO_DEPENDENCY_SCAN_SCHEDULE_ID = 'auto-swe-repo-dependency-scan';
+export const REPO_ACCESS_SYNC_SCHEDULE_ID = 'auto-swe-repo-access-sync';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -149,6 +150,16 @@ export interface RepoDependencyScanScheduleConfig {
   cronExpression: string;
 }
 
+/**
+ * The sweep that refreshes cached GitHub permission answers. Like the
+ * dependency scan, the workflow discovers its own repository set, so the
+ * schedule carries no arguments.
+ */
+export interface RepoAccessSyncScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
 export interface RepoDependencyScanScheduleStatus {
   exists: boolean;
   paused: boolean;
@@ -220,6 +231,7 @@ declare module 'fastify' {
       getRevalidationScheduleStatus: () => Promise<RevalidationScheduleStatus>;
       triggerRevalidationNow: () => Promise<void>;
       syncRepoDependencyScanSchedule: (config: RepoDependencyScanScheduleConfig) => Promise<void>;
+      syncRepoAccessSyncSchedule: (config: RepoAccessSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
       triggerRepoDependencyScanNow: () => Promise<void>;
       syncWorkRequestSchedule: (input: WorkRequestScheduleInput) => Promise<void>;
@@ -270,6 +282,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledRepoDependencyScanWorkflow',
+    };
+  }
+
+  // Permission-sweep action. The workflow discovers its own (user, repo) pairs,
+  // so the schedule carries no arguments.
+  function makeRepoAccessSyncScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledRepoAccessSyncWorkflow',
     };
   }
 
@@ -787,6 +810,16 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       };
       await upsertSchedule(EVAL_SCHEDULE_ID, {
         action: makeEvalScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Repo-access permission sweep (one system-wide Temporal Schedule) ──
+
+    async syncRepoAccessSyncSchedule(config: RepoAccessSyncScheduleConfig): Promise<void> {
+      await upsertSchedule(REPO_ACCESS_SYNC_SCHEDULE_ID, {
+        action: makeRepoAccessSyncScheduleAction(),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

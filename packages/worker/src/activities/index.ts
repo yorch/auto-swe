@@ -200,6 +200,8 @@ export {
   resolveHumanStep,
   updateDomainState,
 } from './state.js';
+export type { SyncRepoAccessInput, SyncRepoAccessResult } from './syncRepoAccess.js';
+export { syncRepoAccess } from './syncRepoAccess.js';
 export {
   createWorkflowRun,
   finalizeWorkflowRun,
