@@ -139,13 +139,41 @@ describe('error bodies', () => {
     expect(body.error.message).toContain('acme/beta');
   });
 
-  it('escalates the code when any refusal is a gate refusal', () => {
+  it('keeps FORBIDDEN when a membership refusal is mixed with a gate refusal', () => {
+    // Before the gate existed these routes ran the membership check to
+    // completion and answered FORBIDDEN if any named repository failed it,
+    // whatever else was wrong. A caller who is not a member of one repository
+    // and lacks GitHub write on another saw FORBIDDEN then, so they must see it
+    // now — requiring unanimity would change the code for a case whose
+    // membership half has not changed meaning.
     const body = multiRepoRefusalBody([
       { label: 'acme/alpha', reason: 'not-a-team-member' },
       { label: 'acme/beta', reason: 'insufficient-permission' },
     ]);
-    expect(body.error.code).toBe('REPO_ACCESS_DENIED');
+    expect(body.error.code).toBe('FORBIDDEN');
     expect(body.error.message).toContain('acme/alpha');
     expect(body.error.message).toContain('acme/beta');
+  });
+
+  it('uses REPO_ACCESS_DENIED when no refusal is a membership one', () => {
+    const body = multiRepoRefusalBody([
+      { label: 'acme/alpha', reason: 'no-github-identity' },
+      { label: 'acme/beta', reason: 'insufficient-permission' },
+    ]);
+    expect(body.error.code).toBe('REPO_ACCESS_DENIED');
+  });
+
+  it('carries the machine-readable reasons, which the message loses', () => {
+    // The single-repo helper emits `reason`; without this the two shapes
+    // disagree about whether a client can tell "link your GitHub account" from
+    // "insufficient permission".
+    const body = multiRepoRefusalBody([
+      { label: 'acme/alpha', reason: 'no-github-identity' },
+      { label: 'acme/beta', reason: 'insufficient-permission' },
+    ]);
+    expect(body.error.reasons).toEqual([
+      { reason: 'no-github-identity', repo: 'acme/alpha' },
+      { reason: 'insufficient-permission', repo: 'acme/beta' },
+    ]);
   });
 });

@@ -103,13 +103,19 @@ export async function decideRepoAccess(
   if (!repo.team.memberships.some((m) => m.userId === user.sub)) {
     return { allowed: false, reason: 'not-a-team-member' };
   }
-  // Only a git repository has a GitHub permission to ask about. An MCP server
-  // or an HTTP API is a `Connection` too, and asking GitHub about one answers
-  // `repo-not-found`, which fails closed — so without this exemption a template
-  // run against an `api_only` connection would be refused for a reason that
-  // cannot apply to it. The listing filter carries the same exemption, for the
-  // same reason.
-  if (repo.type !== 'git_repo') {
+  // Exempt only a row with no repository to ask about. An MCP server or an
+  // HTTP API is a `Connection` too, and asking GitHub about one answers
+  // `repo-not-found`, which fails closed — so without this a template run
+  // against an `api_only` connection would be refused for a reason that cannot
+  // apply to it.
+  //
+  // Keyed on the coordinates, not on `type`, because those are what the
+  // justification is actually about. The repository routes require org/repo
+  // only for `git_repo` rows and de-duplicate only within them, so a team LEAD
+  // can create an `http_api` or `notion` row carrying the coordinates of a
+  // repository they have no access to — including one already onboarded. Keyed
+  // on `type`, such a row would skip a gate that has something real to check.
+  if (!(repo.organizationName && repo.repoName)) {
     return { allowed: true, reason: 'permitted' };
   }
   return decideRepoLaunch(prisma, user, repo, gate, log);
@@ -129,16 +135,32 @@ export async function decideRepoAccess(
  */
 export function multiRepoRefusalBody(
   refusals: Array<{ label: string; reason: RepoAccessRefusal }>
-): { error: { code: string; message: string } } {
-  const onlyMembership = refusals.every((r) => r.reason === 'not-a-team-member');
+): {
+  error: {
+    code: string;
+    message: string;
+    reasons: Array<{ repo: string; reason: RepoAccessRefusal }>;
+  };
+} {
+  // `FORBIDDEN` whenever ANY refusal is a membership one, not only when every
+  // one is. Before the gate existed, these routes ran the membership check to
+  // completion and answered `FORBIDDEN` if any named repository failed it,
+  // whatever else was wrong — so a caller who is not a member of one repository
+  // and lacks GitHub write on another saw `FORBIDDEN` then and must see it now.
+  // Requiring unanimity would change the code for a case whose membership half
+  // has not changed meaning.
+  const anyMembership = refusals.some((r) => r.reason === 'not-a-team-member');
   return {
     error: {
-      code: onlyMembership ? 'FORBIDDEN' : 'REPO_ACCESS_DENIED',
-      message: onlyMembership
-        ? `You do not have access to: ${refusals.map((r) => r.label).join(', ')}`
-        : `You cannot start work on: ${refusals
-            .map((r) => `${r.label}: ${REPO_ACCESS_REFUSAL_MESSAGE[r.reason]}`)
-            .join('; ')}`,
+      code: anyMembership ? 'FORBIDDEN' : 'REPO_ACCESS_DENIED',
+      message: `You cannot start work on: ${refusals
+        .map((r) => `${r.label}: ${REPO_ACCESS_REFUSAL_MESSAGE[r.reason]}`)
+        .join('; ')}`,
+      // The machine-readable reasons, which a concatenated English message
+      // loses. The single-repo helper emits `reason`; without this the two
+      // shapes would disagree about whether a client can tell "link your GitHub
+      // account" from "insufficient permission".
+      reasons: refusals.map((r) => ({ reason: r.reason, repo: r.label })),
     },
   };
 }

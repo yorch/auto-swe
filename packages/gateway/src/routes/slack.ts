@@ -1566,7 +1566,14 @@ async function buildRunModalView(
   // pick. Caller surfaces this as an ephemeral message.
   if (accessibleRepos.length === 0) {
     return {
-      error: 'You do not have access to any active repositories. Ask a team admin to add you.',
+      // Two causes, and telling someone to ask an admin is wrong for the
+      // second: they may not be on a team, or the GitHub permission gate may be
+      // enforcing before the sweep has recorded any answers for them, in which
+      // case being added to a team changes nothing.
+      error:
+        gate?.mode === 'enforce'
+          ? 'No repositories available. Either you are not on a team that owns one, or your GitHub access has not been confirmed yet — it is checked periodically, so try again shortly.'
+          : 'You do not have access to any active repositories. Ask a team admin to add you.',
       ok: false,
     };
   }

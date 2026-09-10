@@ -19,14 +19,21 @@ function json(body: unknown, status = 200): Response {
 
 const findFirst = vi.fn();
 const update = vi.fn();
+const deleteMany = vi.fn();
 
 function prisma(): PrismaClient {
-  return { account: { findFirst }, user: { update } } as unknown as PrismaClient;
+  return {
+    $transaction: (ops: Array<Promise<unknown>>) => Promise.all(ops),
+    account: { findFirst },
+    repoAccess: { deleteMany },
+    user: { update },
+  } as unknown as PrismaClient;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   update.mockResolvedValue({});
+  deleteMany.mockResolvedValue({ count: 0 });
   findFirst.mockResolvedValue({ accountId: '4242' });
 });
 
@@ -96,6 +103,16 @@ describe('verifyGithubLoginOwnership', () => {
       data: { githubLogin: null },
       where: { id: 'user-1' },
     });
+  });
+
+  it('also drops the cached access the stolen login was backing', async () => {
+    // Listing enforcement reads `repo_access` by user id, never through the
+    // login, so clearing the login alone leaves the impostor's recorded
+    // permissions serving this user for up to the staleness window — three days
+    // by default. Detecting the takeover and then doing nothing about it.
+    stub(() => json({ id: 9999 }));
+    await verifyGithubLoginOwnership(prisma(), args);
+    expect(deleteMany).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
   });
 
   it('clears a login with no linked GitHub account behind it', async () => {

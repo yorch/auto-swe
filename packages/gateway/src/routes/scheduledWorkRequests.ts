@@ -78,27 +78,33 @@ const IdParams = z.object({ id: z.string().uuid() });
 
 type Prisma = FastifyInstance['prisma'];
 
-interface RepoWithMembership {
-  id: string;
-  isActive: boolean;
-  type: string;
-  organizationName: string;
-  repoName: string;
-  githubApiUrl: string | null;
-  installation: { installationId: string } | null;
-  teamId: string;
-  team: { memberships: Array<{ role: string; userId: string }> };
-}
+/**
+ * The repository row this route works with, derived from the query rather than
+ * declared alongside it.
+ *
+ * It used to be a hand-written interface reconciled with an
+ * `as RepoWithMembership | null` cast. A type assertion succeeds when either
+ * side is assignable to the other, so the cast was quietly bridging two real
+ * gaps: the interface claimed `organizationName: string` where Prisma returns
+ * `string | null`, and it would equally have accepted a `select` that dropped
+ * `githubApiUrl` — after which the permission lookup asks github.com about a
+ * GitHub Enterprise repository and caches the answer under the Enterprise
+ * connection's id. Deriving the type is what makes the required fields on
+ * `RepoAccessSubject` mean anything here.
+ */
+type RepoWithMembership = NonNullable<Awaited<ReturnType<typeof loadRepoWithMembership>>>;
 
-async function loadRepoWithMembership(
-  prisma: Prisma,
-  repoId: string,
-  userId: string
-): Promise<RepoWithMembership | null> {
+async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: string) {
   // findFirst (not findUnique) so we can scope to git_repo — a scheduled work
   // request only targets git repos; a non-git id (e.g. mcp) resolves to null and
   // the caller rejects it like a missing/forbidden repo.
-  return (await prisma.connection.findFirst({
+  // No `as RepoWithMembership` cast here. A type assertion succeeds when either
+  // side is assignable to the other, so a `select` that dropped `githubApiUrl`
+  // would assert cleanly into a type requiring it — and the permission lookup
+  // would then ask github.com about a GitHub Enterprise repository and cache
+  // the answer. Letting the inferred type flow is what makes the required
+  // fields on `RepoAccessSubject` mean anything at this call site.
+  return prisma.connection.findFirst({
     include: {
       installation: { select: { installationId: true } },
       team: {
@@ -108,7 +114,7 @@ async function loadRepoWithMembership(
       },
     },
     where: { id: repoId, type: 'git_repo' },
-  })) as RepoWithMembership | null;
+  });
 }
 
 /**

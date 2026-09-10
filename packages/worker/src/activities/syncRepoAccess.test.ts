@@ -15,6 +15,13 @@ vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
   runUnscoped: (_reason: string, _models: string[], fn: () => unknown) => fn(),
 }));
 
+// `log` needs a live activity context, which a unit test has no business
+// creating. The sweep genuinely runs as an activity, so the real one works in
+// production; here it only has to not throw.
+vi.mock('@temporalio/activity', () => ({
+  log: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+}));
+
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveGitHubConfig: async () => ({ apiUrl: 'https://api.github.com' }),
 }));

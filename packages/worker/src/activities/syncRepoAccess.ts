@@ -17,6 +17,7 @@ import { verifyGithubLoginOwnership } from '@auto-swe/shared/lib/githubIdentityC
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { log } from '@temporalio/activity';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveGitHubToken } from '../lib/githubAuth.js';
@@ -115,6 +116,18 @@ export async function syncRepoAccess(
     // same account id.
     const ghConfig = await resolveGitHubConfig();
     const platformToken = await resolveGitHubToken(ghConfig).catch(() => null);
+    if (!platformToken) {
+      // Without a credential the ownership check degrades to an unauthenticated
+      // `GET /users/…`, capped at 60 requests an hour — so on any real
+      // deployment it rate-limits, every answer reads as `unverifiable`, and
+      // nothing is ever cleared. That is a silent no-op of a security control,
+      // which is worth a loud line: the two configurations that reach it are an
+      // App with an empty singleton installation id, and an App-only deployment
+      // with per-repository installations and no PAT.
+      log.warn(
+        'repo access sync: no usable GitHub credential; login-ownership verification will rate-limit and detect nothing. Configure a PAT or a singleton installation id.'
+      );
+    }
     const verified = new Map<string, boolean>();
     for (const repo of repos) {
       for (const { user } of repo.team.memberships) {
@@ -137,9 +150,14 @@ export async function syncRepoAccess(
         verified.set(user.id, ownership.status !== 'reassigned');
         if (ownership.status === 'reassigned') {
           result.reassignedLogins++;
-          tracer.addActivityEvent({
-            name: 'repo_access.login_reassigned',
-            outputJson: { clearedLogin: ownership.clearedLogin, userId: user.id },
+          // Logged, not only traced. This activity runs from a Temporal
+          // Schedule with no `WorkflowRun` row behind it, so `persistActivityTrace`
+          // resolves no run id and drops every record it holds — a trace here
+          // would reach nobody. This is the one place an operator learns that
+          // someone's recorded GitHub identity was taken over.
+          log.warn('repo access sync: cleared a GitHub login that now names a different account', {
+            clearedLogin: ownership.clearedLogin,
+            userId: user.id,
           });
         }
       }
@@ -172,9 +190,10 @@ export async function syncRepoAccess(
         const lookup = await provider.repoPermission(repoRef, githubLogin);
         if (!lookup.ok) {
           result.failed++;
-          tracer.addActivityEvent({
-            name: 'repo_access.lookup_failed',
-            outputJson: { connectionId: repo.id, failure: lookup.failure, userId },
+          log.warn('repo access sync: permission lookup failed; previous answer left in place', {
+            connectionId: repo.id,
+            failure: lookup.failure,
+            userId,
           });
           continue;
         }
@@ -184,13 +203,15 @@ export async function syncRepoAccess(
       }
     }
 
-    tracer.addActivityEvent({
+    log.info('repo access sync complete', {
+      ...result,
       durationMs: Date.now() - started,
-      name: 'repo_access.sync',
-      outputJson: { ...result, repos: repos.length },
+      repos: repos.length,
     });
     return result;
   } finally {
+    // Kept for the day this activity runs inside a workflow that has a run row.
+    // It is a no-op from the Schedule, which is why the lines above log.
     await persistActivityTrace(tracer, 'repoAccessSync');
   }
 }

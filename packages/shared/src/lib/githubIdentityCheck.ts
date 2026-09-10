@@ -62,9 +62,25 @@ export async function fetchGithubUserId(
   }
 }
 
-/** Forget a user's GitHub identity. */
+/**
+ * Forget a user's GitHub identity, and the access that identity was backing.
+ *
+ * Dropping the login alone is not enough. Listing enforcement reads
+ * `repo_access` by user id, never through the login, so rows already written
+ * stay valid until they age past `repoAccess.viewStaleAfterHours` — three days
+ * by default. On a takeover those rows are precisely the ones recorded from the
+ * impostor's permissions, so leaving them is detecting the problem and then
+ * doing nothing about it for three days.
+ *
+ * The rows are a cache, so deleting them costs only a re-ask: the next sweep
+ * rebuilds whatever the user is genuinely entitled to, once they have an
+ * identity again. Launching is unaffected either way, because it asks live.
+ */
 export async function clearGithubLogin(prisma: PrismaClient, userId: string): Promise<void> {
-  await prisma.user.update({ data: { githubLogin: null }, where: { id: userId } });
+  await prisma.$transaction([
+    prisma.user.update({ data: { githubLogin: null }, where: { id: userId } }),
+    prisma.repoAccess.deleteMany({ where: { userId } }),
+  ]);
 }
 
 /**
