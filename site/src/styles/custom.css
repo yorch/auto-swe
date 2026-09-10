@@ -390,12 +390,17 @@ starlight-toc a[aria-current='true'] {
  * deliberately constrained — and CI fails a doc that does not. That is an
  * unusual thing for a project to promise, so it is marked rather than left to
  * look like one more heading near the bottom of a long page.
+ *
+ * Matched on the *end* of the id, not the whole of it. Half these docs number
+ * their sections, so the heading slug is `10-limitations` or
+ * `10-known-limitations` rather than `limitations`, and an equality match marks
+ * five docs and silently skips the other five.
  */
-.sl-heading-wrapper.level-h2:has(> h2[id='limitations']) {
+.sl-heading-wrapper.level-h2:has(> h2[id$='limitations']) {
   border-top: 2px solid var(--gate);
 }
 
-.sl-markdown-content h2[id='limitations'] {
+.sl-markdown-content h2[id$='limitations'] {
   color: var(--gate);
 }
 
