@@ -60,6 +60,22 @@ export interface ConnectionScopeGate {
 }
 
 /**
+ * The gate argument is **required, and may be undefined**.
+ *
+ * That combination is deliberate. Optional, it defaulted to "no gate", so
+ * `reachableConnections(user)` compiled and silently ran ungated — which is
+ * how the Slack routes and the human-step resolver ended up outside the gate
+ * twice, in exactly the way this module's docstring warns about. Required,
+ * every call site has to name what it is passing, and a new one that forgets is
+ * a compile error rather than a hole nobody sees.
+ *
+ * `undefined` remains a legitimate value: it means the caller has no gate,
+ * which is what an unconfigured deployment and every pre-gate caller mean. The
+ * point is that saying so is now a decision someone made on purpose.
+ */
+export type MaybeGate = ConnectionScopeGate | undefined;
+
+/**
  * Repositories (`Connection` rows) the actor may reach.
  *
  * This is the one function the GitHub permission gate extends, which is the
@@ -82,7 +98,7 @@ export interface ConnectionScopeGate {
  */
 export function reachableConnections(
   actor: ScopeActor,
-  gate?: ConnectionScopeGate
+  gate: MaybeGate
 ): Prisma.ConnectionWhereInput {
   return { team: memberTeams(actor), ...permissionRequirement(actor, gate) };
 }
@@ -109,7 +125,7 @@ export function staleCutoff(staleAfterHours: number): Date {
  */
 export function permissionRequirement(
   actor: ScopeActor,
-  gate?: ConnectionScopeGate
+  gate: MaybeGate
 ): Prisma.ConnectionWhereInput {
   if (gate?.mode !== 'enforce') {
     return {};

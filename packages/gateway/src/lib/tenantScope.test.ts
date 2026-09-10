@@ -27,7 +27,7 @@ describe('tenant scope predicates', () => {
   it('narrows when nested under the relation it reaches tenancy through', () => {
     expect(hasTenantPredicate({ team: memberTeams(actor) })).toBe(true);
     expect(hasTenantPredicate({ organization: memberOrgs(actor) })).toBe(true);
-    expect(hasTenantPredicate({ repository: reachableConnections(actor) })).toBe(true);
+    expect(hasTenantPredicate({ repository: reachableConnections(actor, undefined) })).toBe(true);
   });
 
   it('narrows through the deeper relation paths the routes actually use', () => {
@@ -35,10 +35,12 @@ describe('tenant scope predicates', () => {
     // through all of it or every run listing becomes an unscoped query.
     expect(
       hasTenantPredicate({
-        workRequest: { activeWorkflows: { some: { repository: reachableConnections(actor) } } },
+        workRequest: {
+          activeWorkflows: { some: { repository: reachableConnections(actor, undefined) } },
+        },
       })
     ).toBe(true);
-    expect(hasTenantPredicate({ fromRepo: reachableConnections(actor) })).toBe(true);
+    expect(hasTenantPredicate({ fromRepo: reachableConnections(actor, undefined) })).toBe(true);
   });
 
   it('still narrows in the "global rows plus mine" shape', () => {
@@ -56,7 +58,7 @@ describe('tenant scope predicates', () => {
         team: memberTeams(actor),
       });
     }
-    expect(reachableConnections(actor)).toEqual({ team: memberTeams(actor) });
+    expect(reachableConnections(actor, undefined)).toEqual({ team: memberTeams(actor) });
   });
 
   it('ANDs the permission requirement onto team membership when enforcing', () => {
@@ -112,6 +114,6 @@ describe('tenant scope predicates', () => {
     for (const predicate of [memberTeams(actor), memberOrgs(actor)]) {
       expect(predicate.memberships).toEqual({ some: { userId: actor.sub } });
     }
-    expect(reachableConnections(actor).team).toEqual(memberTeams(actor));
+    expect(reachableConnections(actor, undefined).team).toEqual(memberTeams(actor));
   });
 });

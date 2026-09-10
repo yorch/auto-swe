@@ -223,6 +223,11 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   sweep, the webhook refresh and the lookup all restrict to `git_repo`. They are therefore matched
   unconditionally. This is not a strictness the gate declines to apply; requiring a row would make
   every non-git connection vanish for every non-admin with no way to get it back.
+- **The gate argument is required but nullable, on purpose.** Optional, it defaulted to "no gate",
+  so a call site that forgot it compiled and ran ungated — which is how the Slack routes and the
+  human-step resolver ended up outside the gate. Required, forgetting is a compile error and
+  passing `undefined` is a decision someone made. This does not reach the JavaScript-side checks
+  below.
 - **Some repository-access decisions are made in JavaScript, not in a `where` clause.** Roughly a
   dozen call sites select membership rows and test the array length in code rather than filtering
   the query. Extending the shared predicate does not reach those, so each had to be gated by hand
