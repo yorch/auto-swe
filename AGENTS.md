@@ -58,6 +58,7 @@ applies to one file belongs in a skill, not in the context of every session.
 | ORM                   | Prisma                                 | 7.9.1                  |
 | Database              | PostgreSQL 18 + pgvector               | pgvector/pgvector:pg18 |
 | Web Dashboard         | Next.js + React + Tailwind CSS         | 16.3.1 / 19.2.8 / 4.3.3 |
+| Public docs site      | Astro + Starlight                      | 7.3.2 / 0.42.0        |
 | Server State          | TanStack Query                         | 5.101.4                |
 | Client State          | Zustand                                | 5.0.15                 |
 | Validation            | Zod                                    | 4.4.3                  |
@@ -79,6 +80,7 @@ Run `ls packages/<name>/src` for the actual layout — only non-obvious rules li
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
 | `packages/cli`     | `auto-swe` CLI                                       | ESM Node 26+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API. `bundle init/validate/sign` is token-free local authoring over `@auto-swe/sdk`; `bundles list/export/install` hits the admin API |
 | `packages/sdk`     | `@auto-swe/sdk` — bundle authoring SDK               | Pure, I/O-free helpers over `@auto-swe/shared/bundle`: `defineAgent`/`defineSkill`/`defineTemplate`/`defineContainerStep`, `defineBundle` (+ content hash), `signBundle` (ed25519), `validateBundle` |
+| `site`             | Public docs site (Astro + Starlight), published to GitHub Pages | **A workspace, not a package** — the only one outside `packages/*`. Owns no content: `scripts/syncDocs.mjs` copies `docs/`, the root `README.md`, and `packages/cli/README.md` into `src/content/docs/` at build time, and that output is gitignored. `scripts/manifest.mjs` is the single source of what is published and where; a doc missing from its `SIDEBAR` fails the build |
 
 Top-level files that matter:
 
@@ -187,6 +189,7 @@ yarn typecheck            # Type-check all packages (no emit)
 yarn dev:gateway          # Start gateway in dev mode (tsx watch)
 yarn dev:worker           # Start worker in dev mode (tsx watch)
 yarn dev:web              # Start Next.js dashboard (port 3000)
+yarn dev:site             # Start the public docs site (port 4321, syncs docs/ first)
 yarn db:migrate           # Create + apply a migration (dev)
 yarn db:deploy            # Apply existing migrations (production)
 yarn db:generate          # Generate Prisma client

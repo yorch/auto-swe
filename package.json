@@ -3,7 +3,8 @@
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "site"
   ],
   "scripts": {
     "build": "yarn workspaces foreach -At run build",
@@ -12,6 +13,7 @@
     "dev:gateway": "yarn workspace @auto-swe/gateway dev",
     "dev:worker": "yarn workspace @auto-swe/worker dev",
     "dev:web": "yarn workspace @auto-swe/web dev",
+    "dev:site": "yarn workspace @auto-swe/site dev",
     "db:migrate": "yarn workspace @auto-swe/shared db:migrate",
     "db:generate": "yarn workspace @auto-swe/shared db:generate",
     "db:reset": "yarn workspace @auto-swe/shared db:reset",

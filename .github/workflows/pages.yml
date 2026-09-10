@@ -1,0 +1,87 @@
+name: Docs site
+
+on:
+  push:
+    branches: [main]
+    # The site is a rendering of `docs/`, the two published READMEs, and its own
+    # sources. Nothing else in the repo can change what it publishes, so nothing
+    # else should spend a deploy.
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - 'packages/cli/README.md'
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+      - 'yarn.lock'
+  # So a deploy can be re-run without an empty commit — the usual reason is a
+  # Pages settings change, which no push reflects.
+  workflow_dispatch:
+
+# There is no pull_request trigger here on purpose. `site` is a workspace, so
+# the root `yarn build` in ci.yml already builds it on every pull request, and
+# that build is what fails on a broken cross-reference. Adding one here would
+# run the same Astro build twice per pull request to learn the same thing.
+
+# One deploy at a time, and never cancel one mid-flight: an interrupted deploy
+# leaves Pages serving a half-uploaded artifact.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # `lastUpdated` reads each page's last commit, so a shallow clone dates
+      # every page to the day of the deploy. The synced pages carry their own
+      # source path, not this checkout's, but the hand-authored ones do not.
+      - name: Fetch full history for page timestamps
+        run: git fetch --unshallow --quiet || true
+
+      # See ci.yml for why `yarn` resolves the way it does on Node 26.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      # The sync step fails on a doc missing from the sidebar, and the Astro
+      # build fails on a link to a page that does not exist — so a broken
+      # cross-reference is caught here rather than shipped.
+      - name: Build site
+        run: yarn workspace @auto-swe/site build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/dist
+
+  # Split from the build so the token that can publish to Pages is only held by
+  # a job that runs no project code and installs nothing.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,20 @@
+{
+  "name": "@auto-swe/site",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public documentation site for auto-swe, published to GitHub Pages",
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/syncDocs.mjs",
+    "dev": "yarn sync && astro dev",
+    "build": "yarn sync && astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.0",
+    "astro": "7.3.2",
+    "astro-mermaid": "2.1.0",
+    "mermaid": "11.17.2",
+    "sharp": "0.35.4"
+  }
+}

@@ -213,10 +213,25 @@ const CHECKS = [
 
 const manifest = (p) => JSON.parse(read(p));
 const rootPkg = manifest('package.json');
-/** Highest-precedence declared version for a dependency, across all workspaces. */
+/**
+ * Highest-precedence declared version for a dependency, across all workspaces.
+ *
+ * Expanded from the root `workspaces` globs rather than hardcoded to
+ * `packages/*`. A workspace living anywhere else — `site`, say — would
+ * otherwise be invisible here, and every version it declares would be a
+ * version no doc can be checked against. That failure is silent in the worst
+ * direction: the check still reports a comfortable count of verified versions,
+ * having skipped the ones it could not see.
+ */
 const MANIFESTS = [
   'package.json',
-  ...readdirSync(join(ROOT, 'packages')).map((d) => `packages/${d}/package.json`),
+  ...rootPkg.workspaces.flatMap((pattern) =>
+    pattern.endsWith('/*')
+      ? readdirSync(join(ROOT, pattern.slice(0, -2))).map(
+          (d) => `${pattern.slice(0, -2)}/${d}/package.json`
+        )
+      : [`${pattern}/package.json`]
+  ),
 ];
 const depVersion = (name) => {
   for (const p of MANIFESTS) {
@@ -253,6 +268,12 @@ const VERSIONED_DEPS = [
     pattern: 'TanStack Query',
   },
   { actual: depVersion('zustand'), name: 'Zustand', pattern: 'Zustand' },
+  { actual: depVersion('astro'), name: 'Astro', pattern: 'Astro' },
+  {
+    actual: depVersion('@astrojs/starlight'),
+    name: 'Starlight',
+    pattern: '(?:@astrojs/)?Starlight',
+  },
   {
     actual: depVersion('@temporalio/worker'),
     name: '@temporalio SDK',

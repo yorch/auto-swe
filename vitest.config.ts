@@ -259,7 +259,15 @@ export default defineConfig({
     // opt into jsdom via a `// @vitest-environment jsdom` pragma at the top
     // of each file. (The deprecated `environmentMatchGlobs` got replaced by
     // the `projects` API in vitest 3.x; per-file pragmas keep the config flat.)
-    include: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/*.test.tsx'],
+    // `site/` is a workspace but not a package, and its build scripts are plain
+    // ESM rather than TypeScript, so neither of the `packages/*` globs reaches
+    // them. Without this line the docs-site tests are collected by nothing and
+    // the suite passes without running them.
+    include: [
+      'packages/*/src/**/*.test.ts',
+      'packages/*/src/**/*.test.tsx',
+      'site/scripts/**/*.test.mjs',
+    ],
     // Anchor test discovery to the worktree directory (not the CWD from which
     // vitest is invoked) so the correct test files are found when running from
     // the main repo root.
