@@ -13,19 +13,11 @@
  * proportional to real reachability rather than to the size of the deployment.
  */
 import { prisma } from '@auto-swe/shared/db';
-import type { RepoPermission } from '@auto-swe/shared/lib/githubPermission';
+import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
-
-/** Prisma's enum spelling for a host permission level. */
-const TO_ENUM = {
-  admin: 'ADMIN',
-  none: 'NONE',
-  read: 'READ',
-  write: 'WRITE',
-} as const satisfies Record<RepoPermission, 'ADMIN' | 'NONE' | 'READ' | 'WRITE'>;
 
 export interface SyncRepoAccessInput {
   /** Restrict the sweep to one repository. Omitted, it walks every active one. */
@@ -129,15 +121,7 @@ export async function syncRepoAccess(
           continue;
         }
 
-        const permission = TO_ENUM[lookup.permission];
-        // `upsert` is safe here: `repo_access` has a plain unique index on
-        // (user_id, connection_id), not one of the partial per-scope indexes
-        // that force findFirst-then-create elsewhere in this codebase.
-        await prisma.repoAccess.upsert({
-          create: { connectionId: repo.id, permission, userId },
-          update: { checkedAt: new Date(), permission },
-          where: { userId_connectionId: { connectionId: repo.id, userId } },
-        });
+        await recordRepoPermission(prisma, { connectionId: repo.id, lookup, userId });
         result.refreshed++;
       }
     }

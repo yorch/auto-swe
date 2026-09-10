@@ -65,6 +65,7 @@
     "./lib/tenantGuard": "./dist/lib/tenantGuard.js",
     "./lib/githubInstallation": "./dist/lib/githubInstallation.js",
     "./lib/githubPermission": "./dist/lib/githubPermission.js",
+    "./lib/repoAccessProjection": "./dist/lib/repoAccessProjection.js",
     "./lib/keyRotation": "./dist/lib/keyRotation.js",
     "./config": "./dist/config/index.js",
     "./config/cache": "./dist/config/cache.js",

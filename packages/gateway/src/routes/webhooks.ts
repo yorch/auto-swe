@@ -259,6 +259,9 @@ async function aggregateCheckRuns(
   };
 }
 
+import { refreshInvalidatedAccess } from '../lib/repoAccessRefresh.js';
+import { classifyAccessEvent } from '../lib/repoAccessWebhook.js';
+
 const TriggerParams = z.object({ token: z.string().min(1) });
 
 export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
@@ -449,6 +452,47 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           ...(signalSent ? {} : { reason: 'Workflow no longer running; merge recorded only' }),
         },
       };
+    }
+  );
+
+  // POST /api/v1/webhooks/access
+  //
+  // Collaborator, team, org-membership and repository events. The scheduled
+  // sweep bounds how long a stale permission answer can survive; this is what
+  // makes revocation fast, so that the sweep interval is not itself the
+  // revocation window an operator has to defend.
+  fastify.post(
+    '/access',
+    {
+      config: { rawBody: true },
+    },
+    async (request, reply) => {
+      if (!(await verifyWebhookOrReject(request, reply))) {
+        return;
+      }
+
+      const eventType = (request.headers['x-github-event'] as string | undefined) ?? '';
+      const invalidation = classifyAccessEvent(eventType, request.body);
+      if (invalidation.kind === 'ignored') {
+        return { data: { ignored: true, reason: invalidation.reason } };
+      }
+
+      // Never fail the response on a lookup error. GitHub redelivers a non-2xx,
+      // and one timed-out lookup turning into a redelivery storm is worse than
+      // a pair that keeps its previous answer until the next sweep.
+      try {
+        const outcome = await refreshInvalidatedAccess(fastify.prisma, invalidation);
+        if (outcome.failed > 0) {
+          request.log.warn(
+            { eventType, ...outcome },
+            'some permission lookups failed; previous answers left in place'
+          );
+        }
+        return { data: outcome };
+      } catch (err) {
+        request.log.error({ err, eventType }, 'access webhook refresh failed');
+        return { data: { failed: 0, refreshed: 0, skipped: 'refresh failed; see gateway logs' } };
+      }
     }
   );
 

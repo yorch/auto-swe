@@ -44,6 +44,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubPermission.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/repoAccessProjection',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoAccessProjection.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/keyRotation',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/keyRotation.ts'),
       },
