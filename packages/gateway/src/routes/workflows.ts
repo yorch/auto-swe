@@ -56,7 +56,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
         user.role === 'ADMIN'
           ? {}
           : {
-              repository: reachableConnections(user),
+              repository: reachableConnections(user, request.repoAccessGate),
             };
 
       const [workflows, total] = await Promise.all([
@@ -85,7 +85,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
       const where: Prisma.ActiveWorkflowWhereInput = {
         id: request.params.id,
         ...(user.role !== 'ADMIN' && {
-          repository: reachableConnections(user),
+          repository: reachableConnections(user, request.repoAccessGate),
         }),
       };
 

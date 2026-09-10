@@ -36,6 +36,55 @@ describe('tenant scope predicates', () => {
     expect(hasTenantPredicate({ OR: [{ teamId: null }, { team: memberTeams(actor) }] })).toBe(true);
   });
 
+  it('leaves listings unchanged unless the gate is enforcing', () => {
+    // Advisory must not filter: reporting what a listing would have hidden
+    // means running it twice on every page render. The launch path carries the
+    // advisory signal instead.
+    for (const mode of ['off', 'advisory'] as const) {
+      expect(reachableConnections(actor, { mode, staleAfterHours: 72 })).toEqual({
+        team: memberTeams(actor),
+      });
+    }
+    expect(reachableConnections(actor)).toEqual({ team: memberTeams(actor) });
+  });
+
+  it('ANDs the permission requirement onto team membership when enforcing', () => {
+    // The two conditions must be ANDed, never substituted: a permission row can
+    // only ever take access away, so nobody reaches a repository whose team
+    // they do not belong to, whatever GitHub says.
+    const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 });
+    expect(filter.team).toEqual(memberTeams(actor));
+    expect(filter.repoAccess?.some).toMatchObject({
+      permission: { in: ['READ', 'WRITE', 'ADMIN'] },
+      userId: actor.sub,
+    });
+  });
+
+  it('excludes a cached answer older than the staleness bound', () => {
+    // Without this a repository whose answers stopped refreshing — a revoked
+    // credential, a paused sweep — would be served from a cache nobody updates.
+    const before = Date.now();
+    const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 24 });
+    const cutoff = filter.repoAccess?.some?.checkedAt as { gte: Date };
+    expect(cutoff.gte.getTime()).toBeGreaterThanOrEqual(before - 24 * 3600_000 - 5_000);
+    expect(cutoff.gte.getTime()).toBeLessThanOrEqual(Date.now() - 24 * 3600_000 + 5_000);
+  });
+
+  it('never treats a recorded NONE as viewable', () => {
+    const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 });
+    const levels = (filter.repoAccess?.some?.permission as { in: string[] }).in;
+    expect(levels).not.toContain('NONE');
+  });
+
+  it('still audits as tenant-scoped when enforcing', () => {
+    // The enforced filter adds a key; it must not stop satisfying the guard.
+    expect(
+      hasTenantPredicate({
+        repository: reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 }),
+      })
+    ).toBe(true);
+  });
+
   it('binds every predicate to the acting user', () => {
     // A predicate that dropped `userId` would match every membership row and
     // silently scope to "any team that has members", which is all of them.

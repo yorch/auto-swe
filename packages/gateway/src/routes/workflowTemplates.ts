@@ -598,7 +598,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           startedAt: { gte: windowStart },
           // Visibility: same run-level visibility predicate used on /runs so
           // global templates do not leak cross-team work-request runs.
-          ...buildWorkflowRunVisibilityFilter(user),
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
         },
       });
       const [rows, baselines] = await Promise.all([
@@ -1748,10 +1748,16 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           orderBy: { startedAt: 'desc' },
           skip: offset,
           take: limit,
-          where: { templateId: tpl.id, ...buildWorkflowRunVisibilityFilter(user) },
+          where: {
+            templateId: tpl.id,
+            ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+          },
         }),
         fastify.prisma.workflowRun.count({
-          where: { templateId: tpl.id, ...buildWorkflowRunVisibilityFilter(user) },
+          where: {
+            templateId: tpl.id,
+            ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+          },
         }),
       ]);
       return {
@@ -1929,7 +1935,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: tpl.id,
             // Visibility: same predicate used on /runs so a global template's
             // runs are not exposed through a different team's work request.
-            ...buildWorkflowRunVisibilityFilter(user),
+            ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
           },
         }),
         fastify.prisma.workflowStep.findMany({
@@ -1940,7 +1946,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             run: {
               startedAt: { gte: windowStart },
               templateId: tpl.id,
-              ...buildWorkflowRunVisibilityFilter(user),
+              ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
             },
           },
         }),

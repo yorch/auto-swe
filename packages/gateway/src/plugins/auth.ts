@@ -5,6 +5,8 @@ import { roleMeets } from '@auto-swe/shared/config/permissions';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
+import type { RepoAccessGate } from '../lib/repoAccessGate.js';
+import { resolveRepoAccessGate } from '../lib/repoAccessGate.js';
 
 // ── JWT Configuration ──
 
@@ -31,6 +33,16 @@ declare module 'fastify' {
   interface FastifyRequest {
     user?: JwtPayload;
     teamRole?: string;
+    /**
+     * How the GitHub permission gate is configured for this request.
+     *
+     * Resolved once here rather than in each handler: the visibility filters
+     * are pure synchronous functions called inside `where` literals, so making
+     * them resolve their own config would mean awaiting mid-expression at
+     * around twenty call sites. Behind the setting registry's ~30s cache, so
+     * this is a memory read in the steady state.
+     */
+    repoAccessGate?: RepoAccessGate;
   }
 }
 
@@ -399,6 +411,17 @@ export function requireAuth(options: RBACOptions = {}) {
       });
     }
     request.user = payload;
+
+    // A failure to read the gate must not fail the request: defaulting to
+    // `off` keeps the pre-existing team-membership behaviour, which is the
+    // safe direction here — the alternative is a config blip emptying every
+    // authenticated user's dashboard at once.
+    try {
+      request.repoAccessGate = await resolveRepoAccessGate();
+    } catch (err) {
+      request.log.warn({ err }, 'repo access gate config unreadable; treating as off');
+      request.repoAccessGate = { mode: 'off', staleAfterHours: 0 };
+    }
 
     // Platform role check
     if (options.requiredRole && !hasRole(payload.role, options.requiredRole)) {

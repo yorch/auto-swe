@@ -236,7 +236,10 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
     const rows = await fastify.prisma.scheduledWorkRequest.findMany({
       include: scheduleInclude,
       orderBy: { createdAt: 'desc' },
-      where: user.role === 'ADMIN' ? {} : { repository: reachableConnections(user) },
+      where:
+        user.role === 'ADMIN'
+          ? {}
+          : { repository: reachableConnections(user, request.repoAccessGate) },
     });
     const statuses = await Promise.all(
       rows.map(async (row) => {

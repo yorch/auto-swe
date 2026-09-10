@@ -116,7 +116,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const { includeChannel, limit, offset, scope, status, templateId, workRequestId } =
         request.query;
-      const teamFilter = buildWorkflowRunVisibilityFilter(user);
+      const teamFilter = buildWorkflowRunVisibilityFilter(user, request.repoAccessGate);
       const visibilityFilter: Prisma.WorkflowRunWhereInput =
         user.role === 'ADMIN' && scope === 'ALL'
           ? {}
@@ -174,7 +174,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const run = await fastify.prisma.workflowRun.findFirst({
-        where: { id: request.params.id, ...buildWorkflowRunVisibilityFilter(user) },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
       });
       if (!run) {
         return reply
@@ -238,7 +241,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const run = await fastify.prisma.workflowRun.findFirst({
         select: { id: true },
-        where: { id: request.params.id, ...buildWorkflowRunVisibilityFilter(user) },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
       });
       if (!run) {
         return reply.status(404).send({
@@ -277,7 +283,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             select: { description: true, externalTicketId: true, id: true },
           },
         },
-        where: { id: request.params.id, ...buildWorkflowRunVisibilityFilter(user) },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
       });
       if (!run) {
         return reply.status(404).send({
@@ -358,7 +367,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const run = await fastify.prisma.workflowRun.findFirst({
         select: { id: true },
-        where: { id: request.params.id, ...buildWorkflowRunVisibilityFilter(user) },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
       });
       if (!run) {
         return reply.status(404).send({

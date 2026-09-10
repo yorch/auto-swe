@@ -146,7 +146,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
               status: 'unresolved',
               toRef: { not: null },
               ...(user.role !== 'ADMIN' && {
-                fromRepo: reachableConnections(user),
+                fromRepo: reachableConnections(user, request.repoAccessGate),
               }),
             },
           })

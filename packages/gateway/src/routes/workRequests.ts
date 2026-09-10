@@ -24,6 +24,7 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -346,7 +347,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           : {
               activeWorkflows: {
                 some: {
-                  repository: reachableConnections(user),
+                  repository: reachableConnections(user, request.repoAccessGate),
                 },
               },
             }),
@@ -399,6 +400,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // on their own team's repos and the org budget cap can be checked.
       const repo = await fastify.prisma.connection.findUnique({
         include: {
+          installation: { select: { installationId: true } },
           team: {
             select: {
               memberships: {
@@ -426,6 +428,29 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
         return reply.status(403).send({
           error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
+        });
+      }
+
+      // GitHub permission gate. Asked live rather than read from the
+      // projection: this is the low-volume, high-stakes decision, so it is
+      // worth one round-trip to make the gate effectively real-time. It fails
+      // closed — an unanswered question is not a yes — which is safe here
+      // precisely because the failure is loud, immediate and retryable by the
+      // person in front of it, unlike a listing.
+      const launchDecision = await decideRepoLaunch(
+        fastify.prisma,
+        user,
+        repo,
+        request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
+        request.log
+      );
+      if (!launchDecision.allowed) {
+        return reply.status(403).send({
+          error: {
+            code: 'REPO_ACCESS_DENIED',
+            message: LAUNCH_REFUSAL_MESSAGE[launchDecision.reason],
+            reason: launchDecision.reason,
+          },
         });
       }
 
@@ -631,6 +656,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             include: {
               repository: {
                 include: {
+                  installation: { select: { installationId: true } },
                   team: {
                     select: {
                       memberships: { select: { userId: true }, where: { userId: user.sub } },
@@ -661,6 +687,26 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
         return reply.status(403).send({
           error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
+        });
+      }
+      // A re-run pushes and opens a pull request exactly like a fresh
+      // submission, so it passes the same GitHub permission gate. Skipping it
+      // here would leave a standing way to act on a repository after GitHub
+      // access was revoked, for as long as an old work request exists.
+      const retryLaunch = await decideRepoLaunch(
+        fastify.prisma,
+        user,
+        repo,
+        request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
+        request.log
+      );
+      if (!retryLaunch.allowed) {
+        return reply.status(403).send({
+          error: {
+            code: 'REPO_ACCESS_DENIED',
+            message: LAUNCH_REFUSAL_MESSAGE[retryLaunch.reason],
+            reason: retryLaunch.reason,
+          },
         });
       }
       // A re-run spends exactly like a fresh submission, so it passes the same

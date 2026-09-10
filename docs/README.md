@@ -29,6 +29,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [figma-integration.md](./figma-integration.md) | Design context — the `design-fidelity` skill and submit-time Figma enrichment |
 | [repo-dependency-graph.md](./repo-dependency-graph.md) | Directed dependency edges between git repos — the `RepoDependency` model, the cross-team edge API and management UI, and the neighbour resolver |
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
+| [repo-access-gating.md](./repo-access-gating.md) | Making repository access agree with GitHub — the permission projection, the sweep and webhook refresh, and the advisory-then-enforce rollout |
 
 ## Configuration & operations
 

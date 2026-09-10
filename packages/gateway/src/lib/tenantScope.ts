@@ -44,6 +44,21 @@ export function memberOrgs(actor: ScopeActor): Prisma.OrganizationWhereInput {
   return { memberships: { some: { userId: actor.sub } } };
 }
 
+/** Levels that let a user see a repository at all. */
+const VIEWABLE = ['READ', 'WRITE', 'ADMIN'] as const;
+
+/**
+ * How the GitHub permission gate is configured, as far as a filter cares.
+ *
+ * Passed in rather than resolved here so these stay pure and synchronous —
+ * they are called inside `where` literals, and an async predicate would make
+ * every call site await mid-expression.
+ */
+export interface ConnectionScopeGate {
+  mode: 'off' | 'advisory' | 'enforce';
+  staleAfterHours: number;
+}
+
 /**
  * Repositories (`Connection` rows) the actor may reach.
  *
@@ -51,7 +66,41 @@ export function memberOrgs(actor: ScopeActor): Prisma.OrganizationWhereInput {
  * whole point of routing every repo-reachability question through it: team
  * membership and real GitHub access have to be checked together or the weaker
  * of the two wins somewhere.
+ *
+ * The two conditions are ANDed, so a permission row can only ever take access
+ * away. Nobody reaches a repository whose team they do not belong to, whatever
+ * GitHub says.
+ *
+ * Only `enforce` changes the filter. Under `advisory` a listing is unchanged,
+ * because reporting what it would have hidden means running it twice on every
+ * page render; the launch path carries the advisory signal instead.
+ *
+ * The staleness bound matters as much as the permission value. Without it a
+ * repository whose answers stopped refreshing — a revoked credential, a paused
+ * sweep, an installation pointed at the wrong account — would be served from a
+ * cache nobody is updating, indefinitely.
  */
-export function reachableConnections(actor: ScopeActor): Prisma.ConnectionWhereInput {
-  return { team: memberTeams(actor) };
+export function reachableConnections(
+  actor: ScopeActor,
+  gate?: ConnectionScopeGate
+): Prisma.ConnectionWhereInput {
+  const team = memberTeams(actor);
+  if (gate?.mode !== 'enforce') {
+    return { team };
+  }
+  return {
+    repoAccess: {
+      some: {
+        checkedAt: { gte: staleCutoff(gate.staleAfterHours) },
+        permission: { in: [...VIEWABLE] },
+        userId: actor.sub,
+      },
+    },
+    team,
+  };
+}
+
+/** The oldest `checkedAt` a cached answer may carry and still count. */
+export function staleCutoff(staleAfterHours: number): Date {
+  return new Date(Date.now() - staleAfterHours * 60 * 60 * 1000);
 }

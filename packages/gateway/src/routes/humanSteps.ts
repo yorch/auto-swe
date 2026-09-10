@@ -170,7 +170,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           ...(status === 'ALL' ? {} : { status: 'PENDING' }),
           ...(overdue ? { timeoutAt: { lt: new Date() } } : {}),
-          ...buildWorkflowHumanStepVisibilityFilter(user),
+          ...buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate),
         },
       });
       return {
@@ -256,7 +256,10 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       const fetchPendingIds = async (): Promise<Set<string>> => {
         const rows = await fastify.prisma.workflowHumanStep.findMany({
           select: { id: true },
-          where: { status: 'PENDING', ...buildWorkflowHumanStepVisibilityFilter(user) },
+          where: {
+            status: 'PENDING',
+            ...buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate),
+          },
         });
         return new Set(rows.map((r) => r.id));
       };
@@ -346,7 +349,10 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             },
           },
         },
-        where: { id: request.params.id, ...buildWorkflowHumanStepVisibilityFilter(user) },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate),
+        },
       });
       if (!step) {
         return reply

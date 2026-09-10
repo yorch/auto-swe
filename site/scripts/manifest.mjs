@@ -103,6 +103,7 @@ export const SIDEBAR = [
       'docs/nl-workflow-authoring',
       'docs/figma-integration',
       'docs/repo-dependency-graph',
+      'docs/repo-access-gating',
       'docs/bundles',
     ],
   },
