@@ -7,6 +7,7 @@
  * side that has the row in hand.
  */
 import type { PrismaClient } from '@auto-swe/shared';
+import { verifyGithubLoginOwnership } from '@auto-swe/shared/lib/githubIdentityCheck';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { fetchRepoPermission, type PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -78,4 +79,44 @@ export async function githubLoginFor(prisma: PrismaClient, userId: string): Prom
     where: { id: userId },
   });
   return user?.githubLogin ?? null;
+}
+
+/**
+ * The user's GitHub login, confirmed to still name their account.
+ *
+ * Three places write permission answers: the worker's sweep, this process's
+ * launch path, and the webhook refresh. Only the sweep verified ownership,
+ * which meant the other two kept re-populating rows under a login that had been
+ * re-registered by someone else, in between sweeps — the exact condition the
+ * verification exists to end. A check that one of three writers performs is not
+ * a check.
+ *
+ * Returns null when there is no login, or when the login no longer belongs to
+ * this user; `verifyGithubLoginOwnership` has already cleared it in the second
+ * case. A caller cannot tell the two apart and does not need to: both mean
+ * there is no identity to ask GitHub about.
+ *
+ * A lookup that cannot be made leaves the login in place and returns it — the
+ * same "an outage is not evidence" rule the rest of this subsystem follows.
+ */
+export async function verifiedGithubLoginFor(
+  prisma: PrismaClient,
+  userId: string
+): Promise<string | null> {
+  const login = await githubLoginFor(prisma, userId);
+  if (!login) {
+    return null;
+  }
+  const ghConfig = await resolveGitHubConfig();
+  // The singleton's host and credential. A GitHub account is not
+  // repository-scoped, and the stored account id came from the OAuth provider
+  // configured against this host.
+  const token = await resolveGitHubToken(ghConfig).catch(() => null);
+  const ownership = await verifyGithubLoginOwnership(prisma, {
+    apiUrl: ghConfig.apiUrl,
+    login,
+    token,
+    userId,
+  });
+  return ownership.status === 'reassigned' ? null : login;
 }

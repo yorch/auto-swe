@@ -11,7 +11,11 @@ import type { PrismaClient } from '@auto-swe/shared';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { AccessInvalidation } from './repoAccessWebhook.js';
-import { lookupRepoPermission, PERMISSION_REPO_SELECT } from './repoPermission.js';
+import {
+  lookupRepoPermission,
+  PERMISSION_REPO_SELECT,
+  verifiedGithubLoginFor,
+} from './repoPermission.js';
 
 export interface RefreshOutcome {
   /** Pairs GitHub answered for. */
@@ -92,6 +96,21 @@ export async function refreshInvalidatedAccess(
   const outcome: RefreshOutcome = { failed: 0, refreshed: 0 };
   let budget = MAX_PAIRS_PER_EVENT;
 
+  // Ownership is a fact about the user, so it is confirmed once per user across
+  // the whole batch rather than once per pair. Without it this writer would
+  // re-populate rows under a login that has been re-registered by someone else
+  // — the sweep verifying is no use if the other two writers do not.
+  const verifiedLogins = new Map<string, string | null>();
+  async function loginFor(userId: string): Promise<string | null> {
+    const cached = verifiedLogins.get(userId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const login = await verifiedGithubLoginFor(prisma, userId);
+    verifiedLogins.set(userId, login);
+    return login;
+  }
+
   for (const repo of repos) {
     for (const { user } of repo.team.memberships) {
       if (!user.githubLogin) {
@@ -104,7 +123,13 @@ export async function refreshInvalidatedAccess(
         outcome.skipped = `capped at ${MAX_PAIRS_PER_EVENT} pairs; the scheduled sweep covers the rest`;
         return outcome;
       }
-      const lookup = await lookupRepoPermission(repo, user.githubLogin);
+      const login = await loginFor(user.id);
+      if (!login) {
+        // No identity, or one that has just been cleared for naming somebody
+        // else. Either way there is nothing to ask GitHub about.
+        continue;
+      }
+      const lookup = await lookupRepoPermission(repo, login);
       const write = await recordRepoPermission(prisma, {
         connectionId: repo.id,
         lookup,

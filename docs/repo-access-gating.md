@@ -98,8 +98,11 @@ Rows are refreshed three ways.
 | Webhook (`POST /api/v1/webhooks/access`) | collaborator, team, org-membership and repository events | seconds |
 | Scheduled sweep | every reachable pair, plus login-ownership verification | one sweep interval |
 
-The sweep also confirms each stored GitHub login still resolves to the account id it was recorded
-for, once per user rather than once per pair. GitHub releases a username on rename and lets anyone
+All three writers confirm the stored login still resolves to the account id it was recorded for
+before using it — the sweep, the launch path and the webhook refresh. A check only one of the three
+performed would not be a check: the other two would keep re-populating rows under a login that had
+changed hands, between sweeps. The sweep and the webhook refresh verify once per user rather than
+once per pair. GitHub releases a username on rename and lets anyone
 re-register it, so a login recorded months ago can end up naming a different person — and the
 projection would then record that person's access as this user's. The numeric account id cannot
 change, which is what makes the check possible; a plain rename still resolves to the same id and is
@@ -146,9 +149,13 @@ rather than surfacing a foreign-key error.
    `GitHubInstallation` rows if repositories span more than one GitHub organization.
 3. Ask users to link GitHub, then run the backfill script for accounts linked earlier.
 4. Enable `repoAccess.syncEnabled` and let one sweep populate `repo_access`.
-5. Set `repoAccess.mode` to `advisory`. Watch the gateway logs for
+5. Leave `repoAccess.syncEnabled` on. Enforcing with the sweep disabled filters every listing
+   against a projection nothing refreshes and never re-verifies a stored GitHub login; the gateway
+   warns when it sees that pairing, because the two knobs default opposite ways and it is easy to
+   reach by accident.
+6. Set `repoAccess.mode` to `advisory`. Watch the gateway logs for
    `repoAccess advisory: this launch would be refused under enforcement`.
-6. When that log is quiet, set `repoAccess.mode` to `enforce`.
+7. When that log is quiet, set `repoAccess.mode` to `enforce`.
 
 Add `POST /api/v1/webhooks/access` as a GitHub webhook delivering `member`, `team`, `membership`,
 `organization`, and `repository` events, signed with the same secret as the other webhooks.

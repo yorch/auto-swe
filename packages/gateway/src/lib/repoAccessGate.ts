@@ -25,7 +25,11 @@ import { permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import type { FastifyBaseLogger } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
-import { githubLoginFor, lookupRepoPermission, type PermissionRepo } from './repoPermission.js';
+import {
+  lookupRepoPermission,
+  type PermissionRepo,
+  verifiedGithubLoginFor,
+} from './repoPermission.js';
 
 export type RepoAccessMode = 'off' | 'advisory' | 'enforce';
 
@@ -59,12 +63,42 @@ export function resetRepoAccessGateCache(): void {
 }
 
 export async function resolveRepoAccessGate(): Promise<RepoAccessGate> {
-  const cfg = await resolveSettings(['repoAccess.mode', 'repoAccess.viewStaleAfterHours'], {});
+  const cfg = await resolveSettings(
+    ['repoAccess.mode', 'repoAccess.syncEnabled', 'repoAccess.viewStaleAfterHours'],
+    {}
+  );
+  const mode = cfg['repoAccess.mode'] as RepoAccessMode;
+  warnIfEnforcingWithoutSync(mode, cfg['repoAccess.syncEnabled']);
   lastKnownGate = {
-    mode: cfg['repoAccess.mode'] as RepoAccessMode,
+    mode,
     staleAfterHours: cfg['repoAccess.viewStaleAfterHours'],
   };
   return lastKnownGate;
+}
+
+/** So the warning below is a line an operator sees, not one per request. */
+let warnedAboutMissingSweep = false;
+
+/**
+ * Enforcing with the sweep disabled is a configuration the settings cannot
+ * forbid and an operator can reach by accident, because the two knobs default
+ * opposite ways: `repoAccess.mode` is the one they came to change, and
+ * `repoAccess.syncEnabled` is off.
+ *
+ * In that pairing every listing is filtered against a projection nothing
+ * refreshes, and no stored GitHub login is ever re-verified — so a username
+ * that changes hands is never detected. Enforcement looks like it is working
+ * while half of it is not running.
+ */
+function warnIfEnforcingWithoutSync(mode: RepoAccessMode, syncEnabled: boolean): void {
+  if (mode !== 'enforce' || syncEnabled || warnedAboutMissingSweep) {
+    warnedAboutMissingSweep = mode === 'enforce' && !syncEnabled;
+    return;
+  }
+  warnedAboutMissingSweep = true;
+  console.warn(
+    '[repoAccess] mode is `enforce` but `repoAccess.syncEnabled` is false. Listings are filtered against a projection nothing refreshes, and stored GitHub logins are never re-verified. Enable the sweep.'
+  );
 }
 
 /**
@@ -145,7 +179,10 @@ async function launchRefusal(
   user: JwtPayload,
   repo: PermissionRepo & { id: string }
 ): Promise<LaunchRefusal | null> {
-  const login = await githubLoginFor(prisma, user.sub);
+  // Verified, not merely read. This is the highest-stakes moment the gate has,
+  // and it is the same argument that justified asking GitHub live here rather
+  // than reading the projection: one extra round-trip on a low-volume path.
+  const login = await verifiedGithubLoginFor(prisma, user.sub);
   if (!login) {
     return 'no-github-identity';
   }

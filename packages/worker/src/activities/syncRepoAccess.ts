@@ -134,6 +134,13 @@ export async function syncRepoAccess(
         if (!user.githubLogin || verified.has(user.id)) {
           continue;
         }
+        // Honour the narrowing, like the permission pass below does. Without
+        // this a sweep scoped to one user verified — and could clear — the
+        // login of every member of every team that user belongs to, and spent a
+        // GitHub call per member to do it.
+        if (input.userId && user.id !== input.userId) {
+          continue;
+        }
         const ownership = await verifyGithubLoginOwnership(prisma, {
           // The singleton's host, never the repository's. A GitHub account is
           // not repository-scoped: the stored account id came from the OAuth
