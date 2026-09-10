@@ -176,6 +176,23 @@ describe('syncRepoAccess', () => {
     });
   });
 
+  it('asks the instance host about a user, never a repository’s Enterprise host', async () => {
+    // A GitHub account is not repository-scoped. Asking a GHE host about a
+    // github.com account id yields a different answer or none, and the
+    // mismatch would clear a perfectly valid login.
+    findMany.mockResolvedValue([
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], {
+        githubApiUrl: 'https://ghe.example.com/api/v3',
+      }),
+    ]);
+    repoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+
+    await syncRepoAccess({});
+    expect(verifyGithubLoginOwnership.mock.calls[0][1]).toMatchObject({
+      apiUrl: 'https://api.github.com',
+    });
+  });
+
   it('verifies each login once, not once per repository', async () => {
     // Ownership is a fact about the user; asking per repository multiplies the
     // cost by the number of repos for no extra information.

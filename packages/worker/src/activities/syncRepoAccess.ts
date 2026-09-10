@@ -122,7 +122,14 @@ export async function syncRepoAccess(
           continue;
         }
         const ownership = await verifyGithubLoginOwnership(prisma, {
-          apiUrl: repo.githubApiUrl ?? ghConfig.apiUrl,
+          // The singleton's host, never the repository's. A GitHub account is
+          // not repository-scoped: the stored account id came from the OAuth
+          // provider better-auth is configured against, which is this host. A
+          // repository with a GitHub Enterprise `githubApiUrl` override would
+          // otherwise have that host asked about a github.com account id, get
+          // a different answer or none, and the mismatch would CLEAR a
+          // perfectly valid login.
+          apiUrl: ghConfig.apiUrl,
           login: user.githubLogin,
           token: platformToken,
           userId: user.id,
