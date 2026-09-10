@@ -149,10 +149,17 @@ nobody is updating.
 
 ## 8. What is gated
 
+Every path that can cause a push is gated, not only the interactive one.
+Gating a single route would leave the others as ways around it.
+
 | Surface | Gated | Requires |
 |---|---|---|
 | `POST /work-requests` | yes | `write` |
 | `POST /work-requests/:id/retry` | yes | `write` |
+| `POST /epics` (per repository) | yes | `write` |
+| `POST /workflow-templates/:id/runs` | yes | `write` |
+| `POST /scheduled-work-requests` | yes | `write` |
+| `POST /scheduled-work-requests/:id/fire` | yes | `write` |
 | `GET /repositories` | yes | `read` |
 | `GET /workflows`, `GET /workflows/:id` | yes | `read` |
 | `GET /runs` and the run viewer | yes | `read` |
@@ -193,3 +200,10 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   all.
 - **Team membership remains the outer bound.** The gate can only remove access. A user with GitHub
   admin rights on a repository still sees nothing unless they are a member of the owning team.
+- **Editing or deleting a schedule is not gated.** Neither causes a push, and refusing a delete
+  would strand a schedule its owner can no longer stop. A schedule created before access was
+  revoked keeps firing until someone deletes it — the gate is checked when it is created and when
+  it is fired by hand, not on each cron fire, which has no user to check.
+- **A template run started by a public or webhook caller is not gated.** There is no authenticated
+  user to ask GitHub about; those callers are scoped to the template's own team instead, which is
+  the pre-existing behaviour.

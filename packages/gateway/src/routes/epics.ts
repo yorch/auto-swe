@@ -5,6 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -86,6 +87,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma.connection.findMany({
             select: {
               id: true,
+              installation: { select: { installationId: true } },
               organizationName: true,
               repoName: true,
               team: {
@@ -129,6 +131,29 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
               message: `You do not have access to: ${inaccessible
                 .map((r) => `${r.organizationName}/${r.repoName}`)
                 .join(', ')}`,
+            },
+          });
+        }
+      }
+
+      // GitHub permission gate, per repo. An epic fans out into a push and a
+      // pull request on every repository it names, so each one is a launch in
+      // exactly the sense the single-repo route means, and gating only that
+      // route would leave the epic as a way around it.
+      for (const r of repos) {
+        const decision = await decideRepoLaunch(
+          fastify.prisma,
+          user,
+          r,
+          request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
+          request.log
+        );
+        if (!decision.allowed) {
+          return reply.status(403).send({
+            error: {
+              code: 'REPO_ACCESS_DENIED',
+              message: `${r.organizationName}/${r.repoName}: ${LAUNCH_REFUSAL_MESSAGE[decision.reason]}`,
+              reason: decision.reason,
             },
           });
         }
