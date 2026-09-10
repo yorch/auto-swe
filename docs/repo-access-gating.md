@@ -7,6 +7,14 @@ The two conditions are ANDed, never substituted. A GitHub permission can only ev
 away: nobody reaches a repository whose team they do not belong to, whatever GitHub says. Team
 scoping still carries budgets, templates, agent configuration, and the tenant guard.
 
+Both conditions are checked in one place, and which place depends on what the caller needs to be
+told. A **listing** filters in the query, through `reachableConnections`. A **route acting on named
+repositories** loads them first and calls `decideRepoAccess`, so a refusal can say which
+repositories were refused and why — filtering there would turn a legitimate mistake into "no such
+repository". Neither form can check membership without also asking GitHub, which is the point:
+they were separate checks once, and six launch paths shipped with the first and without the
+second.
+
 ---
 
 ## 1. Why the gate exists
@@ -235,13 +243,7 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
 - **The gate argument is required but nullable, on purpose.** Optional, it defaulted to "no gate",
   so a call site that forgot it compiled and ran ungated — which is how the Slack routes and the
   human-step resolver ended up outside the gate. Required, forgetting is a compile error and
-  passing `undefined` is a decision someone made. This does not reach the JavaScript-side checks
-  below.
-- **Some repository-access decisions are made in JavaScript, not in a `where` clause.** Roughly a
-  dozen call sites select membership rows and test the array length in code rather than filtering
-  the query. Extending the shared predicate does not reach those, so each had to be gated by hand
-  — which is exactly the shape of mistake that produced the gaps this change had to fix twice.
-  Converting them to predicates would make the next such change safe by construction.
+  passing `undefined` is a decision someone made.
 - **Editing or deleting a schedule is not gated.** Neither causes a push, and refusing a delete
   would strand a schedule its owner can no longer stop. A schedule created before access was
   revoked keeps firing until someone deletes it — the gate is checked when it is created and when
