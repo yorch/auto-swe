@@ -152,9 +152,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       const { limit, offset } = request.query;
       const where: Prisma.ConnectionWhereInput = {
         isActive: true,
-        ...(user.role !== Role.ADMIN && {
-          ...reachableConnections(user, request.repoAccessGate),
-        }),
+        ...(user.role !== Role.ADMIN && reachableConnections(user, request.repoAccessGate)),
       };
 
       const [repos, total] = await asPlatformAdmin(
