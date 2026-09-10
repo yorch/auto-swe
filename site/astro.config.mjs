@@ -64,6 +64,7 @@ export default defineConfig({
     starlight({
       credits: false,
       customCss: ['./src/styles/custom.css'],
+      // The splash page provides its own hero, so Starlight's is unused.
       description:
         'A durable, governed multi-agent workflow platform. Workflows are versioned JSON DAGs ' +
         'on Temporal; agents run in isolated Docker workspaces behind approval gates, security ' +

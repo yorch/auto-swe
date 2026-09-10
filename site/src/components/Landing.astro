@@ -1,0 +1,546 @@
+---
+/**
+ * The landing page.
+ *
+ * The hero is a run, because a run is the thing this product makes. Every
+ * other platform in this space opens by claiming autonomy; this one's actual
+ * argument is that it stops — so the page opens with a run that advances,
+ * reaches a gate, and visibly holds there waiting for a person. That halt is
+ * the single bold moment on the page and everything around it stays quiet.
+ *
+ * The steps are the flagship template's real steps, not an illustration.
+ */
+
+const BASE = '/auto-swe';
+
+const run = [
+  { detail: 'A ticket from Jira, Linear, or GitHub Issues', label: 'Work request submitted' },
+  {
+    detail:
+      'Clones into an isolated Docker sandbox; writes code and tests until the suite is green',
+    label: 'Agent implements',
+  },
+  {
+    detail: 'Security, domain logic, and performance agents inspect the diff in parallel',
+    label: 'Review network runs',
+  },
+  {
+    detail: 'The diff is scanned; a critical finding fails the run outright',
+    label: 'Security gate',
+  },
+  { detail: 'Pushed to a branch on the target repository', label: 'Pull request opened' },
+  { detail: 'If checks fail, the agent reads the logs and pushes a fix', label: 'CI self-heals' },
+];
+
+const reasons = [
+  {
+    body: 'Every run is a Temporal workflow, so a crash, a restart, a deploy, or a provider rate limit does not lose it. Determinism is not assumed either — CI replays recorded histories against the current workflow code, because running forward against fakes cannot catch a change that takes a different path on replay.',
+    claim: 'It survives things going wrong',
+  },
+  {
+    body: 'Approval, decision, input, and review nodes pause a run and wait for a person. Which model an agent binds, which prompt it carries, which skills and tools it may reach for — all of it resolves per team through a five-level scope cascade, as data rather than code.',
+    claim: 'You decide what it may do',
+  },
+  {
+    body: 'Six scanners run during execution. Sensitive-file paths and shell commands are checked before a write lands, the diff is scanned after the commit, and skill text and model output are checked as advisory. The blocking scanners fail closed: a scan that cannot finish cannot call the input clean.',
+    claim: 'It watches what the agent writes',
+  },
+  {
+    body: 'Lessons from merged work are embedded into pgvector and retrieved as context for later runs on the same codebase, so a correction made once does not have to be made again.',
+    claim: 'It gets better at your repository',
+  },
+  {
+    body: 'Every model call is priced and attributed to the run that made it, under a token budget per tier. A model with no price recorded still records its usage, so a pricing gap costs you a number and never a run.',
+    claim: 'You can see what it cost',
+  },
+];
+
+const starting = [
+  {
+    blurb: 'The shortest complete picture of the system',
+    href: `${BASE}/introduction/`,
+    title: 'Introduction',
+  },
+  {
+    blurb: 'Who it is for, the capability map, and what is deliberately out of scope',
+    href: `${BASE}/docs/product-overview/`,
+    title: 'Product overview',
+  },
+  {
+    blurb: 'Run lifecycle, the workflow engine and its node types, the data model',
+    href: `${BASE}/docs/architecture/`,
+    title: 'Architecture',
+  },
+  {
+    blurb: 'The production runbook, end to end',
+    href: `${BASE}/docs/deployment/`,
+    title: 'Deployment',
+  },
+];
+---
+
+<div class="landing">
+  <section class="hero">
+    <div class="hero__lead">
+      <h1 class="hero__title">
+        <span>Ticket in.</span>
+        <span>Reviewed pull request out.</span>
+        <span class="hero__title-halt">Then it waits for you.</span>
+      </h1>
+      <p class="hero__lede">
+        auto-swe runs multi-agent work as versioned workflows on Temporal. Agents work inside
+        isolated Docker sandboxes, behind approval gates, layered security scanning, and a budget on
+        every run. Merging is the one decision it never takes.
+      </p>
+      <p class="hero__actions">
+        <a class="btn btn--primary" href={`${BASE}/introduction/`}>Read the introduction</a>
+        <a class="btn" href="https://github.com/yorch/auto-swe">Source on GitHub</a>
+      </p>
+    </div>
+
+    <div class="hero__run">
+      <p class="run__caption">The default engineering workflow, step by step</p>
+      <ol class="run">
+        {run.map((step) => (
+          <li class="run__step">
+            <span class="run__mark" aria-hidden="true"></span>
+            <span class="run__body">
+              <span class="run__label">{step.label}</span>
+              <span class="run__detail">{step.detail}</span>
+            </span>
+          </li>
+        ))}
+        <li class="run__step run__step--gate">
+          <span class="run__mark" aria-hidden="true"></span>
+          <span class="run__body">
+            <span class="run__label">A person merges</span>
+            <span class="run__detail">
+              The run holds here for up to seven days. No activity in the platform calls the merge
+              API, and no shipped template merges anything.
+            </span>
+          </span>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band">
+    <h2 class="band__title">Why it is built this way</h2>
+    <dl class="reasons">
+      {reasons.map((reason) => (
+        <div class="reason">
+          <dt class="reason__claim">{reason.claim}</dt>
+          <dd class="reason__body">{reason.body}</dd>
+        </div>
+      ))}
+    </dl>
+  </section>
+
+  <section class="band">
+    <h2 class="band__title">Start reading</h2>
+    <ul class="starting">
+      {starting.map((doc) => (
+        <li class="starting__item">
+          <a class="starting__link" href={doc.href}>{doc.title}</a>
+          <span class="starting__blurb">{doc.blurb}</span>
+        </li>
+      ))}
+    </ul>
+    <p class="band__note">
+      These docs describe how auto-swe works now, in present tense. There is no roadmap here and no
+      status column: what shipped when lives in git history. Every capability page ends with
+      a <a href={`${BASE}/docs/`}>Limitations</a> section stating what is not built, not proven, or
+      deliberately constrained, and a page that drops one fails the build.
+    </p>
+  </section>
+</div>
+
+<style>
+  .landing {
+    max-width: 78rem;
+    margin-inline: auto;
+    padding-inline: clamp(1.25rem, 5vw, 4rem);
+    padding-block: clamp(3rem, 7vw, 6rem) 6rem;
+  }
+
+  /* --- Hero ------------------------------------------------------------ */
+
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: clamp(2.5rem, 5vw, 5rem);
+    align-items: start;
+  }
+
+  .hero__title {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: var(--step-6);
+    line-height: 0.98;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+  }
+
+  /*
+   * Each sentence is its own block and balances its own wrap. Hard-coded line
+   * breaks would set the rag once, at one viewport, and then be wrong at every
+   * other one.
+   */
+  .hero__title span {
+    display: block;
+    text-wrap: balance;
+  }
+
+  /*
+   * The third line is the claim the rest of the page has to earn, so it is the
+   * only place on the landing page where the gate colour appears in type.
+   */
+  .hero__title-halt {
+    color: var(--gate);
+  }
+
+  .hero__lede {
+    max-width: 34rem;
+    margin-top: 1.75rem;
+    font-size: var(--step-1);
+    line-height: 1.55;
+    color: var(--ink-muted);
+  }
+
+  .hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+
+  /*
+   * Scoped under `.landing` to outrank the global markdown link rule, which is
+   * three classes deep and otherwise repaints these as underlined body links —
+   * putting ink-coloured text on an ink-coloured button.
+   */
+  .landing .btn {
+    display: inline-block;
+    padding: 0.6rem 1.1rem;
+    font-size: var(--step-0);
+    font-weight: 500;
+    color: var(--ink);
+    text-decoration: none;
+    background: var(--paper-raised);
+    border: 1px solid var(--rule-strong);
+    transition: border-color 0.12s ease, background-color 0.12s ease;
+  }
+
+  .landing .btn:hover {
+    border-color: var(--gate);
+    background: var(--paper);
+  }
+
+  .landing .btn--primary {
+    color: var(--paper);
+    background: var(--ink);
+    border-color: var(--ink);
+  }
+
+  /*
+   * `--gate-text`, not `--gate`. The signal value behind a button label
+   * measures 3.69:1, which is fine for a mark and not for words.
+   */
+  .landing .btn--primary:hover {
+    color: var(--on-gate);
+    background: var(--gate-text);
+    border-color: var(--gate-text);
+  }
+
+  /* --- The run rail ---------------------------------------------------- */
+
+  .hero__run {
+    padding: 1.5rem 1.5rem 1.75rem;
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+  }
+
+  /*
+   * Not monospaced. A mono face on a small label is the reflex here and it
+   * says nothing true — nothing in this box is code. The rail already carries
+   * the machine reading.
+   */
+  .run__caption {
+    margin: 0 0 1.25rem;
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+  }
+
+  .run {
+    position: relative;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .run__step {
+    position: relative;
+    padding-inline-start: 1.9rem;
+    padding-block: 0 1.15rem;
+  }
+
+  /*
+   * The rail is drawn per step rather than as one line behind the list, so the
+   * dash below the gate can differ from the solid line above it without a
+   * second element or a gradient.
+   */
+  .run__step::before {
+    content: '';
+    position: absolute;
+    inset-inline-start: 4px;
+    top: 0.55rem;
+    bottom: -0.15rem;
+    width: 2px;
+    background: var(--rule-strong);
+  }
+
+  .run__step:last-child::before {
+    display: none;
+  }
+
+  .run__mark {
+    position: absolute;
+    inset-inline-start: 0;
+    top: 0.3rem;
+    width: 10px;
+    height: 10px;
+    background: var(--steel);
+    border-radius: 50%;
+  }
+
+  .run__body {
+    display: block;
+  }
+
+  .run__label {
+    display: block;
+    font-weight: 600;
+    font-size: var(--step-0);
+    line-height: 1.35;
+    color: var(--ink);
+  }
+
+  .run__detail {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: var(--step--1);
+    line-height: 1.5;
+    color: var(--ink-muted);
+  }
+
+  /*
+   * The halt. A square rather than a circle, in the gate colour, sitting below
+   * a dashed rail — the run has not flowed into this step and will not until
+   * somebody acts.
+   */
+  .run__step--gate {
+    padding-bottom: 0;
+  }
+
+  .run__step--gate .run__mark {
+    top: 0.25rem;
+    width: 12px;
+    height: 12px;
+    margin-inline-start: -1px;
+    background: var(--gate);
+    border-radius: 0;
+  }
+
+  /* Running text, so the text-safe gate value rather than the signal one. */
+  .run__step--gate .run__label {
+    color: var(--gate-text);
+  }
+
+  .run__step:nth-last-child(2)::before {
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--gate) 0 4px,
+      transparent 4px 8px
+    );
+  }
+
+  /*
+   * One orchestrated moment on the whole site: the rail draws itself down to
+   * the gate on load and stops there. It runs once, it is short, and it says
+   * the same thing the page says.
+   */
+  @media (prefers-reduced-motion: no-preference) {
+    .run__step::before {
+      transform-origin: top;
+      animation: rail-fill 0.5s ease-out backwards;
+      animation-delay: calc(var(--i, 0) * 0.11s);
+    }
+
+    .run__step {
+      animation: step-in 0.4s ease-out backwards;
+      animation-delay: calc(var(--i, 0) * 0.11s);
+    }
+
+    .run__step--gate .run__mark {
+      animation: gate-hold 0.5s ease-out backwards;
+      animation-delay: 0.85s;
+    }
+  }
+
+  @keyframes rail-fill {
+    from {
+      transform: scaleY(0);
+    }
+  }
+
+  @keyframes step-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes gate-hold {
+    from {
+      transform: scale(0.4);
+      opacity: 0;
+    }
+  }
+
+  /* --- Bands ----------------------------------------------------------- */
+
+  .band {
+    margin-top: clamp(4rem, 8vw, 7rem);
+  }
+
+  .band__title {
+    margin: 0 0 2rem;
+    padding-top: 1.25rem;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: var(--step-3);
+    line-height: 1.1;
+    color: var(--ink);
+    border-top: 1px solid var(--rule-strong);
+  }
+
+  .reasons {
+    display: grid;
+    gap: 0;
+    margin: 0;
+  }
+
+  /*
+   * A definition list on rules, not a grid of identical cards. These entries
+   * are different lengths and different weights of claim, and boxing them all
+   * to the same size would say they are interchangeable.
+   */
+  .reason {
+    display: grid;
+    grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+    gap: 0 3rem;
+    padding-block: 1.5rem;
+    border-top: 1px solid var(--rule);
+  }
+
+  .reason:last-child {
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .reason__claim {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: var(--step-1);
+    line-height: 1.2;
+    color: var(--ink);
+  }
+
+  .reason__body {
+    max-width: 60ch;
+    margin: 0;
+    font-size: var(--step-0);
+    line-height: 1.6;
+    color: var(--ink-muted);
+  }
+
+  .starting {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .starting__item {
+    display: grid;
+    grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+    gap: 0 3rem;
+    padding-block: 0.9rem;
+    border-top: 1px solid var(--rule);
+  }
+
+  .starting__item:last-child {
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .landing .starting__link {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: var(--step-1);
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--gate);
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 0.2em;
+  }
+
+  .landing .starting__link:hover {
+    background: var(--gate-wash);
+  }
+
+  .starting__blurb {
+    align-self: center;
+    font-size: var(--step-0);
+    color: var(--ink-muted);
+  }
+
+  .band__note {
+    max-width: 62ch;
+    margin-top: 2rem;
+    font-size: var(--step-0);
+    line-height: 1.6;
+    color: var(--ink-muted);
+  }
+
+  .band__note a {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--gate);
+    text-underline-offset: 0.2em;
+  }
+
+  /* --- Narrow ---------------------------------------------------------- */
+
+  @media (max-width: 60rem) {
+    .hero {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .reason,
+    .starting__item {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.4rem;
+    }
+
+    .starting__blurb {
+      font-size: var(--step--1);
+    }
+  }
+</style>
+
+<script>
+  // Stagger index for the rail animation. Set here rather than inline so the
+  // markup stays free of presentation, and so a page with the animation
+  // disabled carries no unused attributes.
+  for (const [i, step] of document.querySelectorAll('.run__step').entries()) {
+    (step as HTMLElement).style.setProperty('--i', String(i));
+  }
+</script>

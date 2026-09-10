@@ -559,6 +559,9 @@ __metadata:
   resolution: "@auto-swe/site@workspace:site"
   dependencies:
     "@astrojs/starlight": "npm:0.42.0"
+    "@fontsource-variable/ibm-plex-sans": "npm:5.3.0"
+    "@fontsource/ibm-plex-mono": "npm:5.3.0"
+    "@fontsource/ibm-plex-sans-condensed": "npm:5.3.0"
     astro: "npm:7.3.2"
     astro-mermaid: "npm:2.1.0"
     mermaid: "npm:11.17.2"
@@ -1980,6 +1983,27 @@ __metadata:
     rfdc: "npm:^1.3.1"
     yaml: "npm:^2.4.2"
   checksum: 10c0/8cefd29ef2808078270ed73ee17fd6f1f89f5761d665be24bc5a8e5f5a395c7db553e448a1a9c0456fae48d06e5cdf096dd091fac0b49486fbaff69a2ac6799e
+  languageName: node
+  linkType: hard
+
+"@fontsource-variable/ibm-plex-sans@npm:5.3.0":
+  version: 5.3.0
+  resolution: "@fontsource-variable/ibm-plex-sans@npm:5.3.0"
+  checksum: 10c0/3fe44e92a441c956654d08be2fc1310f5527e241961f1386f4dcbe1ecfee4d3a387e1ca8b108afa48184647f3aa9db0d6547c2dd63a0442c2d369401c9a2e306
+  languageName: node
+  linkType: hard
+
+"@fontsource/ibm-plex-mono@npm:5.3.0":
+  version: 5.3.0
+  resolution: "@fontsource/ibm-plex-mono@npm:5.3.0"
+  checksum: 10c0/4aaf5a3c9efc7c32de4fa46ff3187ac63720904beab825f331ac01800038899761da23270f09d3fb5cff22f7cdc366904834854e2107229ad60833bba71c223d
+  languageName: node
+  linkType: hard
+
+"@fontsource/ibm-plex-sans-condensed@npm:5.3.0":
+  version: 5.3.0
+  resolution: "@fontsource/ibm-plex-sans-condensed@npm:5.3.0"
+  checksum: 10c0/a38bb91f97b47dc19c6e79da07f26afedb730700956f5dce507572bf34e8ffdeaff48234bceef4e04f43d35d72b36ba8e7ad82945cee4a86fc32e462f612179e
   languageName: node
   linkType: hard
 

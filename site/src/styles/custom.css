@@ -1,84 +1,447 @@
 /*
- * Brand tuning for the published docs.
+ * auto-swe documentation — visual design.
  *
- * Starlight's own tokens are overridden rather than replaced: everything here is
- * a variable reassignment, so the theme keeps its contrast guarantees and its
- * light/dark pairing instead of this file having to restate them. The accent
- * tracks the dashboard's ember, and the greys track its ink/paper scale, so a
- * reader moving between the site and the product does not feel a change of
- * hands.
+ * Tokens live in `tokens.css`; this file spends them. Three ideas run through
+ * it, and everything else is deliberately quiet so they can be heard:
+ *
+ *   1. A run advances and then stops at a gate. The gate colour is the only
+ *      accent with identity, and it marks the places a person is involved.
+ *   2. Structure carries meaning. The sidebar is a rail with stops on it; a
+ *      doc's Limitations section is marked, because a product that writes down
+ *      its own gaps should not bury them at the bottom of a page.
+ *   3. This is a document to be read for an hour, not a landing page to be
+ *      skimmed. Measure, rhythm, and contrast are set for reading.
  */
 
-:root {
-  --sl-color-accent-low: #431407;
-  --sl-color-accent: #c2410c;
-  --sl-color-accent-high: #fdba74;
+@import './tokens.css';
 
-  --sl-color-white: #ffffff;
-  --sl-color-gray-1: #f1f0ee;
-  --sl-color-gray-2: #c9c6c1;
-  --sl-color-gray-3: #9b9791;
-  --sl-color-gray-4: #59554f;
-  --sl-color-gray-5: #38352f;
-  --sl-color-gray-6: #27241f;
-  --sl-color-black: #1a1815;
+/* ===========================================================================
+ * Starlight variable mapping
+ *
+ * Reassigning Starlight's own tokens rather than fighting its rules keeps its
+ * contrast and light/dark pairing intact, and means components this file never
+ * mentions still come out in the right palette.
+ * ======================================================================== */
+
+:root {
+  --sl-font: var(--font-body);
+  --sl-font-mono: var(--font-mono);
+
+  --sl-color-accent-low: var(--gate-wash);
+  --sl-color-accent: var(--gate);
+  --sl-color-accent-high: var(--ink);
+
+  --sl-color-white: var(--ink);
+  --sl-color-gray-1: var(--ink);
+  --sl-color-gray-2: var(--ink-muted);
+  --sl-color-gray-3: var(--ink-faint);
+  --sl-color-gray-4: var(--rule-strong);
+  --sl-color-gray-5: var(--rule);
+  --sl-color-gray-6: var(--paper-sunk);
+  --sl-color-gray-7: var(--paper-raised);
+  --sl-color-black: var(--paper);
+
+  --sl-color-text: var(--ink-muted);
+  --sl-color-text-accent: var(--gate);
+  --sl-color-text-invert: var(--paper);
+  --sl-color-bg: var(--paper);
+  --sl-color-bg-nav: var(--paper);
+  --sl-color-bg-sidebar: var(--paper);
+  --sl-color-bg-inline-code: var(--paper-sunk);
+  --sl-color-hairline: var(--rule);
+  --sl-color-hairline-light: var(--rule);
+  --sl-color-hairline-shade: var(--rule);
+
+  --sl-content-width: 46rem;
+  --sl-sidebar-width: 17.5rem;
+  --sl-nav-height: 4rem;
+
+  --sl-text-code: var(--step--1);
+  --sl-text-code-sm: 0.78rem;
 }
 
-:root[data-theme='light'] {
-  --sl-color-accent-low: #ffedd5;
-  --sl-color-accent: #c2410c;
-  --sl-color-accent-high: #7c2d12;
+:root[data-theme='dark'] {
+  --sl-color-accent-high: var(--ink);
+}
 
-  --sl-color-white: #1a1815;
-  --sl-color-gray-1: #27241f;
-  --sl-color-gray-2: #38352f;
-  --sl-color-gray-3: #6d6963;
-  --sl-color-gray-4: #94908a;
-  --sl-color-gray-5: #d6d3ce;
-  --sl-color-gray-6: #ebe9e5;
-  --sl-color-gray-7: #f5f4f2;
-  --sl-color-black: #ffffff;
+/* ===========================================================================
+ * Typography
+ * ======================================================================== */
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--step-0);
+  -webkit-font-smoothing: antialiased;
+  color: var(--ink);
+  background: var(--paper);
 }
 
 /*
- * The docs lean hard on wide tables — the setting registry, the model matrix,
- * the scanner list — several of which do not fit a phone at any font size.
- * Scrolling one sideways beats reflowing it into an unreadable column, but the
- * container has to be the table's own wrapper or the whole page scrolls with it.
+ * Headings are condensed. A condensed face at a heavy weight reads as signage
+ * — the lettering on a panel in a machine room — and it buys width back, so a
+ * long technical heading can be set large without wrapping to three lines.
+ */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
+.content-panel h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+  text-wrap: balance;
+}
+
+.content-panel h1 {
+  font-size: var(--step-5);
+  line-height: 1.04;
+}
+
+/*
+ * Starlight wraps every markdown heading in `.sl-heading-wrapper` and sets the
+ * heading itself to `display: inline`, so the anchor link can sit beside it.
+ * Anything block-level — a rule, vertical rhythm — therefore has to go on the
+ * wrapper. Put a `border-top` on the heading and it draws under the words
+ * instead of across the column.
+ */
+.sl-heading-wrapper.level-h2 {
+  padding-top: 1.25rem;
+  margin-top: 3rem;
+  border-top: 1px solid var(--rule);
+}
+
+.sl-heading-wrapper.level-h3 {
+  margin-top: 2.25rem;
+}
+
+.sl-heading-wrapper.level-h4 {
+  margin-top: 1.75rem;
+}
+
+.sl-heading-wrapper:is(.level-h5, .level-h6) {
+  margin-top: 1.5rem;
+}
+
+.sl-markdown-content h2 {
+  font-size: var(--step-3);
+  line-height: 1.15;
+}
+
+.sl-markdown-content h3 {
+  font-size: var(--step-2);
+  line-height: 1.2;
+}
+
+.sl-markdown-content h4 {
+  font-size: var(--step-1);
+  line-height: 1.25;
+}
+
+.sl-markdown-content :is(h5, h6) {
+  font-size: var(--step-0);
+}
+
+.sl-markdown-content p,
+.sl-markdown-content li {
+  max-width: var(--measure);
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+.sl-markdown-content strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Links look like links. On a page this dense, colour alone is not enough of a
+ * signal, and an underline that sits clear of the descenders costs nothing. */
+.sl-markdown-content a:not(.sl-anchor-link, .btn) {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: var(--gate);
+  text-underline-offset: 0.2em;
+  transition: background-color 0.12s ease;
+}
+
+.sl-markdown-content a:not(.sl-anchor-link, .btn):hover {
+  text-decoration-color: var(--ink);
+  background: var(--gate-wash);
+}
+
+:where(a, button, summary, input):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 1px;
+}
+
+/* ===========================================================================
+ * Header
+ * ======================================================================== */
+
+.header {
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.site-title {
+  gap: 0.55rem;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.005em;
+}
+
+/* ===========================================================================
+ * Sidebar — the rail
+ *
+ * A run travels a rail and stops at gates, and that is also what a reader is
+ * doing with a table of contents. The rail is a real vertical rule; the
+ * current page is a solid stop on it, not a highlighted pill. Groups are
+ * separated by their heading rather than by a box.
+ * ======================================================================== */
+
+#starlight__sidebar {
+  border-right: 1px solid var(--rule);
+}
+
+.sidebar-content {
+  padding-top: 1.5rem;
+}
+
+.sidebar-content > ul > li + li {
+  margin-top: 1.75rem;
+}
+
+/* Group headings. */
+.sidebar-content .large {
+  margin-bottom: 0.6rem;
+  font-family: var(--font-display);
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--ink-faint);
+  letter-spacing: 0.01em;
+}
+
+/* The rail itself. */
+.sidebar-content ul ul {
+  position: relative;
+  padding-left: 0;
+  margin-inline-start: 0.15rem;
+  border-inline-start: 1px solid var(--rule);
+}
+
+.sidebar-content ul ul > li > a {
+  --sl-color-bg-nav: transparent;
+  position: relative;
+  padding: 0.3rem 0.5rem 0.3rem 1.1rem;
+  font-size: var(--step--1);
+  line-height: 1.45;
+  color: var(--ink-muted);
+  border-radius: 0;
+}
+
+.sidebar-content ul ul > li > a:hover {
+  color: var(--ink);
+  background: var(--paper-sunk);
+}
+
+/*
+ * The stop. A short thick bar sitting on the rail, in the gate colour —
+ * the same visual language as a halted run, used here for "you are here".
+ */
+.sidebar-content ul ul > li > a[aria-current='page'] {
+  font-weight: 600;
+  color: var(--ink);
+  background: transparent;
+}
+
+.sidebar-content ul ul > li > a[aria-current='page']::before {
+  position: absolute;
+  inset-inline-start: -1px;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  width: 3px;
+  content: '';
+  background: var(--gate);
+}
+
+/* ===========================================================================
+ * Table of contents
+ * ======================================================================== */
+
+.right-sidebar {
+  border-inline-start: 1px solid var(--rule);
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: the higher-specificity
+   heading rules above live under `.sl-markdown-content`, and the table of
+   contents is outside it, so the two never apply to the same element. */
+starlight-toc nav > h2 {
+  font-family: var(--font-display);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-faint);
+  letter-spacing: 0.01em;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: as above — the sidebar and
+   markdown link rules that outrank this one cannot match a link in here. */
+starlight-toc a {
+  padding-block: 0.28rem;
+  font-size: var(--step--1);
+  line-height: 1.4;
+  color: var(--ink-faint);
+  border-inline-start: 2px solid transparent;
+  border-radius: 0;
+}
+
+starlight-toc a[aria-current='true'] {
+  font-weight: 600;
+  color: var(--ink);
+  background: transparent;
+  border-inline-start-color: var(--gate);
+}
+
+/* ===========================================================================
+ * Content blocks
+ * ======================================================================== */
+
+.sl-markdown-content blockquote {
+  padding-inline-start: 1.1rem;
+  margin-inline-start: 0;
+  font-style: normal;
+  color: var(--ink-muted);
+  border-inline-start: 3px solid var(--steel);
+}
+
+/*
+ * Tables carry most of the real reference content here — the setting registry,
+ * the model matrix, the scanner list — so they are set tighter than prose and
+ * given a header that stays legible when a table runs long.
  */
 .sl-markdown-content table {
   display: block;
   max-width: 100%;
   overflow-x: auto;
+  font-size: var(--step--1);
+  border-collapse: collapse;
 }
 
-/* ---------------------------------------------------------------------------
+.sl-markdown-content :is(th, td) {
+  padding: 0.55rem 0.9rem 0.55rem 0;
+  vertical-align: baseline;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.sl-markdown-content th {
+  font-family: var(--font-display);
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.sl-markdown-content td {
+  color: var(--ink-muted);
+}
+
+.sl-markdown-content :is(th, td):last-child {
+  padding-right: 0;
+}
+
+.sl-markdown-content :not(pre) > code {
+  padding: 0.1em 0.35em;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--ink);
+  background: var(--paper-sunk);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+}
+
+.expressive-code .frame pre {
+  border-radius: 2px;
+}
+
+.sl-markdown-content hr {
+  margin-block: 2.5rem;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+
+/*
+ * These docs put a `---` above most section headings, and the heading already
+ * carries a rule. Two lines a few pixels apart read as a mistake, and the
+ * heading's rule is the one that means something — it belongs to the section,
+ * where a loose horizontal rule belongs to nothing.
+ */
+.sl-markdown-content hr:has(+ .sl-heading-wrapper) {
+  display: none;
+}
+
+/*
+ * Limitations.
+ *
+ * Every capability doc ends by stating what is not built, not proven, or
+ * deliberately constrained — and CI fails a doc that does not. That is an
+ * unusual thing for a project to promise, so it is marked rather than left to
+ * look like one more heading near the bottom of a long page.
+ */
+.sl-heading-wrapper.level-h2:has(> h2[id='limitations']) {
+  border-top: 2px solid var(--gate);
+}
+
+.sl-markdown-content h2[id='limitations'] {
+  color: var(--gate);
+}
+
+/* ===========================================================================
+ * Landing page
+ *
+ * The splash template still renders the frontmatter title above the content,
+ * which on this page is a second, smaller "auto-swe" sitting directly above
+ * the hero that already says it. `display: none` rather than a visual hide,
+ * so the hero's own h1 is the only one in the accessibility tree.
+ * ======================================================================== */
+
+main:has(.landing) > .content-panel:first-of-type {
+  display: none;
+}
+
+main:has(.landing) > .content-panel {
+  padding: 0;
+  border: 0;
+}
+
+main:has(.landing) .sl-container,
+main:has(.landing) .sl-markdown-content {
+  max-width: none;
+  margin: 0;
+}
+
+/* ===========================================================================
  * Diagrams
  *
- * The page shows a diagram scaled to the column, which is the right thing for a
- * reader scanning past it and hopeless for a reader trying to read one: the
- * widest diagram here is 2850px of natural width against a 720px column, so its
- * 16px labels land at an effective 4px. No viewport fixes that — the column is
- * capped by reading measure, not by window width.
- *
- * Drawing them at natural size and scrolling the block was tried instead. It
- * makes the labels legible and the diagram unreadable, because the reader sees
- * a sixth of it through a letterbox with no sense of the whole.
- *
- * So: the whole diagram in the page, and a viewer to actually read it in.
- * `src/scripts/mermaidZoom.js` builds both.
- * ------------------------------------------------------------------------- */
+ * The page shows a whole diagram scaled to the column, which is right for a
+ * reader scanning past it and hopeless for one trying to read it: the entity
+ * diagram is 2850px of natural width against a 736px column, so its 16px
+ * labels land at an effective 4px. The Expand control opens it full screen at
+ * natural size. `src/scripts/mermaidZoom.js` builds both.
+ * ======================================================================== */
 
 .mermaid-figure {
   position: relative;
-  /* Top padding is the control strip. Overlaying the button on the diagram was
-   * tried and it covers a node — which node depends on the diagram, so there is
-   * no safe corner to put it in. */
+  /* Top padding is the control strip. Overlaying the button on the diagram
+   * covers a node, and which node depends on the diagram — there is no corner
+   * that is reliably empty. */
   padding: 2.5rem 0 0;
-  margin: 1.5rem 0;
-  background: var(--sl-color-gray-6);
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: 0.5rem;
+  margin: 1.75rem 0;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
 }
 
 .mermaid-figure pre.mermaid {
@@ -87,38 +450,32 @@
   background: none;
 }
 
-/*
- * The control lives in the figure rather than in the `pre`, because a theme
- * change re-renders the diagram by assigning to `pre.innerHTML` and would take
- * anything inside it with it.
- */
 .mermaid-figure__expand {
   position: absolute;
-  top: 0.6rem;
-  right: 0.7rem;
-  padding: 0.25rem 0.7rem;
+  top: 0.55rem;
+  right: 0.6rem;
+  padding: 0.2rem 0.6rem;
   /* Starlight's markdown rhythm gives a following sibling `margin-top: 1rem`,
    * and on an absolutely positioned element that margin is added to `top` —
    * silently pushing the control down into the diagram it is meant to clear. */
   margin: 0;
-  font-family: var(--sl-font);
-  font-size: var(--sl-text-xs);
-  line-height: 1.4;
-  color: var(--sl-color-gray-2);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--ink-muted);
   cursor: pointer;
-  background: var(--sl-color-black);
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: 0.35rem;
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
   transition:
-    color 0.15s ease,
-    border-color 0.15s ease;
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
-.mermaid-figure:hover .mermaid-figure__expand,
-.mermaid-figure__expand:focus-visible,
-.mermaid-figure__expand:hover {
-  border-color: var(--sl-color-accent);
-  opacity: 1;
+.mermaid-figure__expand:hover,
+.mermaid-figure__expand:focus-visible {
+  color: var(--ink);
+  border-color: var(--gate);
 }
 
 .mermaid-viewer {
@@ -127,48 +484,45 @@
   height: 100dvh;
   max-height: 100dvh;
   padding: 0;
-  color: var(--sl-color-white);
-  background: var(--sl-color-black);
+  color: var(--ink);
+  background: var(--paper);
   border: none;
 }
 
 .mermaid-viewer::backdrop {
-  background: rgb(0 0 0 / 70%);
+  background: rgb(10 14 16 / 78%);
 }
 
 .mermaid-viewer__bar {
   position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
+  inset: 0 0 auto;
   z-index: 1;
   display: flex;
-  gap: 0.4rem;
+  gap: 0.35rem;
   align-items: center;
   justify-content: flex-end;
-  padding: 0.6rem 0.8rem;
-  background: linear-gradient(var(--sl-color-black), transparent);
+  padding: 0.7rem 0.9rem;
 }
 
 .mermaid-viewer__bar button {
-  min-width: 2.2rem;
-  padding: 0.35rem 0.7rem;
-  font-family: var(--sl-font);
-  font-size: var(--sl-text-sm);
-  color: var(--sl-color-gray-1);
+  min-width: 2.4rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--ink-muted);
   cursor: pointer;
-  background: var(--sl-color-gray-6);
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: 0.35rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
 }
 
 .mermaid-viewer__bar button:hover,
 .mermaid-viewer__bar button:focus-visible {
-  border-color: var(--sl-color-accent);
+  color: var(--ink);
+  border-color: var(--gate);
 }
 
 .mermaid-viewer__close {
-  margin-left: 0.6rem;
+  margin-left: 0.5rem;
 }
 
 .mermaid-viewer__stage {
@@ -176,7 +530,7 @@
   height: 100%;
   overflow: hidden;
   overscroll-behavior: contain;
-  /* The stage owns the wheel, so the page behind it must not scroll and a
+  /* The stage owns the wheel, so the page behind must not scroll and a
    * trackpad pinch must not zoom the browser instead of the diagram. */
   touch-action: none;
   cursor: grab;
@@ -197,49 +551,21 @@
 }
 
 /*
- * Diagram palette.
- *
- * This is CSS rather than mermaid's own `themeVariables` because the
- * integration spreads one config object into `mermaid.initialize()` and then
- * overrides only `theme` — so a palette written for light mode survives the
- * switch to dark and leaks light fills into a dark diagram. Scoping by
- * `data-theme` is the only place the two can differ.
- *
- * Deliberately narrow. Mermaid's stock themes are legible in both modes and
- * only the subgraph fill actually clashes here: a saturated yellow plate on a
- * warm-grey page. Nodes are neutralised alongside it so a diagram reads as one
- * object rather than two palettes stacked. Everything else — edges, labels,
- * sequence and entity diagrams — is left as mermaid draws it.
- *
- * `!important` throughout because mermaid injects both a <style> block and
- * inline attributes into the SVG it renders.
+ * Diagram palette. CSS rather than mermaid's own `themeVariables` because the
+ * integration spreads one config object into `initialize()` and overrides only
+ * `theme` — so a palette written for light mode survives into dark and leaks
+ * light fills into a dark diagram. Scoping by `data-theme` is the only place
+ * the two can differ. `!important` because mermaid injects both a <style>
+ * block and inline attributes into the SVG.
  */
 .mermaid-figure .cluster rect,
 .mermaid-viewer .cluster rect {
-  fill: var(--diagram-cluster-bg) !important;
-  stroke: var(--diagram-cluster-line) !important;
+  fill: var(--paper-sunk) !important;
+  stroke: var(--rule) !important;
 }
 
-.mermaid-figure .node rect,
-.mermaid-figure .node polygon,
-.mermaid-figure .node path,
-.mermaid-viewer .node rect,
-.mermaid-viewer .node polygon,
-.mermaid-viewer .node path {
-  fill: var(--diagram-node-bg) !important;
-  stroke: var(--diagram-node-line) !important;
-}
-
-:root {
-  --diagram-cluster-bg: #f5f4f2;
-  --diagram-cluster-line: #d6d3ce;
-  --diagram-node-bg: #ffffff;
-  --diagram-node-line: #b4afa8;
-}
-
-:root[data-theme='dark'] {
-  --diagram-cluster-bg: #211e1a;
-  --diagram-cluster-line: #3c3831;
-  --diagram-node-bg: #2d2924;
-  --diagram-node-line: #56514a;
+.mermaid-figure .node :is(rect, polygon, path),
+.mermaid-viewer .node :is(rect, polygon, path) {
+  fill: var(--paper) !important;
+  stroke: var(--rule-strong) !important;
 }
