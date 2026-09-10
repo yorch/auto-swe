@@ -4,15 +4,23 @@ import { memberOrgs, memberTeams, reachableConnections } from './tenantScope.js'
 
 const actor = { sub: '11111111-1111-1111-1111-111111111111' };
 
-/** The `repoAccess` branch of the enforced filter's OR. */
-function permissionBranch(filter: { OR?: unknown[] }): { some?: Record<string, unknown> } {
+/**
+ * The `some` clause of the enforced filter's `repoAccess` branch.
+ *
+ * Returns it non-optional and throws otherwise, so a caller reads a property
+ * off it directly. Returning an optional and letting each assertion optional-
+ * chain would turn a missing clause — the failure these tests exist to catch —
+ * into a `TypeError` several lines from the cause.
+ */
+function permissionClause(filter: { OR?: unknown[] }): Record<string, unknown> {
   const branch = (filter.OR ?? []).find(
     (b) => typeof b === 'object' && b !== null && 'repoAccess' in b
-  ) as { repoAccess: { some?: Record<string, unknown> } } | undefined;
-  if (!branch) {
-    throw new Error('enforced filter has no repoAccess branch');
+  ) as { repoAccess?: { some?: Record<string, unknown> } } | undefined;
+  const some = branch?.repoAccess?.some;
+  if (!some) {
+    throw new Error('enforced filter has no repoAccess.some clause');
   }
-  return branch.repoAccess;
+  return some;
 }
 
 /**
@@ -67,7 +75,7 @@ describe('tenant scope predicates', () => {
     // they do not belong to, whatever GitHub says.
     const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 });
     expect(filter.team).toEqual(memberTeams(actor));
-    expect(permissionBranch(filter).some).toMatchObject({
+    expect(permissionClause(filter)).toMatchObject({
       permission: { in: ['READ', 'WRITE', 'ADMIN'] },
       userId: actor.sub,
     });
@@ -88,14 +96,14 @@ describe('tenant scope predicates', () => {
     // credential, a paused sweep — would be served from a cache nobody updates.
     const before = Date.now();
     const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 24 });
-    const cutoff = permissionBranch(filter).some?.checkedAt as { gte: Date };
+    const cutoff = permissionClause(filter).checkedAt as { gte: Date };
     expect(cutoff.gte.getTime()).toBeGreaterThanOrEqual(before - 24 * 3600_000 - 5_000);
     expect(cutoff.gte.getTime()).toBeLessThanOrEqual(Date.now() - 24 * 3600_000 + 5_000);
   });
 
   it('never treats a recorded NONE as viewable', () => {
     const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 });
-    const levels = (permissionBranch(filter).some?.permission as { in: string[] }).in;
+    const levels = (permissionClause(filter).permission as { in: string[] }).in;
     expect(levels).not.toContain('NONE');
   });
 
