@@ -46,18 +46,35 @@ Also here: [`slack-app-manifest.json`](./slack-app-manifest.json) and [`redesign
 
 ## These files ship
 
-The dashboard renders this directory at `/docs`, linked in the sidebar for every role, so a doc is
-a product surface and not only a file in a checkout. Two consequences when you edit one:
+Two surfaces render this directory, so a doc is a product surface and not only a file in a
+checkout:
 
-- **Only the top level is served.** `history/` and `redesign/` are deliberately not published —
-  frozen docs presented to a product user read as current behaviour. A link into them renders as
-  plain text rather than a dead link, as does a link that leaves `docs/` (`../AGENTS.md`).
-- **Cross-doc links are rewritten**, so `[agents.md](./agents.md)` works both as a file path and as
-  `/docs/agents`. Write them relative, as normal; `packages/web/src/lib/docLinks.ts` handles the
-  translation and is unit-tested against every shape in this tree.
+| Surface | Where | Audience |
+|---|---|---|
+| The dashboard, at `/docs` | `packages/web/src/app/docs/` | Operators signed in to a deployment |
+| The public site | `site/`, published to GitHub Pages | Anyone evaluating the project |
 
-Mermaid blocks render as labelled diagram source in the dashboard, not as diagrams — the renderer
-is a 79-package dependency that has not been taken on.
+Neither owns these files. The dashboard reads them at build time; the site copies them into its
+own content collection, gitignored and rebuilt from scratch on every run. Write markdown for a
+checkout, as normal, and keep three things in mind:
+
+- **Only the top level is published**, by both. `history/` and `redesign/` are deliberately left
+  out — frozen docs presented as current behaviour are worse than no docs.
+- **Cross-doc links are rewritten**, so `[agents.md](./agents.md)` works as a file path, as
+  `/docs/agents`, and as a page on the site. Write them relative and let each surface translate.
+- **A link the surface cannot serve is handled differently by each, on purpose.** The dashboard
+  degrades it to plain text, because bouncing an operator out of the product is worse than a
+  dead-looking word. The site sends it to the file on GitHub, because a public reader is already
+  on the open web. `packages/web/src/lib/docLinks.ts` and `site/scripts/docLinks.mjs` each own one
+  half of that, and both are unit-tested against every link shape in this tree.
+
+Mermaid blocks render as diagrams on the public site. In the dashboard they render as labelled
+diagram source — the renderer is a 79-package dependency that has not been taken on there, and a
+static build can pay that cost once where a shipped application would pay it on every load.
+
+A new doc must also be placed in the site's sidebar (`site/scripts/manifest.mjs`). The build fails
+if it is not: an unplaced doc still resolves by URL, so nothing else would notice that no reader
+can find it.
 
 ## Where known gaps are documented
 

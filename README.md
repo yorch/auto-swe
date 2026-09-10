@@ -2,6 +2,8 @@
 
 [![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](./LICENSE)
 
+**Documentation: <https://yorch.github.io/auto-swe/>**
+
 A durable, governed multi-agent workflow platform for engineering and non-engineering teams. Workflows are versioned JSON DAGs executed on Temporal; agents run inside isolated Docker workspaces, with human approval gates, security scanning, and cost control applied to every run.
 
 Its flagship use case — and what the default template ships for — is **ticket in, reviewed and tested draft pull request out**. That flow is an ordinary workflow template built from the same node types any team can author, not privileged runtime code, so it is a starting point rather than the boundary.
