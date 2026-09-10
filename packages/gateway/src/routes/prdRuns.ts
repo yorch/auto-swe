@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -58,7 +59,9 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
         () =>
           fastify.prisma.connection.findMany({
             select: {
+              githubApiUrl: true,
               id: true,
+              installation: { select: { installationId: true } },
               organizationName: true,
               repoName: true,
               team: {
@@ -94,6 +97,28 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
               message: `You do not have access to: ${inaccessible
                 .map((r) => `${r.organizationName}/${r.repoName}`)
                 .join(', ')}`,
+            },
+          });
+        }
+      }
+
+      // GitHub permission gate, per repo. A PRD run decomposes into work
+      // requests that push and open pull requests on each repository it names,
+      // so each one is a launch in the sense the single-repo route means.
+      for (const r of repos) {
+        const decision = await decideRepoLaunch(
+          fastify.prisma,
+          user,
+          r,
+          request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
+          request.log
+        );
+        if (!decision.allowed) {
+          return reply.status(403).send({
+            error: {
+              code: 'REPO_ACCESS_DENIED',
+              message: `${r.organizationName}/${r.repoName}: ${LAUNCH_REFUSAL_MESSAGE[decision.reason]}`,
+              reason: decision.reason,
             },
           });
         }

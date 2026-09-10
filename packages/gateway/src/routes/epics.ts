@@ -6,6 +6,11 @@ import { z } from 'zod';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
+import {
+  type ConnectionScopeGate,
+  memberTeams,
+  permissionRequirement,
+} from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -47,14 +52,15 @@ export function parseRepoIdsFromPayload(payload: string): string[] {
   return [];
 }
 
-/** Repo IDs the user can see through team membership (non-admin visibility). */
+/** Repo IDs the user can reach, for non-admin epic visibility. */
 async function accessibleRepoIds(
   prisma: FastifyInstance['prisma'],
-  userId: string
+  actor: { sub: string },
+  gate: ConnectionScopeGate | undefined
 ): Promise<Set<string>> {
   const rows = await prisma.connection.findMany({
     select: { id: true },
-    where: { team: { memberships: { some: { userId } } } },
+    where: { team: memberTeams(actor), ...permissionRequirement(actor, gate) },
   });
   return new Set(rows.map((r: { id: string }) => r.id));
 }
@@ -269,7 +275,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         wr,
       }));
       if (user.role !== 'ADMIN') {
-        const allowed = await accessibleRepoIds(fastify.prisma, user.sub);
+        const allowed = await accessibleRepoIds(fastify.prisma, user, request.repoAccessGate);
         visible = visible.filter(({ repoIds }) => repoIds.some((id) => allowed.has(id)));
       }
 
@@ -386,7 +392,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       // repos on their team. 404 (not 403) so existence isn't probeable —
       // mirrors the list endpoint's silent filtering.
       if (user.role !== 'ADMIN') {
-        const allowed = await accessibleRepoIds(fastify.prisma, user.sub);
+        const allowed = await accessibleRepoIds(fastify.prisma, user, request.repoAccessGate);
         if (!knownRepoIds.some((id) => allowed.has(id))) {
           return notFound();
         }

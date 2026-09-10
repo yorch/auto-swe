@@ -84,9 +84,35 @@ export function reachableConnections(
   actor: ScopeActor,
   gate?: ConnectionScopeGate
 ): Prisma.ConnectionWhereInput {
-  const team = memberTeams(actor);
+  return { team: memberTeams(actor), ...permissionRequirement(actor, gate) };
+}
+
+/** The oldest `checkedAt` a cached answer may carry and still count. */
+export function staleCutoff(staleAfterHours: number): Date {
+  return new Date(Date.now() - staleAfterHours * 60 * 60 * 1000);
+}
+
+/**
+ * The permission half of {@link reachableConnections}, on its own.
+ *
+ * For the few call sites where a `Connection` filter IS the whole `where`
+ * rather than being nested under a relation. `where: reachableConnections(…)`
+ * would be correct at run time but opaque to `tenantGuard.coverage.test.ts`,
+ * which can only read an object literal — so those sites spell the tenant key
+ * out and spread this alongside it:
+ *
+ *   where: { team: memberTeams(actor), ...permissionRequirement(actor, gate) }
+ *
+ * The permission term still has one definition; only the `team` key is
+ * repeated, and repeating it is the point — it is what keeps the call site
+ * legible to the audit.
+ */
+export function permissionRequirement(
+  actor: ScopeActor,
+  gate?: ConnectionScopeGate
+): Prisma.ConnectionWhereInput {
   if (gate?.mode !== 'enforce') {
-    return { team };
+    return {};
   }
   return {
     repoAccess: {
@@ -96,11 +122,5 @@ export function reachableConnections(
         userId: actor.sub,
       },
     },
-    team,
   };
-}
-
-/** The oldest `checkedAt` a cached answer may carry and still count. */
-export function staleCutoff(staleAfterHours: number): Date {
-  return new Date(Date.now() - staleAfterHours * 60 * 60 * 1000);
 }
