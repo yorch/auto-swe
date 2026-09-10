@@ -8,8 +8,7 @@
     "sync": "node scripts/syncDocs.mjs",
     "dev": "yarn sync && astro dev",
     "build": "yarn sync && astro build",
-    "preview": "astro preview",
-    "typecheck": "yarn sync && astro check"
+    "preview": "astro preview"
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.0",
@@ -17,9 +16,5 @@
     "astro-mermaid": "2.1.0",
     "mermaid": "11.17.2",
     "sharp": "0.35.4"
-  },
-  "devDependencies": {
-    "@astrojs/check": "0.9.10",
-    "typescript": "7.0.2"
   }
 }

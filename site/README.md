@@ -76,3 +76,8 @@ one job that should not hold it.
   flowchart here is 2049px, which the prose column would scale to an effective 5px type size.
 - **The `docs/` set is not versioned.** The site publishes the current `main`, with no archive of
   what the docs said at an earlier release.
+- **There is no `typecheck` script here, and adding one is not a small fix.** `astro check` needs
+  the TypeScript compiler's programmatic API, which the native TypeScript 7 compiler this repo runs
+  does not expose. Making it work means pinning a second, older TypeScript for this workspace
+  alone. That buys very little: the only TypeScript here is `src/content.config.ts`, and
+  `astro build` imports it, so a broken one already fails the build and CI.
