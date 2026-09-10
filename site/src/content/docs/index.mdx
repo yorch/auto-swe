@@ -1,0 +1,77 @@
+---
+title: auto-swe
+description: A durable, governed multi-agent workflow platform. Ticket in, reviewed draft pull request out — and every other automation your team wants to run the same way.
+template: splash
+hero:
+  tagline: Versioned JSON workflows on Temporal. Agents in isolated Docker sandboxes. Human approval gates, layered security scanning, and a budget on every run.
+  actions:
+    - text: What it is
+      link: /auto-swe/introduction/
+      icon: right-arrow
+    - text: Read the docs
+      link: /auto-swe/docs/
+      variant: minimal
+    - text: View on GitHub
+      link: https://github.com/yorch/auto-swe
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## The flagship flow
+
+Submit a ticket. An agent clones the repository into an ephemeral Docker sandbox, writes code and
+tests, and iterates until the suite is green. Three review agents inspect the diff in parallel. A
+pull request opens, and if CI fails the agent reads the logs and pushes a fix. A human merges — that
+decision never moves.
+
+That flow is an ordinary workflow template built from the same node types any team can author, not
+privileged runtime code. It is a starting point, not the boundary.
+
+<CardGrid stagger>
+  <Card title="Durable by construction" icon="seti:temporal">
+    Every run is a Temporal workflow, so it survives crashes, restarts, deploys, and provider rate
+    limits. Determinism is enforced by replaying committed histories in CI.
+  </Card>
+
+  <Card title="Governed, not autonomous" icon="approve-check">
+    Approval, decision, input, and review nodes pause a run for a person. Nothing merges a pull
+    request on its own — the system opens them and waits.
+  </Card>
+
+  <Card title="Layered security scanning" icon="warning">
+    Six scanners run during agent execution: sensitive-file and shell-command blocks before the
+    write, a diff scan after the commit, and advisory checks on skill text and model output.
+  </Card>
+
+  <Card title="Agents are data" icon="setting">
+    Model, prompt, skills, and tools resolve per agent through a five-level scope cascade. A new
+    agent ships as seed content, not a code change.
+  </Card>
+
+  <Card title="Memory that compounds" icon="star">
+    Lessons from merged work are embedded into pgvector and retrieved as context for later runs on
+    the same repository.
+  </Card>
+
+  <Card title="Talk to it in Slack" icon="comment">
+    A channel-resident teammate with its own memory and persona answers questions with repo and run
+    context, and starts, watches, and gates the workflows themselves.
+  </Card>
+</CardGrid>
+
+## Where to start
+
+These docs describe how auto-swe works **now**, in present tense. There is no status column and no
+roadmap here: what shipped when lives in git history.
+
+- **[Introduction](/auto-swe/introduction/)** — the shortest complete picture of the system.
+- **[Product overview](/auto-swe/docs/product-overview/)** — thesis, target users, capability map,
+  and what is deliberately out of scope.
+- **[Architecture](/auto-swe/docs/architecture/)** — system context, run lifecycle, the workflow
+  engine and its node types, the config cascade, the data model.
+- **[Deployment](/auto-swe/docs/deployment/)** — the production runbook.
+
+Every capability page ends with a **Limitations** section stating what is not built, not proven, or
+deliberately constrained. That is enforced in CI rather than left to good intentions.

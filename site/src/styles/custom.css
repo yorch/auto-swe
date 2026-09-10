@@ -1,0 +1,91 @@
+/*
+ * Brand tuning for the published docs.
+ *
+ * Starlight's own tokens are overridden rather than replaced: everything here is
+ * a variable reassignment, so the theme keeps its contrast guarantees and its
+ * light/dark pairing instead of this file having to restate them. The accent
+ * tracks the dashboard's ember, and the greys track its ink/paper scale, so a
+ * reader moving between the site and the product does not feel a change of
+ * hands.
+ */
+
+:root {
+  --sl-color-accent-low: #431407;
+  --sl-color-accent: #c2410c;
+  --sl-color-accent-high: #fdba74;
+
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #f1f0ee;
+  --sl-color-gray-2: #c9c6c1;
+  --sl-color-gray-3: #9b9791;
+  --sl-color-gray-4: #59554f;
+  --sl-color-gray-5: #38352f;
+  --sl-color-gray-6: #27241f;
+  --sl-color-black: #1a1815;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #ffedd5;
+  --sl-color-accent: #c2410c;
+  --sl-color-accent-high: #7c2d12;
+
+  --sl-color-white: #1a1815;
+  --sl-color-gray-1: #27241f;
+  --sl-color-gray-2: #38352f;
+  --sl-color-gray-3: #6d6963;
+  --sl-color-gray-4: #94908a;
+  --sl-color-gray-5: #d6d3ce;
+  --sl-color-gray-6: #ebe9e5;
+  --sl-color-gray-7: #f5f4f2;
+  --sl-color-black: #ffffff;
+}
+
+/*
+ * The docs lean hard on wide tables — the setting registry, the model matrix,
+ * the scanner list — several of which do not fit a phone at any font size.
+ * Scrolling one sideways beats reflowing it into an unreadable column, but the
+ * container has to be the table's own wrapper or the whole page scrolls with it.
+ */
+.sl-markdown-content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/*
+ * Diagrams are drawn at natural size and scrolled inside a bounded box, rather
+ * than scaled down to the prose column.
+ *
+ * Scaling is mermaid's default and it fails badly here. The system-context
+ * flowchart is 2049px of natural width; in a 720px column that is a scale
+ * factor of 0.34, which renders its 16px labels at an effective 5.4px. There is
+ * no viewport wide enough to fix that — the column is capped by the reading
+ * measure, not by the window — so the diagram has to overflow something.
+ *
+ * It overflows this box and nothing else. Letting it overflow the page instead
+ * was tried: it painted over the table of contents and put the whole document
+ * on a horizontal scrollbar to read one diagram. The height cap keeps a tall
+ * diagram from swallowing the page it is illustrating.
+ *
+ * The border earns its place: it tells the reader the diagram continues past
+ * the edge, rather than letting a scrolled diagram look like a cropped one.
+ */
+.sl-markdown-content pre.mermaid {
+  justify-content: flex-start;
+  max-height: min(70vh, 40rem);
+  padding: 1rem;
+  overflow: auto;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+}
+
+/*
+ * The block is a flex container, so the diagram is a flex item and shrinks to
+ * fit by default — which quietly undoes everything above. Both the shrink and
+ * the inherited `max-width: 100%` have to go.
+ */
+.sl-markdown-content pre.mermaid > svg {
+  flex-shrink: 0;
+  max-width: none;
+  height: auto;
+}

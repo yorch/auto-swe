@@ -3,7 +3,8 @@
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "site"
   ],
   "scripts": {
     "build": "yarn workspaces foreach -At run build",
