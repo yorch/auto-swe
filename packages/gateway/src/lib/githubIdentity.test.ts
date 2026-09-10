@@ -59,6 +59,14 @@ describe('fetchGithubLogin', () => {
     await expect(fetchGithubLogin('tok', API)).resolves.toBeNull();
   });
 
+  it('lower-cases the login', async () => {
+    // GitHub logins are case-insensitive but the unique index is byte-exact, so
+    // storing them as returned would let two platform users hold what GitHub
+    // considers one identity.
+    mockFetch(() => json({ login: 'OctoCat' }));
+    await expect(fetchGithubLogin('tok', API)).resolves.toBe('octocat');
+  });
+
   it('treats a missing or empty login as no login', async () => {
     mockFetch(() => json({ id: 42 }));
     await expect(fetchGithubLogin('tok', API)).resolves.toBeNull();

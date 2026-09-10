@@ -34,6 +34,12 @@ const CreateRepoSchema = z.object({
   executorImage: z.string().optional(),
   githubApiUrl: z.string().url().optional(),
   githubUrl: z.string().url().optional(),
+  /**
+   * Which GitHub App installation reaches this repository. Omitted means the
+   * singleton's installation, which is what every repository meant before a
+   * deployment could span more than one GitHub organization.
+   */
+  installationId: z.string().uuid().optional(),
   isActive: z.boolean().optional(),
   language: z.string().optional(),
   name: z.string().max(200).optional(),
@@ -62,6 +68,8 @@ const UpdateRepoSchema = z.object({
   executorImage: z.string().nullable().optional(),
   githubApiUrl: z.string().url().nullable().optional(),
   githubUrl: z.string().url().nullable().optional(),
+  /** Null repoints the repository at the singleton's installation. */
+  installationId: z.string().uuid().nullable().optional(),
   isActive: z.boolean().optional(),
   language: z.string().nullable().optional(),
   name: z.string().max(200).nullable().optional(),
@@ -90,6 +98,23 @@ export async function canManageTeamRepos(
     where: { userId_teamId: { teamId, userId: user.sub } },
   });
   return !!membership && membership.team.isActive && hasRole(membership.role, Role.LEAD);
+}
+
+/**
+ * Only a platform ADMIN may point a repository at a GitHub App installation.
+ *
+ * The installation decides which GitHub account answers permission questions
+ * about the repository, so a team LEAD repointing one changes the basis of the
+ * access check on their own team's repositories. It cannot grant them access
+ * they do not have — a mismatched installation 404s, and the launch gate fails
+ * closed on that — but it is a knob about credentials, and credentials are
+ * ADMIN-scoped everywhere else in this codebase.
+ */
+function rejectsInstallationChange(
+  user: { role: string },
+  installationId: string | null | undefined
+): boolean {
+  return installationId !== undefined && user.role !== Role.ADMIN;
 }
 
 export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
@@ -200,6 +225,15 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      if (rejectsInstallationChange(user, request.body.installationId)) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Only a platform admin may choose the GitHub App installation',
+          },
+        });
+      }
+
       // Verify team exists
       const team = await fastify.prisma.team.findUnique({
         select: { id: true, isActive: true },
@@ -278,6 +312,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
+      if (rejectsInstallationChange(user, request.body.installationId)) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Only a platform admin may choose the GitHub App installation',
+          },
+        });
+      }
       const repo = await fastify.prisma.connection.findUnique({
         select: { id: true, teamId: true, type: true },
         where: { id: request.params.id },

@@ -51,7 +51,16 @@ export async function fetchGithubLogin(
       return null;
     }
     const body = (await res.json()) as { login?: unknown };
-    return typeof body.login === 'string' && body.login.length > 0 ? body.login : null;
+    if (typeof body.login !== 'string' || body.login.length === 0) {
+      return null;
+    }
+    // Lower-cased on the way in. GitHub logins are case-insensitive — `Octocat`
+    // and `octocat` are one account — but `users.github_login` is unique
+    // byte-exact, so storing them as returned would let two platform users hold
+    // what GitHub considers the same identity, which is precisely what that
+    // index exists to prevent. Every lookup uses the stored value, and GitHub's
+    // API is equally case-insensitive, so normalising costs nothing.
+    return body.login.toLowerCase();
   } catch {
     return null;
   }
