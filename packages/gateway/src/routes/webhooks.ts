@@ -806,6 +806,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const connectionResult = await validateRunConnection(
         {
           connectionId,
+          // No authenticated user, so no GitHub identity to check. This caller
+          // is scoped to the template's own team instead.
+          gate: undefined,
           prisma: fastify.prisma,
           providerMeta,
           templateTeamId: template.teamId,

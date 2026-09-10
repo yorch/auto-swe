@@ -5,7 +5,7 @@ import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
+import { decideRepoAccess, repoAccessErrorBody } from '../lib/repoAccessDecision.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import type { WorkRequestScheduleInput } from '../plugins/temporal.js';
@@ -81,6 +81,7 @@ type Prisma = FastifyInstance['prisma'];
 interface RepoWithMembership {
   id: string;
   isActive: boolean;
+  type: string;
   organizationName: string;
   repoName: string;
   githubApiUrl: string | null;
@@ -129,7 +130,7 @@ async function passesRepoLaunchGate(
   repo: RepoWithMembership,
   reply: FastifyReply
 ): Promise<boolean> {
-  const decision = await decideRepoLaunch(
+  const decision = await decideRepoAccess(
     fastify.prisma,
     user,
     repo,
@@ -139,13 +140,7 @@ async function passesRepoLaunchGate(
   if (decision.allowed) {
     return true;
   }
-  await reply.status(403).send({
-    error: {
-      code: 'REPO_ACCESS_DENIED',
-      message: LAUNCH_REFUSAL_MESSAGE[decision.reason],
-      reason: decision.reason,
-    },
-  });
+  await reply.status(403).send(repoAccessErrorBody(decision.reason));
   return false;
 }
 

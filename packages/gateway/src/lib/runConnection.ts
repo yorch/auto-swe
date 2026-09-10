@@ -1,6 +1,8 @@
 import type { WorkspaceProviderMetadata } from '@auto-swe/shared/lib/workspaceProviders';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
+import { decideRepoAccess, repoAccessErrorBody } from './repoAccessDecision.js';
+import type { RepoAccessGate } from './repoAccessGate.js';
 
 export interface ValidateRunConnectionInput {
   connectionId: string | null;
@@ -8,6 +10,15 @@ export interface ValidateRunConnectionInput {
   providerMeta: WorkspaceProviderMetadata | null;
   templateTeamId: string | null;
   user: JwtPayload | null;
+  /**
+   * The GitHub permission gate. Required so a caller has to name it — it was
+   * optional in an earlier shape and the one caller that needed it applied the
+   * gate separately, in its own block, which is the pattern this consolidation
+   * exists to end. Undefined means no gate, which is what a public or webhook
+   * caller means.
+   */
+  gate: RepoAccessGate | undefined;
+  log?: FastifyBaseLogger;
 }
 
 export type ValidateRunConnectionResult =
@@ -18,9 +29,11 @@ export type ValidateRunConnectionResult =
  * Shared validation for a run's target connection.
  *
  * - Checks the connection exists and is active.
- * - For authenticated calls, checks team membership (admins bypass).
- *   For public/webhook calls, the only scope we can trust is the template's
- *   own team, so the connection must belong to that team.
+ * - For authenticated calls, takes the full repository-access decision — team
+ *   membership AND GitHub permission (admins bypass both).
+ *   For public/webhook calls there is no user to ask GitHub about, so the only
+ *   scope we can trust is the template's own team and the connection must
+ *   belong to it.
  * - Validates the connection type against the template's workspace provider.
  * - Returns the budget org and cap for the calling code to pass to assertOrgBudget.
  *
@@ -31,7 +44,7 @@ export async function validateRunConnection(
   input: ValidateRunConnectionInput,
   reply: FastifyReply
 ): Promise<ValidateRunConnectionResult> {
-  const { connectionId, prisma, providerMeta, templateTeamId, user } = input;
+  const { connectionId, gate, log, prisma, providerMeta, templateTeamId, user } = input;
 
   let budgetOrgId: string | null = null;
   let budgetCap: number | null = null;
@@ -39,9 +52,16 @@ export async function validateRunConnection(
   if (connectionId) {
     const connection = await prisma.connection.findUnique({
       include: {
+        installation: { select: { installationId: true } },
         team: {
           include: {
-            memberships: { select: { userId: true } },
+            // Filtered to the acting user. It used to load every member of the
+            // team to run a `.some()` over them, which read far more rows than
+            // the question needed.
+            memberships: {
+              select: { userId: true },
+              where: user ? { userId: user.sub } : undefined,
+            },
             organization: { select: { id: true, monthlyBudgetUsdCents: true } },
           },
         },
@@ -56,13 +76,18 @@ export async function validateRunConnection(
     }
 
     if (user) {
-      if (
-        user.role !== 'ADMIN' &&
-        !connection.team.memberships.some((m) => m.userId === user.sub)
-      ) {
-        reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: 'You do not have access to this connection' },
-        });
+      // Team membership and GitHub permission in one decision. This used to be
+      // the membership half alone, with the gate applied separately by the one
+      // caller that remembered it.
+      const decision = await decideRepoAccess(
+        prisma,
+        user,
+        connection,
+        gate ?? { mode: 'off', staleAfterHours: 0 },
+        log
+      );
+      if (!decision.allowed) {
+        reply.status(403).send(repoAccessErrorBody(decision.reason));
         return { ok: false };
       }
     } else if (connection.teamId !== templateTeamId) {

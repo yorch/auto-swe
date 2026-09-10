@@ -24,7 +24,7 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
-import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
+import { decideRepoAccess, repoAccessErrorBody } from '../lib/repoAccessDecision.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -425,33 +425,18 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
-        });
-      }
-
-      // GitHub permission gate. Asked live rather than read from the
-      // projection: this is the low-volume, high-stakes decision, so it is
-      // worth one round-trip to make the gate effectively real-time. It fails
-      // closed — an unanswered question is not a yes — which is safe here
-      // precisely because the failure is loud, immediate and retryable by the
-      // person in front of it, unlike a listing.
-      const launchDecision = await decideRepoLaunch(
+      // Team membership AND GitHub permission, in one call. They used to be two
+      // separate checks here, which is how six other launch paths shipped with
+      // the first and without the second.
+      const decision = await decideRepoAccess(
         fastify.prisma,
         user,
         repo,
         request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
         request.log
       );
-      if (!launchDecision.allowed) {
-        return reply.status(403).send({
-          error: {
-            code: 'REPO_ACCESS_DENIED',
-            message: LAUNCH_REFUSAL_MESSAGE[launchDecision.reason],
-            reason: launchDecision.reason,
-          },
-        });
+      if (!decision.allowed) {
+        return reply.status(403).send(repoAccessErrorBody(decision.reason));
       }
 
       // Org access check (P5): non-admins must be members of the repo's org.
@@ -684,30 +669,19 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
         });
       }
-      if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
-        });
-      }
       // A re-run pushes and opens a pull request exactly like a fresh
-      // submission, so it passes the same GitHub permission gate. Skipping it
-      // here would leave a standing way to act on a repository after GitHub
-      // access was revoked, for as long as an old work request exists.
-      const retryLaunch = await decideRepoLaunch(
+      // submission, so it takes the same decision. Skipping it would leave a
+      // standing way to act on a repository after access was revoked, for as
+      // long as an old work request exists.
+      const retryDecision = await decideRepoAccess(
         fastify.prisma,
         user,
         repo,
         request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
         request.log
       );
-      if (!retryLaunch.allowed) {
-        return reply.status(403).send({
-          error: {
-            code: 'REPO_ACCESS_DENIED',
-            message: LAUNCH_REFUSAL_MESSAGE[retryLaunch.reason],
-            reason: retryLaunch.reason,
-          },
-        });
+      if (!retryDecision.allowed) {
+        return reply.status(403).send(repoAccessErrorBody(retryDecision.reason));
       }
       // A re-run spends exactly like a fresh submission, so it passes the same
       // org access and monthly budget gates.

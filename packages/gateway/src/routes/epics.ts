@@ -5,7 +5,11 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
-import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
+import {
+  decideRepoAccess,
+  multiRepoRefusalBody,
+  type RepoAccessRefusal,
+} from '../lib/repoAccessDecision.js';
 import {
   type ConnectionScopeGate,
   memberTeams,
@@ -115,6 +119,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
                   orgId: true,
                 },
               },
+              type: true,
             },
             // Only git_repo connections are valid epic targets; a non-git id (e.g.
             // mcp) simply isn't found and surfaces as REPOS_NOT_FOUND below.
@@ -133,28 +138,14 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // PROD-12: non-admins may only fan an epic out across repos whose teams
-      // they belong to — same policy as single-repo work requests, applied per repo.
-      if (user.role !== 'ADMIN') {
-        const inaccessible = repos.filter((r) => r.team.memberships.length === 0);
-        if (inaccessible.length > 0) {
-          return reply.status(403).send({
-            error: {
-              code: 'FORBIDDEN',
-              message: `You do not have access to: ${inaccessible
-                .map((r) => `${r.organizationName}/${r.repoName}`)
-                .join(', ')}`,
-            },
-          });
-        }
-      }
-
-      // GitHub permission gate, per repo. An epic fans out into a push and a
-      // pull request on every repository it names, so each one is a launch in
-      // exactly the sense the single-repo route means, and gating only that
-      // route would leave the epic as a way around it.
+      // An epic fans out into a push and a pull request on every repository it
+      // names, so each is a launch in the sense the single-repo route means.
+      // One decision per repository — team membership and GitHub permission
+      // together — and every refusal is collected so the response names all of
+      // them. Refusing on the first would make a caller fix them one at a time.
+      const refusals: Array<{ label: string; reason: RepoAccessRefusal }> = [];
       for (const r of repos) {
-        const decision = await decideRepoLaunch(
+        const decision = await decideRepoAccess(
           fastify.prisma,
           user,
           r,
@@ -162,14 +153,14 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
           request.log
         );
         if (!decision.allowed) {
-          return reply.status(403).send({
-            error: {
-              code: 'REPO_ACCESS_DENIED',
-              message: `${r.organizationName}/${r.repoName}: ${LAUNCH_REFUSAL_MESSAGE[decision.reason]}`,
-              reason: decision.reason,
-            },
+          refusals.push({
+            label: `${r.organizationName}/${r.repoName}`,
+            reason: decision.reason,
           });
         }
+      }
+      if (refusals.length > 0) {
+        return reply.status(403).send(multiRepoRefusalBody(refusals));
       }
 
       // Org access + budget check (P5), applied per distinct org across the
