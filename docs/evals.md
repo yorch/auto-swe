@@ -96,11 +96,11 @@ restarts like any other run.
 ## 4. Scheduling and canary
 
 **Nightly regression.** `ScheduledEvalWorkflow` runs on a Temporal Schedule configured per
-deployment at `/admin/workflow`.
+deployment at `/govern/workflow-defaults`.
 
 **Golden-set re-validation.** `ScheduledRevalidationWorkflow` fans out over datasets due for
 re-validation and quarantines cases that have gone stale, so the benchmark does not silently decay
-into measuring the wrong thing. Managed at `/admin/workflow`, with
+into measuring the wrong thing. Managed at `/govern/workflow-defaults`, with
 `GET`/`PUT /api/v1/admin/config/revalidation` and a manual trigger endpoint
 (`POST /api/v1/admin/config/revalidation/trigger`).
 
@@ -134,11 +134,11 @@ verdicts into trends per template, model, and prompt version.
 
 | Surface | Where |
 |---|---|
-| Dashboard | `/admin/evals` — datasets, runs, suite health, score trends |
+| Dashboard | `/govern/evals` — datasets, runs, suite health, score trends |
 | Run detail | The eval panel on `/runs/[id]` |
 | REST | `/api/v1/platform/evals` (datasets, cases, runs, rubrics) |
 | CLI | `auto-swe evals` — list, show, and `run` a dataset |
-| Schedules | `/admin/workflow` — nightly regression and re-validation cadence |
+| Schedules | `/govern/workflow-defaults` — nightly regression and re-validation cadence |
 
 ---
 

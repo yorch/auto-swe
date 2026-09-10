@@ -116,7 +116,7 @@ dynamic catalog + the user's intent go in the user message.
 | Gateway endpoint | `packages/gateway/src/routes/workflowTemplates.ts` (`POST /generate`) |
 | Temporal client bridge | `packages/gateway/src/plugins/temporal.ts` (`generateWorkflowSpec`) |
 | CLI command | `packages/cli/src/commands/workflows.ts` (`generate`) |
-| Web modal + hook | `packages/web/src/app/templates/page.tsx`, `packages/web/src/hooks/useTemplates.ts` |
+| Web modal + hook | `packages/web/src/app/workflows/library/page.tsx`, `packages/web/src/hooks/useTemplates.ts` |
 | Slack tool + draft activity | `packages/worker/src/activities/channelAssistant.ts`, `packages/worker/src/activities/channelWorkflowDraft.ts` |
 | Refine message builder | `packages/shared/src/workflow/authoring.ts` → `buildRefineRequestMessage` |
 | Refine endpoint + version helper | `packages/gateway/src/routes/workflowTemplates.ts` (`POST /:id/refine`, `createTemplateVersion`) |

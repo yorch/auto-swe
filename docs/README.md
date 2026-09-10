@@ -22,6 +22,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | Doc | Covers |
 |-----|--------|
 | [hitl-workflows.md](./hitl-workflows.md) | Human-in-the-loop nodes (approval / decision / input / review), signal flow, the inbox, API |
+| [autonomy-policies.md](./autonomy-policies.md) | When a run may act alone and when it must ask — risk classes, the scope cascade, failing closed, the decision log |
 | [evals.md](./evals.md) | Output-quality measurement — the `eval` node, scorers, datasets, the regression harness, canary routing |
 | [channel-assistant.md](./channel-assistant.md) | The Slack channel teammate — a capability in its own right and the platform's conversational control surface; turns, ambient and reactive modes, channel memory, personas, budgets |
 | [nl-workflow-authoring.md](./nl-workflow-authoring.md) | Describing an automation in natural language and getting a validated `WorkflowSpec` back |
@@ -88,7 +89,7 @@ built, not proven, or deliberately constrained, and `yarn docs:check` fails if o
 | Overall maturity and what is unproven | [product-overview.md §8](./product-overview.md#8-maturity) |
 | A specific capability's gaps | That capability's own **Limitations** section |
 
-So: for "what are the known gaps in X", read `docs/X.md` and jump to the end. For "what is this
+So: for "what are the known gaps in X", open that capability’s own doc and jump to the end. For "what is this
 system not, and what has not been proven", read `product-overview.md` §7 and §8.
 
 ## Conventions

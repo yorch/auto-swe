@@ -642,6 +642,165 @@ const missingGaps = gapCheckedDocs.filter((d) => !GAP_HEADING.test(read(d)));
 const staleExemptions = [...GAP_EXEMPT_DOCS].filter((d) => !existsSync(join(ROOT, d)));
 
 // ---------------------------------------------------------------------------
+// Seeded agents named in the roster
+//
+// The counts above catch a *number* going stale. They do not catch a roster
+// that lists ten of seventeen agents and reads as though it lists them all —
+// which is what happened: the seven agents seeded for content, support and
+// product work were absent from the summary in AGENTS.md while the count
+// beside it stayed correct.
+//
+// Only the two docs that claim to enumerate the roster are checked. Every other
+// doc mentions agents in passing and has no business listing all of them.
+// ---------------------------------------------------------------------------
+
+const ROSTER_DOCS = ['AGENTS.md', 'docs/agents.md'];
+
+const seededAgentKeys = [...builtinAgentsSrc.matchAll(/^\s+key: '([a-zA-Z]+)',$/gm)].map(
+  (m) => m[1]
+);
+
+const rosterFailures = [];
+for (const doc of ROSTER_DOCS) {
+  if (!existsSync(join(ROOT, doc))) {
+    continue;
+  }
+  const src = read(doc);
+  const missingKeys = seededAgentKeys.filter((k) => !src.includes(`\`${k}\``));
+  if (missingKeys.length > 0) {
+    rosterFailures.push({ doc, keys: missingKeys });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Repository paths named in prose
+//
+// A doc that says "see `packages/worker/src/lib/config/cache.ts`" is pointing
+// at a file, and moving that file leaves the sentence reading perfectly while
+// the path resolves to nothing. The relative-link check below covers markdown
+// links; it never looks inside backticks, which is where most of these live.
+// ---------------------------------------------------------------------------
+
+/** A backticked path rooted at a real top-level directory in this repo. */
+const REPO_PATH = /`((?:packages|scripts|infra|site|docs)\/[A-Za-z0-9_./@-]+)`/g;
+
+const pathFailures = [];
+for (const file of targets) {
+  read(file)
+    .split('\n')
+    .forEach((line, i) => {
+      for (const m of line.matchAll(REPO_PATH)) {
+        const p = m[1].replace(/\/$/, '');
+        // A trailing `*` is a glob standing in for a set of files.
+        if (p.includes('*')) {
+          continue;
+        }
+        if (existsSync(join(ROOT, p))) {
+          continue;
+        }
+        pathFailures.push({ file, line: i + 1, path: p });
+      }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard routes named in prose
+//
+// A doc that tells an operator to go to `/admin/integrations` is quoting a URL
+// the web app owns, and nothing else here notices when the app moves it. The
+// dashboard's navigation was reorganised into `/govern` and `/studio` and the
+// docs kept pointing at `/admin` for months: 89 references across 12 files, all
+// of them reading perfectly and none of them resolving.
+//
+// The trap this has to avoid is that `/api/v1/admin/...` is still a live
+// gateway prefix, so `/admin/config` and `/admin/scanner-patterns` are correct
+// API paths. Only a reference that is unambiguously a *page* is checked: one
+// whose line does not mention an API, and whose first segment is a section the
+// dashboard actually has.
+// ---------------------------------------------------------------------------
+
+/** Every route the Next.js app renders, derived from its `page.tsx` files. */
+const appRoutes = (() => {
+  const base = join(ROOT, 'packages/web/src/app');
+  const out = new Set();
+  const walkApp = (dir, url) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        if (entry.name === 'page.tsx') {
+          out.add(url === '' ? '/' : url);
+        }
+        continue;
+      }
+      // Route groups `(name)` do not appear in the URL; dynamic `[id]` segments
+      // are kept as a wildcard marker so a doc may name a concrete id.
+      const seg = entry.name.startsWith('(') ? '' : `/${entry.name}`;
+      walkApp(join(dir, entry.name), url + seg);
+    }
+  };
+  if (existsSync(base)) {
+    walkApp(base, '');
+  }
+  return out;
+})();
+
+/** Top-level sections the dashboard serves, e.g. `govern`, `studio`, `runs`. */
+const appSections = new Set([...appRoutes].map((r) => r.split('/')[1]).filter(Boolean));
+
+/**
+ * Does the app serve this path? A `[slug]` segment in the route matches any one
+ * segment the doc wrote there, so `/docs/agents` resolves against `/docs/[slug]`
+ * — otherwise every doc that names a concrete page would be reported.
+ */
+const routeExists = (path) => {
+  if (appRoutes.has(path)) {
+    return true;
+  }
+  const parts = path.split('/').filter(Boolean);
+  return [...appRoutes].some((route) => {
+    const rp = route.split('/').filter(Boolean);
+    if (rp.length !== parts.length) {
+      return false;
+    }
+    return rp.every((seg, i) => seg.startsWith('[') || seg === parts[i]);
+  });
+};
+
+/**
+ * A path is a page reference when its first segment names a real dashboard
+ * section, or when it names `admin` — which is what the stale references say
+ * and which the app no longer serves at all.
+ */
+const PAGE_LIKE = /`(\/(?:[a-z][a-z0-9-]*)(?:\/[a-z0-9[\]:-]+)*)`/g;
+
+/** Lines that are talking about the HTTP API, where `/admin/...` is correct. */
+const API_CONTEXT =
+  /\bapi\/v1\b|\bAPI\b|\bendpoint\b|\bGET\b|\bPOST\b|\bPUT\b|\bPATCH\b|\bDELETE\b|\bcurl\b/;
+
+const routeFailures = [];
+for (const file of targets) {
+  read(file)
+    .split('\n')
+    .forEach((line, i) => {
+      if (API_CONTEXT.test(line)) {
+        return;
+      }
+      for (const m of line.matchAll(PAGE_LIKE)) {
+        const path = m[1];
+        const section = path.split('/')[1];
+        const isKnownSection = appSections.has(section);
+        const claimsAdmin = section === 'admin';
+        if (!isKnownSection && !claimsAdmin) {
+          continue;
+        }
+        if (routeExists(path)) {
+          continue;
+        }
+        routeFailures.push({ file, line: i + 1, path });
+      }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Broken relative links
 //
 // Moving a doc silently breaks every link into it. Unlike the counts above this
@@ -762,6 +921,9 @@ const clean =
   staleExemptions.length === 0 &&
   versionFailures.length === 0 &&
   proseFailures.length === 0 &&
+  routeFailures.length === 0 &&
+  pathFailures.length === 0 &&
+  rosterFailures.length === 0 &&
   settingFailures.length === 0;
 
 if (clean) {
@@ -776,6 +938,9 @@ if (clean) {
   );
   console.log(`  no forbidden status prose (${FORBIDDEN_PROSE.length} rules).`);
   console.log(`  every setting key named in prose resolves (${settingKeys.size} registered).`);
+  console.log(`  every dashboard route named in prose exists (${appRoutes.size} rendered).`);
+  console.log('  every repository path named in prose exists.');
+  console.log(`  the agent roster names all ${seededAgentKeys.length} seeded agents.`);
   for (const [label, value] of facts) {
     console.log(`  ${String(value).padStart(3)}  ${label}`);
   }
@@ -813,6 +978,39 @@ if (missingGaps.length > 0) {
     '\nEvery capability doc states its own known gaps, so they stay next to the feature.'
   );
   console.error('Add a "## Limitations" section, or "Not built" if nothing else fits.\n');
+}
+
+if (rosterFailures.length > 0) {
+  console.error(`Incomplete agent roster — ${rosterFailures.length} doc(s).\n`);
+  for (const r of rosterFailures) {
+    console.error(`  ${r.doc} does not name: ${r.keys.join(', ')}`);
+  }
+  console.error(
+    '\n  source of truth: packages/shared/src/lib/syncBuiltins.ts\n' +
+      '  A roster that lists most of the agents reads as though it lists them all.\n'
+  );
+}
+
+if (pathFailures.length > 0) {
+  console.error(`Stale repository paths — ${pathFailures.length} in the living docs.\n`);
+  for (const p of pathFailures) {
+    console.error(`  ${p.file}:${p.line}`);
+    console.error(`    names ${p.path}, which does not exist`);
+  }
+  console.error('\n  Point at where the file lives now, or drop the reference.\n');
+}
+
+if (routeFailures.length > 0) {
+  console.error(`Stale dashboard routes — ${routeFailures.length} in the living docs.\n`);
+  for (const r of routeFailures) {
+    console.error(`  ${r.file}:${r.line}`);
+    console.error(`    names the page ${r.path}, which the dashboard does not serve`);
+  }
+  console.error('\n  source of truth: packages/web/src/app/**/page.tsx');
+  console.error(
+    '  Note that `/api/v1/admin/...` is still a live gateway prefix — an API path\n' +
+      '  is not a page, and a line that mentions the API is skipped.\n'
+  );
 }
 
 if (versionFailures.length > 0) {

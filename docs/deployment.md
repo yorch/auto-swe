@@ -19,7 +19,7 @@ Five long-running processes plus one Docker daemon:
 | `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.30.2`                         | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
 | object store (optional)    | `dxflrs/garage` (bundled) / AWS S3 / Cloudflare R2 / Backblaze B2 | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
 
-The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `workspaceImage` Tier-2 default at `/admin/workflow`; an explicit `image` on a node still wins. Leave a connection's executor image **blank** to inherit that default — the column has no database default, so blank means "inherit" rather than a pinned value, and a connection that names an image keeps it. Clearing the field in the connection's settings is how you opt one back in (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
+The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `workspaceImage` Tier-2 default at `/govern/workflow-defaults`; an explicit `image` on a node still wins. Leave a connection's executor image **blank** to inherit that default — the column has no database default, so blank means "inherit" rather than a pinned value, and a connection that names an image keeps it. Clearing the field in the connection's settings is how you opt one back in (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
 
 The workspace image tracks its own major, not the services'. It stays on `node:24-alpine` while the gateway, worker and web images run Node 26, because that image puts `yarn`, `pnpm` and `corepack` on `PATH` and the Node 26 image puts none of them there — Corepack is no longer bundled with the Node distribution.
 
@@ -40,11 +40,11 @@ Before touching infrastructure, gather these:
 - **Domain + TLS.** Reverse-proxy in front of the gateway (`https://api.example.com`) and the web app (`https://app.example.com`). Both must serve HTTPS; better-auth refuses to issue secure cookies otherwise.
 - **GitHub PAT** with `repo` scope, or a GitHub App (short-lived installation tokens; see [`github-app-setup.md`](./github-app-setup.md)).
 - **GitHub webhook secret** — any strong random string; you'll add it to GitHub repo webhooks pointing at `https://api.example.com/api/v1/webhooks/git`.
-- **LLM provider key(s)** — configured via the admin UI (`/admin/model-config`) after first boot. There is no env-var fallback for LLM credentials: model + credential config is fully DB-driven (see [`model-configuration.md`](./model-configuration.md)).
+- **LLM provider key(s)** — configured via the admin UI (`/studio/models`) after first boot. There is no env-var fallback for LLM credentials: model + credential config is fully DB-driven (see [`model-configuration.md`](./model-configuration.md)).
 - **Email transport** — pick one of SMTP (`SMTP_HOST/PORT/USER/PASS` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Required if you want magic-link and password-reset emails actually delivered — without one the gateway only logs the link to stdout.
-- **OAuth credentials** (optional but recommended) — register a GitHub OAuth app, a Google OAuth client, and/or an Okta OIDC app, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google,okta}`. Credentials are configured via `/admin/integrations` after first boot (GitHub tab for GitHub, OAuth tab for Google and Okta). See [`oauth-setup.md`](./oauth-setup.md).
-- **Slack credentials** (optional) — configured via `/admin/integrations` (Slack tab) after first boot.
-- **S3-compatible artifact store** (optional but recommended in prod) — configured via `/admin/integrations` (Storage tab) after first boot. Without it, large step outputs are stored inline in Postgres.
+- **OAuth credentials** (optional but recommended) — register a GitHub OAuth app, a Google OAuth client, and/or an Okta OIDC app, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google,okta}`. Credentials are configured via `/studio/integrations` after first boot (GitHub tab for GitHub, OAuth tab for Google and Okta). See [`oauth-setup.md`](./oauth-setup.md).
+- **Slack credentials** (optional) — configured via `/studio/integrations` (Slack tab) after first boot.
+- **S3-compatible artifact store** (optional but recommended in prod) — configured via `/studio/integrations` (Storage tab) after first boot. Without it, large step outputs are stored inline in Postgres.
 
 Generate strong secrets:
 
@@ -72,10 +72,10 @@ TEMPORAL_ADDRESS=temporal:7233       # or your managed Temporal Cloud endpoint
 TEMPORAL_NAMESPACE=default
 
 # LLM — no env vars. Provider keys and model selection are configured in the
-# admin UI (/admin/model-config) after first boot and stored encrypted in the
+# admin UI (/studio/models) after first boot and stored encrypted in the
 # DB; nothing in the codebase reads ANTHROPIC_API_KEY / OPENAI_API_KEY.
 
-# Source control — set here for bootstrap only; managed via /admin/integrations thereafter
+# Source control — set here for bootstrap only; managed via /studio/integrations thereafter
 # If these are set they act as fallback when the DB row hasn't been configured yet.
 # Remove them once you've saved the values in the admin UI.
 GITHUB_TOKEN=ghp_...
@@ -121,22 +121,22 @@ AUTH_FROM_EMAIL=auth@example.com
 # AUTH_FROM_EMAIL=auth@example.com
 
 # OAuth providers, Slack, and artifact storage are configured via the admin UI
-# (/admin/integrations) after first boot. The env vars below are accepted as
+# (/studio/integrations) after first boot. The env vars below are accepted as
 # bootstrap fallbacks but are NOT required if you use the UI.
 #
-# OAuth (env fallback — prefer /admin/integrations → OAuth tab)
+# OAuth (env fallback — prefer /studio/integrations → OAuth tab)
 # GITHUB_CLIENT_ID=...
 # GITHUB_CLIENT_SECRET=...
 # GOOGLE_CLIENT_ID=...
 # GOOGLE_CLIENT_SECRET=...
 #
-# Slack (env fallback — prefer /admin/integrations → Slack tab)
+# Slack (env fallback — prefer /studio/integrations → Slack tab)
 # SLACK_CLIENT_ID=...
 # SLACK_CLIENT_SECRET=...
 # SLACK_SIGNING_SECRET=...
 # SLACK_BOT_TOKEN=xoxb-...
 #
-# Artifact store (env fallback — prefer /admin/integrations → Storage tab)
+# Artifact store (env fallback — prefer /studio/integrations → Storage tab)
 # ARTIFACT_S3_ACCESS_KEY=...        # compose maps this to AWS_ACCESS_KEY_ID
 # ARTIFACT_S3_SECRET_KEY=...        # compose maps this to AWS_SECRET_ACCESS_KEY
 # ARTIFACT_S3_BUCKET=auto-swe-artifacts
@@ -167,19 +167,19 @@ Several categories of credentials that were previously env-only are now stored e
 
 | Admin page | What it configures | Restart required? |
 |---|---|---|
-| `/admin/model-config` | LLM provider credentials and per-role model selection | No — resolved fresh per activity call |
-| `/admin/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs | No for token/webhook; **Yes** for OAuth app creds |
-| `/admin/integrations → Slack` | Slack client ID/secret, signing secret, bot token | **Yes** for client ID/secret; No for bot token/signing secret |
-| `/admin/integrations → Storage` | S3-compatible bucket, region, endpoint, credentials | No — resolved fresh per artifact write |
-| `/admin/integrations → OAuth` | Google OAuth client ID/secret; Okta issuer + client ID/secret | **Yes** — BetterAuth reads these at startup, and discovers Okta's OIDC endpoints once at boot |
-| `/admin/workflow` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
+| `/studio/models` | LLM provider credentials and per-role model selection | No — resolved fresh per activity call |
+| `/studio/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs | No for token/webhook; **Yes** for OAuth app creds |
+| `/studio/integrations → Slack` | Slack client ID/secret, signing secret, bot token | **Yes** for client ID/secret; No for bot token/signing secret |
+| `/studio/integrations → Storage` | S3-compatible bucket, region, endpoint, credentials | No — resolved fresh per artifact write |
+| `/studio/integrations → OAuth` | Google OAuth client ID/secret; Okta issuer + client ID/secret | **Yes** — BetterAuth reads these at startup, and discovers Okta's OIDC endpoints once at boot |
+| `/govern/workflow-defaults` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
 
 **Bootstrap order** (first deployment):
 1. Start gateway + web only — `docker compose -f docker-compose.infra.yml -f docker-compose.prod.yml up -d gateway web` in the compose stack (locally, `yarn dev:gateway` and `yarn dev:web`).
 2. Sign in as admin.
-3. `/admin/model-config` → Credentials → add a provider credential (the seed already created the agents + embedding config).
-4. `/admin/integrations` → GitHub tab → enter your PAT and webhook secret → Save.
-5. `/admin/integrations` → any other tabs you need (Slack, Storage, OAuth).
+3. `/studio/models` → Credentials → add a provider credential (the seed already created the agents + embedding config).
+4. `/studio/integrations` → GitHub tab → enter your PAT and webhook secret → Save.
+5. `/studio/integrations` → any other tabs you need (Slack, Storage, OAuth).
 6. Start the worker (`… up -d worker`, or `yarn dev:worker` locally). The worker reads all config from the DB.
 7. Optionally clear the `GITHUB_TOKEN` and `GITHUB_WEBHOOK_SECRET` env vars — the DB config is now the source of truth.
 
@@ -325,7 +325,7 @@ Two constraints worth knowing before you set credentials:
 | Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `auto` | `false` |
 | Backblaze B2 | `https://s3.<region>.backblazeb2.com` | your region | `true` |
 
-`ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` become the provider's credentials — compose passes them into the container as the standard `AWS_*` names the SDK reads, but keeps them under a distinct name outside so an ambient `AWS_ACCESS_KEY_ID` in the deploying shell cannot silently win over `.env`. **The bucket must already exist** — only the bundled store self-provisions one. These same settings can be managed at `/admin/integrations → Storage` instead, which takes precedence over the environment.
+`ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` become the provider's credentials — compose passes them into the container as the standard `AWS_*` names the SDK reads, but keeps them under a distinct name outside so an ambient `AWS_ACCESS_KEY_ID` in the deploying shell cannot silently win over `.env`. **The bucket must already exist** — only the bundled store self-provisions one. These same settings can be managed at `/studio/integrations → Storage` instead, which takes precedence over the environment.
 
 **Migrating an existing MinIO deployment.** Garage's on-disk format is unrelated to MinIO's, so pointing it at `./data/minio` will not work and existing objects will not appear. `ArtifactRef` rows in the app DB hold keys, not blobs, so any object left behind becomes a broken artifact link rather than a visible failure. Copy the objects across before cutting over, with both stores running:
 
@@ -394,14 +394,14 @@ open https://app.example.com
 | Workflow visibility        | Temporal UI (`:8233`), or `/workflows`, `/runs`, `/workflows/:id` in the dashboard.                              |
 | Cost tracking              | `WorkflowRun.costUsdAccrued`, `/analytics` page, OTel span attribute `llm.cost_usd`. Unknown models log `llm.cost_pricing_known=false`. |
 | Per-team A/B experiments   | `/templates/:id` → set `experimentVersion` + `experimentSplit`.                                                  |
-| Rotating LLM models        | Change model spec at `/admin/model-config` (takes effect on next activity call). For pricing of new models use `MODEL_PRICE_<PROVIDER>_<MODEL>` env overrides. |
-| Rotating GitHub PAT        | `/admin/integrations → GitHub` → enter new token → Save. No restart required. |
-| Rotating Slack bot token   | `/admin/integrations → Slack` → enter new bot token → Save. No restart required. |
-| Rotating S3 credentials    | `/admin/integrations → Storage` → enter new key → Save. No restart required. |
-| Rotating OAuth app creds   | `/admin/integrations → GitHub or OAuth` → enter new secret → Save → restart gateway. |
+| Rotating LLM models        | Change model spec at `/studio/models` (takes effect on next activity call). For pricing of new models use `MODEL_PRICE_<PROVIDER>_<MODEL>` env overrides. |
+| Rotating GitHub PAT        | `/studio/integrations → GitHub` → enter new token → Save. No restart required. |
+| Rotating Slack bot token   | `/studio/integrations → Slack` → enter new bot token → Save. No restart required. |
+| Rotating S3 credentials    | `/studio/integrations → Storage` → enter new key → Save. No restart required. |
+| Rotating OAuth app creds   | `/studio/integrations → GitHub or OAuth` → enter new secret → Save → restart gateway. |
 | Rotating secrets           | `BETTER_AUTH_SECRET` / `JWT_SECRET` invalidate all existing sessions/tokens. Communicate before rotating.        |
-| Sessions admin             | `/admin/sessions` (revoke any session); `/admin/access-tokens` (revoke PATs across all users).                   |
-| Shell-step audit           | `/admin/access-tokens` page exposes the prune control for `workflow_shell_audit` rows older than N days.         |
+| Sessions admin             | `/govern/sessions` (revoke any session); `/govern/api-tokens` (revoke PATs across all users).                   |
+| Shell-step audit           | `/govern/api-tokens` page exposes the prune control for `workflow_shell_audit` rows older than N days.         |
 | Lesson retention           | `memory_items` grows over time; no automatic pruning. Manual `DELETE` is fine — drops the row from the HNSW index. |
 | pgvector index rebuild     | `REINDEX INDEX idx_memory_items_embedding;` — only needed after a bulk import or if recall degrades.            |
 
@@ -433,7 +433,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).
 - [ ] Temporal namespace retention is set deliberately (default in self-hosted = 30d; tune for your humanMergeSignal wait).
 - [ ] `OTEL_EXPORTER_OTLP_ENDPOINT` is set and the collector is reachable — otherwise traces silently drop.
-- [ ] GitHub PAT and webhook secret are set via `/admin/integrations` (or env var fallback). Secrets are random per-environment.
+- [ ] GitHub PAT and webhook secret are set via `/studio/integrations` (or env var fallback). Secrets are random per-environment.
 - [ ] `CONFIG_ENCRYPTION_KEY` (base64 32-byte random) is set and backed up — it encrypts all DB-stored secrets (GitHub token, Slack tokens, S3 key, OAuth secrets). Loss = all stored credentials are unreadable.
 
 ---

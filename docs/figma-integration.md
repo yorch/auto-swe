@@ -20,10 +20,10 @@ The original RFC, including the later phases that were scoped but not built, is 
 
 This path is configuration, not code — it reuses the MCP integration end to end.
 
-1. **Create a Figma `mcp` Connection** at `/admin/mcp-connections` with the Figma Dev Mode MCP
+1. **Create a Figma `mcp` Connection** at `/studio/mcp` with the Figma Dev Mode MCP
    endpoint URL. It is stored as an ordinary `Connection{ type: 'mcp', config: { url } }`; the
    connection layer already accepts any HTTP(S) MCP server.
-2. **Bind it to the implementer and reviewer Agents** at `/admin/agents/library`: add `'mcp'` to the
+2. **Bind it to the implementer and reviewer Agents** at `/studio/agents/library`: add `'mcp'` to the
    Agent's `toolKeys` and set `mcpConnectionId`. `resolveAgentMcpUrl` binds Figma's tools at run
    time through `buildImplementerForActivity` and the review network.
 3. **The `design-fidelity` skill** does the steering. It tells the implementer to fetch the relevant
@@ -48,7 +48,7 @@ Figma frame payloads can be large. The skill steers the agent toward targeted no
 Mirrors the tracker and knowledge-base enrichment exactly.
 
 - **`FigmaConfig`** — a singleton table (`id = 'default'`) with `enabled`, an encrypted `apiToken`,
-  and a `maxNodes` cap. Managed at `/admin/integrations → Figma`, resolved by `resolveFigmaConfig()`.
+  and a `maxNodes` cap. Managed at `/studio/integrations → Figma`, resolved by `resolveFigmaConfig()`.
 - **`FigmaProvider`** — a REST client behind `createFigmaDesignProvider`, using `X-Figma-Token`
   against the files, nodes, and local-variables endpoints.
 - **`extractFigmaRefs`** pulls `figma.com/(file|design)/…` URLs out of ticket and description text.

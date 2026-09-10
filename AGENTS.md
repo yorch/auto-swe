@@ -80,7 +80,7 @@ Run `ls packages/<name>/src` for the actual layout — only non-obvious rules li
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
 | `packages/cli`     | `auto-swe` CLI                                       | ESM Node 26+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API. `bundle init/validate/sign` is token-free local authoring over `@auto-swe/sdk`; `bundles list/export/install` hits the admin API |
 | `packages/sdk`     | `@auto-swe/sdk` — bundle authoring SDK               | Pure, I/O-free helpers over `@auto-swe/shared/bundle`: `defineAgent`/`defineSkill`/`defineTemplate`/`defineContainerStep`, `defineBundle` (+ content hash), `signBundle` (ed25519), `validateBundle` |
-| `site`             | Public docs site (Astro + Starlight), published to GitHub Pages | **A workspace, not a package** — the only one outside `packages/*`. Owns no content: `scripts/syncDocs.mjs` copies `docs/`, the root `README.md`, and `packages/cli/README.md` into `src/content/docs/` at build time, and that output is gitignored. `scripts/manifest.mjs` is the single source of what is published and where; a doc missing from its `SIDEBAR` fails the build |
+| `site`             | Public docs site (Astro + Starlight), published to GitHub Pages | **A workspace, not a package** — the only one outside `packages/*`. Owns no content: `site/scripts/syncDocs.mjs` copies `docs/`, the root `README.md`, and `packages/cli/README.md` into `site/src/content/docs/` at build time, and that output is gitignored. `site/scripts/manifest.mjs` is the single source of what is published and where; a doc missing from its `SIDEBAR` fails the build |
 
 Top-level files that matter:
 
@@ -249,14 +249,14 @@ fallback. **Never read these from `process.env` directly in new code.**
 
 | Admin page | Manages | Resolver |
 |---|---|---|
-| `/admin/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds | `resolveGitHubConfig()` |
-| `/admin/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
-| `/admin/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
-| `/admin/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveTrackerConfig()` |
-| `/admin/integrations → Knowledge Base` | Confluence / Notion connector | `resolveKnowledgeBaseConfig()` |
-| `/admin/integrations → Figma` | read-only Figma design connector | `resolveFigmaConfig()` |
-| `/admin/integrations → OAuth` | Google OAuth client ID/secret; Okta SSO issuer + client ID/secret | `resolveGoogleOAuthConfig()`, `resolveOktaOAuthConfig()` |
-| `/admin/workflow` | branch prefix, PR templates, default team slug, consolidation + eval schedules, CI wait strategy, Tier-2 defaults | `resolveWorkflowDefaults()` and friends |
+| `/studio/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds | `resolveGitHubConfig()` |
+| `/studio/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
+| `/studio/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
+| `/studio/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveIssueTrackerConfig()` |
+| `/studio/integrations → Knowledge Base` | Confluence / Notion connector | `resolveKnowledgeBaseConfig()` |
+| `/studio/integrations → Figma` | read-only Figma design connector | `resolveFigmaConfig()` |
+| `/studio/integrations → OAuth` | Google OAuth client ID/secret; Okta SSO issuer + client ID/secret | `resolveGoogleOAuthConfig()`, `resolveOktaOAuthConfig()` |
+| `/govern/workflow-defaults` | branch prefix, PR templates, default team slug, consolidation + eval schedules, CI wait strategy, Tier-2 defaults | `resolveWorkflowDefaults()` and friends |
 
 Every config table is a singleton: one row, `id = 'default'`, enforced by a `CHECK` constraint.
 Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential`, so
@@ -270,7 +270,7 @@ accept a self-hosted base URL on a private or internal address.
 **Tier-2 resource & tuning defaults** live on the `WorkflowDefaults` singleton with a
 `row?.x ?? default` fallback, so an unconfigured deployment keeps the built-in constants. They are
 **GLOBAL-scope only** — not part of the per-team/-template cascade — and are edited at
-`/admin/workflow`:
+`/govern/workflow-defaults`:
 
 | Field(s) | Default | Consumed by |
 |---|---|---|
@@ -300,7 +300,7 @@ at startup — so the issuer is read at boot too, not per sign-in.
 Knobs that are neither an integration credential nor bootstrap live in the **setting registry**:
 one declaration per knob in `packages/shared/src/config/registry.ts` carrying its Zod schema,
 default, the scopes it may be overridden at, the role required to change it, and whether it pins to
-a run. That declaration is what validates a write, resolves a read, drives the `/admin/settings`
+a run. That declaration is what validates a write, resolves a read, drives the `/govern/platform-settings`
 form, and gates permission — **adding a knob is a definition, not a migration plus a route plus a
 form field.**
 
@@ -342,13 +342,18 @@ skills via `skillRefs` and tools via `toolKeys`. `getModel` / `getModelSpec` / `
 **Agent identity is a free-form `string`** (`AnySkillRole = string`) — there is no enum. New agents
 are added as data, not code. Seeded built-ins split by how they bind a model:
 
-- **Model-backed** (own `modelSpec`): `implementer`, `reviewer`, `planner`, `securityReview`,
-  `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`, `workflowAuthor`,
-  `workflowExplainer`.
-- **Sub-role personas** (`inheritsModelFrom`): `securityReviewer` / `domainLogicReviewer` /
-  `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` / `prdDecomposer` (← `planner`);
-  `ciFixer` / `reviewFixer` / `gateFixer` / `mergeConflictResolver` (← `implementer`);
-  `lessonConsolidator` (← `commitToMemory`).
+- **Model-backed** (own `modelSpec`), 17 of them. The engineering set is `implementer`, `reviewer`,
+  `planner`, `securityReview`, `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`,
+  `workflowAuthor`, `workflowExplainer`, `repoDependencyInferrer`. The rest exist because the
+  platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
+  `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
+- **Sub-role personas** (`inheritsModelFrom`), 11 of them: `securityReviewer` /
+  `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
+  `prdDecomposer` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
+  `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
+
+Both lists are complete as written, and `yarn docs:check` fails if one stops being — see
+[`docs/agents.md`](./docs/agents.md) for what calls each agent and its default model.
 
 `securityReview` is **not** legacy, despite what it used to say here. It backs
 `scanDiffForSecurityIssues`, the post-diff gate that runs on `executeImplementation` and on all
@@ -447,7 +452,7 @@ Six scanners run during agent execution, each independently advisory or blocking
 
 **Built-in patterns:** 62 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION,
 11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE, 4 PII. Synced idempotently by
-`syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
+`syncBuiltins()` at gateway startup and admin-extensible at `/govern/scanner`.
 
 `EXFILTRATION` patterns are written for **prose** — skill text and LLM output — and several are far
 too broad for a shell (`https?://\S+` matches most build commands). Shell-context exfiltration is
@@ -459,7 +464,7 @@ loops.
 
 **The shell scanner also enforces the sensitive-file policy.** `scanShellCommand` extracts write
 targets from a command (redirects, `tee`, `dd of=`, `cp`/`mv` destinations) and runs each through
-`checkSensitiveFilePath`, so a `SENSITIVE_FILE` pattern added at `/admin/scanner` covers `bash` as
+`checkSensitiveFilePath`, so a `SENSITIVE_FILE` pattern added at `/govern/scanner` covers `bash` as
 well as the `writeFile` tool. Extraction is a heuristic over command text, not a shell parser — it
 raises the floor and is not a containment boundary.
 
@@ -522,7 +527,7 @@ Limitations of this arrangement, stated so nothing above reads as more than it i
   so the caller decides: `scanShellCommand` and `checkSensitiveFilePath` block on a non-empty
   list (a rule they never ran cannot clear the input), while the advisory scanners proceed without
   the rule. For a blocking scanner the quarantine therefore turns "two burned budgets per scan" into
-  an immediate block, and an admin must fix or disable the row at `/admin/scanner` to restore
+  an immediate block, and an admin must fix or disable the row at `/govern/scanner` to restore
   agent `bash` access; it does not silently drop the rule. It is logged loudly on every skip; the
   quarantine is per-process, so gateway and worker quarantine independently and both forget on
   restart. When the TTL lapses the pattern runs again, and a still-bad one costs another two
@@ -688,8 +693,8 @@ yarn dev:web             # Terminal 2 — http://localhost:3000
 
 # 5. Configure integrations in the admin UI
 #    Sign in at http://localhost:3000 with admin@auto-swe.local + SEED_ADMIN_PASSWORD
-#    → /admin/model-config → Credentials → add a provider credential
-#    → /admin/integrations → GitHub → enter the PAT + webhook secret → Save
+#    → /studio/models → Credentials → add a provider credential
+#    → /studio/integrations → GitHub → enter the PAT + webhook secret → Save
 #      (or skip if GITHUB_TOKEN is set in .env — the env fallback still works)
 
 # 6. Start the worker

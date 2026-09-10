@@ -611,7 +611,7 @@ Writes cut a new immutable `version`.
   the caller decides what that means. The blocking scanners (`scanShellCommand`,
   `checkSensitiveFilePath`) block on a non-empty list — a rule they never ran cannot clear the
   input — so a quarantined shell or sensitive-file rule denies `bash` and `writeFile` until an admin
-  fixes or disables the row at `/admin/scanner`, instead of costing two budgets per call. The
+  fixes or disables the row at `/govern/scanner`, instead of costing two budgets per call. The
   advisory scanners proceed without the rule. It is logged on every skip, and quarantine is
   per-process, so gateway and worker decide independently and both forget on restart.
 - **The write-time backtracking probe is sound but incomplete.** `POST /admin/scanner-patterns`

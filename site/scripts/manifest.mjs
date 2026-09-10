@@ -97,6 +97,7 @@ export const SIDEBAR = [
     label: 'Capabilities',
     slugs: [
       'docs/hitl-workflows',
+      'docs/autonomy-policies',
       'docs/evals',
       'docs/channel-assistant',
       'docs/nl-workflow-authoring',
