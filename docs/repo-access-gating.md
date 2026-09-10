@@ -121,7 +121,8 @@ Multiple GitHub organizations are reached through multiple App installations. `G
 rows name them and `connections.installation_id` points a repository at one; null means the
 singleton `GitHubConfig.appInstallationId`, so an existing single-org deployment needs no change.
 
-Installations are managed at `/api/v1/admin/github-installations` (list, create, update, delete),
+Installations are managed at `/studio/github-installations` in the dashboard, or at
+`/api/v1/admin/github-installations` (list, create, update, delete),
 and a repository is pointed at one through `installationId` on the repository create and update
 routes. Both are ADMIN-only: the installation decides which GitHub account answers permission
 questions about a repository, and every other credential-shaped knob in this codebase is

@@ -115,6 +115,12 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Integrations',
         roles: ['ADMIN'],
       },
+      {
+        href: '/studio/github-installations',
+        icon: 'connections',
+        label: 'GitHub installations',
+        roles: ['ADMIN'],
+      },
       { href: '/studio/models', icon: 'admin', label: 'Model config', roles: ['ADMIN'] },
       { href: '/studio/bundles', icon: 'templates', label: 'Bundles', roles: ['ADMIN'] },
     ],

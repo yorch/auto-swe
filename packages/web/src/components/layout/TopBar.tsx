@@ -42,6 +42,7 @@ function pageTitle(pathname: string): string {
     ['/studio/agents', 'Agents'],
     ['/studio/skills', 'Skills'],
     ['/studio/mcp', 'MCP'],
+    ['/studio/github-installations', 'GitHub installations'],
     ['/studio/integrations', 'Integrations'],
     ['/studio/models', 'Model config'],
     ['/studio/bundles', 'Bundles'],
