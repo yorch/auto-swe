@@ -15,6 +15,19 @@ vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
   runUnscoped: (_reason: string, _models: string[], fn: () => unknown) => fn(),
 }));
 
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubConfig: async () => ({ apiUrl: 'https://api.github.com' }),
+}));
+
+vi.mock('../lib/githubAuth.js', () => ({
+  resolveGitHubToken: async () => 'platform-token',
+}));
+
+const verifyGithubLoginOwnership = vi.fn();
+vi.mock('@auto-swe/shared/lib/githubIdentityCheck', () => ({
+  verifyGithubLoginOwnership: (...a: unknown[]) => verifyGithubLoginOwnership(...a),
+}));
+
 vi.mock('../lib/activityContext.js', () => ({
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
 }));
@@ -45,6 +58,7 @@ function repo(members: { id: string; githubLogin: string | null }[], over = {}) 
 beforeEach(() => {
   vi.clearAllMocks();
   upsert.mockResolvedValue({});
+  verifyGithubLoginOwnership.mockResolvedValue({ status: 'ok' });
 });
 
 describe('syncRepoAccess', () => {
@@ -126,6 +140,55 @@ describe('syncRepoAccess', () => {
 
     await expect(syncRepoAccess({})).resolves.toMatchObject({ failed: 1, refreshed: 1 });
     expect(upsert.mock.calls[0][0].create.userId).toBe('user-2');
+  });
+
+  it('clears a login that now names a different GitHub account, and asks nothing about it', async () => {
+    // The dangerous case: GitHub releases a renamed username and someone else
+    // re-registers it. Asking about that name would record the new owner's
+    // access as this user's.
+    findMany.mockResolvedValue([repo([{ githubLogin: 'octocat', id: 'user-1' }])]);
+    verifyGithubLoginOwnership.mockResolvedValue({
+      clearedLogin: 'octocat',
+      status: 'reassigned',
+    });
+
+    await expect(syncRepoAccess({})).resolves.toMatchObject({
+      reassignedLogins: 1,
+      refreshed: 0,
+    });
+    expect(repoPermission).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('proceeds normally when GitHub cannot confirm ownership', async () => {
+    // An outage is not evidence that a name changed hands. Clearing on one
+    // would revoke every unlucky user's access for a reason GitHub never gave.
+    findMany.mockResolvedValue([repo([{ githubLogin: 'octocat', id: 'user-1' }])]);
+    verifyGithubLoginOwnership.mockResolvedValue({
+      reason: 'GitHub did not answer for this login',
+      status: 'unverifiable',
+    });
+    repoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+
+    await expect(syncRepoAccess({})).resolves.toMatchObject({
+      reassignedLogins: 0,
+      refreshed: 1,
+    });
+  });
+
+  it('verifies each login once, not once per repository', async () => {
+    // Ownership is a fact about the user; asking per repository multiplies the
+    // cost by the number of repos for no extra information.
+    findMany.mockResolvedValue([
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], { id: 'conn-1' }),
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], { id: 'conn-2' }),
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], { id: 'conn-3' }),
+    ]);
+    repoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+
+    await syncRepoAccess({});
+    expect(verifyGithubLoginOwnership).toHaveBeenCalledTimes(1);
+    expect(repoPermission).toHaveBeenCalledTimes(3);
   });
 
   it('narrows to one user when asked, without touching the others', async () => {

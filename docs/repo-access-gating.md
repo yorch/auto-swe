@@ -88,7 +88,14 @@ Rows are refreshed three ways.
 |---|---|---|
 | Live lookup at launch | the one pair being launched | immediate |
 | Webhook (`POST /api/v1/webhooks/access`) | collaborator, team, org-membership and repository events | seconds |
-| Scheduled sweep | every reachable pair | one sweep interval |
+| Scheduled sweep | every reachable pair, plus login-ownership verification | one sweep interval |
+
+The sweep also confirms each stored GitHub login still resolves to the account id it was recorded
+for, once per user rather than once per pair. GitHub releases a username on rename and lets anyone
+re-register it, so a login recorded months ago can end up naming a different person — and the
+projection would then record that person's access as this user's. The numeric account id cannot
+change, which is what makes the check possible; a plain rename still resolves to the same id and is
+left alone.
 
 The sweep's candidate set is each repository's own team members, not every user times every
 repository, so its cost tracks real reachability rather than deployment size.
@@ -198,10 +205,11 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
 - **A user with no linked GitHub account cannot launch under enforcement.** There is no identity to
   ask GitHub about. They can still be found in advisory mode, which is what the advisory period is
   for, but under enforcement the refusal is absolute.
-- **A GitHub username change is not detected.** The login is captured at link time and refreshed
-  only when the account is linked again. GitHub usernames are reusable after release, so a stale
-  login could in principle name a different person. Re-linking fixes it; nothing detects it
-  automatically.
+- **A re-registered GitHub username is detected on the next sweep, not immediately.** The sweep
+  confirms each stored login still resolves to the GitHub account id it was recorded for, and
+  clears it when it does not. A plain rename is harmless and is deliberately left alone, because
+  GitHub redirects the old name to the same account id. The exposure window is one sweep interval,
+  and a deployment with the sweep disabled has no detection at all.
 - **Revocation is not instant.** Webhooks make it seconds, but a missed or undelivered webhook
   leaves the previous answer in place until the next sweep, and a paused sweep extends that to
   `repoAccess.viewStaleAfterHours`. The launch path is unaffected, because it asks live.

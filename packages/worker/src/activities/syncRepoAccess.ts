@@ -13,10 +13,13 @@
  * proportional to real reachability rather than to the size of the deployment.
  */
 import { prisma } from '@auto-swe/shared/db';
+import { verifyGithubLoginOwnership } from '@auto-swe/shared/lib/githubIdentityCheck';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { resolveGitHubToken } from '../lib/githubAuth.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 
 export interface SyncRepoAccessInput {
@@ -35,6 +38,12 @@ export interface SyncRepoAccessResult {
   unresolvedUsers: number;
   /** Repositories skipped because they are not a git repo or have no identity. */
   skippedRepos: number;
+  /**
+   * Users whose stored login turned out to name a different GitHub account and
+   * was cleared. Non-zero means someone's recorded identity had been taken over
+   * by a re-registered username, which is worth an operator's attention.
+   */
+  reassignedLogins: number;
 }
 
 /**
@@ -52,6 +61,7 @@ export async function syncRepoAccess(
   const started = Date.now();
   const result: SyncRepoAccessResult = {
     failed: 0,
+    reassignedLogins: 0,
     refreshed: 0,
     skippedRepos: 0,
     unresolvedUsers: 0,
@@ -93,6 +103,41 @@ export async function syncRepoAccess(
         })
     );
 
+    // Confirm each stored login still names the account it was stored for,
+    // once per user rather than once per pair — it is a fact about the user, so
+    // asking per repository would multiply the cost by the number of repos for
+    // no extra information.
+    //
+    // A login goes stale in a way that matters when GitHub releases a renamed
+    // username and someone else re-registers it: the projection then asks
+    // GitHub about a different person and records their access as this user's.
+    // A plain rename is harmless, because GitHub redirects the old name to the
+    // same account id.
+    const ghConfig = await resolveGitHubConfig();
+    const platformToken = await resolveGitHubToken(ghConfig).catch(() => null);
+    const verified = new Map<string, boolean>();
+    for (const repo of repos) {
+      for (const { user } of repo.team.memberships) {
+        if (!user.githubLogin || verified.has(user.id)) {
+          continue;
+        }
+        const ownership = await verifyGithubLoginOwnership(prisma, {
+          apiUrl: repo.githubApiUrl ?? ghConfig.apiUrl,
+          login: user.githubLogin,
+          token: platformToken,
+          userId: user.id,
+        });
+        verified.set(user.id, ownership.status !== 'reassigned');
+        if (ownership.status === 'reassigned') {
+          result.reassignedLogins++;
+          tracer.addActivityEvent({
+            name: 'repo_access.login_reassigned',
+            outputJson: { clearedLogin: ownership.clearedLogin, userId: user.id },
+          });
+        }
+      }
+    }
+
     for (const repo of repos) {
       if (!(repo.organizationName && repo.repoName)) {
         result.skippedRepos++;
@@ -107,6 +152,12 @@ export async function syncRepoAccess(
           continue;
         }
         if (!githubLogin) {
+          result.unresolvedUsers++;
+          continue;
+        }
+        // Cleared just above: the login named someone else, so any answer about
+        // it would be that person's access recorded as this user's.
+        if (verified.get(userId) === false) {
           result.unresolvedUsers++;
           continue;
         }
