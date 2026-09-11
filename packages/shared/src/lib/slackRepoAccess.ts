@@ -43,9 +43,12 @@ const ALLOWED: SlackRepoAccessVerdict = { allowed: true };
 /**
  * May the Slack user behind `slackId` cause work to run against `connectionId`?
  *
- * **Off means off.** With `repoAccess.mode` off this allows without a query,
- * which keeps the long-standing behaviour that talking to the assistant needs no
- * linked account. The gate is the operator's statement that it should.
+ * **Off means off, and advisory means advisory.** With `repoAccess.mode` off
+ * this allows without a query, which keeps the long-standing behaviour that
+ * talking to the assistant needs no linked account. Under `advisory` an
+ * unlinked Slack user is logged and allowed, because that population is what
+ * the advisory period is for — see the comment at that branch for why it is the
+ * only reason that softens.
  *
  * A gate that has never been readable refuses. The gateway treats the same
  * value as `off` because it decorates every authenticated request and a process
@@ -90,6 +93,24 @@ export async function decideSlackRepoAccessWithGate(
       })
     : null;
   if (!user) {
+    // Advisory observes; it does not refuse. An unlinked Slack user is the
+    // single largest population the advisory period exists to measure — an
+    // operator turns the gate on to find out how many people would be stopped
+    // BEFORE stopping them, and refusing here would stop them on day one while
+    // the dial still says advisory.
+    //
+    // Only this reason softens. `not-a-team-member` and `installation-retired`
+    // are refused in every mode by the decision below, because neither is part
+    // of the GitHub rollout; `repo-unreadable` is an integrity failure rather
+    // than a policy one; and `gate-unreadable` cannot be softened because the
+    // mode is exactly what could not be read.
+    if (gate.mode === 'advisory') {
+      log?.warn(
+        { connectionId, reason: 'no-linked-account', slackId },
+        'repo access (advisory): would refuse this Slack request'
+      );
+      return ALLOWED;
+    }
     return { allowed: false, reason: 'no-linked-account' };
   }
 

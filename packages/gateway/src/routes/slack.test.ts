@@ -55,6 +55,27 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 const repoAccessGate = vi.fn<() => Promise<{ mode: string; staleAfterHours: number } | null>>(
   async () => ({ mode: 'off', staleAfterHours: 72 })
 );
+/**
+ * GitHub, as the live launch decision sees it.
+ *
+ * Stubbed so the ordinary member path can be walked at all: without it the only
+ * way to reach an allow verdict in these tests is the platform-admin bypass,
+ * which skips every part of the decision worth testing.
+ */
+const githubLogin = vi.fn<() => Promise<string | null>>(async () => 'octocat');
+const githubPermission = vi.fn<() => Promise<{ ok: boolean; permission?: string }>>(async () => ({
+  ok: true,
+  permission: 'write',
+}));
+vi.mock('@auto-swe/shared/lib/repoPermission', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoPermission')>()),
+  lookupRepoPermission: () => githubPermission(),
+  verifiedGithubLoginFor: () => githubLogin(),
+}));
+vi.mock('@auto-swe/shared/lib/repoAccessProjection', () => ({
+  recordRepoPermission: async () => {},
+}));
+
 vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
   // Spread the original: `repoAccessDecision` imports `decideRepoLaunch` and the
   // refusal messages from this module at load time, so a factory that returns
@@ -134,6 +155,8 @@ interface FakeState {
   runnableStarts: Array<{ id: string; args: unknown }>;
   /** When set, `startRunnableWorkflow` rejects with this. */
   runnableStartError: Error | null;
+  /** Whether an open channel-task execution exists for the thread being replied to. */
+  threadTaskRunning: boolean;
 }
 
 /** A `RunInput` row, with the columns the steer decision selects on. */
@@ -188,6 +211,11 @@ function buildApp(state: FakeState): FastifyInstance {
   } as unknown as never);
   app.decorate('temporal', {
     cancelWorkflow: async () => undefined,
+    // The steer path asks this BEFORE deciding whether the requester may steer,
+    // so that a thread with nothing running costs no access decision. Tests
+    // that want "nothing to steer" set `threadTaskRunning` to false; the
+    // not-found signal error remains its own case (the run closing in between).
+    isWorkflowRunning: async () => state.threadTaskRunning,
     signalWorkflow: async (workflowId: string, signalName: string, args: unknown[] = []) => {
       if (state.signalError) {
         throw state.signalError;
@@ -437,6 +465,7 @@ beforeEach(async () => {
         teamId: 'team-a',
       },
     ],
+    threadTaskRunning: true,
     users: [
       { id: 'u1', role: 'ADMIN', slackId: 'U1' },
       { id: 'u2', role: 'ENGINEER', slackId: 'U-ENGINEER' },
@@ -1178,7 +1207,8 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
   }
 
   /** Override the temporal signal mock so steers throw not-found (records the
-   * attempt first, then throws — mirrors a real signal that found no run). */
+   * attempt first, then throws — mirrors a real signal that found no run: the
+   * run was open when the steer path checked and closed before the signal). */
   function setSteerNotFound(): void {
     (app as unknown as { temporal: { signalWorkflow: unknown } }).temporal.signalWorkflow = (async (
       workflowId: string,
@@ -1294,6 +1324,8 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       // implementations), so re-state the default or each test inherits the mode
       // the one before it set.
       repoAccessGate.mockResolvedValue({ mode: 'off', staleAfterHours: 72 });
+      githubLogin.mockResolvedValue('octocat');
+      githubPermission.mockResolvedValue({ ok: true, permission: 'write' });
       state.runInputRows = [channelTask('conn-1')];
       state.connectionRow = REPO_ROW;
     });
@@ -1446,6 +1478,70 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(state.connectionLookups).toContain('conn-1');
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('steers for an ordinary member GitHub reports as a writer', async () => {
+      // The allow case without the admin bypass: the one path that actually
+      // walks membership, then the live GitHub permission lookup.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = { ...REPO_ROW, team: { memberships: [{ userId: 'u2' }] } };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('does not steer for a member GitHub reports as read-only', async () => {
+      // Steering pushes to the branch the run is building, so read is not
+      // enough — the same bar the launch takes.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = { ...REPO_ROW, team: { memberships: [{ userId: 'u2' }] } };
+      githubPermission.mockResolvedValue({ ok: true, permission: 'read' });
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('costs no access decision when there is nothing to steer', async () => {
+      // The regression this guards: a `RunInput` row is permanent, so a thread
+      // that once hosted a code task would otherwise ask GitHub who is speaking
+      // on every reply for the rest of its life — and most thread replies are
+      // people talking to each other, long after the task closed.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.threadTaskRunning = false;
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.runInputFindManyCalls).toHaveLength(0);
+      expect(state.connectionLookups).toHaveLength(0);
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('allows an unlinked user under advisory, and says what it would have refused', async () => {
+      // Advisory observes; it does not refuse. An unlinked Slack user is the
+      // largest population the advisory period exists to measure, so refusing
+      // here would stop them on day one while the dial still said advisory.
+      repoAccessGate.mockResolvedValue({ mode: 'advisory', staleAfterHours: 72 });
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('refuses when the gate has never been readable', async () => {
+      // Not the same as off. A Slack message arrives with no session, so the
+      // gate read is the only policy in the path.
+      repoAccessGate.mockResolvedValue(null);
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
       expect(state.signalCalls).toHaveLength(0);
     });
 

@@ -199,12 +199,20 @@ last configuration it read successfully and keeps applying it, so a database hic
 enforcement off underneath a running deployment. Only a process that has never managed to read the
 configuration falls back to `off`, and such a process has nothing to enforce yet.
 
-The Slack paths are the exception: they refuse. The gateway's fallback is safe because it decorates
+The Slack paths, and the Slack run modal, are the exception: they refuse. The gateway's fallback is safe because it decorates
 every authenticated request and the routes downstream still check team membership, but a Slack
 message arrives with no session at all, and the gate read is the only thing between an unidentified
 workspace user and a push. "We could not check" must not read there as "there was nothing to check".
 In practice a configuration store that cannot answer also cannot create the run a moment later, so
-what this costs is a clear message in the thread rather than a failure further in.
+what this costs is a clear message in the thread rather than a failure further in. The run modal
+refuses for the same reason and to keep the two consistent: a launch must never be more permissive
+than a steer of the run it starts.
+
+**Advisory means advisory on these paths too.** A Slack user with no linked account is logged and
+allowed under `advisory`, and only refused under `enforce` — that population is the main thing an
+operator turns advisory on to measure, and refusing them during the advisory period would stop them
+on day one while the dial still said observe. Team membership and a retired installation are refused
+in every mode, because neither is part of the GitHub rollout.
 
 ---
 
@@ -231,6 +239,11 @@ the thread's task targets. The check is repository access, not authorship: two p
 write access steering each other's task is ordinary collaboration. A refusal is silent — the reply
 is dropped as ordinary channel chatter rather than answered, because answering would confirm to
 someone outside the repository that a task is running in that thread.
+
+The decision is taken only when there is an open run to steer. Checking first costs one call to the
+orchestrator; skipping it would mean asking GitHub who is speaking on every reply in any thread that
+ever hosted a code task, for the life of the thread, because the run-input row that records it is
+permanent and most thread replies are people talking to each other.
 
 Which repository a thread is judged against is the part worth stating, because the obvious answer is
 wrong twice over. A channel task files its run input under a deterministic ticket id built from the

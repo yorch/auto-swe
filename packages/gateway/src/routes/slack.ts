@@ -1119,7 +1119,10 @@ async function maySteerThreadTask(
     if (!verdict.allowed) {
       fastify.log.warn(
         { reason: verdict.reason, repoId, slackChannelId, threadTs, userSlackId },
-        'refusing to steer channel task: requester has no access to the repository'
+        // Not "has no access": `gate-unreadable` and `repo-unreadable` establish
+        // nothing about the requester, and an operator chasing "steering stopped
+        // during a config blip" should not be pointed at the person.
+        `refusing to steer channel task: ${verdict.reason}`
       );
       return false;
     }
@@ -1176,10 +1179,21 @@ async function trySteerThreadTask(
   userText: string,
   userSlackId: string | undefined
 ): Promise<boolean> {
+  const workflowId = channelTaskWorkflowId(channelId, threadTs);
+  // Is there anything here to steer, before deciding whether they may?
+  //
+  // Signalling first and reading the not-found error is the cheaper order only
+  // while the decision is free. It is not: under enforcement it asks GitHub who
+  // this person is and what they may do, twice, live. A `RunInput` row is
+  // permanent, so without this every reply in a thread that once hosted a code
+  // task would pay that for the life of the thread — and most thread replies
+  // are people talking to each other, long after the task closed.
+  if (!(await fastify.temporal.isWorkflowRunning(workflowId))) {
+    return false;
+  }
   if (!(await maySteerThreadTask(fastify, slackChannelId, threadTs, userSlackId))) {
     return false;
   }
-  const workflowId = channelTaskWorkflowId(channelId, threadTs);
   try {
     await fastify.temporal.signalWorkflow(workflowId, CHANNEL_TASK_STEER_SIGNAL, [userText]);
   } catch (err) {
@@ -1850,11 +1864,27 @@ async function handleRunModalSubmission(
   // Team membership and GitHub permission in one decision, the same one the
   // dashboard's submit takes. Slack routes authenticate by request signature
   // rather than `requireAuth`, so the gate is resolved here.
+  const gate = await resolveRepoAccessGateOrLastKnown();
+  if (!gate) {
+    // A launch must never be more permissive than a steer of the run it starts.
+    // The rest of the gateway reads a never-readable gate as `off`, which is
+    // defensible where it decorates every authenticated request and the routes
+    // downstream still check team membership — but this route authenticates by
+    // request signature, so the gate read is the only policy in the path, and
+    // it is the strictly more powerful operation.
+    return {
+      errors: {
+        repo_block:
+          'Cannot start a run right now — the access policy could not be read. Try again shortly.',
+      },
+      response_action: 'errors',
+    };
+  }
   const decision = await decideRepoAccess(
     fastify.prisma,
     { role: user.role, sub: user.id },
     repo,
-    (await resolveRepoAccessGateOrLastKnown()) ?? { mode: 'off', staleAfterHours: 0 }
+    gate
   );
   if (!decision.allowed) {
     return {
