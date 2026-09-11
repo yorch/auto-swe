@@ -21,6 +21,7 @@ import {
 } from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
+import { getErrorName } from './auth.js';
 
 export const CONSOLIDATION_SCHEDULE_ID = 'auto-swe-lesson-consolidation';
 export const EVAL_SCHEDULE_ID = 'auto-swe-eval-regression';
@@ -220,6 +221,7 @@ declare module 'fastify' {
         input: ConsolidateLessonsInput
       ) => Promise<void>;
       signalWorkflow: (workflowId: string, signalName: string, args?: unknown[]) => Promise<void>;
+      isWorkflowRunning: (workflowId: string) => Promise<boolean>;
       cancelWorkflow: (workflowId: string) => Promise<void>;
       syncConsolidationSchedule: (config: ConsolidationScheduleConfig) => Promise<void>;
       getConsolidationScheduleStatus: () => Promise<ConsolidationScheduleStatus>;
@@ -655,6 +657,30 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
           throw err;
         }
         return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
+      }
+    },
+
+    /**
+     * Is there an open execution under this id right now?
+     *
+     * For callers that must decide something expensive BEFORE signalling, and
+     * for whom "there is nothing here" is the common answer. Signalling and
+     * reading the not-found error is cheaper when the decision is free; it is
+     * the wrong order when the decision costs an API call to a third party.
+     *
+     * Not-found and closed are the same answer — neither can receive a signal —
+     * and any other error propagates, because "the server did not answer" must
+     * not be read as "there is nothing running".
+     */
+    async isWorkflowRunning(workflowId: string): Promise<boolean> {
+      try {
+        const description = await client.workflow.getHandle(workflowId).describe();
+        return description.status.name === 'RUNNING';
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowNotFoundError') {
+          return false;
+        }
+        throw err;
       }
     },
 

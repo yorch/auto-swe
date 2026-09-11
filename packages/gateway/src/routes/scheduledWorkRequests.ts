@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
+import { decideRepoAccess, repoAccessErrorBody } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { decideRepoAccess, repoAccessErrorBody } from '../lib/repoAccessDecision.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import type { WorkRequestScheduleInput } from '../plugins/temporal.js';

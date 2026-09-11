@@ -1,13 +1,13 @@
-import type { WorkspaceProviderMetadata } from '@auto-swe/shared/lib/workspaceProviders';
-import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
-import type { JwtPayload } from '../plugins/auth.js';
 import {
   decideRepoAccess,
   installationRetiredErrorBody,
   isInstallationRetired,
   repoAccessErrorBody,
-} from './repoAccessDecision.js';
-import type { RepoAccessGate } from './repoAccessGate.js';
+} from '@auto-swe/shared/lib/repoAccessDecision';
+import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
+import type { WorkspaceProviderMetadata } from '@auto-swe/shared/lib/workspaceProviders';
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
+import type { JwtPayload } from '../plugins/auth.js';
 
 export interface ValidateRunConnectionInput {
   connectionId: string | null;
