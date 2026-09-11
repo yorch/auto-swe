@@ -98,6 +98,11 @@ Rows are refreshed three ways.
 | Webhook (`POST /api/v1/webhooks/access`) | collaborator, team, org-membership and repository events | seconds |
 | Scheduled sweep | every reachable pair, plus login-ownership verification | one sweep interval |
 
+A detected takeover is recorded in the governance audit log against the affected user, with the
+account id the login was recorded for and the one it resolves to now. It appears at `/govern/audit`
+with no actor, because the system cleared it rather than a person. A log line was the only signal
+before, and a log line is gone by the time anyone asks.
+
 All three writers confirm the stored login still resolves to the account id it was recorded for
 before using it — the sweep, the launch path and the webhook refresh. A check only one of the three
 performed would not be a check: the other two would keep re-populating rows under a login that had
@@ -131,6 +136,11 @@ of the check that keeps the platform's idea of access aligned with GitHub's.
 Multiple GitHub organizations are reached through multiple App installations. `GitHubInstallation`
 rows name them and `connections.installation_id` points a repository at one; null means the
 singleton `GitHubConfig.appInstallationId`, so an existing single-org deployment needs no change.
+
+An installation can be marked **retired**, which refuses new launches against the repositories
+pointing at it — with a distinct `INSTALLATION_RETIRED` code, because it is an operator-
+configuration problem rather than a statement about the user. Clones, pushes, CI reads and runs
+already in flight are deliberately unaffected.
 
 Installations are managed at `/studio/github-installations` in the dashboard, or over the API at
 `/api/v1/platform/github-installations` — which the dashboard itself calls, and which is also
@@ -241,9 +251,10 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   attributed to the requester. Delegating execution to a user identity would need per-user token
   refresh and a service identity for webhook- and schedule-triggered runs, which have no user at
   all.
-- **An installation's in-use/retired mark is bookkeeping.** Nothing reads it: a repository
-  pointing at an installation marked retired still uses it, and marking one retired disconnects
-  nothing. It records an operator's intent so a stale row is recognisable, and the page says so.
+- **Retiring an installation stops new work, not work in flight.** A run already under way keeps
+  cloning, pushing and reading CI through a retired installation, and so does the sweep. The mark
+  says what may start next; pulling the credential out from under running work would make a
+  bookkeeping toggle into an outage.
 - **Team membership remains the outer bound.** The gate can only remove access. A user with GitHub
   admin rights on a repository still sees nothing unless they are a member of the owning team.
 - **Non-git connections are exempt, necessarily.** A `Connection` is also how an MCP server and

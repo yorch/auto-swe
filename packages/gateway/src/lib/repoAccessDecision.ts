@@ -49,7 +49,7 @@ export interface RepoAccessSubject {
   organizationName: string | null;
   repoName: string | null;
   githubApiUrl: string | null;
-  installation: { installationId: string } | null;
+  installation: { installationId: string; isActive: boolean } | null;
   /** Must be filtered to the acting user, or pre-filtered by the query. */
   team: { memberships: Array<{ userId: string }> };
 }
@@ -58,13 +58,13 @@ export interface RepoAccessSubject {
 export const REPO_ACCESS_SUBJECT_SELECT = {
   githubApiUrl: true,
   id: true,
-  installation: { select: { installationId: true } },
+  installation: { select: { installationId: true, isActive: true } },
   organizationName: true,
   repoName: true,
   type: true,
 } as const;
 
-export type RepoAccessRefusal = 'not-a-team-member' | LaunchRefusal;
+export type RepoAccessRefusal = 'not-a-team-member' | 'installation-retired' | LaunchRefusal;
 
 export type RepoAccessVerdict =
   | { allowed: true; reason: 'admin' | 'gate-off' | 'permitted' | 'advisory-would-refuse' }
@@ -73,6 +73,8 @@ export type RepoAccessVerdict =
 /** Human-readable refusal text, for the API response. */
 export const REPO_ACCESS_REFUSAL_MESSAGE: Record<RepoAccessRefusal, string> = {
   ...LAUNCH_REFUSAL_MESSAGE,
+  'installation-retired':
+    'The GitHub App installation this repository uses has been retired. An admin has to point it at a current installation before new work can start here.',
   'not-a-team-member': 'You do not have access to this repository.',
 };
 
@@ -117,6 +119,15 @@ export async function decideRepoAccess(
   // on `type`, such a row would skip a gate that has something real to check.
   if (!(repo.organizationName && repo.repoName)) {
     return { allowed: true, reason: 'permitted' };
+  }
+  // A retired installation stops NEW work and nothing else. Clones, pushes, CI
+  // and runs already under way keep resolving credentials through it, so
+  // retiring one cannot break work in flight — an operator marking a row
+  // decommissioned is stating an intention about what starts next, not pulling
+  // a cable. That is also why the check lives here rather than in the token
+  // resolver, which every one of those paths goes through.
+  if (repo.installation && !repo.installation.isActive) {
+    return { allowed: false, reason: 'installation-retired' };
   }
   return decideRepoLaunch(prisma, user, repo, gate, log);
 }
@@ -173,7 +184,12 @@ export function repoAccessErrorBody(refusal: RepoAccessRefusal): {
     error: {
       // A team-membership refusal keeps the code every client already handles;
       // only the GitHub-gate refusals are new.
-      code: refusal === 'not-a-team-member' ? 'FORBIDDEN' : 'REPO_ACCESS_DENIED',
+      code:
+        refusal === 'not-a-team-member'
+          ? 'FORBIDDEN'
+          : refusal === 'installation-retired'
+            ? 'INSTALLATION_RETIRED'
+            : 'REPO_ACCESS_DENIED',
       message: REPO_ACCESS_REFUSAL_MESSAGE[refusal],
       reason: refusal,
     },

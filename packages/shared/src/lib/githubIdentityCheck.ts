@@ -140,5 +140,52 @@ export async function verifyGithubLoginOwnership(
   }
 
   await clearGithubLogin(prisma, args.userId);
+  await recordTakeover(prisma, args.userId, args.login, currentOwner, account.accountId);
   return { clearedLogin: args.login, status: 'reassigned' };
+}
+
+/**
+ * Record a takeover in the governance audit log.
+ *
+ * A log line is where this was reported before, and a log line is gone by the
+ * time anyone asks. This is durable, it sits at `/govern/audit` beside every
+ * other governance change, and it survives the process — which matters for the
+ * one event in this subsystem that says somebody's recorded identity was
+ * claimed by a stranger.
+ *
+ * Written here rather than by the callers, so neither the sweep nor the launch
+ * path can detect a takeover and forget to record it. `actorId` is null: this
+ * is the system acting, not a person.
+ *
+ * Best-effort. A failure to write the audit row must not stop the clearing that
+ * already happened — losing the record is bad, leaving the login in place is
+ * worse.
+ */
+async function recordTakeover(
+  prisma: PrismaClient,
+  userId: string,
+  clearedLogin: string,
+  newOwnerAccountId: string,
+  expectedAccountId: string
+): Promise<void> {
+  try {
+    await prisma.configAuditLog.create({
+      data: {
+        action: 'UPDATE',
+        actorId: null,
+        afterJson: {
+          githubLogin: null,
+          // Both ids, so an operator can see what the name resolves to now and
+          // what it used to. Neither is a secret.
+          observedAccountId: newOwnerAccountId,
+          reason: 'login-reassigned',
+        },
+        beforeJson: { accountId: expectedAccountId, githubLogin: clearedLogin },
+        entityId: userId,
+        entityType: 'User',
+      },
+    });
+  } catch {
+    // Swallowed deliberately — see the note above.
+  }
 }

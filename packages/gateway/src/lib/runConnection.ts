@@ -52,7 +52,7 @@ export async function validateRunConnection(
   if (connectionId) {
     const connection = await prisma.connection.findUnique({
       include: {
-        installation: { select: { installationId: true } },
+        installation: { select: { installationId: true, isActive: true } },
         team: {
           include: {
             // Filtered to the acting user. It used to load every member of the

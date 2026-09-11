@@ -31,6 +31,9 @@ function repo(over: Record<string, unknown> = {}) {
   };
 }
 
+const RETIRED = { installationId: '900001', isActive: false };
+const LIVE = { installationId: '900001', isActive: true };
+
 beforeEach(() => {
   vi.clearAllMocks();
   decideRepoLaunch.mockResolvedValue({ allowed: true, reason: 'permitted' });
@@ -85,6 +88,52 @@ describe('decideRepoAccess', () => {
     expect(decideRepoLaunch).not.toHaveBeenCalled();
   });
 
+  it('refuses new work through a retired installation', async () => {
+    // Retiring is an operator statement about what starts next. Refusing here
+    // gives the flag meaning without touching the paths that keep running work
+    // alive.
+    await expect(
+      decideRepoAccess(prisma, engineer, repo({ installation: RETIRED }), ENFORCE)
+    ).resolves.toEqual({ allowed: false, reason: 'installation-retired' });
+    expect(decideRepoLaunch).not.toHaveBeenCalled();
+  });
+
+  it('refuses through a retired installation even with the gate off', async () => {
+    // The flag is operator configuration, not part of the GitHub gate, so it
+    // must not switch off with it.
+    await expect(
+      decideRepoAccess(prisma, engineer, repo({ installation: RETIRED }), OFF)
+    ).resolves.toEqual({ allowed: false, reason: 'installation-retired' });
+  });
+
+  it('allows a live installation through to the GitHub check', async () => {
+    // The discriminating case: if the retired test passed because ANY
+    // installation refused, this would fail.
+    await expect(
+      decideRepoAccess(prisma, engineer, repo({ installation: LIVE }), ENFORCE)
+    ).resolves.toEqual({ allowed: true, reason: 'permitted' });
+    expect(decideRepoLaunch).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells a non-member they are not a member, not that the installation is retired', async () => {
+    // Membership is still decided first: someone outside the team gets the
+    // answer that is actionable for them.
+    await expect(
+      decideRepoAccess(
+        prisma,
+        engineer,
+        repo({ installation: RETIRED, team: { memberships: [] } }),
+        ENFORCE
+      )
+    ).resolves.toEqual({ allowed: false, reason: 'not-a-team-member' });
+  });
+
+  it('lets a platform admin past a retired installation', async () => {
+    await expect(
+      decideRepoAccess(prisma, admin, repo({ installation: RETIRED }), ENFORCE)
+    ).resolves.toMatchObject({ allowed: true });
+  });
+
   it('exempts non-git connections from the GitHub half', async () => {
     // An MCP server or an HTTP API has no GitHub permission to ask about, and
     // asking anyway answers `repo-not-found`, which fails closed — so without
@@ -111,6 +160,12 @@ describe('decideRepoAccess', () => {
 });
 
 describe('error bodies', () => {
+  it('gives a retired installation its own code, not an access-denied one', () => {
+    // It is an operator-configuration problem, not a statement about this user;
+    // a client should be able to tell them apart.
+    expect(repoAccessErrorBody('installation-retired').error.code).toBe('INSTALLATION_RETIRED');
+  });
+
   it('keeps FORBIDDEN for a membership refusal', async () => {
     // The code these routes returned before the gate existed. A client handling
     // it should not start seeing a new code for a case whose meaning has not

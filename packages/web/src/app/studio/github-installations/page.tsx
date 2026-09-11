@@ -120,8 +120,8 @@ function EditInstallationModal({
           <Input onChange={(e) => setAccountLogin(e.target.value)} value={accountLogin} />
         </FieldWrapper>
         <FieldWrapper
-          hint="Bookkeeping only. Nothing reads this: a repository pointing at an installation marked retired still uses it, and marking one retired does not disconnect anything on GitHub or here."
-          label="Operator note"
+          hint="Retiring stops NEW runs against the repositories pointing here. Work already in flight keeps cloning, pushing and reading CI through it, and nothing is disconnected on GitHub."
+          label="Status"
         >
           <Select onChange={(e) => setIsActive(e.target.value)} value={isActive}>
             <option value="true">In use</option>
@@ -235,7 +235,7 @@ export default function StudioGithubInstallationsPage() {
                 <Th variant="compact">Account</Th>
                 <Th variant="compact">Installation ID</Th>
                 <Th variant="compact">Repositories</Th>
-                <Th variant="compact">Note</Th>
+                <Th variant="compact">Status</Th>
                 <Th variant="compact" />
               </THead>
               <tbody>

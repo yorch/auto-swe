@@ -1687,7 +1687,7 @@ async function handleRunModalSubmission(
 
   const repo = await fastify.prisma.connection.findUnique({
     include: {
-      installation: { select: { installationId: true } },
+      installation: { select: { installationId: true, isActive: true } },
       team: { select: { memberships: { where: { userId: user.id } } } },
     },
     where: { id: repoId },

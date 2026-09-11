@@ -104,7 +104,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
               // connection's id, where the viewing filter reads it.
               githubApiUrl: true,
               id: true,
-              installation: { select: { installationId: true } },
+              installation: { select: { installationId: true, isActive: true } },
               organizationName: true,
               repoName: true,
               team: {
