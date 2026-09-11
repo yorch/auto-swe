@@ -1280,7 +1280,9 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       return {
         connectionId,
         externalTicketId: 'slack-C9-1700.root',
-        payload: { kind: 'channel-task' },
+        // The builder stamps the repository into the payload as well as the
+        // column, and a repo-less general task has neither.
+        payload: { kind: 'channel-task', ...(connectionId ? { repoId: connectionId } : {}) },
         slackChannelId: 'C9',
         slackMessageTs: '1700.root',
         ...over,
@@ -1422,12 +1424,29 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(state.runInputFindManyCalls[0]?.where).toMatchObject({
-        connectionId: { not: null },
         externalTicketId: 'slack-C9-1700.root',
         payload: { equals: 'channel-task', path: ['kind'] },
         slackChannelId: 'C9',
         slackMessageTs: '1700.root',
       });
+    });
+
+    it('still names the repository after its connection row is deleted', async () => {
+      // Deleting a `Connection` nulls `connectionId` on every row that pointed
+      // at it. Read from the column alone, that would REMOVE a repository from
+      // the set — the one direction the set must never move, since requiring
+      // all of them is what makes an extra row narrowing rather than widening.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = [{ ...channelTask('conn-1'), connectionId: null }];
+      // The id now resolves to nothing, which fails closed rather than passing.
+      state.connectionRows = {};
+      state.connectionRow = null;
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.connectionLookups).toContain('conn-1');
+      expect(state.signalCalls).toHaveLength(0);
     });
 
     it('refuses when the lookup itself fails', async () => {

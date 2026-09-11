@@ -1067,7 +1067,10 @@ async function isLiveThreadSession(
  * including one planted deliberately, by asking for a code task with a
  * `repoHint` naming a repository the asker *can* reach. Requiring all of them
  * makes those rows monotonic: an extra row can only ever narrow who may steer,
- * so planting one denies the planter rather than promoting them.
+ * so planting one denies the planter rather than promoting them. That property
+ * is why the repository id is read from the payload as well as the column — see
+ * {@link taskRepoId}, where removing a row from the set is the failure being
+ * guarded against.
  */
 async function maySteerThreadTask(
   fastify: FastifyInstance,
@@ -1078,17 +1081,12 @@ async function maySteerThreadTask(
   let repoIds: string[];
   try {
     const tasks = await fastify.prisma.runInput.findMany({
-      select: { connectionId: true },
+      select: { connectionId: true, payload: true },
       // One more than the cap, so a result AT the cap is distinguishable from
       // one that was truncated. Truncation has to fail closed: the rows this
       // dropped are exactly the ones an attacker would want dropped.
       take: STEER_REPO_SCAN_LIMIT + 1,
       where: {
-        // Repo-less rows are excluded rather than ranked. A general task in the
-        // thread says nothing about the code task that may be running beside it,
-        // and reading it as "no repository to check" is how the newest-row-wins
-        // version could be switched off with one message.
-        connectionId: { not: null },
         externalTicketId: channelTaskExternalTicketId(slackChannelId, threadTs),
         payload: { equals: 'channel-task', path: ['kind'] },
         slackChannelId,
@@ -1102,7 +1100,7 @@ async function maySteerThreadTask(
       );
       return false;
     }
-    repoIds = [...new Set(tasks.map((t) => t.connectionId).filter((id) => id !== null))];
+    repoIds = [...new Set(tasks.map(taskRepoId).filter((id) => id !== null))];
   } catch (err) {
     // Fail closed. This runs only to decide whether to hand someone's text to a
     // running agent, and a lookup that did not answer cannot say they may.
@@ -1135,6 +1133,28 @@ async function maySteerThreadTask(
  * the allowance is for the rows a thread accumulates over its life.
  */
 const STEER_REPO_SCAN_LIMIT = 10;
+
+/**
+ * The repository a channel task row names, from either place it is recorded.
+ *
+ * The column is authoritative while it is set, but deleting a `Connection` sets
+ * it to null on every row that pointed at it — so reading the column alone would
+ * let a repository be *removed* from the set, which is the one thing that must
+ * not be possible: the whole reason the set is required rather than ranked is
+ * that a row can only narrow it. The payload copy is written at the same moment
+ * and no cascade touches it, and the id it holds now resolves to nothing, which
+ * the decision fails closed on rather than waving through.
+ *
+ * Null means a repo-less general task, which names no repository in either
+ * place and has nothing to check.
+ */
+function taskRepoId(task: { connectionId: string | null; payload: unknown }): string | null {
+  if (task.connectionId) {
+    return task.connectionId;
+  }
+  const recorded = (task.payload as { repoId?: unknown } | null)?.repoId;
+  return typeof recorded === 'string' && recorded.length > 0 ? recorded : null;
+}
 
 /**
  * Attempt to steer an in-flight channel task run bound to this thread. The task
