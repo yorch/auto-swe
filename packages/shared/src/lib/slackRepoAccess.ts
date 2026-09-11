@@ -23,12 +23,16 @@ import { type RepoAccessGate, resolveRepoAccessGateOrLastKnown } from './repoAcc
 /**
  * Why a Slack user was refused.
  *
- * `no-linked-account` and `gate-unreadable` are Slack-specific and have no
- * equivalent in {@link RepoAccessRefusal}: the first is "we cannot tell who this
- * is", the second "we cannot tell what the policy is". Both are distinct from
- * every reason that describes a user we successfully identified.
+ * The three Slack-specific ones have no equivalent in {@link RepoAccessRefusal},
+ * and each says a different thing could not be established: who this is, what
+ * the policy is, and what repository was being asked about. All three are
+ * distinct from every reason that describes a user we successfully identified.
  */
-export type SlackAccessRefusal = RepoAccessRefusal | 'no-linked-account' | 'gate-unreadable';
+export type SlackAccessRefusal =
+  | RepoAccessRefusal
+  | 'no-linked-account'
+  | 'gate-unreadable'
+  | 'repo-unreadable';
 
 export type SlackRepoAccessVerdict =
   | { allowed: true }
@@ -101,11 +105,13 @@ export async function decideSlackRepoAccessWithGate(
     },
     where: { id: connectionId },
   });
-  // No such row is not a refusal. The caller named a connection that does not
-  // exist, which its own not-found handling answers better than an access
-  // decision can.
+  // Fail closed. There is no access to grant to a repository that could not be
+  // read, and answering "allowed" would assert something nothing checked —
+  // the same reasoning `decideRepoLaunch` states as "an unanswered question is
+  // not a yes". Both callers read the row moments earlier, so in practice this
+  // is a delete racing the decision rather than an ordinary not-found.
   if (!repo) {
-    return ALLOWED;
+    return { allowed: false, reason: 'repo-unreadable' };
   }
 
   const decision = await decideRepoAccess(

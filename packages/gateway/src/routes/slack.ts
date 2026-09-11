@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { Prisma } from '@auto-swe/shared';
+import type { Prisma, Role } from '@auto-swe/shared';
 import {
   CHANNEL_TASK_STEER_SIGNAL,
   channelTaskExternalTicketId,
@@ -133,7 +133,7 @@ interface SlackInteractivePayload {
  */
 async function canSeeRun(
   fastify: FastifyInstance,
-  user: { id: string; role: string },
+  user: { id: string; role: Role },
   workflowId: string
 ): Promise<boolean> {
   // Slack routes authenticate by request signature rather than `requireAuth`,
@@ -1334,7 +1334,7 @@ interface HitlButtonValue {
 async function handleHitlResolveAction(
   fastify: FastifyInstance,
   request: FastifyRequest,
-  user: { id: string; role: string },
+  user: { id: string; role: Role },
   payload: SlackInteractivePayload
 ): Promise<unknown> {
   let parsed: HitlButtonValue = {};
@@ -1482,7 +1482,7 @@ interface SimpleTemplateRow {
 
 async function listVisibleTemplates(
   fastify: FastifyInstance,
-  user: { id: string; role: string }
+  user: { id: string; role: Role }
 ): Promise<SimpleTemplateRow[]> {
   const where =
     user.role === 'ADMIN'
@@ -1514,7 +1514,7 @@ async function listVisibleTemplates(
 
 async function findTemplateByName(
   fastify: FastifyInstance,
-  user: { id: string; role: string },
+  user: { id: string; role: Role },
   name: string
 ): Promise<
   | (SimpleTemplateRow & {
@@ -1604,7 +1604,7 @@ function buildLinkAccountModalView(): unknown {
 
 async function buildRunModalView(
   fastify: FastifyInstance,
-  user: { id: string; role: string },
+  user: { id: string; role: Role },
   channelId: string,
   initialDescription: string
 ): Promise<{ ok: true; view: unknown } | { ok: false; error: string }> {
@@ -1725,7 +1725,7 @@ async function buildRunModalView(
 
 async function handleRunModalSubmission(
   fastify: FastifyInstance,
-  user: { id: string; role: string },
+  user: { id: string; role: Role },
   payload: SlackInteractivePayload
 ): Promise<unknown> {
   const values = payload.view?.state?.values ?? {};

@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
 import {
   CHANNEL_TASK_TEMPLATE_NAME,
   channelTaskExternalTicketId,
@@ -377,21 +378,37 @@ async function refuseChannelCodeTask(
   requesterSlackId: string,
   connectionId: string
 ): Promise<ChannelTaskRefusal | null> {
-  const verdict = await decideSlackRepoAccess(
-    prisma,
-    requesterSlackId,
-    connectionId,
-    // Adapter, not a cast. Temporal's logger takes (message, meta) and the
-    // gateway's takes (obj, message) — `AccessLog` mirrors the latter, so the
-    // worker flips them here. Advisory mode logs what it would refuse, and that
-    // is the whole signal an operator watches during a rollout.
-    { warn: (obj, msg) => log.warn(msg ?? 'repo access', obj as Record<string, unknown>) }
-  );
+  const verdict = await decideSlackRepoAccess(prisma, requesterSlackId, connectionId, ADVISORY_LOG);
   if (verdict.allowed) {
     return null;
   }
   return { message: SLACK_TASK_REFUSAL_MESSAGE[verdict.reason], refused: true };
 }
+
+/**
+ * Where the decision's advisory warnings go in the worker.
+ *
+ * An adapter, not a cast. Temporal's logger takes `(message, meta)` and the
+ * gateway's takes `(obj, message)` — `AccessLog` mirrors the latter, so this
+ * flips them. Advisory mode logs every launch it *would* refuse, and that is the
+ * whole signal an operator watches during a rollout.
+ *
+ * Wrapped because it is reached from inside a decision whose rejection nobody
+ * distinguishes from a failed launch: `launchTask`'s catch-all would swallow it
+ * and post the assistant's "on it" acknowledgement while nothing had started.
+ * A line of telemetry must never be the reason a task does not run, and this one
+ * fires only in advisory mode — precisely the mode an operator is sitting in
+ * while deciding whether the gate is safe to enforce.
+ */
+const ADVISORY_LOG: AccessLog = {
+  warn: (obj, msg) => {
+    try {
+      log.warn(msg ?? 'repo access', obj as Record<string, unknown>);
+    } catch {
+      // Nothing to escalate to: the logger is the thing that failed.
+    }
+  },
+};
 
 /**
  * What the thread is told about each refusal.
@@ -413,6 +430,8 @@ const SLACK_TASK_REFUSAL_MESSAGE: Record<SlackAccessRefusal, string> = {
     'I cannot start a code task right now — the access policy could not be read. Try again shortly.',
   'no-linked-account':
     'I can answer questions here, but starting a code task needs your Slack account linked to auto-swe — it pushes a branch and opens a pull request under your name. Link it in Settings, then ask me again.',
+  'repo-unreadable':
+    'I cannot start a code task right now — that repository could not be read. Try again shortly.',
 };
 
 function prefixWithRefusal<K extends string>(messages: Record<K, string>): Record<K, string> {

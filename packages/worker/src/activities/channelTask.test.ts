@@ -29,27 +29,39 @@ const decide = vi.fn(async () => ({ allowed: true, reason: 'permitted' }));
 
 // Mocked at the gate + decision boundary, NOT at `decideSlackRepoAccess` — so
 // these tests run the real shared helper and would notice it being wired up
-// wrongly. Only `resolveRepoAccessGateOrLastKnown` is stubbed, because the raw
-// resolver must not be reachable from here: reading the gate through the
-// unwrapped one is the bug this file is guarding against.
-vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
+// wrongly. The rest of the module comes through: `repoAccessDecision` builds its
+// refusal messages from `LAUNCH_REFUSAL_MESSAGE` at load time, and a fake there
+// would be the same drifting second copy.
+//
+// The raw resolver is replaced with a throw rather than left alone. Reading the
+// gate through the unwrapped one is the bug this file guards against, and a
+// working stub would let it pass silently.
+vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoAccessGate')>()),
+  resolveRepoAccessGate: () => {
+    throw new Error('read the gate through resolveRepoAccessGateOrLastKnown, not the raw resolver');
+  },
   resolveRepoAccessGateOrLastKnown: () => resolveGate(),
 }));
 
-vi.mock('@auto-swe/shared/lib/repoAccessDecision', () => ({
+// Only the decision is stubbed. The refusal messages come through unchanged,
+// because a hand-copied map is a second definition that drifts: a new
+// `RepoAccessRefusal` reason would reach the thread as `undefined` while the
+// suite stayed green against the copy.
+vi.mock('@auto-swe/shared/lib/repoAccessDecision', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoAccessDecision')>()),
   decideRepoAccess: (...a: unknown[]) => decide(...(a as [])),
-  REPO_ACCESS_REFUSAL_MESSAGE: {
-    'installation-retired': 'the installation is retired',
-    'insufficient-permission': 'GitHub says you lack write access',
-    'lookup-unavailable': 'access could not be confirmed',
-    'no-github-identity': 'link your GitHub account',
-    'not-a-team-member': 'you are not on that team',
-  },
 }));
 
 vi.mock('./templates.js', () => ({
   resolveTemplateForRepo: vi.fn(),
 }));
+
+// Temporal's `log` reads `Context.current()`, which throws outside a running
+// activity — so it has to be stubbed for the process to survive, and stubbing it
+// is also what lets the advisory adapter's argument order be asserted.
+const warn = vi.fn();
+vi.mock('@temporalio/activity', () => ({ log: { warn: (...a: unknown[]) => warn(...a) } }));
 
 import { prisma } from '@auto-swe/shared/db';
 import {
@@ -72,6 +84,9 @@ const resolveTemplate = vi.mocked(resolveTemplateForRepo);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` clears calls, not implementations — so a test that made the
+  // logger throw would leave it throwing for every test after it.
+  warn.mockReset();
   findTemplate.mockResolvedValue({ activeVersion: 1, id: 'tmpl-channel-task' } as never);
   createRunInput.mockResolvedValue({ id: 'runinput-1' } as never);
   resolveTemplate.mockResolvedValue({ templateId: 'tmpl-swe', templateVersion: 3 });
@@ -280,6 +295,10 @@ describe('createChannelCodeTaskRun', () => {
       const result = await createChannelCodeTaskRun(INPUT);
       expect(isChannelTaskRefusal(result)).toBe(false);
       expect(decide).not.toHaveBeenCalled();
+      // The load-bearing half. Without it this test passes just as well when the
+      // check has been deleted outright, which is the one change it exists to
+      // notice — "nothing happened" is what both look like from the outside.
+      expect(resolveGate).toHaveBeenCalled();
     });
 
     it('refuses an unlinked Slack user once the gate is on', async () => {
@@ -301,7 +320,10 @@ describe('createChannelCodeTaskRun', () => {
 
       const result = await createChannelCodeTaskRun(INPUT);
       expect(isChannelTaskRefusal(result)).toBe(true);
-      expect((result as { message: string }).message).toContain('lack write access');
+      // The real message, from the shared map — not a fixture's paraphrase.
+      expect((result as { message: string }).message).toContain(
+        'GitHub reports that you do not have write access'
+      );
       expect(createRunInput).not.toHaveBeenCalled();
     });
 
@@ -341,6 +363,55 @@ describe('createChannelCodeTaskRun', () => {
       expect(isChannelTaskRefusal(result)).toBe(true);
       expect((result as { message: string }).message).toContain('Try again shortly');
       expect(createRunInput).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the repository row cannot be read', async () => {
+      // An unanswered question is not a yes. The row was read moments earlier by
+      // `resolveChannelRepo`, so this is a delete racing the decision — but
+      // answering "allowed" would assert something nothing checked.
+      resolveGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      findConnection.mockResolvedValue(null as never);
+
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(isChannelTaskRefusal(result)).toBe(true);
+      expect(createRunInput).not.toHaveBeenCalled();
+    });
+
+    it('flips the argument order for Temporal when the decision logs', async () => {
+      // Advisory mode's whole output is this log line, and the two loggers take
+      // their arguments in opposite orders — so an adapter that passes them
+      // straight through logs the metadata as the message and loses the rest.
+      resolveGate.mockResolvedValue({ mode: 'advisory', staleAfterHours: 72 });
+      decide.mockImplementation(async (...args: unknown[]) => {
+        (args[4] as { warn: (obj: unknown, msg?: string) => void }).warn(
+          { repoId: 'c-1' },
+          'would refuse'
+        );
+        return { allowed: true, reason: 'advisory-would-refuse' };
+      });
+
+      await createChannelCodeTaskRun(INPUT);
+
+      expect(warn).toHaveBeenCalledWith('would refuse', { repoId: 'c-1' });
+    });
+
+    it('launches anyway when the advisory log throws', async () => {
+      // A line of telemetry must never be the reason a task does not run. The
+      // rejection would surface as a failed launch and the assistant would post
+      // its "on it" ack with nothing behind it — in advisory mode, which is the
+      // mode an operator sits in while deciding whether to enforce.
+      resolveGate.mockResolvedValue({ mode: 'advisory', staleAfterHours: 72 });
+      warn.mockImplementation(() => {
+        throw new Error('no activity context');
+      });
+      decide.mockImplementation(async (...args: unknown[]) => {
+        (args[4] as { warn: (obj: unknown, msg?: string) => void }).warn({}, 'would refuse');
+        return { allowed: true, reason: 'advisory-would-refuse' };
+      });
+
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(isChannelTaskRefusal(result)).toBe(false);
+      expect(createRunInput).toHaveBeenCalled();
     });
 
     it('resolves the requester and the decision against the SAME set of users', async () => {
