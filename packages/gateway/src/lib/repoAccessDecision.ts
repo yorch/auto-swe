@@ -79,6 +79,41 @@ export const REPO_ACCESS_REFUSAL_MESSAGE: Record<RepoAccessRefusal, string> = {
 };
 
 /**
+ * Has the installation this repository reaches been retired?
+ *
+ * Separate from {@link decideRepoAccess} because it takes no user: retirement
+ * is a statement about the platform's configuration, not about who is asking.
+ * The launch paths that have no authenticated user — the template webhook and
+ * the issue-tracker auto-trigger — are exempt from the GitHub gate for want of
+ * an identity, and that exemption must not carry them past this too.
+ *
+ * A retired installation stops NEW work and nothing else. Clones, pushes, CI
+ * reads and runs already under way keep resolving credentials through it, so
+ * retiring one cannot break work in flight — an operator marking a row
+ * decommissioned is stating an intention about what starts next, not pulling a
+ * cable. That is why this is consulted at the decision, not in the token
+ * resolver every one of those paths shares.
+ */
+export function isInstallationRetired(repo: {
+  installation?: { isActive: boolean } | null;
+}): boolean {
+  // Optional chaining, not `!== null`. A relation that was not selected arrives
+  // as `undefined`, and `undefined !== null` is true — so the stricter-looking
+  // comparison read a missing installation as a retired one and then threw
+  // reading `.isActive` off it. The type requires the field at every production
+  // call site, which is exactly why nothing caught this until a test fixture
+  // left it out.
+  return repo.installation?.isActive === false;
+}
+
+/** The error body for a refusal that has no user to describe. */
+export function installationRetiredErrorBody(): {
+  error: { code: string; message: string; reason: string };
+} {
+  return repoAccessErrorBody('installation-retired');
+}
+
+/**
  * May `user` start a run against `repo`?
  *
  * Team membership first, then GitHub. The order matters for what a refusal
@@ -97,13 +132,25 @@ export async function decideRepoAccess(
   gate: RepoAccessGate,
   log?: FastifyBaseLogger
 ): Promise<RepoAccessVerdict> {
-  // Platform ADMINs bypass both halves, consistent with every other check in
-  // the gateway.
+  // Membership first, and only for non-admins. Someone outside the team gets
+  // the answer that is actionable for them, rather than being told about an
+  // installation they have no stake in.
+  if (user.role !== 'ADMIN' && !repo.team.memberships.some((m) => m.userId === user.sub)) {
+    return { allowed: false, reason: 'not-a-team-member' };
+  }
+  // Then the installation, for EVERYONE — admins included, and ahead of the
+  // no-coordinates exemption below.
+  //
+  // Retirement is operator configuration, not a statement about the person
+  // asking, so neither the admin bypass nor an identity-shaped exemption should
+  // skip it. An admin who retired an installation and then launched through it
+  // anyway would get GitHub's failure instead of ours, which is a worse way to
+  // learn the same thing.
+  if (isInstallationRetired(repo)) {
+    return { allowed: false, reason: 'installation-retired' };
+  }
   if (user.role === 'ADMIN') {
     return { allowed: true, reason: 'admin' };
-  }
-  if (!repo.team.memberships.some((m) => m.userId === user.sub)) {
-    return { allowed: false, reason: 'not-a-team-member' };
   }
   // Exempt only a row with no repository to ask about. An MCP server or an
   // HTTP API is a `Connection` too, and asking GitHub about one answers
@@ -119,15 +166,6 @@ export async function decideRepoAccess(
   // on `type`, such a row would skip a gate that has something real to check.
   if (!(repo.organizationName && repo.repoName)) {
     return { allowed: true, reason: 'permitted' };
-  }
-  // A retired installation stops NEW work and nothing else. Clones, pushes, CI
-  // and runs already under way keep resolving credentials through it, so
-  // retiring one cannot break work in flight — an operator marking a row
-  // decommissioned is stating an intention about what starts next, not pulling
-  // a cable. That is also why the check lives here rather than in the token
-  // resolver, which every one of those paths goes through.
-  if (repo.installation && !repo.installation.isActive) {
-    return { allowed: false, reason: 'installation-retired' };
   }
   return decideRepoLaunch(prisma, user, repo, gate, log);
 }

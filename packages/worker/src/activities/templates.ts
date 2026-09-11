@@ -34,6 +34,39 @@ export interface CreateWorkflowRunInput {
 }
 
 /**
+ * The refusal message when a run's repository points at a retired installation,
+ * or null when it does not.
+ *
+ * Resolves the connection through the work request, which is the one handle
+ * every caller of this activity supplies. A run with no work request, or one
+ * that targets no connection, has no installation to be retired.
+ */
+async function installationRetiredForRun(
+  workRequestId: string | undefined
+): Promise<string | null> {
+  if (!workRequestId) {
+    return null;
+  }
+  const runInput = await prisma.runInput.findUnique({
+    select: {
+      connection: {
+        select: {
+          installation: { select: { isActive: true } },
+          organizationName: true,
+          repoName: true,
+        },
+      },
+    },
+    where: { id: workRequestId },
+  });
+  const connection = runInput?.connection;
+  if (!connection?.installation || connection.installation.isActive) {
+    return null;
+  }
+  return `the GitHub App installation for ${connection.organizationName}/${connection.repoName} has been retired; point the repository at a current installation before starting new work`;
+}
+
+/**
  * Creates the WorkflowRun row (used by RunnableWorkflow on first tick) and
  * returns its id + the spec snapshot. The spec is snapshotted on the row so
  * later edits to the template don't affect this run.
@@ -44,6 +77,28 @@ export async function createWorkflowRun(
   | { runId: string; spec: WorkflowSpec; pinnedSettings?: Record<string, unknown> }
   | { error: string }
 > {
+  // Before anything else: has the installation this run's repository reaches
+  // been retired?
+  //
+  // Checked here, inside the run's FIRST activity, rather than added as a new
+  // activity call — the workflow's command sequence is replayed against
+  // committed history fixtures, and an extra call would break every one of
+  // them. An activity's own internals are free to change.
+  //
+  // The gateway refuses a retired installation at every launch path it owns,
+  // but not every run starts at the gateway. A scheduled work request's
+  // Temporal Schedule starts this workflow directly, so a schedule created
+  // before retirement would otherwise keep pushing indefinitely — the standing
+  // exemption for a cron fire is "there is no user to check", and this check
+  // reads no user. The same is true of the channel assistant's code task.
+  //
+  // This is the run's start, so nothing already under way is affected, which is
+  // what "retirement stops new work" was supposed to mean everywhere.
+  const retired = await installationRetiredForRun(input.workRequestId);
+  if (retired) {
+    return { error: retired };
+  }
+
   const version = await prisma.workflowTemplateVersion.findUnique({
     include: {
       template: { select: { estimatedHumanTimeSavedMinutes: true, workspaceProvider: true } },

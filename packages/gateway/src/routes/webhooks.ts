@@ -259,6 +259,7 @@ async function aggregateCheckRuns(
   };
 }
 
+import { isInstallationRetired } from '../lib/repoAccessDecision.js';
 import { refreshInvalidatedAccess } from '../lib/repoAccessRefresh.js';
 import { classifyAccessEvent } from '../lib/repoAccessWebhook.js';
 
@@ -949,6 +950,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         () =>
           fastify.prisma.connection.findMany({
             include: {
+              installation: { select: { isActive: true } },
               team: {
                 select: { organization: { select: { monthlyBudgetUsdCents: true } }, orgId: true },
               },
@@ -968,6 +970,17 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(200).send({ reason: 'ambiguous target repository', skipped: true });
       }
       const defaultRepo = candidateRepos[0];
+      // This path starts a real run — a push and a pull request — without an
+      // authenticated user, so it is exempt from the GitHub gate for want of an
+      // identity. Retirement is not about identity, so that exemption does not
+      // reach it.
+      if (isInstallationRetired(defaultRepo)) {
+        fastify.log.warn(
+          { repoId: defaultRepo.id, ticketId },
+          'Jira auto-trigger skipped: the GitHub App installation this repository uses has been retired'
+        );
+        return reply.code(200).send({ reason: 'installation retired', skipped: true });
+      }
       // Team default first, then the global default — the same resolution (and
       // A/B bucketing) an authenticated submission for this repo would get,
       // instead of whichever team's default row Postgres returns first.

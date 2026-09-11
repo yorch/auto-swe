@@ -128,10 +128,26 @@ describe('decideRepoAccess', () => {
     ).resolves.toEqual({ allowed: false, reason: 'not-a-team-member' });
   });
 
-  it('lets a platform admin past a retired installation', async () => {
+  it('subjects a platform admin to a retired installation too', async () => {
+    // Retirement is operator configuration, not a statement about the person
+    // asking, so the admin bypass does not reach it. An admin who retired an
+    // installation and then launched through it anyway would get GitHub's
+    // failure instead of ours, which is a worse way to learn the same thing.
     await expect(
       decideRepoAccess(prisma, admin, repo({ installation: RETIRED }), ENFORCE)
-    ).resolves.toMatchObject({ allowed: true });
+    ).resolves.toEqual({ allowed: false, reason: 'installation-retired' });
+  });
+
+  it('still lets a platform admin past everything else', async () => {
+    // The discriminating case: the admin bypass is narrowed, not removed.
+    await expect(
+      decideRepoAccess(
+        prisma,
+        admin,
+        repo({ installation: LIVE, team: { memberships: [] } }),
+        ENFORCE
+      )
+    ).resolves.toEqual({ allowed: true, reason: 'admin' });
   });
 
   it('exempts non-git connections from the GitHub half', async () => {
