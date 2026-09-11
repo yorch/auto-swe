@@ -7,6 +7,14 @@ The two conditions are ANDed, never substituted. A GitHub permission can only ev
 away: nobody reaches a repository whose team they do not belong to, whatever GitHub says. Team
 scoping still carries budgets, templates, agent configuration, and the tenant guard.
 
+Both conditions are checked in one place, and which place depends on what the caller needs to be
+told. A **listing** filters in the query, through `reachableConnections`. A **route acting on named
+repositories** loads them first and calls `decideRepoAccess`, so a refusal can say which
+repositories were refused and why — filtering there would turn a legitimate mistake into "no such
+repository". Neither form can check membership without also asking GitHub, which is the point:
+they were separate checks once, and six launch paths shipped with the first and without the
+second.
+
 ---
 
 ## 1. Why the gate exists
@@ -88,7 +96,17 @@ Rows are refreshed three ways.
 |---|---|---|
 | Live lookup at launch | the one pair being launched | immediate |
 | Webhook (`POST /api/v1/webhooks/access`) | collaborator, team, org-membership and repository events | seconds |
-| Scheduled sweep | every reachable pair | one sweep interval |
+| Scheduled sweep | every reachable pair, plus login-ownership verification | one sweep interval |
+
+All three writers confirm the stored login still resolves to the account id it was recorded for
+before using it — the sweep, the launch path and the webhook refresh. A check only one of the three
+performed would not be a check: the other two would keep re-populating rows under a login that had
+changed hands, between sweeps. The sweep and the webhook refresh verify once per user rather than
+once per pair. GitHub releases a username on rename and lets anyone
+re-register it, so a login recorded months ago can end up naming a different person — and the
+projection would then record that person's access as this user's. The numeric account id cannot
+change, which is what makes the check possible; a plain rename still resolves to the same id and is
+left alone.
 
 The sweep's candidate set is each repository's own team members, not every user times every
 repository, so its cost tracks real reachability rather than deployment size.
@@ -114,7 +132,9 @@ Multiple GitHub organizations are reached through multiple App installations. `G
 rows name them and `connections.installation_id` points a repository at one; null means the
 singleton `GitHubConfig.appInstallationId`, so an existing single-org deployment needs no change.
 
-Installations are managed at `/api/v1/admin/github-installations` (list, create, update, delete),
+Installations are managed at `/studio/github-installations` in the dashboard, or over the API at
+`/api/v1/platform/github-installations` — which the dashboard itself calls, and which is also
+registered under `/api/v1/admin` like the other admin routes (list, create, update, delete),
 and a repository is pointed at one through `installationId` on the repository create and update
 routes. Both are ADMIN-only: the installation decides which GitHub account answers permission
 questions about a repository, and every other credential-shaped knob in this codebase is
@@ -130,9 +150,13 @@ rather than surfacing a foreign-key error.
    `GitHubInstallation` rows if repositories span more than one GitHub organization.
 3. Ask users to link GitHub, then run the backfill script for accounts linked earlier.
 4. Enable `repoAccess.syncEnabled` and let one sweep populate `repo_access`.
-5. Set `repoAccess.mode` to `advisory`. Watch the gateway logs for
+5. Leave `repoAccess.syncEnabled` on. Enforcing with the sweep disabled filters every listing
+   against a projection nothing refreshes and never re-verifies a stored GitHub login; the gateway
+   warns when it sees that pairing, because the two knobs default opposite ways and it is easy to
+   reach by accident.
+6. Set `repoAccess.mode` to `advisory`. Watch the gateway logs for
    `repoAccess advisory: this launch would be refused under enforcement`.
-6. When that log is quiet, set `repoAccess.mode` to `enforce`.
+7. When that log is quiet, set `repoAccess.mode` to `enforce`.
 
 Add `POST /api/v1/webhooks/access` as a GitHub webhook delivering `member`, `team`, `membership`,
 `organization`, and `repository` events, signed with the same secret as the other webhooks.
@@ -198,10 +222,11 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
 - **A user with no linked GitHub account cannot launch under enforcement.** There is no identity to
   ask GitHub about. They can still be found in advisory mode, which is what the advisory period is
   for, but under enforcement the refusal is absolute.
-- **A GitHub username change is not detected.** The login is captured at link time and refreshed
-  only when the account is linked again. GitHub usernames are reusable after release, so a stale
-  login could in principle name a different person. Re-linking fixes it; nothing detects it
-  automatically.
+- **A re-registered GitHub username is detected on the next sweep, not immediately.** The sweep
+  confirms each stored login still resolves to the GitHub account id it was recorded for, and
+  clears it when it does not. A plain rename is harmless and is deliberately left alone, because
+  GitHub redirects the old name to the same account id. The exposure window is one sweep interval,
+  and a deployment with the sweep disabled has no detection at all.
 - **Revocation is not instant.** Webhooks make it seconds, but a missed or undelivered webhook
   leaves the previous answer in place until the next sweep, and a paused sweep extends that to
   `repoAccess.viewStaleAfterHours`. The launch path is unaffected, because it asks live.
@@ -216,6 +241,9 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   attributed to the requester. Delegating execution to a user identity would need per-user token
   refresh and a service identity for webhook- and schedule-triggered runs, which have no user at
   all.
+- **An installation's in-use/retired mark is bookkeeping.** Nothing reads it: a repository
+  pointing at an installation marked retired still uses it, and marking one retired disconnects
+  nothing. It records an operator's intent so a stale row is recognisable, and the page says so.
 - **Team membership remains the outer bound.** The gate can only remove access. A user with GitHub
   admin rights on a repository still sees nothing unless they are a member of the owning team.
 - **Non-git connections are exempt, necessarily.** A `Connection` is also how an MCP server and
@@ -226,13 +254,7 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
 - **The gate argument is required but nullable, on purpose.** Optional, it defaulted to "no gate",
   so a call site that forgot it compiled and ran ungated — which is how the Slack routes and the
   human-step resolver ended up outside the gate. Required, forgetting is a compile error and
-  passing `undefined` is a decision someone made. This does not reach the JavaScript-side checks
-  below.
-- **Some repository-access decisions are made in JavaScript, not in a `where` clause.** Roughly a
-  dozen call sites select membership rows and test the array length in code rather than filtering
-  the query. Extending the shared predicate does not reach those, so each had to be gated by hand
-  — which is exactly the shape of mistake that produced the gaps this change had to fix twice.
-  Converting them to predicates would make the next such change safe by construction.
+  passing `undefined` is a decision someone made.
 - **Editing or deleting a schedule is not gated.** Neither causes a push, and refusing a delete
   would strand a schedule its owner can no longer stop. A schedule created before access was
   revoked keeps firing until someone deletes it — the gate is checked when it is created and when

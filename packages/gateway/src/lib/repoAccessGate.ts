@@ -25,7 +25,11 @@ import { permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import type { FastifyBaseLogger } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
-import { githubLoginFor, lookupRepoPermission, type PermissionRepo } from './repoPermission.js';
+import {
+  lookupRepoPermission,
+  type PermissionRepo,
+  verifiedGithubLoginFor,
+} from './repoPermission.js';
 
 export type RepoAccessMode = 'off' | 'advisory' | 'enforce';
 
@@ -53,28 +57,121 @@ export interface RepoAccessGate {
  */
 let lastKnownGate: RepoAccessGate | null = null;
 
-/** Drop the remembered gate. Exported for tests. */
+/** Drop the remembered gate and any failure backoff. Exported for tests. */
 export function resetRepoAccessGateCache(): void {
   lastKnownGate = null;
+  lastFailedReadAt = 0;
 }
 
 export async function resolveRepoAccessGate(): Promise<RepoAccessGate> {
-  const cfg = await resolveSettings(['repoAccess.mode', 'repoAccess.viewStaleAfterHours'], {});
+  const cfg = await resolveSettings(
+    ['repoAccess.mode', 'repoAccess.syncEnabled', 'repoAccess.viewStaleAfterHours'],
+    {}
+  );
+  const mode = cfg['repoAccess.mode'] as RepoAccessMode;
+  warnIfEnforcingWithoutSync(mode, cfg['repoAccess.syncEnabled']);
   lastKnownGate = {
-    mode: cfg['repoAccess.mode'] as RepoAccessMode,
+    mode,
     staleAfterHours: cfg['repoAccess.viewStaleAfterHours'],
   };
   return lastKnownGate;
 }
 
+/** So the warning below is a line an operator sees, not one per request. */
+let warnedAboutMissingSweep = false;
+
+/**
+ * Enforcing with the sweep disabled is a configuration the settings cannot
+ * forbid and an operator can reach by accident, because the two knobs default
+ * opposite ways: `repoAccess.mode` is the one they came to change, and
+ * `repoAccess.syncEnabled` is off.
+ *
+ * In that pairing every listing is filtered against a projection nothing
+ * refreshes, and no stored GitHub login is ever re-verified — so a username
+ * that changes hands is never detected. Enforcement looks like it is working
+ * while half of it is not running.
+ */
+function warnIfEnforcingWithoutSync(mode: RepoAccessMode, syncEnabled: boolean): void {
+  if (mode !== 'enforce' || syncEnabled || warnedAboutMissingSweep) {
+    warnedAboutMissingSweep = mode === 'enforce' && !syncEnabled;
+    return;
+  }
+  warnedAboutMissingSweep = true;
+  console.warn(
+    '[repoAccess] mode is `enforce` but `repoAccess.syncEnabled` is false. Listings are filtered against a projection nothing refreshes, and stored GitHub logins are never re-verified. Enable the sweep.'
+  );
+}
+
+/**
+ * How long a failed read suppresses the next attempt.
+ *
+ * The settings resolver caches successes, not failures, so without this every
+ * authenticated request retries a store that is down — and each retry waits out
+ * a connection timeout before falling back. That turns one unreachable
+ * dependency into a slow response on every request in the process, which is a
+ * worse outcome than the stale-config window this buys.
+ *
+ * Short enough that recovery is quick; long enough that a burst of requests
+ * costs one attempt rather than one each.
+ */
+const FAILED_READ_BACKOFF_MS = 5_000;
+
+/**
+ * How long the gate read may take before the request stops waiting for it.
+ *
+ * This runs in `requireAuth`, on every authenticated request. A settings read is
+ * a cached memory lookup in the steady state, so any real wait means the config
+ * store is unreachable — and an unreachable dependency must not add its
+ * connection timeout to every request in the process. Generous for the work
+ * being done, short enough that nothing waits on it noticeably.
+ */
+const READ_TIMEOUT_MS = 2_000;
+
+let lastFailedReadAt = 0;
+
+/** A sentinel that is not a `RepoAccessGate`, so the race is unambiguous. */
+const TIMED_OUT = Symbol('repoAccessGate.timeout');
+
+function withTimeout(p: Promise<RepoAccessGate>): Promise<RepoAccessGate | typeof TIMED_OUT> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(TIMED_OUT), READ_TIMEOUT_MS);
+    // `unref` so a pending timer cannot hold the process open — this runs on
+    // every request, and one that outlives its request must not keep the
+    // gateway from shutting down.
+    timer.unref?.();
+    p.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 /**
  * Resolve the gate, falling back to the last value this process read rather
  * than to `off`. Returns null only when the config has never been readable.
+ *
+ * A recent failure short-circuits rather than retrying, so a config store that
+ * is down cannot add its timeout to every request.
  */
 export async function resolveRepoAccessGateOrLastKnown(): Promise<RepoAccessGate | null> {
+  if (Date.now() - lastFailedReadAt < FAILED_READ_BACKOFF_MS) {
+    return lastKnownGate;
+  }
   try {
-    return await resolveRepoAccessGate();
+    const result = await withTimeout(resolveRepoAccessGate());
+    if (result === TIMED_OUT) {
+      lastFailedReadAt = Date.now();
+      return lastKnownGate;
+    }
+    return result;
   } catch {
+    lastFailedReadAt = Date.now();
     return lastKnownGate;
   }
 }
@@ -145,7 +242,10 @@ async function launchRefusal(
   user: JwtPayload,
   repo: PermissionRepo & { id: string }
 ): Promise<LaunchRefusal | null> {
-  const login = await githubLoginFor(prisma, user.sub);
+  // Verified, not merely read. This is the highest-stakes moment the gate has,
+  // and it is the same argument that justified asking GitHub live here rather
+  // than reading the projection: one extra round-trip on a low-volume path.
+  const login = await verifiedGithubLoginFor(prisma, user.sub);
   if (!login) {
     return 'no-github-identity';
   }

@@ -131,6 +131,20 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
             error: { code: 'INSTALLATION_NOT_FOUND', message: 'Installation not found' },
           });
         }
+        // A repository repointed at this installation between the check above
+        // and this delete. `ON DELETE RESTRICT` refuses, which is the right
+        // outcome — but without this branch the foreign-key error became a 500,
+        // so the one case the pre-check exists to explain showed a generic
+        // failure instead.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+          return reply.status(409).send({
+            error: {
+              code: 'INSTALLATION_IN_USE',
+              message:
+                'A repository was pointed at this installation while it was being deleted. Repoint it and try again.',
+            },
+          });
+        }
         throw err;
       }
     }

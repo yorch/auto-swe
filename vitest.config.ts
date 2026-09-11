@@ -44,6 +44,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubPermission.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/githubIdentityCheck',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubIdentityCheck.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/repoAccessProjection',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoAccessProjection.ts'),
       },

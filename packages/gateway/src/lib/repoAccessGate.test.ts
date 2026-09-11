@@ -8,6 +8,10 @@ const recordRepoPermission = vi.fn();
 vi.mock('./repoPermission.js', () => ({
   githubLoginFor: (...a: unknown[]) => githubLoginFor(...a),
   lookupRepoPermission: (...a: unknown[]) => lookupRepoPermission(...a),
+  // The launch path resolves a VERIFIED login now: reading the stored one was
+  // enough for the sweep to be the only writer that checks ownership, which
+  // meant this path kept re-populating rows under a re-registered login.
+  verifiedGithubLoginFor: (...a: unknown[]) => githubLoginFor(...a),
 }));
 
 vi.mock('@auto-swe/shared/lib/repoAccessProjection', () => ({
@@ -91,7 +95,10 @@ describe('decideRepoLaunch', () => {
     }
   });
 
-  it('refuses a user with no GitHub identity without calling GitHub', async () => {
+  it('refuses a user whose login is missing or no longer theirs', async () => {
+    // `verifiedGithubLoginFor` returns null for both, having already cleared a
+    // login that turned out to name somebody else. The launch path cannot tell
+    // them apart and does not need to: neither is an identity to ask about.
     githubLoginFor.mockResolvedValue(null);
     await expect(decideRepoLaunch(prisma, engineer, REPO, ENFORCE, log)).resolves.toEqual({
       allowed: false,

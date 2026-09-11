@@ -96,7 +96,20 @@ async function fetchInstallationToken(
       'GitHub App auth requires appId, appPrivateKey, and an installation id to all be configured'
     );
   }
-  const res = await fetch(`${apiUrl}/app/installations/${installationId}/access_tokens`, {
+  // Both interpolations are defended here rather than trusted from the caller.
+  // The per-installation rows are validated as numeric at the API, but the
+  // singleton `GitHubConfig.appInstallationId` is only length-checked, so a
+  // value containing slashes would redirect the App JWT to a different path on
+  // the configured host. And `apiUrl` is operator-entered, so a trailing slash
+  // would produce a doubled one — the identity helpers already strip it and
+  // this did not.
+  if (!/^[0-9]+$/.test(installationId)) {
+    throw new Error(
+      `GitHub installation id must be numeric; got '${installationId.slice(0, 32)}'. Check the App installation id on the GitHub integration page.`
+    );
+  }
+  const base = apiUrl.replace(/\/$/, '');
+  const res = await fetch(`${base}/app/installations/${installationId}/access_tokens`, {
     headers: {
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${createGitHubAppJwt(appId, appPrivateKey)}`,

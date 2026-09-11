@@ -4,7 +4,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
-import { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } from '../lib/repoAccessGate.js';
+import {
+  decideRepoAccess,
+  multiRepoRefusalBody,
+  type RepoAccessRefusal,
+} from '../lib/repoAccessDecision.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -72,6 +76,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
                   },
                 },
               },
+              type: true,
             },
             where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
           })
@@ -88,25 +93,14 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      if (user.role !== 'ADMIN') {
-        const inaccessible = repos.filter((r) => r.team.memberships.length === 0);
-        if (inaccessible.length > 0) {
-          return reply.status(403).send({
-            error: {
-              code: 'FORBIDDEN',
-              message: `You do not have access to: ${inaccessible
-                .map((r) => `${r.organizationName}/${r.repoName}`)
-                .join(', ')}`,
-            },
-          });
-        }
-      }
-
-      // GitHub permission gate, per repo. A PRD run decomposes into work
-      // requests that push and open pull requests on each repository it names,
-      // so each one is a launch in the sense the single-repo route means.
+      // A PRD run decomposes into work requests that push and open pull
+      // requests on each repository it names, so each is a launch.
+      // One decision per repository — team membership and GitHub permission
+      // together — and every refusal is collected so the response names all of
+      // them. Refusing on the first would make a caller fix them one at a time.
+      const refusals: Array<{ label: string; reason: RepoAccessRefusal }> = [];
       for (const r of repos) {
-        const decision = await decideRepoLaunch(
+        const decision = await decideRepoAccess(
           fastify.prisma,
           user,
           r,
@@ -114,14 +108,14 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
           request.log
         );
         if (!decision.allowed) {
-          return reply.status(403).send({
-            error: {
-              code: 'REPO_ACCESS_DENIED',
-              message: `${r.organizationName}/${r.repoName}: ${LAUNCH_REFUSAL_MESSAGE[decision.reason]}`,
-              reason: decision.reason,
-            },
+          refusals.push({
+            label: `${r.organizationName}/${r.repoName}`,
+            reason: decision.reason,
           });
         }
+      }
+      if (refusals.length > 0) {
+        return reply.status(403).send(multiRepoRefusalBody(refusals));
       }
 
       // Find the prd-decomposition workflow template.

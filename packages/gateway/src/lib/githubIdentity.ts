@@ -14,6 +14,7 @@
  * to surface.
  */
 import type { PrismaClient } from '@auto-swe/shared';
+import { clearGithubLogin } from '@auto-swe/shared/lib/githubIdentityCheck';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 /** Wall-clock cap: this sits on the sign-in path, so it must not hang it. */
@@ -101,13 +102,12 @@ export async function storeGithubLogin(
  * Forget a user's GitHub identity.
  *
  * Called when the GitHub account is unlinked and when a login turns out to be
- * held by someone else. A login left behind keeps backing repository access
- * with nothing standing behind it, and GitHub usernames are re-registrable
- * after release — so a stale one can eventually name a different person.
+ * held by someone else. Re-exported from `@auto-swe/shared` because the
+ * worker's permission sweep clears logins too, when it finds one that has been
+ * re-registered by a different account — one implementation, so the two cannot
+ * disagree about what forgetting means.
  */
-export async function clearGithubLogin(prisma: PrismaClient, userId: string): Promise<void> {
-  await prisma.user.update({ data: { githubLogin: null }, where: { id: userId } });
-}
+export { clearGithubLogin } from '@auto-swe/shared/lib/githubIdentityCheck';
 
 /**
  * Resolve and store the GitHub login behind a freshly linked OAuth account.

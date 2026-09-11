@@ -22,9 +22,18 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** Minimal Prisma stand-in — only `user.update` is reached. */
+/**
+ * Minimal Prisma stand-in. `clearGithubLogin` runs its two writes in a
+ * transaction, so the stub has to honour the array form — forgetting the
+ * repoAccess delete is exactly what would let a cleared login keep its cached
+ * access.
+ */
 function prismaWith(update: (args: unknown) => Promise<unknown>): PrismaClient {
-  return { user: { update } } as unknown as PrismaClient;
+  return {
+    $transaction: (ops: Array<Promise<unknown>>) => Promise.all(ops),
+    repoAccess: { deleteMany: async () => ({ count: 0 }) },
+    user: { update },
+  } as unknown as PrismaClient;
 }
 
 afterEach(() => {

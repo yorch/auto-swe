@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { Prisma } from '@auto-swe/shared';
 import { CHANNEL_TASK_STEER_SIGNAL, channelTaskWorkflowId } from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
@@ -10,18 +11,14 @@ import {
   resolveWebUrl,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
-import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import {
-  decideRepoLaunch,
-  LAUNCH_REFUSAL_MESSAGE,
-  resolveRepoAccessGateOrLastKnown,
-} from '../lib/repoAccessGate.js';
+import { decideRepoAccess, REPO_ACCESS_REFUSAL_MESSAGE } from '../lib/repoAccessDecision.js';
+import { resolveRepoAccessGateOrLastKnown } from '../lib/repoAccessGate.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import {
   fetchSlackChannelIsPrivate,
@@ -31,7 +28,7 @@ import {
   verifySlackSignature,
 } from '../lib/slack.js';
 import { isTerminalSignalError } from '../lib/temporalErrors.js';
-import { memberTeams } from '../lib/tenantScope.js';
+import { memberTeams, reachableConnections } from '../lib/tenantScope.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import {
   getErrorName,
@@ -1542,34 +1539,41 @@ async function buildRunModalView(
   initialDescription: string
 ): Promise<{ ok: true; view: unknown } | { ok: false; error: string }> {
   const tpls = await listVisibleTemplates(fastify, user);
-  // Unscoped by design: the memberships selected here are what `accessibleRepos`
-  // below filters on, so the tenant decision is made from the rows, not the where.
-  const repos = await runUnscoped(
-    'access is decided from the memberships selected here, not by the where clause',
+  // A listing, so the decision belongs in the query. It used to load every
+  // active repository and filter on selected membership rows, which offered a
+  // picker containing repositories the user had lost GitHub access to — the
+  // names alone are a leak, and picking one only failed at submit.
+  const gate = (await resolveRepoAccessGateOrLastKnown()) ?? undefined;
+  const where: Prisma.ConnectionWhereInput = {
+    isActive: true,
+    // Only git_repo connections are valid run targets; exclude non-git types (e.g. mcp).
+    type: 'git_repo',
+    ...(user.role !== 'ADMIN' && reachableConnections({ sub: user.id }, gate)),
+  };
+  const accessibleRepos = await asPlatformAdmin(
+    user,
+    "admin picks from every team's repos",
     ['Connection'],
     () =>
       fastify.prisma.connection.findMany({
-        select: {
-          id: true,
-          organizationName: true,
-          repoName: true,
-          team: {
-            select: { memberships: { select: { userId: true }, where: { userId: user.id } } },
-          },
-        },
-        // Only git_repo connections are valid run targets; exclude non-git types (e.g. mcp).
-        where: { isActive: true, type: 'git_repo' },
+        select: { id: true, organizationName: true, repoName: true },
+        where,
       })
   );
-  const accessibleRepos =
-    user.role === 'ADMIN' ? repos : repos.filter((r) => r.team.memberships.length > 0);
   // The submission handler binds the repo via `selected_option.value` on a
   // `static_select` element — rendering a free-text fallback would silently
   // skip submission validation, so we short-circuit when there's nothing to
   // pick. Caller surfaces this as an ephemeral message.
   if (accessibleRepos.length === 0) {
     return {
-      error: 'You do not have access to any active repositories. Ask a team admin to add you.',
+      // Two causes, and telling someone to ask an admin is wrong for the
+      // second: they may not be on a team, or the GitHub permission gate may be
+      // enforcing before the sweep has recorded any answers for them, in which
+      // case being added to a team changes nothing.
+      error:
+        gate?.mode === 'enforce'
+          ? 'No repositories available. Either you are not on a team that owns one, or your GitHub access has not been confirmed yet — it is checked periodically, so try again shortly.'
+          : 'You do not have access to any active repositories. Ask a team admin to add you.',
       ok: false,
     };
   }
@@ -1694,12 +1698,6 @@ async function handleRunModalSubmission(
       response_action: 'errors',
     };
   }
-  if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
-    return {
-      errors: { repo_block: 'You do not have access to this repository' },
-      response_action: 'errors',
-    };
-  }
   if (!isGitRepoConnection(repo)) {
     return {
       errors: { repo_block: 'Selected connection is not a git repository' },
@@ -1707,17 +1705,18 @@ async function handleRunModalSubmission(
     };
   }
 
-  // The same GitHub permission gate the dashboard's submit applies. Without it
-  // the Slack modal is simply the way around it.
-  const launchDecision = await decideRepoLaunch(
+  // Team membership and GitHub permission in one decision, the same one the
+  // dashboard's submit takes. Slack routes authenticate by request signature
+  // rather than `requireAuth`, so the gate is resolved here.
+  const decision = await decideRepoAccess(
     fastify.prisma,
     { exp: 0, iat: 0, role: user.role as JwtPayload['role'], sub: user.id },
     repo,
     (await resolveRepoAccessGateOrLastKnown()) ?? { mode: 'off', staleAfterHours: 0 }
   );
-  if (!launchDecision.allowed) {
+  if (!decision.allowed) {
     return {
-      errors: { repo_block: LAUNCH_REFUSAL_MESSAGE[launchDecision.reason] },
+      errors: { repo_block: REPO_ACCESS_REFUSAL_MESSAGE[decision.reason] },
       response_action: 'errors',
     };
   }

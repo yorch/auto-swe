@@ -27,6 +27,20 @@ function str(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+/**
+ * A GitHub login from a webhook payload, normalised the way stored ones are.
+ *
+ * `users.github_login` is written lower-cased, because GitHub treats logins
+ * case-insensitively while the unique index does not. Payloads carry GitHub's
+ * own casing, so comparing them raw silently matches nobody: a collaborator
+ * removal for `OctoCat` would find no user holding `octocat`, the refresh would
+ * do nothing, and the access would survive until the next sweep — a revocation
+ * that looks delivered and is not.
+ */
+function normalizedLogin(value: unknown): string | null {
+  return str(value)?.toLowerCase() ?? null;
+}
+
 function repoIdentity(payload: Record<string, unknown>): { org: string; repo: string } | null {
   const repository = payload.repository as Record<string, unknown> | undefined;
   if (!repository) {
@@ -57,7 +71,7 @@ export function classifyAccessEvent(eventType: string, body: unknown): AccessInv
     case 'member': {
       // A collaborator added to, removed from, or re-graded on one repository.
       const identity = repoIdentity(payload);
-      const login = str((payload.member as Record<string, unknown> | undefined)?.login);
+      const login = normalizedLogin((payload.member as Record<string, unknown> | undefined)?.login);
       if (!(identity && login)) {
         return { kind: 'ignored', reason: 'member event without a repository and member' };
       }
@@ -79,7 +93,7 @@ export function classifyAccessEvent(eventType: string, body: unknown): AccessInv
     case 'membership': {
       // Someone joined or left a GitHub team. Which repositories that team can
       // reach is not in the payload, so the whole user is invalidated.
-      const login = str((payload.member as Record<string, unknown> | undefined)?.login);
+      const login = normalizedLogin((payload.member as Record<string, unknown> | undefined)?.login);
       return login
         ? { kind: 'user', login }
         : { kind: 'ignored', reason: 'membership event without a member' };
@@ -93,7 +107,9 @@ export function classifyAccessEvent(eventType: string, body: unknown): AccessInv
         };
       }
       const membership = payload.membership as Record<string, unknown> | undefined;
-      const login = str((membership?.user as Record<string, unknown> | undefined)?.login);
+      const login = normalizedLogin(
+        (membership?.user as Record<string, unknown> | undefined)?.login
+      );
       return login
         ? { kind: 'user', login }
         : { kind: 'ignored', reason: 'organization event without a removed user' };

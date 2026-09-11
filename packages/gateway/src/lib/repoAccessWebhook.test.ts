@@ -97,6 +97,29 @@ describe('classifyAccessEvent', () => {
     expect((result as { reason: string }).reason).toContain('push');
   });
 
+  it('lower-cases every login, because stored ones are', () => {
+    // `users.github_login` is written lower-cased; payloads carry GitHub's own
+    // casing. Comparing them raw matches nobody, so a collaborator removal for
+    // `OctoCat` would refresh no rows at all — a revocation that looks
+    // delivered and is not.
+    expect(
+      classifyAccessEvent('member', {
+        action: 'removed',
+        member: { login: 'OctoCat' },
+        repository: REPO,
+      })
+    ).toMatchObject({ login: 'octocat' });
+    expect(
+      classifyAccessEvent('membership', { action: 'removed', member: { login: 'OctoCat' } })
+    ).toMatchObject({ login: 'octocat' });
+    expect(
+      classifyAccessEvent('organization', {
+        action: 'member_removed',
+        membership: { user: { login: 'OctoCat' } },
+      })
+    ).toMatchObject({ login: 'octocat' });
+  });
+
   it('never throws on a malformed payload', () => {
     // Payloads are third-party data. A parse failure here would 500 the webhook
     // and make GitHub redeliver it indefinitely.
