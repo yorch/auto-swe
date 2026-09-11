@@ -112,6 +112,14 @@ export function installationRetiredErrorBody(): {
  * and refusing here would take away its owner's control of it without stopping
  * anything.
  *
+ * One execution satisfies "already in flight" without having started its work: a
+ * channel task deferred with `runAt` has a wrapper workflow running while it
+ * sleeps, and text steered into it lands in a run that begins later. That is not
+ * a hole, but it is not covered by the sentence above either — it is covered by
+ * `createWorkflowRun`, which re-reads retirement when the deferred run actually
+ * fires and refuses it there. Retirement is the one condition a deferred run
+ * re-checks at its start, which is exactly why this one is safe to relax here.
+ *
  * **Defaulted, and defaulted to the strict answer.** Unlike the gate argument,
  * which is required-but-nullable because forgetting it would silently permit,
  * forgetting this one silently *refuses* — the failure-safe direction. Every
@@ -152,14 +160,20 @@ export async function decideRepoAccess(
   if (user.role !== 'ADMIN' && !repo.team.memberships.some((m) => m.userId === user.sub)) {
     return { allowed: false, reason: 'not-a-team-member' };
   }
-  // Then the installation, for EVERYONE — admins included, and ahead of the
-  // no-coordinates exemption below.
+  // Then the installation — when the caller is starting work, and then for
+  // EVERYONE, admins included, and ahead of the no-coordinates exemption below.
   //
   // Retirement is operator configuration, not a statement about the person
   // asking, so neither the admin bypass nor an identity-shaped exemption should
   // skip it. An admin who retired an installation and then launched through it
   // anyway would get GitHub's failure instead of ours, which is a worse way to
   // learn the same thing.
+  //
+  // `action` narrows WHEN the condition applies, never who it applies to: see
+  // {@link RepoAccessAction}. Note what stays below it either way — the GitHub
+  // permission check runs for a steer through a retired installation, because
+  // the token resolver keys on the installation id and never reads `isActive`,
+  // so the lookup is genuinely available to answer.
   if (action === 'start-new-work' && isInstallationRetired(repo)) {
     return { allowed: false, reason: 'installation-retired' };
   }

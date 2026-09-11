@@ -1439,6 +1439,27 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       expect(state.signalCalls).toHaveLength(1);
     });
 
+    it('still asks GitHub when the installation is retired', async () => {
+      // The assertion the test above cannot make. With the permission stub left
+      // at `write` it passes whether or not the lookup ran — so the first fix
+      // for the retirement case, which skipped the rest of the decision, would
+      // have passed it too. Retiring an installation must not quietly downgrade
+      // the steer gate from "team membership AND GitHub write" to membership
+      // alone, which is an ADMIN action taken for unrelated reasons.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = {
+        ...REPO_ROW,
+        installation: { installationId: '42', isActive: false },
+        team: { memberships: [{ userId: 'u2' }] },
+      };
+      githubPermission.mockResolvedValue({ ok: true, permission: 'read' });
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
     it('counts repositories, not rows, against the scan limit', async () => {
       // Every delegating turn writes a row and they normally all name the same
       // repository, so counting rows would silently kill steering in an ordinary
