@@ -185,7 +185,15 @@ async function recordTakeover(
         entityType: 'User',
       },
     });
-  } catch {
-    // Swallowed deliberately — see the note above.
+  } catch (err) {
+    // Swallowed, but never silently. In the sweep a failure here is survivable
+    // because the caller logs the takeover separately; at launch time this row
+    // is the ONLY record, so a permanently failing insert — a missing migration,
+    // an exhausted pool — would be indistinguishable from no takeover ever
+    // happening.
+    console.warn(
+      `[repoAccess] cleared a re-registered GitHub login for user ${userId} but could not write the audit record:`,
+      err
+    );
   }
 }

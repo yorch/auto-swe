@@ -199,9 +199,19 @@ export function multiRepoRefusalBody(
   // Requiring unanimity would change the code for a case whose membership half
   // has not changed meaning.
   const anyMembership = refusals.some((r) => r.reason === 'not-a-team-member');
+  // A retired installation keeps its own code here too. Collapsing it into
+  // `REPO_ACCESS_DENIED` on the multi-repo routes would be the exact conflation
+  // the single-repo helper exists to avoid: one is operator configuration, the
+  // other is a statement about this user. Membership still wins when both are
+  // present, because that is the answer these routes gave before any of this.
+  const anyRetired = refusals.some((r) => r.reason === 'installation-retired');
   return {
     error: {
-      code: anyMembership ? 'FORBIDDEN' : 'REPO_ACCESS_DENIED',
+      code: anyMembership
+        ? 'FORBIDDEN'
+        : anyRetired
+          ? 'INSTALLATION_RETIRED'
+          : 'REPO_ACCESS_DENIED',
       message: `You cannot start work on: ${refusals
         .map((r) => `${r.label}: ${REPO_ACCESS_REFUSAL_MESSAGE[r.reason]}`)
         .join('; ')}`,

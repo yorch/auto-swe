@@ -182,6 +182,27 @@ describe('error bodies', () => {
     expect(repoAccessErrorBody('installation-retired').error.code).toBe('INSTALLATION_RETIRED');
   });
 
+  it('keeps INSTALLATION_RETIRED on the multi-repo routes too', () => {
+    // Epics and PRD runs answered REPO_ACCESS_DENIED for a retired
+    // installation, which is the exact conflation the single-repo helper exists
+    // to avoid. Only the single-repo path was tested, so nothing caught it.
+    const body = multiRepoRefusalBody([
+      { label: 'acme/alpha', reason: 'installation-retired' },
+      { label: 'acme/beta', reason: 'insufficient-permission' },
+    ]);
+    expect(body.error.code).toBe('INSTALLATION_RETIRED');
+  });
+
+  it('lets a membership refusal outrank a retired one', () => {
+    // The pre-existing contract: any membership failure among the named
+    // repositories answers FORBIDDEN, whatever else is wrong.
+    const body = multiRepoRefusalBody([
+      { label: 'acme/alpha', reason: 'installation-retired' },
+      { label: 'acme/beta', reason: 'not-a-team-member' },
+    ]);
+    expect(body.error.code).toBe('FORBIDDEN');
+  });
+
   it('keeps FORBIDDEN for a membership refusal', async () => {
     // The code these routes returned before the gate existed. A client handling
     // it should not start seeing a new code for a case whose meaning has not

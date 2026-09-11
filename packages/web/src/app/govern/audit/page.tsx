@@ -86,19 +86,52 @@ function AuditActionBadge({ action }: { action: 'CREATE' | 'DELETE' | 'UPDATE' }
   );
 }
 
+/** The keys worth leading with, in this order, when a row has them. */
+const AUDIT_SUMMARY_KEYS = [
+  'reason',
+  'changedFields',
+  'revoked',
+  'id',
+  'email',
+  'role',
+  'name',
+  'prefix',
+  'key',
+];
+
+/** `key: before → after` for every key whose value actually changed. */
+function diffKeys(
+  keys: string[],
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): string[] {
+  const parts: string[] = [];
+  for (const key of keys) {
+    if (!(key in after || key in before)) {
+      continue;
+    }
+    const beforeVal = JSON.stringify(before[key] ?? null);
+    const afterVal = JSON.stringify(after[key] ?? null);
+    if (beforeVal !== afterVal) {
+      parts.push(`${key}: ${beforeVal} → ${afterVal}`);
+    }
+  }
+  return parts;
+}
+
 function AuditDetail({ before, after }: { before: unknown; after: unknown }) {
   const b = (before ?? {}) as Record<string, unknown>;
   const a = (after ?? {}) as Record<string, unknown>;
-  const summaryKeys = ['changedFields', 'revoked', 'id', 'email', 'role', 'name', 'prefix', 'key'];
-  const parts: string[] = [];
-  for (const key of summaryKeys) {
-    if (key in a || key in b) {
-      const beforeVal = JSON.stringify(b[key] ?? null);
-      const afterVal = JSON.stringify(a[key] ?? null);
-      if (beforeVal !== afterVal) {
-        parts.push(`${key}: ${beforeVal} → ${afterVal}`);
-      }
-    }
-  }
+
+  // Known keys first, then everything else. Without the fallback a row whose
+  // keys nobody thought to list here renders as a bare dash — which is what a
+  // detected GitHub-login takeover did, showing as an ordinary user update with
+  // no detail at all, in the surface added specifically so it could be found.
+  // Any future writer gets legible output without editing this list.
+  const known = diffKeys(AUDIT_SUMMARY_KEYS, b, a);
+  const parts = known.length
+    ? known
+    : diffKeys([...new Set([...Object.keys(b), ...Object.keys(a)])].sort(), b, a);
+
   return <span className="line-clamp-2">{parts.length ? parts.join('; ') : '—'}</span>;
 }
