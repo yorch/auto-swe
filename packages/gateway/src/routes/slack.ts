@@ -1136,6 +1136,10 @@ async function maySteerThreadTask(
       userSlackId,
       repoId,
       gate,
+      // Steering redirects a run that `isWorkflowRunning` just confirmed is in
+      // flight, so a retired installation does not stop it — retirement stops
+      // new work and nothing else.
+      'steer-running-work',
       fastify.log
     );
     if (!verdict.allowed) {

@@ -1419,6 +1419,26 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       expect(state.signalCalls).toHaveLength(0);
     });
 
+    it('steers a run whose installation was retired mid-flight', async () => {
+      // Retirement stops NEW work and nothing else: clones, pushes and CI reads
+      // already under way keep resolving through it, because an operator marking
+      // a row decommissioned states an intention about what starts next rather
+      // than pulling a cable. The run being steered is running — that is checked
+      // before this decision is reached — so it started before the retirement,
+      // and taking its owner's control away would stop nothing except them.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = {
+        ...REPO_ROW,
+        installation: { installationId: '42', isActive: false },
+        team: { memberships: [{ userId: 'u2' }] },
+      };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
     it('counts repositories, not rows, against the scan limit', async () => {
       // Every delegating turn writes a row and they normally all name the same
       // repository, so counting rows would silently kill steering in an ordinary

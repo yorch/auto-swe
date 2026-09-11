@@ -378,7 +378,13 @@ async function refuseChannelCodeTask(
   requesterSlackId: string,
   connectionId: string
 ): Promise<ChannelTaskRefusal | null> {
-  const verdict = await decideSlackRepoAccess(prisma, requesterSlackId, connectionId, ADVISORY_LOG);
+  const verdict = await decideSlackRepoAccess(
+    prisma,
+    requesterSlackId,
+    connectionId,
+    'start-new-work',
+    ADVISORY_LOG
+  );
   if (verdict.allowed) {
     return null;
   }
@@ -404,8 +410,14 @@ const ADVISORY_LOG: AccessLog = {
   warn: (obj, msg) => {
     try {
       log.warn(msg ?? 'repo access', obj as Record<string, unknown>);
-    } catch {
-      // Nothing to escalate to: the logger is the thing that failed.
+    } catch (err) {
+      // Swallowed, but never silently. If the activity logger throws on every
+      // call — no context, a serializer choking on the metadata — an advisory
+      // rollout would produce no output at all, and the operator would read an
+      // empty log as "nothing would be refused", which is the opposite of what
+      // happened. `console` is the one sink that cannot depend on the thing
+      // that just failed.
+      console.warn('[repoAccess] advisory log failed; this rollout is under-reporting', err);
     }
   },
 };

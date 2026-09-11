@@ -61,7 +61,19 @@ vi.mock('./templates.js', () => ({
 // activity — so it has to be stubbed for the process to survive, and stubbing it
 // is also what lets the advisory adapter's argument order be asserted.
 const warn = vi.fn();
-vi.mock('@temporalio/activity', () => ({ log: { warn: (...a: unknown[]) => warn(...a) } }));
+vi.mock('@temporalio/activity', () => ({
+  // `activityInfo` is stubbed even though nothing here calls it. This module is
+  // mocked WHOLESALE, and `channelTask` reaches `lib/activityContext.ts` through
+  // `./channelAssistant.js`, which imports it — so omitting it leaves a trap:
+  // the first traced call added anywhere in that graph fails with something that
+  // reads as a Temporal problem rather than a gap in this factory.
+  activityInfo: () => ({
+    activityType: 'createChannelCodeTaskRun',
+    attempt: 1,
+    workflowExecution: { runId: 'run-test', workflowId: 'wf-test' },
+  }),
+  log: { warn: (...a: unknown[]) => warn(...a) },
+}));
 
 import { prisma } from '@auto-swe/shared/db';
 import {
@@ -412,6 +424,40 @@ describe('createChannelCodeTaskRun', () => {
       const result = await createChannelCodeTaskRun(INPUT);
       expect(isChannelTaskRefusal(result)).toBe(false);
       expect(createRunInput).toHaveBeenCalled();
+    });
+
+    it('refuses a retired installation, because starting a task IS new work', async () => {
+      // The other half of the intent: retirement stops new work, and a code task
+      // is new work however the run that follows is steered later.
+      resolveGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      decide.mockResolvedValue({ allowed: false, reason: 'installation-retired' });
+
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(isChannelTaskRefusal(result)).toBe(true);
+      expect(createRunInput).not.toHaveBeenCalled();
+    });
+
+    it('says so on the console when the advisory log itself fails', async () => {
+      // Swallowed, but never silently: an advisory rollout whose logger throws
+      // on every call produces no output, and an operator reads an empty log as
+      // "nothing would be refused" — the opposite of what happened.
+      resolveGate.mockResolvedValue({ mode: 'advisory', staleAfterHours: 72 });
+      warn.mockImplementation(() => {
+        throw new Error('no activity context');
+      });
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      decide.mockImplementation(async (...args: unknown[]) => {
+        (args[4] as { warn: (obj: unknown, msg?: string) => void }).warn({}, 'would refuse');
+        return { allowed: true, reason: 'advisory-would-refuse' };
+      });
+
+      await createChannelCodeTaskRun(INPUT);
+
+      expect(consoleWarn).toHaveBeenCalledWith(
+        expect.stringContaining('under-reporting'),
+        expect.any(Error)
+      );
+      consoleWarn.mockRestore();
     });
 
     it('resolves the requester and the decision against the SAME set of users', async () => {

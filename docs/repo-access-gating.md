@@ -218,8 +218,15 @@ this, so membership there is a pre-existing bound that advisory has no business 
 Slack paths never did: a channel task resolves its repository from the **channel's** team binding and
 never consulted the asker's membership, and a thread steer checked nothing at all. Both conditions
 arrived together, so both observe together, or advisory refuses someone for a rule that did not exist
-when the operator set the dial. A retired installation is refused in every mode, because it already
-stopped channel code tasks at the run's first activity.
+when the operator set the dial. A retired installation is refused in every mode when a
+task is being **started**, because it already stopped channel code tasks at the run's first activity.
+
+**A retired installation does not stop a steer.** Retirement stops new work and nothing else — that
+is the doctrine everywhere else in this document, and a steer is not new work. Reaching the decision
+at all requires the run to be in flight, so it necessarily started before the retirement, and it goes
+on running either way; refusing the steer would take away its owner's control of it without stopping
+anything. The two Slack paths pass their intent to the decision so this one answer can differ between
+them, and it is the only answer that does.
 
 **And `off` is read first.** Everything the gate adds has failure modes of its own — a truncated
 scan, a lookup that did not answer — and each of them refuses. A deployment that never asked for the

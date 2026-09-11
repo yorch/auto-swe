@@ -62,14 +62,31 @@ export async function decideSlackRepoAccess(
   prisma: PrismaClient,
   slackId: string | undefined,
   connectionId: string,
+  intent: SlackAccessIntent,
   log?: AccessLog
 ): Promise<SlackRepoAccessVerdict> {
   const gate = await resolveRepoAccessGateOrLastKnown();
   if (!gate) {
     return { allowed: false, reason: 'gate-unreadable' };
   }
-  return decideSlackRepoAccessWithGate(prisma, slackId, connectionId, gate, log);
+  return decideSlackRepoAccessWithGate(prisma, slackId, connectionId, gate, intent, log);
 }
+
+/**
+ * What the Slack user is asking for, which changes exactly one answer.
+ *
+ * A retired installation stops NEW work and nothing else — clones, pushes, CI
+ * reads and runs already under way keep resolving credentials through it,
+ * because an operator marking a row decommissioned is stating an intention about
+ * what starts next rather than pulling a cable. Steering is not new work: the
+ * run being steered is running, which is checked before the decision is even
+ * reached, so it necessarily started before the retirement. Refusing it would
+ * take away the owner's control of a run that keeps going regardless.
+ *
+ * Required rather than defaulted, because a caller that guesses gets the
+ * doctrine backwards silently, and the compiler is the only thing that can ask.
+ */
+export type SlackAccessIntent = 'start-new-work' | 'steer-running-work';
 
 /** As {@link decideSlackRepoAccess}, for a caller that already holds the gate. */
 export async function decideSlackRepoAccessWithGate(
@@ -77,6 +94,7 @@ export async function decideSlackRepoAccessWithGate(
   slackId: string | undefined,
   connectionId: string,
   gate: RepoAccessGate,
+  intent: SlackAccessIntent,
   log?: AccessLog
 ): Promise<SlackRepoAccessVerdict> {
   if (gate.mode === 'off') {
@@ -127,6 +145,10 @@ export async function decideSlackRepoAccessWithGate(
   if (decision.allowed) {
     return ALLOWED;
   }
+  // The one answer the intent changes; see {@link SlackAccessIntent}.
+  if (decision.reason === 'installation-retired' && intent === 'steer-running-work') {
+    return ALLOWED;
+  }
   return softenUnderAdvisory(decision.reason, connectionId, gate, slackId, log);
 }
 
@@ -148,10 +170,12 @@ export async function decideSlackRepoAccessWithGate(
  *   someone for a rule that did not exist when the operator set the dial.
  *
  * Everything else stays a refusal in every mode. `installation-retired` already
- * stopped channel code tasks at the run's first activity, so it is not new here.
- * `repo-unreadable` is an integrity failure rather than a policy one. And
- * `gate-unreadable` cannot reach this function at all, because the mode is
- * precisely what could not be read.
+ * stopped channel code tasks at the run's first activity, so it is not new on
+ * the start path — and on the steer path it is not a refusal at all, which
+ * {@link SlackAccessIntent} handles before this is reached. `repo-unreadable` is
+ * an integrity failure rather than a policy one. And `gate-unreadable` cannot
+ * reach this function at all, because the mode is precisely what could not be
+ * read.
  */
 const ADVISORY_SOFTENED: ReadonlySet<SlackAccessRefusal> = new Set([
   'no-linked-account',
