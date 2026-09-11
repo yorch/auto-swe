@@ -366,14 +366,17 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   easier way to do what `/auto-swe run` already checks. A Slack user with no linked account cannot
   start a code task under enforcement; they are told to link, and the conversational route keeps
   working. The **general** route needs no identity and is untouched in every mode.
-- **A thread can be talked past the steer decision's ceilings, permanently.** The decision reads a
-  bounded number of task rows and decides against a bounded number of repositories; exceeding either
-  refuses. Run inputs are never deleted, so both ceilings are one-way doors: someone who drives
-  enough delegating turns in one thread — or enough of them naming distinct repositories — ends
-  steering in that thread for everyone, with no message and no way to clear it. The task itself is
-  unaffected and a new thread works normally. Failing closed is the right answer for a decision taken
-  on a truncated set, but the refusal is silent, and it does not consider who is asking, so a
-  platform admin cannot steer past it either.
+- **A thread can be talked past the steer decision's ceilings, permanently, and on purpose.** The
+  decision reads a bounded number of task rows and decides against a bounded number of repositories;
+  exceeding either refuses. Run inputs are never deleted, so both ceilings are one-way doors. This is
+  not only a capacity limit reached by accident in a long thread: anyone who can post in the channel
+  can reach it deliberately, by driving enough delegating turns — or enough of them naming distinct
+  repositories — and thereby end steering in that thread for everyone. There is no message and no way
+  to clear it, and the ceiling is reached before any actor is considered, so a platform admin cannot
+  steer past it either. Failing closed is the right answer for a decision taken on a truncated set;
+  the silence and the permanence are the cost. **Starting a new thread is not a workaround for the
+  person it happens to** — a running task cannot be moved to one, so their recourse is to let it
+  finish unsteered and begin again.
 - **Steering a thread can be narrowed by anyone who can start a task in it.** Because a steer
   requires access to every repository the thread has tasked, someone who asks for a code task in
   another person's thread against a repository only they can reach leaves a row behind that the
