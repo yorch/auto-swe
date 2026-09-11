@@ -52,6 +52,22 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoAccessProjection.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/accessActor',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/accessActor.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/repoAccessDecision',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoAccessDecision.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/repoAccessGate',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoAccessGate.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/repoPermission',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoPermission.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/keyRotation',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/keyRotation.ts'),
       },

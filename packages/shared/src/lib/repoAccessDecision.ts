@@ -21,9 +21,9 @@
  * predicate form (`reachableConnections`) remains right for listings, where
  * there is nothing to name.
  */
-import type { PrismaClient } from '@auto-swe/shared';
-import type { FastifyBaseLogger } from 'fastify';
-import type { JwtPayload } from '../plugins/auth.js';
+
+import type { PrismaClient } from '../index.js';
+import type { AccessActor, AccessLog } from './accessActor.js';
 import {
   decideRepoLaunch,
   LAUNCH_REFUSAL_MESSAGE,
@@ -117,10 +117,10 @@ export function installationRetiredErrorBody(): {
  */
 export async function decideRepoAccess(
   prisma: PrismaClient,
-  user: JwtPayload,
+  user: AccessActor,
   repo: RepoAccessSubject,
   gate: RepoAccessGate,
-  log?: FastifyBaseLogger
+  log?: AccessLog
 ): Promise<RepoAccessVerdict> {
   // Membership first, and only for non-admins. Someone outside the team gets
   // the answer that is actionable for them, rather than being told about an

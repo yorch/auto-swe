@@ -2,11 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { Role } from '@auto-swe/shared';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
+import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
+import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
-import type { RepoAccessGate } from '../lib/repoAccessGate.js';
-import { resolveRepoAccessGateOrLastKnown } from '../lib/repoAccessGate.js';
 
 // ── JWT Configuration ──
 

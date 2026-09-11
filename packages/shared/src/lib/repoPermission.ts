@@ -6,14 +6,11 @@
  * process gets from a `Connection` row to a credential, and the gateway is the
  * side that has the row in hand.
  */
-import type { PrismaClient } from '@auto-swe/shared';
-import {
-  GITHUB_ACCOUNT_API_URL,
-  verifyGithubLoginOwnership,
-} from '@auto-swe/shared/lib/githubIdentityCheck';
-import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
-import { fetchRepoPermission, type PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
-import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+import type { PrismaClient } from '../index.js';
+import { GITHUB_ACCOUNT_API_URL, verifyGithubLoginOwnership } from './githubIdentityCheck.js';
+import { resolveGitHubToken } from './githubInstallation.js';
+import { fetchRepoPermission, type PermissionLookup } from './githubPermission.js';
+import { resolveGitHubConfig } from './systemConfig.js';
 
 /** The `Connection` columns a permission lookup needs. */
 export interface PermissionRepo {

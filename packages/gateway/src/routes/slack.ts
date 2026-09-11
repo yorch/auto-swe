@@ -4,6 +4,11 @@ import { CHANNEL_TASK_STEER_SIGNAL, channelTaskWorkflowId } from '@auto-swe/shar
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
+  decideRepoAccess,
+  REPO_ACCESS_REFUSAL_MESSAGE,
+} from '@auto-swe/shared/lib/repoAccessDecision';
+import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
+import {
   resolvePublicUrl,
   resolveSlackBotTokenForSlackChannel,
   resolveSlackBotTokenForWorkspace,
@@ -17,8 +22,6 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastif
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import { decideRepoAccess, REPO_ACCESS_REFUSAL_MESSAGE } from '../lib/repoAccessDecision.js';
-import { resolveRepoAccessGateOrLastKnown } from '../lib/repoAccessGate.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import {
   fetchSlackChannelIsPrivate,
@@ -30,13 +33,7 @@ import {
 import { isTerminalSignalError } from '../lib/temporalErrors.js';
 import { memberTeams, reachableConnections } from '../lib/tenantScope.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
-import {
-  getErrorName,
-  hasRole,
-  type JwtPayload,
-  requireAuth,
-  requireUser,
-} from '../plugins/auth.js';
+import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
 
 interface SlackOAuthResponse {
@@ -1710,7 +1707,7 @@ async function handleRunModalSubmission(
   // rather than `requireAuth`, so the gate is resolved here.
   const decision = await decideRepoAccess(
     fastify.prisma,
-    { exp: 0, iat: 0, role: user.role as JwtPayload['role'], sub: user.id },
+    { role: user.role, sub: user.id },
     repo,
     (await resolveRepoAccessGateOrLastKnown()) ?? { mode: 'off', staleAfterHours: 0 }
   );

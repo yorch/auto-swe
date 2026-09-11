@@ -1,5 +1,5 @@
-import type { PrismaClient } from '@auto-swe/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PrismaClient } from '../index.js';
 
 const decideRepoLaunch = vi.fn();
 

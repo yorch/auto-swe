@@ -19,12 +19,12 @@
  * projection is populated and whether users have GitHub logins recorded — which
  * is what the advisory period is for.
  */
-import type { PrismaClient } from '@auto-swe/shared';
-import { resolveSettings } from '@auto-swe/shared/config';
-import { permissionMeets } from '@auto-swe/shared/lib/githubPermission';
-import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
-import type { FastifyBaseLogger } from 'fastify';
-import type { JwtPayload } from '../plugins/auth.js';
+
+import { resolveSettings } from '../config/index.js';
+import type { PrismaClient } from '../index.js';
+import type { AccessActor, AccessLog } from './accessActor.js';
+import { permissionMeets } from './githubPermission.js';
+import { recordRepoPermission } from './repoAccessProjection.js';
 import {
   lookupRepoPermission,
   type PermissionRepo,
@@ -208,10 +208,10 @@ export const LAUNCH_REFUSAL_MESSAGE: Record<LaunchRefusal, string> = {
  */
 export async function decideRepoLaunch(
   prisma: PrismaClient,
-  user: JwtPayload,
+  user: AccessActor,
   repo: PermissionRepo & { id: string },
   gate: RepoAccessGate,
-  log?: FastifyBaseLogger
+  log?: AccessLog
 ): Promise<LaunchDecision> {
   if (gate.mode === 'off') {
     return { allowed: true, reason: 'gate-off' };
@@ -239,7 +239,7 @@ export async function decideRepoLaunch(
 /** Null when the launch is permitted; otherwise why it is not. */
 async function launchRefusal(
   prisma: PrismaClient,
-  user: JwtPayload,
+  user: AccessActor,
   repo: PermissionRepo & { id: string }
 ): Promise<LaunchRefusal | null> {
   // Verified, not merely read. This is the highest-stakes moment the gate has,

@@ -8,6 +8,7 @@ import {
   createFigmaDesignProvider,
   createKnowledgeBaseProvider,
 } from '@auto-swe/shared/lib/integrations/registry';
+import { decideRepoAccess, repoAccessErrorBody } from '@auto-swe/shared/lib/repoAccessDecision';
 import {
   resolveCanaryConfig,
   resolveFigmaConfig,
@@ -24,7 +25,6 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
-import { decideRepoAccess, repoAccessErrorBody } from '../lib/repoAccessDecision.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
