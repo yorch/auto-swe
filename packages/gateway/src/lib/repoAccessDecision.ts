@@ -54,16 +54,6 @@ export interface RepoAccessSubject {
   team: { memberships: Array<{ userId: string }> };
 }
 
-/** The Prisma selection `RepoAccessSubject` needs, for a `select` call site. */
-export const REPO_ACCESS_SUBJECT_SELECT = {
-  githubApiUrl: true,
-  id: true,
-  installation: { select: { installationId: true, isActive: true } },
-  organizationName: true,
-  repoName: true,
-  type: true,
-} as const;
-
 export type RepoAccessRefusal = 'not-a-team-member' | 'installation-retired' | LaunchRefusal;
 
 export type RepoAccessVerdict =

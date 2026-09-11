@@ -203,8 +203,13 @@ configuration falls back to `off`, and such a process has nothing to enforce yet
 
 ## 8. What is gated
 
-Every path that can cause a push is gated, not only the interactive one.
-Gating a single route would leave the others as ways around it.
+Every path that carries a **user identity** is gated, not only the interactive one. Gating a single
+route would leave the others as ways around it.
+
+The paths that carry no user identity are not, and cannot be, gated on a user's GitHub permission —
+there is nobody to ask GitHub about. They are listed under Limitations, and they are all scoped some
+other way: to the template's own team, or to the Slack channel's team binding. A retired
+installation does stop all of them, because that check reads no user.
 
 | Surface | Gated | Requires |
 |---|---|---|
@@ -283,3 +288,10 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
 - **A template run started by a public or webhook caller is not GitHub-gated.** There is no
   authenticated user to ask GitHub about; those callers are scoped to the template's own team
   instead, which is the pre-existing behaviour. A retired installation still stops them.
+- **The Slack channel assistant's code task is not gated on the requesting user.** A channel-
+  resident run resolves its repository from the *channel's* team binding, not from the person who
+  asked, so access there is channel membership rather than platform team membership or GitHub
+  permission. That is a coherent model — a private Slack channel is the boundary — but it is a
+  different one from the rest of this document, and it means a user who has lost GitHub access to a
+  repository can still drive a run against it from a channel bound to its team. A retired
+  installation stops those runs; nothing else about the gate reaches them.

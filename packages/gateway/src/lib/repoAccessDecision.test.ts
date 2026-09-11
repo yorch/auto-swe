@@ -168,6 +168,22 @@ describe('decideRepoAccess', () => {
     expect(decideRepoLaunch).not.toHaveBeenCalled();
   });
 
+  it('exempts a connection with no coordinates even when its installation is retired', async () => {
+    // The coordinates exemption is checked after the retired one, so this is
+    // the documented order rather than an accident: a row with an installation
+    // but no org/repo has nothing to clone, and nothing to refuse about. Only
+    // an ADMIN can attach an installation, so reaching this at all is a
+    // misconfiguration rather than an attack.
+    await expect(
+      decideRepoAccess(
+        prisma,
+        engineer,
+        repo({ installation: RETIRED, organizationName: null, repoName: null }),
+        ENFORCE
+      )
+    ).resolves.toEqual({ allowed: false, reason: 'installation-retired' });
+  });
+
   it('still requires membership on a non-git connection', async () => {
     await expect(
       decideRepoAccess(prisma, engineer, repo({ team: { memberships: [] }, type: 'mcp' }), ENFORCE)

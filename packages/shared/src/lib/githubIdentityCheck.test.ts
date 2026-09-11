@@ -77,7 +77,10 @@ describe('fetchGithubUserId', () => {
 });
 
 describe('verifyGithubLoginOwnership', () => {
-  const args = { apiUrl: API, login: 'octocat', token: 'tok', userId: 'user-1' };
+  // A real UUID: `config_audit_log.entity_id` is `@db.Uuid`, so a stub that
+  // accepts 'user-1' would let a test pass on a call Postgres would reject.
+  const USER_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+  const args = { apiUrl: API, login: 'octocat', token: 'tok', userId: USER_ID };
 
   it('accepts a login that still resolves to the same account', async () => {
     stub(() => json({ id: 4242 }));
@@ -104,7 +107,7 @@ describe('verifyGithubLoginOwnership', () => {
     });
     expect(update).toHaveBeenCalledWith({
       data: { githubLogin: null },
-      where: { id: 'user-1' },
+      where: { id: USER_ID },
     });
   });
 
@@ -115,7 +118,7 @@ describe('verifyGithubLoginOwnership', () => {
     // by default. Detecting the takeover and then doing nothing about it.
     stub(() => json({ id: 9999 }));
     await verifyGithubLoginOwnership(prisma(), args);
-    expect(deleteMany).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
+    expect(deleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
   });
 
   it('records the takeover in the audit log, with both account ids', async () => {
@@ -131,7 +134,7 @@ describe('verifyGithubLoginOwnership', () => {
       action: 'UPDATE',
       // The system acted, not a person.
       actorId: null,
-      entityId: 'user-1',
+      entityId: USER_ID,
       entityType: 'User',
     });
     expect(row.beforeJson).toEqual({ accountId: '4242', githubLogin: 'octocat' });
@@ -159,7 +162,7 @@ describe('verifyGithubLoginOwnership', () => {
     });
     expect(update).toHaveBeenCalledWith({
       data: { githubLogin: null },
-      where: { id: 'user-1' },
+      where: { id: USER_ID },
     });
   });
 
