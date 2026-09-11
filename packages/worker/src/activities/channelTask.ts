@@ -4,7 +4,13 @@ import {
   channelTaskWorkflowId,
 } from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
+import {
+  decideRepoAccess,
+  REPO_ACCESS_REFUSAL_MESSAGE,
+} from '@auto-swe/shared/lib/repoAccessDecision';
+import { resolveRepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import { log } from '@temporalio/activity';
 import { isChannelOverBudgetNow } from './channelAssistant.js';
 import { resolveTemplateForRepo } from './templates.js';
 
@@ -127,10 +133,17 @@ export async function createChannelTaskRun(
  */
 async function buildChannelTaskRun(
   input: CreateChannelTaskRunInput,
-  resolved: { templateId: string; templateVersion: number; repoId: string }
+  resolved: { templateId: string; templateVersion: number; repoId: string },
+  /**
+   * The code route's requester. Passed rather than read off `input`, because
+   * the general route's input type has no such field and sniffing the union
+   * would compile as `unknown`.
+   */
+  requesterSlackId?: string
 ): Promise<CreateChannelTaskRunResult> {
   const { templateId, templateVersion, repoId } = resolved;
   const externalTicketId = `slack-${input.slackChannelId}-${input.threadTs}`;
+  const requestedById = await platformUserIdForSlackId(requesterSlackId);
 
   const runInput = await prisma.runInput.create({
     data: {
@@ -150,6 +163,11 @@ async function buildChannelTaskRun(
         title: input.title,
       },
       requestPayload: input.description,
+      // Who asked. Channel-originated runs recorded no requester at all, so a
+      // run started from Slack was the one kind nothing could be traced back to
+      // a person. Resolved best-effort: an unlinked Slack user leaves it null,
+      // exactly as before.
+      ...(requestedById ? { requestedById } : {}),
       slackChannelId: input.slackChannelId,
       slackMessageTs: input.threadTs,
       templateId,
@@ -265,6 +283,16 @@ export interface CreateChannelCodeTaskRunInput {
   repoHint?: string;
   /** Gap D: ISO 8601 UTC timestamp to defer execution. Propagated to `buildChannelTaskRun`. */
   runAt?: string;
+  /**
+   * Slack user id (`U…`) of the person who asked.
+   *
+   * The code route pushes a branch and opens a pull request, so it takes the
+   * same access decision every other launch path takes — and that needs someone
+   * to decide about. It was in scope at the call site all along and simply was
+   * not forwarded, which is how this route ended up the one launch path with no
+   * access check at all.
+   */
+  requesterSlackId: string;
 }
 
 /**
@@ -296,17 +324,123 @@ export interface CreateChannelCodeTaskRunInput {
  * is additive/independent, not a second org increment. We do NOT touch
  * `OrgMonthlyUsage` here; the standard repo-bound finalize path owns that.
  */
+
+/** The platform user behind a Slack id, or null when they have not linked. */
+async function platformUserIdForSlackId(slackId: string | undefined): Promise<string | null> {
+  if (!slackId) {
+    return null;
+  }
+  const user = await prisma.user.findFirst({
+    select: { id: true },
+    where: { slackId },
+  });
+  return user?.id ?? null;
+}
+
+/** A code task the requester may not start, and why, for the thread reply. */
+export interface ChannelTaskRefusal {
+  refused: true;
+  message: string;
+}
+
+export function isChannelTaskRefusal(
+  value: CreateChannelTaskRunResult | ChannelTaskRefusal | null
+): value is ChannelTaskRefusal {
+  return value !== null && 'refused' in value;
+}
+
+/**
+ * May the person who asked start a code task against this repository?
+ *
+ * Returns null when they may, and the thread reply when they may not.
+ *
+ * **Only consulted when the gate is on.** With `repoAccess.mode` off this
+ * returns null without a query, which keeps the long-standing behaviour that an
+ * `@mention` needs no linked account — a deliberate choice, stated in the Slack
+ * route, and one that predates the code route growing the ability to push.
+ * Where an operator has asked for the gate, the conversational route stops
+ * being an easier way to do what `/auto-swe run` already checks.
+ *
+ * The general route is untouched in every mode: it answers questions and needs
+ * no identity to do so.
+ */
+async function refuseChannelCodeTask(
+  requesterSlackId: string,
+  connectionId: string
+): Promise<ChannelTaskRefusal | null> {
+  const gate = await resolveRepoAccessGate().catch(() => null);
+  if (!gate || gate.mode === 'off') {
+    return null;
+  }
+
+  const user = await prisma.user.findFirst({
+    select: { id: true, role: true },
+    where: { isActive: true, slackId: requesterSlackId },
+  });
+  if (!user) {
+    return {
+      message:
+        'I can answer questions here, but starting a code task needs your Slack account linked to auto-swe — it pushes a branch and opens a pull request under your name. Link it in Settings, then ask me again.',
+      refused: true,
+    };
+  }
+
+  const repo = await prisma.connection.findUnique({
+    select: {
+      githubApiUrl: true,
+      id: true,
+      installation: { select: { installationId: true, isActive: true } },
+      organizationName: true,
+      repoName: true,
+      team: { select: { memberships: { select: { userId: true }, where: { userId: user.id } } } },
+      type: true,
+    },
+    where: { id: connectionId },
+  });
+  if (!repo) {
+    return null;
+  }
+
+  const decision = await decideRepoAccess(
+    prisma,
+    { role: user.role, sub: user.id },
+    repo,
+    gate,
+    // Adapter, not a cast. Temporal's logger takes (message, meta) and the
+    // gateway's takes (obj, message) — `AccessLog` mirrors the latter, so the
+    // worker flips them here. Advisory mode logs what it would refuse, and that
+    // is the whole signal an operator watches during a rollout.
+    { warn: (obj, msg) => log.warn(msg ?? 'repo access', obj as Record<string, unknown>) }
+  );
+  if (decision.allowed) {
+    return null;
+  }
+  return {
+    message: `I cannot start that here: ${REPO_ACCESS_REFUSAL_MESSAGE[decision.reason]}`,
+    refused: true,
+  };
+}
+
 export async function createChannelCodeTaskRun(
   input: CreateChannelCodeTaskRunInput
-): Promise<CreateChannelTaskRunResult | null> {
+): Promise<CreateChannelTaskRunResult | ChannelTaskRefusal | null> {
   const repo = await resolveChannelRepo(input.channelId, input.repoHint);
   if (!repo) {
     // No (unambiguous) repo — signal the caller to fall back to the general route.
     return null;
   }
 
+  const refusal = await refuseChannelCodeTask(input.requesterSlackId, repo.repoId);
+  if (refusal) {
+    return refusal;
+  }
+
   // Default SWE template: team `isDefault` ACTIVE → GLOBAL `isDefault` fallback.
   const { templateId, templateVersion } = await resolveTemplateForRepo(repo.repoId);
   // Real `repoId` so the SWE spec's implement → review → PR nodes have a workspace.
-  return buildChannelTaskRun(input, { repoId: repo.repoId, templateId, templateVersion });
+  return buildChannelTaskRun(
+    input,
+    { repoId: repo.repoId, templateId, templateVersion },
+    input.requesterSlackId
+  );
 }

@@ -4,9 +4,10 @@ vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
     channelMonthlyUsage: { findUnique: vi.fn() },
-    connection: { findMany: vi.fn() },
+    connection: { findMany: vi.fn(), findUnique: vi.fn() },
     runInput: { create: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
+    user: { findFirst: vi.fn() },
     workflowTemplate: { findFirst: vi.fn() },
   };
   return { prisma: prismaMock };
@@ -18,6 +19,24 @@ vi.mock('@auto-swe/shared/lib/billing', () => ({
 
 // Phase B: stub the default-SWE-template resolver so the code-task tests don't drag
 // in the templates activity's whole dependency chain (slackNotify, trackerSync, …).
+const resolveGate = vi.fn(async () => ({ mode: 'off', staleAfterHours: 72 }));
+const decide = vi.fn(async () => ({ allowed: true, reason: 'permitted' }));
+
+vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
+  resolveRepoAccessGate: () => resolveGate(),
+}));
+
+vi.mock('@auto-swe/shared/lib/repoAccessDecision', () => ({
+  decideRepoAccess: (...a: unknown[]) => decide(...(a as [])),
+  REPO_ACCESS_REFUSAL_MESSAGE: {
+    'installation-retired': 'the installation is retired',
+    'insufficient-permission': 'GitHub says you lack write access',
+    'lookup-unavailable': 'access could not be confirmed',
+    'no-github-identity': 'link your GitHub account',
+    'not-a-team-member': 'you are not on that team',
+  },
+}));
+
 vi.mock('./templates.js', () => ({
   resolveTemplateForRepo: vi.fn(),
 }));
@@ -27,6 +46,7 @@ import {
   createChannelCodeTaskRun,
   createChannelTaskRun,
   isChannelOverBudgetForTask,
+  isChannelTaskRefusal,
   resolveChannelRepo,
 } from './channelTask.js';
 import { resolveTemplateForRepo } from './templates.js';
@@ -36,6 +56,8 @@ const createRunInput = vi.mocked(prisma.runInput.create);
 const findChannel = vi.mocked(prisma.slackChannel.findUnique);
 const findUsage = vi.mocked(prisma.channelMonthlyUsage.findUnique);
 const findConnections = vi.mocked(prisma.connection.findMany);
+const findUser = vi.mocked(prisma.user.findFirst);
+const findConnection = vi.mocked(prisma.connection.findUnique);
 const resolveTemplate = vi.mocked(resolveTemplateForRepo);
 
 beforeEach(() => {
@@ -54,6 +76,7 @@ describe('createChannelTaskRun', () => {
   const INPUT = {
     channelId: 'chan-1',
     description: 'Investigate the flaky test and summarise the root cause.',
+    requesterSlackId: 'U123',
     slackChannelId: 'C123',
     threadTs: '111.222',
     title: 'Investigate flaky test',
@@ -216,6 +239,7 @@ describe('createChannelCodeTaskRun', () => {
     channelId: 'chan-1',
     description: 'Add a GET /health endpoint and open a PR.',
     repoHint: 'payments-api',
+    requesterSlackId: 'U123',
     slackChannelId: 'C123',
     threadTs: '111.222',
     title: 'Add health endpoint',
@@ -224,19 +248,93 @@ describe('createChannelCodeTaskRun', () => {
   beforeEach(() => {
     findChannel.mockResolvedValue({ teamId: 'team-1' } as never);
     findConnections.mockResolvedValue([gitRepo('c-1', 'acme', 'payments-api')] as never);
+    findUser.mockResolvedValue({ id: 'user-1', role: 'ENGINEER' } as never);
+    findConnection.mockResolvedValue({
+      githubApiUrl: null,
+      id: 'c-1',
+      installation: null,
+      organizationName: 'acme',
+      repoName: 'payments-api',
+      team: { memberships: [{ userId: 'user-1' }] },
+      type: 'git_repo',
+    } as never);
+    resolveGate.mockResolvedValue({ mode: 'off', staleAfterHours: 72 });
+    decide.mockResolvedValue({ allowed: true, reason: 'permitted' });
+  });
+
+  describe('access', () => {
+    it('asks nothing about the requester while the gate is off', async () => {
+      // The long-standing behaviour: an @mention needs no linked account. That
+      // was a deliberate choice, and a deployment that has not asked for the
+      // gate keeps it exactly.
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(isChannelTaskRefusal(result)).toBe(false);
+      expect(decide).not.toHaveBeenCalled();
+    });
+
+    it('refuses an unlinked Slack user once the gate is on', async () => {
+      // `/auto-swe run` has always required a linked account. The conversational
+      // route reaches the same outcome — a push and a pull request — so under
+      // enforcement it stops being the easier way in.
+      resolveGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      findUser.mockResolvedValue(null as never);
+
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(isChannelTaskRefusal(result)).toBe(true);
+      expect((result as { message: string }).message).toContain('linked');
+      expect(createRunInput).not.toHaveBeenCalled();
+    });
+
+    it('takes the full decision for a linked user, and refuses what it refuses', async () => {
+      resolveGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      decide.mockResolvedValue({ allowed: false, reason: 'insufficient-permission' });
+
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(isChannelTaskRefusal(result)).toBe(true);
+      expect((result as { message: string }).message).toContain('lack write access');
+      expect(createRunInput).not.toHaveBeenCalled();
+    });
+
+    it('launches for a linked user the decision allows', async () => {
+      // The discriminating case: if the refusals above passed because the gate
+      // refuses everything once on, this would fail.
+      resolveGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(isChannelTaskRefusal(result)).toBe(false);
+      expect(decide).toHaveBeenCalledTimes(1);
+      expect(createRunInput).toHaveBeenCalled();
+    });
+
+    it('records who asked, even with the gate off', async () => {
+      // Channel-originated runs recorded no requester at all, so a run started
+      // from Slack was the one kind nothing could trace back to a person.
+      await createChannelCodeTaskRun(INPUT);
+      expect(createRunInput.mock.calls[0]?.[0]?.data).toMatchObject({
+        requestedById: 'user-1',
+      });
+    });
+
+    it('leaves the requester null when the Slack user has not linked', async () => {
+      findUser.mockResolvedValue(null as never);
+      await createChannelCodeTaskRun(INPUT);
+      expect(createRunInput.mock.calls[0]?.[0]?.data).not.toHaveProperty('requestedById');
+    });
   });
 
   it('builds a REAL RepoWorkRequest against the resolved repo + the default SWE template', async () => {
     const result = await createChannelCodeTaskRun(INPUT);
 
     expect(result).not.toBeNull();
+    if (!result || isChannelTaskRefusal(result)) {
+      throw new Error('expected a prepared run, got a refusal');
+    }
     // Default SWE template resolved via resolveTemplateForRepo(resolvedRepoId).
     expect(resolveTemplate).toHaveBeenCalledWith('c-1');
-    expect(result?.templateId).toBe('tmpl-swe');
-    expect(result?.templateVersion).toBe(3);
+    expect(result.templateId).toBe('tmpl-swe');
+    expect(result.templateVersion).toBe(3);
     // Shares the deterministic per-thread workflowId with the general route.
-    expect(result?.workflowId).toBe('chantask-chan-1-111-222');
-    expect(result?.request).toMatchObject({
+    expect(result.workflowId).toBe('chantask-chan-1-111-222');
+    expect(result.request).toMatchObject({
       channelId: 'chan-1',
       description: INPUT.description,
       externalTicketId: 'slack-C123-111.222',

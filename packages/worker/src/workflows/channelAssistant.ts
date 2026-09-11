@@ -322,6 +322,12 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
         await deliver(input, placeholderTs, CHANNEL_TASK_ALREADY_RUNNING_TEXT);
         return 'SUCCESS';
       }
+      // Refused on access. Same shape as above and for the same reason: nothing
+      // launched, so the ack must not claim otherwise.
+      if (outcome.refusal) {
+        await deliver(input, placeholderTs, outcome.refusal);
+        return 'SUCCESS';
+      }
       // Otherwise prepend any routing note (e.g. the code→general no-repo fallback).
       replyPrefix = outcome.prefix;
     }
@@ -384,6 +390,12 @@ interface LaunchOutcome {
    * instead of the agent's "on it" ack rather than falsely claiming a launch.
    */
   alreadyRunning?: boolean;
+  /**
+   * Text to post INSTEAD of the agent's ack, when the task was refused on
+   * access. Distinct from {@link prefix}, which decorates an ack that still
+   * happened: nothing launched here, so claiming "on it" would be a lie.
+   */
+  refusal?: string;
 }
 
 /**
@@ -417,11 +429,19 @@ async function launchTask(
         channelId: input.channelId,
         description: delegate.description,
         repoHint: delegate.repoHint,
+        requesterSlackId: input.userSlackId,
         runAt: delegate.runAt,
         slackChannelId: input.slackChannelId,
         threadTs: input.threadTs,
         title: delegate.title,
       });
+      if (prepared && 'refused' in prepared) {
+        // Refused on access, which is NOT the "no repo resolved" case below.
+        // Falling through to the general route there would answer the question
+        // conversationally and never mention the refusal, so someone without
+        // access would be told nothing at all.
+        return { prefix: '', refusal: prepared.message };
+      }
       if (prepared) {
         await startTaskChild(prepared);
         return { prefix: '' };
