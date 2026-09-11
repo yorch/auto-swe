@@ -11,8 +11,11 @@ import {
   decideRepoAccess,
   REPO_ACCESS_REFUSAL_MESSAGE,
 } from '@auto-swe/shared/lib/repoAccessDecision';
-import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
-import { decideSlackRepoAccess } from '@auto-swe/shared/lib/slackRepoAccess';
+import {
+  type RepoAccessGate,
+  resolveRepoAccessGateOrLastKnown,
+} from '@auto-swe/shared/lib/repoAccessGate';
+import { decideSlackRepoAccessWithGate } from '@auto-swe/shared/lib/slackRepoAccess';
 import {
   resolvePublicUrl,
   resolveSlackBotTokenForSlackChannel,
@@ -1076,7 +1079,8 @@ async function maySteerThreadTask(
   fastify: FastifyInstance,
   slackChannelId: string,
   threadTs: string,
-  userSlackId: string | undefined
+  userSlackId: string | undefined,
+  gate: RepoAccessGate
 ): Promise<boolean> {
   let repoIds: string[];
   try {
@@ -1085,7 +1089,7 @@ async function maySteerThreadTask(
       // One more than the cap, so a result AT the cap is distinguishable from
       // one that was truncated. Truncation has to fail closed: the rows this
       // dropped are exactly the ones an attacker would want dropped.
-      take: STEER_REPO_SCAN_LIMIT + 1,
+      take: STEER_ROW_SCAN_LIMIT + 1,
       where: {
         externalTicketId: channelTaskExternalTicketId(slackChannelId, threadTs),
         payload: { equals: 'channel-task', path: ['kind'] },
@@ -1093,14 +1097,26 @@ async function maySteerThreadTask(
         slackMessageTs: threadTs,
       },
     });
-    if (tasks.length > STEER_REPO_SCAN_LIMIT) {
+    if (tasks.length > STEER_ROW_SCAN_LIMIT) {
       fastify.log.warn(
         { slackChannelId, threadTs },
+        'refusing to steer channel task: more task rows in this thread than the decision scans'
+      );
+      return false;
+    }
+    // Distinct repositories, counted AFTER the dedupe. Counting rows would
+    // refuse an ordinary thread: every turn that delegates writes a row, a
+    // repo-less general task writes one too, and all of them normally name the
+    // same single repository — so a busy thread would silently lose steering
+    // for everyone, in every mode, for a reason no message explains.
+    repoIds = [...new Set(tasks.map(taskRepoId).filter((id) => id !== null))];
+    if (repoIds.length > STEER_REPO_SCAN_LIMIT) {
+      fastify.log.warn(
+        { repoCount: repoIds.length, slackChannelId, threadTs },
         'refusing to steer channel task: more repositories in this thread than the decision scans'
       );
       return false;
     }
-    repoIds = [...new Set(tasks.map(taskRepoId).filter((id) => id !== null))];
   } catch (err) {
     // Fail closed. This runs only to decide whether to hand someone's text to a
     // running agent, and a lookup that did not answer cannot say they may.
@@ -1115,7 +1131,13 @@ async function maySteerThreadTask(
   }
 
   for (const repoId of repoIds) {
-    const verdict = await decideSlackRepoAccess(fastify.prisma, userSlackId, repoId, fastify.log);
+    const verdict = await decideSlackRepoAccessWithGate(
+      fastify.prisma,
+      userSlackId,
+      repoId,
+      gate,
+      fastify.log
+    );
     if (!verdict.allowed) {
       fastify.log.warn(
         { reason: verdict.reason, repoId, slackChannelId, threadTs, userSlackId },
@@ -1133,9 +1155,21 @@ async function maySteerThreadTask(
 /**
  * How many distinct repositories one thread's tasks may name before a steer is
  * refused outright. A thread has one running task, so the real number is one;
- * the allowance is for the rows a thread accumulates over its life.
+ * the allowance is for the repositories a thread accumulates over its life, and
+ * the ceiling is really about cost — each one is its own live decision.
  */
 const STEER_REPO_SCAN_LIMIT = 10;
+
+/**
+ * How many task ROWS the lookup will read before refusing.
+ *
+ * A separate, far looser bound than the repository one, because rows and
+ * repositories are not the same quantity: an ordinary thread accumulates a row
+ * per delegating turn, all naming one repository. This exists only so the read
+ * cannot be unbounded; reaching it means something is wrong with the thread, not
+ * with the person steering.
+ */
+const STEER_ROW_SCAN_LIMIT = 100;
 
 /**
  * The repository a channel task row names, from either place it is recorded.
@@ -1180,19 +1214,38 @@ async function trySteerThreadTask(
   userSlackId: string | undefined
 ): Promise<boolean> {
   const workflowId = channelTaskWorkflowId(channelId, threadTs);
-  // Is there anything here to steer, before deciding whether they may?
+
+  // The mode is read FIRST, and `off` skips the whole apparatus below.
   //
-  // Signalling first and reading the not-found error is the cheaper order only
-  // while the decision is free. It is not: under enforcement it asks GitHub who
-  // this person is and what they may do, twice, live. A `RunInput` row is
-  // permanent, so without this every reply in a thread that once hosted a code
-  // task would pay that for the life of the thread — and most thread replies
-  // are people talking to each other, long after the task closed.
-  if (!(await fastify.temporal.isWorkflowRunning(workflowId))) {
+  // Not an optimisation. Everything the gate added has failure modes of its own
+  // — a truncated scan, a lookup that did not answer — and each of them refuses.
+  // A deployment that never asked for the gate must not lose a steer to a
+  // database blip in a check it did not turn on. Reading the mode after building
+  // the repository set, inside the decision, left exactly that hole.
+  const gate = await resolveRepoAccessGateOrLastKnown();
+  if (!gate) {
+    // Never readable is not `off`; see `decideSlackRepoAccess`.
+    fastify.log.warn(
+      { slackChannelId, threadTs },
+      'refusing to steer channel task: gate-unreadable'
+    );
     return false;
   }
-  if (!(await maySteerThreadTask(fastify, slackChannelId, threadTs, userSlackId))) {
-    return false;
+  if (gate.mode !== 'off') {
+    // Is there anything here to steer, before deciding whether they may?
+    //
+    // Signalling first and reading the not-found error is the cheaper order only
+    // while the decision is free. It is not: under enforcement it asks GitHub who
+    // this person is and what they may do, twice, live. A `RunInput` row is
+    // permanent, so without this every reply in a thread that once hosted a code
+    // task would pay that for the life of the thread — and most thread replies
+    // are people talking to each other, long after the task closed.
+    if (!(await fastify.temporal.isWorkflowRunning(workflowId))) {
+      return false;
+    }
+    if (!(await maySteerThreadTask(fastify, slackChannelId, threadTs, userSlackId, gate))) {
+      return false;
+    }
   }
   try {
     await fastify.temporal.signalWorkflow(workflowId, CHANNEL_TASK_STEER_SIGNAL, [userText]);

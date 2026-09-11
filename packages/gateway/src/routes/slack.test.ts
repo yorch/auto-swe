@@ -1378,6 +1378,60 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       expect(state.signalCalls).toHaveLength(1);
     });
 
+    it('steers while the gate is off even when the lookup would fail', async () => {
+      // Everything the gate added has failure modes of its own, and each of them
+      // refuses. None of them may reach a deployment that never turned it on:
+      // losing a steer to a database blip in a check you did not enable is the
+      // worst kind of surprise.
+      state.runInputFindManyThrows = true;
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.runInputFindManyCalls).toHaveLength(0);
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('allows a non-member under advisory, because this path never checked membership', async () => {
+      // Membership is a pre-existing bound on the gateway routes and a NEW one
+      // here: a channel task resolves its repository from the channel's team
+      // binding and never consulted the asker's membership, and the steer
+      // checked nothing at all. Both halves arrived together, so both observe
+      // together — otherwise advisory refuses someone for a rule that did not
+      // exist when the operator set the dial.
+      repoAccessGate.mockResolvedValue({ mode: 'advisory', staleAfterHours: 72 });
+      state.connectionRow = { ...REPO_ROW, team: { memberships: [] } };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('refuses a non-member under enforcement', async () => {
+      // The discriminating half: advisory observes, enforce refuses.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = { ...REPO_ROW, team: { memberships: [] } };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('counts repositories, not rows, against the scan limit', async () => {
+      // Every delegating turn writes a row and they normally all name the same
+      // repository, so counting rows would silently kill steering in an ordinary
+      // busy thread — for everyone, with no message explaining it.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = Array.from({ length: 30 }, () => channelTask('conn-1'));
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
     it('is not switched off by a repo-less task landing in the same thread', async () => {
       // A `RunInput` is written before the child run starts, so a thread
       // accumulates rows — and a general task in a thread that already has a
@@ -1561,6 +1615,9 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       // ones someone filling the thread would want dropped.
       repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
       state.runInputRows = Array.from({ length: 11 }, (_, i) => channelTask(`conn-${i}`));
+      state.connectionRows = Object.fromEntries(
+        Array.from({ length: 11 }, (_, i) => [`conn-${i}`, { ...REPO_ROW, id: `conn-${i}` }])
+      );
 
       expect((await reply('U1')).statusCode).toBe(200);
       await new Promise((resolve) => setTimeout(resolve, 0));

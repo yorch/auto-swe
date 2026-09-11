@@ -45,10 +45,10 @@ const ALLOWED: SlackRepoAccessVerdict = { allowed: true };
  *
  * **Off means off, and advisory means advisory.** With `repoAccess.mode` off
  * this allows without a query, which keeps the long-standing behaviour that
- * talking to the assistant needs no linked account. Under `advisory` an
- * unlinked Slack user is logged and allowed, because that population is what
- * the advisory period is for — see the comment at that branch for why it is the
- * only reason that softens.
+ * talking to the assistant needs no linked account. Under `advisory` the two
+ * conditions this path did not apply before the gate existed are logged and
+ * allowed rather than refused — see {@link ADVISORY_SOFTENED} for which, and for
+ * why the answer differs from the gateway's.
  *
  * A gate that has never been readable refuses. The gateway treats the same
  * value as `off` because it decorates every authenticated request and a process
@@ -93,25 +93,7 @@ export async function decideSlackRepoAccessWithGate(
       })
     : null;
   if (!user) {
-    // Advisory observes; it does not refuse. An unlinked Slack user is the
-    // single largest population the advisory period exists to measure — an
-    // operator turns the gate on to find out how many people would be stopped
-    // BEFORE stopping them, and refusing here would stop them on day one while
-    // the dial still says advisory.
-    //
-    // Only this reason softens. `not-a-team-member` and `installation-retired`
-    // are refused in every mode by the decision below, because neither is part
-    // of the GitHub rollout; `repo-unreadable` is an integrity failure rather
-    // than a policy one; and `gate-unreadable` cannot be softened because the
-    // mode is exactly what could not be read.
-    if (gate.mode === 'advisory') {
-      log?.warn(
-        { connectionId, reason: 'no-linked-account', slackId },
-        'repo access (advisory): would refuse this Slack request'
-      );
-      return ALLOWED;
-    }
-    return { allowed: false, reason: 'no-linked-account' };
+    return softenUnderAdvisory('no-linked-account', connectionId, gate, slackId, log);
   }
 
   const repo = await prisma.connection.findUnique({
@@ -142,5 +124,53 @@ export async function decideSlackRepoAccessWithGate(
     gate,
     log
   );
-  return decision.allowed ? ALLOWED : { allowed: false, reason: decision.reason };
+  if (decision.allowed) {
+    return ALLOWED;
+  }
+  return softenUnderAdvisory(decision.reason, connectionId, gate, slackId, log);
+}
+
+/**
+ * Reasons that advisory mode logs instead of enforcing, and why only these.
+ *
+ * Advisory promises to report what enforcement *would* refuse without refusing
+ * it. The test for whether a reason belongs here is not what kind of condition
+ * it is — it is whether this path applied it before the gate existed. On these
+ * two Slack paths the answer for both of these is no:
+ *
+ * - `no-linked-account` is the GitHub gate's own identity requirement, and is
+ *   the largest population an operator turns advisory on to measure.
+ * - `not-a-team-member` is membership — which every *gateway* route checked
+ *   long before the gate, but which these paths never did. The channel task
+ *   resolves its repository from the CHANNEL's team binding and never consulted
+ *   the asker's membership; the steer checked nothing at all. Both conditions
+ *   arrived together, so both have to observe together, or advisory refuses
+ *   someone for a rule that did not exist when the operator set the dial.
+ *
+ * Everything else stays a refusal in every mode. `installation-retired` already
+ * stopped channel code tasks at the run's first activity, so it is not new here.
+ * `repo-unreadable` is an integrity failure rather than a policy one. And
+ * `gate-unreadable` cannot reach this function at all, because the mode is
+ * precisely what could not be read.
+ */
+const ADVISORY_SOFTENED: ReadonlySet<SlackAccessRefusal> = new Set([
+  'no-linked-account',
+  'not-a-team-member',
+]);
+
+function softenUnderAdvisory(
+  reason: SlackAccessRefusal,
+  connectionId: string,
+  gate: RepoAccessGate,
+  slackId: string | undefined,
+  log?: AccessLog
+): SlackRepoAccessVerdict {
+  if (gate.mode !== 'advisory' || !ADVISORY_SOFTENED.has(reason)) {
+    return { allowed: false, reason };
+  }
+  log?.warn(
+    { connectionId, reason, slackId },
+    'repo access (advisory): would refuse this Slack request'
+  );
+  return ALLOWED;
 }

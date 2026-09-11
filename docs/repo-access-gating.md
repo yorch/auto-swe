@@ -208,11 +208,23 @@ what this costs is a clear message in the thread rather than a failure further i
 refuses for the same reason and to keep the two consistent: a launch must never be more permissive
 than a steer of the run it starts.
 
-**Advisory means advisory on these paths too.** A Slack user with no linked account is logged and
-allowed under `advisory`, and only refused under `enforce` — that population is the main thing an
-operator turns advisory on to measure, and refusing them during the advisory period would stop them
-on day one while the dial still said observe. Team membership and a retired installation are refused
-in every mode, because neither is part of the GitHub rollout.
+**Advisory means advisory on these paths too**, and it covers one more condition here than it does
+on the gateway routes. Under `advisory` a Slack user with no linked account **and** a Slack user who
+is not a member of the channel's team are both logged and allowed, and refused only under `enforce`.
+
+The test for what belongs in that list is not what kind of condition it is — it is whether the path
+applied it before the gate existed. Every gateway route checked team membership long before any of
+this, so membership there is a pre-existing bound that advisory has no business relaxing. These two
+Slack paths never did: a channel task resolves its repository from the **channel's** team binding and
+never consulted the asker's membership, and a thread steer checked nothing at all. Both conditions
+arrived together, so both observe together, or advisory refuses someone for a rule that did not exist
+when the operator set the dial. A retired installation is refused in every mode, because it already
+stopped channel code tasks at the run's first activity.
+
+**And `off` is read first.** Everything the gate adds has failure modes of its own — a truncated
+scan, a lookup that did not answer — and each of them refuses. A deployment that never asked for the
+gate must not lose a steer to a database blip in a check it did not turn on, so the mode is read
+before any of that apparatus runs rather than inside the decision at the end of it.
 
 ---
 
@@ -254,7 +266,9 @@ API route writes. And it requires **every** repository the thread has tasked, no
 one: a run input is written before its run starts, so a thread accumulates rows, and reading only the
 newest would let a repo-less general task or a deliberately planted one decide in place of the task
 actually being steered. Requiring all of them makes an extra row narrow who may steer rather than
-widen it.
+widen it. The ceiling is counted in distinct repositories, not rows: every delegating turn writes a
+row and they normally all name the same one, so counting rows would quietly cost a busy thread its
+steering.
 
 | Surface | Gated | Requires |
 |---|---|---|
