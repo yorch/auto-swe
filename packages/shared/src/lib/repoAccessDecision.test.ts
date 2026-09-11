@@ -128,6 +128,48 @@ describe('decideRepoAccess', () => {
     ).resolves.toEqual({ allowed: false, reason: 'not-a-team-member' });
   });
 
+  it('steering running work skips retirement WITHOUT skipping the GitHub check', async () => {
+    // The regression this exists for: retirement returns, so an earlier version
+    // turned its refusal into an allow at the CALL SITE — which discarded
+    // membership, the admin bypass and the permission check along with it.
+    // Removing the condition is not the same as accepting the verdict.
+    decideRepoLaunch.mockResolvedValue({ allowed: false, reason: 'insufficient-permission' });
+
+    await expect(
+      decideRepoAccess(
+        prisma,
+        engineer,
+        repo({ installation: RETIRED }),
+        ENFORCE,
+        undefined,
+        'steer-running-work'
+      )
+    ).resolves.toEqual({ allowed: false, reason: 'insufficient-permission' });
+    expect(decideRepoLaunch).toHaveBeenCalledTimes(1);
+  });
+
+  it('steering running work still stops at a non-member', async () => {
+    // Membership is decided before retirement and is not what the action
+    // changes, so it holds whatever the caller is asking to do.
+    await expect(
+      decideRepoAccess(
+        prisma,
+        engineer,
+        repo({ installation: RETIRED, team: { memberships: [] } }),
+        ENFORCE,
+        undefined,
+        'steer-running-work'
+      )
+    ).resolves.toEqual({ allowed: false, reason: 'not-a-team-member' });
+  });
+
+  it('defaults to refusing, so a caller that says nothing gets the strict answer', async () => {
+    // Unlike the gate argument, forgetting this one must not silently permit.
+    await expect(
+      decideRepoAccess(prisma, engineer, repo({ installation: RETIRED }), ENFORCE, undefined)
+    ).resolves.toEqual({ allowed: false, reason: 'installation-retired' });
+  });
+
   it('subjects a platform admin to a retired installation too', async () => {
     // Retirement is operator configuration, not a statement about the person
     // asking, so the admin bypass does not reach it. An admin who retired an

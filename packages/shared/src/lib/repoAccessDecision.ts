@@ -104,6 +104,29 @@ export function installationRetiredErrorBody(): {
 }
 
 /**
+ * What the caller is asking to do, which changes exactly one condition.
+ *
+ * Retirement stops NEW work and nothing else — see {@link isInstallationRetired}.
+ * An action on a run that is already in flight is not new work, so it is not
+ * what retiring an installation was meant to stop; the run goes on either way,
+ * and refusing here would take away its owner's control of it without stopping
+ * anything.
+ *
+ * **Defaulted, and defaulted to the strict answer.** Unlike the gate argument,
+ * which is required-but-nullable because forgetting it would silently permit,
+ * forgetting this one silently *refuses* — the failure-safe direction. Every
+ * existing caller is a launch, and a caller that does not think about this is
+ * almost certainly a launch too.
+ *
+ * **It removes a condition; it never skips the rest of the decision.** That is
+ * the whole reason it lives here rather than at a call site: the retirement
+ * branch below returns, so turning its refusal into an allow from outside would
+ * discard membership, the admin bypass and the GitHub permission check along
+ * with it — which is exactly the bug that produced this parameter.
+ */
+export type RepoAccessAction = 'start-new-work' | 'steer-running-work';
+
+/**
  * May `user` start a run against `repo`?
  *
  * Team membership first, then GitHub. The order matters for what a refusal
@@ -120,7 +143,8 @@ export async function decideRepoAccess(
   user: AccessActor,
   repo: RepoAccessSubject,
   gate: RepoAccessGate,
-  log?: AccessLog
+  log?: AccessLog,
+  action: RepoAccessAction = 'start-new-work'
 ): Promise<RepoAccessVerdict> {
   // Membership first, and only for non-admins. Someone outside the team gets
   // the answer that is actionable for them, rather than being told about an
@@ -136,7 +160,7 @@ export async function decideRepoAccess(
   // skip it. An admin who retired an installation and then launched through it
   // anyway would get GitHub's failure instead of ours, which is a worse way to
   // learn the same thing.
-  if (isInstallationRetired(repo)) {
+  if (action === 'start-new-work' && isInstallationRetired(repo)) {
     return { allowed: false, reason: 'installation-retired' };
   }
   if (user.role === 'ADMIN') {

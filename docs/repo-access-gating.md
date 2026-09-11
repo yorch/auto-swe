@@ -225,8 +225,10 @@ task is being **started**, because it already stopped channel code tasks at the 
 is the doctrine everywhere else in this document, and a steer is not new work. Reaching the decision
 at all requires the run to be in flight, so it necessarily started before the retirement, and it goes
 on running either way; refusing the steer would take away its owner's control of it without stopping
-anything. The two Slack paths pass their intent to the decision so this one answer can differ between
-them, and it is the only answer that does.
+anything. The two Slack paths pass what they are asking for **into** the decision, so it
+removes that one condition and keeps every other. Converting the refusal afterwards would not be the
+same thing: retirement is decided before the GitHub permission check, so an allow applied to its
+answer would have skipped the check as well.
 
 **And `off` is read first.** Everything the gate adds has failure modes of its own — a truncated
 scan, a lookup that did not answer — and each of them refuses. A deployment that never asked for the
@@ -364,6 +366,14 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   easier way to do what `/auto-swe run` already checks. A Slack user with no linked account cannot
   start a code task under enforcement; they are told to link, and the conversational route keeps
   working. The **general** route needs no identity and is untouched in every mode.
+- **A thread can be talked past the steer decision's ceilings, permanently.** The decision reads a
+  bounded number of task rows and decides against a bounded number of repositories; exceeding either
+  refuses. Run inputs are never deleted, so both ceilings are one-way doors: someone who drives
+  enough delegating turns in one thread — or enough of them naming distinct repositories — ends
+  steering in that thread for everyone, with no message and no way to clear it. The task itself is
+  unaffected and a new thread works normally. Failing closed is the right answer for a decision taken
+  on a truncated set, but the refusal is silent, and it does not consider who is asking, so a
+  platform admin cannot steer past it either.
 - **Steering a thread can be narrowed by anyone who can start a task in it.** Because a steer
   requires access to every repository the thread has tasked, someone who asks for a code task in
   another person's thread against a repository only they can reach leaves a row behind that the

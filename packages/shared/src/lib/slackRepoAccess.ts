@@ -17,7 +17,11 @@
 
 import type { PrismaClient } from '../index.js';
 import type { AccessLog } from './accessActor.js';
-import { decideRepoAccess, type RepoAccessRefusal } from './repoAccessDecision.js';
+import {
+  decideRepoAccess,
+  type RepoAccessAction,
+  type RepoAccessRefusal,
+} from './repoAccessDecision.js';
 import { type RepoAccessGate, resolveRepoAccessGateOrLastKnown } from './repoAccessGate.js';
 
 /**
@@ -62,31 +66,15 @@ export async function decideSlackRepoAccess(
   prisma: PrismaClient,
   slackId: string | undefined,
   connectionId: string,
-  intent: SlackAccessIntent,
+  action: RepoAccessAction,
   log?: AccessLog
 ): Promise<SlackRepoAccessVerdict> {
   const gate = await resolveRepoAccessGateOrLastKnown();
   if (!gate) {
     return { allowed: false, reason: 'gate-unreadable' };
   }
-  return decideSlackRepoAccessWithGate(prisma, slackId, connectionId, gate, intent, log);
+  return decideSlackRepoAccessWithGate(prisma, slackId, connectionId, gate, action, log);
 }
-
-/**
- * What the Slack user is asking for, which changes exactly one answer.
- *
- * A retired installation stops NEW work and nothing else — clones, pushes, CI
- * reads and runs already under way keep resolving credentials through it,
- * because an operator marking a row decommissioned is stating an intention about
- * what starts next rather than pulling a cable. Steering is not new work: the
- * run being steered is running, which is checked before the decision is even
- * reached, so it necessarily started before the retirement. Refusing it would
- * take away the owner's control of a run that keeps going regardless.
- *
- * Required rather than defaulted, because a caller that guesses gets the
- * doctrine backwards silently, and the compiler is the only thing that can ask.
- */
-export type SlackAccessIntent = 'start-new-work' | 'steer-running-work';
 
 /** As {@link decideSlackRepoAccess}, for a caller that already holds the gate. */
 export async function decideSlackRepoAccessWithGate(
@@ -94,7 +82,7 @@ export async function decideSlackRepoAccessWithGate(
   slackId: string | undefined,
   connectionId: string,
   gate: RepoAccessGate,
-  intent: SlackAccessIntent,
+  action: RepoAccessAction,
   log?: AccessLog
 ): Promise<SlackRepoAccessVerdict> {
   if (gate.mode === 'off') {
@@ -135,18 +123,20 @@ export async function decideSlackRepoAccessWithGate(
     return { allowed: false, reason: 'repo-unreadable' };
   }
 
+  // `action` is passed INTO the decision rather than applied to its answer. The
+  // retirement branch returns, so converting that refusal to an allow out here
+  // would discard membership, the admin bypass and the GitHub permission check
+  // along with it — an allow that skipped every condition the decision had not
+  // reached yet.
   const decision = await decideRepoAccess(
     prisma,
     { role: user.role, sub: user.id },
     repo,
     gate,
-    log
+    log,
+    action
   );
   if (decision.allowed) {
-    return ALLOWED;
-  }
-  // The one answer the intent changes; see {@link SlackAccessIntent}.
-  if (decision.reason === 'installation-retired' && intent === 'steer-running-work') {
     return ALLOWED;
   }
   return softenUnderAdvisory(decision.reason, connectionId, gate, slackId, log);
@@ -156,9 +146,12 @@ export async function decideSlackRepoAccessWithGate(
  * Reasons that advisory mode logs instead of enforcing, and why only these.
  *
  * Advisory promises to report what enforcement *would* refuse without refusing
- * it. The test for whether a reason belongs here is not what kind of condition
- * it is — it is whether this path applied it before the gate existed. On these
- * two Slack paths the answer for both of these is no:
+ * it. The test has two halves, and the second is easy to drop: a **policy**
+ * reason softens if and only if this path did not apply it before the gate
+ * existed. Both halves are load-bearing — without the first, `repo-unreadable`
+ * would qualify, since it is new on both paths and is not a policy at all.
+ *
+ * On these two Slack paths, two policy reasons are new:
  *
  * - `no-linked-account` is the GitHub gate's own identity requirement, and is
  *   the largest population an operator turns advisory on to measure.
@@ -169,13 +162,13 @@ export async function decideSlackRepoAccessWithGate(
  *   arrived together, so both have to observe together, or advisory refuses
  *   someone for a rule that did not exist when the operator set the dial.
  *
- * Everything else stays a refusal in every mode. `installation-retired` already
- * stopped channel code tasks at the run's first activity, so it is not new on
- * the start path — and on the steer path it is not a refusal at all, which
- * {@link SlackAccessIntent} handles before this is reached. `repo-unreadable` is
- * an integrity failure rather than a policy one. And `gate-unreadable` cannot
- * reach this function at all, because the mode is precisely what could not be
- * read.
+ * Everything else stays a refusal in every mode, each for its own half of the
+ * test. `installation-retired` is policy, but not new: it already stopped
+ * channel code tasks at the run's first activity — and on the steer path it is
+ * not a condition at all, which {@link RepoAccessAction} settles inside the
+ * decision. `repo-unreadable` is new but not policy; it says a row could not be
+ * read, and advisory has no opinion about that. And `gate-unreadable` never
+ * reaches this function, because the mode is precisely what could not be read.
  */
 const ADVISORY_SOFTENED: ReadonlySet<SlackAccessRefusal> = new Set([
   'no-linked-account',
