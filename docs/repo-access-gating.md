@@ -142,6 +142,14 @@ pointing at it — with a distinct `INSTALLATION_RETIRED` code, because it is an
 configuration problem rather than a statement about the user. Clones, pushes, CI reads and runs
 already in flight are deliberately unaffected.
 
+It is enforced in two places, because not every run starts at the gateway. Every launch route
+refuses one up front, which is what produces the error a caller sees. And the run's first activity
+refuses again at run start, which is what covers the paths that never touch the gateway at all: a
+scheduled work request's cron fire, the Slack channel assistant's code task, and any launch path
+added later. Both sit at the beginning of new work, so neither can interrupt a run already under
+way. Unlike the GitHub gate, this check reads no user, so the exemptions for callers without an
+identity do not apply to it.
+
 Installations are managed at `/studio/github-installations` in the dashboard, or over the API at
 `/api/v1/platform/github-installations` — which the dashboard itself calls, and which is also
 registered under `/api/v1/admin` like the other admin routes (list, create, update, delete),
@@ -266,10 +274,12 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   so a call site that forgot it compiled and ran ungated — which is how the Slack routes and the
   human-step resolver ended up outside the gate. Required, forgetting is a compile error and
   passing `undefined` is a decision someone made.
-- **Editing or deleting a schedule is not gated.** Neither causes a push, and refusing a delete
-  would strand a schedule its owner can no longer stop. A schedule created before access was
-  revoked keeps firing until someone deletes it — the gate is checked when it is created and when
-  it is fired by hand, not on each cron fire, which has no user to check.
-- **A template run started by a public or webhook caller is not gated.** There is no authenticated
-  user to ask GitHub about; those callers are scoped to the template's own team instead, which is
-  the pre-existing behaviour.
+- **Editing or deleting a schedule is not gated, and a cron fire is not GitHub-gated.** Neither
+  editing nor deleting causes a push, and refusing a delete would strand a schedule its owner can
+  no longer stop. A schedule created before a user's GitHub access was revoked keeps firing until
+  someone deletes it: the gate is checked when the schedule is created and when it is fired by
+  hand, not on each cron fire, which has no user to check. A **retired installation** does stop
+  those fires, because that check reads no user — see below.
+- **A template run started by a public or webhook caller is not GitHub-gated.** There is no
+  authenticated user to ask GitHub about; those callers are scoped to the template's own team
+  instead, which is the pre-existing behaviour. A retired installation still stops them.
