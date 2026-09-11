@@ -1,14 +1,15 @@
 import { prisma } from '@auto-swe/shared/db';
 import {
   CHANNEL_TASK_TEMPLATE_NAME,
+  channelTaskExternalTicketId,
   channelTaskWorkflowId,
 } from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
+import { REPO_ACCESS_REFUSAL_MESSAGE } from '@auto-swe/shared/lib/repoAccessDecision';
 import {
-  decideRepoAccess,
-  REPO_ACCESS_REFUSAL_MESSAGE,
-} from '@auto-swe/shared/lib/repoAccessDecision';
-import { resolveRepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
+  decideSlackRepoAccess,
+  type SlackAccessRefusal,
+} from '@auto-swe/shared/lib/slackRepoAccess';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { log } from '@temporalio/activity';
 import { isChannelOverBudgetNow } from './channelAssistant.js';
@@ -142,7 +143,7 @@ async function buildChannelTaskRun(
   requesterSlackId?: string
 ): Promise<CreateChannelTaskRunResult> {
   const { templateId, templateVersion, repoId } = resolved;
-  const externalTicketId = `slack-${input.slackChannelId}-${input.threadTs}`;
+  const externalTicketId = channelTaskExternalTicketId(input.slackChannelId, input.threadTs);
   const requestedById = await platformUserIdForSlackId(requesterSlackId);
 
   const runInput = await prisma.runInput.create({
@@ -325,14 +326,22 @@ export interface CreateChannelCodeTaskRunInput {
  * `OrgMonthlyUsage` here; the standard repo-bound finalize path owns that.
  */
 
-/** The platform user behind a Slack id, or null when they have not linked. */
+/**
+ * The platform user behind a Slack id, or null when they have not linked.
+ *
+ * `isActive` is filtered here for the same reason the access decision filters
+ * it: the two queries answer the same question — who is this Slack id — and a
+ * disagreement between them is worse than either answer alone. Without it a
+ * deactivated user is refused by the gate as if they had never linked, and then
+ * recorded as the requester of the run they were refused.
+ */
 async function platformUserIdForSlackId(slackId: string | undefined): Promise<string | null> {
   if (!slackId) {
     return null;
   }
   const user = await prisma.user.findFirst({
     select: { id: true },
-    where: { slackId },
+    where: { isActive: true, slackId },
   });
   return user?.id ?? null;
 }
@@ -368,57 +377,51 @@ async function refuseChannelCodeTask(
   requesterSlackId: string,
   connectionId: string
 ): Promise<ChannelTaskRefusal | null> {
-  const gate = await resolveRepoAccessGate().catch(() => null);
-  if (!gate || gate.mode === 'off') {
-    return null;
-  }
-
-  const user = await prisma.user.findFirst({
-    select: { id: true, role: true },
-    where: { isActive: true, slackId: requesterSlackId },
-  });
-  if (!user) {
-    return {
-      message:
-        'I can answer questions here, but starting a code task needs your Slack account linked to auto-swe — it pushes a branch and opens a pull request under your name. Link it in Settings, then ask me again.',
-      refused: true,
-    };
-  }
-
-  const repo = await prisma.connection.findUnique({
-    select: {
-      githubApiUrl: true,
-      id: true,
-      installation: { select: { installationId: true, isActive: true } },
-      organizationName: true,
-      repoName: true,
-      team: { select: { memberships: { select: { userId: true }, where: { userId: user.id } } } },
-      type: true,
-    },
-    where: { id: connectionId },
-  });
-  if (!repo) {
-    return null;
-  }
-
-  const decision = await decideRepoAccess(
+  const verdict = await decideSlackRepoAccess(
     prisma,
-    { role: user.role, sub: user.id },
-    repo,
-    gate,
+    requesterSlackId,
+    connectionId,
     // Adapter, not a cast. Temporal's logger takes (message, meta) and the
     // gateway's takes (obj, message) — `AccessLog` mirrors the latter, so the
     // worker flips them here. Advisory mode logs what it would refuse, and that
     // is the whole signal an operator watches during a rollout.
     { warn: (obj, msg) => log.warn(msg ?? 'repo access', obj as Record<string, unknown>) }
   );
-  if (decision.allowed) {
+  if (verdict.allowed) {
     return null;
   }
-  return {
-    message: `I cannot start that here: ${REPO_ACCESS_REFUSAL_MESSAGE[decision.reason]}`,
-    refused: true,
-  };
+  return { message: SLACK_TASK_REFUSAL_MESSAGE[verdict.reason], refused: true };
+}
+
+/**
+ * What the thread is told about each refusal.
+ *
+ * The shared decision returns a reason rather than prose precisely so this can
+ * be written for a chat reply: every line names the next thing the person can
+ * do, and none of them mentions a repository they may not know they were being
+ * checked against.
+ */
+const SLACK_TASK_REFUSAL_MESSAGE: Record<SlackAccessRefusal, string> = {
+  // Spread rather than re-typed, so this map stays exhaustive by construction:
+  // a new `RepoAccessRefusal` has to be added to the shared message map, which
+  // makes it appear here too. Writing the strings out again would compile
+  // forever while quietly saying `undefined` to the thread.
+  ...prefixWithRefusal(REPO_ACCESS_REFUSAL_MESSAGE),
+  // A read that never succeeded is not "the gate is off" — see
+  // `decideSlackRepoAccess`. Phrased as the transient it almost always is.
+  'gate-unreadable':
+    'I cannot start a code task right now — the access policy could not be read. Try again shortly.',
+  'no-linked-account':
+    'I can answer questions here, but starting a code task needs your Slack account linked to auto-swe — it pushes a branch and opens a pull request under your name. Link it in Settings, then ask me again.',
+};
+
+function prefixWithRefusal<K extends string>(messages: Record<K, string>): Record<K, string> {
+  return Object.fromEntries(
+    Object.entries<string>(messages).map(([reason, text]) => [
+      reason,
+      `I cannot start that here: ${text}`,
+    ])
+  ) as Record<K, string>;
 }
 
 export async function createChannelCodeTaskRun(

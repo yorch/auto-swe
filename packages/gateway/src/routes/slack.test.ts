@@ -43,6 +43,27 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
+/**
+ * The repository-access gate, as these tests see it.
+ *
+ * Stubbed rather than left to the real resolver, which reaches the settings
+ * store and therefore answers "never readable" in a unit test. That value is a
+ * refusal, not an off switch — so without this every steer would fail closed for
+ * a reason that has nothing to do with the case under test. Default `off`: the
+ * long-standing behaviour every other test in this file was written against.
+ */
+const repoAccessGate = vi.fn<() => Promise<{ mode: string; staleAfterHours: number } | null>>(
+  async () => ({ mode: 'off', staleAfterHours: 72 })
+);
+vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
+  // Spread the original: `repoAccessDecision` imports `decideRepoLaunch` and the
+  // refusal messages from this module at load time, so a factory that returns
+  // only the resolver leaves those undefined and the decision module throws
+  // while it is still being evaluated.
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoAccessGate')>()),
+  resolveRepoAccessGateOrLastKnown: () => repoAccessGate(),
+}));
+
 import { slackRoutes } from './slack.js';
 
 const SIGNING_SECRET = 'test-signing-secret';
@@ -88,6 +109,8 @@ interface FakeState {
   connectionRow: Record<string, unknown> | null;
   /** Ledger writes recorded by the run-modal path. */
   runInputCreates: Array<Record<string, unknown>>;
+  /** The thread's task row, as the steer path's `runInput.findFirst` sees it. */
+  threadTaskRunInput: { connectionId: string | null } | null;
   activeWorkflowCreates: Array<Record<string, unknown>>;
   /** Ordered log of 'ledger' vs 'start', proving the write precedes the start. */
   launchOrder: string[];
@@ -185,6 +208,8 @@ function buildApp(state: FakeState): FastifyInstance {
         return data;
       },
       delete: async () => ({}),
+      // The steer path's lookup: which repository does this thread's task target?
+      findFirst: async () => state.threadTaskRunInput,
     },
     slackChannel: {
       // No row yet → provisionChannel takes its create path, where it asks
@@ -332,6 +357,7 @@ beforeEach(async () => {
         teamId: 'team-a',
       },
     ],
+    threadTaskRunInput: null,
     users: [{ id: 'u1', role: 'ADMIN', slackId: 'U1' }],
     versions: new Map([
       [
@@ -1138,6 +1164,90 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       { args: ['tighten the validation'], signalName: 'steer', workflowId: STEER_WORKFLOW_ID },
     ]);
     expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  describe('repository access', () => {
+    /** A `git_repo` row the decision can be taken against. */
+    const REPO_ROW = {
+      githubApiUrl: null,
+      id: 'conn-1',
+      installation: null,
+      organizationName: 'acme',
+      repoName: 'payments',
+      team: { memberships: [] },
+      type: 'git_repo',
+    };
+
+    /** A plain thread reply from `user`, which is only ever a steer attempt. */
+    function reply(user: string) {
+      return postEvent({
+        channel: 'C9',
+        channel_type: 'channel',
+        team: 'T1',
+        text: 'push it to production too',
+        thread_ts: '1700.root',
+        ts: '1700.reply',
+        type: 'message',
+        user,
+      });
+    }
+
+    beforeEach(() => {
+      // `mockResolvedValue` outlives `clearAllMocks` (which clears calls, not
+      // implementations), so re-state the default or each test inherits the mode
+      // the one before it set.
+      repoAccessGate.mockResolvedValue({ mode: 'off', staleAfterHours: 72 });
+      state.threadTaskRunInput = { connectionId: 'conn-1' };
+      state.connectionRow = REPO_ROW;
+    });
+
+    it('does not steer a repo-bound task for someone with no linked account', async () => {
+      // A steer is not a smaller thing than a launch: for a deferred task this
+      // text is spliced into the run description before the run starts, so it is
+      // indistinguishable from having asked for the work.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+      // Silently, and then dropped as ordinary channel chatter — the bot does
+      // not announce that a task it will not steer is running in this thread.
+      expect(state.channelAssistantStarts).toHaveLength(0);
+    });
+
+    it('steers for someone the decision allows', async () => {
+      // The discriminating case: without it, the refusal above would also pass
+      // if enforcement simply stopped all steering.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toEqual([
+        { args: ['push it to production too'], signalName: 'steer', workflowId: STEER_WORKFLOW_ID },
+      ]);
+    });
+
+    it('steers a repo-less general task without asking who is speaking', async () => {
+      // The general route is untouched in every mode — it answers questions and
+      // needs no identity to do so, which is the same line the code route draws.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.threadTaskRunInput = { connectionId: null };
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('steers for anyone while the gate is off', async () => {
+      // A deployment that has not asked for the gate keeps the behaviour it has.
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
   });
 
   it('falls through to a turn for a mention thread reply with NO in-flight task', async () => {

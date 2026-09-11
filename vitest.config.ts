@@ -64,6 +64,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoAccessGate.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/slackRepoAccess',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/slackRepoAccess.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/repoPermission',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoPermission.ts'),
       },

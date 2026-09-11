@@ -199,6 +199,13 @@ last configuration it read successfully and keeps applying it, so a database hic
 enforcement off underneath a running deployment. Only a process that has never managed to read the
 configuration falls back to `off`, and such a process has nothing to enforce yet.
 
+The Slack paths are the exception: they refuse. The gateway's fallback is safe because it decorates
+every authenticated request and the routes downstream still check team membership, but a Slack
+message arrives with no session at all, and the gate read is the only thing between an unidentified
+workspace user and a push. "We could not check" must not read there as "there was nothing to check".
+In practice a configuration store that cannot answer also cannot create the run a moment later, so
+what this costs is a clear message in the thread rather than a failure further in.
+
 ---
 
 ## 8. What is gated
@@ -214,6 +221,16 @@ check reads no user.
 The Slack channel assistant used to be in that list and no longer is. Its code task does carry a
 requester — only the interactive turn can start one, and it knows who spoke — so once the gate is on
 it takes the same decision as everything else.
+
+**Steering counts as launching.** A reply in a thread with a running task is delivered to that run
+as new instructions, and for a task deferred with `runAt` it is spliced into the run's description
+before the run starts at all — which makes it indistinguishable from having asked for that work.
+Gating the launch and leaving the steer open would let anyone who can type in the channel write the
+second half of somebody else's task, so the steer takes the same decision, against the repository
+the thread's task targets. The check is repository access, not authorship: two people who both have
+write access steering each other's task is ordinary collaboration. A refusal is silent — the reply
+is dropped as ordinary channel chatter rather than answered, because answering would confirm to
+someone outside the repository that a task is running in that thread.
 
 | Surface | Gated | Requires |
 |---|---|---|
@@ -236,6 +253,7 @@ it takes the same decision as everything else.
 | `GET /epics` | yes | `read` |
 | Slack run-status buttons (`canSeeRun`) | yes | `read` |
 | Slack channel assistant code task | yes, when the gate is on | `write` |
+| Slack thread steer of a running code task | yes, when the gate is on | `write` |
 
 Platform `ADMIN`s bypass the gate, consistent with every other check in the gateway.
 
@@ -301,3 +319,10 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   easier way to do what `/auto-swe run` already checks. A Slack user with no linked account cannot
   start a code task under enforcement; they are told to link, and the conversational route keeps
   working. The **general** route needs no identity and is untouched in every mode.
+- **A deferred code task is decided when it is asked for, not when it runs.** A task scheduled with
+  `runAt` takes the requester's decision at creation and nothing re-asks GitHub at the moment the
+  run starts, so access lost in between does not stop it. This is the same window every other
+  deferred launch has — a scheduled work request is checked when the schedule is created, not on
+  each fire — and it exists because a re-check needs a user and the run's start does not have one in
+  hand. A **retired installation** is the one condition re-read at the start of every run, because
+  that check reads no user.

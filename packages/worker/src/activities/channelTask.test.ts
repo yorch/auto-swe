@@ -19,11 +19,21 @@ vi.mock('@auto-swe/shared/lib/billing', () => ({
 
 // Phase B: stub the default-SWE-template resolver so the code-task tests don't drag
 // in the templates activity's whole dependency chain (slackNotify, trackerSync, …).
-const resolveGate = vi.fn(async () => ({ mode: 'off', staleAfterHours: 72 }));
+const resolveGate = vi.fn(
+  async (): Promise<{ mode: string; staleAfterHours: number } | null> => ({
+    mode: 'off',
+    staleAfterHours: 72,
+  })
+);
 const decide = vi.fn(async () => ({ allowed: true, reason: 'permitted' }));
 
+// Mocked at the gate + decision boundary, NOT at `decideSlackRepoAccess` — so
+// these tests run the real shared helper and would notice it being wired up
+// wrongly. Only `resolveRepoAccessGateOrLastKnown` is stubbed, because the raw
+// resolver must not be reachable from here: reading the gate through the
+// unwrapped one is the bug this file is guarding against.
 vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
-  resolveRepoAccessGate: () => resolveGate(),
+  resolveRepoAccessGateOrLastKnown: () => resolveGate(),
 }));
 
 vi.mock('@auto-swe/shared/lib/repoAccessDecision', () => ({
@@ -318,6 +328,32 @@ describe('createChannelCodeTaskRun', () => {
       findUser.mockResolvedValue(null as never);
       await createChannelCodeTaskRun(INPUT);
       expect(createRunInput.mock.calls[0]?.[0]?.data).not.toHaveProperty('requestedById');
+    });
+
+    it('refuses when the gate has never been readable, rather than treating it as off', async () => {
+      // The whole point of the last-known-good resolver: a config read that
+      // fails must not silently turn enforcement off. Reading through the raw
+      // resolver and catching would land here as "no gate → allowed", which is
+      // the launch the deployment was refusing a second earlier.
+      resolveGate.mockResolvedValue(null);
+
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(isChannelTaskRefusal(result)).toBe(true);
+      expect((result as { message: string }).message).toContain('Try again shortly');
+      expect(createRunInput).not.toHaveBeenCalled();
+    });
+
+    it('resolves the requester and the decision against the SAME set of users', async () => {
+      // Both queries answer "who is this Slack id". A deactivated user filtered
+      // out of one and not the other is refused by the gate as if they had never
+      // linked, and then recorded as the requester of the run they were refused.
+      resolveGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      await createChannelCodeTaskRun(INPUT);
+
+      expect(findUser).toHaveBeenCalled();
+      for (const [args] of findUser.mock.calls) {
+        expect(args?.where).toMatchObject({ isActive: true, slackId: 'U123' });
+      }
     });
   });
 

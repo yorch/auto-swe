@@ -70,6 +70,7 @@
     "./lib/accessActor": "./dist/lib/accessActor.js",
     "./lib/repoAccessDecision": "./dist/lib/repoAccessDecision.js",
     "./lib/repoAccessGate": "./dist/lib/repoAccessGate.js",
+    "./lib/slackRepoAccess": "./dist/lib/slackRepoAccess.js",
     "./lib/repoPermission": "./dist/lib/repoPermission.js",
     "./lib/keyRotation": "./dist/lib/keyRotation.js",
     "./config": "./dist/config/index.js",

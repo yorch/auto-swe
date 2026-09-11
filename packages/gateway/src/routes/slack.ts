@@ -1,6 +1,10 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
-import { CHANNEL_TASK_STEER_SIGNAL, channelTaskWorkflowId } from '@auto-swe/shared/lib/channelTask';
+import {
+  CHANNEL_TASK_STEER_SIGNAL,
+  channelTaskExternalTicketId,
+  channelTaskWorkflowId,
+} from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
@@ -8,6 +12,7 @@ import {
   REPO_ACCESS_REFUSAL_MESSAGE,
 } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
+import { decideSlackRepoAccess } from '@auto-swe/shared/lib/slackRepoAccess';
 import {
   resolvePublicUrl,
   resolveSlackBotTokenForSlackChannel,
@@ -906,7 +911,8 @@ async function processChannelEvent(
       channelRow.id,
       event.thread_ts,
       slackChannelId,
-      userText
+      userText,
+      event.user
     );
     if (steered) {
       return;
@@ -1016,6 +1022,69 @@ async function isLiveThreadSession(
 }
 
 /**
+ * May this person redirect the task running in this thread?
+ *
+ * A steer is not a smaller thing than a launch. The text is appended to the
+ * instructions an agent is executing against a repository — and for a DEFERRED
+ * task it is spliced into the run's description before the run has started at
+ * all, so it is indistinguishable from having asked for that work in the first
+ * place. Gating the launch and leaving the steer open would mean anyone who can
+ * type in the channel can write the second half of an authorized user's task.
+ *
+ * The check is repository access, not authorship. Two teammates who both have
+ * write access steering each other's task is ordinary collaboration, and the
+ * gate exists to describe who may reach the repository, not who owns a thread.
+ *
+ * **A refusal is silent here, and deliberately so.** Returning false falls
+ * through to the caller's normal handling: a plain thread reply is dropped as
+ * channel chatter always is, and an `@mention` starts a turn whose code route
+ * refuses in the thread with a message that says what to do about it. Answering
+ * every unsteered reply directly would turn the bot into a thing that talks back
+ * at conversations it is not part of, and would confirm that a task is running
+ * in the thread to someone who may not be entitled to know it.
+ */
+async function maySteerThreadTask(
+  fastify: FastifyInstance,
+  slackChannelId: string,
+  threadTs: string,
+  userSlackId: string | undefined
+): Promise<boolean> {
+  let task: { connectionId: string | null } | null;
+  try {
+    task = await fastify.prisma.runInput.findFirst({
+      orderBy: { createdAt: 'desc' },
+      select: { connectionId: true },
+      where: { externalTicketId: channelTaskExternalTicketId(slackChannelId, threadTs) },
+    });
+  } catch (err) {
+    // Fail closed. This runs only to decide whether to hand someone's text to a
+    // running agent, and a lookup that did not answer cannot say they may.
+    fastify.log.warn({ err, slackChannelId, threadTs }, 'steer access lookup failed');
+    return false;
+  }
+  // No task row, or a repo-less general task: nothing to gate. The general route
+  // is untouched in every mode — it answers questions and needs no identity to
+  // do so, which is the same line the code route draws.
+  if (!task?.connectionId) {
+    return true;
+  }
+
+  const verdict = await decideSlackRepoAccess(
+    fastify.prisma,
+    userSlackId,
+    task.connectionId,
+    fastify.log
+  );
+  if (!verdict.allowed) {
+    fastify.log.warn(
+      { reason: verdict.reason, slackChannelId, threadTs, userSlackId },
+      'refusing to steer channel task: requester has no access to the repository'
+    );
+  }
+  return verdict.allowed;
+}
+
+/**
  * Attempt to steer an in-flight channel task run bound to this thread. The task
  * run's Temporal workflowId is deterministic — `channelTaskWorkflowId(channelId,
  * threadTs)` — so we reconstruct it without a DB lookup and deliver the new
@@ -1032,8 +1101,12 @@ async function trySteerThreadTask(
   channelId: string,
   threadTs: string,
   slackChannelId: string,
-  userText: string
+  userText: string,
+  userSlackId: string | undefined
 ): Promise<boolean> {
+  if (!(await maySteerThreadTask(fastify, slackChannelId, threadTs, userSlackId))) {
+    return false;
+  }
   const workflowId = channelTaskWorkflowId(channelId, threadTs);
   try {
     await fastify.temporal.signalWorkflow(workflowId, CHANNEL_TASK_STEER_SIGNAL, [userText]);

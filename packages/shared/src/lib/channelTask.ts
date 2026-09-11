@@ -14,6 +14,19 @@ function sanitizeIdPart(s: string): string {
   return s.replace(/[^A-Za-z0-9_-]+/g, '-');
 }
 
+/**
+ * The `RunInput.externalTicketId` a channel-launched task run is filed under.
+ *
+ * Shared for the same reason as the workflow id above, and used for the same
+ * kind of lookup from the other direction: the worker writes the row, and the
+ * gateway finds it — on the indexed column — to learn which repository a thread's
+ * task targets. Note the parts: the Slack channel id (`C…`), not our
+ * `SlackChannel.id`, which is what the workflow id uses.
+ */
+export function channelTaskExternalTicketId(slackChannelId: string, threadTs: string): string {
+  return `slack-${slackChannelId}-${threadTs}`;
+}
+
 /** The Temporal signal name a channel task run accepts for mid-flight steering. */
 export const CHANNEL_TASK_STEER_SIGNAL = 'steer';
 
