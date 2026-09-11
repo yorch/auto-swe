@@ -106,7 +106,7 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
   // fields on `RepoAccessSubject` mean anything at this call site.
   return prisma.connection.findFirst({
     include: {
-      installation: { select: { installationId: true } },
+      installation: { select: { installationId: true, isActive: true } },
       team: {
         select: {
           memberships: { select: { role: true, userId: true }, where: { userId } },

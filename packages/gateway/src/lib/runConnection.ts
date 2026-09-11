@@ -1,7 +1,12 @@
 import type { WorkspaceProviderMetadata } from '@auto-swe/shared/lib/workspaceProviders';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
-import { decideRepoAccess, repoAccessErrorBody } from './repoAccessDecision.js';
+import {
+  decideRepoAccess,
+  installationRetiredErrorBody,
+  isInstallationRetired,
+  repoAccessErrorBody,
+} from './repoAccessDecision.js';
 import type { RepoAccessGate } from './repoAccessGate.js';
 
 export interface ValidateRunConnectionInput {
@@ -52,7 +57,7 @@ export async function validateRunConnection(
   if (connectionId) {
     const connection = await prisma.connection.findUnique({
       include: {
-        installation: { select: { installationId: true } },
+        installation: { select: { installationId: true, isActive: true } },
         team: {
           include: {
             // Filtered to the acting user. It used to load every member of the
@@ -72,6 +77,14 @@ export async function validateRunConnection(
       reply.status(404).send({
         error: { code: 'CONNECTION_NOT_FOUND', message: 'Connection not found or inactive' },
       });
+      return { ok: false };
+    }
+
+    // Ahead of the user branch: a public or webhook caller is exempt from the
+    // GitHub gate because there is no identity to ask about, and that exemption
+    // has nothing to say about whether the installation still exists.
+    if (isInstallationRetired(connection)) {
+      reply.status(409).send(installationRetiredErrorBody());
       return { ok: false };
     }
 

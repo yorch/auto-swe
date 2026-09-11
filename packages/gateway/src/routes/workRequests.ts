@@ -400,7 +400,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // on their own team's repos and the org budget cap can be checked.
       const repo = await fastify.prisma.connection.findUnique({
         include: {
-          installation: { select: { installationId: true } },
+          installation: { select: { installationId: true, isActive: true } },
           team: {
             select: {
               memberships: {
@@ -641,7 +641,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             include: {
               repository: {
                 include: {
-                  installation: { select: { installationId: true } },
+                  installation: { select: { installationId: true, isActive: true } },
                   team: {
                     select: {
                       memberships: { select: { userId: true }, where: { userId: user.sub } },

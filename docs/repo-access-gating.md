@@ -98,6 +98,11 @@ Rows are refreshed three ways.
 | Webhook (`POST /api/v1/webhooks/access`) | collaborator, team, org-membership and repository events | seconds |
 | Scheduled sweep | every reachable pair, plus login-ownership verification | one sweep interval |
 
+A detected takeover is recorded in the governance audit log against the affected user, with the
+account id the login was recorded for and the one it resolves to now. It appears at `/govern/audit`
+with no actor, because the system cleared it rather than a person. A log line was the only signal
+before, and a log line is gone by the time anyone asks.
+
 All three writers confirm the stored login still resolves to the account id it was recorded for
 before using it — the sweep, the launch path and the webhook refresh. A check only one of the three
 performed would not be a check: the other two would keep re-populating rows under a login that had
@@ -131,6 +136,19 @@ of the check that keeps the platform's idea of access aligned with GitHub's.
 Multiple GitHub organizations are reached through multiple App installations. `GitHubInstallation`
 rows name them and `connections.installation_id` points a repository at one; null means the
 singleton `GitHubConfig.appInstallationId`, so an existing single-org deployment needs no change.
+
+An installation can be marked **retired**, which refuses new launches against the repositories
+pointing at it — with a distinct `INSTALLATION_RETIRED` code, because it is an operator-
+configuration problem rather than a statement about the user. Clones, pushes, CI reads and runs
+already in flight are deliberately unaffected.
+
+It is enforced in two places, because not every run starts at the gateway. Every launch route
+refuses one up front, which is what produces the error a caller sees. And the run's first activity
+refuses again at run start, which is what covers the paths that never touch the gateway at all: a
+scheduled work request's cron fire, the Slack channel assistant's code task, and any launch path
+added later. Both sit at the beginning of new work, so neither can interrupt a run already under
+way. Unlike the GitHub gate, this check reads no user, so the exemptions for callers without an
+identity do not apply to it.
 
 Installations are managed at `/studio/github-installations` in the dashboard, or over the API at
 `/api/v1/platform/github-installations` — which the dashboard itself calls, and which is also
@@ -185,8 +203,13 @@ configuration falls back to `off`, and such a process has nothing to enforce yet
 
 ## 8. What is gated
 
-Every path that can cause a push is gated, not only the interactive one.
-Gating a single route would leave the others as ways around it.
+Every path that carries a **user identity** is gated, not only the interactive one. Gating a single
+route would leave the others as ways around it.
+
+The paths that carry no user identity are not, and cannot be, gated on a user's GitHub permission —
+there is nobody to ask GitHub about. They are listed under Limitations, and they are all scoped some
+other way: to the template's own team, or to the Slack channel's team binding. A retired
+installation does stop all of them, because that check reads no user.
 
 | Surface | Gated | Requires |
 |---|---|---|
@@ -241,9 +264,10 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   attributed to the requester. Delegating execution to a user identity would need per-user token
   refresh and a service identity for webhook- and schedule-triggered runs, which have no user at
   all.
-- **An installation's in-use/retired mark is bookkeeping.** Nothing reads it: a repository
-  pointing at an installation marked retired still uses it, and marking one retired disconnects
-  nothing. It records an operator's intent so a stale row is recognisable, and the page says so.
+- **Retiring an installation stops new work, not work in flight.** A run already under way keeps
+  cloning, pushing and reading CI through a retired installation, and so does the sweep. The mark
+  says what may start next; pulling the credential out from under running work would make a
+  bookkeeping toggle into an outage.
 - **Team membership remains the outer bound.** The gate can only remove access. A user with GitHub
   admin rights on a repository still sees nothing unless they are a member of the owning team.
 - **Non-git connections are exempt, necessarily.** A `Connection` is also how an MCP server and
@@ -255,10 +279,19 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   so a call site that forgot it compiled and ran ungated — which is how the Slack routes and the
   human-step resolver ended up outside the gate. Required, forgetting is a compile error and
   passing `undefined` is a decision someone made.
-- **Editing or deleting a schedule is not gated.** Neither causes a push, and refusing a delete
-  would strand a schedule its owner can no longer stop. A schedule created before access was
-  revoked keeps firing until someone deletes it — the gate is checked when it is created and when
-  it is fired by hand, not on each cron fire, which has no user to check.
-- **A template run started by a public or webhook caller is not gated.** There is no authenticated
-  user to ask GitHub about; those callers are scoped to the template's own team instead, which is
-  the pre-existing behaviour.
+- **Editing or deleting a schedule is not gated, and a cron fire is not GitHub-gated.** Neither
+  editing nor deleting causes a push, and refusing a delete would strand a schedule its owner can
+  no longer stop. A schedule created before a user's GitHub access was revoked keeps firing until
+  someone deletes it: the gate is checked when the schedule is created and when it is fired by
+  hand, not on each cron fire, which has no user to check. A **retired installation** does stop
+  those fires, because that check reads no user — see below.
+- **A template run started by a public or webhook caller is not GitHub-gated.** There is no
+  authenticated user to ask GitHub about; those callers are scoped to the template's own team
+  instead, which is the pre-existing behaviour. A retired installation still stops them.
+- **The Slack channel assistant's code task is not gated on the requesting user.** A channel-
+  resident run resolves its repository from the *channel's* team binding, not from the person who
+  asked, so access there is channel membership rather than platform team membership or GitHub
+  permission. That is a coherent model — a private Slack channel is the boundary — but it is a
+  different one from the rest of this document, and it means a user who has lost GitHub access to a
+  repository can still drive a run against it from a channel bound to its team. A retired
+  installation stops those runs; nothing else about the gate reaches them.

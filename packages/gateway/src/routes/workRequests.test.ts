@@ -51,6 +51,8 @@ describe('POST /api/v1/work-requests', () => {
   // every test pass them (member of the org, no cap, no prior spend).
   let orgMembershipRole: string | null = 'ORG_MEMBER';
   let orgBudgetCents: number | null = null;
+  /** The repo's installation. Null is "the singleton's", which is the default. */
+  let installation: { installationId: string; isActive: boolean } | null = null;
   let orgSpentUsd: number | null = null;
 
   beforeAll(async () => {
@@ -93,6 +95,7 @@ describe('POST /api/v1/work-requests', () => {
       connection: {
         findUnique: async () => ({
           id: 'repo-1',
+          installation,
           isActive: true,
           organizationName: 'org',
           repoName: 'test',
@@ -271,6 +274,51 @@ describe('POST /api/v1/work-requests', () => {
     orgMembershipRole = 'ORG_MEMBER'; // restore default
     expect(res.statusCode).toBe(403);
     expect(JSON.parse(res.payload).error.code).toBe('FORBIDDEN');
+  });
+
+  it('returns 403 INSTALLATION_RETIRED when the repo points at a retired installation', async () => {
+    // The only end-to-end assertion that a gated route actually refuses. Every
+    // other test of this covers the pure decision function, and no route
+    // fixture set an `installation` at all — so the branch was never taken
+    // through a real request, and a route that dropped the check would have
+    // stayed green.
+    existingWorkflows = [];
+    installation = { installationId: '900001', isActive: false };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-RETIRED',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    installation = null; // restore default
+    expect(res.statusCode).toBe(403);
+    const body = JSON.parse(res.payload);
+    expect(body.error.code).toBe('INSTALLATION_RETIRED');
+    expect(body.error.reason).toBe('installation-retired');
+  });
+
+  it('accepts the same request through a live installation', async () => {
+    // The discriminating case: if the test above passed because ANY
+    // installation refused, or because the route refuses everything, this
+    // would fail.
+    existingWorkflows = [];
+    installation = { installationId: '900001', isActive: true };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-LIVE',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    installation = null;
+    expect(res.statusCode).toBe(201);
   });
 
   it('returns 402 when the org has exceeded its monthly budget cap (P5 billing)', async () => {

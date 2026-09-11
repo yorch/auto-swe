@@ -178,6 +178,88 @@ describe('createWorkflowRun', () => {
     ] as never);
   });
 
+  describe('retired installation', () => {
+    const findRunInput = vi.mocked(prisma.runInput.findUnique);
+
+    beforeEach(() => {
+      // The pass-through cases must actually get past the installation check
+      // and load a template, or "no error" would be true for the wrong reason.
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+    });
+
+    function connection(isActive: boolean | null) {
+      return {
+        connection: {
+          installation: isActive === null ? null : { isActive },
+          organizationName: 'acme',
+          repoName: 'payments',
+        },
+      };
+    }
+
+    it('refuses to start a run whose repository points at a retired installation', async () => {
+      // Not every run starts at the gateway. A scheduled work request's Temporal
+      // Schedule starts this workflow directly, so a schedule created before
+      // retirement would otherwise keep pushing indefinitely. The same is true
+      // of the channel assistant's code task.
+      findRunInput.mockResolvedValue(connection(false) as never);
+      const result = await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+        workRequestId: 'wr-1',
+      });
+      expect(result).toEqual({
+        error: expect.stringContaining('acme/payments'),
+      });
+      expect((result as { error: string }).error).toContain('retired');
+      // Refused before the template is even loaded.
+      expect(findVersion).not.toHaveBeenCalled();
+    });
+
+    it('starts normally through a live installation', async () => {
+      // The discriminating case: if the test above passed because ANY
+      // installation refused, this would fail.
+      findRunInput.mockResolvedValue(connection(true) as never);
+      const result = await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+        workRequestId: 'wr-1',
+      });
+      expect(result).not.toHaveProperty('error');
+      expect(findVersion).toHaveBeenCalled();
+    });
+
+    it('starts normally when the repository uses the default installation', async () => {
+      // A null installation means the singleton's, which cannot be retired
+      // through this flag — treating it as retired would stop every run on a
+      // single-organization deployment.
+      findRunInput.mockResolvedValue(connection(null) as never);
+      const result = await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+        workRequestId: 'wr-1',
+      });
+      expect(result).not.toHaveProperty('error');
+    });
+
+    it('starts normally for a run with no work request at all', async () => {
+      // Cleared explicitly: the assertion below is about THIS call, and mocks
+      // accumulate across the cases above.
+      findRunInput.mockClear();
+      findRunInput.mockResolvedValue(null as never);
+      const result = await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+      });
+      expect(result).not.toHaveProperty('error');
+      expect(findRunInput).not.toHaveBeenCalled();
+    });
+  });
+
   it('snapshots the active GLOBAL Agent versions onto the run', async () => {
     findVersion.mockResolvedValue({ spec: validSpec } as never);
     await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
