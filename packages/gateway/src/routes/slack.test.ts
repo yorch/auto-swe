@@ -72,6 +72,8 @@ interface FakeUser {
   id: string;
   role: string;
   slackId: string | null;
+  /** Omitted means active, which is what almost every test wants. */
+  isActive?: boolean;
 }
 
 interface FakeTemplate {
@@ -107,16 +109,67 @@ interface FakeState {
   workspaceUpdateCalls: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
   /** Connection returned by `connection.findUnique` (null = not found). */
   connectionRow: Record<string, unknown> | null;
+  /** Per-id overrides for `connection.findUnique`, for multi-repository cases. */
+  connectionRows: Record<string, Record<string, unknown>>;
+  /** Every id `connection.findUnique` was asked about, in order. */
+  connectionLookups: string[];
   /** Ledger writes recorded by the run-modal path. */
   runInputCreates: Array<Record<string, unknown>>;
-  /** The thread's task row, as the steer path's `runInput.findFirst` sees it. */
-  threadTaskRunInput: { connectionId: string | null } | null;
+  /**
+   * Every `RunInput` row in the fake store, as whole rows.
+   *
+   * Whole rows rather than a canned answer, because the steer decision is
+   * mostly *which* rows its `where` selects: the fake applies the filter, so a
+   * change that looks up the wrong thread, drops the payload marker, or starts
+   * ranking rows instead of requiring all of them fails a test.
+   */
+  runInputRows: FakeRunInput[];
+  /** Recorded `where`/`take` of every steer lookup, so the query itself is assertable. */
+  runInputFindManyCalls: Array<{ take?: number; where: Record<string, unknown> }>;
+  /** When true, the steer lookup rejects — the fail-closed path. */
+  runInputFindManyThrows: boolean;
   activeWorkflowCreates: Array<Record<string, unknown>>;
   /** Ordered log of 'ledger' vs 'start', proving the write precedes the start. */
   launchOrder: string[];
   runnableStarts: Array<{ id: string; args: unknown }>;
   /** When set, `startRunnableWorkflow` rejects with this. */
   runnableStartError: Error | null;
+}
+
+/** A `RunInput` row, with the columns the steer decision selects on. */
+interface FakeRunInput {
+  connectionId: string | null;
+  externalTicketId: string;
+  payload: { kind?: string } | null;
+  slackChannelId: string | null;
+  slackMessageTs: string | null;
+}
+
+/**
+ * The subset of Prisma's `where` this fake understands, applied for real.
+ *
+ * Deliberately strict: an operator it does not recognise throws rather than
+ * being ignored, so a decision that starts filtering on something new cannot
+ * quietly pass every test in this file by being silently unfiltered.
+ */
+function matchesRunInputWhere(row: FakeRunInput, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([field, want]) => {
+    if (field === 'payload') {
+      const { equals, path } = want as { equals: unknown; path: string[] };
+      if (path.length !== 1 || path[0] !== 'kind') {
+        throw new Error(`fake runInput.findMany: unsupported payload path ${path.join('.')}`);
+      }
+      return row.payload?.kind === equals;
+    }
+    const actual = (row as unknown as Record<string, unknown>)[field];
+    if (want !== null && typeof want === 'object') {
+      if ('not' in want) {
+        return actual !== (want as { not: unknown }).not;
+      }
+      throw new Error(`fake runInput.findMany: unsupported filter on ${field}`);
+    }
+    return actual === want;
+  });
 }
 
 function buildApp(state: FakeState): FastifyInstance {
@@ -196,7 +249,13 @@ function buildApp(state: FakeState): FastifyInstance {
           team: { memberships: [{ userId: 'u1' }] },
         },
       ],
-      findUnique: async () => state.connectionRow,
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        state.connectionLookups.push(where.id);
+        // Per-id when the test set one up, so a decision taken against several
+        // repositories is distinguishable from one taken against the same row
+        // twice; otherwise the single shared row every other test uses.
+        return state.connectionRows[where.id] ?? state.connectionRow;
+      },
     },
     repository: {
       findMany: async () => [],
@@ -208,8 +267,17 @@ function buildApp(state: FakeState): FastifyInstance {
         return data;
       },
       delete: async () => ({}),
-      // The steer path's lookup: which repository does this thread's task target?
-      findFirst: async () => state.threadTaskRunInput,
+      // The steer path's lookup: which repositories has this thread tasked?
+      // Applies the `where` rather than returning a canned answer — see
+      // `runInputRows`.
+      findMany: async (args: { take?: number; where: Record<string, unknown> }) => {
+        if (state.runInputFindManyThrows) {
+          throw new Error('connection reset');
+        }
+        state.runInputFindManyCalls.push(args);
+        const matched = state.runInputRows.filter((row) => matchesRunInputWhere(row, args.where));
+        return args.take === undefined ? matched : matched.slice(0, args.take);
+      },
     },
     slackChannel: {
       // No row yet → provisionChannel takes its create path, where it asks
@@ -239,8 +307,15 @@ function buildApp(state: FakeState): FastifyInstance {
       findUnique: async () => ({ id: 'team-default', orgId: 'org-1', slug: 'default' }),
     },
     user: {
-      findFirst: async ({ where }: { where: { slackId?: string } }) =>
-        state.users.find((u) => u.slackId === where.slackId) ?? null,
+      // `isActive` is applied, not ignored: the access decision filters on it,
+      // and a fake that drops the filter cannot tell a deactivated user from a
+      // linked one.
+      findFirst: async ({ where }: { where: { isActive?: boolean; slackId?: string } }) =>
+        state.users.find(
+          (u) =>
+            u.slackId === where.slackId &&
+            (where.isActive === undefined || (u.isActive ?? true) === where.isActive)
+        ) ?? null,
       // The install callback re-checks the installer's platform role.
       findUnique: async ({ where }: { where: { id: string } }) =>
         state.installer && state.installer.id === where.id ? state.installer : null,
@@ -323,7 +398,9 @@ beforeEach(async () => {
     activeWorkflowCreates: [],
     channelAssistantStartError: null,
     channelAssistantStarts: [],
+    connectionLookups: [],
     connectionRow: null,
+    connectionRows: {},
     existingWorkspace: null,
     humanStep: null,
     humanStepUpdateCalls: [],
@@ -331,6 +408,9 @@ beforeEach(async () => {
     installer: { id: 'u1', isActive: true, role: 'ADMIN' },
     launchOrder: [],
     runInputCreates: [],
+    runInputFindManyCalls: [],
+    runInputFindManyThrows: false,
+    runInputRows: [],
     runnableStartError: null,
     runnableStarts: [],
     signalCalls: [],
@@ -357,8 +437,11 @@ beforeEach(async () => {
         teamId: 'team-a',
       },
     ],
-    threadTaskRunInput: null,
-    users: [{ id: 'u1', role: 'ADMIN', slackId: 'U1' }],
+    users: [
+      { id: 'u1', role: 'ADMIN', slackId: 'U1' },
+      { id: 'u2', role: 'ENGINEER', slackId: 'U-ENGINEER' },
+      { id: 'u3', isActive: false, role: 'ENGINEER', slackId: 'U-DEACTIVATED' },
+    ],
     versions: new Map([
       [
         't1:1',
@@ -1192,12 +1275,24 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       });
     }
 
+    /** A channel task's `RunInput`, as `buildChannelTaskRun` writes it. */
+    function channelTask(connectionId: string | null, over: Partial<FakeRunInput> = {}) {
+      return {
+        connectionId,
+        externalTicketId: 'slack-C9-1700.root',
+        payload: { kind: 'channel-task' },
+        slackChannelId: 'C9',
+        slackMessageTs: '1700.root',
+        ...over,
+      };
+    }
+
     beforeEach(() => {
       // `mockResolvedValue` outlives `clearAllMocks` (which clears calls, not
       // implementations), so re-state the default or each test inherits the mode
       // the one before it set.
       repoAccessGate.mockResolvedValue({ mode: 'off', staleAfterHours: 72 });
-      state.threadTaskRunInput = { connectionId: 'conn-1' };
+      state.runInputRows = [channelTask('conn-1')];
       state.connectionRow = REPO_ROW;
     });
 
@@ -1233,7 +1328,7 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       // The general route is untouched in every mode — it answers questions and
       // needs no identity to do so, which is the same line the code route draws.
       repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
-      state.threadTaskRunInput = { connectionId: null };
+      state.runInputRows = [channelTask(null)];
 
       expect((await reply('U-STRANGER')).statusCode).toBe(200);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1247,6 +1342,115 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('is not switched off by a repo-less task landing in the same thread', async () => {
+      // A `RunInput` is written before the child run starts, so a thread
+      // accumulates rows — and a general task in a thread that already has a
+      // code task is the ordinary way to get a repo-less one. Ranked by
+      // recency, this row would answer "no repository to check" and turn the
+      // gate off with one message.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = [channelTask('conn-1'), channelTask(null)];
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('requires EVERY repository the thread has tasked, not the newest', async () => {
+      // The planted-row case: ask for a code task with a `repoHint` naming a
+      // repository you CAN reach, lose the already-running race, and the row is
+      // still written. Ranked by recency it would decide the steer; required as
+      // a set it only narrows who may steer.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = [channelTask('conn-1'), channelTask('conn-planted')];
+      // The planted one is reachable; the thread's real task is not. Whichever
+      // single row a ranking picked, this refuses only if BOTH were consulted.
+      state.connectionRows = {
+        'conn-1': { ...REPO_ROW, id: 'conn-1', team: { memberships: [] } },
+        'conn-planted': {
+          ...REPO_ROW,
+          id: 'conn-planted',
+          team: { memberships: [{ userId: 'u2' }] },
+        },
+      };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+      expect(state.connectionLookups).toContain('conn-1');
+    });
+
+    it('refuses a deactivated user whose Slack id is still linked', async () => {
+      // Deactivation is not a state the gate may read as "linked, carry on".
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+
+      expect((await reply('U-DEACTIVATED')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('ignores a row that only claims the thread ticket id', async () => {
+      // `externalTicketId` is free text taken from the body of
+      // `POST /work-requests`, and its validation permits every character the
+      // channel task's id uses. Only the typed Slack columns and the payload
+      // marker are written by us, so a row carrying just the ticket id must not
+      // be what the steer is decided against.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = [
+        channelTask('conn-planted', { payload: null, slackChannelId: null, slackMessageTs: null }),
+      ];
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // No channel task in this thread at all → nothing to gate, and crucially
+      // the planted row's repository was never consulted.
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('asks about the thread it was given', async () => {
+      // The `where` itself, because everything above would also pass if the
+      // lookup read some other thread and found nothing.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+
+      await reply('U1');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.runInputFindManyCalls[0]?.where).toMatchObject({
+        connectionId: { not: null },
+        externalTicketId: 'slack-C9-1700.root',
+        payload: { equals: 'channel-task', path: ['kind'] },
+        slackChannelId: 'C9',
+        slackMessageTs: '1700.root',
+      });
+    });
+
+    it('refuses when the lookup itself fails', async () => {
+      // A lookup that did not answer cannot say they may.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputFindManyThrows = true;
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('refuses a thread naming more repositories than the decision scans', async () => {
+      // Truncation has to fail closed: the rows a `take` drops are exactly the
+      // ones someone filling the thread would want dropped.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = Array.from({ length: 11 }, (_, i) => channelTask(`conn-${i}`));
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
     });
   });
 

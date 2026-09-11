@@ -1042,6 +1042,32 @@ async function isLiveThreadSession(
  * every unsteered reply directly would turn the bot into a thing that talks back
  * at conversations it is not part of, and would confirm that a task is running
  * in the thread to someone who may not be entitled to know it.
+ *
+ * ### Which repository the thread is judged against
+ *
+ * Two properties are needed of that lookup, and neither is obvious.
+ *
+ * **The key must be one no caller can write.** `externalTicketId` looks like
+ * the natural join — the channel task files itself under a deterministic
+ * `slack-<channel>-<thread>` — but it is a free-text field taken straight from
+ * the body of `POST /work-requests` and `POST /epics`, and its validation
+ * permits every character that id uses. Keyed on it alone, anyone could submit
+ * an ordinary work request against a repository they legitimately hold, under
+ * the victim thread's ticket id, and have this decide against *their* repository
+ * instead. So the query also requires the two typed Slack columns and the
+ * channel-task payload marker, none of which any API route writes — only
+ * `buildChannelTaskRun` sets all of them. The ticket id stays in the `where` for
+ * its index, where it can narrow but can no longer decide.
+ *
+ * **Every repository the thread has tasked must pass, not the newest one.** A
+ * `RunInput` is written before the child run is started, so a thread accumulates
+ * rows: a task that lost the already-running race leaves one behind, and so does
+ * a repo-less general task in a thread that already has a code task. Taking the
+ * most recent row would let either mask the repository actually being steered —
+ * including one planted deliberately, by asking for a code task with a
+ * `repoHint` naming a repository the asker *can* reach. Requiring all of them
+ * makes those rows monotonic: an extra row can only ever narrow who may steer,
+ * so planting one denies the planter rather than promoting them.
  */
 async function maySteerThreadTask(
   fastify: FastifyInstance,
@@ -1049,40 +1075,66 @@ async function maySteerThreadTask(
   threadTs: string,
   userSlackId: string | undefined
 ): Promise<boolean> {
-  let task: { connectionId: string | null } | null;
+  let repoIds: string[];
   try {
-    task = await fastify.prisma.runInput.findFirst({
-      orderBy: { createdAt: 'desc' },
+    const tasks = await fastify.prisma.runInput.findMany({
       select: { connectionId: true },
-      where: { externalTicketId: channelTaskExternalTicketId(slackChannelId, threadTs) },
+      // One more than the cap, so a result AT the cap is distinguishable from
+      // one that was truncated. Truncation has to fail closed: the rows this
+      // dropped are exactly the ones an attacker would want dropped.
+      take: STEER_REPO_SCAN_LIMIT + 1,
+      where: {
+        // Repo-less rows are excluded rather than ranked. A general task in the
+        // thread says nothing about the code task that may be running beside it,
+        // and reading it as "no repository to check" is how the newest-row-wins
+        // version could be switched off with one message.
+        connectionId: { not: null },
+        externalTicketId: channelTaskExternalTicketId(slackChannelId, threadTs),
+        payload: { equals: 'channel-task', path: ['kind'] },
+        slackChannelId,
+        slackMessageTs: threadTs,
+      },
     });
+    if (tasks.length > STEER_REPO_SCAN_LIMIT) {
+      fastify.log.warn(
+        { slackChannelId, threadTs },
+        'refusing to steer channel task: more repositories in this thread than the decision scans'
+      );
+      return false;
+    }
+    repoIds = [...new Set(tasks.map((t) => t.connectionId).filter((id) => id !== null))];
   } catch (err) {
     // Fail closed. This runs only to decide whether to hand someone's text to a
     // running agent, and a lookup that did not answer cannot say they may.
     fastify.log.warn({ err, slackChannelId, threadTs }, 'steer access lookup failed');
     return false;
   }
-  // No task row, or a repo-less general task: nothing to gate. The general route
+  // No code task has ever run in this thread. Nothing to gate: the general route
   // is untouched in every mode — it answers questions and needs no identity to
   // do so, which is the same line the code route draws.
-  if (!task?.connectionId) {
+  if (repoIds.length === 0) {
     return true;
   }
 
-  const verdict = await decideSlackRepoAccess(
-    fastify.prisma,
-    userSlackId,
-    task.connectionId,
-    fastify.log
-  );
-  if (!verdict.allowed) {
-    fastify.log.warn(
-      { reason: verdict.reason, slackChannelId, threadTs, userSlackId },
-      'refusing to steer channel task: requester has no access to the repository'
-    );
+  for (const repoId of repoIds) {
+    const verdict = await decideSlackRepoAccess(fastify.prisma, userSlackId, repoId, fastify.log);
+    if (!verdict.allowed) {
+      fastify.log.warn(
+        { reason: verdict.reason, repoId, slackChannelId, threadTs, userSlackId },
+        'refusing to steer channel task: requester has no access to the repository'
+      );
+      return false;
+    }
   }
-  return verdict.allowed;
+  return true;
 }
+
+/**
+ * How many distinct repositories one thread's tasks may name before a steer is
+ * refused outright. A thread has one running task, so the real number is one;
+ * the allowance is for the rows a thread accumulates over its life.
+ */
+const STEER_REPO_SCAN_LIMIT = 10;
 
 /**
  * Attempt to steer an in-flight channel task run bound to this thread. The task

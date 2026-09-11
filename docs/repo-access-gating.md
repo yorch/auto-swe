@@ -232,6 +232,17 @@ write access steering each other's task is ordinary collaboration. A refusal is 
 is dropped as ordinary channel chatter rather than answered, because answering would confirm to
 someone outside the repository that a task is running in that thread.
 
+Which repository a thread is judged against is the part worth stating, because the obvious answer is
+wrong twice over. A channel task files its run input under a deterministic ticket id built from the
+channel and thread, which looks like the natural key — but a ticket id is free text taken from the
+body of a work-request submission, and its validation permits every character that id uses. So the
+lookup also requires the typed Slack columns and the channel-task payload marker, none of which any
+API route writes. And it requires **every** repository the thread has tasked, not the most recent
+one: a run input is written before its run starts, so a thread accumulates rows, and reading only the
+newest would let a repo-less general task or a deliberately planted one decide in place of the task
+actually being steered. Requiring all of them makes an extra row narrow who may steer rather than
+widen it.
+
 | Surface | Gated | Requires |
 |---|---|---|
 | `POST /work-requests` | yes | `write` |
@@ -319,6 +330,12 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   easier way to do what `/auto-swe run` already checks. A Slack user with no linked account cannot
   start a code task under enforcement; they are told to link, and the conversational route keeps
   working. The **general** route needs no identity and is untouched in every mode.
+- **Steering a thread can be narrowed by anyone who can start a task in it.** Because a steer
+  requires access to every repository the thread has tasked, someone who asks for a code task in
+  another person's thread against a repository only they can reach leaves a row behind that the
+  thread's owner then fails. They lose the ability to steer their own task; they do not lose the
+  task, and an `@mention` still works. That trade is deliberate — the alternative, ranking the rows
+  and trusting the newest, turns the same move into a way to steer somebody else's run.
 - **A deferred code task is decided when it is asked for, not when it runs.** A task scheduled with
   `runAt` takes the requester's decision at creation and nothing re-asks GitHub at the moment the
   run starts, so access lost in between does not stop it. This is the same window every other
