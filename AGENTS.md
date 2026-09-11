@@ -110,6 +110,21 @@ Top-level files that matter:
   plus the row/advisory-lock exception in §7
 - Prefer explicit error handling over silent failures
 - **Biome** is the single source of truth for lint + format — config at root `biome.json` (single quotes, lineWidth 100, indent 2, organizeImports on). Run `yarn lint:fix` before committing.
+- **In a git worktree under `.claude/worktrees/`, `yarn lint` checks ZERO files and exits 0.**
+  `yarn lint` is `biome check .`, and `biome.json` ignores `**/.claude`, so the worktree's own root
+  resolves into an ignored path: Biome prints "No files were processed in the specified paths" and
+  succeeds. CI checks out at an ordinary path, so it catches what the worktree hid. Pass explicit
+  directories instead, and confirm the file count it reports matches the one in the CI log:
+
+  ```bash
+  yarn biome check defaults docs infra packages scripts site \
+    biome.json package.json tsconfig.base.json vitest.config.ts
+  ```
+
+  Fewer arguments silently narrow the scope; `packages` alone misses the root-level files. And
+  **never verify with `--write`** — it reports what it fixed, not what it cannot fix, so a rule with
+  no autofix (`noUnsafeOptionalChaining`, say) reads as success. Run the plain `check` before
+  pushing, `--write` only to apply.
 
 ### Naming Conventions
 
