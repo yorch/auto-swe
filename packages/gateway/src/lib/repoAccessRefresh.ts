@@ -9,13 +9,13 @@
  */
 import type { PrismaClient } from '@auto-swe/shared';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
-import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { AccessInvalidation } from './repoAccessWebhook.js';
 import {
   lookupRepoPermission,
   PERMISSION_REPO_SELECT,
   verifiedGithubLoginFor,
-} from './repoPermission.js';
+} from '@auto-swe/shared/lib/repoPermission';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import type { AccessInvalidation } from './repoAccessWebhook.js';
 
 export interface RefreshOutcome {
   /** Pairs GitHub answered for. */

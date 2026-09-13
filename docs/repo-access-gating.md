@@ -199,6 +199,42 @@ last configuration it read successfully and keeps applying it, so a database hic
 enforcement off underneath a running deployment. Only a process that has never managed to read the
 configuration falls back to `off`, and such a process has nothing to enforce yet.
 
+The Slack paths, and the Slack run modal, are the exception: they refuse. The gateway's fallback is safe because it decorates
+every authenticated request and the routes downstream still check team membership, but a Slack
+message arrives with no session at all, and the gate read is the only thing between an unidentified
+workspace user and a push. "We could not check" must not read there as "there was nothing to check".
+In practice a configuration store that cannot answer also cannot create the run a moment later, so
+what this costs is a clear message in the thread rather than a failure further in. The run modal
+refuses for the same reason and to keep the two consistent: a launch must never be more permissive
+than a steer of the run it starts.
+
+**Advisory means advisory on these paths too**, and it covers one more condition here than it does
+on the gateway routes. Under `advisory` a Slack user with no linked account **and** a Slack user who
+is not a member of the channel's team are both logged and allowed, and refused only under `enforce`.
+
+The test for what belongs in that list is not what kind of condition it is — it is whether the path
+applied it before the gate existed. Every gateway route checked team membership long before any of
+this, so membership there is a pre-existing bound that advisory has no business relaxing. These two
+Slack paths never did: a channel task resolves its repository from the **channel's** team binding and
+never consulted the asker's membership, and a thread steer checked nothing at all. Both conditions
+arrived together, so both observe together, or advisory refuses someone for a rule that did not exist
+when the operator set the dial. A retired installation is refused in every mode when a
+task is being **started**, because it already stopped channel code tasks at the run's first activity.
+
+**A retired installation does not stop a steer.** Retirement stops new work and nothing else — that
+is the doctrine everywhere else in this document, and a steer is not new work. Reaching the decision
+at all requires the run to be in flight, so it necessarily started before the retirement, and it goes
+on running either way; refusing the steer would take away its owner's control of it without stopping
+anything. The two Slack paths pass what they are asking for **into** the decision, so it
+removes that one condition and keeps every other. Converting the refusal afterwards would not be the
+same thing: retirement is decided before the GitHub permission check, so an allow applied to its
+answer would have skipped the check as well.
+
+**And `off` is read first.** Everything the gate adds has failure modes of its own — a truncated
+scan, a lookup that did not answer — and each of them refuses. A deployment that never asked for the
+gate must not lose a steer to a database blip in a check it did not turn on, so the mode is read
+before any of that apparatus runs rather than inside the decision at the end of it.
+
 ---
 
 ## 8. What is gated
@@ -207,9 +243,41 @@ Every path that carries a **user identity** is gated, not only the interactive o
 route would leave the others as ways around it.
 
 The paths that carry no user identity are not, and cannot be, gated on a user's GitHub permission —
-there is nobody to ask GitHub about. They are listed under Limitations, and they are all scoped some
-other way: to the template's own team, or to the Slack channel's team binding. A retired
-installation does stop all of them, because that check reads no user.
+there is nobody to ask GitHub about. They are listed under Limitations, and they are scoped some
+other way: to the template's own team. A retired installation does stop all of them, because that
+check reads no user.
+
+The Slack channel assistant used to be in that list and no longer is. Its code task does carry a
+requester — only the interactive turn can start one, and it knows who spoke — so once the gate is on
+it takes the same decision as everything else.
+
+**Steering counts as launching.** A reply in a thread with a running task is delivered to that run
+as new instructions, and for a task deferred with `runAt` it is spliced into the run's description
+before the run starts at all — which makes it indistinguishable from having asked for that work.
+Gating the launch and leaving the steer open would let anyone who can type in the channel write the
+second half of somebody else's task, so the steer takes the same decision, against the repository
+the thread's task targets. The check is repository access, not authorship: two people who both have
+write access steering each other's task is ordinary collaboration. A refusal is silent — the reply
+is dropped as ordinary channel chatter rather than answered, because answering would confirm to
+someone outside the repository that a task is running in that thread.
+
+The decision is taken only when there is an open run to steer. Checking first costs one call to the
+orchestrator; skipping it would mean asking GitHub who is speaking on every reply in any thread that
+ever hosted a code task, for the life of the thread, because the run-input row that records it is
+permanent and most thread replies are people talking to each other.
+
+Which repository a thread is judged against is the part worth stating, because the obvious answer is
+wrong twice over. A channel task files its run input under a deterministic ticket id built from the
+channel and thread, which looks like the natural key — but a ticket id is free text taken from the
+body of a work-request submission, and its validation permits every character that id uses. So the
+lookup also requires the typed Slack columns and the channel-task payload marker, none of which any
+API route writes. And it requires **every** repository the thread has tasked, not the most recent
+one: a run input is written before its run starts, so a thread accumulates rows, and reading only the
+newest would let a repo-less general task or a deliberately planted one decide in place of the task
+actually being steered. Requiring all of them makes an extra row narrow who may steer rather than
+widen it. The ceiling is counted in distinct repositories, not rows: every delegating turn writes a
+row and they normally all name the same one, so counting rows would quietly cost a busy thread its
+steering.
 
 | Surface | Gated | Requires |
 |---|---|---|
@@ -231,6 +299,8 @@ installation does stop all of them, because that check reads no user.
 | `GET /lessons` and lesson search | yes | `read` |
 | `GET /epics` | yes | `read` |
 | Slack run-status buttons (`canSeeRun`) | yes | `read` |
+| Slack channel assistant code task | yes, when the gate is on | `write` |
+| Slack thread steer of a running code task | yes, when the gate is on | `write` |
 
 Platform `ADMIN`s bypass the gate, consistent with every other check in the gateway.
 
@@ -288,10 +358,35 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
 - **A template run started by a public or webhook caller is not GitHub-gated.** There is no
   authenticated user to ask GitHub about; those callers are scoped to the template's own team
   instead, which is the pre-existing behaviour. A retired installation still stops them.
-- **The Slack channel assistant's code task is not gated on the requesting user.** A channel-
-  resident run resolves its repository from the *channel's* team binding, not from the person who
-  asked, so access there is channel membership rather than platform team membership or GitHub
-  permission. That is a coherent model — a private Slack channel is the boundary — but it is a
-  different one from the rest of this document, and it means a user who has lost GitHub access to a
-  repository can still drive a run against it from a channel bound to its team. A retired
-  installation stops those runs; nothing else about the gate reaches them.
+- **The Slack channel assistant's code task is gated only once the gate is on.** With
+  `repoAccess.mode` off it needs no linked account, which is the long-standing behaviour of an
+  `@mention` and a deliberate one — the assistant's value is that you can talk to it without
+  onboarding. Under `advisory` or `enforce` it resolves the Slack user to a platform user and takes
+  the same decision every other launch path takes, so the conversational route stops being an
+  easier way to do what `/auto-swe run` already checks. A Slack user with no linked account cannot
+  start a code task under enforcement; they are told to link, and the conversational route keeps
+  working. The **general** route needs no identity and is untouched in every mode.
+- **A thread can be talked past the steer decision's ceilings, permanently, and on purpose.** The
+  decision reads a bounded number of task rows and decides against a bounded number of repositories;
+  exceeding either refuses. Run inputs are never deleted, so both ceilings are one-way doors. This is
+  not only a capacity limit reached by accident in a long thread: anyone who can post in the channel
+  can reach it deliberately, by driving enough delegating turns — or enough of them naming distinct
+  repositories — and thereby end steering in that thread for everyone. There is no message and no way
+  to clear it, and the ceiling is reached before any actor is considered, so a platform admin cannot
+  steer past it either. Failing closed is the right answer for a decision taken on a truncated set;
+  the silence and the permanence are the cost. **Starting a new thread is not a workaround for the
+  person it happens to** — a running task cannot be moved to one, so their recourse is to let it
+  finish unsteered and begin again.
+- **Steering a thread can be narrowed by anyone who can start a task in it.** Because a steer
+  requires access to every repository the thread has tasked, someone who asks for a code task in
+  another person's thread against a repository only they can reach leaves a row behind that the
+  thread's owner then fails. They lose the ability to steer their own task; they do not lose the
+  task, and an `@mention` still works. That trade is deliberate — the alternative, ranking the rows
+  and trusting the newest, turns the same move into a way to steer somebody else's run.
+- **A deferred code task is decided when it is asked for, not when it runs.** A task scheduled with
+  `runAt` takes the requester's decision at creation and nothing re-asks GitHub at the moment the
+  run starts, so access lost in between does not stop it. This is the same window every other
+  deferred launch has — a scheduled work request is checked when the schedule is created, not on
+  each fire — and it exists because a re-check needs a user and the run's start does not have one in
+  hand. A **retired installation** is the one condition re-read at the start of every run, because
+  that check reads no user.

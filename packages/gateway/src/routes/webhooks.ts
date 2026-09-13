@@ -259,7 +259,7 @@ async function aggregateCheckRuns(
   };
 }
 
-import { isInstallationRetired } from '../lib/repoAccessDecision.js';
+import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
 import { refreshInvalidatedAccess } from '../lib/repoAccessRefresh.js';
 import { classifyAccessEvent } from '../lib/repoAccessWebhook.js';
 

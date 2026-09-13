@@ -21,9 +21,9 @@
  * predicate form (`reachableConnections`) remains right for listings, where
  * there is nothing to name.
  */
-import type { PrismaClient } from '@auto-swe/shared';
-import type { FastifyBaseLogger } from 'fastify';
-import type { JwtPayload } from '../plugins/auth.js';
+
+import type { PrismaClient } from '../index.js';
+import type { AccessActor, AccessLog } from './accessActor.js';
 import {
   decideRepoLaunch,
   LAUNCH_REFUSAL_MESSAGE,
@@ -104,6 +104,37 @@ export function installationRetiredErrorBody(): {
 }
 
 /**
+ * What the caller is asking to do, which changes exactly one condition.
+ *
+ * Retirement stops NEW work and nothing else — see {@link isInstallationRetired}.
+ * An action on a run that is already in flight is not new work, so it is not
+ * what retiring an installation was meant to stop; the run goes on either way,
+ * and refusing here would take away its owner's control of it without stopping
+ * anything.
+ *
+ * One execution satisfies "already in flight" without having started its work: a
+ * channel task deferred with `runAt` has a wrapper workflow running while it
+ * sleeps, and text steered into it lands in a run that begins later. That is not
+ * a hole, but it is not covered by the sentence above either — it is covered by
+ * `createWorkflowRun`, which re-reads retirement when the deferred run actually
+ * fires and refuses it there. Retirement is the one condition a deferred run
+ * re-checks at its start, which is exactly why this one is safe to relax here.
+ *
+ * **Defaulted, and defaulted to the strict answer.** Unlike the gate argument,
+ * which is required-but-nullable because forgetting it would silently permit,
+ * forgetting this one silently *refuses* — the failure-safe direction. Every
+ * existing caller is a launch, and a caller that does not think about this is
+ * almost certainly a launch too.
+ *
+ * **It removes a condition; it never skips the rest of the decision.** That is
+ * the whole reason it lives here rather than at a call site: the retirement
+ * branch below returns, so turning its refusal into an allow from outside would
+ * discard membership, the admin bypass and the GitHub permission check along
+ * with it — which is exactly the bug that produced this parameter.
+ */
+export type RepoAccessAction = 'start-new-work' | 'steer-running-work';
+
+/**
  * May `user` start a run against `repo`?
  *
  * Team membership first, then GitHub. The order matters for what a refusal
@@ -117,10 +148,11 @@ export function installationRetiredErrorBody(): {
  */
 export async function decideRepoAccess(
   prisma: PrismaClient,
-  user: JwtPayload,
+  user: AccessActor,
   repo: RepoAccessSubject,
   gate: RepoAccessGate,
-  log?: FastifyBaseLogger
+  log?: AccessLog,
+  action: RepoAccessAction = 'start-new-work'
 ): Promise<RepoAccessVerdict> {
   // Membership first, and only for non-admins. Someone outside the team gets
   // the answer that is actionable for them, rather than being told about an
@@ -128,15 +160,21 @@ export async function decideRepoAccess(
   if (user.role !== 'ADMIN' && !repo.team.memberships.some((m) => m.userId === user.sub)) {
     return { allowed: false, reason: 'not-a-team-member' };
   }
-  // Then the installation, for EVERYONE — admins included, and ahead of the
-  // no-coordinates exemption below.
+  // Then the installation — when the caller is starting work, and then for
+  // EVERYONE, admins included, and ahead of the no-coordinates exemption below.
   //
   // Retirement is operator configuration, not a statement about the person
   // asking, so neither the admin bypass nor an identity-shaped exemption should
   // skip it. An admin who retired an installation and then launched through it
   // anyway would get GitHub's failure instead of ours, which is a worse way to
   // learn the same thing.
-  if (isInstallationRetired(repo)) {
+  //
+  // `action` narrows WHEN the condition applies, never who it applies to: see
+  // {@link RepoAccessAction}. Note what stays below it either way — the GitHub
+  // permission check runs for a steer through a retired installation, because
+  // the token resolver keys on the installation id and never reads `isActive`,
+  // so the lookup is genuinely available to answer.
+  if (action === 'start-new-work' && isInstallationRetired(repo)) {
     return { allowed: false, reason: 'installation-retired' };
   }
   if (user.role === 'ADMIN') {

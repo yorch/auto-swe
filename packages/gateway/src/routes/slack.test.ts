@@ -43,6 +43,48 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
+/**
+ * The repository-access gate, as these tests see it.
+ *
+ * Stubbed rather than left to the real resolver, which reaches the settings
+ * store and therefore answers "never readable" in a unit test. That value is a
+ * refusal, not an off switch — so without this every steer would fail closed for
+ * a reason that has nothing to do with the case under test. Default `off`: the
+ * long-standing behaviour every other test in this file was written against.
+ */
+const repoAccessGate = vi.fn<() => Promise<{ mode: string; staleAfterHours: number } | null>>(
+  async () => ({ mode: 'off', staleAfterHours: 72 })
+);
+/**
+ * GitHub, as the live launch decision sees it.
+ *
+ * Stubbed so the ordinary member path can be walked at all: without it the only
+ * way to reach an allow verdict in these tests is the platform-admin bypass,
+ * which skips every part of the decision worth testing.
+ */
+const githubLogin = vi.fn<() => Promise<string | null>>(async () => 'octocat');
+const githubPermission = vi.fn<() => Promise<{ ok: boolean; permission?: string }>>(async () => ({
+  ok: true,
+  permission: 'write',
+}));
+vi.mock('@auto-swe/shared/lib/repoPermission', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoPermission')>()),
+  lookupRepoPermission: () => githubPermission(),
+  verifiedGithubLoginFor: () => githubLogin(),
+}));
+vi.mock('@auto-swe/shared/lib/repoAccessProjection', () => ({
+  recordRepoPermission: async () => {},
+}));
+
+vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
+  // Spread the original: `repoAccessDecision` imports `decideRepoLaunch` and the
+  // refusal messages from this module at load time, so a factory that returns
+  // only the resolver leaves those undefined and the decision module throws
+  // while it is still being evaluated.
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoAccessGate')>()),
+  resolveRepoAccessGateOrLastKnown: () => repoAccessGate(),
+}));
+
 import { slackRoutes } from './slack.js';
 
 const SIGNING_SECRET = 'test-signing-secret';
@@ -51,6 +93,8 @@ interface FakeUser {
   id: string;
   role: string;
   slackId: string | null;
+  /** Omitted means active, which is what almost every test wants. */
+  isActive?: boolean;
 }
 
 interface FakeTemplate {
@@ -86,14 +130,69 @@ interface FakeState {
   workspaceUpdateCalls: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
   /** Connection returned by `connection.findUnique` (null = not found). */
   connectionRow: Record<string, unknown> | null;
+  /** Per-id overrides for `connection.findUnique`, for multi-repository cases. */
+  connectionRows: Record<string, Record<string, unknown>>;
+  /** Every id `connection.findUnique` was asked about, in order. */
+  connectionLookups: string[];
   /** Ledger writes recorded by the run-modal path. */
   runInputCreates: Array<Record<string, unknown>>;
+  /**
+   * Every `RunInput` row in the fake store, as whole rows.
+   *
+   * Whole rows rather than a canned answer, because the steer decision is
+   * mostly *which* rows its `where` selects: the fake applies the filter, so a
+   * change that looks up the wrong thread, drops the payload marker, or starts
+   * ranking rows instead of requiring all of them fails a test.
+   */
+  runInputRows: FakeRunInput[];
+  /** Recorded `where`/`take` of every steer lookup, so the query itself is assertable. */
+  runInputFindManyCalls: Array<{ take?: number; where: Record<string, unknown> }>;
+  /** When true, the steer lookup rejects — the fail-closed path. */
+  runInputFindManyThrows: boolean;
   activeWorkflowCreates: Array<Record<string, unknown>>;
   /** Ordered log of 'ledger' vs 'start', proving the write precedes the start. */
   launchOrder: string[];
   runnableStarts: Array<{ id: string; args: unknown }>;
   /** When set, `startRunnableWorkflow` rejects with this. */
   runnableStartError: Error | null;
+  /** Whether an open channel-task execution exists for the thread being replied to. */
+  threadTaskRunning: boolean;
+}
+
+/** A `RunInput` row, with the columns the steer decision selects on. */
+interface FakeRunInput {
+  connectionId: string | null;
+  externalTicketId: string;
+  payload: { kind?: string } | null;
+  slackChannelId: string | null;
+  slackMessageTs: string | null;
+}
+
+/**
+ * The subset of Prisma's `where` this fake understands, applied for real.
+ *
+ * Deliberately strict: an operator it does not recognise throws rather than
+ * being ignored, so a decision that starts filtering on something new cannot
+ * quietly pass every test in this file by being silently unfiltered.
+ */
+function matchesRunInputWhere(row: FakeRunInput, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([field, want]) => {
+    if (field === 'payload') {
+      const { equals, path } = want as { equals: unknown; path: string[] };
+      if (path.length !== 1 || path[0] !== 'kind') {
+        throw new Error(`fake runInput.findMany: unsupported payload path ${path.join('.')}`);
+      }
+      return row.payload?.kind === equals;
+    }
+    const actual = (row as unknown as Record<string, unknown>)[field];
+    if (want !== null && typeof want === 'object') {
+      if ('not' in want) {
+        return actual !== (want as { not: unknown }).not;
+      }
+      throw new Error(`fake runInput.findMany: unsupported filter on ${field}`);
+    }
+    return actual === want;
+  });
 }
 
 function buildApp(state: FakeState): FastifyInstance {
@@ -112,6 +211,11 @@ function buildApp(state: FakeState): FastifyInstance {
   } as unknown as never);
   app.decorate('temporal', {
     cancelWorkflow: async () => undefined,
+    // The steer path asks this BEFORE deciding whether the requester may steer,
+    // so that a thread with nothing running costs no access decision. Tests
+    // that want "nothing to steer" set `threadTaskRunning` to false; the
+    // not-found signal error remains its own case (the run closing in between).
+    isWorkflowRunning: async () => state.threadTaskRunning,
     signalWorkflow: async (workflowId: string, signalName: string, args: unknown[] = []) => {
       if (state.signalError) {
         throw state.signalError;
@@ -173,7 +277,13 @@ function buildApp(state: FakeState): FastifyInstance {
           team: { memberships: [{ userId: 'u1' }] },
         },
       ],
-      findUnique: async () => state.connectionRow,
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        state.connectionLookups.push(where.id);
+        // Per-id when the test set one up, so a decision taken against several
+        // repositories is distinguishable from one taken against the same row
+        // twice; otherwise the single shared row every other test uses.
+        return state.connectionRows[where.id] ?? state.connectionRow;
+      },
     },
     repository: {
       findMany: async () => [],
@@ -185,6 +295,17 @@ function buildApp(state: FakeState): FastifyInstance {
         return data;
       },
       delete: async () => ({}),
+      // The steer path's lookup: which repositories has this thread tasked?
+      // Applies the `where` rather than returning a canned answer — see
+      // `runInputRows`.
+      findMany: async (args: { take?: number; where: Record<string, unknown> }) => {
+        if (state.runInputFindManyThrows) {
+          throw new Error('connection reset');
+        }
+        state.runInputFindManyCalls.push(args);
+        const matched = state.runInputRows.filter((row) => matchesRunInputWhere(row, args.where));
+        return args.take === undefined ? matched : matched.slice(0, args.take);
+      },
     },
     slackChannel: {
       // No row yet → provisionChannel takes its create path, where it asks
@@ -214,8 +335,15 @@ function buildApp(state: FakeState): FastifyInstance {
       findUnique: async () => ({ id: 'team-default', orgId: 'org-1', slug: 'default' }),
     },
     user: {
-      findFirst: async ({ where }: { where: { slackId?: string } }) =>
-        state.users.find((u) => u.slackId === where.slackId) ?? null,
+      // `isActive` is applied, not ignored: the access decision filters on it,
+      // and a fake that drops the filter cannot tell a deactivated user from a
+      // linked one.
+      findFirst: async ({ where }: { where: { isActive?: boolean; slackId?: string } }) =>
+        state.users.find(
+          (u) =>
+            u.slackId === where.slackId &&
+            (where.isActive === undefined || (u.isActive ?? true) === where.isActive)
+        ) ?? null,
       // The install callback re-checks the installer's platform role.
       findUnique: async ({ where }: { where: { id: string } }) =>
         state.installer && state.installer.id === where.id ? state.installer : null,
@@ -298,7 +426,9 @@ beforeEach(async () => {
     activeWorkflowCreates: [],
     channelAssistantStartError: null,
     channelAssistantStarts: [],
+    connectionLookups: [],
     connectionRow: null,
+    connectionRows: {},
     existingWorkspace: null,
     humanStep: null,
     humanStepUpdateCalls: [],
@@ -306,6 +436,9 @@ beforeEach(async () => {
     installer: { id: 'u1', isActive: true, role: 'ADMIN' },
     launchOrder: [],
     runInputCreates: [],
+    runInputFindManyCalls: [],
+    runInputFindManyThrows: false,
+    runInputRows: [],
     runnableStartError: null,
     runnableStarts: [],
     signalCalls: [],
@@ -332,7 +465,12 @@ beforeEach(async () => {
         teamId: 'team-a',
       },
     ],
-    users: [{ id: 'u1', role: 'ADMIN', slackId: 'U1' }],
+    threadTaskRunning: true,
+    users: [
+      { id: 'u1', role: 'ADMIN', slackId: 'U1' },
+      { id: 'u2', role: 'ENGINEER', slackId: 'U-ENGINEER' },
+      { id: 'u3', isActive: false, role: 'ENGINEER', slackId: 'U-DEACTIVATED' },
+    ],
     versions: new Map([
       [
         't1:1',
@@ -1069,7 +1207,8 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
   }
 
   /** Override the temporal signal mock so steers throw not-found (records the
-   * attempt first, then throws — mirrors a real signal that found no run). */
+   * attempt first, then throws — mirrors a real signal that found no run: the
+   * run was open when the steer path checked and closed before the signal). */
   function setSteerNotFound(): void {
     (app as unknown as { temporal: { signalWorkflow: unknown } }).temporal.signalWorkflow = (async (
       workflowId: string,
@@ -1138,6 +1277,394 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       { args: ['tighten the validation'], signalName: 'steer', workflowId: STEER_WORKFLOW_ID },
     ]);
     expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  describe('repository access', () => {
+    /** A `git_repo` row the decision can be taken against. */
+    const REPO_ROW = {
+      githubApiUrl: null,
+      id: 'conn-1',
+      installation: null,
+      organizationName: 'acme',
+      repoName: 'payments',
+      team: { memberships: [] },
+      type: 'git_repo',
+    };
+
+    /** A plain thread reply from `user`, which is only ever a steer attempt. */
+    function reply(user: string) {
+      return postEvent({
+        channel: 'C9',
+        channel_type: 'channel',
+        team: 'T1',
+        text: 'push it to production too',
+        thread_ts: '1700.root',
+        ts: '1700.reply',
+        type: 'message',
+        user,
+      });
+    }
+
+    /** A channel task's `RunInput`, as `buildChannelTaskRun` writes it. */
+    function channelTask(connectionId: string | null, over: Partial<FakeRunInput> = {}) {
+      return {
+        connectionId,
+        externalTicketId: 'slack-C9-1700.root',
+        // The builder stamps the repository into the payload as well as the
+        // column, and a repo-less general task has neither.
+        payload: { kind: 'channel-task', ...(connectionId ? { repoId: connectionId } : {}) },
+        slackChannelId: 'C9',
+        slackMessageTs: '1700.root',
+        ...over,
+      };
+    }
+
+    beforeEach(() => {
+      // `mockResolvedValue` outlives `clearAllMocks` (which clears calls, not
+      // implementations), so re-state the default or each test inherits the mode
+      // the one before it set.
+      repoAccessGate.mockResolvedValue({ mode: 'off', staleAfterHours: 72 });
+      githubLogin.mockResolvedValue('octocat');
+      githubPermission.mockResolvedValue({ ok: true, permission: 'write' });
+      state.runInputRows = [channelTask('conn-1')];
+      state.connectionRow = REPO_ROW;
+    });
+
+    it('does not steer a repo-bound task for someone with no linked account', async () => {
+      // A steer is not a smaller thing than a launch: for a deferred task this
+      // text is spliced into the run description before the run starts, so it is
+      // indistinguishable from having asked for the work.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+      // Silently, and then dropped as ordinary channel chatter — the bot does
+      // not announce that a task it will not steer is running in this thread.
+      expect(state.channelAssistantStarts).toHaveLength(0);
+    });
+
+    it('steers for someone the decision allows', async () => {
+      // The discriminating case: without it, the refusal above would also pass
+      // if enforcement simply stopped all steering.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toEqual([
+        { args: ['push it to production too'], signalName: 'steer', workflowId: STEER_WORKFLOW_ID },
+      ]);
+    });
+
+    it('steers a repo-less general task without asking who is speaking', async () => {
+      // The general route is untouched in every mode — it answers questions and
+      // needs no identity to do so, which is the same line the code route draws.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = [channelTask(null)];
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('steers for anyone while the gate is off', async () => {
+      // A deployment that has not asked for the gate keeps the behaviour it has.
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('steers while the gate is off even when the lookup would fail', async () => {
+      // Everything the gate added has failure modes of its own, and each of them
+      // refuses. None of them may reach a deployment that never turned it on:
+      // losing a steer to a database blip in a check you did not enable is the
+      // worst kind of surprise.
+      state.runInputFindManyThrows = true;
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.runInputFindManyCalls).toHaveLength(0);
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('allows a non-member under advisory, because this path never checked membership', async () => {
+      // Membership is a pre-existing bound on the gateway routes and a NEW one
+      // here: a channel task resolves its repository from the channel's team
+      // binding and never consulted the asker's membership, and the steer
+      // checked nothing at all. Both halves arrived together, so both observe
+      // together — otherwise advisory refuses someone for a rule that did not
+      // exist when the operator set the dial.
+      repoAccessGate.mockResolvedValue({ mode: 'advisory', staleAfterHours: 72 });
+      state.connectionRow = { ...REPO_ROW, team: { memberships: [] } };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('refuses a non-member under enforcement', async () => {
+      // The discriminating half: advisory observes, enforce refuses.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = { ...REPO_ROW, team: { memberships: [] } };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('steers a run whose installation was retired mid-flight', async () => {
+      // Retirement stops NEW work and nothing else: clones, pushes and CI reads
+      // already under way keep resolving through it, because an operator marking
+      // a row decommissioned states an intention about what starts next rather
+      // than pulling a cable. The run being steered is running — that is checked
+      // before this decision is reached — so it started before the retirement,
+      // and taking its owner's control away would stop nothing except them.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = {
+        ...REPO_ROW,
+        installation: { installationId: '42', isActive: false },
+        team: { memberships: [{ userId: 'u2' }] },
+      };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('still asks GitHub when the installation is retired', async () => {
+      // The assertion the test above cannot make. With the permission stub left
+      // at `write` it passes whether or not the lookup ran — so the first fix
+      // for the retirement case, which skipped the rest of the decision, would
+      // have passed it too. Retiring an installation must not quietly downgrade
+      // the steer gate from "team membership AND GitHub write" to membership
+      // alone, which is an ADMIN action taken for unrelated reasons.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = {
+        ...REPO_ROW,
+        installation: { installationId: '42', isActive: false },
+        team: { memberships: [{ userId: 'u2' }] },
+      };
+      githubPermission.mockResolvedValue({ ok: true, permission: 'read' });
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('counts repositories, not rows, against the scan limit', async () => {
+      // Every delegating turn writes a row and they normally all name the same
+      // repository, so counting rows would silently kill steering in an ordinary
+      // busy thread — for everyone, with no message explaining it.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = Array.from({ length: 30 }, () => channelTask('conn-1'));
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('is not switched off by a repo-less task landing in the same thread', async () => {
+      // A `RunInput` is written before the child run starts, so a thread
+      // accumulates rows — and a general task in a thread that already has a
+      // code task is the ordinary way to get a repo-less one. Ranked by
+      // recency, this row would answer "no repository to check" and turn the
+      // gate off with one message.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = [channelTask('conn-1'), channelTask(null)];
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('requires EVERY repository the thread has tasked, not the newest', async () => {
+      // The planted-row case: ask for a code task with a `repoHint` naming a
+      // repository you CAN reach, lose the already-running race, and the row is
+      // still written. Ranked by recency it would decide the steer; required as
+      // a set it only narrows who may steer.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = [channelTask('conn-1'), channelTask('conn-planted')];
+      // The planted one is reachable; the thread's real task is not. Whichever
+      // single row a ranking picked, this refuses only if BOTH were consulted.
+      state.connectionRows = {
+        'conn-1': { ...REPO_ROW, id: 'conn-1', team: { memberships: [] } },
+        'conn-planted': {
+          ...REPO_ROW,
+          id: 'conn-planted',
+          team: { memberships: [{ userId: 'u2' }] },
+        },
+      };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+      expect(state.connectionLookups).toContain('conn-1');
+    });
+
+    it('refuses a deactivated user whose Slack id is still linked', async () => {
+      // Deactivation is not a state the gate may read as "linked, carry on".
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+
+      expect((await reply('U-DEACTIVATED')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('ignores a row that only claims the thread ticket id', async () => {
+      // `externalTicketId` is free text taken from the body of
+      // `POST /work-requests`, and its validation permits every character the
+      // channel task's id uses. Only the typed Slack columns and the payload
+      // marker are written by us, so a row carrying just the ticket id must not
+      // be what the steer is decided against.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = [
+        channelTask('conn-planted', { payload: null, slackChannelId: null, slackMessageTs: null }),
+      ];
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // No channel task in this thread at all → nothing to gate, and crucially
+      // the planted row's repository was never consulted.
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('asks about the thread it was given', async () => {
+      // The `where` itself, because everything above would also pass if the
+      // lookup read some other thread and found nothing.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+
+      await reply('U1');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.runInputFindManyCalls[0]?.where).toMatchObject({
+        externalTicketId: 'slack-C9-1700.root',
+        payload: { equals: 'channel-task', path: ['kind'] },
+        slackChannelId: 'C9',
+        slackMessageTs: '1700.root',
+      });
+    });
+
+    it('still names the repository after its connection row is deleted', async () => {
+      // Deleting a `Connection` nulls `connectionId` on every row that pointed
+      // at it. Read from the column alone, that would REMOVE a repository from
+      // the set — the one direction the set must never move, since requiring
+      // all of them is what makes an extra row narrowing rather than widening.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = [{ ...channelTask('conn-1'), connectionId: null }];
+      // The id now resolves to nothing, which fails closed rather than passing.
+      state.connectionRows = {};
+      state.connectionRow = null;
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.connectionLookups).toContain('conn-1');
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('steers for an ordinary member GitHub reports as a writer', async () => {
+      // The allow case without the admin bypass: the one path that actually
+      // walks membership, then the live GitHub permission lookup.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = { ...REPO_ROW, team: { memberships: [{ userId: 'u2' }] } };
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('does not steer for a member GitHub reports as read-only', async () => {
+      // Steering pushes to the branch the run is building, so read is not
+      // enough — the same bar the launch takes.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.connectionRow = { ...REPO_ROW, team: { memberships: [{ userId: 'u2' }] } };
+      githubPermission.mockResolvedValue({ ok: true, permission: 'read' });
+
+      expect((await reply('U-ENGINEER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('costs no access decision when there is nothing to steer', async () => {
+      // The regression this guards: a `RunInput` row is permanent, so a thread
+      // that once hosted a code task would otherwise ask GitHub who is speaking
+      // on every reply for the rest of its life — and most thread replies are
+      // people talking to each other, long after the task closed.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.threadTaskRunning = false;
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.runInputFindManyCalls).toHaveLength(0);
+      expect(state.connectionLookups).toHaveLength(0);
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('allows an unlinked user under advisory, and says what it would have refused', async () => {
+      // Advisory observes; it does not refuse. An unlinked Slack user is the
+      // largest population the advisory period exists to measure, so refusing
+      // here would stop them on day one while the dial still said advisory.
+      repoAccessGate.mockResolvedValue({ mode: 'advisory', staleAfterHours: 72 });
+
+      expect((await reply('U-STRANGER')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('refuses when the gate has never been readable', async () => {
+      // Not the same as off. A Slack message arrives with no session, so the
+      // gate read is the only policy in the path.
+      repoAccessGate.mockResolvedValue(null);
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('refuses when the lookup itself fails', async () => {
+      // A lookup that did not answer cannot say they may.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputFindManyThrows = true;
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('refuses a thread naming more repositories than the decision scans', async () => {
+      // Truncation has to fail closed: the rows a `take` drops are exactly the
+      // ones someone filling the thread would want dropped.
+      repoAccessGate.mockResolvedValue({ mode: 'enforce', staleAfterHours: 72 });
+      state.runInputRows = Array.from({ length: 11 }, (_, i) => channelTask(`conn-${i}`));
+      state.connectionRows = Object.fromEntries(
+        Array.from({ length: 11 }, (_, i) => [`conn-${i}`, { ...REPO_ROW, id: `conn-${i}` }])
+      );
+
+      expect((await reply('U1')).statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.signalCalls).toHaveLength(0);
+    });
   });
 
   it('falls through to a turn for a mention thread reply with NO in-flight task', async () => {

@@ -90,7 +90,13 @@ export async function createWorkflowRun(
   // Temporal Schedule starts this workflow directly, so a schedule created
   // before retirement would otherwise keep pushing indefinitely — the standing
   // exemption for a cron fire is "there is no user to check", and this check
-  // reads no user. The same is true of the channel assistant's code task.
+  // reads no user.
+  //
+  // It is also the only access condition a DEFERRED run re-reads. The channel
+  // assistant's code task decides the requester's repository access when the
+  // task is created, which for a task scheduled with `runAt` can be long before
+  // it starts; nothing re-asks GitHub at the moment it does. Retirement is
+  // re-read here because it is the one condition that takes no user.
   //
   // This is the run's start, so nothing already under way is affected, which is
   // what "retirement stops new work" was supposed to mean everywhere.

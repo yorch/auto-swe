@@ -185,6 +185,7 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
+      isWorkflowRunning: async () => false,
       signalWorkflow: async () => {},
       startChannelAssistant: async () => {},
       startConsolidationWorkflow: async () => {},

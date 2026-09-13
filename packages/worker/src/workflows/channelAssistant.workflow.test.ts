@@ -75,6 +75,10 @@ let overBudget = false;
 // Phase B: per-test knob — when null, createChannelCodeTaskRun returns null (no
 // repo resolved → the workflow falls back to the general route).
 let codeRepoResolves = true;
+// Phase B: when set, the code-route preparer answers with an access refusal
+// instead of a prepared run — a different outcome from "no repo resolved", and
+// the one the workflow must NOT answer by falling through to the general route.
+let codeTaskRefusal: string | null = null;
 // Refinement: optional refine intent returned by the turn + the activity verdict.
 let turnRefine: { instruction: string } | undefined;
 let refineResult: {
@@ -94,6 +98,9 @@ const fakeActivities = {
   // collision-free workflowId (the abandoned child's activities are faked).
   createChannelCodeTaskRun: async (input: { channelId: string; threadTs: string }) => {
     calls.codeTaskRuns.push(input);
+    if (codeTaskRefusal) {
+      return { message: codeTaskRefusal, refused: true };
+    }
     if (!codeRepoResolves) {
       return null;
     }
@@ -213,6 +220,7 @@ beforeEach((ctx: TestContext) => {
   calls.refines = [];
   overBudget = false;
   codeRepoResolves = true;
+  codeTaskRefusal = null;
 });
 
 afterAll(async () => {
@@ -433,5 +441,24 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     // The ack is prefixed with the no-repo note so the fallback isn't silent.
     expect(calls.updates[0]?.text).toContain("couldn't find a repository");
     expect(calls.updates[0]?.text).toContain('On it — will follow up here.');
+  }, 60_000);
+
+  it('posts the refusal INSTEAD of the ack when the requester lacks access', async () => {
+    // The agent has already written "on it" by this point. Posting that after a
+    // refusal would tell someone their task is running when nothing started —
+    // the same reason the already-running branch replaces the ack rather than
+    // prefixing it.
+    turnDelegate = { description: 'add an endpoint', route: 'code', title: 'Endpoint' };
+    turnReply = 'On it — will open a PR.';
+    codeTaskRefusal = 'I cannot start that here: you are not on that team.';
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-code-refused'));
+
+    expect(calls.updates[0]?.text).toBe('I cannot start that here: you are not on that team.');
+    expect(calls.updates[0]?.text).not.toContain('On it');
+    // A refusal is NOT the "no repo resolved" case: falling through to the
+    // general route would answer the question and never mention the refusal.
+    expect(calls.codeTaskRuns).toHaveLength(1);
+    expect(calls.taskRuns).toHaveLength(0);
   }, 60_000);
 });
