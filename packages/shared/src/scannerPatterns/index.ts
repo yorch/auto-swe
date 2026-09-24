@@ -1,8 +1,10 @@
+import type { ScannerPatternType } from '../lib/scannerPatternTypes.js';
+
 export interface BuiltinScannerPatternDef {
   flags: string;
   label: string;
   pattern: string;
-  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE' | 'PII';
+  type: ScannerPatternType;
 }
 
 /**
@@ -502,6 +504,18 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
     flags: 'i',
     label: 'sensitive-credentials-file',
     pattern: 'credentials\\.(json|ya?ml)$',
+    type: 'SENSITIVE_FILE',
+  },
+  // Git metadata: hooks, `.git/config` (url.*.insteadOf, http.proxy,
+  // core.hooksPath, core.sshCommand …) and gitfiles are what an authenticated
+  // push or fetch reads. The worker neutralises them before every authed git
+  // call; this blocks the direct write so the agent cannot plant them at all.
+  // Matches `.git` itself and anything under it, at any depth — not `.github/`
+  // or `.gitignore`.
+  {
+    flags: '',
+    label: 'sensitive-git-metadata',
+    pattern: '(^|\\/)\\.git(\\/|$)',
     type: 'SENSITIVE_FILE',
   },
 

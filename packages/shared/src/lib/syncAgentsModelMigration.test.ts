@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../generated/prisma/client.js';
+import { BUILTIN_SKILLS } from '../skills/index.js';
 import { seedSweStarter } from './syncBuiltins.js';
 
 /**
@@ -63,7 +64,13 @@ function seededRow(overrides: Partial<AgentRecord> & { key: string }): AgentReco
   };
 }
 
-function makeStore(initialAgents: AgentRecord[], initialRefs: RefRecord[] = []) {
+function makeStore(
+  initialAgents: AgentRecord[],
+  initialRefs: RefRecord[] = [],
+  // Built-in skills that exist. Empty by default, so a skill is never found and the
+  // ref-attach step is inert; a test about refs passes the names it wants found.
+  existingSkills: readonly string[] = []
+) {
   const agents = [...initialAgents];
   const refs = [...initialRefs];
   let nextId = 0;
@@ -114,7 +121,10 @@ function makeStore(initialAgents: AgentRecord[], initialRefs: RefRecord[] = []) 
       refs.push(...data);
       return { count: data.length };
     }),
-    findFirst: vi.fn(async () => null),
+    findFirst: vi.fn(
+      async ({ where }: { where: { agentId: string; skillId: string } }) =>
+        refs.find((r) => r.agentId === where.agentId && r.skillId === where.skillId) ?? null
+    ),
     findMany: vi.fn(async ({ where }: { where: { agentId: string } }) =>
       refs
         .filter((r) => r.agentId === where.agentId)
@@ -131,7 +141,12 @@ function makeStore(initialAgents: AgentRecord[], initialRefs: RefRecord[] = []) 
     agentSkillRef,
     evalRubric: nullFinder,
     scannerPattern: { upsert: vi.fn(async () => ({})) },
-    skill: nullFinder,
+    skill: {
+      ...nullFinder,
+      findFirst: vi.fn(async ({ where }: { where: { name: string } }) =>
+        existingSkills.includes(where.name) ? { id: `skill-${where.name}` } : null
+      ),
+    },
     workflowTemplate: nullFinder,
     workflowTemplateVersion: { upsert: vi.fn(async () => ({})) },
   };
@@ -241,6 +256,35 @@ describe('syncAgents — seeded model default upgrade', () => {
     expect(agents.length).toBe(afterFirst);
     expect(lineage(agents, 'implementer')).toHaveLength(2);
     expect(lineage(agents, 'planner')).toHaveLength(2);
+  });
+
+  it("keeps an admin's removal of a skill ref: the migrated version copies, never re-adds", async () => {
+    // The implementer is assigned several built-in skills. The admin kept one and
+    // removed the rest from v1. Every one of those skills still exists, so a sync
+    // that re-attached missing refs would put them straight back on the new version.
+    const assigned = BUILTIN_SKILLS.filter((skill) =>
+      skill.assignments.some((a) => a.role === 'implementer')
+    ).map((skill) => skill.name);
+    expect(assigned.length).toBeGreaterThan(1);
+    const kept = assigned[0] as string;
+
+    const v1 = seededRow({ key: 'implementer', modelSpec: 'anthropic/claude-opus-4-8' });
+    const { agents, prisma, refs } = makeStore(
+      [v1],
+      [{ agentId: v1.id, skillId: `skill-${kept}`, sortOrder: 0 }],
+      assigned
+    );
+
+    await seedSweStarter(prisma);
+    await seedSweStarter(prisma);
+
+    const [, v2] = lineage(agents, 'implementer');
+    expect(v2?.modelSpec).toBe('anthropic/claude-opus-5-5');
+    const refsOf = (agentId: string) =>
+      refs.filter((r) => r.agentId === agentId).map((r) => r.skillId);
+    expect(refsOf(v1.id)).toEqual([`skill-${kept}`]);
+    expect(refsOf((v2 as AgentRecord).id)).toEqual([`skill-${kept}`]);
+    expect(lineage(agents, 'implementer')).toHaveLength(2);
   });
 
   it('seeds a fresh deployment straight onto the current defaults', async () => {

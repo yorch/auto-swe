@@ -466,3 +466,22 @@ describe('readNodeEdge / setNodeEdge', () => {
     expect(readNodeEdge({ next: 'b', step: 'x', type: 'step' }, 'options[0].next')).toBeUndefined();
   });
 });
+
+describe('fan-out concurrency cap', () => {
+  it('is the same bound for a node and for the setting that supplies its default', async () => {
+    const { MAX_FANOUT_CONCURRENCY, NodeSchema } = await import('./spec.js');
+    const { SETTING_DEFINITIONS } = await import('../config/registry.js');
+    const setting = SETTING_DEFINITIONS['workflow.fanoutConcurrency'].schema;
+    expect(setting.safeParse(MAX_FANOUT_CONCURRENCY).success).toBe(true);
+    expect(setting.safeParse(MAX_FANOUT_CONCURRENCY + 1).success).toBe(false);
+    const node = (concurrency: number) => ({
+      concurrency,
+      join: 'j',
+      over: { from: 'request.items' },
+      subgraph: 's',
+      type: 'fanOut',
+    });
+    expect(NodeSchema.safeParse(node(MAX_FANOUT_CONCURRENCY)).success).toBe(true);
+    expect(NodeSchema.safeParse(node(MAX_FANOUT_CONCURRENCY + 1)).success).toBe(false);
+  });
+});
