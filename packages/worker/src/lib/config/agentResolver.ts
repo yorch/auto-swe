@@ -149,7 +149,7 @@ async function resolveModelForAgent(
   }
   if (!source.modelSpec) {
     throw new ConfigMissingError(
-      `Agent '${agent.key}' has no model: set a modelSpec (or an inheritsModelFrom chain that resolves one) at /admin/agents/library.`
+      `Agent '${agent.key}' has no model: set a modelSpec (or an inheritsModelFrom chain that resolves one) at /studio/agents/library.`
     );
   }
   const spec = source.modelSpec;
@@ -232,7 +232,7 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
   const agent = await fetchActiveAgent(key, ctx);
   if (!agent) {
     throw new ConfigMissingError(
-      `No active Agent found for key '${key}' at any scope. Create it at /admin/agents/library.`
+      `No active Agent found for key '${key}' at any scope. Create it at /studio/agents/library.`
     );
   }
 

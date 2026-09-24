@@ -15,6 +15,12 @@ vi.mock('../lib/activityContext.js', () => ({
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
 }));
 
+const { resolveSettingMock } = vi.hoisted(() => ({ resolveSettingMock: vi.fn(async () => 50) }));
+vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: resolveSettingMock }));
+vi.mock('../lib/config/contextLookup.js', () => ({
+  currentRequestContext: vi.fn(async () => ({ teamId: 'team-from-activity' })),
+}));
+
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
   recordLlmUsage: vi
@@ -119,5 +125,34 @@ describe('runAgent', () => {
     generateMock.mockResolvedValue({ object: { ok: true } });
     await runAgent(makeSpec(), 'M');
     expect(mockedPersist).toHaveBeenCalledWith(expect.anything(), 'validateContext');
+  });
+
+  it('gives a tool-bearing agent the workspace.agentMaxSteps budget at the caller scope', async () => {
+    generateMock.mockResolvedValue({ text: 'done' });
+    resolveSettingMock.mockResolvedValueOnce(77);
+    const tools = { mcp_search: {} } as unknown as AgentSpec['tools'];
+    const ctx = { channelId: 'C1', teamId: 'team-1' };
+
+    await runAgent(makeSpec({ tools }), 'M', { ctx });
+
+    expect(resolveSettingMock).toHaveBeenCalledWith('workspace.agentMaxSteps', ctx);
+    expect(generateMock).toHaveBeenCalledWith([{ content: 'M', role: 'user' }], {
+      maxSteps: 77,
+    });
+  });
+
+  it('falls back to the activity request context when the caller passes none', async () => {
+    generateMock.mockResolvedValue({ text: 'done' });
+    const tools = { mcp_search: {} } as unknown as AgentSpec['tools'];
+    await runAgent(makeSpec({ tools }), 'M');
+    expect(resolveSettingMock).toHaveBeenCalledWith('workspace.agentMaxSteps', {
+      teamId: 'team-from-activity',
+    });
+  });
+
+  it('does not read the step budget for a tool-free agent', async () => {
+    generateMock.mockResolvedValue({ text: 'x' });
+    await runAgent(makeSpec(), 'M');
+    expect(resolveSettingMock).not.toHaveBeenCalled();
   });
 });

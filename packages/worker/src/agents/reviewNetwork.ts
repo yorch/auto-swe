@@ -38,12 +38,24 @@ const ReviewVerdictSchema = z.object({
 
 // ── Individual Reviewer Agents ──
 
+/**
+ * The Agent row each reviewer persona runs as. Each carries its own prompt and
+ * skills, and binds the `reviewer` model through `inheritsModelFrom` unless the
+ * row sets a `modelSpec` of its own.
+ */
+export const REVIEWER_AGENT_KEYS: Record<ReviewVerdict['reviewer'], string> = {
+  DOMAIN_LOGIC: 'domainLogicReviewer',
+  PERFORMANCE: 'performanceReviewer',
+  SECURITY: 'securityReviewer',
+};
+
 async function runReviewerAgent(
   prompt: string,
   reviewerType: ReviewVerdict['reviewer'],
   codeResult: CodeResult,
   tracer?: AgentTracer
 ): Promise<ReviewVerdict> {
+  const agentKey = REVIEWER_AGENT_KEYS[reviewerType];
   return otelTracer.startActiveSpan(
     `llm.review.${reviewerType}`,
     { attributes: { 'llm.reviewer_type': reviewerType } },
@@ -51,8 +63,8 @@ async function runReviewerAgent(
       const start = Date.now();
       let llmUserMessage = '';
       try {
-        const modelSpec = await getModelSpec('reviewer');
-        const model = await getModel('reviewer');
+        const modelSpec = await getModelSpec(agentKey);
+        const model = await getModel(agentKey);
         span.setAttribute('llm.model', modelSpec);
         const agent = new Agent({
           id: `${reviewerType.toLowerCase()}-reviewer`,
@@ -75,7 +87,7 @@ async function runReviewerAgent(
         if (result.usage) {
           attribution = await recordLlmUsage(
             currentWorkflowId(),
-            'reviewer',
+            agentKey,
             result.usage,
             `llm.review.${reviewerType.toLowerCase()}`
           );
@@ -134,7 +146,24 @@ export interface ReviewNetworkOptions {
   domainSkillSuffix?: string;
   performanceSkillSuffix?: string;
   securitySkillSuffix?: string;
+  /**
+   * Each persona's base prompt, as the activity chose it
+   * (`reviewerPersonaPrompt` in `activities/runReviewNetwork.ts`): the
+   * persona's own customised row, else a customised parent `reviewer` row,
+   * else the persona's seeded text. Unset falls back to the built-in prompt
+   * for that persona. The parent row's seeded text is never used — it is the
+   * domain-logic prompt, and handing it to all three made every reviewer
+   * review domain logic.
+   */
+  domainLogicPrompt?: string;
+  performancePrompt?: string;
+  securityPrompt?: string;
   successCriteria?: string[];
+  /**
+   * A step-level prompt set by the template author on the review node. It
+   * replaces all three personas' base prompts — the author asked for exactly
+   * that text — while each keeps its own skills and context suffixes.
+   */
   systemPromptOverride?: string;
   tracer?: AgentTracer;
 }
@@ -153,7 +182,8 @@ export async function runReviewNetwork(
     tracer,
   } = options;
   // Append success criteria to the domain logic prompt so it validates against original intent
-  let domainLogicPrompt = systemPromptOverride ?? DOMAIN_LOGIC_REVIEWER_PROMPT;
+  let domainLogicPrompt =
+    systemPromptOverride || options.domainLogicPrompt || DOMAIN_LOGIC_REVIEWER_PROMPT;
   if (successCriteria && successCriteria.length > 0) {
     domainLogicPrompt += `\n\nSUCCESS CRITERIA FROM ORIGINAL REQUEST:\nThe implementation must satisfy these criteria extracted from the work request:\n${successCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n\nFor each criterion, verify whether the diff satisfies it. Report unmet criteria as findings with category "UNMET_SUCCESS_CRITERION".`;
   }
@@ -175,12 +205,12 @@ export async function runReviewNetwork(
 
   const staticScanSuffix = formatCodeSecurityFindings(codeResult.codeSecurityFindings ?? []);
   const securityPrompt =
-    (systemPromptOverride ?? SECURITY_AUDITOR_PROMPT) +
+    (systemPromptOverride || options.securityPrompt || SECURITY_AUDITOR_PROMPT) +
     (securitySkillSuffix ? `\n\n${securitySkillSuffix}` : '') +
     (staticScanSuffix ? `\n\n${staticScanSuffix}` : '') +
     crossRepoSuffix;
   const performancePrompt =
-    (systemPromptOverride ?? PERFORMANCE_REVIEWER_PROMPT) +
+    (systemPromptOverride || options.performancePrompt || PERFORMANCE_REVIEWER_PROMPT) +
     (performanceSkillSuffix ? `\n\n${performanceSkillSuffix}` : '') +
     crossRepoSuffix;
 

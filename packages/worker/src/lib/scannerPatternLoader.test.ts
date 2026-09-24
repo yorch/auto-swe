@@ -27,8 +27,8 @@ describe('makePatternLoader — loading and compilation', () => {
     const { load } = makePatternLoader('SHELL_COMMAND', 'test');
     const entries = await load();
     expect(entries).toEqual([
-      { flags: '', label: 'rule-a', source: '\\bmkfs\\b' },
-      { flags: 'i', label: 'rule-b', source: 'foo' },
+      { flags: '', label: 'rule-a', source: '\\bmkfs\\b', type: 'SHELL_COMMAND' },
+      { flags: 'i', label: 'rule-b', source: 'foo', type: 'SHELL_COMMAND' },
     ]);
   });
 

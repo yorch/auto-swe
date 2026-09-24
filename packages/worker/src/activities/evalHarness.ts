@@ -135,9 +135,13 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
   // LLM boundary).
   const maxEvalIterations = (await resolveWorkflowDefaults()).maxEvalIterations;
 
-  // Every implementer run in the harness is an LLM call like any other: it is
-  // traced (tool calls, responses, test runs), its usage is recorded against the
-  // eval run's ledger, and it is refused once that ledger is exhausted.
+  // Every implementer run in the harness is traced like any other (tool calls,
+  // responses, test runs) and goes through `assertBudgetAvailable` /
+  // `recordLlmUsage`. Those key on the workflow's `ActiveWorkflow` ledger row,
+  // and an eval workflow has none — so both are no-ops here: eval spend is
+  // priced onto the trace rows but is neither debited to a ledger nor capped by
+  // one. The benchmark's size (cases × arms × `maxEvalIterations`) is the only
+  // bound on what a run can spend.
   const tracer = new AgentTracer();
   let workspace: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;
@@ -157,10 +161,12 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
     // default for the same reason the model is: it changes how much of a failing
     // test run the implementer sees, so an eval that ignored an operator's
     // override would be grading it under conditions production never runs it in.
-    const [resolved, mcpTarget, toolOutputSettings] = await Promise.all([
+    // The step budget likewise: an eval capped at a different number of tool
+    // steps per turn than production is not measuring production.
+    const [resolved, mcpTarget, agentSettings] = await Promise.all([
       resolveAgent(parsed.key, ctx),
       resolveAgentMcpUrl(parsed.key, ctx),
-      resolveSettings(['workspace.maxToolOutputChars'], ctx),
+      resolveSettings(['workspace.maxToolOutputChars', 'workspace.agentMaxSteps'], ctx),
     ]);
     const model: LanguageModel = resolveModel(
       resolved.model.spec,
@@ -173,7 +179,7 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
       resolved.toolKeys,
       resolved.skills,
       {
-        maxToolOutputChars: toolOutputSettings['workspace.maxToolOutputChars'],
+        maxToolOutputChars: agentSettings['workspace.maxToolOutputChars'],
         mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
         mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
         mcpServerRef: mcpTarget?.url,
@@ -202,7 +208,7 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
           { content: systemPrompt, role: 'system' as const },
           { content: userMessage, role: 'user' as const },
         ],
-        { toolChoice: 'auto' as const }
+        { maxSteps: agentSettings['workspace.agentMaxSteps'], toolChoice: 'auto' as const }
       );
 
       let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };

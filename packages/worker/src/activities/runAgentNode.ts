@@ -7,6 +7,7 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 import { runAgent } from './runAgent.js';
 
 export interface RunAgentNodeInput {
@@ -53,6 +54,12 @@ export interface RunAgentNodeResult {
  * the generic counterpart to the implementer's `buildImplementerForActivity`.
  */
 export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNodeResult> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('runAgentNode', runAgentNodeImpl(input));
+}
+
+async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeResult> {
   const baseCtx = await currentRequestContext();
   // Phase A: a channel-task run carries its originating channelId on the request
   // (not derivable from `currentRequestContext`, which keys on ActiveWorkflow).
@@ -93,6 +100,7 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
     const baseMessage = input.userMessage ?? inputsToMessage(input.inputs);
     const userMessage = prependSteering(baseMessage, input.steering);
     const result = await runAgent(spec, userMessage, {
+      ctx: resolveCtx,
       spanName: input.spanName ?? 'llm.agent_node',
     });
     return { object: result.object, text: result.text };

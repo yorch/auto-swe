@@ -88,6 +88,9 @@ describe('refineChannelWorkflowDraft', () => {
     // The stored version pins the template name, not the model's rename.
     expect(versionCreate.mock.calls[0][0].data.spec.name).toBe('My Flow');
     expect(versionCreate.mock.calls[0][0].data.version).toBe(2);
+    // Marked as agent-generated: needs review before promotion, and is never
+    // mistaken for a built-in version (no createdBy and no generatedBy).
+    expect(versionCreate.mock.calls[0][0].data.generatedBy).toBe('workflow_author');
   });
 
   it('refuses a refinement that introduces a shell node', async () => {

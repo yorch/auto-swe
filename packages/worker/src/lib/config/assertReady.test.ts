@@ -68,6 +68,18 @@ const ALL_MODEL_BACKED_AGENT_KEYS = [
   'channelAssistant',
 ];
 
+/**
+ * The sub-role personas `specWithAllSweSteps` runs as. Each supplies its own
+ * prompt, so a run needs its row as well as the parent it inherits a model
+ * from.
+ */
+const SWE_PERSONA_KEYS = [
+  'decomposer',
+  'domainLogicReviewer',
+  'performanceReviewer',
+  'securityReviewer',
+];
+
 beforeEach(() => {
   resolveAgentMock.mockReset();
   credFindFirst.mockReset();
@@ -123,7 +135,7 @@ describe('requiredAgentKeysForDeployment', () => {
 
   it('requires the SWE agents when a SWE template is installed', async () => {
     const keys = await requiredAgentKeysForDeployment();
-    expect([...keys].sort()).toEqual([...ALL_MODEL_BACKED_AGENT_KEYS].sort());
+    expect([...keys].sort()).toEqual([...ALL_MODEL_BACKED_AGENT_KEYS, ...SWE_PERSONA_KEYS].sort());
   });
 
   it('counts the experiment arm of an A/B split as installed', async () => {
@@ -196,7 +208,9 @@ describe('assertConfigReady', () => {
   it('passes when every required Agent resolves and the embedding is healthy', async () => {
     fullyConfigured();
     await expect(assertConfigReady()).resolves.toBeUndefined();
-    expect(resolveAgentMock).toHaveBeenCalledTimes(ALL_MODEL_BACKED_AGENT_KEYS.length);
+    expect(resolveAgentMock).toHaveBeenCalledTimes(
+      ALL_MODEL_BACKED_AGENT_KEYS.length + SWE_PERSONA_KEYS.length
+    );
   });
 
   it('reports every Agent that fails to resolve in a single error', async () => {

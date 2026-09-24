@@ -6,6 +6,7 @@ import type { LanguageModel as AiLanguageModel } from 'ai';
 import { resolveAgent } from './config/agentResolver.js';
 import { currentRequestContext } from './config/contextLookup.js';
 import type {
+  AnySkillRole,
   ModelBackedAgentKey as ConfigModelBackedAgentKey,
   ResolveCtx,
 } from './config/types.js';
@@ -30,7 +31,7 @@ export type ModelBackedAgentKey = ConfigModelBackedAgentKey;
  * (the worker's startup check should have caught this; runtime delete is
  * the only way to hit it now).
  */
-export async function getModelSpec(role: ModelBackedAgentKey): Promise<string> {
+export async function getModelSpec(role: AnySkillRole): Promise<string> {
   const ctx = await currentRequestContext();
   const resolved = await resolveAgent(role, ctx);
   return resolved.model.spec;
@@ -47,7 +48,7 @@ export async function getModelSpec(role: ModelBackedAgentKey): Promise<string> {
  * context cannot supply. Same optional-override shape as `loadAgentSkills`.
  */
 export async function getModel(
-  role: ModelBackedAgentKey,
+  role: AnySkillRole,
   ctx?: Partial<ResolveCtx>
 ): Promise<LanguageModel> {
   const resolveCtx = { ...(await currentRequestContext()), ...ctx };
@@ -106,7 +107,7 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
       // with an unhelpful SDK error.
       if (!apiBase) {
         throw new Error(
-          `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /admin/model-config.`
+          `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models.`
         );
       }
       return createOpenAICompatible({ apiKey, baseURL: apiBase, name: provider })(modelId);

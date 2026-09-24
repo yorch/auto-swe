@@ -32,6 +32,8 @@ vi.mock('../lib/models.js', () => ({
 }));
 
 import { Agent } from '@mastra/core/agent';
+import { recordLlmUsage } from '../lib/costTracking.js';
+import { getModel } from '../lib/models.js';
 import { runReviewNetwork } from './reviewNetwork.js';
 
 const MockedAgent = vi.mocked(Agent);
@@ -117,5 +119,51 @@ describe('runReviewNetwork cross-repo context', () => {
     for (const prompt of Object.values(instructionsById())) {
       expect(prompt).toContain('\n\n## Cross-Repo Dependency Context');
     }
+  });
+});
+
+describe('runReviewNetwork per-persona configuration', () => {
+  it("builds each reviewer from its own persona's prompt", async () => {
+    await runReviewNetwork(CODE_RESULT, {
+      domainLogicPrompt: 'DOMAIN ROW',
+      performancePrompt: 'PERF ROW',
+      securityPrompt: 'SECURITY ROW',
+    });
+    const prompts = instructionsById();
+    expect(prompts['security-reviewer']?.startsWith('SECURITY ROW')).toBe(true);
+    expect(prompts['domain_logic-reviewer']?.startsWith('DOMAIN ROW')).toBe(true);
+    expect(prompts['performance-reviewer']?.startsWith('PERF ROW')).toBe(true);
+  });
+
+  it('falls back to the built-in persona prompts, which differ from one another', async () => {
+    await runReviewNetwork(CODE_RESULT);
+    const prompts = Object.values(instructionsById());
+    expect(new Set(prompts).size).toBe(3);
+  });
+
+  it('lets a step-level override replace every persona prompt', async () => {
+    await runReviewNetwork(CODE_RESULT, {
+      securityPrompt: 'SECURITY ROW',
+      systemPromptOverride: 'STEP PROMPT',
+    });
+    for (const prompt of Object.values(instructionsById())) {
+      expect(prompt.startsWith('STEP PROMPT')).toBe(true);
+    }
+  });
+
+  it("binds each reviewer's model and cost through its own persona key", async () => {
+    await runReviewNetwork(CODE_RESULT);
+    const modelKeys = vi.mocked(getModel).mock.calls.map((c) => c[0]);
+    expect(modelKeys.sort()).toEqual([
+      'domainLogicReviewer',
+      'performanceReviewer',
+      'securityReviewer',
+    ]);
+    const usageKeys = vi.mocked(recordLlmUsage).mock.calls.map((c) => c[1]);
+    expect(usageKeys.sort()).toEqual([
+      'domainLogicReviewer',
+      'performanceReviewer',
+      'securityReviewer',
+    ]);
   });
 });

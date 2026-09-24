@@ -47,6 +47,7 @@ describe('runAgentNode', () => {
       { teamId: 'team-1' }
     );
     expect(mockedRunAgent).toHaveBeenCalledWith({ agentKey: 'reviewer' }, 'check the diff', {
+      ctx: { teamId: 'team-1' },
       spanName: 'llm.agent_node',
     });
     expect(result).toEqual({ object: undefined, text: 'verdict' });
@@ -67,6 +68,7 @@ describe('runAgentNode', () => {
     // description — it must reach the agent as prose, not `{"task":"…"}`.
     await runAgentNode({ agentRef: 'reviewer', inputs: { task: 'add a health endpoint' } });
     expect(mockedRunAgent).toHaveBeenCalledWith({ agentKey: 'reviewer' }, 'add a health endpoint', {
+      ctx: { teamId: 'team-1' },
       spanName: 'llm.agent_node',
     });
   });
@@ -76,7 +78,7 @@ describe('runAgentNode', () => {
     expect(mockedRunAgent).toHaveBeenCalledWith(
       { agentKey: 'reviewer' },
       JSON.stringify({ bar: 2, foo: 'a' }),
-      { spanName: 'llm.agent_node' }
+      { ctx: { teamId: 'team-1' }, spanName: 'llm.agent_node' }
     );
   });
 
@@ -108,7 +110,7 @@ describe('runAgentNode', () => {
     expect(mockedRunAgent).toHaveBeenCalledWith(
       expect.objectContaining({ tools: { existing: 't', mcp_x: 'mt' } }),
       'hi',
-      { spanName: 'llm.agent_node' }
+      { ctx: { teamId: 'team-1' }, spanName: 'llm.agent_node' }
     );
     expect(close).toHaveBeenCalledTimes(1);
   });
@@ -149,13 +151,14 @@ describe('runAgentNode', () => {
     expect(mockedRunAgent).toHaveBeenCalledWith(
       { agentKey: 'reviewer' },
       'implement the change\n\n[Steering update from the channel — incorporate this]:\n- use the v2 endpoint\n- keep it backwards compatible',
-      { spanName: 'llm.agent_node' }
+      { ctx: { teamId: 'team-1' }, spanName: 'llm.agent_node' }
     );
   });
 
   it('leaves the user message untouched when steering is empty', async () => {
     await runAgentNode({ agentRef: 'reviewer', steering: [], userMessage: 'hi' });
     expect(mockedRunAgent).toHaveBeenCalledWith({ agentKey: 'reviewer' }, 'hi', {
+      ctx: { teamId: 'team-1' },
       spanName: 'llm.agent_node',
     });
   });

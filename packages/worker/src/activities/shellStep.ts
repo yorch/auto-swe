@@ -42,7 +42,12 @@ import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
-import { gitWithAuthHeader, shellQuote, splitCloneCredential } from './workspace.js';
+import {
+  gitWithAuthHeader,
+  sanitizeGitRepoConfigScript,
+  shellQuote,
+  splitCloneCredential,
+} from './workspace.js';
 
 export interface ShellStepInput {
   request: RepoWorkRequest;
@@ -241,6 +246,49 @@ function isBranchNotFoundError(err: unknown): boolean {
   );
 }
 
+/**
+ * The script `finalizeWorkspaceVolume` runs in its helper container.
+ *
+ * The author command had write access to the volume's `.git/`, so nothing in
+ * it is trusted here: the config is rewritten from an allow-list BEFORE the
+ * first git command, and every git command — not only the push — runs
+ * hardened (hooks off, system/global config ignored). A `pre-commit` hook that
+ * ran here could otherwise replace `git` in this container before the
+ * credential-bearing push. The rewrite also pins `GIT_DIR` / `GIT_WORK_TREE`
+ * for every command after it (see `sanitizeGitRepoConfigScript`), so a `.git`
+ * the author command broke cannot send `git add` up to a parent repository
+ * whose `filter.*.clean` would run in this network-enabled container. Filter,
+ * diff and merge drivers all need a config entry to run, and the rewrite keeps
+ * none, so an in-tree `.gitattributes` naming one is inert. Identity is passed
+ * per-call because the rewrite drops the repo-local `user.*` the clone set.
+ */
+export function finalizeScript(
+  repoDir: string,
+  opts: { branch: string; commandSummary: string; cleanUrl: string; gitAuthHeader?: string }
+): string {
+  const git = (sub: string) => gitWithAuthHeader(sub);
+  const identity = "-c user.name='auto-swe' -c user.email='auto-swe@localhost'";
+  return [
+    'set -e',
+    `cd ${shellQuote(repoDir)}`,
+    sanitizeGitRepoConfigScript(opts.cleanUrl),
+    `if [ -z "$(${git('status --porcelain')})" ]; then`,
+    '  echo NO_CHANGES',
+    '  exit 0',
+    'fi',
+    git('add -A'),
+    git(`${identity} commit -m ${shellQuote(`auto: shell step ${opts.commandSummary}`)}`),
+    // `gitWithAuthHeader` shell-quotes the header; the branch is quoted here.
+    // Pushed to the scrubbed URL explicitly, not through the `origin` name.
+    gitWithAuthHeader(
+      `push --no-verify ${shellQuote(opts.cleanUrl)} HEAD:${shellQuote(opts.branch)}`,
+      opts.gitAuthHeader
+    ),
+    git('rev-parse HEAD'),
+    git('diff --name-only HEAD~1 HEAD'),
+  ].join('\n');
+}
+
 interface FinalizeResult {
   committedSha?: string;
   filesChanged: string[];
@@ -263,22 +311,15 @@ async function finalizeWorkspaceVolume(
   commandSummary: string,
   image: string,
   token: string,
+  cleanUrl: string,
   gitAuthHeader?: string
 ): Promise<FinalizeResult> {
-  const script = [
-    'set -e',
-    'cd /workspace/repo',
-    'if [ -z "$(git status --porcelain)" ]; then',
-    '  echo NO_CHANGES',
-    '  exit 0',
-    'fi',
-    'git add -A',
-    `git commit -m ${shellQuote(`auto: shell step ${commandSummary}`)}`,
-    // `gitWithAuthHeader` shell-quotes the header; the branch is quoted here.
-    gitWithAuthHeader(`push origin HEAD:${shellQuote(branch)}`, gitAuthHeader),
-    'git rev-parse HEAD',
-    'git diff --name-only HEAD~1 HEAD',
-  ].join('\n');
+  const script = finalizeScript('/workspace/repo', {
+    branch,
+    cleanUrl,
+    commandSummary,
+    gitAuthHeader,
+  });
   // `git push` failures can still echo credential material (e.g. a git build
   // that logs the extraheader, or an operator-supplied URL we failed to
   // parse) — pass the token through so `runDocker`'s catch redacts it before
@@ -387,6 +428,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
           input.command.slice(0, 80),
           helperImage,
           meta.token,
+          meta.cleanUrl,
           meta.gitAuthHeader
         );
       } catch (err) {

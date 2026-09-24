@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -61,7 +65,7 @@ import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
 import { getScmProvider } from '../lib/scm/index.js';
-import { runShellStep } from './shellStep.js';
+import { finalizeScript, runShellStep } from './shellStep.js';
 import { shellQuote } from './workspace.js';
 
 const findUniqueOrThrow = vi.mocked(prisma.connection.findUniqueOrThrow);
@@ -89,11 +93,11 @@ beforeEach(() => {
   // `docker ...` command string. Route by content: clone/volume calls succeed;
   // the finalize (commit + push) script fails, mimicking a real `git push`
   // rejection whose stderr/message embed the credential URL — exactly what
-  // git prints on a push failure. Match on `push origin` rather than
-  // `git push origin`: the push is issued as
-  // `git -c http.extraheader=… push origin …`.
+  // git prints on a push failure. Match on `push --no-verify` rather than
+  // `git push origin`: the push is issued hardened, to the scrubbed URL, as
+  // `… git -c … -c http.extraheader=… push --no-verify <url> …`.
   mockedExec.mockImplementation(async (command: string) => {
-    if (command.includes('push origin')) {
+    if (command.includes('push --no-verify')) {
       const err = new Error(
         `Command failed: docker run ... sh -c 'git push origin HEAD:auto/JIRA-1'\n` +
           `fatal: unable to access '${CLONE_URL}/': The requested URL returned error: 403`
@@ -128,7 +132,7 @@ describe('runShellStep — token redaction', () => {
     // activity always swallows the push error into `summary` rather than
     // rethrowing it.
     mockedExec.mockImplementation(async (command: string) => {
-      if (command.includes('git push origin')) {
+      if (command.includes('push --no-verify')) {
         const err = new Error(
           `fatal: unable to access '${CLONE_URL}/': The requested URL returned error: 403`
         ) as Error & { stdout?: string; stderr?: string };
@@ -339,15 +343,36 @@ describe('runShellStep — clone credential is never persisted in the workspace 
   it('authenticates the finalize push via http.extraheader rather than the origin URL', async () => {
     await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
 
-    const finalize = requireCommand('finalize push', (c) => c.includes('push origin'));
+    const finalize = requireCommand('finalize push', (c) => c.includes('push --no-verify'));
+    expect(finalize).toContain(escaped(`-c http.extraheader=${shellQuote(AUTH_HEADER)}`));
+    // Pushed to the scrubbed URL explicitly, never through the `origin` name
+    // the author command could have repointed.
     expect(finalize).toContain(
-      escaped(`git -c http.extraheader=${shellQuote(AUTH_HEADER)} push origin HEAD:`)
+      escaped(`push --no-verify ${shellQuote(CLEAN_CLONE_URL)} HEAD:${shellQuote('auto/JIRA-1')}`)
     );
+    expect(finalize).not.toContain('push origin');
     // The header carries the credential base64-encoded, so the raw token must
-    // not appear — and the push must not fall back to a bare `git push` that
-    // would rely on a credential-bearing remote.
+    // not appear.
     expect(finalize).not.toContain(TOKEN);
-    expect(finalize).not.toContain('\ngit push origin');
+  });
+
+  it('rewrites the repo config and disables hooks before any git command in the finalize script', async () => {
+    await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
+
+    const finalize = requireCommand('finalize push', (c) => c.includes('push --no-verify'));
+    // The allow-list rewrite runs before the first git command that reads
+    // the (author-writable) repo config — `status` included, since
+    // `core.fsmonitor` runs a command there.
+    const rewrite = finalize.indexOf('mv -f .git/config.auto-swe-tmp .git/config');
+    expect(rewrite).toBeGreaterThan(-1);
+    expect(rewrite).toBeLessThan(finalize.indexOf('status --porcelain'));
+    // Every git command is hardened: no plain `git <sub>` survives.
+    for (const sub of ['status', 'add', 'commit', 'push', 'rev-parse', 'diff']) {
+      expect(finalize).not.toMatch(new RegExp(`(^|\\n|\\$\\()git ${sub}\\b`));
+    }
+    const hardenedCount = finalize.split('-c core.hooksPath=/dev/null').length - 1;
+    expect(hardenedCount).toBe(6);
+    expect(finalize).toContain('GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null');
   });
 
   it('shell-quotes the branch inside the header-authenticated push', async () => {
@@ -359,15 +384,13 @@ describe('runShellStep — clone credential is never persisted in the workspace 
       request: REQUEST,
     });
 
-    const finalize = requireCommand('finalize push', (c) => c.includes('push origin'));
+    const finalize = requireCommand('finalize push', (c) => c.includes('push --no-verify'));
     expect(finalize).toContain(
-      escaped(
-        `git -c http.extraheader=${shellQuote(AUTH_HEADER)} push origin HEAD:${shellQuote(branch)}`
-      )
+      escaped(`push --no-verify ${shellQuote(CLEAN_CLONE_URL)} HEAD:${shellQuote(branch)}`)
     );
   });
 
-  it('falls back to a plain push when the provider hands back an unauthenticated URL', async () => {
+  it('pushes without an auth header when the provider hands back an unauthenticated URL', async () => {
     mockedGetScmProvider.mockReturnValue({
       cloneCredentials: vi
         .fn()
@@ -379,9 +402,78 @@ describe('runShellStep — clone credential is never persisted in the workspace 
     // The scrub is unconditional — it just installs the same URL back.
     const clone = requireCommand('git clone', (c) => c.includes('git clone'));
     expect(clone).toContain(escaped(`git remote set-url origin ${shellQuote(CLEAN_CLONE_URL)}`));
-    // …and with nothing to inject, the push stays a plain `git push`.
-    const finalize = requireCommand('finalize push', (c) => c.includes('push origin'));
-    expect(finalize).toContain('\ngit push origin HEAD:');
+    // …and with nothing to inject, the push carries no header but stays hardened.
+    const finalize = requireCommand('finalize push', (c) => c.includes('push --no-verify'));
     expect(finalize).not.toContain('http.extraheader');
+    expect(finalize).toContain('-c core.hooksPath=/dev/null');
+  });
+});
+
+describe('finalizeScript against a real git repository', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
+  // A clone the author command has written to: a changed file, and an in-tree
+  // `.gitattributes` routing every file through a `filter=x` driver.
+  const setup = () => {
+    const root = mkdtempSync(join(tmpdir(), 'finalize-'));
+    const good = join(root, 'good.git');
+    git(root, 'init', '-q', '--bare', good);
+    const seed = join(root, 'seed');
+    git(root, 'init', '-q', seed);
+    git(
+      seed,
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'i'
+    );
+    git(seed, 'push', '-q', good, 'HEAD:refs/heads/main');
+    const work = join(root, 'work');
+    git(root, 'clone', '-q', '-b', 'main', `file://${good}`, work);
+    writeFileSync(join(work, '.gitattributes'), '* filter=x\n');
+    writeFileSync(join(work, 'out.txt'), 'result\n');
+    const loot = join(root, 'loot');
+    return { good, loot, root, work };
+  };
+  const run = (work: string, good: string) =>
+    execFileSync(
+      '/bin/sh',
+      [
+        '-c',
+        finalizeScript(work, {
+          branch: 'auto/T-1',
+          cleanUrl: `file://${good}`,
+          commandSummary: 'build',
+        }),
+      ],
+      { encoding: 'utf8', stdio: 'pipe' }
+    );
+
+  it('never runs a clean filter the author command planted in the repo config', () => {
+    const { good, loot, work } = setup();
+    git(work, 'config', 'filter.x.clean', `sh -c 'echo ran >> ${loot}; cat'`);
+    git(work, 'config', 'filter.x.required', 'true');
+
+    run(work, good);
+
+    expect(existsSync(loot)).toBe(false);
+    expect(git(good, 'ls-tree', '--name-only', 'auto/T-1')).toContain('out.txt');
+  });
+
+  it('refuses a broken .git instead of running a parent repository filter', () => {
+    const { good, loot, root, work } = setup();
+    git(root, 'init', '-q');
+    git(root, 'config', 'filter.x.clean', `sh -c 'echo ran >> ${loot}; cat'`);
+    rmSync(join(work, '.git', 'HEAD'));
+
+    expect(() => run(work, good)).toThrow(/not a valid repository/);
+    expect(existsSync(loot)).toBe(false);
+    expect(git(good, 'branch', '--list', 'auto/T-1')).toBe('');
   });
 });

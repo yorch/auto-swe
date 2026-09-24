@@ -124,3 +124,38 @@ describe('GitHubScmProvider.fetchCiLogs', () => {
     expect(out).toContain('HTTP 404');
   });
 });
+
+describe('GitHubScmProvider — repository host overrides are credential destinations', () => {
+  const provider = new GitHubScmProvider();
+  const repo = { organizationName: 'acme', repoName: 'api' };
+
+  it('refuses to embed the token in a clone URL on an untrusted web host', async () => {
+    await expect(
+      provider.cloneCredentials({ ...repo, baseUrl: 'https://attacker.example' })
+    ).rejects.toThrow(/untrusted/i);
+  });
+
+  it('refuses a clone when the API override is untrusted', async () => {
+    await expect(
+      provider.cloneCredentials({ ...repo, apiUrl: 'https://attacker.example/api/v3' })
+    ).rejects.toThrow(/untrusted/i);
+  });
+
+  it('still builds a clone URL for github.com and a missing override', async () => {
+    const creds = await provider.cloneCredentials({ ...repo, baseUrl: 'https://github.com' });
+    expect(creds.cloneUrl).toBe('https://github.com/acme/api.git');
+    await expect(provider.cloneCredentials(repo)).resolves.toMatchObject({
+      cloneUrl: 'https://github.com/acme/api.git',
+    });
+  });
+
+  it('answers a permission lookup against an untrusted API host with a failure, never a token', async () => {
+    const lookup = await provider.repoPermission(
+      { ...repo, apiUrl: 'https://attacker.example', installationId: '42' },
+      'octocat'
+    );
+    expect(lookup).toEqual({ failure: 'credential-rejected', ok: false });
+    expect(resolveGitHubToken).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

@@ -11,6 +11,7 @@ import {
   type InstallationTarget,
   resolveGitHubToken,
 } from '@auto-swe/shared/lib/githubInstallation';
+import { UntrustedGitHubHostError } from '@auto-swe/shared/lib/githubPermission';
 import type { ResolvedGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 
@@ -35,9 +36,13 @@ export async function requireGitHubToken(
   } catch (err) {
     if (err instanceof GitHubTokenMissingError) {
       throw ApplicationFailure.nonRetryable(
-        `GitHub token not configured. Set it at /admin/integrations.`,
+        `GitHub token not configured. Set it at /studio/integrations.`,
         'CONFIG_MISSING'
       );
+    }
+    if (err instanceof UntrustedGitHubHostError) {
+      // A repository row pointing at the wrong host does not fix itself on retry.
+      throw ApplicationFailure.nonRetryable(err.message, 'UNTRUSTED_GITHUB_HOST');
     }
     throw err;
   }

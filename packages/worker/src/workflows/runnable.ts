@@ -8,13 +8,14 @@ import type {
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
 import type { Duration } from '@temporalio/common';
-import { CancelledFailure } from '@temporalio/common';
+import { ApplicationFailure, CancelledFailure } from '@temporalio/common';
 import {
   CancellationScope,
   condition,
   defineSignal,
   isCancellation,
   log,
+  patched,
   proxyActivities,
   setHandler,
   workflowInfo,
@@ -118,16 +119,20 @@ const conflictActivities = proxyActivities<Pick<typeof activitiesType, 'resolveM
   startToCloseTimeout: T_30M,
 });
 
-// Phase 6: user-authored shell steps. `runShellStep` runs the command via
-// async spawn with heartbeat pumping; `startToCloseTimeout` still caps the
-// wall clock (the activity's own cap is `timeoutMs`, set on the shell node).
+// User-authored shell steps. `runShellStep` runs the command via async spawn
+// with heartbeat pumping; `startToCloseTimeout` still caps the wall clock (the
+// activity's own cap is `timeoutMs`, set on the shell node). The heartbeat
+// timeout is what notices a worker that died mid-step — without it Temporal
+// waited out the full hour — and is how a cancellation reaches the step.
 const shellActivities = proxyActivities<Pick<typeof activitiesType, 'runShellStep'>>({
+  heartbeatTimeout: T_5M,
   retry: RETRY_SANDBOX,
   startToCloseTimeout: T_60M,
 });
 
 // P4/WS4: container-contract coded steps. Same sandbox/lifecycle shape as shell.
 const containerStepActivities = proxyActivities<Pick<typeof activitiesType, 'runContainerStep'>>({
+  heartbeatTimeout: T_5M,
   retry: RETRY_SANDBOX,
   startToCloseTimeout: T_60M,
 });
@@ -248,9 +253,20 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     templateVersion: input.templateVersion,
     workflowId,
     workRequestId: input.request.workRequestId,
+    // Epic children get their own ledger row from this activity (the gateway
+    // wrote only the epic's). Absent for every other run, so their input is
+    // unchanged.
+    ...(input.request.parentWorkflowId
+      ? { parentWorkflowId: input.request.parentWorkflowId, repoId: input.request.repoId ?? null }
+      : {}),
   });
   if ('error' in runInfo) {
-    throw new Error(`failed to load workflow template: ${runInfo.error}`);
+    // A plain Error here fails the workflow *task*, which Temporal retries
+    // forever; a non-retryable ApplicationFailure fails the run once.
+    throw ApplicationFailure.nonRetryable(
+      `failed to load workflow template: ${runInfo.error}`,
+      'WORKFLOW_RUN_SETUP_FAILED'
+    );
   }
   const spec = runInfo.spec;
   const runId = runInfo.runId;
@@ -987,11 +1003,20 @@ function resolveMergeBindings(
 }
 
 /**
- * Phase-8 cancellation bridge. When the interpreter passes a `cancellation`
- * sink, wrap the activity call in a `CancellationScope` and write a
- * `cancel()` callback into the sink so fan-out's block-mode can abort the
- * activity. Without a sink we fall through to the bare callback (the
- * pre-phase-8 drain behavior).
+ * Cancellation bridge. When the interpreter passes a `cancellation` sink,
+ * wrap the activity call in a `CancellationScope` and write a `cancel()`
+ * callback into the sink so fan-out's block-mode can cancel the branch.
+ * Without a sink we fall through to the bare callback (drain behavior).
+ *
+ * What `scope.cancel()` does and does not do: the workflow stops waiting on
+ * the activity immediately (the default `TRY_CANCEL` cancellation type) and a
+ * cancel REQUEST is recorded for it. It does not stop the activity. The
+ * request reaches the worker only through the activity's next heartbeat, and
+ * the activity stops only if it then observes `Context.cancellationSignal` —
+ * see `lib/cancellation.ts`. The implementer, fix and merge-resolver loops
+ * and `runAgent` do (they abort the in-flight LLM call and refuse to push);
+ * an activity that neither heartbeats nor checks the signal runs to
+ * completion in the background and its result is discarded.
  *
  * Cancellation surfaces as a Temporal `CancelledFailure`. We rethrow as a
  * {@link BranchCancelledError} so the interpreter's `runRetryable` recognises
@@ -1130,6 +1155,13 @@ async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
   let budget = SPILL_TOTAL_BUDGET;
   for (const item of oversized) {
     if (item.value.length > budget) {
+      // One value too large for what is left must not stop a smaller one
+      // after it from being spilled. Patched: a history recorded before this
+      // change stopped at the first value that did not fit, and a replay of
+      // it must spill exactly what it spilled then.
+      if (patched('spill-budget-skip-oversized')) {
+        continue;
+      }
       break;
     }
     budget -= item.value.length;

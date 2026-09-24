@@ -45,7 +45,7 @@ async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
   }
   if (!apiBase) {
     throw new Error(
-      `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /admin/model-config (Embeddings tab).`
+      `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models (Embeddings tab).`
     );
   }
   cachedModel = {

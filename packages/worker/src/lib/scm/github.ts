@@ -11,9 +11,15 @@
  * `../githubAuth.ts` — it is a GitHub-internal concern behind this provider.
  */
 
-import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
+import {
+  configuredGitHubOrigins,
+  fetchRepoPermission,
+  isTrustedGitHubHost,
+  UntrustedGitHubHostError,
+} from '@auto-swe/shared/lib/githubPermission';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+import { ApplicationFailure } from '@temporalio/activity';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
 import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
 import type {
@@ -48,6 +54,32 @@ function installationTarget(
 }
 
 /**
+ * Refuse to aim a credential at a repository host override nobody configured.
+ *
+ * `RepoRef.apiUrl` / `baseUrl` come from the repository row, and the token (or
+ * the App JWT that mints it) is sent to whatever host they name. The gateway
+ * validates them on write; this is the same check at the point of use, so a row
+ * that predates that validation — or reached the table some other way — still
+ * cannot receive a credential.
+ */
+function assertTrustedRepoHosts(
+  repo: RepoRef,
+  ghConfig: { baseUrl: string; apiUrl: string },
+  which: { api?: boolean; web?: boolean }
+): void {
+  const untrusted =
+    which.api && repo.apiUrl && !isTrustedGitHubHost(repo.apiUrl, ghConfig)
+      ? new UntrustedGitHubHostError('api', repo.apiUrl)
+      : which.web && repo.baseUrl && !isTrustedGitHubHost(repo.baseUrl, ghConfig)
+        ? new UntrustedGitHubHostError('web', repo.baseUrl)
+        : null;
+  if (untrusted) {
+    // Non-retryable: the row names the wrong host, and a retry reads the same row.
+    throw ApplicationFailure.nonRetryable(untrusted.message, 'UNTRUSTED_GITHUB_HOST');
+  }
+}
+
+/**
  * Build an authenticated Octokit for `repo`.
  *
  * The token and the GHE base URL both come from DB-backed config, so every API
@@ -58,6 +90,7 @@ function installationTarget(
 async function octokitFor(repo: RepoRef) {
   const { Octokit } = await import('@octokit/rest');
   const ghConfig = await resolveGitHubConfig();
+  assertTrustedRepoHosts(repo, ghConfig, { api: true });
   const token = await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
   const apiUrl =
     repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
@@ -66,19 +99,6 @@ async function octokitFor(repo: RepoRef) {
 
 /** Wall-clock cap on a CI log download — the URL is third-party data. */
 const CI_LOG_FETCH_TIMEOUT_MS = 15_000;
-
-/** Origins the configured GitHub credential may be sent to. */
-function trustedGitHubOrigins(ghConfig: { baseUrl: string; apiUrl: string }): string[] {
-  const origins: string[] = [];
-  for (const raw of [ghConfig.baseUrl, ghConfig.apiUrl]) {
-    try {
-      origins.push(new URL(raw).origin);
-    } catch {
-      // A malformed configured URL simply contributes no trusted origin.
-    }
-  }
-  return origins;
-}
 
 export type CiLogsTarget = { ok: true; url: URL; trusted: boolean } | { ok: false; reason: string };
 
@@ -108,6 +128,8 @@ export function resolveCiLogsTarget(logsUrl: string, trustedOrigins: string[]): 
 export class GitHubScmProvider implements ScmProvider {
   async cloneCredentials(repo: RepoRef): Promise<CloneCredentials> {
     const ghConfig = await resolveGitHubConfig();
+    // The token is embedded in the clone URL, so the web host receives it too.
+    assertTrustedRepoHosts(repo, ghConfig, { api: true, web: true });
     const baseUrl = repo.baseUrl ?? ghConfig.baseUrl;
     const cloneUrl = `${baseUrl}/${repo.organizationName}/${repo.repoName}.git`;
     const token = await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
@@ -195,7 +217,7 @@ export class GitHubScmProvider implements ScmProvider {
 
   async fetchCiLogs(logsUrl: string, repo?: RepoRef): Promise<string> {
     const ghConfig = await resolveGitHubConfig();
-    const target = resolveCiLogsTarget(logsUrl, trustedGitHubOrigins(ghConfig));
+    const target = resolveCiLogsTarget(logsUrl, configuredGitHubOrigins(ghConfig));
     if (!target.ok) {
       return `Cannot fetch CI logs — refusing to fetch '${logsUrl}': ${target.reason}`;
     }
@@ -264,6 +286,10 @@ export class GitHubScmProvider implements ScmProvider {
   async repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup> {
     const ghConfig = await resolveGitHubConfig();
     const target = installationTarget(repo, ghConfig);
+    if (!isTrustedGitHubHost(target.apiUrl, ghConfig)) {
+      // Nothing was asked, so this is a failure, not a verdict.
+      return { failure: 'credential-rejected', ok: false };
+    }
     let token: string;
     try {
       token = await resolveGitHubToken(ghConfig, target);

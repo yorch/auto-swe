@@ -178,28 +178,28 @@ async function resolveChannelAssistantTemplate(): Promise<{
  * so the unique-constraint violation (P2002) on `workflowId` is caught and
  * treated as a no-op — a Temporal retry won't crash.
  *
- * The channel/kind/label metadata is stashed into `specSnapshot.channel` (a Json
- * column that already exists) so the run is queryable/identifiable without a
- * schema change.
+ * The channel/kind/label metadata is stashed into `specSnapshot.channel` for the
+ * audit feed; the channel itself is also linked relationally (`channelId`) so
+ * run visibility can reach the channel's owning team.
  */
 export async function startChannelRun(input: StartChannelRunInput): Promise<void> {
   const { templateId, templateVersion } = await resolveChannelAssistantTemplate();
 
-  // The ambient path only knows the channelId, so backfill team/org from the
-  // channel row when not supplied. Best-effort — the metadata is observability
-  // only (it isn't load-bearing for trace resolution, which keys on workflowId).
-  let { orgId, teamId } = input;
-  if (!teamId || !orgId) {
-    const channel = await prisma.slackChannel.findUnique({
-      select: { orgId: true, teamId: true },
-      where: { id: input.channelId },
-    });
-    teamId = teamId ?? channel?.teamId ?? undefined;
-    orgId = orgId ?? channel?.orgId ?? undefined;
-  }
+  // The channel row is read on every path: its existence decides whether the
+  // run links to it (`channelId`, which run visibility joins through to the
+  // channel's owning team — an orphaned schedule can fire for a channel that
+  // has since been deleted, and linking that would fail the foreign key), and
+  // the ambient path only knows the channelId, so team/org are backfilled from
+  // it when not supplied.
+  const channel = await prisma.slackChannel.findUnique({
+    select: { id: true, orgId: true, teamId: true },
+    where: { id: input.channelId },
+  });
+  const teamId = input.teamId ?? channel?.teamId ?? undefined;
+  const orgId = input.orgId ?? channel?.orgId ?? undefined;
 
   // Snapshot the minimal spec + the channel metadata. The metadata rides along
-  // in the Json spec snapshot — no schema column added.
+  // in the Json spec snapshot for the audit feed; visibility uses `channelId`.
   const specSnapshot = {
     ...CHANNEL_ASSISTANT_SPEC,
     channel: {
@@ -217,6 +217,7 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
   try {
     await prisma.workflowRun.create({
       data: {
+        channelId: channel?.id ?? null,
         specSnapshot: specSnapshot as unknown as Prisma.InputJsonValue,
         status: 'RUNNING',
         templateId,

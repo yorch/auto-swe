@@ -6,6 +6,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import {
   type CapturedResult,
   execShellAsync,
+  type OnTimeout,
   spawnCaptureAsync,
   spawnWithStdinAsync,
 } from '../lib/execUtils.js';
@@ -38,7 +39,10 @@ export interface Workspace {
    * Run a git subcommand (e.g. `push origin main`) against `origin` with the
    * clone credential injected for this call only via `-c http.extraheader`,
    * rather than a persisted `origin` URL. The credential is never written to
-   * `.git/config` — see the scrub in `createWorkspace` after clone.
+   * `.git/config` — see the scrub in `createWorkspace` after clone. The call
+   * is hardened against anything the agent planted in `.git/` (hooks,
+   * `insteadOf`, proxies …) — see `authedGitScript`; a `push origin …` goes to
+   * the scrubbed URL explicitly.
    */
   gitAuthed: (subcommand: string) => Promise<string>;
   destroy: () => Promise<void>;
@@ -117,17 +121,263 @@ export function splitCloneCredential(authedRepoUrl: string): SplitCloneCredentia
 }
 
 /**
- * Build a `git` invocation with the clone credential injected for this call
- * only via `-c http.extraheader`, so it is never written to disk. With no
- * header (unauthenticated remote) this is just a plain `git <subcommand>`.
+ * `-c` overrides applied to every git invocation that may carry the clone
+ * credential. Command-line config is read last, so for single-valued keys it
+ * wins over anything the repository (i.e. the agent, or an author-supplied
+ * shell command) wrote into `.git/config`:
+ *
+ *  - `core.hooksPath=/dev/null` — no hook runs. A hook inherits
+ *    `GIT_CONFIG_PARAMETERS`, which holds the `http.extraheader` below, so any
+ *    hook (`pre-push`, `reference-transaction`, `post-checkout` …) could read
+ *    the token.
+ *  - `core.fsmonitor=false`, `core.askPass=`, `credential.helper=` — config
+ *    keys whose value is a command git executes.
+ *  - `protocol.ext.allow=never` — the `ext::` transport runs a command.
+ *  - `*.recurseSubmodules` off — a submodule fetch/push would send the header
+ *    to whatever host `.gitmodules` names.
+ *
+ * Keys a `-c` cannot neutralise — `url.<base>.insteadOf` (longest match
+ * wins), `http.<url>.proxy` (a URL-specific key beats `http.proxy`),
+ * `include.path` — are why the repository config is also rewritten from an
+ * allow-list before every authenticated call; see
+ * {@link sanitizeGitRepoConfigScript}.
+ */
+const HARDENED_GIT_CONFIG = [
+  'core.hooksPath=/dev/null',
+  'core.fsmonitor=false',
+  'core.askPass=',
+  'credential.helper=',
+  'protocol.ext.allow=never',
+  'submodule.recurse=false',
+  'fetch.recurseSubmodules=false',
+  'push.recurseSubmodules=no',
+];
+
+/**
+ * Environment for a credential-bearing git call: ignore the system and global
+ * config files (`/etc/gitconfig`, `~/.gitconfig` — both writable by an agent
+ * running as root in its workspace), and never prompt.
+ */
+const HARDENED_GIT_ENV = 'GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0';
+
+/**
+ * Build a hardened `git` invocation, with the clone credential (when there is
+ * one) injected for this call only via `-c http.extraheader`, so it is never
+ * written to disk. See {@link HARDENED_GIT_CONFIG} for what the hardening
+ * neutralises. The empty `http.extraheader=` first resets the multi-valued
+ * list, so no header from a config file rides along.
  *
  * The header is `shellQuote`d here — callers embed the result in a shell
  * script, so this stays the escaping boundary for the credential value.
  */
 export function gitWithAuthHeader(subcommand: string, gitAuthHeader?: string): string {
-  return gitAuthHeader
-    ? `git -c http.extraheader=${shellQuote(gitAuthHeader)} ${subcommand}`
-    : `git ${subcommand}`;
+  const flags = HARDENED_GIT_CONFIG.map((kv) => `-c ${kv}`);
+  if (gitAuthHeader) {
+    flags.push('-c http.extraheader=', `-c http.extraheader=${shellQuote(gitAuthHeader)}`);
+  }
+  return `${HARDENED_GIT_ENV} git ${flags.join(' ')} ${subcommand}`;
+}
+
+/** Quote a value for a git config file (`"…"` with `\` and `"` escaped). */
+function gitConfigQuote(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Shell script (run from the repository's working-tree root, under `set -e`)
+ * that rewrites `.git/config` from an allow-list before an authenticated git
+ * call, so nothing an agent or author command planted there can redirect or
+ * intercept the credential: `url.*.insteadOf`, `http.proxy` /
+ * `http.<url>.proxy`, `http.curloptResolve`, `core.sshCommand`,
+ * `credential.*`, `include.path` / `includeIf.*`, a rewritten
+ * `remote.origin.url` or an extra `pushurl`.
+ *
+ * What survives is only what the platform itself relies on: the repository
+ * format (`extensions.objectformat=sha256` when present, `core.ignorecase`
+ * on a case-insensitive filesystem), `origin` pinned to
+ * the scrubbed clone URL, and `origin`'s fetch refspecs when they have the
+ * plain `refs/heads/…:refs/remotes/origin/…` shape (so `git fetch origin <b>`
+ * keeps updating `origin/<b>` exactly as before). Branch tracking and any
+ * other local setting is dropped — the platform never reads them.
+ *
+ * It also refuses to proceed when `.git` is not a plain directory (a gitfile
+ * or symlink would point git at a config outside this check), and removes
+ * `commondir` / `config.worktree`, the two files that make git read config
+ * from somewhere else.
+ *
+ * And it pins the repository for every git command after it in the same
+ * script: `GIT_DIR` and `GIT_WORK_TREE` are exported to this directory (with
+ * `GIT_CEILING_DIRECTORIES` at its parent as a second fence), then
+ * `git rev-parse --absolute-git-dir` must name exactly that `.git`. Without
+ * the pin, a `.git` the agent broke on purpose (deleting `HEAD` is enough)
+ * makes git ignore it and walk up to `/workspace/.git` or `/.git` — whose
+ * config this rewrite never touched, so its `url.*.insteadOf` would receive
+ * the credential and its `filter.*.clean` would run during `git add`. With
+ * the pin, a broken `.git` is an error, not a fallback.
+ */
+export function sanitizeGitRepoConfigScript(cleanUrl: string): string {
+  if (/[\r\n]/.test(cleanUrl)) {
+    throw new Error('Refusing a remote URL containing a line break');
+  }
+  const readConfig = 'GIT_CONFIG_NOSYSTEM=1 git config --file .git/config';
+  return [
+    'if [ -L .git ] || [ ! -d .git ]; then',
+    "  echo 'auto-swe: refusing authenticated git: .git is not a plain directory' >&2",
+    '  exit 1',
+    'fi',
+    // Physical path, because `rev-parse --absolute-git-dir` resolves symlinks.
+    'asw_root=$(pwd -P)',
+    'GIT_DIR="$asw_root/.git"',
+    'GIT_WORK_TREE="$asw_root"',
+    'GIT_CEILING_DIRECTORIES=$(dirname "$asw_root")',
+    'export GIT_DIR GIT_WORK_TREE GIT_CEILING_DIRECTORIES',
+    // The temp file too: a pre-planted symlink there would redirect the write.
+    'rm -f .git/commondir .git/config.worktree .git/config.auto-swe-tmp',
+    `asw_fmt=$(${readConfig} --get extensions.objectformat 2>/dev/null || true)`,
+    `asw_fetch=$(${readConfig} --get-all remote.origin.fetch 2>/dev/null | grep -E '^[+]?refs/heads/[^[:space:]:"\\;#]+:refs/remotes/origin/[^[:space:]:"\\;#]+$' || true)`,
+    `asw_ic=$(${readConfig} --type=bool --get core.ignorecase 2>/dev/null || true)`,
+    'case "$asw_fmt" in sha256) asw_ver=1 ;; *) asw_fmt=; asw_ver=0 ;; esac',
+    '{',
+    `  printf '[core]\\n\\trepositoryformatversion = %s\\n\\tfilemode = true\\n\\tbare = false\\n\\tlogallrefupdates = true\\n' "$asw_ver"`,
+    `  printf '[remote "origin"]\\n\\turl = %s\\n' ${shellQuote(gitConfigQuote(cleanUrl))}`,
+    '  printf \'%s\\n\' "$asw_fetch" | while IFS= read -r asw_l; do',
+    '    if [ -n "$asw_l" ]; then printf \'\\tfetch = %s\\n\' "$asw_l"; fi',
+    '  done',
+    '  if [ "$asw_ic" = true ]; then printf \'[core]\\n\\tignorecase = true\\n\'; fi',
+    '  if [ -n "$asw_fmt" ]; then printf \'[extensions]\\n\\tobjectformat = %s\\n\' "$asw_fmt"; fi',
+    '} > .git/config.auto-swe-tmp',
+    'mv -f .git/config.auto-swe-tmp .git/config',
+    `asw_gd=$(${HARDENED_GIT_ENV} git rev-parse --absolute-git-dir 2>/dev/null || true)`,
+    'if [ "$asw_gd" != "$GIT_DIR" ]; then',
+    "  echo 'auto-swe: refusing authenticated git: .git is not a valid repository' >&2",
+    '  exit 1',
+    'fi',
+  ].join('\n');
+}
+
+/**
+ * The `fetch` subcommand that brings `branches` into `origin/<branch>`.
+ *
+ * Every workspace is a single-branch clone (`clone -b <branch>` implies
+ * `--single-branch`), so `origin`'s configured refspec covers one branch and a
+ * bare `git fetch origin <other>` only writes `FETCH_HEAD` — `origin/<other>`
+ * never appears, and a following `reset --hard origin/<other>` fails (or, on a
+ * retry path that swallows the error, silently keeps the stale tree). An
+ * explicit, forced refspec per branch updates the remote-tracking ref whatever
+ * the clone was configured with, including after a force-push.
+ */
+export function fetchBranchesSubcommand(branches: string[]): string {
+  const refspecs = branches.map((b) => shellQuote(`+refs/heads/${b}:refs/remotes/origin/${b}`));
+  return `fetch origin ${refspecs.join(' ')}`;
+}
+
+/**
+ * Shell script that SIGKILLs every process in the agent workspace except
+ * PID 1 (`docker-init`), the container's `sleep infinity` keeper, and the
+ * script's own process tree. `gitAuthed` runs it first, in the same exec as
+ * the config rewrite and the credential-bearing git call, for two reasons:
+ *
+ *  - The credential is on git's command line (`-c http.extraheader=…`), and a
+ *    process the agent left running (`nohup … &`) can read every other
+ *    process's `/proc/<pid>/cmdline`.
+ *  - The same process could rewrite `.git/config` between the allow-list
+ *    rewrite and git reading it.
+ *
+ * Processes are stopped (twice, to catch a child forked mid-scan) before any
+ * is killed, as in {@link killTaggedProcessesScript}. The keeper is the
+ * lowest-numbered child of PID 1 — the first thing the container started. If
+ * PID reuse ever handed an agent process a lower number, the keeper is the
+ * one killed and the container stops before the git call runs: the failure
+ * is closed. Uses only `/proc`, `sed` and `kill`.
+ */
+export function killStrayProcessesScript(): string {
+  return [
+    'asw_ppid() { sed -n \'s/^PPid:[[:space:]]*//p\' "/proc/$1/status" 2>/dev/null; }',
+    'asw_mine() {',
+    '  asw_a=$1',
+    '  while [ -n "$asw_a" ] && [ "$asw_a" -gt 1 ]; do',
+    '    if [ "$asw_a" = "$$" ]; then return 0; fi',
+    '    asw_a=$(asw_ppid "$asw_a")',
+    '  done',
+    '  return 1',
+    '}',
+    'asw_keeper=',
+    'for asw_d in /proc/[0-9]*; do',
+    `  asw_p=\${asw_d#/proc/}`,
+    '  if [ "$(asw_ppid "$asw_p")" = 1 ] && { [ -z "$asw_keeper" ] || [ "$asw_p" -lt "$asw_keeper" ]; }; then asw_keeper=$asw_p; fi',
+    'done',
+    'asw_sweep() {',
+    '  for asw_d in /proc/[0-9]*; do',
+    `    asw_p=\${asw_d#/proc/}`,
+    '    if [ "$asw_p" = 1 ] || [ "$asw_p" = "$asw_keeper" ] || asw_mine "$asw_p"; then continue; fi',
+    '    kill -"$1" "$asw_p" 2>/dev/null || true',
+    '  done',
+    '}',
+    'asw_sweep STOP',
+    'asw_sweep STOP',
+    'asw_sweep KILL',
+  ].join('\n');
+}
+
+/**
+ * The full script for one credential-bearing git call against the repository
+ * at `repoDir`: fail fast, rewrite the repo config from the allow-list, then
+ * run the hardened invocation. A `push origin …` is additionally sent to the
+ * scrubbed URL explicitly (with `--no-verify`) rather than resolved through
+ * the remote name, so the destination is fixed by the worker, not by the
+ * repository.
+ *
+ * Shared by the agent workspace's `gitAuthed` and the shell step's finalize
+ * push. The one thing it cannot defend against is code already running as
+ * root in the same container replacing the `git` binary itself — see the
+ * Limitations in docs/architecture.md.
+ */
+export function authedGitScript(
+  repoDir: string,
+  subcommand: string,
+  opts: { cleanUrl: string; gitAuthHeader?: string }
+): string {
+  const explicit = subcommand.replace(
+    /^push origin(?=\s|$)/,
+    `push --no-verify ${shellQuote(opts.cleanUrl)}`
+  );
+  return [
+    'set -e',
+    `cd ${shellQuote(repoDir)}`,
+    sanitizeGitRepoConfigScript(opts.cleanUrl),
+    gitWithAuthHeader(explicit, opts.gitAuthHeader),
+  ].join('\n');
+}
+
+/**
+ * Environment variable that tags every command the worker runs in a workspace
+ * with a per-call id. Children inherit their parent's environment, so the tag
+ * marks the command's whole process tree — including grandchildren that were
+ * reparented when an intermediate process exited.
+ */
+export const EXEC_TAG_ENV = 'AUTO_SWE_EXEC_ID';
+
+/**
+ * Shell script, run inside the workspace, that kills every process carrying
+ * `EXEC_TAG_ENV=<execId>`. Two passes: SIGSTOP everything first, so a process
+ * cannot fork a new child between the scan and the kill, then SIGKILL. Uses
+ * only `/proc`, `grep` and `kill`, which busybox and coreutils images both
+ * have. The id is worker-generated hex, so it needs no quoting beyond the
+ * check below.
+ */
+export function killTaggedProcessesScript(execId: string): string {
+  if (!/^[0-9a-f]+$/.test(execId)) {
+    throw new Error(`invalid exec tag: ${execId}`);
+  }
+  return [
+    'asw_kill() {',
+    '  for p in /proc/[0-9]*; do',
+    `    if grep -qs '${EXEC_TAG_ENV}=${execId}' "$p/environ"; then kill -"$1" "\${p#/proc/}" 2>/dev/null || true; fi`,
+    '  done',
+    '}',
+    'asw_kill STOP',
+    'asw_kill KILL',
+  ].join('\n');
 }
 
 // Resource caps applied to every workspace container (bound worst-case
@@ -294,7 +544,7 @@ export async function createWorkspace(
    * Pass `repo.executorImage ?? undefined`, never `repo.executorImage ?? '<some
    * image>'`. A literal here is not a fallback — it is a value, so it wins the
    * `??` below and `workspaceImage` is never consulted. Every caller used to do
-   * exactly that, which made the admin's /admin/workflow setting unreachable
+   * exactly that, which made the admin's /govern/workflow-defaults setting unreachable
    * while both this comment and the docs said otherwise. The one deliberate
    * exception is the eval harness, which pins its image for benchmark
    * comparability and says so at the call site.
@@ -355,6 +605,23 @@ export async function createWorkspace(
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
 
+  // Every command run in the container carries a fresh tag, and a command that
+  // outlives its timeout has its whole in-container process tree killed by
+  // that tag. Killing the local `docker exec` client alone — all a timeout used
+  // to do — leaves the command running inside the container.
+  const newExecTag = (): { env: string; onTimeout: OnTimeout } => {
+    const execId = crypto.randomBytes(8).toString('hex');
+    return {
+      env: `${EXEC_TAG_ENV}=${execId}`,
+      onTimeout: async () => {
+        await execShellAsync(
+          `docker exec ${containerName} sh -c ${shellQuote(killTaggedProcessesScript(execId))}`,
+          { heartbeatLabel: 'workspace: killing timed-out command', timeoutMs: 30_000 }
+        );
+      },
+    };
+  };
+
   // Start container — use '--' to separate docker flags from the image argument.
   // Pin public DNS resolvers (Cloudflare + Google) so name resolution doesn't
   // depend on Docker's embedded forwarder, which intermittently times out when
@@ -379,64 +646,69 @@ export async function createWorkspace(
   //    `buildMetadataBlockArgs`) run right after this container starts, since
   //    installing the route here would need `NET_ADMIN`, which conflicts
   //    with `--cap-drop=ALL`.
-  await execShellAsync(
-    // `workspaceMemory` is a DB-backed string, so shell-quote it (the numeric
-    // caps can't carry shell metacharacters); defense-in-depth on top of the
-    // route-level format validation.
-    `docker run -d --name ${containerName} --dns=1.1.1.1 --dns=8.8.8.8 --memory=${shellQuote(cfg.workspaceMemory)} --cpus=${cfg.workspaceCpus} --pids-limit=${cfg.workspacePidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(effectiveImage)} sleep infinity`,
-    { heartbeatLabel: 'workspace: starting container' }
-  );
-
-  // Cloud metadata-IP egress block (deferred follow-up, now implemented): run
-  // a throwaway sidecar that shares this container's network namespace to
-  // install blackhole routes for the metadata IPs — see `buildMetadataBlockArgs`
-  // for the full rationale. Best-effort and non-fatal: a failure here (e.g. an
-  // unsupported `--network container:` mode on some Docker runtime) must not
-  // break every workspace run, especially since the primary IMDS
-  // credential-exfil vector — leaking the *host's* cloud credentials pulled
-  // from the metadata service — is already mitigated by the credential
-  // scrubbing elsewhere in this function. This path has no daemon available to
-  // smoke-test in CI/this sandbox; it still needs a real-Docker validation
-  // pass before being relied on in production.
-  if (blockMetadata) {
-    try {
-      await execShellAsync(buildMetadataBlockArgs(containerName, metadataBlockImage), {
-        heartbeatLabel: 'workspace: blocking metadata-IP egress',
-      });
-    } catch (err) {
-      console.warn(
-        `workspace ${containerName}: metadata-IP egress block failed, continuing without it — ` +
-          `agent may be able to reach cloud metadata endpoints by IP: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-      );
-    }
-  }
-
-  // Initial exec function (root of container)
-  const rootExec = (command: string, timeoutMs?: number): Promise<string> =>
-    execShellAsync(`docker exec ${containerName} sh -c ${shellQuote(command)}`, {
-      heartbeatLabel: 'workspace: provisioning',
-      timeoutMs,
-    });
-
-  // A clone of a large repository legitimately outlasts the 2-minute exec
-  // default; give it the same 10-minute ceiling as a test run.
-  const CLONE_TIMEOUT_MS = 600_000;
-  // Clone with the CLEAN url and the credential injected per-call via
-  // `-c http.extraheader`, so the token is never on the command line (where a
-  // failure would echo it back in `error.message`) and never written to
-  // `.git/config`. `--` terminates option parsing so a URL beginning with a
-  // dash cannot be read as a git flag.
-  const cloneCmd = (args: string): string =>
-    gitWithAuthHeader(
-      `clone ${args}${args ? ' ' : ''}-- ${shellQuote(cleanUrl)} /workspace/target-repo`,
-      gitAuthHeader
+  //
+  // Everything from `docker run` on sits inside one try: the container has a
+  // deterministic name before it exists, so any failure — including a
+  // `docker run` whose client timed out after the daemon had already created
+  // the container — removes it by that name instead of leaking it.
+  try {
+    await execShellAsync(
+      // `workspaceMemory` is a DB-backed string, so shell-quote it (the numeric
+      // caps can't carry shell metacharacters); defense-in-depth on top of the
+      // route-level format validation.
+      `docker run -d --name ${containerName} --init --dns=1.1.1.1 --dns=8.8.8.8 --memory=${shellQuote(cfg.workspaceMemory)} --cpus=${cfg.workspaceCpus} --pids-limit=${cfg.workspacePidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(effectiveImage)} sleep infinity`,
+      { heartbeatLabel: 'workspace: starting container' }
     );
 
-  // Wrap provisioning in try/catch — destroy the container if any setup step fails
-  // to prevent accumulation of orphaned containers on repeated failures.
-  try {
+    // Cloud metadata-IP egress block (deferred follow-up, now implemented): run
+    // a throwaway sidecar that shares this container's network namespace to
+    // install blackhole routes for the metadata IPs — see `buildMetadataBlockArgs`
+    // for the full rationale. Best-effort and non-fatal: a failure here (e.g. an
+    // unsupported `--network container:` mode on some Docker runtime) must not
+    // break every workspace run, especially since the primary IMDS
+    // credential-exfil vector — leaking the *host's* cloud credentials pulled
+    // from the metadata service — is already mitigated by the credential
+    // scrubbing elsewhere in this function. This path has no daemon available to
+    // smoke-test in CI/this sandbox; it still needs a real-Docker validation
+    // pass before being relied on in production.
+    if (blockMetadata) {
+      try {
+        await execShellAsync(buildMetadataBlockArgs(containerName, metadataBlockImage), {
+          heartbeatLabel: 'workspace: blocking metadata-IP egress',
+        });
+      } catch (err) {
+        console.warn(
+          `workspace ${containerName}: metadata-IP egress block failed, continuing without it — ` +
+            `agent may be able to reach cloud metadata endpoints by IP: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+        );
+      }
+    }
+
+    // Initial exec function (root of container)
+    const rootExec = (command: string, timeoutMs?: number): Promise<string> => {
+      const tag = newExecTag();
+      return execShellAsync(
+        `docker exec -e ${tag.env} ${containerName} sh -c ${shellQuote(command)}`,
+        { heartbeatLabel: 'workspace: provisioning', onTimeout: tag.onTimeout, timeoutMs }
+      );
+    };
+
+    // A clone of a large repository legitimately outlasts the 2-minute exec
+    // default; give it the same 10-minute ceiling as a test run.
+    const CLONE_TIMEOUT_MS = 600_000;
+    // Clone with the CLEAN url and the credential injected per-call via
+    // `-c http.extraheader`, so the token is never on the command line (where a
+    // failure would echo it back in `error.message`) and never written to
+    // `.git/config`. `--` terminates option parsing so a URL beginning with a
+    // dash cannot be read as a git flag.
+    const cloneCmd = (args: string): string =>
+      gitWithAuthHeader(
+        `clone ${args}${args ? ' ' : ''}-- ${shellQuote(cleanUrl)} /workspace/target-repo`,
+        gitAuthHeader
+      );
+
     // Install git if not present (alpine images may not have it)
     await rootExec('which git || apk add --no-cache git');
 
@@ -486,12 +758,6 @@ export async function createWorkspace(
     throw err;
   }
 
-  // Builds a git invocation with the credential injected via
-  // `-c http.extraheader` for this call only — never written to disk. When
-  // the source URL carried no credential (`gitAuthHeader` unset), this is
-  // just a plain `git <subcmd>` against the scrubbed `origin` remote.
-  const gitAuthedArgs = (subcmd: string) => gitWithAuthHeader(subcmd, gitAuthHeader);
-
   return {
     containerId: containerName,
     destroy: async () => {
@@ -501,23 +767,47 @@ export async function createWorkspace(
         // Container may already be gone
       }
     },
-    exec: (command: string, options) =>
-      execShellAsync(
-        `docker exec -w /workspace/target-repo ${containerName} sh -c ${shellQuote(command)}`,
-        { heartbeatLabel: 'workspace: exec', timeoutMs: options?.timeoutMs }
-      ),
-    execCapture: (command: string, options) =>
-      spawnCaptureAsync(
+    exec: (command: string, options) => {
+      const tag = newExecTag();
+      return execShellAsync(
+        `docker exec -w /workspace/target-repo -e ${tag.env} ${containerName} sh -c ${shellQuote(command)}`,
+        {
+          heartbeatLabel: 'workspace: exec',
+          onTimeout: tag.onTimeout,
+          timeoutMs: options?.timeoutMs,
+        }
+      );
+    },
+    execCapture: (command: string, options) => {
+      const tag = newExecTag();
+      return spawnCaptureAsync(
         'docker',
-        ['exec', '-w', '/workspace/target-repo', containerName, 'sh', '-c', command],
-        { heartbeatLabel: 'workspace: exec (capture)', timeoutMs: options?.timeoutMs ?? 600_000 }
-      ),
+        ['exec', '-w', '/workspace/target-repo', '-e', tag.env, containerName, 'sh', '-c', command],
+        {
+          heartbeatLabel: 'workspace: exec (capture)',
+          onTimeout: tag.onTimeout,
+          timeoutMs: options?.timeoutMs ?? 600_000,
+        }
+      );
+    },
     execStdin: async (command: string, stdin: string | Buffer) => {
+      const tag = newExecTag();
       const result = await spawnWithStdinAsync(
         'docker',
-        ['exec', '-i', '-w', '/workspace/target-repo', containerName, 'sh', '-c', command],
+        [
+          'exec',
+          '-i',
+          '-w',
+          '/workspace/target-repo',
+          '-e',
+          tag.env,
+          containerName,
+          'sh',
+          '-c',
+          command,
+        ],
         stdin,
-        { heartbeatLabel: 'workspace: exec (stdin)' }
+        { heartbeatLabel: 'workspace: exec (stdin)', onTimeout: tag.onTimeout }
       );
       if (result.exitCode !== 0) {
         throw Object.assign(
@@ -531,9 +821,20 @@ export async function createWorkspace(
     },
     gitAuthed: async (subcommand: string) => {
       try {
+        // The repo has been writable by the agent since clone, so every
+        // authenticated call rewrites its config and runs git hardened — see
+        // `authedGitScript`. The credential is injected for this call only.
+        // Nothing the agent left running may witness the call — see
+        // `killStrayProcessesScript` — so the sweep, the rewrite and the git
+        // call share one exec.
+        const script = [
+          killStrayProcessesScript(),
+          authedGitScript('/workspace/target-repo', subcommand, { cleanUrl, gitAuthHeader }),
+        ].join('\n');
+        const tag = newExecTag();
         return await execShellAsync(
-          `docker exec ${containerName} sh -c ${shellQuote(`cd /workspace/target-repo && ${gitAuthedArgs(subcommand)}`)}`,
-          { heartbeatLabel: 'workspace: git' }
+          `docker exec -e ${tag.env} ${containerName} sh -c ${shellQuote(script)}`,
+          { heartbeatLabel: 'workspace: git', onTimeout: tag.onTimeout }
         );
       } catch (err) {
         // Same leak as a failed clone: the auth header is on the command line.

@@ -26,6 +26,7 @@ import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { calculateCostUsd } from '../lib/costTracking.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 import {
   fetchThreadReplies,
   postSlackThreadMessage,
@@ -790,6 +791,20 @@ export async function runHeldChannelTurn(
  * channel-scoped ledger used purely for the per-channel cap.
  */
 export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput): Promise<{
+  reply: string;
+  delegate?: DelegateIntent;
+  generate?: GenerateWorkflowIntent;
+  refine?: RefineWorkflowIntent;
+  /** Gap H: set when a follow-up turn decided the message wasn't addressed to it
+   *  (SKIP) — the workflow then delivers nothing. */
+  suppressed?: boolean;
+}> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('runChannelAssistantTurn', runChannelAssistantTurnImpl(input));
+}
+
+async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Promise<{
   reply: string;
   delegate?: DelegateIntent;
   generate?: GenerateWorkflowIntent;
