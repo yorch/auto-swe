@@ -26,8 +26,10 @@ import {
   useTeamAgents,
   useUpdateTeamAgent,
 } from '@/hooks/useAgentLibrary';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
-import { useSkills } from '@/hooks/useSkills';
+import { useTeamSkills } from '@/hooks/useSkills';
+import { modelLabel } from '@/lib/agentDisplay';
 import { errMsg } from '@/lib/errors';
 
 const EMPTY: CreateTeamAgentBody = {
@@ -53,16 +55,6 @@ const EDIT_COPY: AgentFormCopy = {
   systemPrompt: { hint: 'Leave blank to inherit the GLOBAL prompt' },
 };
 
-function modelLabel(a: AgentRow): string {
-  if (a.modelSpec) {
-    return a.modelSpec;
-  }
-  if (a.inheritsModelFrom) {
-    return `↳ ${a.inheritsModelFrom}`;
-  }
-  return '—';
-}
-
 /**
  * Team-owner editor for TEAM-scope Agents — per-team overrides of the GLOBAL
  * library, resolved by `resolveAgent` ahead of GLOBAL for this team's runs.
@@ -72,8 +64,12 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const createAgent = useCreateTeamAgent(teamId);
   const updateAgent = useUpdateTeamAgent(teamId);
   const deleteAgent = useDeleteTeamAgent(teamId);
-  const { data: mcpConnections } = useMcpConnections();
-  const { data: skills } = useSkills();
+  // The platform MCP connection list is ADMIN-only; a team ADMIN who is not a
+  // platform ADMIN gets no picker (and no request that can only 403). The
+  // skill picker reads the team-scoped list, which any team member may read.
+  const isPlatformAdmin = useHasRole('ADMIN');
+  const { data: mcpConnections } = useMcpConnections({ enabled: isPlatformAdmin });
+  const { data: skills } = useTeamSkills(teamId);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateTeamAgentBody>(EMPTY);

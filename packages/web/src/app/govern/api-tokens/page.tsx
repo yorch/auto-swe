@@ -36,9 +36,10 @@ export default function GovernAccessTokensPage() {
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const [pruneConfirmOpen, setPruneConfirmOpen] = useState(false);
 
-  const confirmRevoke = () => {
+  // Awaited so ConfirmModal keeps the dialog open and shows a failed revoke.
+  const confirmRevoke = async () => {
     if (revokeTarget) {
-      revokeToken.mutate(revokeTarget.id);
+      await revokeToken.mutateAsync(revokeTarget.id);
     }
   };
 

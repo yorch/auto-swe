@@ -1,6 +1,11 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { COOKIE_ACCESS_TOKEN, COOKIE_SESSION_MARKER, PATHNAME_HEADER } from '@/lib/config';
+import {
+  COOKIE_ACCESS_TOKEN,
+  COOKIE_SESSION_MARKER,
+  PATHNAME_HEADER,
+  SEARCH_HEADER,
+} from '@/lib/config';
 
 const PUBLIC_PATHS = ['/login', '/api', '/reset-password', '/health'];
 
@@ -19,12 +24,15 @@ const PUBLIC_PATHS = ['/login', '/api', '/reset-password', '/health'];
  * still enforces real auth on every /api/v1/* call.
  */
 /**
- * Forward the matched pathname to Server Components. Layouts have no access to
- * the URL, and the /admin layout needs it to decide which paths a LEAD may reach.
+ * Forward the matched pathname and query string to Server Components. Layouts
+ * have no access to the URL, and the reauth redirect in `auth.server.ts` needs
+ * both to send the user back to exactly the page they were on. Both headers are
+ * always set (never merely passed through), so a client-sent value is replaced.
  */
 function nextWithPathname(request: NextRequest, pathname: string) {
   const headers = new Headers(request.headers);
   headers.set(PATHNAME_HEADER, pathname);
+  headers.set(SEARCH_HEADER, request.nextUrl.search);
   return NextResponse.next({ request: { headers } });
 }
 
@@ -40,7 +48,7 @@ export function proxy(request: NextRequest) {
 
   if (!(hasLegacyToken || hasBetterAuthMarker)) {
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', pathname);
+    loginUrl.searchParams.set('redirect', `${pathname}${request.nextUrl.search}`);
     return NextResponse.redirect(loginUrl);
   }
 

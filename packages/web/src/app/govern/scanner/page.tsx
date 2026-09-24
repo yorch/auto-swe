@@ -23,22 +23,20 @@ import {
   useUpdateScannerPattern,
 } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
+import {
+  SCANNER_PATTERN_TYPE_INFO,
+  SCANNER_PATTERN_TYPE_ORDER,
+  type ScannerPatternType,
+} from '@/lib/scannerPatternTypes';
 import { formatDate } from '@/lib/utils';
 
-type PatternType =
-  | 'INJECTION'
-  | 'EXFILTRATION'
-  | 'SHELL_COMMAND'
-  | 'CODE_SECURITY'
-  | 'SENSITIVE_FILE';
+type PatternType = ScannerPatternType;
 
-const patternTypeOptions: Array<{ label: string; value: PatternType }> = [
-  { label: 'Injection (skill content)', value: 'INJECTION' },
-  { label: 'Exfiltration (skill content)', value: 'EXFILTRATION' },
-  { label: 'Shell Command (bash tool)', value: 'SHELL_COMMAND' },
-  { label: 'Code Security (diff review)', value: 'CODE_SECURITY' },
-  { label: 'Sensitive File (writeFile block)', value: 'SENSITIVE_FILE' },
-];
+const patternTypeOptions: Array<{ label: string; value: PatternType }> =
+  SCANNER_PATTERN_TYPE_ORDER.map((value) => ({
+    label: SCANNER_PATTERN_TYPE_INFO[value].label,
+    value,
+  }));
 
 // ── Create Modal ─────────────────────────────────────────────────────────────
 
@@ -270,88 +268,81 @@ function PatternDetailModal({
 
 // ── Pattern Row ───────────────────────────────────────────────────────────────
 
-function PatternRow({ pattern }: { pattern: ScannerPattern }) {
-  const update = useUpdateScannerPattern();
-  const [viewTarget, setViewTarget] = useState<ScannerPattern | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ScannerPattern | null>(null);
-  const deletePattern = useDeleteScannerPattern();
-  const [toggleError, setToggleError] = useState<string | null>(null);
+interface RowActions {
+  onView: (pattern: ScannerPattern) => void;
+  onDelete: (pattern: ScannerPattern) => void;
+  onError: (message: string | null) => void;
+}
 
-  async function toggleActive() {
-    setToggleError(null);
-    try {
-      await update.mutateAsync({ id: pattern.id, isActive: !pattern.isActive });
-    } catch (err) {
-      setToggleError(errMsg(err, `Failed to update "${pattern.label}"`));
-    }
+function PatternRow({
+  pattern,
+  onView,
+  onDelete,
+  onError,
+}: { pattern: ScannerPattern } & RowActions) {
+  const update = useUpdateScannerPattern();
+
+  function toggleActive() {
+    onError(null);
+    update.mutate(
+      { id: pattern.id, isActive: !pattern.isActive },
+      {
+        onError: (err) =>
+          onError(
+            errMsg(err, `Could not ${pattern.isActive ? 'disable' : 'enable'} "${pattern.label}"`)
+          ),
+      }
+    );
   }
 
   return (
-    <>
-      <TRow>
-        <Td className="py-2 pr-4">
-          <button
-            className="text-left font-mono text-xs text-paper-100 hover:underline"
-            onClick={() => setViewTarget(pattern)}
-            type="button"
-          >
-            {pattern.label}
-          </button>
-          {pattern.origin && (
-            <Badge className="ml-1.5" tone="neutral">
-              {pattern.origin}
-            </Badge>
-          )}
-        </Td>
-        <Td className="max-w-xs py-2 pr-4">
-          <code className="block truncate font-mono text-[11px] text-paper-300">
-            /{pattern.pattern}/{pattern.flags}
-          </code>
-        </Td>
-        <Td className="py-2 pr-4">
-          {pattern.isBuiltIn && (
-            <Badge tone="muted" uppercase variant="text">
-              built-in
-            </Badge>
-          )}
-        </Td>
-        <Td className="py-2 pr-4">
-          <ToggleSwitch
-            checked={pattern.isActive}
-            disabled={update.isPending}
-            onChange={toggleActive}
-          />
-          {toggleError && <Alert className="mt-2 text-xs">{toggleError}</Alert>}
-        </Td>
-        <Td className="py-2 text-right">
-          <div className="flex items-center justify-end gap-2">
-            <Button onClick={() => setViewTarget(pattern)} size="sm" variant="ghost">
-              View
+    <TRow>
+      <Td className="py-2 pr-4">
+        <button
+          className="text-left font-mono text-xs text-paper-100 hover:underline"
+          onClick={() => onView(pattern)}
+          type="button"
+        >
+          {pattern.label}
+        </button>
+        {pattern.origin && (
+          <Badge className="ml-1.5" tone="neutral">
+            {pattern.origin}
+          </Badge>
+        )}
+      </Td>
+      <Td className="max-w-xs py-2 pr-4">
+        <code className="block truncate font-mono text-[11px] text-paper-300">
+          /{pattern.pattern}/{pattern.flags}
+        </code>
+      </Td>
+      <Td className="py-2 pr-4">
+        {pattern.isBuiltIn && (
+          <Badge tone="muted" uppercase variant="text">
+            built-in
+          </Badge>
+        )}
+      </Td>
+      <Td className="py-2 pr-4">
+        <ToggleSwitch
+          checked={pattern.isActive}
+          disabled={update.isPending}
+          onChange={toggleActive}
+        />
+      </Td>
+      <Td className="py-2 text-right">
+        <div className="flex items-center justify-end gap-2">
+          <Button onClick={() => onView(pattern)} size="sm" variant="ghost">
+            View
+          </Button>
+          {!pattern.isBuiltIn && (
+            <Button onClick={() => onDelete(pattern)} size="sm" variant="danger">
+              Delete
             </Button>
-            {!pattern.isBuiltIn && (
-              <Button onClick={() => setDeleteTarget(pattern)} size="sm" variant="danger">
-                Delete
-              </Button>
-            )}
-          </div>
-        </Td>
-      </TRow>
-      <PatternDetailModal onClose={() => setViewTarget(null)} pattern={viewTarget} />
-      <ConfirmModal
-        confirmLabel="Delete"
-        dangerous
-        message="This will permanently remove the scanner pattern. This cannot be undone."
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={async () => {
-          if (deleteTarget) {
-            await deletePattern.mutateAsync(deleteTarget.id);
-          }
-        }}
-        open={deleteTarget !== null}
-        pendingLabel="Deleting…"
-        title={`Delete "${deleteTarget?.label ?? ''}"?`}
-      />
-    </>
+          )}
+        </div>
+      </Td>
+    </TRow>
   );
 }
 
@@ -361,10 +352,12 @@ function PatternSection({
   description,
   patterns,
   title,
+  actions,
 }: {
   description?: string;
   patterns: ScannerPattern[];
   title: string;
+  actions: RowActions;
 }) {
   return (
     <Card>
@@ -385,7 +378,7 @@ function PatternSection({
           </THead>
           <tbody>
             {patterns.map((p) => (
-              <PatternRow key={p.id} pattern={p} />
+              <PatternRow key={p.id} pattern={p} {...actions} />
             ))}
           </tbody>
         </Table>
@@ -399,12 +392,17 @@ function PatternSection({
 export default function GovernScannerPage() {
   const [newOpen, setNewOpen] = useState(false);
   const { data: patterns, isLoading, isError, error: loadError } = useScannerPatterns();
-
-  const injection = patterns?.filter((p) => p.type === 'INJECTION') ?? [];
-  const exfiltration = patterns?.filter((p) => p.type === 'EXFILTRATION') ?? [];
-  const shellCommand = patterns?.filter((p) => p.type === 'SHELL_COMMAND') ?? [];
-  const codeSecurity = patterns?.filter((p) => p.type === 'CODE_SECURITY') ?? [];
-  const sensitiveFile = patterns?.filter((p) => p.type === 'SENSITIVE_FILE') ?? [];
+  // One detail modal and one delete confirmation for the page, bound to the
+  // selected row — not one of each mounted per row.
+  const [viewTarget, setViewTarget] = useState<ScannerPattern | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ScannerPattern | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const deletePattern = useDeleteScannerPattern();
+  const rowActions: RowActions = {
+    onDelete: setDeleteTarget,
+    onError: setActionError,
+    onView: setViewTarget,
+  };
 
   return (
     <div className="space-y-8">
@@ -415,7 +413,7 @@ export default function GovernScannerPage() {
           </Button>
         }
         chapter="§ Govern"
-        subtitle="Regex patterns used across four scanning stages: skill content injection/exfiltration detection, shell command blocking in the agent workspace, and advisory code security findings fed to the security reviewer. Built-in patterns can be toggled but not deleted."
+        subtitle="Regex patterns behind the runtime scanners: skill-content and LLM-output injection/exfiltration checks, shell command and sensitive-file blocking, advisory code security findings, and the PII eval scorer. Built-in patterns can be toggled but not deleted."
         title="Scanner patterns"
       />
 
@@ -425,38 +423,41 @@ export default function GovernScannerPage() {
         isLoading={isLoading}
         label="scanner patterns"
       >
-        {
-          <>
-            <PatternSection
-              description="Checked when custom skill content is saved. Detects attempts to override agent instructions."
-              patterns={injection}
-              title="Injection patterns"
-            />
-            <PatternSection
-              description="Checked when custom skill content is saved. Detects attempts to exfiltrate data via skill prompts."
-              patterns={exfiltration}
-              title="Exfiltration patterns"
-            />
-            <PatternSection
-              description="Checked before each bash tool invocation. Dangerous matches are soft-blocked — the agent receives an error and can self-correct."
-              patterns={shellCommand}
-              title="Shell command patterns"
-            />
-            <PatternSection
-              description="Checked against added lines in the final diff. Findings are advisory — passed to the security reviewer agent as structured context."
-              patterns={codeSecurity}
-              title="Code security patterns"
-            />
-            <PatternSection
-              description="Checked against file paths before each writeFile tool call. Matches are hard-blocked — the agent cannot write to the matched path."
-              patterns={sensitiveFile}
-              title="Sensitive file patterns"
-            />
-          </>
-        }
+        {actionError && <Alert variant="error">{actionError}</Alert>}
+        {SCANNER_PATTERN_TYPE_ORDER.map((type) => (
+          <PatternSection
+            actions={rowActions}
+            description={SCANNER_PATTERN_TYPE_INFO[type].description}
+            key={type}
+            patterns={patterns?.filter((p) => p.type === type) ?? []}
+            title={SCANNER_PATTERN_TYPE_INFO[type].title}
+          />
+        ))}
       </QueryBoundary>
 
       <CreatePatternModal onClose={() => setNewOpen(false)} open={newOpen} />
+      {viewTarget && (
+        // Keyed so the modal's edit state starts fresh for each pattern opened.
+        <PatternDetailModal
+          key={viewTarget.id}
+          onClose={() => setViewTarget(null)}
+          pattern={viewTarget}
+        />
+      )}
+      {deleteTarget && (
+        <ConfirmModal
+          confirmLabel="Delete"
+          dangerous
+          message="This will permanently remove the scanner pattern. This cannot be undone."
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async () => {
+            await deletePattern.mutateAsync(deleteTarget.id);
+          }}
+          open
+          pendingLabel="Deleting…"
+          title={`Delete "${deleteTarget.label}"?`}
+        />
+      )}
     </div>
   );
 }

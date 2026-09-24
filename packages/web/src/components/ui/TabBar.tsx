@@ -26,10 +26,10 @@ export function TabBar<T extends string>({
 }) {
   return (
     <div className={cn('border-b border-ink-600', className)}>
-      <nav className="flex gap-1">
+      <nav className="flex gap-1 overflow-x-auto">
         {tabs.map((tab) => {
           const tabClassName = cn(
-            'border-b-2 px-4 py-2 text-sm transition-colors',
+            'shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm transition-colors',
             active === tab.id
               ? 'border-ember-400 text-ember-400'
               : 'border-transparent text-paper-400 hover:text-paper-100'

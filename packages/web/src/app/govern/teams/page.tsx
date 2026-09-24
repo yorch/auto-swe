@@ -8,13 +8,13 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useTeams } from '@/hooks/useTeams';
-import { useAuthStore } from '@/stores/authStore';
 
 export default function TeamsPage() {
   const { data: teams, isLoading, isError, error: loadError } = useTeams();
-  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const canCreate = role === 'ADMIN';
+  // POST /teams is ADMIN-only.
+  const canCreate = useHasRole('ADMIN');
   const [creating, setCreating] = useState(false);
 
   return (

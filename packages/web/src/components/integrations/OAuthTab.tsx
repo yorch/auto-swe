@@ -13,7 +13,9 @@ import {
   useUpdateOktaOAuthConfig,
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { API_BASE } from '@/lib/config';
+import { clearableField } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { IntegrationFormFooter } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
@@ -39,7 +41,7 @@ function GoogleOAuthForm() {
   const sources = resp?.sources ?? {};
   const update = useUpdateGoogleOAuthConfig();
 
-  const [clientId, setClientId] = useState('');
+  const [clientId, setClientId] = usePrefilledField(data?.clientId);
   const [clientSecret, setClientSecret] = useState('');
   const { saved, error, requiresRestart, submit } = useIntegrationConfigForm();
 
@@ -49,9 +51,8 @@ function GoogleOAuthForm() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const body: GoogleOAuthConfigInput = {};
-    if (clientId) {
-      body.clientId = clientId;
-    }
+    // Prefilled: omit when unchanged, send null when cleared.
+    body.clientId = clearableField(clientId, data?.clientId);
     if (clientSecret) {
       body.clientSecret = clientSecret;
     }
@@ -136,8 +137,8 @@ function OktaOAuthForm() {
   const sources = resp?.sources ?? {};
   const update = useUpdateOktaOAuthConfig();
 
-  const [issuer, setIssuer] = useState('');
-  const [clientId, setClientId] = useState('');
+  const [issuer, setIssuer] = usePrefilledField(data?.issuer);
+  const [clientId, setClientId] = usePrefilledField(data?.clientId);
   const [clientSecret, setClientSecret] = useState('');
   const { saved, error, requiresRestart, submit } = useIntegrationConfigForm();
 
@@ -155,12 +156,9 @@ function OktaOAuthForm() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const body: OktaOAuthConfigInput = {};
-    if (issuer) {
-      body.issuer = issuer;
-    }
-    if (clientId) {
-      body.clientId = clientId;
-    }
+    // Prefilled: omit when unchanged, send null when cleared.
+    body.issuer = clearableField(issuer, data?.issuer);
+    body.clientId = clearableField(clientId, data?.clientId);
     if (clientSecret) {
       body.clientSecret = clientSecret;
     }

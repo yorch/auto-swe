@@ -14,13 +14,11 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
+import { isRecord } from '@/lib/utils';
 import { OnFailSection, SchemaAwareForm } from './inspectorFields';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export function StepConfigSection({
   node,
@@ -487,34 +485,51 @@ export function McpSection({
   node: Extract<SpecNode, { type: 'mcp' }>;
   onChange: (next: SpecNode) => void;
 }) {
+  // The connection list is an ADMIN-only route. A team LEAD authoring their
+  // team's template cannot read it, so they get the id as a plain field
+  // (keeping whatever the node already holds) instead of a picker that 403s
+  // and hides the current value behind an empty placeholder.
+  const isPlatformAdmin = useHasRole('ADMIN');
   const {
     data: connections,
     error: connectionsError,
     isLoading: connectionsLoading,
-  } = useMcpConnections();
+  } = useMcpConnections({ enabled: isPlatformAdmin });
   return (
     <div className="space-y-4">
-      {connectionsError && (
-        <Alert>{errMsg(connectionsError, 'Failed to load MCP connections')}</Alert>
-      )}
-      <Select
-        compact
-        hint="Choose an active MCP connection (managed at /studio/mcp)"
-        label="Connection"
-        onChange={(e) => onChange({ ...node, connectionRef: e.target.value })}
-        value={node.connectionRef}
-      >
-        <option disabled value="">
-          {connectionsLoading ? 'Loading connections…' : 'Select an MCP connection…'}
-        </option>
-        {(connections ?? []).map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name} ({c.team?.name ?? c.teamId})
-          </option>
-        ))}
-      </Select>
-      {!connectionsLoading && !connectionsError && (connections ?? []).length === 0 && (
-        <EmptyState className="py-0 text-left text-xs" title="No MCP connections configured." />
+      {!isPlatformAdmin ? (
+        <Input
+          compact
+          hint="MCP connection id — ask a platform admin for it (connections are managed at /studio/mcp)"
+          label="Connection"
+          onChange={(e) => onChange({ ...node, connectionRef: e.target.value })}
+          value={node.connectionRef}
+        />
+      ) : (
+        <>
+          {connectionsError && (
+            <Alert>{errMsg(connectionsError, 'Failed to load MCP connections')}</Alert>
+          )}
+          <Select
+            compact
+            hint="Choose an active MCP connection (managed at /studio/mcp)"
+            label="Connection"
+            onChange={(e) => onChange({ ...node, connectionRef: e.target.value })}
+            value={node.connectionRef}
+          >
+            <option disabled value="">
+              {connectionsLoading ? 'Loading connections…' : 'Select an MCP connection…'}
+            </option>
+            {(connections ?? []).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.team?.name ?? c.teamId})
+              </option>
+            ))}
+          </Select>
+          {!connectionsLoading && !connectionsError && (connections ?? []).length === 0 && (
+            <EmptyState className="py-0 text-left text-xs" title="No MCP connections configured." />
+          )}
+        </>
       )}
       <Input
         compact

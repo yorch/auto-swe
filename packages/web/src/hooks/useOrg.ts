@@ -69,7 +69,10 @@ export function usePatchOrg(orgId: string) {
 export function useOrgMembers(orgId: string) {
   return useQuery({
     enabled: !!orgId,
-    queryFn: () => api.get<OrgMemberRow[]>(`/api/v1/platform/organizations/${orgId}/members`),
+    queryFn: () =>
+      api
+        .get<{ data: OrgMemberRow[] }>(`/api/v1/platform/organizations/${orgId}/members`)
+        .then((r) => r.data),
     queryKey: ['org-members', orgId],
   });
 }
@@ -78,7 +81,9 @@ export function useUpsertOrgMember(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { userId: string; role: OrgRole }) =>
-      api.post<OrgMemberRow>(`/api/v1/platform/organizations/${orgId}/members`, body),
+      api
+        .post<{ data: OrgMemberRow }>(`/api/v1/platform/organizations/${orgId}/members`, body)
+        .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org-members', orgId] }),
   });
 }
@@ -87,9 +92,12 @@ export function usePatchOrgMember(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ userId, role }: { userId: string; role: OrgRole }) =>
-      api.patch<OrgMemberRow>(`/api/v1/platform/organizations/${orgId}/members/${userId}`, {
-        role,
-      }),
+      api
+        .patch<{ data: OrgMemberRow }>(
+          `/api/v1/platform/organizations/${orgId}/members/${userId}`,
+          { role }
+        )
+        .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org-members', orgId] }),
   });
 }

@@ -189,7 +189,7 @@ export default function GovernBaselinesPage() {
           </Button>
         }
         chapter="§ Govern"
-        subtitle="Manually-recorded human error rates used to compute errorRateVsHuman on the analytics dashboard. Baselines are scoped to an organization and domain."
+        subtitle="Manually-recorded human error rates that the analytics dashboard compares agent error rates against (the “vs human” column). Baselines are scoped to an organization and domain."
         title="Human error baselines"
       />
 

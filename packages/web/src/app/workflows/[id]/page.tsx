@@ -11,6 +11,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { KeyValueRow } from '@/components/workflow/KeyValueRow';
 import { useRunsForWorkRequest, useWorkflow } from '@/hooks/useRuns';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
+import { githubWebBase } from '@/lib/githubHost';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
 
@@ -44,11 +45,11 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
     return notFound;
   }
 
-  // githubUrl is the host base (e.g. https://github.com or a GHE URL).
+  // githubUrl is the host base (null for github.com, a GHE web base otherwise).
   const repo = workflow.repository;
   const prHref = (prNumber: number | null) =>
     repo && prNumber != null
-      ? `${repo.githubUrl ?? 'https://github.com'}/${repo.organizationName}/${repo.repoName}/pull/${prNumber}`
+      ? `${githubWebBase(repo.githubUrl, repo.organizationName, repo.repoName)}/${repo.organizationName}/${repo.repoName}/pull/${prNumber}`
       : null;
 
   return (

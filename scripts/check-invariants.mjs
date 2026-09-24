@@ -211,16 +211,38 @@ function checkDockerfileYarnProvisioning() {
 // Locally it is invisible, because the fallback is the address the dev gateway listens on.
 // ---------------------------------------------------------------------------
 
+/**
+ * The layout takes its public URLs from `lib/env.ts` rather than touching `process.env` itself, so
+ * importing from that module is the same request-time read one call away — and the rule has to see
+ * through it, or moving the read into a helper switches the rule off without anyone noticing.
+ *
+ * Deliberately coarse. Working out which helper reads which variable is a call-graph question
+ * (`apiInternalUrl()` only calls `publicApiUrl()`; a helper can be an arrow function, or aliased on
+ * import), and every shortcut there is a way to defeat the rule. So: any import from `@/lib/env`,
+ * while that module reads a `NEXT_PUBLIC_*` variable anywhere, counts. The cost of a false positive
+ * is one `export const dynamic` line in a layout that is rendered per request anyway.
+ */
+function layoutImportsPublicEnv(layoutSrc) {
+  const importsEnv = /from\s+['"]@\/lib\/env['"]/.test(layoutSrc);
+  return importsEnv && /NEXT_PUBLIC_\w+/.test(read('packages/web/src/lib/env.ts'));
+}
+
 function checkLayoutRendersPerRequest() {
   const file = 'packages/web/src/app/layout.tsx';
   const src = read(file);
-  const reads = src.match(/process\.env\.NEXT_PUBLIC_\w+/);
-  if (reads && !/export\s+const\s+dynamic\s*=\s*['"]force-dynamic['"]/.test(src)) {
+  const direct = src.match(/process\.env(?:\.|\[\s*['"])NEXT_PUBLIC_\w+/);
+  const viaEnvModule = layoutImportsPublicEnv(src);
+  if (
+    (direct || viaEnvModule) &&
+    !/export\s+const\s+dynamic\s*=\s*['"]force-dynamic['"]/.test(src)
+  ) {
+    const reads = direct ? direct[0] : 'NEXT_PUBLIC_* through @/lib/env';
+    const at = direct ? direct[0] : src.match(/from\s+['"]@\/lib\/env['"]/)[0];
     fail(
       file,
-      src.slice(0, src.indexOf(reads[0])).split('\n').length,
+      src.slice(0, Math.max(0, src.indexOf(at))).split('\n').length,
       'layout-renders-per-request',
-      `the root layout reads ${reads[0]} but does not export dynamic = 'force-dynamic'`,
+      `the root layout reads ${reads} but does not export dynamic = 'force-dynamic'`,
       'Without it Next prerenders the layout at build time, where the variable is unset, and ' +
         'bakes the fallback into every page. The env var on the running container is ignored.'
     );

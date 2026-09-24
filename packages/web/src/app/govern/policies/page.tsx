@@ -354,9 +354,9 @@ function PolicyModal({
 export default function AutonomyPoliciesPage() {
   const { data: policies, isLoading, isError, error } = useAutonomyPolicies();
   const deletePolicy = useDeleteAutonomyPolicy();
+  const [deleteTarget, setDeleteTarget] = useState<AutonomyPolicy | null>(null);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<AutonomyPolicy | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AutonomyPolicy | null>(null);
 
   const sorted = useMemo(
     () => [...(policies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),

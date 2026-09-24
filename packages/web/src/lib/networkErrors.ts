@@ -30,21 +30,3 @@ export function gatewayUnreachableMessage(err: unknown, apiBase: string): string
   }
   return `Can't reach the auto-swe gateway at ${apiBase}. Check that it's running and that CORS_ORIGIN includes this page's origin.`;
 }
-
-/**
- * Wrap any fetch-issuing function so a network-level failure throws with a
- * useful message instead of the raw `TypeError: Failed to fetch`. HTTP errors
- * (4xx/5xx) pass through unchanged — the server's own message is more
- * informative for those.
- */
-export async function withGatewayDiagnostics<T>(apiBase: string, fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    const friendly = gatewayUnreachableMessage(err, apiBase);
-    if (friendly) {
-      throw new Error(friendly);
-    }
-    throw err;
-  }
-}

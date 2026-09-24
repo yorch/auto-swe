@@ -22,7 +22,9 @@ import {
   ReactFlowProvider,
   type Node as RFNode,
   useEdgesState,
+  useNodesInitialized,
   useNodesState,
+  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -72,14 +74,28 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode<DagNodeData>>(initial.nodes);
-  const [edges, , onEdgesChange] = useEdgesState(initial.edges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
 
   // Reflect external spec / overlay changes back into the flow state.
   // Using JSON serialization as the dep is cheap for the workflow sizes
   // we expect (<100 nodes) and avoids deep-equality libraries.
   useEffect(() => {
     setNodes(initial.nodes);
-  }, [initial.nodes, setNodes]);
+    setEdges(initial.edges);
+  }, [initial.nodes, initial.edges, setNodes, setEdges]);
+
+  // The `fitView` prop fits once, on the first render — before the nodes are
+  // measured when they arrive with the spec. Fit again once they are measured
+  // and whenever a different spec (another version) is shown, so the whole
+  // graph is on screen on load instead of clipped at the canvas edge.
+  const { fitView } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: specKey is the trigger — a different spec must be refitted.
+  useEffect(() => {
+    if (nodesInitialized) {
+      void fitView(FIT_VIEW_OPTIONS);
+    }
+  }, [nodesInitialized, specKey, fitView]);
 
   // Reflect external selection by setting React Flow's `selected` flag.
   const nodesWithSelection = useMemo(

@@ -23,6 +23,8 @@ import { Textarea } from '@/components/ui/Textarea';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import { VersionTags } from '@/components/workflow/VersionTags';
+import { useHasRole } from '@/hooks/useHasRole';
+import { useLedTeamIds } from '@/hooks/useTeams';
 import {
   useCreateWorkflowTemplate,
   useStartWorkflowGenerationJob,
@@ -31,7 +33,10 @@ import {
   useWorkflowTemplates,
 } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { requiresRoleTitle } from '@/lib/roles';
+import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { cn, formatRelativeTime } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
 
 const SPEC_SCHEMA_VERSION = 1;
@@ -379,6 +384,22 @@ export default function TemplatesPage() {
     error: loadError,
   } = useWorkflowTemplates(selectedTeamId);
   const createTemplate = useCreateWorkflowTemplate();
+  // Creating, forking and archiving templates are LEAD routes on the gateway,
+  // and on top of the platform role the gateway requires LEAD membership on the
+  // owning team (templateWriteFilter); a GLOBAL template is ADMIN-only. New
+  // templates are created for the selected team, so creation needs a team the
+  // caller leads selected (or platform ADMIN).
+  const platformRole = useAuthStore((s) => s.user?.role);
+  const isLead = useHasRole('LEAD');
+  const ledTeamIds = useLedTeamIds();
+  const canWrite = (teamId: string | null | undefined) =>
+    canWriteTeamResource(platformRole, teamId, ledTeamIds);
+  const canManage = canWrite(selectedTeamId);
+  const manageTitle = canManage
+    ? undefined
+    : isLead
+      ? 'Select a team you lead to author templates for it'
+      : requiresRoleTitle('LEAD');
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -429,10 +450,17 @@ export default function TemplatesPage() {
 
       <PageHeader
         actions={
-          <Button onClick={() => setGenerateOpen(true)} size="sm" variant="primary">
-            <SparkleIcon />
-            New workflow
-          </Button>
+          <span title={manageTitle}>
+            <Button
+              disabled={!canManage}
+              onClick={() => setGenerateOpen(true)}
+              size="sm"
+              variant="primary"
+            >
+              <SparkleIcon />
+              New workflow
+            </Button>
+          </span>
         }
         chapter="§ Workflows"
         subtitle="Agentic workflow library. Pick a template, run it with your inputs, watch it execute."
@@ -460,15 +488,16 @@ export default function TemplatesPage() {
                 <p className="mb-5 flex-1 text-sm leading-relaxed text-paper-400">
                   {s.description}
                 </p>
-                <Button
-                  className="self-start"
-                  disabled={isForking || createTemplate.isPending}
-                  onClick={() => handleFork(s)}
-                  size="sm"
-                  variant="primary"
-                >
-                  {isForking ? 'Forking…' : 'Fork starter'}
-                </Button>
+                <span className="self-start" title={manageTitle}>
+                  <Button
+                    disabled={!canManage || isForking || createTemplate.isPending}
+                    onClick={() => handleFork(s)}
+                    size="sm"
+                    variant="primary"
+                  >
+                    {isForking ? 'Forking…' : 'Fork starter'}
+                  </Button>
+                </span>
               </Card>
             );
           })}
@@ -555,7 +584,12 @@ export default function TemplatesPage() {
                         <div className="flex items-center justify-end gap-2">
                           {t.status === 'ARCHIVED' ? null : t.status === 'ACTIVE' &&
                             t.activeVersion !== null ? (
-                            <Button onClick={() => setRunTarget(t)} size="sm" variant="primary">
+                            <Button
+                              className="whitespace-nowrap"
+                              onClick={() => setRunTarget(t)}
+                              size="sm"
+                              variant="primary"
+                            >
                               Run →
                             </Button>
                           ) : (
@@ -577,9 +611,9 @@ export default function TemplatesPage() {
                             size="sm"
                             variant="secondary"
                           >
-                            Edit
+                            {canWrite(t.team?.id) ? 'Edit' : 'View'}
                           </ButtonLink>
-                          {t.status !== 'ARCHIVED' && (
+                          {canWrite(t.team?.id) && t.status !== 'ARCHIVED' && (
                             <Button
                               onClick={() => setArchiveTarget({ id: t.id, name: t.name })}
                               size="sm"

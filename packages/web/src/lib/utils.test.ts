@@ -7,6 +7,7 @@ import {
   formatPercent,
   formatRelativeTime,
   formatTokens,
+  isRecord,
 } from './utils.js';
 
 // These formatters deliberately follow the runtime's default locale, so the
@@ -129,6 +130,15 @@ describe('formatCents', () => {
 
   it('converts cents to dollars', () => {
     expect(formatCents(123_456)).toBe(ref.usd.format(1234.56));
+  });
+});
+
+describe('isRecord', () => {
+  it('accepts plain objects only', () => {
+    expect(isRecord({ a: 1 })).toBe(true);
+    expect(isRecord([])).toBe(false);
+    expect(isRecord(null)).toBe(false);
+    expect(isRecord('x')).toBe(false);
   });
 });
 

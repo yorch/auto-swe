@@ -10,21 +10,21 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useTemporalUiUrl } from '@/hooks/useTemporalUi';
 import { API_BASE } from '@/lib/config';
-
-type Role = 'ADMIN' | 'LEAD' | 'ENGINEER' | string;
+import { hasRole } from '@/lib/roles';
 
 export function DashboardOnboarding({
   role,
   onNewRequest,
 }: {
-  role: Role;
+  role: string | null | undefined;
   onNewRequest?: () => void;
 }) {
   const { data: repos = [], isLoading: connectionsLoading } = useRepositories();
 
   const temporalUiUrl = useTemporalUiUrl();
 
-  const canManageRepos = role === 'ADMIN' || role === 'LEAD';
+  const canManageRepos = hasRole(role, 'LEAD');
+  const isAdmin = hasRole(role, 'ADMIN');
   const hasConnections = repos.length > 0;
 
   const curlExample = `curl -X POST ${API_BASE}/api/v1/workflow-templates/<template-id>/runs \\
@@ -43,7 +43,7 @@ export function DashboardOnboarding({
         title="Let's get the workshop running"
       />
 
-      {role === 'ADMIN' && (
+      {isAdmin && (
         <section className="fade-up stagger-1">
           <SectionHeader
             hint="admins only · do this first"
