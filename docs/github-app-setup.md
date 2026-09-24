@@ -50,7 +50,17 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
 
 ### GitHub Enterprise Server
 
-The same steps apply; navigate to your GHE instance's settings instead of github.com.
+The same steps apply; navigate to your GHE instance's settings instead of github.com, and set the
+instance's web and API URLs at `/studio/integrations → GitHub`.
+
+A repository's own GitHub URL and API URL are **host overrides**, and every credential the
+platform holds for that repository — the PAT, the App JWT, the installation token, the
+authenticated clone URL — is sent to the host they name. They therefore accept only a bare host on
+public GitHub or on the configured instance (with `/api/v3` allowed on the API URL), never a
+repository URL. Only a platform ADMIN may point a repository at a different host; a team lead may
+leave the values unchanged, clear them, or set them to the configured instance. The worker and the
+permission lookups re-check the host before sending a credential, so a row that fails the check
+cannot receive one however it was written.
 
 ---
 

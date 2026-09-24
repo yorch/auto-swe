@@ -200,7 +200,7 @@ Before flipping a deployment from dev to prod, confirm:
 | GitHub OAuth credentials configured        | Optional — button hides when absent. Set via `/studio/integrations → GitHub` or env var. |
 | Google OAuth credentials configured        | Optional — button hides when absent. Set via `/studio/integrations → OAuth` or env var. |
 | Okta issuer + credentials configured       | Optional — button hides unless all three are present. Set via `/studio/integrations → OAuth` or env var. |
-| `RESEND_API_KEY` + `AUTH_FROM_EMAIL`       | Required if you want magic-link emails sent for real (else stdout-only)  |
+| `RESEND_API_KEY` + `AUTH_FROM_EMAIL`       | Required for magic-link emails outside development (dev prints to stdout) |
 | OAuth callbacks point at the prod URL      | GitHub, Google, and Okta consoles must list the right callback URL       |
 | Okta discovery URL reachable from the gateway | Fetched at boot; an unreachable issuer leaves Okta sign-in broken until the next restart |
 | Google consent screen published            | Else sign-ins are limited to the test-user list                          |

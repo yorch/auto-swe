@@ -8,9 +8,9 @@ Follow the Local Development Quickstart in [`AGENTS.md` §8](./AGENTS.md#8-local
 
 ```bash
 npm i -g corepack && corepack enable && yarn install   # Node >= 26, Yarn 4 via corepack
-cp .env.example .env              # fill in CONFIG_ENCRYPTION_KEY + SEED_ADMIN_PASSWORD
+cp .env.example .env              # fill in the required-secrets block (4 values)
 yarn docker:infra:up              # postgres + temporal + garage
-yarn db:migrate && yarn db:generate && yarn db:seed
+yarn db:deploy && yarn db:generate && yarn db:seed
 ```
 
 ## Before you open a PR
@@ -22,7 +22,8 @@ yarn test        # Vitest
 yarn build       # all packages compile
 ```
 
-CI runs the same four checks; Docker image publishing is gated on them passing.
+CI runs the same four checks, plus the doc-drift and source-invariant checks and a
+real-database migrations job; Docker image publishing is gated on all of them passing.
 
 - Co-locate tests next to source (`workRequests.test.ts` pattern).
 - Run `yarn lint:fix` before committing.
