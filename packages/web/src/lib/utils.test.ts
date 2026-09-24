@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatBudgetCents,
   formatCost,
   formatDate,
   formatDuration,
   formatPercent,
   formatRelativeTime,
   formatTokens,
+  isRecord,
 } from './utils.js';
 
 // These formatters deliberately follow the runtime's default locale, so the
@@ -118,6 +120,26 @@ describe('formatCost', () => {
 
   it('formats representable amounts as USD', () => {
     expect(formatCost(1234.5)).toBe(ref.usd.format(1234.5));
+  });
+});
+
+describe('formatBudgetCents', () => {
+  it('reads null as uncapped', () => {
+    expect(formatBudgetCents(null)).toBe('No cap');
+  });
+
+  it('formats cents as dollars', () => {
+    expect(formatBudgetCents(12345)).toBe(ref.usd.format(123.45));
+    expect(formatBudgetCents(0)).toBe(ref.usd.format(0));
+  });
+});
+
+describe('isRecord', () => {
+  it('accepts plain objects only', () => {
+    expect(isRecord({ a: 1 })).toBe(true);
+    expect(isRecord([])).toBe(false);
+    expect(isRecord(null)).toBe(false);
+    expect(isRecord('x')).toBe(false);
   });
 });
 

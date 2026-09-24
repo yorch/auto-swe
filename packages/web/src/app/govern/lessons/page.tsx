@@ -7,6 +7,7 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Table } from '@/components/ui/Table';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
 import {
   type LessonRepoStats,
@@ -16,6 +17,7 @@ import {
   useLessons,
 } from '@/hooks/useLessons';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { formatDate } from '@/lib/utils';
 
 function RepoStatsRow({
@@ -101,7 +103,7 @@ export default function GovernLessonsPage() {
     <div className="space-y-6">
       <PageHeader
         subtitle="Agent lessons captured from completed workflows. Consolidation merges semantically similar lessons to reduce redundancy."
-        title="Admin — Lessons"
+        title={navLabel('/govern/lessons')}
       />
 
       {/* Summary stats */}
@@ -171,7 +173,7 @@ export default function GovernLessonsPage() {
         ) : !stats || stats.length === 0 ? (
           <EmptyState className="py-0 text-left text-paper-600" title="No repositories found." />
         ) : (
-          <table className="w-full">
+          <Table className="text-base">
             <thead>
               <tr>
                 <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
@@ -194,7 +196,7 @@ export default function GovernLessonsPage() {
                 <RepoStatsRow key={repo.id} onTrigger={handleTriggerRepo} repo={repo} />
               ))}
             </tbody>
-          </table>
+          </Table>
         )}
       </Card>
 

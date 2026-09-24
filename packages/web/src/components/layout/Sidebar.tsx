@@ -2,10 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useMemo } from 'react';
+import { type RefObject, useMemo } from 'react';
 import { useApprovalsCount } from '@/hooks/useApprovals';
+import { activeNavHref, visibleNavGroups } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
+
+/** DOM id of the sidebar, referenced by the TopBar menu button's `aria-controls`. */
+export const SIDEBAR_ID = 'app-sidebar';
 
 // SVG icon paths — each path is for viewBox="0 0 24 24" stroke icons
 const ICONS: Record<string, string> = {
@@ -58,261 +62,128 @@ function NavIcon({ name }: { name: string }) {
   );
 }
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: string;
-  roles: string[];
-};
+interface SidebarProps {
+  /** Drawer state below `md`. At `md` and up the sidebar is always shown. */
+  open: boolean;
+  onClose: () => void;
+  /** First focus target when the drawer opens. */
+  closeButtonRef?: RefObject<HTMLButtonElement | null>;
+}
 
-type NavGroup = {
-  label: string;
-  items: NavItem[];
-};
-
-const NAV_GROUPS: NavGroup[] = [
-  {
-    items: [{ href: '/', icon: 'dashboard', label: 'Home', roles: ['ENGINEER', 'LEAD', 'ADMIN'] }],
-    label: 'Start',
-  },
-  {
-    items: [
-      { href: '/workflows', icon: 'canvas', label: 'Queue', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
-    ],
-    label: 'Requests',
-  },
-  {
-    items: [
-      {
-        href: '/workflows/library',
-        icon: 'templates',
-        label: 'Library',
-        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
-      },
-      {
-        href: '/connections',
-        icon: 'connections',
-        label: 'Connections',
-        roles: ['LEAD', 'ADMIN'],
-      },
-      { href: '/runs', icon: 'runs', label: 'Runs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
-    ],
-    label: 'Workflows',
-  },
-  {
-    items: [
-      {
-        href: '/studio/agents/library',
-        icon: 'agents',
-        label: 'Agents',
-        roles: ['ADMIN'],
-      },
-      { href: '/studio/skills', icon: 'skills', label: 'Skills', roles: ['LEAD', 'ADMIN'] },
-      { href: '/studio/mcp', icon: 'connections', label: 'MCP', roles: ['LEAD', 'ADMIN'] },
-      {
-        href: '/studio/integrations',
-        icon: 'connections',
-        label: 'Integrations',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/studio/github-installations',
-        icon: 'connections',
-        label: 'GitHub installations',
-        roles: ['ADMIN'],
-      },
-      { href: '/studio/models', icon: 'admin', label: 'Model config', roles: ['ADMIN'] },
-      { href: '/studio/bundles', icon: 'templates', label: 'Bundles', roles: ['ADMIN'] },
-    ],
-    label: 'Studio',
-  },
-  {
-    items: [
-      { href: '/govern/security', icon: 'security', label: 'Security', roles: ['ADMIN'] },
-      { href: '/govern/scanner', icon: 'security', label: 'Scanner', roles: ['ADMIN'] },
-      { href: '/govern/policies', icon: 'security', label: 'Autonomy policies', roles: ['ADMIN'] },
-      { href: '/govern/evals', icon: 'analytics', label: 'Evals', roles: ['ADMIN'] },
-      { href: '/govern/schedules', icon: 'clock', label: 'Schedules', roles: ['ADMIN'] },
-      {
-        href: '/govern/budget-alerts',
-        icon: 'security',
-        label: 'Budget alerts',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/govern/teams',
-        icon: 'teams',
-        label: 'Teams',
-        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
-      },
-      {
-        href: '/govern/organizations',
-        icon: 'teams',
-        label: 'Organizations',
-        roles: ['ADMIN'],
-      },
-      { href: '/govern/users', icon: 'users', label: 'Users', roles: ['ADMIN'] },
-      { href: '/govern/api-tokens', icon: 'key', label: 'API tokens', roles: ['ADMIN'] },
-      {
-        href: '/govern/approvals',
-        icon: 'inbox',
-        label: 'Approvals',
-        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
-      },
-      { href: '/govern/lessons', icon: 'memory', label: 'Lessons', roles: ['ADMIN'] },
-      {
-        href: '/govern/analytics',
-        icon: 'analytics',
-        label: 'Analytics',
-        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
-      },
-      {
-        href: '/govern/baselines',
-        icon: 'analytics',
-        label: 'Error baselines',
-        roles: ['ADMIN'],
-      },
-      { href: '/govern/sessions', icon: 'clock', label: 'Sessions', roles: ['ADMIN'] },
-      {
-        href: '/govern/slack-channels',
-        icon: 'teams',
-        label: 'Slack channels',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/govern/workflow-defaults',
-        icon: 'workflows',
-        label: 'Workflow defaults',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/govern/platform-settings',
-        icon: 'settings',
-        label: 'Platform settings',
-        roles: ['ADMIN', 'LEAD'],
-      },
-      {
-        href: '/govern/config-grants',
-        icon: 'settings',
-        label: 'Config grants',
-        roles: ['ADMIN'],
-      },
-      {
-        href: '/govern/audit',
-        icon: 'analytics',
-        label: 'Audit log',
-        roles: ['ADMIN'],
-      },
-    ],
-    label: 'Govern',
-  },
-  {
-    items: [
-      {
-        href: '/settings',
-        icon: 'settings',
-        label: 'Settings',
-        roles: ['ENGINEER', 'LEAD', 'ADMIN'],
-      },
-    ],
-    label: 'Account',
-  },
-];
-
-const ROLE_HIERARCHY: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
-
-// Active item is computed in the Sidebar component so the most-specific
-// matching nav item wins (e.g. /workflows/library over /workflows).
-
-export function Sidebar() {
+export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
-  const userLevel = ROLE_HIERARCHY[user?.role ?? 'ENGINEER'] ?? 1;
   const inboxCount = useApprovalsCount();
 
-  const allowed = useMemo(
+  const groups = useMemo(() => visibleNavGroups(user?.role), [user?.role]);
+  // The most-specific matching nav item wins (e.g. /workflows/library over /workflows).
+  const activeHref = useMemo(
     () =>
-      NAV_GROUPS.flatMap((group) =>
-        group.items.filter((item) => item.roles.some((r) => (ROLE_HIERARCHY[r] ?? 0) <= userLevel))
+      activeNavHref(
+        pathname,
+        groups.flatMap((g) => g.items)
       ),
-    [userLevel]
+    [pathname, groups]
   );
-  const activeHref = useMemo(() => {
-    if (pathname === '/') {
-      return '/';
-    }
-    const match = allowed
-      .filter(
-        (item) =>
-          item.href !== '/' && (pathname === item.href || pathname.startsWith(`${item.href}/`))
-      )
-      .sort((a, b) => b.href.length - a.href.length)[0];
-    return match?.href ?? '';
-  }, [pathname, allowed]);
 
   const avatarLetter = (user?.email ?? 'G')[0].toUpperCase();
 
   return (
     <aside
-      className="flex flex-col border-r"
+      aria-label="Main navigation"
+      className={cn(
+        'flex flex-col border-r',
+        // Below md the sidebar is an off-canvas drawer; `invisible` when closed
+        // takes its links out of the tab order and the accessibility tree.
+        'max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl max-md:duration-200',
+        // Visibility flips immediately on open (so focus can move in) and only
+        // after the slide-out on close.
+        open
+          ? 'max-md:visible max-md:translate-x-0 max-md:transition-transform'
+          : 'max-md:invisible max-md:-translate-x-full max-md:transition-[transform,visibility]'
+      )}
+      id={SIDEBAR_ID}
       style={{
         background: 'var(--color-ink-900)',
         borderColor: 'var(--color-ink-400)',
         width: 234,
       }}
     >
-      {/* Brand */}
-      <Link
-        className="flex items-center gap-3 px-[18px] py-[18px]"
-        href="/"
-        style={{ textDecoration: 'none' }}
-      >
-        {/* Gradient logo mark */}
-        <span
-          className="flex shrink-0 items-center justify-center"
-          style={{
-            background: 'linear-gradient(135deg, var(--color-ember-400), var(--color-violet-400))',
-            borderRadius: 7,
-            boxShadow: '0 6px 18px -6px rgba(124, 108, 255, 0.7)',
-            height: 26,
-            width: 26,
-          }}
+      <div className="flex items-center justify-between">
+        {/* Brand */}
+        <Link
+          className="flex items-center gap-3 px-[18px] py-[18px]"
+          href="/"
+          style={{ textDecoration: 'none' }}
         >
-          <svg aria-hidden="true" fill="none" height={15} viewBox="0 0 24 24" width={15}>
-            <path
-              d="M4 7h7M4 12h16M13 17h7"
-              stroke="#fff"
-              strokeLinecap="round"
-              strokeWidth={2.2}
-            />
-            <circle cx={17} cy={7} fill="#fff" r={2.4} />
-            <circle cx={7} cy={17} fill="#fff" r={2.4} />
+          {/* Gradient logo mark */}
+          <span
+            className="flex shrink-0 items-center justify-center"
+            style={{
+              background:
+                'linear-gradient(135deg, var(--color-ember-400), var(--color-violet-400))',
+              borderRadius: 7,
+              boxShadow: '0 6px 18px -6px rgba(124, 108, 255, 0.7)',
+              height: 26,
+              width: 26,
+            }}
+          >
+            <svg aria-hidden="true" fill="none" height={15} viewBox="0 0 24 24" width={15}>
+              <path
+                d="M4 7h7M4 12h16M13 17h7"
+                stroke="#fff"
+                strokeLinecap="round"
+                strokeWidth={2.2}
+              />
+              <circle cx={17} cy={7} fill="#fff" r={2.4} />
+              <circle cx={7} cy={17} fill="#fff" r={2.4} />
+            </svg>
+          </span>
+          <span className="flex items-baseline gap-[3px]">
+            <span
+              style={{
+                color: 'var(--color-paper-100)',
+                fontSize: 15,
+                fontWeight: 700,
+                letterSpacing: '-0.02em',
+              }}
+            >
+              auto
+            </span>
+            <span
+              style={{
+                color: 'var(--color-ember-400)',
+                fontFamily: 'var(--font-display)',
+                fontSize: 15,
+                fontStyle: 'italic',
+                fontWeight: 600,
+              }}
+            >
+              ·swe
+            </span>
+          </span>
+        </Link>
+        <button
+          aria-label="Close navigation"
+          className="mr-3 rounded-md p-2 text-paper-400 hover:text-paper-100 md:hidden"
+          onClick={onClose}
+          ref={closeButtonRef}
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            fill="none"
+            height={18}
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeWidth={2}
+            viewBox="0 0 24 24"
+            width={18}
+          >
+            <path d="M6 6l12 12M18 6L6 18" />
           </svg>
-        </span>
-        <span className="flex items-baseline gap-[3px]">
-          <span
-            style={{
-              color: 'var(--color-paper-100)',
-              fontSize: 15,
-              fontWeight: 700,
-              letterSpacing: '-0.02em',
-            }}
-          >
-            auto
-          </span>
-          <span
-            style={{
-              color: 'var(--color-ember-400)',
-              fontFamily: 'var(--font-display)',
-              fontSize: 15,
-              fontStyle: 'italic',
-              fontWeight: 600,
-            }}
-          >
-            ·swe
-          </span>
-        </span>
-      </Link>
+        </button>
+      </div>
 
       {/* Team context chip */}
       <div
@@ -360,68 +231,60 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto pb-4">
-        {NAV_GROUPS.map((group) => {
-          const visible = group.items.filter((item) =>
-            item.roles.some((r) => (ROLE_HIERARCHY[r] ?? 0) <= userLevel)
-          );
-          if (visible.length === 0) {
-            return null;
-          }
-
-          return (
-            <div key={group.label}>
-              <div
-                className="px-5 pb-[6px] pt-[14px]"
-                style={{
-                  color: 'var(--color-paper-600)',
-                  fontSize: 10,
-                  fontWeight: 700,
-                  letterSpacing: '0.12em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                {group.label}
-              </div>
-              {visible.map((item) => {
-                const active = activeHref === item.href;
-                return (
-                  <Link
-                    className={cn(
-                      'flex items-center gap-[11px] px-[18px] py-[8px] transition-all',
-                      active ? 'text-paper-100' : 'text-paper-500 hover:text-paper-200'
-                    )}
-                    href={item.href}
-                    key={item.href}
-                    style={{
-                      background: active ? 'var(--color-ink-700)' : undefined,
-                      borderLeft: `2px solid ${active ? 'var(--color-ember-400)' : 'transparent'}`,
-                      fontSize: 13.5,
-                      fontWeight: 550,
-                      textDecoration: 'none',
-                    }}
-                  >
-                    <NavIcon name={item.icon} />
-                    <span className="flex-1">{item.label}</span>
-                    {item.href === '/govern/approvals' && inboxCount > 0 && (
-                      <span
-                        style={{
-                          background: 'var(--color-ember-400)',
-                          borderRadius: 999,
-                          color: '#fff',
-                          fontSize: 10.5,
-                          fontWeight: 700,
-                          padding: '1px 7px',
-                        }}
-                      >
-                        {inboxCount}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
+        {groups.map((group) => (
+          <div key={group.label}>
+            <div
+              className="px-5 pb-[6px] pt-[14px]"
+              style={{
+                color: 'var(--color-paper-600)',
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+              }}
+            >
+              {group.label}
             </div>
-          );
-        })}
+            {group.items.map((item) => {
+              const active = activeHref === item.href;
+              return (
+                <Link
+                  aria-current={active ? 'page' : undefined}
+                  className={cn(
+                    'flex items-center gap-[11px] px-[18px] py-[8px] transition-all',
+                    active ? 'text-paper-100' : 'text-paper-500 hover:text-paper-200'
+                  )}
+                  href={item.href}
+                  key={item.href}
+                  style={{
+                    background: active ? 'var(--color-ink-700)' : undefined,
+                    borderLeft: `2px solid ${active ? 'var(--color-ember-400)' : 'transparent'}`,
+                    fontSize: 13.5,
+                    fontWeight: 550,
+                    textDecoration: 'none',
+                  }}
+                >
+                  <NavIcon name={item.icon} />
+                  <span className="flex-1">{item.label}</span>
+                  {item.href === '/govern/approvals' && inboxCount > 0 && (
+                    <span
+                      style={{
+                        background: 'var(--color-ember-400)',
+                        borderRadius: 999,
+                        color: '#fff',
+                        fontSize: 10.5,
+                        fontWeight: 700,
+                        padding: '1px 7px',
+                      }}
+                    >
+                      {inboxCount}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Footer */}

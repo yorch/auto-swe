@@ -44,3 +44,43 @@ describe('ApiClient request shaping', () => {
     await expect(client.delete('/api/v1/skills/abc')).resolves.toBeUndefined();
   });
 });
+
+describe('ApiClient 401 handling', () => {
+  const originalFetch = globalThis.fetch;
+
+  function stubBrowser(pathname: string, cookie: string) {
+    const location = { href: `http://app${pathname}`, pathname, search: '' };
+    vi.stubGlobal('window', { location });
+    vi.stubGlobal('document', { cookie });
+    return location;
+  }
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async () => new Response('{}', { status: 401 })) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.unstubAllGlobals();
+  });
+
+  it('does not redirect an anonymous visitor on a public page', async () => {
+    const location = stubBrowser('/reset-password', '');
+    const client = new ApiClient();
+    await expect(client.get('/api/v1/approvals')).rejects.toThrow('Not signed in');
+    expect(location.href).toBe('http://app/reset-password');
+  });
+
+  it('does not redirect when there never was a session, even off a public page', async () => {
+    const location = stubBrowser('/runs', '');
+    const client = new ApiClient();
+    await expect(client.get('/api/v1/runs')).rejects.toThrow('Not signed in');
+    expect(location.href).toBe('http://app/runs');
+  });
+
+  it('sends a caller whose session lapsed to /login with a return path', async () => {
+    const location = stubBrowser('/runs', 'web-session-active=1');
+    const client = new ApiClient();
+    await expect(client.get('/api/v1/runs')).rejects.toThrow('Session expired');
+    expect(location.href).toBe('/login?redirect=%2Fruns');
+  });
+});

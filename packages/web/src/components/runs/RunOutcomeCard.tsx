@@ -1,14 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { isRecord } from '@/lib/utils';
 
 interface RunOutcomeCardProps {
   result: unknown;
   templateName: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function truncate(value: unknown, maxChars = 240): string {

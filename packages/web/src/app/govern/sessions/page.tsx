@@ -1,16 +1,21 @@
 'use client';
 
+import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useAdmin';
+import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 export default function GovernSessionsPage() {
   const { data: sessions, isLoading, isError, error: loadError } = useAdminSessions();
   const revoke = useAdminRevokeSession();
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   if (isLoading || isError) {
     return (
@@ -32,12 +37,17 @@ export default function GovernSessionsPage() {
         <PageHeader
           chapter={`§ Admin · Sessions · ${rows.length} active`}
           subtitle="Every active browser session (better-auth). Revoke immediately locks the cookie out and clears the in-memory auth cache."
-          title="Active sessions."
+          title={navLabel('/govern/sessions')}
         />
       </div>
 
       <section className="fade-up stagger-1">
         <SectionHeader hint="newest first" number="01" title="Sessions" />
+        {revokeError && (
+          <Alert className="mb-4" variant="error">
+            {revokeError}
+          </Alert>
+        )}
         <Card className="overflow-hidden p-0" variant="inset">
           <Table>
             <THead>
@@ -71,10 +81,18 @@ export default function GovernSessionsPage() {
                     )}
                   </Td>
                   <Td className="px-4 py-3 font-mono text-[10px] text-paper-500">{s.token}</Td>
-                  <Td className="px-4 py-3 text-right">
+                  <Td align="right" className="px-4 py-3">
                     <Button
                       disabled={revoke.isPending}
-                      onClick={() => revoke.mutate(s.id)}
+                      onClick={() => {
+                        setRevokeError(null);
+                        revoke.mutate(s.id, {
+                          onError: (err) =>
+                            setRevokeError(
+                              errMsg(err, `Could not revoke ${s.user.email}'s session`)
+                            ),
+                        });
+                      }}
                       size="sm"
                       variant="danger"
                     >

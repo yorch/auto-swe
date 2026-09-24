@@ -2,63 +2,22 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import type { RefObject } from 'react';
+import { SIDEBAR_ID } from '@/components/layout/Sidebar';
 import { Select } from '@/components/ui/Select';
 import { useApprovalsCount } from '@/hooks/useApprovals';
 import { useTeams } from '@/hooks/useTeams';
+import { pageTitle } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
 
-// Derive a readable page title from the pathname
-function pageTitle(pathname: string): string {
-  const prefixes: [string, string][] = [
-    ['/', 'Dashboard'],
-    ['/runs/', 'Run'],
-    ['/runs', 'Runs'],
-    ['/govern/approvals', 'Approvals'],
-    ['/workflows/library', 'Workflow library'],
-    ['/workflows', 'Request queue'],
-    ['/connections', 'Connections'],
-    ['/govern/security', 'Security'],
-    ['/govern/scanner', 'Scanner'],
-    ['/govern/policies', 'Autonomy policies'],
-    ['/govern/evals', 'Evals'],
-    ['/govern/schedules', 'Schedules'],
-    ['/govern/budget-alerts', 'Budget alerts'],
-    ['/govern/budgets', 'Budgets'],
-    ['/govern/teams', 'Teams'],
-    ['/govern/organizations', 'Organizations'],
-    ['/govern/users', 'Users'],
-    ['/govern/api-tokens', 'API tokens'],
-    ['/govern/lessons', 'Lessons'],
-    ['/govern/analytics', 'Analytics'],
-    ['/govern/baselines', 'Error baselines'],
-    ['/govern/sessions', 'Sessions'],
-    ['/govern/slack-channels', 'Slack channels'],
-    ['/govern/workflow-defaults', 'Workflow defaults'],
-    ['/govern/platform-settings', 'Platform settings'],
-    ['/govern/config-grants', 'Config grants'],
-    ['/govern/audit', 'Audit log'],
-    ['/govern', 'Govern'],
-    ['/studio/agents', 'Agents'],
-    ['/studio/skills', 'Skills'],
-    ['/studio/mcp', 'MCP'],
-    ['/studio/github-installations', 'GitHub installations'],
-    ['/studio/integrations', 'Integrations'],
-    ['/studio/models', 'Model config'],
-    ['/studio/bundles', 'Bundles'],
-    ['/studio', 'Studio'],
-    ['/settings', 'Settings'],
-    ['/docs', 'Docs'],
-  ];
-  for (const [prefix, title] of prefixes) {
-    if (prefix === '/' ? pathname === '/' : pathname.startsWith(prefix)) {
-      return title;
-    }
-  }
-  return 'auto·swe';
+interface TopBarProps {
+  navOpen: boolean;
+  onOpenNav: () => void;
+  menuButtonRef: RefObject<HTMLButtonElement | null>;
 }
 
-export function TopBar() {
+export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
@@ -78,7 +37,7 @@ export function TopBar() {
 
   return (
     <header
-      className="flex items-center gap-[14px] px-[26px]"
+      className="flex min-w-0 items-center gap-2 px-3 sm:gap-[14px] md:px-[26px]"
       style={{
         backdropFilter: 'blur(12px)',
         background: 'rgba(10, 12, 18, 0.72)',
@@ -89,8 +48,33 @@ export function TopBar() {
         zIndex: 20,
       }}
     >
+      {/* Menu button — opens the sidebar drawer below md */}
+      <button
+        aria-controls={SIDEBAR_ID}
+        aria-expanded={navOpen}
+        aria-label="Open navigation"
+        className="-ml-1 shrink-0 rounded-md p-2 text-paper-300 hover:text-paper-100 md:hidden"
+        onClick={onOpenNav}
+        ref={menuButtonRef}
+        type="button"
+      >
+        <svg
+          aria-hidden="true"
+          fill="none"
+          height={20}
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth={2}
+          viewBox="0 0 24 24"
+          width={20}
+        >
+          <path d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+
       {/* Page title */}
       <h2
+        className="min-w-0 truncate"
         style={{
           color: 'var(--color-paper-100)',
           fontSize: 17,
@@ -104,11 +88,11 @@ export function TopBar() {
 
       {/* Team context selector */}
       <label
-        className="relative flex cursor-pointer items-center gap-[6px]"
+        className="relative flex min-w-0 shrink cursor-pointer items-center gap-[6px] sm:ml-2"
         htmlFor="topbar-team-select"
-        style={{ marginLeft: 8 }}
       >
         <span
+          className="min-w-0"
           style={{
             alignItems: 'center',
             background: 'var(--color-ink-700)',
@@ -122,8 +106,13 @@ export function TopBar() {
             padding: '5px 10px',
           }}
         >
-          team:{' '}
-          <span style={{ color: 'var(--color-ember-400)', fontWeight: 600 }}>{teamLabel}</span>
+          <span className="max-sm:hidden">team:</span>
+          <span
+            className="max-w-[9rem] truncate"
+            style={{ color: 'var(--color-ember-400)', fontWeight: 600 }}
+          >
+            {teamLabel}
+          </span>
           <span style={{ color: 'var(--color-paper-500)', fontSize: 10 }}>▾</span>
         </span>
         <Select
@@ -145,6 +134,7 @@ export function TopBar() {
       {/* Inbox badge */}
       {inboxCount > 0 && (
         <Link
+          className="shrink-0 max-sm:hidden"
           href="/govern/approvals"
           style={{
             alignItems: 'center',
@@ -177,9 +167,9 @@ export function TopBar() {
       <div style={{ flex: 1 }} />
 
       {/* Right side */}
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3">
         {/* Online dot */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 max-sm:hidden">
           <span
             className="pulse-dot"
             style={{
@@ -204,6 +194,7 @@ export function TopBar() {
         </div>
 
         <span
+          className="max-sm:hidden"
           style={{
             background: 'var(--color-ink-400)',
             display: 'inline-block',

@@ -11,6 +11,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useExportBundle, useInstallBundleFromUrl, useInstalledBundles } from '@/hooks/useBundles';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 
 export default function StudioBundlesPage() {
   const { data: bundles, isLoading, isError, error: loadError } = useInstalledBundles();
@@ -64,7 +65,7 @@ export default function StudioBundlesPage() {
             <code className="text-paper-300">UNVERIFIED</code> (community).
           </>
         }
-        title="Bundles"
+        title={navLabel('/studio/bundles')}
       />
 
       {error && <Alert variant="error">{error}</Alert>}

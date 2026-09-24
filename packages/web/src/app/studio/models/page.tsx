@@ -8,6 +8,7 @@ import { EmbeddingsTab } from '@/components/modelConfig/EmbeddingsTab';
 import { MidRunWarning } from '@/components/modelConfig/MidRunWarning';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar } from '@/components/ui/TabBar';
+import { navLabel } from '@/lib/navigation';
 
 type Tab = 'credentials' | 'embeddings' | 'audit';
 
@@ -33,7 +34,7 @@ export default function StudioModelConfigPage() {
             .
           </>
         }
-        title="Admin — Model configuration"
+        title={navLabel('/studio/models')}
       />
       <MidRunWarning />
       <TabBar active={active} onChange={setActive} tabs={TABS} />

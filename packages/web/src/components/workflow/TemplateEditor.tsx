@@ -388,7 +388,7 @@ function EditorInner({
             deleteKeyCode="Delete"
             edges={edges}
             fitView
-            fitViewOptions={{ maxZoom: 1.2, minZoom: 0.55, padding: 0.18 }}
+            fitViewOptions={{ maxZoom: 1.2, minZoom: 0.15, padding: 0.18 }}
             maxZoom={2.5}
             minZoom={0.15}
             nodes={nodesWithSelection}

@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
+import { Table } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import {
   type AgentRow,
@@ -27,8 +28,10 @@ import {
   useTeamAgents,
   useUpdateTeamAgent,
 } from '@/hooks/useAgentLibrary';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
-import { useSkills } from '@/hooks/useSkills';
+import { useTeamSkills } from '@/hooks/useSkills';
+import { modelLabel } from '@/lib/agentDisplay';
 import { errMsg } from '@/lib/errors';
 
 const EMPTY: CreateTeamAgentBody = {
@@ -42,16 +45,6 @@ const EMPTY: CreateTeamAgentBody = {
   toolKeys: null,
 };
 
-function modelLabel(a: AgentRow): string {
-  if (a.modelSpec) {
-    return a.modelSpec;
-  }
-  if (a.inheritsModelFrom) {
-    return `↳ ${a.inheritsModelFrom}`;
-  }
-  return '—';
-}
-
 /**
  * Team-owner editor for TEAM-scope Agents — per-team overrides of the GLOBAL
  * library, resolved by `resolveAgent` ahead of GLOBAL for this team's runs.
@@ -61,8 +54,12 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const createAgent = useCreateTeamAgent(teamId);
   const updateAgent = useUpdateTeamAgent(teamId);
   const deleteAgent = useDeleteTeamAgent(teamId);
-  const { data: mcpConnections } = useMcpConnections();
-  const { data: skills } = useSkills();
+  // The platform MCP connection list is ADMIN-only; a team ADMIN who is not a
+  // platform ADMIN gets no picker (and no request that can only 403). The
+  // skill picker reads the team-scoped list, which any team member may read.
+  const isPlatformAdmin = useHasRole('ADMIN');
+  const { data: mcpConnections } = useMcpConnections({ enabled: isPlatformAdmin });
+  const { data: skills } = useTeamSkills(teamId);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateTeamAgentBody>(EMPTY);
@@ -158,7 +155,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       ) : (agents ?? []).length === 0 ? (
         <EmptyState className="py-3 text-xs text-paper-500" title="No team overrides yet." />
       ) : (
-        <table className="w-full text-sm">
+        <Table>
           <thead>
             <tr className="border-b border-ink-600 text-left text-xs text-paper-500">
               <th className="py-2 pr-3">Key</th>
@@ -190,7 +187,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       )}
 
       {/* Create */}
@@ -251,19 +248,21 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
               skills={skills ?? []}
             />
           </FieldWrapper>
-          <Select
-            hint="Bind this MCP server's tools at run time"
-            label="MCP connection (optional)"
-            onChange={(e) => setForm({ ...form, mcpConnectionId: e.target.value || null })}
-            value={form.mcpConnectionId ?? ''}
-          >
-            <option value="">None</option>
-            {mcpConnections?.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} — {c.config?.url}
-              </option>
-            ))}
-          </Select>
+          {isPlatformAdmin && (
+            <Select
+              hint="Bind this MCP server's tools at run time"
+              label="MCP connection (optional)"
+              onChange={(e) => setForm({ ...form, mcpConnectionId: e.target.value || null })}
+              value={form.mcpConnectionId ?? ''}
+            >
+              <option value="">None</option>
+              {mcpConnections?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} — {c.config?.url}
+                </option>
+              ))}
+            </Select>
+          )}
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={() => setCreateOpen(false)} variant="secondary">
@@ -335,20 +334,27 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
                   skills={skills ?? []}
                 />
               </FieldWrapper>
-              <Select
-                label="MCP connection"
-                onChange={(e) =>
-                  setEditing({ ...editing, mcpConnectionId: e.target.value || null })
-                }
-                value={editing.mcpConnectionId ?? ''}
-              >
-                <option value="">None</option>
-                {mcpConnections?.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} — {c.config?.url}
-                  </option>
-                ))}
-              </Select>
+              {isPlatformAdmin ? (
+                <Select
+                  label="MCP connection"
+                  onChange={(e) =>
+                    setEditing({ ...editing, mcpConnectionId: e.target.value || null })
+                  }
+                  value={editing.mcpConnectionId ?? ''}
+                >
+                  <option value="">None</option>
+                  {mcpConnections?.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} — {c.config?.url}
+                    </option>
+                  ))}
+                </Select>
+              ) : editing.mcpConnectionId ? (
+                <p className="text-sm text-paper-500">
+                  Bound to an MCP connection. Only a platform admin can change it; saving keeps the
+                  current binding.
+                </p>
+              ) : null}
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button onClick={() => setEditing(null)} variant="secondary">

@@ -2,11 +2,22 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAuthStore } from '@/stores/authStore';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { AddMemberModal } from './AddMemberModal';
 
-beforeEach(stubDialogPrototype);
-afterEach(() => vi.unstubAllGlobals());
+function signInAs(role: 'ADMIN' | 'LEAD') {
+  useAuthStore.setState({ isAuthenticated: true, user: { role, sub: 'me' } });
+}
+
+beforeEach(() => {
+  stubDialogPrototype();
+  signInAs('ADMIN');
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  useAuthStore.setState({ isAuthenticated: false, user: null });
+});
 
 const TEAM_ID = 't1';
 const USERS = [
@@ -70,5 +81,39 @@ describe('AddMemberModal', () => {
     });
     const submit = screen.getByRole('button', { name: /add member/i }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
+  });
+
+  it('lets a LEAD, who cannot list users, add one by exact email', async () => {
+    signInAs('LEAD');
+    const onClose = vi.fn();
+    const spy = setupFetchMock({
+      '/api/v1/users/lookup': () => ({
+        data: { email: 'eligible@example.com', id: 'u1', name: 'Eli' },
+      }),
+      [`/api/v1/teams/${TEAM_ID}/members`]: () => ({ data: { ok: true } }),
+    });
+
+    render(
+      withQuery(
+        <AddMemberModal existingUserIds={['u2']} onClose={onClose} open={true} teamId={TEAM_ID} />
+      )
+    );
+
+    const submit = screen.getByRole('button', { name: /add member/i }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/user/i), {
+      target: { value: 'eligible@example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /find/i }));
+    await waitFor(() => expect(screen.getByText(/eligible@example.com · Eli/)).toBeTruthy());
+
+    fireEvent.click(submit);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(bodyOf(spy, `/api/v1/teams/${TEAM_ID}/members`, 'POST')).toEqual({
+      role: 'ENGINEER',
+      userId: 'u1',
+    });
+    // The ADMIN-only directory was never requested.
+    expect(spy.mock.calls.some(([u]) => String(u).endsWith('/api/v1/users'))).toBe(false);
   });
 });

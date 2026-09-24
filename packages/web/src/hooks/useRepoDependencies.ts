@@ -69,7 +69,10 @@ export function useTriggerRepoDependencyScan() {
 export function useRepoDependencies(repoId: string | null, enabled = true) {
   return useQuery({
     enabled: enabled && !!repoId,
-    queryFn: () => api.get<RepoDependencies>(`/api/v1/repositories/${repoId}/dependencies`),
+    queryFn: () =>
+      api
+        .get<{ data: RepoDependencies }>(`/api/v1/repositories/${repoId}/dependencies`)
+        .then((r) => r.data),
     queryKey: key(repoId ?? ''),
   });
 }

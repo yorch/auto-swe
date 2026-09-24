@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Table } from '@/components/ui/Table';
 import { formatDate } from '@/lib/utils';
 
 /** The columns every config audit row carries, whichever endpoint it came from. */
@@ -85,7 +86,7 @@ export function AuditLogTable<T extends AuditLogEntry>({
         <div className="space-y-2">
           {caption && <p className="text-xs text-paper-500">{caption}</p>}
           <div className="overflow-x-auto rounded-sm border border-ink-700">
-            <table className="w-full text-xs">
+            <Table className="text-xs">
               <thead>
                 <tr className="border-b border-ink-700 bg-ink-900 text-left">
                   <th className={TH}>Time</th>
@@ -126,7 +127,7 @@ export function AuditLogTable<T extends AuditLogEntry>({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         </div>
       )}

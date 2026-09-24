@@ -26,7 +26,9 @@ import {
   ReactFlowProvider,
   type Node as RFNode,
   useEdgesState,
+  useNodesInitialized,
   useNodesState,
+  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -61,6 +63,10 @@ interface Props {
 
 const NODE_TYPES = { dag: DagNode };
 
+// `minZoom` here must not exceed the canvas's own `minZoom`: fitView clamps to
+// it, so a larger floor leaves a big graph zoomed in and clipped on load.
+const FIT_VIEW_OPTIONS = { maxZoom: 1.2, minZoom: 0.15, padding: 0.18 };
+
 function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, height }: Props) {
   // Poll refreshes hand us new object identities for `spec` / `statuses` /
   // `diffMarkers` every 3-5s even when their content is unchanged. Keying the
@@ -76,14 +82,28 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode<DagNodeData>>(initial.nodes);
-  const [edges, , onEdgesChange] = useEdgesState(initial.edges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
 
   // Reflect external spec / overlay changes back into the flow state.
   // Using JSON serialization as the dep is cheap for the workflow sizes
   // we expect (<100 nodes) and avoids deep-equality libraries.
   useEffect(() => {
     setNodes(initial.nodes);
-  }, [initial.nodes, setNodes]);
+    setEdges(initial.edges);
+  }, [initial.nodes, initial.edges, setNodes, setEdges]);
+
+  // The `fitView` prop fits once, on the first render — before the nodes are
+  // measured when they arrive with the spec. Fit again once they are measured
+  // and whenever a different spec (another version) is shown, so the whole
+  // graph is on screen on load instead of clipped at the canvas edge.
+  const { fitView } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: specKey is the trigger — a different spec must be refitted.
+  useEffect(() => {
+    if (nodesInitialized) {
+      void fitView(FIT_VIEW_OPTIONS);
+    }
+  }, [nodesInitialized, specKey, fitView]);
 
   // Reflect external selection by setting React Flow's `selected` flag.
   const nodesWithSelection = useMemo(
@@ -168,7 +188,7 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
       <ReactFlow
         edges={edges}
         fitView
-        fitViewOptions={{ maxZoom: 1.2, minZoom: 0.55, padding: 0.18 }}
+        fitViewOptions={FIT_VIEW_OPTIONS}
         maxZoom={2.5}
         minZoom={0.15}
         nodes={nodesWithSelection}

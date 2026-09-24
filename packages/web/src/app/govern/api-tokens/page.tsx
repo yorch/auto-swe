@@ -9,6 +9,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { cn, formatDate, formatRelativeTime } from '@/lib/utils';
 
 function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
@@ -35,9 +36,10 @@ export default function GovernAccessTokensPage() {
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const [pruneConfirmOpen, setPruneConfirmOpen] = useState(false);
 
-  const confirmRevoke = () => {
+  // Awaited so ConfirmModal keeps the dialog open and shows a failed revoke.
+  const confirmRevoke = async () => {
     if (revokeTarget) {
-      revokeToken.mutate(revokeTarget.id);
+      await revokeToken.mutateAsync(revokeTarget.id);
     }
   };
 
@@ -76,7 +78,7 @@ export default function GovernAccessTokensPage() {
         <PageHeader
           chapter={`§ Admin · Access Tokens · ${activeCount} active / ${rows.length} total`}
           subtitle="Platform admins can view and revoke any user's personal access token. Plaintexts are never stored — only the non-secret prefix is shown."
-          title="Personal access tokens."
+          title={navLabel('/govern/api-tokens')}
         />
       </div>
 

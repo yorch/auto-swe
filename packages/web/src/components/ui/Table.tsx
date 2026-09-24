@@ -8,8 +8,16 @@ const ALIGN: Record<Align, string> = {
   right: 'text-right',
 };
 
+/**
+ * The table scrolls inside its own wrapper, so a wide table on a narrow screen
+ * never widens the page itself.
+ */
 export function Table({ children, className }: { children: ReactNode; className?: string }) {
-  return <table className={cn('w-full text-sm', className)}>{children}</table>;
+  return (
+    <div className="w-full overflow-x-auto">
+      <table className={cn('w-full text-sm', className)}>{children}</table>
+    </div>
+  );
 }
 
 /** Header row (`<thead><tr>`). `className` carries a row background or text treatment. */

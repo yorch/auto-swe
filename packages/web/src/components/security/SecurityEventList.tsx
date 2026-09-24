@@ -1,5 +1,6 @@
 'use client';
 
+import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/securityTraceTags';
 import { useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import type { SecurityEvent, SecurityEventType } from '@/hooks/useAdmin';
@@ -258,16 +259,16 @@ export function classifyTraceAsSecurityEvent(trace: {
   toolName: string | null;
   type: string;
 }): SecurityEventType | null {
-  if (trace.error?.startsWith('blocked by shell command')) {
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.SHELL_BLOCK)) {
     return 'SHELL_BLOCK';
   }
-  if (trace.error?.startsWith('blocked by sensitive file')) {
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.FILE_BLOCK)) {
     return 'FILE_BLOCK';
   }
-  if (trace.error?.startsWith('blocked by content security')) {
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.CONTENT_BLOCK)) {
     return 'CONTENT_SECURITY_BLOCK';
   }
-  if (trace.error === 'content security warning') {
+  if (trace.error === SECURITY_TRACE_ERRORS.CONTENT_WARN) {
     return 'CONTENT_SECURITY_WARN';
   }
   if (trace.type === 'activity_event' && trace.toolName === 'code_security.scan') {

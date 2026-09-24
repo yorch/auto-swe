@@ -5,10 +5,10 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Th } from '@/components/ui/Table';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type ConfigGrant,
   useConfigGrantPreview,
@@ -17,13 +17,14 @@ import {
   useRevokeConfigGrant,
 } from '@/hooks/useConfigSettings';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { formatRelativeTime } from '@/lib/utils';
 
 type GrantScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
 type GrantRole = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
 export default function GovernConfigGrantsPage() {
-  const { data: grants, isLoading } = useConfigGrants();
+  const { data: grants, isLoading, isError, error: loadError } = useConfigGrants();
   const createGrant = useCreateConfigGrant();
   const revokeGrant = useRevokeConfigGrant();
   const [revokeTarget, setRevokeTarget] = useState<ConfigGrant | null>(null);
@@ -68,16 +69,12 @@ export default function GovernConfigGrantsPage() {
     }
   };
 
-  const confirmRevoke = () => {
+  // Awaited so ConfirmModal keeps the dialog open and shows a failed revoke.
+  const confirmRevoke = async () => {
     if (revokeTarget) {
-      revokeGrant.mutate(revokeTarget.id);
-      setRevokeTarget(null);
+      await revokeGrant.mutateAsync(revokeTarget.id);
     }
   };
-
-  if (isLoading) {
-    return <LoadingState message="loading grants…" />;
-  }
 
   return (
     <div className="space-y-10">
@@ -85,7 +82,7 @@ export default function GovernConfigGrantsPage() {
         <PageHeader
           chapter={`§ Admin · Config grants · ${(grants ?? []).length} active`}
           subtitle="Delegate fine-grained permission to change platform settings. Grants are bounded to known keys or groups — they never grant generic IAM or the ability to mint further grants."
-          title="Configuration grants."
+          title={navLabel('/govern/config-grants')}
         />
       </div>
 
@@ -230,55 +227,61 @@ export default function GovernConfigGrantsPage() {
       <section className="fade-up stagger-3">
         <SectionHeader number="03" title="Active grants" />
         <Card className="overflow-hidden p-0" variant="inset">
-          {(grants ?? []).length === 0 ? (
-            <p className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-              no grants configured
-            </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
+          <QueryBoundary
+            error={loadError}
+            isError={isError}
+            isLoading={isLoading}
+            label="grants"
+            loadingMessage="loading grants…"
+          >
+            {(grants ?? []).length === 0 ? (
+              <p className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
+                no grants configured
+              </p>
+            ) : (
+              <Table>
+                <THead>
                   <Th>Pattern</Th>
                   <Th>Scope</Th>
                   <Th>Grantee</Th>
                   <Th>Bound to</Th>
                   <Th>Created</Th>
                   <Th align="right">Actions</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {(grants ?? []).map((g) => (
-                  <tr className="border-b border-ink-600 last:border-b-0" key={g.id}>
-                    <td className="px-4 py-3 font-mono text-[11px] text-paper-200">
-                      {g.keyPattern}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[10px] uppercase text-paper-400">
-                      {g.scope}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-paper-300">
-                      {g.user?.email ?? g.role ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-paper-500">
-                      {g.team?.name ?? g.organization?.name ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
-                      {formatRelativeTime(g.createdAt)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Button
-                        disabled={revokeGrant.isPending}
-                        onClick={() => setRevokeTarget(g)}
-                        size="sm"
-                        variant="danger"
-                      >
-                        Revoke
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </THead>
+                <tbody>
+                  {(grants ?? []).map((g) => (
+                    <TRow key={g.id}>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-200">
+                        {g.keyPattern}
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[10px] uppercase text-paper-400">
+                        {g.scope}
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-300">
+                        {g.user?.email ?? g.role ?? '—'}
+                      </Td>
+                      <Td className="px-4 py-3 text-xs text-paper-500">
+                        {g.team?.name ?? g.organization?.name ?? '—'}
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                        {formatRelativeTime(g.createdAt)}
+                      </Td>
+                      <Td align="right" className="px-4 py-3">
+                        <Button
+                          disabled={revokeGrant.isPending}
+                          onClick={() => setRevokeTarget(g)}
+                          size="sm"
+                          variant="danger"
+                        >
+                          Revoke
+                        </Button>
+                      </Td>
+                    </TRow>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </QueryBoundary>
         </Card>
       </section>
 

@@ -12,8 +12,10 @@ import {
   useUpdateSlackConfig,
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useSlackWorkspaces } from '@/hooks/useSlackChannels';
 import { API_BASE } from '@/lib/config';
+import { clearableField } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
@@ -31,7 +33,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
   const update = useUpdateSlackConfig();
 
   const [botToken, setBotToken] = useState('');
-  const [clientId, setClientId] = useState('');
+  const [clientId, setClientId] = usePrefilledField(data?.clientId);
   const [clientSecret, setClientSecret] = useState('');
   const [signingSecret, setSigningSecret] = useState('');
 
@@ -49,9 +51,8 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
     if (botToken) {
       body.botToken = botToken;
     }
-    if (clientId) {
-      body.clientId = clientId;
-    }
+    // Prefilled: omit when unchanged, send null when cleared.
+    body.clientId = clearableField(clientId, data?.clientId);
     if (clientSecret) {
       body.clientSecret = clientSecret;
     }

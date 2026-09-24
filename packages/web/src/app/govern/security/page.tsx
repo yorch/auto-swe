@@ -9,6 +9,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import type { SecurityEventType } from '@/hooks/useAdmin';
 import { useSecurityEvents } from '@/hooks/useAdmin';
+import { navLabel } from '@/lib/navigation';
 
 const TYPE_OPTIONS: Array<{ label: string; value: SecurityEventType | '' }> = [
   { label: 'All types', value: '' },
@@ -72,7 +73,7 @@ export default function GovernSecurityPage() {
           </div>
         }
         subtitle="Recent scanner findings across all runs — shell command blocks, file blocks, content security violations, static code analysis findings, and suspicious LLM output. Click any event to expand details. Events refresh every 30 s."
-        title="Security Events"
+        title={navLabel('/govern/security')}
       />
 
       <QueryBoundary

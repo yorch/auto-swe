@@ -12,7 +12,9 @@ import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
@@ -25,6 +27,8 @@ export default function UsersPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [creatingDirect, setCreatingDirect] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const currentUserId = useAuthStore((s) => s.user?.sub ?? null);
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
   // users get a dedicated top section so admins notice them; the rest go
@@ -54,8 +58,20 @@ export default function UsersPage() {
     );
   }
 
-  const handleApprove = (id: string) => updateUser.mutate({ id, patch: { isActive: true } });
-  const handleSuspend = (id: string) => updateUser.mutate({ id, patch: { isActive: false } });
+  const setActive = (id: string, isActive: boolean) => {
+    setActionError(null);
+    updateUser.mutate(
+      { id, patch: { isActive } },
+      {
+        onError: (err) =>
+          setActionError(
+            errMsg(err, isActive ? 'Could not approve user' : 'Could not suspend user')
+          ),
+      }
+    );
+  };
+  const handleApprove = (id: string) => setActive(id, true);
+  const handleSuspend = (id: string) => setActive(id, false);
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,7 +93,7 @@ export default function UsersPage() {
         <PageHeader
           chapter={`§ Users · ${(users ?? []).length} total · ${pending.length} pending`}
           subtitle="Manage who can sign in to the control plane. Sign-ups via GitHub / Google / magic link start in the pending queue and need admin approval."
-          title="Members."
+          title={navLabel('/govern/users')}
         />
       </div>
 
@@ -144,6 +160,8 @@ export default function UsersPage() {
           </form>
         </Card>
       </section>
+
+      {actionError && <Alert variant="error">{actionError}</Alert>}
 
       {pending.length > 0 && (
         <section className="fade-up stagger-2">
@@ -225,15 +243,22 @@ export default function UsersPage() {
                       .filter(Boolean)
                       .join(', ') || <span className="text-paper-500">—</span>}
                   </Td>
-                  <Td className="px-4 py-3 text-right">
-                    <Button
-                      disabled={updateUser.isPending}
-                      onClick={() => handleSuspend(u.id)}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      Suspend
-                    </Button>
+                  <Td align="right" className="px-4 py-3">
+                    {/* Suspending yourself would lock you out mid-session. */}
+                    {u.id === currentUserId ? (
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                        you
+                      </span>
+                    ) : (
+                      <Button
+                        disabled={updateUser.isPending}
+                        onClick={() => handleSuspend(u.id)}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Suspend
+                      </Button>
+                    )}
                   </Td>
                 </TRow>
               ))}

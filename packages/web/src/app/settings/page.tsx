@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { API_BASE } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
 
@@ -142,7 +143,7 @@ export default function SettingsPage() {
         <PageHeader
           chapter="§ Settings"
           subtitle="Profile, sign-in methods, and integrations. Changes apply to your account only."
-          title="Account settings."
+          title={navLabel('/settings')}
         />
       </div>
 

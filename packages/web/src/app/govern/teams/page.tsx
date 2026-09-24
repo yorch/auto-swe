@@ -7,13 +7,14 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useTeams } from '@/hooks/useTeams';
-import { useAuthStore } from '@/stores/authStore';
+import { navLabel } from '@/lib/navigation';
 
 export default function TeamsPage() {
   const { data: teams, isLoading, isError, error: loadError } = useTeams();
-  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const canCreate = role === 'ADMIN';
+  // POST /teams is ADMIN-only.
+  const canCreate = useHasRole('ADMIN');
   const [creating, setCreating] = useState(false);
 
   if (isLoading || isError) {
@@ -33,7 +34,7 @@ export default function TeamsPage() {
           )
         }
         chapter="§ Teams"
-        title="Teams"
+        title={navLabel('/govern/teams')}
       />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {(teams ?? []).map((t) => (

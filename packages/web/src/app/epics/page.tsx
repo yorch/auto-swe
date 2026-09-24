@@ -11,15 +11,15 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useCreateEpic, useEpics } from '@/hooks/useEpics';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
 import { formatRelativeTime } from '@/lib/utils';
-import { useAuthStore } from '@/stores/authStore';
 
 export default function EpicsPage() {
   const router = useRouter();
-  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const canCreate = role === 'ADMIN' || role === 'LEAD';
+  // POST /epics requires LEAD.
+  const canCreate = useHasRole('LEAD');
   const { data: repos = [] } = useRepositories();
   const create = useCreateEpic();
   const { data: epicsPage, isLoading: epicsLoading, error: epicsError } = useEpics();

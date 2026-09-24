@@ -8,6 +8,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEpic } from '@/hooks/useEpics';
+import { useRunsForWorkRequest } from '@/hooks/useRuns';
+import { epicChildRunCell } from '@/lib/epicChildRun';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatRelativeTime } from '@/lib/utils';
@@ -29,6 +31,15 @@ export default function EpicDetailPage({ params }: PageProps) {
   const workflowId = validateRouteParam(rawWorkflowId);
   const mountedAtRef = useRef(Date.now());
   const { data: epic, isLoading, error } = useEpic(workflowId ?? '');
+  // Every child run shares the epic's work request. The child's ActiveWorkflow
+  // row is self-registered without a repository, so /workflows/:id cannot show
+  // it; its WorkflowRun (keyed by the same Temporal workflow ID) can.
+  // 100 is the list endpoint's page cap — far above any realistic repo count.
+  const { data: childRuns, isSuccess: childRunsSettled } = useRunsForWorkRequest(
+    epic?.workRequestId,
+    100
+  );
+  const runIdByTemporalId = new Map((childRuns ?? []).map((r) => [r.workflowId, r.id]));
 
   if (!workflowId) {
     return (
@@ -119,16 +130,34 @@ export default function EpicDetailPage({ params }: PageProps) {
                   {child.branch ?? '—'}
                 </Td>
                 <Td className="px-4 py-3">
-                  {child.workflowId ? (
-                    <Link
-                      className="text-ember-400 hover:underline font-mono text-xs"
-                      href={`/workflows/${child.workflowId}`}
-                    >
-                      view →
-                    </Link>
-                  ) : (
-                    <span className="font-mono text-xs text-paper-500">not started</span>
-                  )}
+                  {(() => {
+                    const cell = epicChildRunCell(child, runIdByTemporalId, childRunsSettled);
+                    if (cell.kind === 'run') {
+                      return (
+                        <Link
+                          className="text-ember-400 hover:underline font-mono text-xs"
+                          href={`/runs/${cell.runId}`}
+                        >
+                          view run →
+                        </Link>
+                      );
+                    }
+                    if (cell.kind === 'no-access') {
+                      return (
+                        <span
+                          className="font-mono text-xs text-paper-500"
+                          title="This child's run is not visible to you — it likely belongs to a team you are not a member of."
+                        >
+                          no access
+                        </span>
+                      );
+                    }
+                    return (
+                      <span className="font-mono text-xs text-paper-500">
+                        {cell.kind === 'starting' ? 'starting…' : 'not started'}
+                      </span>
+                    );
+                  })()}
                 </Td>
               </TRow>
             ))}

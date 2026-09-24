@@ -5,6 +5,11 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** A plain JSON-style object — not null, not an array. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 // ── Locale-sensitive display helpers ────────────────────────────────────────
 //
 // Every formatter below passes `undefined` as the locale so the reader's own
@@ -81,6 +86,14 @@ export function formatCost(usdAmount: number | null): string {
     return `<${usd().format(0.01)}`;
   }
   return usd().format(usdAmount);
+}
+
+/** A monthly budget cap stored in USD cents; `null` means uncapped. */
+export function formatBudgetCents(cents: number | null): string {
+  if (cents == null) {
+    return 'No cap';
+  }
+  return usd().format(cents / 100);
 }
 
 const compact = lazy(

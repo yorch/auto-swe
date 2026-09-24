@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   type ProviderCredentialRow,
@@ -30,7 +31,7 @@ const BUILTIN_PROVIDER_HINTS: Record<BuiltinProvider, string> = {
 };
 
 export function CredentialsTab() {
-  const { data: credentials, isLoading } = useAdminCredentials();
+  const { data: credentials, isLoading, isError, error: loadError } = useAdminCredentials();
   const [editing, setEditing] = useState<ProviderCredentialRow | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<ProviderCredentialRow | null>(null);
@@ -76,66 +77,80 @@ export function CredentialsTab() {
           + New credential
         </Button>
       </CardHeader>
-      {isLoading && <LoadingState compact />}
-      <table className="w-full text-sm">
-        <thead className="text-left text-[11px] uppercase tracking-wide text-paper-500">
-          <tr>
-            <th className="pb-2">Provider</th>
-            <th className="pb-2">Scope</th>
-            <th className="pb-2">API base</th>
-            <th className="pb-2">Key</th>
-            <th className="pb-2">Test</th>
-            <th className="pb-2 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(credentials ?? []).map((c) => (
-            <tr className="border-t border-ink-700" key={c.id}>
-              <td className="py-2 font-mono text-xs">{c.provider}</td>
-              <td className="py-2 text-xs">
-                {c.scope}
-                {c.teamId && ` (${c.teamId.slice(0, 8)}…)`}
-              </td>
-              <td className="py-2 font-mono text-[11px] text-paper-400">{c.apiBase ?? '—'}</td>
-              <td className="py-2 font-mono text-xs">{c.maskedKey}</td>
-              <td className="py-2 text-xs">
-                <Button
-                  disabled={!!probePending[c.id]}
-                  onClick={() => handleTest(c.id)}
-                  size="sm"
-                  variant="ghost"
-                >
-                  {probePending[c.id] ? '…' : 'Test'}
-                </Button>
-                {probeResults[c.id] && (
-                  <span
-                    className={`ml-2 text-[10px] ${probeResults[c.id].ok ? 'text-moss-400' : 'text-brick-400'}`}
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="provider credentials"
+      >
+        <Table>
+          <THead>
+            <Th variant="compact">Provider</Th>
+            <Th variant="compact">Scope</Th>
+            <Th variant="compact">API base</Th>
+            <Th variant="compact">Key</Th>
+            <Th variant="compact">Test</Th>
+            <Th align="right" variant="compact">
+              Actions
+            </Th>
+          </THead>
+          <tbody>
+            {(credentials ?? []).length === 0 && (
+              <TRow>
+                <Td className="py-6 text-center text-xs text-paper-500" colSpan={6}>
+                  No provider credentials yet. Add one — the worker will not start until every
+                  agent's provider has a key.
+                </Td>
+              </TRow>
+            )}
+            {(credentials ?? []).map((c) => (
+              <TRow key={c.id}>
+                <Td className="py-2 font-mono text-xs">{c.provider}</Td>
+                <Td className="py-2 text-xs">
+                  {c.scope}
+                  {c.teamId && ` (${c.teamId.slice(0, 8)}…)`}
+                </Td>
+                <Td className="py-2 font-mono text-[11px] text-paper-400">{c.apiBase ?? '—'}</Td>
+                <Td className="py-2 font-mono text-xs">{c.maskedKey}</Td>
+                <Td className="py-2 text-xs">
+                  <Button
+                    disabled={!!probePending[c.id]}
+                    onClick={() => handleTest(c.id)}
+                    size="sm"
+                    variant="ghost"
                   >
-                    {probeResults[c.id].ok
-                      ? `OK (${probeResults[c.id].status})`
-                      : (probeResults[c.id].error ?? `HTTP ${probeResults[c.id].status}`)}
-                  </span>
-                )}
-              </td>
-              <td className="py-2 text-right">
-                <Button
-                  onClick={() => {
-                    clearProbeForRow(c.id);
-                    setEditing(c);
-                  }}
-                  size="sm"
-                  variant="ghost"
-                >
-                  Edit
-                </Button>
-                <Button onClick={() => setDeleting(c)} size="sm" variant="danger">
-                  Delete
-                </Button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                    {probePending[c.id] ? '…' : 'Test'}
+                  </Button>
+                  {probeResults[c.id] && (
+                    <span
+                      className={`ml-2 text-[10px] ${probeResults[c.id].ok ? 'text-moss-400' : 'text-brick-400'}`}
+                    >
+                      {probeResults[c.id].ok
+                        ? `OK (${probeResults[c.id].status})`
+                        : (probeResults[c.id].error ?? `HTTP ${probeResults[c.id].status}`)}
+                    </span>
+                  )}
+                </Td>
+                <Td align="right" className="py-2">
+                  <Button
+                    onClick={() => {
+                      clearProbeForRow(c.id);
+                      setEditing(c);
+                    }}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Edit
+                  </Button>
+                  <Button onClick={() => setDeleting(c)} size="sm" variant="danger">
+                    Delete
+                  </Button>
+                </Td>
+              </TRow>
+            ))}
+          </tbody>
+        </Table>
+      </QueryBoundary>
       {(creating || editing) && (
         <CredentialModal
           existing={editing}
@@ -160,9 +175,10 @@ export function CredentialsTab() {
         dangerous
         message={`Delete ${deleting?.provider} credential? Roles pinning it will fall back to the cascade.`}
         onClose={() => setDeleting(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
+          // Awaited so ConfirmModal keeps the dialog open and shows a failure.
           if (deleting) {
-            del.mutate(deleting.id);
+            await del.mutateAsync(deleting.id);
           }
         }}
         open={deleting !== null}

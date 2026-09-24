@@ -1,3 +1,5 @@
+import { publicApiUrl, temporalUiUrl } from './env';
+
 // Shape must match what layout.tsx injects into window.__APP_CONFIG__.
 interface AppConfig {
   apiUrl: string;
@@ -18,17 +20,15 @@ function windowConfig(): Partial<AppConfig> {
 // consistent across all three without a silent auth break.
 export const COOKIE_ACCESS_TOKEN = 'accessToken';
 export const COOKIE_SESSION_MARKER = 'web-session-active';
-// Request header the proxy sets so Server Component layouts can read the
-// pathname (app/admin/layout.tsx uses it for its role check).
+// Request headers the proxy sets so Server Components can read the URL, which
+// layouts otherwise cannot see: the reauth redirect rebuilds the page's full
+// path from both. The proxy always overwrites them, so a client cannot supply its own.
 export const PATHNAME_HEADER = 'x-pathname';
+export const SEARCH_HEADER = 'x-search';
 
-export const API_BASE =
-  windowConfig().apiUrl ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
+// The runtime values the root layout injected win; the build-time env defaults
+// (one definition, in lib/env.ts) cover SSR and a page without the script.
+export const API_BASE = windowConfig().apiUrl ?? publicApiUrl();
 export const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? '0.0.0';
 export const IS_DEV = process.env.NODE_ENV !== 'production';
-// Dev builds default to localhost; prod builds without the env var resolve to ''
-// so the Temporal UI link is hidden rather than pointing at a dead localhost URL.
-export const TEMPORAL_UI_URL =
-  windowConfig().temporalUiUrl ??
-  process.env.NEXT_PUBLIC_TEMPORAL_UI_URL ??
-  (process.env.NODE_ENV !== 'production' ? 'http://localhost:8233' : '');
+export const TEMPORAL_UI_URL = windowConfig().temporalUiUrl ?? temporalUiUrl();

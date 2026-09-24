@@ -1,8 +1,11 @@
 'use client';
 
 import type { TeamDetail, TeamSummary } from '@auto-swe/shared/types/api';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { api } from '@/lib/api';
+import { hasRole } from '@/lib/roles';
+import { useAuthStore } from '@/stores/authStore';
 
 export function useTeams() {
   return useQuery({
@@ -17,6 +20,49 @@ export function useTeam(id: string) {
     queryFn: () => api.get<{ data: TeamDetail }>(`/api/v1/teams/${id}`).then((r) => r.data),
     queryKey: ['team', id],
   });
+}
+
+/**
+ * Ids of the active teams the caller leads (LEAD or ADMIN membership) — the
+ * team-scoped write bar the gateway applies to templates and connections on
+ * top of the platform role. `null` until known.
+ *
+ * The team list carries no per-caller role, so this reads each team's detail
+ * (the same `['team', id]` cache the team page uses). Only a platform LEAD
+ * needs it: an ENGINEER can write nothing and a platform ADMIN bypasses team
+ * checks, so neither fires the fan-out.
+ */
+export function useLedTeamIds(): ReadonlySet<string> | null {
+  const user = useAuthStore((s) => s.user);
+  const needsLookup = hasRole(user?.role, 'LEAD') && !hasRole(user?.role, 'ADMIN');
+  const teams = useQuery({
+    enabled: needsLookup,
+    queryFn: () => api.get<{ data: TeamSummary[] }>('/api/v1/teams').then((r) => r.data),
+    queryKey: ['teams'],
+  });
+  const details = useQueries({
+    queries: (needsLookup ? (teams.data ?? []) : []).map((t) => ({
+      queryFn: () => api.get<{ data: TeamDetail }>(`/api/v1/teams/${t.id}`).then((r) => r.data),
+      queryKey: ['team', t.id],
+    })),
+  });
+  // Reduce to a string key first so the returned Set keeps its identity across
+  // renders — callers put it in memo / callback deps.
+  let key: string | null;
+  if (!needsLookup) {
+    key = '';
+  } else if (!user || !teams.data || details.some((d) => d.isPending)) {
+    key = null;
+  } else {
+    key = details
+      .filter((d) =>
+        hasRole(d.data?.memberships.find((m) => m.user?.id === user.sub)?.role, 'LEAD')
+      )
+      .map((d) => d.data?.id ?? '')
+      .sort()
+      .join(',');
+  }
+  return useMemo(() => (key === null ? null : new Set(key ? key.split(',') : [])), [key]);
 }
 
 export function useCreateTeam() {

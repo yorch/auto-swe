@@ -18,6 +18,7 @@ import {
   useUpdateGithubInstallation,
 } from '@/hooks/useGithubInstallations';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 
 function CreateInstallationModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const [installationId, setInstallationId] = useState('');
@@ -211,7 +212,7 @@ export default function StudioGithubInstallationsPage() {
             deployment reaches. A repository with no installation uses the one configured there.
           </>
         }
-        title="GitHub Installations"
+        title={navLabel('/studio/github-installations')}
       />
 
       <QueryBoundary

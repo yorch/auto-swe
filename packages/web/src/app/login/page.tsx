@@ -5,8 +5,10 @@ import { Suspense, useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { api } from '@/lib/api';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
+import { safeRedirectPath } from '@/lib/safeRedirect';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
 
 interface ProviderFlags {
@@ -68,12 +70,13 @@ function LoginPageInner() {
   const hydrate = useAuthStore((s) => s.hydrateFromSession);
 
   // Where to land after a successful sign-in. The proxy sets ?redirect=<path>
-  // when it bounces an unauthenticated request here; honor it, but only for
-  // same-origin relative paths (reject `//host` and absolute URLs) to avoid an
+  // when it bounces an unauthenticated request here; honor it, but only when it
+  // resolves to a path on this origin (see safeRedirectPath) to avoid an
   // open-redirect.
-  const redirectParam = searchParams.get('redirect');
-  const destination =
-    redirectParam?.startsWith('/') && !redirectParam.startsWith('//') ? redirectParam : '/';
+  const destination = safeRedirectPath(
+    searchParams.get('redirect'),
+    typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+  );
 
   const [tab, setTab] = useState<Tab>('magic');
   const [providers, setProviders] = useState<ProviderFlags>({
@@ -98,22 +101,43 @@ function LoginPageInner() {
   // Set after hydrate when the resolved user has isActive=false. Renders
   // a dedicated approval-pending screen instead of bouncing to /.
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  // Bumped by the "Retry" button to re-run the session bridge after the
+  // gateway could not be reached.
+  const [bridgeAttempt, setBridgeAttempt] = useState(0);
+  const [bridgeUnavailable, setBridgeUnavailable] = useState(false);
 
   // After a better-auth social or magic-link sign-in lands back here with
   // ?bridge=1, resolve the session and either route into the dashboard or
   // surface the pending-approval screen depending on isActive.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: bridgeAttempt is the retry trigger.
   useEffect(() => {
     if (searchParams.get('bridge') !== '1') {
       return;
     }
+    // ?reauth=1 marks a server-side role guard that found the hour-long
+    // bearer cookie missing or expired while the week-long session marker was
+    // still set: the bridge re-mints the bearer and returns to the page.
+    const reauth = searchParams.get('reauth') === '1';
     let cancelled = false;
+    setBridgeUnavailable(false);
     (async () => {
-      const ok = await hydrate();
+      const status = await hydrate();
       if (cancelled) {
         return;
       }
-      if (!ok) {
-        setError('Sign-in completed but no session was found — try again.');
+      if (status === 'unknown') {
+        // The gateway did not answer (offline, 429, 5xx): nothing is known
+        // about the session, so do not claim it expired.
+        setBridgeUnavailable(true);
+        setError('The gateway is unavailable, so your session could not be checked.');
+        return;
+      }
+      if (status !== 'authenticated') {
+        setError(
+          reauth
+            ? 'Your session has expired — sign in again.'
+            : 'Sign-in completed but no session was found — try again.'
+        );
         return;
       }
       const u = useAuthStore.getState().user;
@@ -121,12 +145,18 @@ function LoginPageInner() {
         setPendingEmail(u.email ?? null);
         return;
       }
+      // The guard that sent us here needs the bearer cookie; returning without
+      // one would bounce straight back and loop.
+      if (reauth && !api.getToken()) {
+        setError('Could not refresh your access — sign in again.');
+        return;
+      }
       router.replace(destination);
     })();
     return () => {
       cancelled = true;
     };
-  }, [searchParams, hydrate, router, destination]);
+  }, [searchParams, hydrate, router, destination, bridgeAttempt]);
 
   // Which social providers are configured in the backend? Also doubles as
   // the gateway-reachability check (see gatewayDown above). "Gateway is up"
@@ -461,7 +491,23 @@ function LoginPageInner() {
             </button>
           </div>
 
-          {error && <Alert className="mb-4">{error}</Alert>}
+          {error && (
+            <Alert className="mb-4">
+              {error}
+              {bridgeUnavailable && (
+                <button
+                  className="ml-2 underline hover:no-underline"
+                  onClick={() => {
+                    setError('');
+                    setBridgeAttempt((n) => n + 1);
+                  }}
+                  type="button"
+                >
+                  Retry
+                </button>
+              )}
+            </Alert>
+          )}
           {info && (
             <Alert className="mb-4" variant="success">
               {info}

@@ -8,13 +8,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useBudgetAlerts } from '@/hooks/useOrg';
-
-function fmtCents(n: number | null): string {
-  if (n == null) {
-    return 'No cap';
-  }
-  return `$${(n / 100).toFixed(2)}`;
-}
+import { navLabel } from '@/lib/navigation';
+import { formatBudgetCents } from '@/lib/utils';
 
 export default function BudgetAlertsPage() {
   const { data: orgs, isLoading, isError, error: loadError } = useBudgetAlerts();
@@ -24,7 +19,7 @@ export default function BudgetAlertsPage() {
     <div className="space-y-6">
       <PageHeader
         subtitle="Organizations whose current month spend has crossed their configured alert threshold."
-        title="Budget Alerts"
+        title={navLabel('/govern/budget-alerts')}
       />
 
       {alerting.length > 0 && (
@@ -81,7 +76,7 @@ export default function BudgetAlertsPage() {
                             </Link>
                           </Td>
                           <Td className="px-4 py-2 text-right tabular-nums">
-                            {fmtCents(org.monthlyBudgetUsdCents)}
+                            {formatBudgetCents(org.monthlyBudgetUsdCents)}
                           </Td>
                           <Td className="px-4 py-2 text-right tabular-nums">
                             {org.currentMonthUsage
