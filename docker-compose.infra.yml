@@ -17,11 +17,11 @@
 #
 # Ports for Postgres (5432), Temporal (7233/8233), and the object store (9000)
 # are published to the host for local development and so the documented runbook
-# can run `psql` / `prisma migrate deploy` from the host. On any shared or
-# internet-facing host, restrict them to loopback: POSTGRES_PORT=127.0.0.1:5432,
-# GARAGE_API_PORT=127.0.0.1:9000, TEMPORAL_GRPC_PORT=127.0.0.1:7233,
-# TEMPORAL_UI_PORT=127.0.0.1:8233 in `.env`. None of these services is meant to
-# be reachable from outside the host.
+# can run `psql` / `prisma migrate deploy` from the host. None of these services
+# authenticates its callers, so each binds to loopback (127.0.0.1) by default.
+# The override variables (POSTGRES_PORT, TEMPORAL_GRPC_PORT, TEMPORAL_UI_PORT,
+# GARAGE_API_PORT) take `[host-ip:]port`; a bare port publishes on every
+# interface, so keep the `127.0.0.1:` prefix unless another host must reach it.
 # ============================================================================
 services:
   postgres:
@@ -35,7 +35,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-127.0.0.1:5432}:5432"
     volumes:
       # pg18 stores data under /var/lib/postgresql/18/docker; mount the parent.
       - ./data/postgres:/var/lib/postgresql
@@ -102,7 +102,7 @@ services:
       - BIND_ON_IP=0.0.0.0
       - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
     ports:
-      - "${TEMPORAL_GRPC_PORT:-7233}:7233"
+      - "${TEMPORAL_GRPC_PORT:-127.0.0.1:7233}:7233"
     volumes:
       - ./infra/dynamicconfig:/etc/temporal/config/dynamicconfig
     healthcheck:
@@ -141,7 +141,7 @@ services:
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_CORS_ORIGINS=http://localhost:${WEB_PORT:-3000}
     ports:
-      - "${TEMPORAL_UI_PORT:-8233}:8080"
+      - "${TEMPORAL_UI_PORT:-127.0.0.1:8233}:8080"
 
   # Garage — S3-compatible object store for the artifact backend.
   #
@@ -181,7 +181,7 @@ services:
       # zero-config.
       GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-0000000000000000000000000000000000000000000000000000000000000001}
     ports:
-      - "${GARAGE_API_PORT:-9000}:3900"
+      - "${GARAGE_API_PORT:-127.0.0.1:9000}:3900"
     volumes:
       - ./infra/garage/garage.toml:/etc/garage.toml:ro
       - ./data/garage:/var/lib/garage

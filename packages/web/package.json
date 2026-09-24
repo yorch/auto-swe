@@ -9,6 +9,7 @@
     "start": "next start --port 3000"
   },
   "dependencies": {
+    "@auto-swe/shared": "workspace:*",
     "@tanstack/react-query": "5.101.4",
     "@xyflow/react": "12.11.3",
     "better-auth": "1.7.1",

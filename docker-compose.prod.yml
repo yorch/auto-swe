@@ -20,6 +20,9 @@ services:
     env_file:
       - .env
     environment:
+      # Pinned so a development value in `.env` cannot switch the image onto
+      # the in-source dev secrets (`environment:` wins over `env_file`).
+      NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production — set a strong value in .env (or set DATABASE_URL_OVERRIDE for an external database)}@postgres:5432/${POSTGRES_DB:-engineering_system}}
       TEMPORAL_ADDRESS: temporal:7233
       PORT: "8080"
@@ -43,6 +46,9 @@ services:
     env_file:
       - .env
     environment:
+      # Pinned so a development value in `.env` cannot switch the image onto
+      # the in-source dev secrets (`environment:` wins over `env_file`).
+      NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production — set a strong value in .env (or set DATABASE_URL_OVERRIDE for an external database)}@postgres:5432/${POSTGRES_DB:-engineering_system}}
       TEMPORAL_ADDRESS: temporal:7233
       # Same key as the gateway — every provider credential decrypts with it.
@@ -72,6 +78,9 @@ services:
         condition: service_healthy
       temporal:
         condition: service_healthy
+      # The gateway syncs the built-in config the worker's boot check requires.
+      gateway:
+        condition: service_healthy
       # `required: false` so a deployment pointing ARTIFACT_S3_ENDPOINT at a
       # hosted provider can leave the `objectstore` profile off; the worker then
       # starts without it instead of failing on a missing dependency.
@@ -89,6 +98,8 @@ services:
     env_file:
       - .env
     environment:
+      NODE_ENV: production
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://gateway:8080}
     depends_on:
-      - gateway
+      gateway:
+        condition: service_healthy

@@ -684,17 +684,57 @@ for (const doc of ROSTER_DOCS) {
 /** A backticked path rooted at a real top-level directory in this repo. */
 const REPO_PATH = /`((?:packages|scripts|infra|site|docs)\/[A-Za-z0-9_./@-]+)`/g;
 
+/**
+ * A backticked package-relative path — `src/lib/github.ts` — as the per-package
+ * tables in architecture.md write them. `[` and `]` are allowed so a Next.js
+ * dynamic segment (`src/app/runs/[id]/`) is checked rather than skipped.
+ */
+const PACKAGE_PATH = /`(src\/[A-Za-z0-9_./@[\]-]+)`/g;
+
+/** A heading line: its level, and the package it names in backticks, if any. */
+const HEADING = /^(#{1,6})\s/;
+const HEADING_PACKAGE = /`packages\/([A-Za-z0-9_-]+)`/;
+
 const pathFailures = [];
 for (const file of targets) {
+  // Package-relative paths resolve against the package whose section they sit
+  // in: a heading naming `packages/<pkg>` opens that package's section, and the
+  // next heading at the same or a shallower level closes it. Outside such a
+  // section a bare `src/...` path is ambiguous, so it is not checked.
+  let section = null; // { pkg, level }
   read(file)
     .split('\n')
     .forEach((line, i) => {
+      const heading = line.match(HEADING);
+      if (heading) {
+        const level = heading[1].length;
+        const named = line.match(HEADING_PACKAGE);
+        if (named) {
+          section = { level, pkg: named[1] };
+        } else if (section && level <= section.level) {
+          section = null;
+        }
+      }
       for (const m of line.matchAll(REPO_PATH)) {
         const p = m[1].replace(/\/$/, '');
         // A trailing `*` is a glob standing in for a set of files.
         if (p.includes('*')) {
           continue;
         }
+        if (existsSync(join(ROOT, p))) {
+          continue;
+        }
+        pathFailures.push({ file, line: i + 1, path: p });
+      }
+      if (!section) {
+        return;
+      }
+      for (const m of line.matchAll(PACKAGE_PATH)) {
+        const rel = m[1].replace(/\/$/, '');
+        if (rel.includes('*')) {
+          continue;
+        }
+        const p = `packages/${section.pkg}/${rel}`;
         if (existsSync(join(ROOT, p))) {
           continue;
         }
