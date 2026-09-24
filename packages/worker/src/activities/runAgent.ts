@@ -1,15 +1,27 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { abortSignalOption } from '../lib/cancellation.js';
 import type { AgentSpec } from '../lib/config/agentSpec.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
+import type { ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
 
 export interface RunAgentOptions {
   /** OTel span name and cost-attribution event name. Default `llm.run_agent`. */
   spanName?: string;
+  /**
+   * Scope the step budget (`workspace.agentMaxSteps`) resolves against. Pass
+   * the fullest context the caller has — a channel-scoped run's `channelId`,
+   * say — since a lookup missing a key silently resolves a broader value.
+   * Defaults to the activity's request context.
+   */
+  ctx?: ResolveCtx;
 }
 
 export interface RunAgentResult<T = unknown> {
@@ -72,11 +84,35 @@ export async function runAgent<T = unknown>(
         });
 
         await assertBudgetAvailable(`agent.${spec.agentKey}`);
-        const genResult = spec.outputSchema
-          ? await agent.generate([{ content: userMessage, role: 'user' }], {
-              structuredOutput: { schema: spec.outputSchema },
-            })
-          : await agent.generate([{ content: userMessage, role: 'user' }]);
+        // Every caller is an activity with a heartbeat timeout, and a single
+        // generate (with a tool loop) can outlast it — pump heartbeats while
+        // it runs. The heartbeat is also how a cancellation reaches this
+        // activity; the abort signal then stops the in-flight call.
+        // A tool-bearing agent (MCP tools on an agent node) needs an explicit
+        // step budget: without one Mastra stops after 5 steps, which ends the
+        // turn mid-task. Same setting as the implementer family. A tool-free
+        // call is a single step, so it neither needs nor reads the setting.
+        const hasTools = Object.keys(spec.tools ?? {}).length > 0;
+        const stepBudget = hasTools
+          ? {
+              maxSteps: await resolveSetting(
+                'workspace.agentMaxSteps',
+                options.ctx ?? (await currentRequestContext())
+              ),
+            }
+          : {};
+        const callOptions = { ...stepBudget, ...abortSignalOption() };
+        const genResult = await withHeartbeat(
+          `agent ${spec.agentKey}: generating`,
+          spec.outputSchema
+            ? agent.generate([{ content: userMessage, role: 'user' }], {
+                ...callOptions,
+                structuredOutput: { schema: spec.outputSchema },
+              })
+            : Object.keys(callOptions).length > 0
+              ? agent.generate([{ content: userMessage, role: 'user' }], callOptions)
+              : agent.generate([{ content: userMessage, role: 'user' }])
+        );
 
         let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
         if (genResult.usage) {

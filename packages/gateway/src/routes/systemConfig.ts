@@ -107,6 +107,11 @@ const StoragePutBody = z
     message: 'backend=s3 requires s3Bucket',
   });
 
+/** Longest CI poll interval that fits the poll activity's 2-minute heartbeat. */
+const CI_POLL_INTERVAL_MAX_SEC = 60;
+/** Longest CI poll deadline below the poll activity's 6-hour timeout, less a tick. */
+const CI_POLL_DEADLINE_MAX_SEC = 6 * 3600 - 15 * 60;
+
 const WorkflowDefaultsPutBody = z.object({
   branchPrefix: z
     .string()
@@ -122,9 +127,30 @@ const WorkflowDefaultsPutBody = z.object({
   budgetStandardOutputTokens: z.number().int().min(1).optional(),
   // CI-wait strategy. Nullable: clearing a value hands the knob back to the
   // env-var fallback rather than pinning a default into the row.
-  ciPollDeadlineSec: z.number().int().min(1).nullable().optional(),
+  // Upper bounds mirror the worker's clamp (`ciPollLoop.ts`): the interval must
+  // stay inside the poll activity's 2-minute heartbeat timeout, and the
+  // deadline below its 6-hour start-to-close timeout (less one final tick).
+  //
+  // Clamped, not rejected. The settings form sends every field on every save,
+  // so a row stored before these bounds existed — or a value the worker would
+  // clamp anyway — would otherwise turn every save of an unrelated field into a
+  // 400. The lower bound stays a rejection: there is no sensible value to
+  // round a zero or negative interval to.
+  ciPollDeadlineSec: z
+    .number()
+    .int()
+    .min(1)
+    .transform((v) => Math.min(v, CI_POLL_DEADLINE_MAX_SEC))
+    .nullable()
+    .optional(),
   ciPollGraceSec: z.number().int().min(1).nullable().optional(),
-  ciPollIntervalSec: z.number().int().min(1).nullable().optional(),
+  ciPollIntervalSec: z
+    .number()
+    .int()
+    .min(1)
+    .transform((v) => Math.min(v, CI_POLL_INTERVAL_MAX_SEC))
+    .nullable()
+    .optional(),
   ciWaitMode: z.enum(['signal', 'poll']).nullable().optional(),
   defaultTeamSlug: z.string().min(1).max(100).optional(),
   evalHealthMaxFlakeRate: z.number().min(0).max(1).optional(),

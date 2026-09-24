@@ -58,7 +58,17 @@ async function appendVersion(templateId: string, spec: WorkflowSpec): Promise<nu
     const next = (last?.version ?? 0) + 1;
     try {
       await prisma.workflowTemplateVersion.create({
-        data: { createdBy: null, spec: spec as object, templateId, version: next },
+        // The workflow author agent wrote this spec, so the version says so:
+        // `generatedBy` is what requires a human review before it can be
+        // promoted, and a version with neither `createdBy` nor `generatedBy`
+        // is what `syncBuiltins` takes for a built-in one.
+        data: {
+          createdBy: null,
+          generatedBy: 'workflow_author',
+          spec: spec as object,
+          templateId,
+          version: next,
+        },
       });
       return next;
     } catch (err) {

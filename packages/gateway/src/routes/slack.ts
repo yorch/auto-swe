@@ -7,10 +7,7 @@ import {
 } from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
-import {
-  decideRepoAccess,
-  REPO_ACCESS_REFUSAL_MESSAGE,
-} from '@auto-swe/shared/lib/repoAccessDecision';
+import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import {
   type RepoAccessGate,
   resolveRepoAccessGateOrLastKnown,
@@ -28,6 +25,7 @@ import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/wor
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { authorizeLaunch, launchRefusalMessage } from '../lib/launchAuthorization.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
@@ -40,7 +38,8 @@ import {
 } from '../lib/slack.js';
 import { isTerminalSignalError } from '../lib/temporalErrors.js';
 import { memberTeams, reachableConnections } from '../lib/tenantScope.js';
-import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
+import { isValidTicketId, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
+import { allocateWorkflowId, launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
 
@@ -406,9 +405,10 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    // Bounce back to the admin integrations page with a success flag.
+    // Bounce back to the integrations page with a success flag; its Slack tab
+    // reads `tab` and `slack_installed`.
     return reply.redirect(
-      `${resolveWebUrl()}/admin/integrations?tab=slack&slack_installed=${slackTeamId}`
+      `${resolveWebUrl()}/studio/integrations?tab=slack&slack_installed=${slackTeamId}`
     );
   });
 
@@ -475,9 +475,12 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         return reply;
       }
 
-      // Resolve user by Slack ID
+      // Resolve user by Slack ID. A deactivated account resolves to nobody: a
+      // Slack link must not outlive the platform access it stands in for, and
+      // every action below (HITL resolve, merge signal, run launch) acts as
+      // this user.
       const user = await fastify.prisma.user.findFirst({
-        where: { slackId: slackUserId },
+        where: { isActive: true, slackId: slackUserId },
       });
 
       if (!user) {
@@ -642,7 +645,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       const channelId = body.channel_id ?? '';
 
       const user = slackUserId
-        ? await fastify.prisma.user.findFirst({ where: { slackId: slackUserId } })
+        ? await fastify.prisma.user.findFirst({ where: { isActive: true, slackId: slackUserId } })
         : null;
       if (!user) {
         // Ephemeral reply — only visible to the invoking user
@@ -1880,6 +1883,13 @@ async function handleRunModalSubmission(
   const errors: Record<string, string> = {};
   if (!ticket) {
     errors.ticket_block = 'Ticket ID is required';
+  } else if (!isValidTicketId(ticket)) {
+    // The ticket id becomes the branch name and part of the Temporal workflow
+    // id, so it takes the same validation as POST /work-requests.
+    errors.ticket_block =
+      'Ticket ID may only contain letters, digits, ".", "_", "#", "/" and "-" (max 100)';
+  } else if (description.length > MAX_DESCRIPTION_LENGTH) {
+    errors.description_block = `Description must be at most ${MAX_DESCRIPTION_LENGTH} characters`;
   }
   if (!description) {
     errors.description_block = 'Description is required';
@@ -1901,7 +1911,13 @@ async function handleRunModalSubmission(
   const repo = await fastify.prisma.connection.findUnique({
     include: {
       installation: { select: { installationId: true, isActive: true } },
-      team: { select: { memberships: { where: { userId: user.id } } } },
+      team: {
+        select: {
+          memberships: { select: { userId: true }, where: { userId: user.id } },
+          organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+          orgId: true,
+        },
+      },
     },
     where: { id: repoId },
   });
@@ -1937,15 +1953,16 @@ async function handleRunModalSubmission(
       response_action: 'errors',
     };
   }
-  const decision = await decideRepoAccess(
+  // Repository access, org membership and the org's monthly cap — the same
+  // launch decision the dashboard's submit takes.
+  const authorization = await authorizeLaunch(
     fastify.prisma,
     { role: user.role, sub: user.id },
-    repo,
-    gate
+    { gate, repos: [repo] }
   );
-  if (!decision.allowed) {
+  if (!authorization.ok) {
     return {
-      errors: { repo_block: REPO_ACCESS_REFUSAL_MESSAGE[decision.reason] },
+      errors: { repo_block: launchRefusalMessage(authorization.refusal) },
       response_action: 'errors',
     };
   }
@@ -1983,7 +2000,48 @@ async function handleRunModalSubmission(
     resolvedTemplate = { templateId: def.templateId, version: def.version };
   }
 
-  const temporalWorkflowId = generateWorkflowId(ticket, repo.organizationName, repo.repoName);
+  // The same payload contract POST /work-requests validates against the
+  // template's declared input schema, checked before any ledger row is written.
+  const requestPayload = JSON.stringify({ description, externalTicketId: ticket, source: 'slack' });
+  const runPayload = {
+    budget: 'STANDARD',
+    connectionId: repo.id,
+    description,
+    ticketId: ticket,
+  };
+  const tplSchema = await fastify.prisma.workflowTemplate.findUnique({
+    select: { inputSchema: true },
+    where: { id: resolvedTemplate.templateId },
+  });
+  if (tplSchema?.inputSchema && isInputSchema(tplSchema.inputSchema)) {
+    const result = validateInputPayload(tplSchema.inputSchema, runPayload);
+    if (!result.ok) {
+      return {
+        errors: {
+          template_block: `This workflow needs inputs the modal cannot supply: ${result.errors.join('; ')}`,
+        },
+        response_action: 'errors',
+      };
+    }
+  }
+
+  // Re-submitting a finished ticket gets an `-rN` suffix, exactly as the
+  // dashboard does; a base id alone would collide with the finished run's
+  // ledger row and leave the ticket unsubmittable from Slack.
+  const allocated = await allocateWorkflowId(
+    fastify.prisma,
+    generateWorkflowId(ticket, repo.organizationName, repo.repoName),
+    { externalTicketId: ticket, repoId: repo.id }
+  );
+  if ('conflictWorkflowId' in allocated) {
+    return {
+      errors: {
+        ticket_block: `Workflow already running for ${ticket} (${allocated.conflictWorkflowId})`,
+      },
+      response_action: 'errors',
+    };
+  }
+  const temporalWorkflowId = allocated.workflowId;
   const { branchPrefix: slackBranchPrefix } = await resolveWorkflowDefaults();
   const branch = generateBranchName(ticket, slackBranchPrefix);
   const workRequestId = crypto.randomUUID();
@@ -1992,14 +2050,14 @@ async function handleRunModalSubmission(
     description,
     externalTicketId: ticket,
     repoId: repo.id,
-    requestPayload: JSON.stringify({ description, externalTicketId: ticket, source: 'slack' }),
+    requestPayload,
     workRequestId,
   };
 
   // Ledger rows first, workflow second, rolled back if the start fails —
-  // see `launchTrackedWorkflow`. The workflow ID is deterministic per
-  // (org, repo, ticket), so the unique index is the real dedup gate here and a
-  // double-submitted modal loses the race rather than starting a second run.
+  // see `launchTrackedWorkflow`. The unique index on the allocated workflow ID
+  // is the real dedup gate, so a double-submitted modal loses the race rather
+  // than starting a second run.
   const launch = await launchTrackedWorkflow(
     fastify.prisma,
     {
@@ -2012,10 +2070,13 @@ async function handleRunModalSubmission(
         workRequestId,
       },
       runInput: {
+        connectionId: repo.id,
         description,
         externalTicketId: ticket,
         id: workRequestId,
-        requestPayload: JSON.stringify({ description, externalTicketId: ticket, source: 'slack' }),
+        payload: runPayload,
+        requestedById: user.id,
+        requestPayload,
         slackChannelId: metadata.channelId || null,
         templateId: resolvedTemplate.templateId,
         templateVersion: resolvedTemplate.version,

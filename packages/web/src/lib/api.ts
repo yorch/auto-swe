@@ -1,8 +1,23 @@
-import { API_BASE, COOKIE_ACCESS_TOKEN } from './config';
+import { API_BASE, COOKIE_ACCESS_TOKEN, COOKIE_SESSION_MARKER } from './config';
 import { gatewayUnreachableMessage } from './networkErrors';
+import { isRecord } from './utils';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function hasSessionMarkerCookie(): boolean {
+  if (typeof document === 'undefined') {
+    return false;
+  }
+  return document.cookie
+    .split(';')
+    .some((c) => c.trim().startsWith(`${COOKIE_SESSION_MARKER}=`) && !c.trim().endsWith('='));
+}
+
+/** Pages that are reachable signed out; a 401 there must not redirect. */
+function isOnPublicAuthPage(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const { pathname } = window.location;
+  return ['/login', '/reset-password'].some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
 export class ApiClient {
@@ -127,11 +142,17 @@ export class ApiClient {
   }
 
   private expireSession(): never {
+    // Only a caller that had a session can lose one. With neither a bearer nor
+    // the better-auth marker cookie this was an anonymous request (a public
+    // page such as /reset-password), and bouncing it to /login would hijack
+    // the page the visitor is on.
+    const hadSession = this.accessToken !== null || hasSessionMarkerCookie();
     this.clearToken();
-    if (typeof window !== 'undefined') {
-      window.location.href = '/login';
+    if (typeof window !== 'undefined' && hadSession && !isOnPublicAuthPage()) {
+      const here = `${window.location.pathname}${window.location.search}`;
+      window.location.href = `/login?${new URLSearchParams({ redirect: here }).toString()}`;
     }
-    throw new Error('Session expired');
+    throw new Error(hadSession ? 'Session expired' : 'Not signed in');
   }
 
   private async extractErrorMessage(res: Response): Promise<string> {

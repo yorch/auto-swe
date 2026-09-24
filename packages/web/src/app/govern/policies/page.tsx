@@ -4,11 +4,12 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import {
   type AutonomyPolicy,
@@ -21,6 +22,7 @@ import {
 import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { formatDate } from '@/lib/utils';
 
 type RuleRow = {
@@ -357,8 +359,9 @@ function PolicyModal({
 
 export default function AutonomyPoliciesPage() {
   const router = useRouter();
-  const { data: policies, isLoading } = useAutonomyPolicies();
+  const { data: policies, isLoading, isError, error: loadError } = useAutonomyPolicies();
   const deletePolicy = useDeleteAutonomyPolicy();
+  const [deleteTarget, setDeleteTarget] = useState<AutonomyPolicy | null>(null);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<AutonomyPolicy | null>(null);
 
@@ -366,10 +369,6 @@ export default function AutonomyPoliciesPage() {
     () => [...(policies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [policies]
   );
-
-  if (isLoading) {
-    return <LoadingState message="loading policies…" />;
-  }
 
   function startEdit(policy: AutonomyPolicy) {
     setEditing(policy);
@@ -395,41 +394,66 @@ export default function AutonomyPoliciesPage() {
           </div>
         }
         chapter="§ Govern"
-        title="Autonomy Policies"
+        title={navLabel('/govern/policies')}
       />
 
-      <Card variant="inset">
-        <div className="divide-y divide-ink-100/10">
-          {sorted.map((p) => (
-            <div className="flex items-start justify-between p-4" key={p.id}>
-              <div className="space-y-1">
-                <p className="font-medium text-sm">{p.name}</p>
-                <p className="text-xs text-paper-400">{scopeLabel(p)}</p>
-                {p.description && <p className="text-xs text-paper-500">{p.description}</p>}
-                <p className="text-xs text-paper-500">
-                  {Object.keys(p.rules).length} rule
-                  {Object.keys(p.rules).length === 1 ? '' : 's'} · updated {formatDate(p.updatedAt)}
-                </p>
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="autonomy policies"
+        loadingMessage="loading policies…"
+      >
+        <Card variant="inset">
+          <div className="divide-y divide-ink-100/10">
+            {sorted.map((p) => (
+              <div className="flex items-start justify-between p-4" key={p.id}>
+                <div className="space-y-1">
+                  <p className="font-medium text-sm">{p.name}</p>
+                  <p className="text-xs text-paper-400">{scopeLabel(p)}</p>
+                  {p.description && <p className="text-xs text-paper-500">{p.description}</p>}
+                  <p className="text-xs text-paper-500">
+                    {Object.keys(p.rules).length} rule
+                    {Object.keys(p.rules).length === 1 ? '' : 's'} · updated{' '}
+                    {formatDate(p.updatedAt)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={() => startEdit(p)} variant="secondary">
+                    Edit
+                  </Button>
+                  <Button
+                    disabled={deletePolicy.isPending}
+                    onClick={() => setDeleteTarget(p)}
+                    variant="danger"
+                  >
+                    Delete
+                  </Button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <Button onClick={() => startEdit(p)} variant="secondary">
-                  Edit
-                </Button>
-                <Button
-                  disabled={deletePolicy.isPending}
-                  onClick={() => deletePolicy.mutate(p.id)}
-                  variant="danger"
-                >
-                  Delete
-                </Button>
-              </div>
-            </div>
-          ))}
-          {sorted.length === 0 && (
-            <p className="text-center text-paper-400 py-12">No autonomy policies yet.</p>
-          )}
-        </div>
-      </Card>
+            ))}
+            {sorted.length === 0 && (
+              <p className="text-center text-paper-400 py-12">No autonomy policies yet.</p>
+            )}
+          </div>
+        </Card>
+      </QueryBoundary>
+
+      {deleteTarget && (
+        <ConfirmModal
+          confirmLabel="Delete"
+          dangerous
+          message={`Delete the "${deleteTarget.name}" policy? This cannot be undone.`}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async () => {
+            // Awaited so ConfirmModal keeps the dialog open and shows a failure.
+            await deletePolicy.mutateAsync(deleteTarget.id);
+          }}
+          open
+          pendingLabel="Deleting…"
+          title="Delete autonomy policy"
+        />
+      )}
 
       <PolicyModal
         editing={editing}

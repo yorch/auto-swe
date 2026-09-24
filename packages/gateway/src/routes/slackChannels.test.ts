@@ -580,7 +580,7 @@ describe('slackChannelRoutes', () => {
       url: `/api/v1/platform/slack-channels/${CHANNEL}/budget`,
     });
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.payload);
+    const body = JSON.parse(res.payload).data;
     expect(body.monthlyBudgetUsdCents).toBe(5000);
     expect(body.currentMonthUsage.costUsdAccrued).toBe(2.25);
     await app.close();
@@ -972,7 +972,7 @@ describe('POST /:id/budget/reset', () => {
     const res = await reset(app);
 
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.payload);
+    const body = JSON.parse(res.payload).data;
     expect(body.holdsReleased).toBe(1);
     expect(body.reclaimedUsd).toBeCloseTo(0.0775, 6);
     // Exactly one decrement, for exactly the hold that was claimed.
@@ -989,7 +989,7 @@ describe('POST /:id/budget/reset', () => {
     const { app, mockPrisma } = await buildApp();
     twoHolds(mockPrisma);
 
-    const body = JSON.parse((await reset(app)).payload);
+    const body = JSON.parse((await reset(app)).payload).data;
     expect(body.holdsReleased).toBe(2);
     expect(body.reclaimedUsd).toBeCloseTo(0.155, 6);
     expect(mockPrisma.channelMonthlyUsage.update).toHaveBeenCalledTimes(2);
@@ -1004,7 +1004,7 @@ describe('POST /:id/budget/reset', () => {
       yearMonth: '2026-06',
     });
 
-    const body = JSON.parse((await reset(app)).payload);
+    const body = JSON.parse((await reset(app)).payload).data;
     expect(body.holdsReleased).toBe(0);
     expect(body.reclaimedUsd).toBe(0);
     // Real spend is never what this endpoint touches.

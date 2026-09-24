@@ -33,7 +33,7 @@ async function run() {
   }
 
   // Refuse to start if the DB doesn't have every required config row. The
-  // dashboard at /admin/model-config is the bootstrap path — bring up the
+  // dashboard at /studio/models is the bootstrap path — bring up the
   // gateway + web first, sign in as admin, add the rows, then start the
   // worker. If this throws the process exits non-zero so an orchestrator
   // (Docker Compose restart policy, K8s, etc.) keeps the worker out of the

@@ -11,7 +11,7 @@
  *
  * This script idempotently:
  *   1. Finds the admin user by email (default `admin@auto-swe.local`)
- *   2. Hashes `SEED_ADMIN_PASSWORD` (or a generated random) via better-auth's
+ *   2. Hashes `SEED_ADMIN_PASSWORD` (required) via better-auth's
  *      own password util — guarantees the format matches what `signInEmail`
  *      expects.
  *   3. Upserts the credential Account row pointing at that user.
@@ -19,7 +19,6 @@
  * Run after `yarn db:seed` (or as part of the chained `yarn db:seed:auth`).
  */
 
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -45,13 +44,15 @@ const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@auto-swe.local';
 const CREDENTIAL_ISSUER = 'local:credential';
 
 async function main() {
-  // Re-derive the password the same way the shared seed does so the two
-  // paths (legacy bcrypt + better-auth scrypt) agree on the value.
-  let password = process.env.SEED_ADMIN_PASSWORD;
+  // The same SEED_ADMIN_PASSWORD the shared seed hashed with bcrypt, so the
+  // legacy and better-auth credentials agree. Both scripts require it rather
+  // than generating one: they run in separate processes, so a generated value
+  // could not be shared between them.
+  const password = process.env.SEED_ADMIN_PASSWORD;
   if (!password) {
-    password = crypto.randomBytes(16).toString('hex');
-    console.log(`[provisionAuthAdmin] generated random password: ${password}`);
-    console.log('[provisionAuthAdmin]   set SEED_ADMIN_PASSWORD to keep it stable across runs');
+    throw new Error(
+      'SEED_ADMIN_PASSWORD is required — set it in .env (generate with `openssl rand -base64 24`).'
+    );
   }
 
   // better-auth's internal context exposes the password helpers we need

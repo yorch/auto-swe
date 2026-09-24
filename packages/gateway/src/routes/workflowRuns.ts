@@ -10,9 +10,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import { isTerminalSignalError } from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import {
   AutonomyDecisionSchema,
@@ -168,6 +170,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           200: CancelRunResponseSchema,
           404: ErrorResponseSchema,
           409: ErrorResponseSchema,
+          502: ErrorResponseSchema,
         },
       },
     },
@@ -189,22 +192,50 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'RUN_NOT_RUNNING', message: 'Only RUNNING runs can be cancelled' },
         });
       }
-      // DB update is the authoritative record; fail the request if it rejects.
-      // Temporal cancel is best-effort: once the cancellation lands, the
-      // workflow's non-cancellable finalisation calls finalizeWorkflowRun with
-      // CANCELLED and clears the run's PENDING human steps, so a transient
-      // Temporal blip here isn't fatal.
+      // Temporal first, then the rows. Marking the run CANCELLED before the
+      // cancel reached Temporal left a workflow still running — pushing,
+      // spending — behind a dashboard that said it had stopped, whenever the
+      // fire-and-forget cancel failed. An execution Temporal no longer knows
+      // (never started, or already closed) has nothing left to cancel, so that
+      // failure counts as success; any other failure leaves the row RUNNING
+      // and reports 502 so the caller can retry.
+      if (run.workflowId) {
+        try {
+          await fastify.temporal.cancelWorkflow(run.workflowId);
+        } catch (err) {
+          if (!isTerminalSignalError(err)) {
+            request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel failed');
+            return sendError(
+              reply,
+              502,
+              'TEMPORAL_CANCEL_FAILED',
+              'Could not cancel the workflow in Temporal; the run was left RUNNING — try again'
+            );
+          }
+        }
+      }
       // Guard the update with a status=RUNNING predicate so a race against a
-      // concurrent terminal-state write (e.g. the workflow finishing between
-      // the findFirst above and this update) can't clobber a completed run.
+      // concurrent terminal-state write (e.g. the workflow finishing, or its
+      // own cancellation finalisation landing first) can't clobber it.
       const { count } = await fastify.prisma.workflowRun.updateMany({
         data: { endedAt: new Date(), status: 'CANCELLED' },
         where: { id: run.id, status: 'RUNNING' },
       });
       if (count === 0) {
-        return reply.status(409).send({
-          error: { code: 'RUN_NOT_RUNNING', message: 'Run reached a terminal state before cancel' },
+        // The workflow's own cancellation handler can finalise the run as
+        // CANCELLED before this write — that is this cancel succeeding.
+        const current = await fastify.prisma.workflowRun.findUnique({
+          select: { status: true },
+          where: { id: run.id },
         });
+        if (current?.status !== 'CANCELLED') {
+          return reply.status(409).send({
+            error: {
+              code: 'RUN_NOT_RUNNING',
+              message: 'Run reached a terminal state before cancel',
+            },
+          });
+        }
       }
       if (run.workflowId) {
         await fastify.prisma.activeWorkflow.updateMany({
@@ -212,9 +243,6 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           where: { temporalWorkflowId: run.workflowId },
         });
       }
-      fastify.temporal.cancelWorkflow(run.workflowId).catch((err: unknown) => {
-        request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel signal failed');
-      });
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,

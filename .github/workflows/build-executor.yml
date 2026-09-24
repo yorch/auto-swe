@@ -16,6 +16,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
+      contents: read # actions/checkout and the default-Dockerfile fetch
       id-token: write # For OIDC -> ECR auth
 
     steps:
@@ -48,15 +49,32 @@ jobs:
           GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
           GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
           REPO_ID: ${{ steps.repo.outputs.id }}
+        # The gateway has no single-repository GET, so page through the list
+        # endpoint (which returns only what the token's user may reach) and pick
+        # the row by id. includeInactive lets a LEAD token rebuild a paused repo.
         run: |
-          REPO=$(curl -sf -H "Authorization: Bearer ${GATEWAY_TOKEN}" \
-            "${GATEWAY_URL}/api/v1/repositories/${REPO_ID}")
-          echo "org=$(echo "$REPO" | jq -r '.data.organizationName')" >> "$GITHUB_OUTPUT"
-          echo "name=$(echo "$REPO" | jq -r '.data.repoName')" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          LIMIT=500
+          OFFSET=0
+          REPO=''
+          while :; do
+            PAGE=$(curl -sf -H "Authorization: Bearer ${GATEWAY_TOKEN}" \
+              "${GATEWAY_URL}/api/v1/repositories?includeInactive=true&limit=${LIMIT}&offset=${OFFSET}")
+            REPO=$(echo "$PAGE" | jq -c --arg id "$REPO_ID" '.data[] | select(.id == $id)')
+            TOTAL=$(echo "$PAGE" | jq -r '.meta.total // 0')
+            OFFSET=$((OFFSET + LIMIT))
+            if [ -n "$REPO" ] || [ "$OFFSET" -ge "$TOTAL" ]; then break; fi
+          done
+          if [ -z "$REPO" ]; then
+            echo "::error::Repository ${REPO_ID} not found or not visible to GATEWAY_TOKEN"
+            exit 1
+          fi
+          echo "org=$(echo "$REPO" | jq -r '.organizationName')" >> "$GITHUB_OUTPUT"
+          echo "name=$(echo "$REPO" | jq -r '.repoName')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout target repo
         if: steps.repo.outputs.id != ''
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ steps.config.outputs.org }}/${{ steps.config.outputs.name }}
           token: ${{ secrets.GITHUB_APP_TOKEN }}
@@ -81,23 +99,23 @@ jobs:
 
       - name: Configure AWS credentials (OIDC)
         if: steps.repo.outputs.id != ''
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
         with:
           role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
         if: steps.repo.outputs.id != ''
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
         id: ecr-login
 
       - name: Set up Docker Buildx
         if: steps.repo.outputs.id != ''
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Generate image metadata
         if: steps.repo.outputs.id != ''
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         id: meta
         with:
           images: ${{ steps.ecr-login.outputs.registry }}/auto-swe/executors/${{ steps.config.outputs.org }}-${{ steps.config.outputs.name }}
@@ -107,7 +125,7 @@ jobs:
 
       - name: Build and push
         if: steps.repo.outputs.id != ''
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ${{ steps.dockerfile.outputs.path }}

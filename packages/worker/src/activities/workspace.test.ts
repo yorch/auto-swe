@@ -1,4 +1,15 @@
 import { execFileSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/execUtils.js', async (importOriginal) => {
@@ -36,9 +47,13 @@ vi.mock('../lib/config/contextLookup.js', () => ({
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { execShellAsync, spawnWithStdinAsync } from '../lib/execUtils.js';
 import {
+  authedGitScript,
   buildMetadataBlockArgs,
   cloneDependencyRepos,
   createWorkspace,
+  fetchBranchesSubcommand,
+  killStrayProcessesScript,
+  killTaggedProcessesScript,
   MAX_DEPENDENCY_CHECKOUTS,
   safeDepDirName,
   shellQuote,
@@ -295,6 +310,60 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     );
   });
 
+  it('runs gitAuthed hardened: config rewritten, hooks off, push to the scrubbed URL', async () => {
+    const ws = await createWorkspace(AUTHED, 'auto/TICKET-1', 'main');
+    vi.mocked(execShellAsync).mockClear();
+    await ws.gitAuthed(`push origin ${shellQuote('auto/TICKET-1')}`);
+    const [cmd] = vi.mocked(execShellAsync).mock.calls.map((c) => c[0] as string);
+    expect(cmd).toContain('mv -f .git/config.auto-swe-tmp .git/config');
+    expect(cmd).toContain('-c core.hooksPath=/dev/null');
+    expect(cmd).toContain('GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null');
+    expect(cmd).toContain(`push --no-verify ${Q(CLEAN)} ${Q('auto/TICKET-1')}`);
+    expect(cmd).not.toContain('push origin');
+    expect(cmd.indexOf('mv -f .git/config')).toBeLessThan(cmd.indexOf('push --no-verify'));
+    // Stray processes die first, in the same exec as the rewrite and the call.
+    expect(cmd.indexOf('asw_sweep KILL')).toBeGreaterThanOrEqual(0);
+    expect(cmd.indexOf('asw_sweep KILL')).toBeLessThan(cmd.indexOf('mv -f .git/config'));
+    // The repository is pinned before the credential-bearing call.
+    expect(cmd.indexOf('export GIT_DIR GIT_WORK_TREE')).toBeLessThan(
+      cmd.indexOf('push --no-verify')
+    );
+  });
+
+  it('kills the timed-out command inside the container by its exec tag', async () => {
+    const ws = await createWorkspace(AUTHED, 'auto/TICKET-1', 'main');
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string, opts) => {
+      if (cmd.includes('yarn test')) {
+        await opts?.onTimeout?.();
+        throw Object.assign(new Error('Command failed: timed out'), { killed: true });
+      }
+      return '';
+    });
+    await expect(ws.exec('yarn test', { timeoutMs: 1000 })).rejects.toThrow('timed out');
+
+    const cmds = vi.mocked(execShellAsync).mock.calls.map((c) => c[0] as string);
+    const run = cmds.find((c) => c.includes('yarn test')) ?? '';
+    const tag = /-e AUTO_SWE_EXEC_ID=([0-9a-f]{16}) /.exec(run)?.[1];
+    expect(tag).toBeDefined();
+    const kill = cmds.find((c) => c.includes('asw_kill')) ?? '';
+    expect(kill).toContain(`docker exec ${ws.containerId} sh -c`);
+    expect(kill).toContain(`AUTO_SWE_EXEC_ID=${tag}`);
+  });
+
+  it('removes the container by name when `docker run` itself fails', async () => {
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+      if (cmd.startsWith('docker run -d')) {
+        throw new Error('Command failed: docker run timed out');
+      }
+      return '';
+    });
+    await expect(createWorkspace(AUTHED, 'auto/TICKET-1', 'main')).rejects.toThrow('docker run');
+    const cmds = vi.mocked(execShellAsync).mock.calls.map((c) => c[0] as string);
+    const name = /--name (workspace-[0-9a-f]+)/.exec(cmds[0] ?? '')?.[1];
+    expect(name).toBeDefined();
+    expect(cmds).toContain(`docker rm -f ${name}`);
+  });
+
   it('forwards an explicit exec timeout and gives the clone a 10-minute ceiling', async () => {
     const ws = await createWorkspace(AUTHED, 'auto/TICKET-1', 'main');
     const cloneCall = vi
@@ -331,8 +400,11 @@ describe('Workspace.execStdin (spawn mocked)', () => {
     const [file, args, stdin] = vi.mocked(spawnWithStdinAsync).mock.calls[0];
     expect(file).toBe('docker');
     expect(args.slice(0, 4)).toEqual(['exec', '-i', '-w', '/workspace/target-repo']);
-    expect(args[4]).toBe(ws.containerId);
-    expect(args.slice(5)).toEqual(['sh', '-c', "cat > 'big.json'"]);
+    // Tagged so a timed-out command's in-container process tree can be killed.
+    expect(args[4]).toBe('-e');
+    expect(args[5]).toMatch(/^AUTO_SWE_EXEC_ID=[0-9a-f]{16}$/);
+    expect(args[6]).toBe(ws.containerId);
+    expect(args.slice(7)).toEqual(['sh', '-c', "cat > 'big.json'"]);
     expect(stdin).toBe(content);
     // Nothing that large ever went through a shell command string.
     for (const call of vi.mocked(execShellAsync).mock.calls) {
@@ -477,5 +549,221 @@ describe('cloneDependencyRepos', () => {
   it('returns an empty list when there are no dependencies', async () => {
     expect(await cloneDependencyRepos(ws, [])).toEqual([]);
     expect(exec).not.toHaveBeenCalled();
+  });
+});
+
+describe('authedGitScript against a real git repository', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const HEADER = 'AUTHORIZATION: basic c2VjcmV0';
+
+  // A working clone whose `.git/` an attacker has written to: a pre-push and a
+  // reference-transaction hook that dump GIT_CONFIG_PARAMETERS (where
+  // `-c http.extraheader` lives), an `insteadOf` and a `pushurl` that redirect
+  // origin to an attacker remote, and an fsmonitor command.
+  const setup = () => {
+    const root = mkdtempSync(join(tmpdir(), 'authed-git-'));
+    const good = join(root, 'good.git');
+    const evil = join(root, 'evil.git');
+    git(root, 'init', '-q', '--bare', good);
+    git(root, 'init', '-q', '--bare', evil);
+    const seed = join(root, 'seed');
+    git(root, 'init', '-q', seed);
+    git(
+      seed,
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'init'
+    );
+    git(seed, 'push', '-q', good, 'HEAD:refs/heads/main');
+    const work = join(root, 'work');
+    git(root, 'clone', '-q', '-b', 'main', `file://${good}`, work);
+    git(work, 'checkout', '-q', '-b', 'auto/T-1');
+    git(
+      work,
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'x'
+    );
+    const loot = join(root, 'loot');
+    const hook = `#!/bin/sh\necho "$GIT_CONFIG_PARAMETERS" >> ${loot}\n`;
+    mkdirSync(join(work, '.git', 'hooks'), { recursive: true });
+    for (const name of ['pre-push', 'reference-transaction']) {
+      writeFileSync(join(work, '.git', 'hooks', name), hook);
+      chmodSync(join(work, '.git', 'hooks', name), 0o755);
+    }
+    git(work, 'config', `url.file://${evil}.insteadOf`, `file://${good}`);
+    git(work, 'config', '--add', 'remote.origin.pushurl', `file://${evil}`);
+    git(work, 'config', 'core.fsmonitor', `echo fsmonitor >> ${loot}; false`);
+    return { evil, good, loot, work };
+  };
+
+  it('pushes to the real remote without running a planted hook or following a redirect', () => {
+    const { evil, good, loot, work } = setup();
+    const script = authedGitScript(work, `push origin ${shellQuote('auto/T-1')}`, {
+      cleanUrl: `file://${good}`,
+      gitAuthHeader: HEADER,
+    });
+    execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' });
+
+    expect(existsSync(loot)).toBe(false);
+    expect(git(good, 'branch', '--list', 'auto/T-1')).toContain('auto/T-1');
+    expect(git(evil, 'branch', '--list')).toBe('');
+    const config = readFileSync(join(work, '.git', 'config'), 'utf8');
+    expect(config).not.toContain('insteadOf');
+    expect(config).not.toContain('pushurl');
+    expect(config).not.toContain('fsmonitor');
+    // `origin` stays usable: its fetch refspec survives the rewrite.
+    expect(config).toContain('fetch = +refs/heads/');
+  });
+
+  it('fetches from the real remote and still updates origin/<branch>', () => {
+    const { loot, good, work } = setup();
+    const script = authedGitScript(work, `fetch origin ${shellQuote('main')}`, {
+      cleanUrl: `file://${good}`,
+      gitAuthHeader: HEADER,
+    });
+    execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' });
+    expect(existsSync(loot)).toBe(false);
+    expect(git(work, 'rev-parse', 'origin/main').trim()).toBe(
+      git(good, 'rev-parse', 'main').trim()
+    );
+  });
+
+  it('refuses a broken .git instead of falling back to a parent repository', () => {
+    const { evil, good, loot, work } = setup();
+    // A parent repository the rewrite never touches, whose config sends the
+    // push to the attacker and whose history has the branch being pushed.
+    const parent = join(work, '..');
+    git(parent, 'init', '-q');
+    git(parent, 'config', `url.file://${evil}.insteadOf`, `file://${good}`);
+    git(
+      parent,
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'evil'
+    );
+    git(parent, 'branch', 'auto/T-1');
+    git(parent, 'config', 'core.fsmonitor', `echo fsmonitor >> ${loot}; false`);
+    // Deleting HEAD is enough to make git stop treating work/.git as a repo.
+    rmSync(join(work, '.git', 'HEAD'));
+
+    for (const sub of [
+      `push origin ${shellQuote('auto/T-1')}`,
+      fetchBranchesSubcommand(['main']),
+    ]) {
+      const script = authedGitScript(work, sub, {
+        cleanUrl: `file://${good}`,
+        gitAuthHeader: HEADER,
+      });
+      expect(() => execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' })).toThrow(
+        /not a valid repository/
+      );
+    }
+    expect(git(evil, 'branch', '--list')).toBe('');
+    expect(git(good, 'branch', '--list', 'auto/T-1')).toBe('');
+    expect(existsSync(loot)).toBe(false);
+  });
+
+  it('fetches a non-default branch into origin/<branch> in a single-branch shallow clone', () => {
+    const { good, work } = setup();
+    // Publish the work branch, then take the clone every workspace starts from.
+    git(good, 'branch', 'auto/T-1', 'main');
+    const shallow = join(work, '..', 'shallow');
+    git(join(work, '..'), 'clone', '-q', '--depth=50', '-b', 'main', `file://${good}`, shallow);
+
+    // A bare branch name lands only in FETCH_HEAD in such a clone.
+    const bare = authedGitScript(shallow, `fetch origin ${shellQuote('auto/T-1')}`, {
+      cleanUrl: `file://${good}`,
+    });
+    execFileSync('/bin/sh', ['-c', bare], { stdio: 'pipe' });
+    expect(() => git(shallow, 'rev-parse', '--verify', '-q', 'origin/auto/T-1')).toThrow();
+
+    const script = authedGitScript(shallow, fetchBranchesSubcommand(['auto/T-1']), {
+      cleanUrl: `file://${good}`,
+      gitAuthHeader: HEADER,
+    });
+    execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' });
+    expect(git(shallow, 'rev-parse', 'origin/auto/T-1').trim()).toBe(
+      git(good, 'rev-parse', 'auto/T-1').trim()
+    );
+    git(shallow, 'reset', '-q', '--hard', 'origin/auto/T-1');
+  });
+
+  it('refuses to run when .git is a gitfile pointing elsewhere', () => {
+    const { good, work } = setup();
+    const other = mkdtempSync(join(tmpdir(), 'authed-git-gitfile-'));
+    writeFileSync(join(other, '.git'), `gitdir: ${join(work, '.git')}\n`);
+    const script = authedGitScript(other, `fetch origin ${shellQuote('main')}`, {
+      cleanUrl: `file://${good}`,
+      gitAuthHeader: HEADER,
+    });
+    expect(() => execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' })).toThrow();
+  });
+});
+
+describe('fetchBranchesSubcommand', () => {
+  it('writes a forced refspec per branch into origin/<branch>', () => {
+    expect(fetchBranchesSubcommand(['main', "auto/it's"])).toBe(
+      `fetch origin '+refs/heads/main:refs/remotes/origin/main' ${shellQuote(
+        "+refs/heads/auto/it's:refs/remotes/origin/auto/it's"
+      )}`
+    );
+  });
+});
+
+describe('killStrayProcessesScript', () => {
+  // Not executed for real: outside a container it would kill every process
+  // the test runner's user owns. Its structure is what these assert.
+  const script = killStrayProcessesScript();
+
+  it('stops everything before killing anything', () => {
+    const stop = script.indexOf('asw_sweep STOP');
+    expect(stop).toBeGreaterThan(0);
+    expect(script.lastIndexOf('asw_sweep STOP')).toBeGreaterThan(stop);
+    expect(script.lastIndexOf('asw_sweep STOP')).toBeLessThan(script.indexOf('asw_sweep KILL'));
+  });
+
+  it('spares PID 1, the keeper, and its own process tree', () => {
+    expect(script).toContain(
+      'if [ "$asw_p" = 1 ] || [ "$asw_p" = "$asw_keeper" ] || asw_mine "$asw_p"; then continue; fi'
+    );
+    expect(script).toContain('if [ "$asw_a" = "$$" ]; then return 0; fi');
+    // The keeper is the lowest-numbered child of PID 1.
+    expect(script).toContain('[ "$(asw_ppid "$asw_p")" = 1 ]');
+  });
+
+  it('is valid POSIX sh', () => {
+    execFileSync('/bin/sh', ['-n', '-c', script]);
+  });
+});
+
+describe('killTaggedProcessesScript', () => {
+  it('rejects anything but a hex tag', () => {
+    expect(() => killTaggedProcessesScript("abc'; rm -rf /")).toThrow();
+  });
+
+  it('stops every tagged process before killing any', () => {
+    const script = killTaggedProcessesScript('00ff');
+    expect(script.indexOf('asw_kill STOP')).toBeLessThan(script.indexOf('asw_kill KILL'));
+    expect(script).toContain("grep -qs 'AUTO_SWE_EXEC_ID=00ff'");
   });
 });

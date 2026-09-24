@@ -27,6 +27,7 @@ import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { SchemaFormPreview } from '@/components/workflow/SchemaFormPreview';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { useLedTeamIds } from '@/hooks/useTeams';
 import {
   useCreateWorkflowVersion,
   useExplainWorkflowTemplate,
@@ -43,6 +44,7 @@ import {
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
+import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { formatPercent, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -554,8 +556,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const createVersion = useCreateWorkflowVersion(id ?? '');
   const promoteVersion = usePromoteWorkflowVersion(id ?? '');
   const reviewVersion = useReviewWorkflowVersion(id ?? '');
-  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const canManage = role === 'ADMIN' || role === 'LEAD';
+  // Every write here (new version, promote, review, refine, metadata, webhook)
+  // is a LEAD route on the gateway that also requires LEAD membership on the
+  // template's owning team (templateWriteFilter) — a GLOBAL template is
+  // ADMIN-only. Anyone else gets a read-only view.
+  const platformRole = useAuthStore((s) => s.user?.role);
+  const ledTeamIds = useLedTeamIds();
+  const canManage = canWriteTeamResource(platformRole, template?.team?.id, ledTeamIds);
 
   const [mode, setMode] = useState<ViewMode>('view');
   const [editorSpec, setEditorSpec] = useState<WorkflowSpec | null>(null);
@@ -662,14 +669,24 @@ export default function TemplateDetailPage({ params }: PageProps) {
     if (effectiveVersion === null) {
       return;
     }
-    await promoteVersion.mutateAsync(effectiveVersion);
+    setSaveError(null);
+    try {
+      await promoteVersion.mutateAsync(effectiveVersion);
+    } catch (err) {
+      setSaveError(errMsg(err, 'promote failed'));
+    }
   };
 
   const handleReview = async () => {
     if (effectiveVersion === null) {
       return;
     }
-    await reviewVersion.mutateAsync(effectiveVersion);
+    setSaveError(null);
+    try {
+      await reviewVersion.mutateAsync(effectiveVersion);
+    } catch (err) {
+      setSaveError(errMsg(err, 'review failed'));
+    }
   };
 
   const selectedNeedsReview =
@@ -703,13 +720,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
   const editorActions = (
     <>
-      {mode === 'view' && (
+      {mode === 'view' && canManage && (
         <Button onClick={() => setMode('edit')} size="sm" variant="secondary">
           Edit
         </Button>
       )}
       <Button
-        onClick={() => setMode(mode === 'json' ? 'edit' : 'json')}
+        onClick={() => setMode(mode === 'json' ? (canManage ? 'edit' : 'view') : 'json')}
         size="sm"
         variant={mode === 'json' ? 'primary' : 'ghost'}
       >
@@ -731,6 +748,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
         </Button>
       )}
       {!isDirty &&
+        canManage &&
         effectiveVersion !== null &&
         effectiveVersion !== template.activeVersion &&
         (selectedNeedsReview ? (
@@ -774,7 +792,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
         <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
           <div className="flex-1">
             <PageHeader
-              chapter={`§ Workflows · v${effectiveVersion ?? '?'}`}
+              chapter={`§ Workflows · v${effectiveVersion ?? '?'}${
+                effectiveVersion !== null && effectiveVersion === template.activeVersion
+                  ? ' · active version'
+                  : ''
+              }`}
               subtitle={template.description ?? undefined}
               title={template.name}
             />
@@ -797,9 +819,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 Refine with AI
               </Button>
             )}
-            <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
-              Edit metadata
-            </Button>
+            {canManage && (
+              <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
+                Edit metadata
+              </Button>
+            )}
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -807,11 +831,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
           {template.isDefault && (
             <span className="rounded border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
               default
-            </span>
-          )}
-          {effectiveVersion === template.activeVersion && (
-            <span className="rounded border border-moss-400/40 bg-moss-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-moss-400">
-              active
             </span>
           )}
           {template.experimentVersion && (
@@ -841,7 +860,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       {/* Edit mode: full-bleed canvas */}
       {mode === 'edit' && editorSpec && stepRegistry && (
-        <div className="fade-up stagger-1 -mx-10">
+        <div className="fade-up stagger-1 -mx-4 md:-mx-10">
           <TemplateEditor
             actions={editorActions}
             costEstimateUsd={costEstimate?.totalUsd}
@@ -888,6 +907,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 <textarea
                   className="h-[520px] w-full rounded-[9px] border border-ink-500 bg-ink-900 p-4 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
                   onChange={(e) => handleJsonChange(e.target.value)}
+                  readOnly={!canManage}
                   spellCheck={false}
                   value={editorJson}
                 />
@@ -1026,9 +1046,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
             <Card variant="inset">
               <div className="flex items-center justify-between">
                 <SectionHeader number="03" title="Run schema" />
-                <Button onClick={() => setEditSchemaOpen(true)} size="sm" variant="ghost">
-                  Edit
-                </Button>
+                {canManage && (
+                  <Button onClick={() => setEditSchemaOpen(true)} size="sm" variant="ghost">
+                    Edit
+                  </Button>
+                )}
               </div>
               {(() => {
                 const inputSchema = template.inputSchema;

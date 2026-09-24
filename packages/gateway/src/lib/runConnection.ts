@@ -1,13 +1,12 @@
 import {
-  decideRepoAccess,
   installationRetiredErrorBody,
   isInstallationRetired,
-  repoAccessErrorBody,
 } from '@auto-swe/shared/lib/repoAccessDecision';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import type { WorkspaceProviderMetadata } from '@auto-swe/shared/lib/workspaceProviders';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
+import { authorizeLaunch, sendLaunchRefusal } from './launchAuthorization.js';
 
 export interface ValidateRunConnectionInput {
   connectionId: string | null;
@@ -34,13 +33,15 @@ export type ValidateRunConnectionResult =
  * Shared validation for a run's target connection.
  *
  * - Checks the connection exists and is active.
- * - For authenticated calls, takes the full repository-access decision — team
- *   membership AND GitHub permission (admins bypass both).
+ * - For authenticated calls, takes the full launch decision (`authorizeLaunch`)
+ *   — team membership, GitHub permission, org membership and the connection
+ *   org's monthly cap (admins bypass membership and permission, not the cap).
  *   For public/webhook calls there is no user to ask GitHub about, so the only
  *   scope we can trust is the template's own team and the connection must
  *   belong to it.
  * - Validates the connection type against the template's workspace provider.
- * - Returns the budget org and cap for the calling code to pass to assertOrgBudget.
+ * - Returns the budget org and cap. An authenticated caller's connection org has
+ *   already been checked; a public/webhook caller passes them to assertOrgBudget.
  *
  * When validation fails this function sends the reply and returns `{ ok: false }`;
  * the caller should `return` immediately.
@@ -89,18 +90,15 @@ export async function validateRunConnection(
     }
 
     if (user) {
-      // Team membership and GitHub permission in one decision. This used to be
-      // the membership half alone, with the gate applied separately by the one
-      // caller that remembered it.
-      const decision = await decideRepoAccess(
-        prisma,
-        user,
-        connection,
-        gate ?? { mode: 'off', staleAfterHours: 0 },
-        log
-      );
-      if (!decision.allowed) {
-        reply.status(403).send(repoAccessErrorBody(decision.reason));
+      // The launch decision: repository access, org membership and the org's
+      // monthly cap, the same one every other launch path takes.
+      const authorization = await authorizeLaunch(prisma, user, {
+        gate,
+        log,
+        repos: [connection],
+      });
+      if (!authorization.ok) {
+        sendLaunchRefusal(reply, authorization.refusal);
         return { ok: false };
       }
     } else if (connection.teamId !== templateTeamId) {

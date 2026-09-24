@@ -1122,7 +1122,10 @@ describe('webhook routes', () => {
       const body = transitionPayload('Ready for Dev');
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(res.statusCode).toBe(401);
-      expect(JSON.parse(res.payload).error).toBe('Jira webhook secret not configured');
+      expect(JSON.parse(res.payload).error).toEqual({
+        code: 'UNAUTHORIZED',
+        message: 'Jira webhook secret not configured',
+      });
       expect(jiraStartCalls).toHaveLength(0);
     });
 
@@ -1141,7 +1144,9 @@ describe('webhook routes', () => {
       const body = JSON.stringify({});
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ skipped: true });
+      expect(JSON.parse(res.payload)).toEqual({
+        data: { reason: 'not an issue transition event', skipped: true },
+      });
       expect(jiraStartCalls).toHaveLength(0);
     });
 
@@ -1149,7 +1154,20 @@ describe('webhook routes', () => {
       const body = transitionPayload('In Progress');
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ skipped: true });
+      expect(JSON.parse(res.payload)).toEqual({
+        data: { reason: 'transition does not match the trigger status', skipped: true },
+      });
+      expect(jiraStartCalls).toHaveLength(0);
+    });
+
+    it('skips an issue key that is not a valid ticket id', async () => {
+      jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
+      const body = transitionPayload('Ready for Dev', 'bad key..');
+      const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({
+        data: { reason: 'invalid ticket id', skipped: true },
+      });
       expect(jiraStartCalls).toHaveLength(0);
     });
 
@@ -1160,8 +1178,7 @@ describe('webhook routes', () => {
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({
-        reason: 'no active default template',
-        skipped: true,
+        data: { reason: 'no active default template', skipped: true },
       });
       expect(jiraStartCalls).toHaveLength(0);
     });
@@ -1171,7 +1188,7 @@ describe('webhook routes', () => {
       const body = transitionPayload('Ready for Dev', 'PROJ-99');
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ ok: true, ticketId: 'PROJ-99' });
+      expect(JSON.parse(res.payload)).toEqual({ data: { duplicate: false, ticketId: 'PROJ-99' } });
 
       expect(jiraStartCalls).toHaveLength(1);
       expect(jiraStartCalls[0].id).toBe('jira-PROJ-99');
@@ -1206,14 +1223,14 @@ describe('webhook routes', () => {
 
       const first = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(first.statusCode).toBe(200);
-      expect(JSON.parse(first.payload)).toEqual({ ok: true, ticketId: 'PROJ-100' });
+      expect(JSON.parse(first.payload)).toEqual({
+        data: { duplicate: false, ticketId: 'PROJ-100' },
+      });
 
       const second = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(second.statusCode).toBe(200);
       expect(JSON.parse(second.payload)).toEqual({
-        duplicate: true,
-        ok: true,
-        ticketId: 'PROJ-100',
+        data: { duplicate: true, ticketId: 'PROJ-100' },
       });
 
       // Exactly one run: one workflow start, one surviving ledger row.
@@ -1231,7 +1248,9 @@ describe('webhook routes', () => {
       const body = transitionPayload('Ready for Dev', 'PROJ-101');
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ duplicate: true, ok: true, ticketId: 'PROJ-101' });
+      expect(JSON.parse(res.payload)).toEqual({
+        data: { duplicate: true, ticketId: 'PROJ-101' },
+      });
       // Rows were written, then rolled back — nothing is left behind.
       expect(jiraPrismaState.activeWorkflowCreateCalls).toHaveLength(1);
       expect(jiraPrismaState.activeWorkflowDeleteCalls).toBe(1);
@@ -1256,7 +1275,9 @@ describe('webhook routes', () => {
       jiraStartFailure = null;
       const retried = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(retried.statusCode).toBe(200);
-      expect(JSON.parse(retried.payload)).toEqual({ ok: true, ticketId: 'PROJ-102' });
+      expect(JSON.parse(retried.payload)).toEqual({
+        data: { duplicate: false, ticketId: 'PROJ-102' },
+      });
       expect(jiraStartCalls).toHaveLength(1);
       expect(jiraPrismaState.rows.size).toBe(1);
     });

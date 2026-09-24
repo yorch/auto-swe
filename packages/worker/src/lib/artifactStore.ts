@@ -82,7 +82,7 @@ async function s3Client(): Promise<S3Helper> {
     const storageCfg = await resolveStorageConfig();
     if (!storageCfg.s3Bucket) {
       throw new Error(
-        'S3 backend is active but s3Bucket is not configured. Set it at /admin/integrations → Storage.'
+        'S3 backend is active but s3Bucket is not configured. Set it at /studio/integrations → Storage.'
       );
     }
     const region = storageCfg.s3Region ?? 'us-east-1';
@@ -123,7 +123,7 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
     const storageCfg = await resolveStorageConfig();
     if (!storageCfg.s3Bucket) {
       throw new Error(
-        'S3 backend is active but s3Bucket is not configured. Set it at /admin/integrations → Storage.'
+        'S3 backend is active but s3Bucket is not configured. Set it at /studio/integrations → Storage.'
       );
     }
     const bucket = storageCfg.s3Bucket;

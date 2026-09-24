@@ -15,6 +15,11 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubConfig: vi.fn(),
+  resolveIssueTrackerConfig: vi.fn(),
+}));
+
 vi.mock('../connectors/notion.js', () => ({
   readNotionPage: vi.fn(),
 }));
@@ -24,6 +29,7 @@ vi.mock('../connectors/zendesk.js', () => ({
 }));
 
 const { prisma } = await import('@auto-swe/shared/db');
+const { resolveGitHubConfig } = await import('@auto-swe/shared/lib/systemConfig');
 const { readNotionPage } = await import('../connectors/notion.js');
 const { fetchZendeskTicket } = await import('../connectors/zendesk.js');
 
@@ -40,7 +46,7 @@ describe('resolveWorkspace', () => {
   it('resolves a git_repo workspace from a connection', async () => {
     (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       defaultBranch: 'main',
-      githubUrl: 'https://ghe.example.com/org/repo.git',
+      githubUrl: 'https://ghe.example.com/',
       isActive: true,
       organizationName: 'org',
       repoName: 'repo',
@@ -61,6 +67,27 @@ describe('resolveWorkspace', () => {
       repoName: 'repo',
       repoOwner: 'org',
     });
+  });
+
+  it('builds the clone URL from the configured GitHub base when the repo has no host override', async () => {
+    (resolveGitHubConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      baseUrl: 'https://github.corp.example',
+    });
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      defaultBranch: 'main',
+      githubUrl: null,
+      isActive: true,
+      organizationName: 'org',
+      repoName: 'repo',
+      type: 'git_repo',
+    });
+
+    const result = await resolveWorkspace({
+      connectionId: 'conn-1',
+      workspaceProvider: 'git_repo',
+    });
+
+    expect(result).toMatchObject({ cloneUrl: 'https://github.corp.example/org/repo.git' });
   });
 
   it('throws for a git_repo connection without owner/name', async () => {

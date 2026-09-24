@@ -9,6 +9,7 @@ import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { selectableConnectionTypes } from '@/lib/connectionForm';
 
 const FIELD_TYPES: { label: string; value: InputFieldType }[] = [
   { label: 'String', value: 'string' },
@@ -253,9 +254,11 @@ export function InputSchemaBuilder({
               value={f.connectionType}
             >
               <option value="">Any type</option>
-              <option value="git_repo">Git repository</option>
-              <option value="api_endpoint">REST API</option>
-              <option value="generic">Generic</option>
+              {selectableConnectionTypes().map(({ label, value }) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
             </Select>
           )}
           <div className="flex justify-end">

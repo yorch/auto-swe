@@ -1,14 +1,10 @@
 import crypto from 'node:crypto';
-import {
-  decideRepoAccess,
-  multiRepoRefusalBody,
-  type RepoAccessRefusal,
-} from '@auto-swe/shared/lib/repoAccessDecision';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -74,6 +70,8 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
                     select: { userId: true },
                     where: { userId: user.sub },
                   },
+                  organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+                  orgId: true,
                 },
               },
               type: true,
@@ -94,28 +92,17 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // A PRD run decomposes into work requests that push and open pull
-      // requests on each repository it names, so each is a launch.
-      // One decision per repository — team membership and GitHub permission
-      // together — and every refusal is collected so the response names all of
-      // them. Refusing on the first would make a caller fix them one at a time.
-      const refusals: Array<{ label: string; reason: RepoAccessRefusal }> = [];
-      for (const r of repos) {
-        const decision = await decideRepoAccess(
-          fastify.prisma,
-          user,
-          r,
-          request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-          request.log
-        );
-        if (!decision.allowed) {
-          refusals.push({
-            label: `${r.organizationName}/${r.repoName}`,
-            reason: decision.reason,
-          });
-        }
-      }
-      if (refusals.length > 0) {
-        return reply.status(403).send(multiRepoRefusalBody(refusals));
+      // requests on each repository it names, and spends against each of their
+      // orgs, so it takes the same launch decision as an epic. Every repository
+      // refusal is collected so the response names all of them.
+      const authorization = await authorizeLaunch(fastify.prisma, user, {
+        gate: request.repoAccessGate,
+        log: request.log,
+        refusalShape: 'multi',
+        repos,
+      });
+      if (!authorization.ok) {
+        return sendLaunchRefusal(reply, authorization.refusal);
       }
 
       // Find the prd-decomposition workflow template.
@@ -188,6 +175,12 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma,
         {
           runInput: {
+            // The primary repository is the run's relational target: run
+            // visibility reaches a run through its work request's connection,
+            // and with none a PRD run was visible to its requester and ADMINs
+            // only — not to the team whose repository it decomposes against.
+            // The full repo set still travels in `requestPayload`.
+            connectionId: primaryRepoId,
             description: prdTitle,
             externalTicketId: workflowInput.request.externalTicketId,
             id: workRequestId,

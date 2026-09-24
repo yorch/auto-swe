@@ -12,6 +12,7 @@ import {
   useUpdateStorageConfig,
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { clearableField } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
@@ -52,22 +53,13 @@ export function StorageTab() {
 
     const body: StorageConfigInput = { backend };
     if (backend === 's3') {
-      if (s3Bucket) {
-        body.s3Bucket = s3Bucket;
-      }
-      if (s3Region) {
-        body.s3Region = s3Region;
-      }
-      if (s3Endpoint) {
-        body.s3Endpoint = s3Endpoint;
-      }
-      if (s3Prefix) {
-        body.s3Prefix = s3Prefix;
-      }
+      // Prefilled from the stored config: omit when unchanged, send null when cleared.
+      body.s3Bucket = clearableField(s3Bucket, data?.s3Bucket);
+      body.s3Region = clearableField(s3Region, data?.s3Region);
+      body.s3Endpoint = clearableField(s3Endpoint, data?.s3Endpoint);
+      body.s3Prefix = clearableField(s3Prefix, data?.s3Prefix);
       body.s3ForcePathStyle = s3ForcePathStyle;
-      if (awsAccessKeyId) {
-        body.awsAccessKeyId = awsAccessKeyId;
-      }
+      body.awsAccessKeyId = clearableField(awsAccessKeyId, data?.awsAccessKeyId);
       if (awsSecretAccessKey) {
         body.awsSecretAccessKey = awsSecretAccessKey;
       }

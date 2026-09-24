@@ -19,6 +19,7 @@ import {
   useUserOrgs,
 } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { formatDate } from '@/lib/utils';
 
 type BaselineForm = {
@@ -177,8 +178,8 @@ export default function GovernBaselinesPage() {
             + New Baseline
           </Button>
         }
-        subtitle="Manually-recorded human error rates used to compute errorRateVsHuman on the analytics dashboard. Baselines are scoped to an organization and domain."
-        title="Human Error Baselines"
+        subtitle="Manually-recorded human error rates that the analytics dashboard compares agent error rates against (the “vs human” column). Baselines are scoped to an organization and domain."
+        title={navLabel('/govern/baselines')}
       />
 
       <div className="flex items-center gap-4">

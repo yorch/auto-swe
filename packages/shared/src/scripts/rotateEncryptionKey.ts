@@ -39,6 +39,17 @@ async function main(): Promise<void> {
   }
   console.log(`Fields already at version ${report.toVersion}: ${report.skipped}`);
 
+  if (report.conflicted.length > 0) {
+    console.error(
+      `\n${report.conflicted.length} row(s) changed while rotation was running and were not written:\n`
+    );
+    for (const c of report.conflicted) {
+      console.error(`  ${c.model} (id ${c.id})`);
+    }
+    console.error('\nRun rotation again to move them — do NOT drop the previous key yet.');
+    process.exitCode = 1;
+  }
+
   if (report.failed.length > 0) {
     console.error(`\n${report.failed.length} field(s) could not be decrypted:\n`);
     for (const f of report.failed) {
@@ -52,7 +63,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!dryRun && rotatedTotal > 0) {
+  if (!dryRun && rotatedTotal > 0 && report.conflicted.length === 0) {
     console.log('\nDone. Once every service has restarted, remove CONFIG_ENCRYPTION_KEY_PREVIOUS.');
   }
 }

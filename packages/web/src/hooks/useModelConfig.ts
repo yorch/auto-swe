@@ -58,12 +58,9 @@ export function useAdminCredentials() {
   });
 }
 
-/// Invalidate every query that may display a credential or a row that joins
-/// against one.
+/// Invalidate every query that may display a credential.
 function invalidateCredentialQueries(qc: ReturnType<typeof useQueryClient>): void {
   qc.invalidateQueries({ queryKey: ['admin-credentials'] });
-  qc.invalidateQueries({ queryKey: ['team-credentials'] });
-  qc.invalidateQueries({ queryKey: ['team-accessible-credentials'] });
 }
 
 export function useAdminCreateCredential() {

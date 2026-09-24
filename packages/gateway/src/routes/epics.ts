@@ -1,19 +1,16 @@
 import crypto from 'node:crypto';
-import {
-  decideRepoAccess,
-  multiRepoRefusalBody,
-  type RepoAccessRefusal,
-} from '@auto-swe/shared/lib/repoAccessDecision';
+import type { Prisma } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
+import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { paginationQuery } from '../lib/pagination.js';
 import {
   type ConnectionScopeGate,
   memberTeams,
   permissionRequirement,
+  reachableConnections,
 } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -139,50 +136,18 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // An epic fans out into a push and a pull request on every repository it
-      // names, so each is a launch in the sense the single-repo route means.
-      // One decision per repository — team membership and GitHub permission
-      // together — and every refusal is collected so the response names all of
-      // them. Refusing on the first would make a caller fix them one at a time.
-      const refusals: Array<{ label: string; reason: RepoAccessRefusal }> = [];
-      for (const r of repos) {
-        const decision = await decideRepoAccess(
-          fastify.prisma,
-          user,
-          r,
-          request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-          request.log
-        );
-        if (!decision.allowed) {
-          refusals.push({
-            label: `${r.organizationName}/${r.repoName}`,
-            reason: decision.reason,
-          });
-        }
-      }
-      if (refusals.length > 0) {
-        return reply.status(403).send(multiRepoRefusalBody(refusals));
-      }
-
-      // Org access + budget check (P5), applied per distinct org across the
-      // selected repos — mirrors the single-repo work-request route, but an
-      // epic can fan out across repos owned by more than one org.
-      const orgs = new Map<string, number | null>();
-      for (const r of repos) {
-        const orgId = r.team.orgId;
-        if (orgId && !orgs.has(orgId)) {
-          orgs.set(orgId, r.team.organization?.monthlyBudgetUsdCents ?? null);
-        }
-      }
-      for (const [orgId, budgetCap] of orgs) {
-        if (user.role !== 'ADMIN') {
-          const hasAccess = await assertOrgAccess(fastify.prisma, user, orgId, reply);
-          if (!hasAccess) {
-            return;
-          }
-        }
-        if (!(await assertOrgBudget(fastify.prisma, orgId, budgetCap, reply))) {
-          return;
-        }
+      // names, so each is a launch in the sense the single-repo route means,
+      // and it can spend against more than one org. Every repository refusal is
+      // collected so the response names all of them — refusing on the first
+      // would make a caller fix them one at a time.
+      const authorization = await authorizeLaunch(fastify.prisma, user, {
+        gate: request.repoAccessGate,
+        log: request.log,
+        refusalShape: 'multi',
+        repos,
+      });
+      if (!authorization.ok) {
+        return sendLaunchRefusal(reply, authorization.refusal);
       }
 
       const workRequestId = crypto.randomUUID();
@@ -245,10 +210,11 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // List epics. Epic ActiveWorkflow rows self-register with repoId null, so
-  // the team filter used elsewhere can't see them — visibility is derived from
-  // the repoIds recorded in the cross-repo WorkRequest payload instead
-  // (a superset of the repos the planner actually fans out to).
+  // List epics. The epic's own ledger row carries no repository, and its repo
+  // set in the request payload is a JSON string no exact predicate can reach —
+  // so a non-admin's visibility runs through the children instead: each epic
+  // child records its repository on its own `ActiveWorkflow`, linked to the
+  // epic's work request, which is the same term run visibility uses.
   app.get(
     '/',
     {
@@ -259,25 +225,45 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const { limit, offset } = request.query;
 
-      // Epics are rare — fetch a generous window and filter/paginate in JS,
-      // since the repo set only exists inside the JSON payload.
-      const workRequests = await fastify.prisma.runInput.findMany({
-        include: { requestedBy: { select: { email: true, id: true, name: true } } },
-        orderBy: { createdAt: 'desc' },
-        take: 500,
-        where: { isCrossRepo: true },
-      });
+      // An epic is a cross-repo RunInput with no template. PRD runs are
+      // cross-repo too but always record the prd-decomposition template, so
+      // `templateId: null` is what tells the two apart.
+      //
+      // Non-admins see an epic they requested, or one with a started child on
+      // a repository they can reach. Both are exact relational matches, so
+      // filtering and paginating in the query keeps `total` truthful. An epic
+      // still in planning has no child rows yet and is listed for its requester
+      // and ADMINs only until its first child starts.
+      const where: Prisma.RunInputWhereInput = {
+        isCrossRepo: true,
+        templateId: null,
+        ...(user.role !== 'ADMIN' && {
+          OR: [
+            { requestedById: user.sub },
+            {
+              activeWorkflows: {
+                some: { repository: reachableConnections(user, request.repoAccessGate) },
+              },
+            },
+          ],
+        }),
+      };
 
-      let visible = workRequests.map((wr) => ({
+      const [workRequests, total] = await Promise.all([
+        fastify.prisma.runInput.findMany({
+          include: { requestedBy: { select: { email: true, id: true, name: true } } },
+          orderBy: { createdAt: 'desc' },
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.runInput.count({ where }),
+      ]);
+
+      const page = workRequests.map((wr) => ({
         repoIds: parseRepoIdsFromPayload(wr.requestPayload),
         wr,
       }));
-      if (user.role !== 'ADMIN') {
-        const allowed = await accessibleRepoIds(fastify.prisma, user, request.repoAccessGate);
-        visible = visible.filter(({ repoIds }) => repoIds.some((id) => allowed.has(id)));
-      }
-
-      const page = visible.slice(offset, offset + limit);
       const epicIds = page.map(({ wr }) => `${EPIC_ID_PREFIX}${wr.externalTicketId}`);
       const epicRows = await fastify.prisma.activeWorkflow.findMany({
         select: { currentStatus: true, temporalWorkflowId: true, updatedAt: true },
@@ -303,7 +289,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
             workRequestId: wr.id,
           };
         }),
-        meta: { limit, offset, total: visible.length },
+        meta: { limit, offset, total },
       };
     }
   );
@@ -342,7 +328,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.runInput.findFirst({
           include: { requestedBy: { select: { email: true, id: true, name: true } } },
           orderBy: { createdAt: 'desc' },
-          where: { externalTicketId, isCrossRepo: true },
+          where: { externalTicketId, isCrossRepo: true, templateId: null },
         }),
         fastify.prisma.activeWorkflow.findUnique({
           where: { temporalWorkflowId: workflowId },

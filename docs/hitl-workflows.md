@@ -332,5 +332,17 @@ lifecycle changes and delegated configuration grants are managed under `/govern/
 - **`humanDecision` takes 2–10 options.** Wider branching needs a `cond` chain downstream.
 - **A parked run holds a Temporal workflow open for its whole timeout.** Long timeouts are cheap but
   not free; a 7-day approval keeps the workflow alive for 7 days unless it is cancelled.
+- **Some runs are visible only to their requester and platform ADMINs.** Resolving a step, like
+  seeing or cancelling its run, needs run visibility (see
+  [`architecture.md`](./architecture.md#5-authentication)), and some shapes match no team term: a
+  template run launched with no connection on a GLOBAL template, and any run whose work request,
+  channel and template all lack a team link. A team member cannot approve a step on one of those.
+- **A PRD run is visible to the team of its first repository only.** It records its primary
+  repository as its work request's connection; the teams of its other repositories see the per-repo
+  work requests it submits, not the PRD run and its approval steps.
+- **A requester keeps visibility of their own runs after leaving the team.** The requester term is
+  not re-checked against current membership, so someone who launched a run can still see it, cancel
+  it and resolve its steps after being removed from the team that owns its repository. Revoking
+  that means deactivating the user.
 - **Approval ownership is not delegated or escalated.** The inbox supports due/overdue visibility,
   but there are no reassignment chains, on-call schedules, holiday calendars, or SLA automation.

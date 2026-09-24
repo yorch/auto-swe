@@ -24,6 +24,7 @@ import {
 } from '@/hooks/useSchedules';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { formatDate } from '@/lib/utils';
 
 function fmtTime(iso: string | null | undefined): string {
@@ -329,7 +330,7 @@ export default function GovernSchedulesPage() {
           </Button>
         }
         subtitle="Standing automation: each schedule fires the workflow engine on a cron cadence against one repository (e.g. a weekly dependency update). Fires reuse the same synthetic ticket and branch; runs appear in Run History attributed to the schedule's standing work request. Templates are snapshotted when the schedule is saved."
-        title="Scheduled Work Requests"
+        title={navLabel('/govern/schedules')}
       />
 
       <Card>

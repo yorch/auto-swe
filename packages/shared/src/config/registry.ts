@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
+import { MAX_FANOUT_CONCURRENCY } from '../workflow/spec.js';
 import type { SettingDefinition } from './types.js';
 
 /**
@@ -275,7 +276,7 @@ export const SETTING_DEFINITIONS = {
     requiredRole: 'LEAD',
     restartRequired: false,
     runPinned: true,
-    schema: positiveInt.max(64),
+    schema: positiveInt.max(MAX_FANOUT_CONCURRENCY),
     unit: 'branches',
   }),
   'workflow.maxTransitions': defineSetting({
@@ -290,6 +291,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: true,
     schema: positiveInt.max(100_000),
     unit: 'transitions',
+  }),
+  'workspace.agentMaxSteps': defineSetting({
+    defaultValue: 50,
+    description:
+      'Ceiling on model steps in one implementer turn — every tool call (bash, readFile, writeFile, listDirectory, loadSkill, MCP) and the final answer each count as one. Applies to the implementer, the CI/review/gate fixers, the merge-conflict resolver, eval replays, and any agent node that carries tools (MCP). Without an explicit budget the agent framework stops after 5 steps, which ends a turn before the agent has read, edited and tested anything. Raise it for large changes; lower it to cap the tokens one turn can spend.',
+    group: 'workspace',
+    label: 'Max agent steps per turn',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.min(5).max(500),
+    unit: 'steps',
   }),
   'workspace.blockMetadata': defineSetting({
     defaultValue: true,

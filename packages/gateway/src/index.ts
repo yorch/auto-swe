@@ -21,10 +21,13 @@ import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
+import { parseTrustProxy } from './lib/trustProxy.js';
 import authPlugin, {
   ACCESS_TOKEN_TTL_SECONDS,
   extractSessionCookieValue,
   invalidateSessionCache,
+  ipRateLimitKey,
+  rateLimitKey,
   requireAuth,
   requireUser,
 } from './plugins/auth.js';
@@ -76,7 +79,7 @@ async function start() {
   // Must run before betterAuth.handler is called — reads OAuth creds from DB.
   await initAuth();
 
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, trustProxy: parseTrustProxy(process.env.TRUST_PROXY) });
 
   // Zod validation + serialization
   app.setValidatorCompiler(validatorCompiler);
@@ -124,8 +127,14 @@ async function start() {
 
   await app.register(cookie);
 
-  // Rate limiting — auth routes use stricter per-route limits (see auth.ts)
-  await app.register(rateLimit, { max: 200, timeWindow: '1 minute' });
+  // Rate limiting — keyed per authenticated user where the identity is already
+  // verified, else per client IP (see `rateLimitKey`). The credential routes
+  // below add a stricter per-route limit.
+  await app.register(rateLimit, {
+    keyGenerator: rateLimitKey,
+    max: 200,
+    timeWindow: '1 minute',
+  });
 
   // Plugins (decorate app with .temporal, .prisma, .auth)
   await app.register(prismaPlugin);
@@ -268,9 +277,13 @@ async function start() {
     '/api/auth/change-password',
     '/api/auth/send-verification-email',
   ];
+  //
+  // Keyed on the client IP alone, never the per-user key the global limit
+  // uses: these are the brute-force targets, and a per-user key would give an
+  // attacker one fresh bucket per self-registered account they sign in as.
   for (const url of CREDENTIAL_AUTH_PATHS) {
     app.route({
-      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+      config: { rateLimit: { keyGenerator: ipRateLimitKey, max: 20, timeWindow: '1 minute' } },
       handler: betterAuthHandler,
       method: 'POST',
       url,

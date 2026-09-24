@@ -1,5 +1,6 @@
 'use client';
 
+import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -7,9 +8,16 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useCreateRepository, useUpdateRepository } from '@/hooks/useRepositories';
-import { useTeams } from '@/hooks/useTeams';
+import { useLedTeamIds, useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
+import {
+  initialConnectionType,
+  parseConnectionConfig,
+  selectableConnectionTypes,
+} from '@/lib/connectionForm';
 import { errMsg } from '@/lib/errors';
+import { canWriteTeamResource } from '@/lib/teamPermissions';
+import { useAuthStore } from '@/stores/authStore';
 
 export interface ConnectionPrefill {
   organizationName?: string;
@@ -25,21 +33,7 @@ type Mode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
   | { kind: 'edit'; repo: RepositorySummary };
 
-const CONNECTION_TYPES = [
-  { label: 'Git repository (GitHub / GHE)', value: 'git_repo' },
-  { label: 'REST API endpoint', value: 'api_endpoint' },
-  { label: 'Generic / other', value: 'generic' },
-] as const;
-
-type ConnectionType = (typeof CONNECTION_TYPES)[number]['value'];
-
-function isConnectionType(value: unknown): value is ConnectionType {
-  return CONNECTION_TYPES.some((t) => t.value === value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+const CONNECTION_TYPE_OPTIONS = selectableConnectionTypes();
 
 export function ConnectionFormModal({
   open,
@@ -50,16 +44,23 @@ export function ConnectionFormModal({
   onClose: () => void;
   mode: Mode;
 }) {
-  const { data: teams = [] } = useTeams();
+  const { data: allTeams } = useTeams();
+  // Only teams the caller may write connections for (canManageTeamRepos): a
+  // platform LEAD sees every team they belong to in the list, but can only
+  // onboard into or reassign to one they lead.
+  const platformRole = useAuthStore((s) => s.user?.role);
+  const ledTeamIds = useLedTeamIds();
+  const teams = useMemo(
+    () => (allTeams ?? []).filter((t) => canWriteTeamResource(platformRole, t.id, ledTeamIds)),
+    [allTeams, platformRole, ledTeamIds]
+  );
   const create = useCreateRepository();
   const update = useUpdateRepository(mode.kind === 'edit' ? mode.repo.id : '');
 
   const initial = mode.kind === 'edit' ? mode.repo : null;
   const prefill = mode.kind === 'create' ? mode.prefill : undefined;
 
-  const [connType, setConnType] = useState<ConnectionType>(
-    isConnectionType(initial?.type) ? initial.type : 'git_repo'
-  );
+  const [connType, setConnType] = useState<ConnectionType>(initialConnectionType(initial?.type));
 
   // git_repo fields
   const [organizationName, setOrganizationName] = useState(
@@ -72,7 +73,7 @@ export function ConnectionFormModal({
   const [executorImage, setExecutorImage] = useState(initial?.executorImage ?? '');
   const [language, setLanguage] = useState(initial?.language ?? prefill?.language ?? '');
 
-  // generic / api_endpoint fields
+  // non-git fields (name + type-specific config)
   const [name, setName] = useState(initial?.name ?? '');
   const [configJson, setConfigJson] = useState(() =>
     initial?.config != null ? JSON.stringify(initial.config, null, 2) : ''
@@ -93,8 +94,7 @@ export function ConnectionFormModal({
     if (!open) {
       return;
     }
-    const t = isConnectionType(initial?.type) ? initial.type : 'git_repo';
-    setConnType(t);
+    setConnType(initialConnectionType(initial?.type));
     setOrganizationName(initial?.organizationName ?? prefill?.organizationName ?? '');
     setRepoName(initial?.repoName ?? prefill?.repoName ?? '');
     setDefaultBranch(initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main');
@@ -120,19 +120,13 @@ export function ConnectionFormModal({
     setError(null);
 
     let parsedConfig: Record<string, unknown> | null = null;
-    if (connType !== 'git_repo' && configJson.trim()) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(configJson);
-      } catch {
-        setError('Config JSON is invalid');
+    if (connType !== 'git_repo') {
+      const parsed = parseConnectionConfig(configJson);
+      if (!parsed.ok) {
+        setError(parsed.error);
         return;
       }
-      if (!isRecord(parsed)) {
-        setError('Config must be a JSON object (e.g. {"key": "value"})');
-        return;
-      }
-      parsedConfig = parsed;
+      parsedConfig = parsed.config;
     }
 
     try {
@@ -151,7 +145,8 @@ export function ConnectionFormModal({
           });
         } else {
           await create.mutateAsync({
-            config: parsedConfig,
+            // The create schema is optional, not nullable: omit a blank config.
+            config: parsedConfig ?? undefined,
             description: description.trim() || undefined,
             name: name.trim() || undefined,
             teamId,
@@ -225,13 +220,14 @@ export function ConnectionFormModal({
             label="Connection type"
             onChange={(e) => {
               const v = e.target.value;
-              if (isConnectionType(v)) {
-                setConnType(v);
+              const match = CONNECTION_TYPE_OPTIONS.find((t) => t.value === v);
+              if (match) {
+                setConnType(match.value);
               }
             }}
             value={connType}
           >
-            {CONNECTION_TYPES.map(({ label, value }) => (
+            {CONNECTION_TYPE_OPTIONS.map(({ label, value }) => (
               <option key={value} value={value}>
                 {label}
               </option>
@@ -302,7 +298,7 @@ export function ConnectionFormModal({
             <Input
               label="Name"
               onChange={(e) => setName(e.target.value)}
-              placeholder={connType === 'api_endpoint' ? 'Payments API (prod)' : 'My integration'}
+              placeholder={connType === 'http_api' ? 'Payments API (prod)' : 'My integration'}
               required
               value={name}
             />
@@ -329,7 +325,7 @@ export function ConnectionFormModal({
               >
                 Config (JSON)
                 <span className="ml-1 font-normal normal-case text-paper-500">
-                  {connType === 'api_endpoint'
+                  {connType === 'http_api'
                     ? '— e.g. {"baseUrl":"https://api.example.com","authType":"bearer"}'
                     : '— arbitrary key/value pairs for workflow use'}
                 </span>

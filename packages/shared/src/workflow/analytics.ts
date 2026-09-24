@@ -13,6 +13,12 @@
  * RUNNING, or pre-phase-8 rows in the same table).
  */
 
+import {
+  isTerminalWorkflowRunStatus,
+  WORKFLOW_RUN_FAILURE_STATUSES,
+  type WorkflowRunStatus,
+} from '../types/api.js';
+
 export interface AnalyticsRunRow {
   endedAt: Date | null;
   startedAt: Date;
@@ -85,12 +91,24 @@ export interface SignificanceHint {
 /** Minimum runs per arm before we report a significance hint at all. */
 export const MIN_SAMPLES_FOR_SIGNIFICANCE = 30;
 
-const TERMINAL_FAILURE_STATUSES = new Set(['FAILED', 'TIMED_OUT', 'CANCELLED']);
-const TERMINAL_STATUSES = new Set<string>(['SUCCESS', ...TERMINAL_FAILURE_STATUSES]);
 const STEP_STATUSES_TO_SKIP = new Set(['SKIPPED', 'PENDING', 'RUNNING']);
 
+/**
+ * Terminal = finished: every status but RUNNING, SKIPPED included (see
+ * `WORKFLOW_RUN_TERMINAL_STATUSES` in `types/api.ts`). Success rates are taken over the
+ * *decided* runs only — SUCCESS plus the failure statuses — because a skipped
+ * run neither succeeded nor failed and would otherwise read as a failure.
+ */
 function isTerminalStatus(status: string): boolean {
-  return TERMINAL_STATUSES.has(status);
+  return isTerminalWorkflowRunStatus(status);
+}
+
+function isFailureStatus(status: string): boolean {
+  return WORKFLOW_RUN_FAILURE_STATUSES.has(status as WorkflowRunStatus);
+}
+
+function isDecidedStatus(status: string): boolean {
+  return status === 'SUCCESS' || isFailureStatus(status);
 }
 
 function percentile(sorted: number[], p: number): number | null {
@@ -107,10 +125,11 @@ export function computeAnalytics(
   windowDays: number
 ): AnalyticsResult {
   const totalRuns = runs.length;
-  const finished = runs.filter((r) => r.status !== 'RUNNING');
+  const finished = runs.filter((r) => isTerminalStatus(r.status));
   const succeeded = finished.filter((r) => r.status === 'SUCCESS').length;
-  const failed = finished.filter((r) => TERMINAL_FAILURE_STATUSES.has(r.status)).length;
-  const successRate = finished.length > 0 ? succeeded / finished.length : null;
+  const failed = finished.filter((r) => isFailureStatus(r.status)).length;
+  const decided = succeeded + failed;
+  const successRate = decided > 0 ? succeeded / decided : null;
 
   const durationsMs = finished
     .filter((r) => r.endedAt)
@@ -152,13 +171,15 @@ export function computeAnalytics(
   const estimatedHumanTimeSavedTotal =
     timeSaved.length > 0 ? timeSaved.reduce((s, m) => s + m, 0) : null;
 
-  const finishedAutonomy = runs.filter((r) => r.status !== 'RUNNING' && r.wasAutonomous != null);
+  const finishedAutonomy = runs.filter(
+    (r) => isTerminalStatus(r.status) && r.wasAutonomous != null
+  );
   const autonomyRate =
     finishedAutonomy.length > 0
       ? finishedAutonomy.filter((r) => r.wasAutonomous).length / finishedAutonomy.length
       : null;
 
-  const finishedHuman = runs.filter((r) => r.status !== 'RUNNING' && r.hadHumanStep != null);
+  const finishedHuman = runs.filter((r) => isTerminalStatus(r.status) && r.hadHumanStep != null);
   const humanReviewRate =
     finishedHuman.length > 0
       ? finishedHuman.filter((r) => r.hadHumanStep).length / finishedHuman.length
@@ -227,7 +248,7 @@ export function computeAnalytics(
  * the team make the call.
  */
 function computeSignificanceHint(runs: AnalyticsRunRow[]): SignificanceHint | null {
-  const finished = runs.filter((r) => r.status !== 'RUNNING');
+  const finished = runs.filter((r) => isDecidedStatus(r.status));
   if (finished.length === 0) {
     return null;
   }
@@ -305,13 +326,13 @@ export interface HumanErrorBaselineShallow {
 export interface GlobalAnalyticsResult {
   windowDays: number;
   totalRuns: number;
-  /** Terminal/completed runs (SUCCESS + FAILED/TIMED_OUT/CANCELLED). */
+  /** Terminal/completed runs — every status but RUNNING, SKIPPED included. */
   completedRuns: number;
   /** Runs currently in RUNNING status. */
   runningRuns: number;
   succeeded: number;
   failed: number;
-  /** Success rate computed over terminal/completed runs only. */
+  /** Success rate over decided runs only (SUCCESS + FAILED/TIMED_OUT/CANCELLED). */
   successRate: number | null;
   totalCost: number;
   estimatedHumanTimeSavedTotal: number | null;
@@ -321,7 +342,7 @@ export interface GlobalAnalyticsResult {
     templateId: string;
     templateName: string;
     totalRuns: number;
-    /** Success rate computed over terminal/completed runs only. */
+    /** Success rate over decided runs only (SUCCESS + FAILED/TIMED_OUT/CANCELLED). */
     successRate: number | null;
     totalCost: number;
     estimatedHumanTimeSavedTotal: number | null;
@@ -352,15 +373,15 @@ export function computeGlobalAnalytics(
   const completedRuns = terminal.length;
   const runningRuns = totalRuns - completedRuns;
   const succeeded = terminal.filter((r) => r.status === 'SUCCESS').length;
-  const failed = terminal.filter((r) => TERMINAL_FAILURE_STATUSES.has(r.status)).length;
-  const successRate = completedRuns > 0 ? succeeded / completedRuns : null;
+  const failed = terminal.filter((r) => isFailureStatus(r.status)).length;
+  const successRate = succeeded + failed > 0 ? succeeded / (succeeded + failed) : null;
   const totalCost = rows.reduce((s, r) => s + (r.costUsdAccrued || 0), 0);
 
   const timeSaved = rows.map((r) => r.estimatedHumanTimeSaved ?? 0).filter((m) => m > 0);
   const estimatedHumanTimeSavedTotal =
     timeSaved.length > 0 ? timeSaved.reduce((s, m) => s + m, 0) : null;
 
-  const finished = rows.filter((r) => r.status !== 'RUNNING');
+  const finished = rows.filter((r) => isTerminalStatus(r.status));
   const autonomyBase = finished.filter((r) => r.wasAutonomous != null);
   const autonomyRate =
     autonomyBase.length > 0
@@ -399,7 +420,7 @@ export function computeGlobalAnalytics(
     tCell.totalRuns += 1;
     tCell.totalCost += r.costUsdAccrued || 0;
     tCell.timeSaved += r.estimatedHumanTimeSaved ?? 0;
-    if (isTerminalStatus(r.status)) {
+    if (isDecidedStatus(r.status)) {
       tCell.completed += 1;
       if (r.status === 'SUCCESS') {
         tCell.succeeded += 1;
@@ -418,7 +439,7 @@ export function computeGlobalAnalytics(
     dCell.totalRuns += 1;
     dCell.totalCost += r.costUsdAccrued || 0;
     dCell.timeSaved += r.estimatedHumanTimeSaved ?? 0;
-    if (r.status !== 'RUNNING') {
+    if (isTerminalStatus(r.status)) {
       dCell.finished += 1;
       if (r.hasError) {
         dCell.withError += 1;

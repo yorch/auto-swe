@@ -56,9 +56,13 @@ export interface UpdateRepoBody {
   config?: unknown;
 }
 
-export function useRepositories(opts: ListOptions = {}) {
+export function useRepositories(opts: ListOptions & { includeInactive?: boolean } = {}) {
+  const { includeInactive, ...page } = opts;
+  const path = includeInactive
+    ? '/api/v1/repositories?includeInactive=true'
+    : '/api/v1/repositories';
   return useListQuery<RepositorySummary>({
-    queryFn: () => api.get(listUrl('/api/v1/repositories', opts)),
+    queryFn: () => api.get(listUrl(path, page)),
     queryKey: ['repositories', opts],
   });
 }

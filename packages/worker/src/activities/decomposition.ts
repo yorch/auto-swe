@@ -15,10 +15,11 @@ import type {
   RepoWorkRequest,
   Subtask,
 } from '@auto-swe/shared/types/workflow';
-import { heartbeat } from '@temporalio/activity';
+import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
 import { buildImplementerForActivity } from '../agents/implementer.js';
 import { MERGE_CONFLICT_RESOLVER_PROMPT } from '../agents/prompts.js';
+import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import {
   currentWorkflowId,
   currentWorkflowRunId,
@@ -26,14 +27,23 @@ import {
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
+import { abortSignalOption, throwIfActivityCancelled } from '../lib/cancellation.js';
+import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorOutput } from '../lib/errors.js';
+import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
+import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
+import { resolveSystemPrompt } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
-import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
+import {
+  createWorkspace,
+  fetchBranchesSubcommand,
+  shellQuote,
+  type Workspace,
+} from './workspace.js';
 
 export async function planDecomposition(
   request: RepoWorkRequest,
@@ -57,7 +67,7 @@ export async function planDecomposition(
     );
     return result;
   } finally {
-    await persistActivityTrace(tracer, 'planner');
+    await persistActivityTrace(tracer, 'decomposer');
   }
 }
 
@@ -193,11 +203,14 @@ export interface ResolveMergeConflictInput {
 }
 
 /**
- * Replay the unmerged tail through the implementer agent. For each source:
- * attempt the merge; on conflict, invoke the resolver agent against the
- * conflicted files; verify the resolution via `git diff --diff-filter=U`
- * (unmerged stages) + `git diff --check` (working-tree markers); stage +
- * commit. After the loop, push the target if every branch resolved.
+ * Replay the unmerged tail through the `mergeConflictResolver` agent. For each
+ * source: attempt the merge; on conflict, invoke the resolver against the
+ * conflicted files; verify the resolution ourselves — no conflict markers left
+ * in any conflicted file — then stage exactly those files, confirm git holds no
+ * unmerged path, and commit. The agent never runs git; staging is this
+ * activity's job. After the loop, a branch the resolver touched is put through
+ * the same diff scanners as every other agent-written push, and the target is
+ * pushed only if every branch resolved and the security gate passed.
  */
 export async function resolveMergeConflict(
   input: ResolveMergeConflictInput
@@ -232,6 +245,7 @@ export async function resolveMergeConflict(
   const unmerged: string[] = [];
   const conflicts: Array<{ branch: string; output: string }> = [];
   const tracer = new AgentTracer();
+  const resolutions: ResolverCommit[] = [];
 
   try {
     for (let idx = 0; idx < sourceBranches.length; idx++) {
@@ -243,6 +257,9 @@ export async function resolveMergeConflict(
         messagePrefix,
         tracer,
       });
+      if (resolved.resolution) {
+        resolutions.push(resolved.resolution);
+      }
       if (resolved.passed) {
         merged.push(source);
       } else {
@@ -254,6 +271,12 @@ export async function resolveMergeConflict(
     }
 
     const passed = conflicts.length === 0;
+    if (passed && resolutions.length > 0) {
+      // The resolver wrote code, so its result gets the same scan every other
+      // agent-written push does — before the push, so a CRITICAL finding never
+      // reaches the remote branch.
+      await scanResolvedMerge(workspace, resolutions, tracer);
+    }
     const headSha =
       passed && merged.length > 0 ? await pushAndCapture(workspace, targetBranch, log) : undefined;
 
@@ -281,7 +304,7 @@ export async function resolveMergeConflict(
         failureType: 'MERGE_CONFLICT',
         lessonSummary: `Auto-resolved merge conflicts when merging ${merged.length} branch(es) into ${targetBranch}: ${merged.join(', ')}`,
         metadata: { mergedBranches: merged, targetBranch },
-        rationale: `Implementer agent rewrote conflict markers and the resolution passed git diff --check + diff-filter=U.`,
+        rationale: `Merge-conflict resolver rewrote the conflicted files; no conflict markers remained and git reported no unmerged paths after staging.`,
         repoId: requireRepoId(request, 'resolveMergeConflict'),
         temporalWorkflowId: currentWorkflowId(),
       });
@@ -297,9 +320,79 @@ export async function resolveMergeConflict(
       unmergedBranches: unmerged,
     };
   } finally {
-    const done = persistActivityTrace(tracer, 'implementer');
+    const done = persistActivityTrace(tracer, 'mergeConflictResolver');
     await workspace.destroy();
     await done;
+  }
+}
+
+/** A merge commit the resolver produced, and the conflicted paths it wrote. */
+interface ResolverCommit {
+  sha: string;
+  files: string[];
+}
+
+/**
+ * The diff scanners every agent-written push goes through (see
+ * `implementerSession.ts`): the advisory static code scan, recorded on the
+ * trace, and the security gate, which fails the activity on a CRITICAL
+ * finding.
+ *
+ * The scan covers only what the resolver wrote: for each merge commit it
+ * produced, the conflicted paths diffed from the target side (`<sha>^1`) to the
+ * committed resolution. Not the working tree — an edit the agent made outside
+ * the conflict set is never staged or pushed — and not the default branch,
+ * which would re-scan every subtask already merged into the epic and fail the
+ * resolver for a finding it did not write.
+ */
+async function scanResolvedMerge(
+  workspace: Workspace,
+  resolutions: ResolverCommit[],
+  tracer: AgentTracer
+): Promise<void> {
+  const parts: string[] = [];
+  for (const { sha, files } of resolutions) {
+    const paths = files.map((f) => shellQuote(f)).join(' ');
+    parts.push(
+      await workspace.exec(`git diff ${shellQuote(`${sha}^1`)} ${shellQuote(sha)} -- ${paths}`)
+    );
+  }
+  const diff = parts.filter((p) => p.trim().length > 0).join('\n');
+  if (diff.length === 0) {
+    // The resolution kept the target side verbatim: the resolver wrote nothing.
+    return;
+  }
+
+  try {
+    const findings = await scanDiffForCodeIssues(diff);
+    if (findings.length > 0) {
+      tracer.addActivityEvent({
+        name: 'code_security.scan',
+        outputJson: { count: findings.length, findings },
+      });
+    }
+  } catch (err) {
+    tracer.addActivityEvent({
+      error: getErrorMessage(err),
+      name: 'code_security.scan',
+      outputJson: { degraded: true },
+    });
+  }
+
+  heartbeat('resolveMergeConflict: running security scan');
+  const securityResult = await scanDiffForSecurityIssues(diff);
+  if (!securityResult.passed) {
+    const findingsSummary = securityResult.findings
+      .map(
+        (f) =>
+          `[${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''} — ${f.category}: ${f.description}`
+      )
+      .join('\n');
+    throw ApplicationFailure.nonRetryable(
+      `Security scan failed with critical findings:\n${findingsSummary}`,
+      'SECURITY_GATE_FAILURE',
+      { findings: securityResult.findings }
+    );
   }
 }
 
@@ -314,7 +407,7 @@ async function provisionMergeWorkspace(
   targetBranch: string,
   sourceBranches: string[],
   label: string
-): Promise<{ workspace: Workspace; log: string[] }> {
+): Promise<{ workspace: Workspace; log: string[]; defaultBranch: string }> {
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { installationId: true } } },
     where: { id: requireRepoId(request, 'decomposition') },
@@ -331,16 +424,18 @@ async function provisionMergeWorkspace(
   heartbeat(`${label}: workspace provisioned`);
 
   const log: string[] = [];
+  // Explicit refspecs: the clone is single-branch, so a bare branch name
+  // would land only in FETCH_HEAD and `origin/<branch>` would not exist for
+  // the reset and merges below (see `fetchBranchesSubcommand`).
   const refs = [targetBranch, ...sourceBranches];
-  const refList = refs.map((r) => shellQuote(r)).join(' ');
   try {
-    await workspace.gitAuthed(`fetch origin ${refList}`);
+    await workspace.gitAuthed(fetchBranchesSubcommand(refs));
     log.push(`fetched ${refs.join(', ')}`);
   } catch {
     log.push('batched fetch failed; retrying per-ref');
     for (const r of refs) {
       try {
-        await workspace.gitAuthed(`fetch origin ${shellQuote(r)}`);
+        await workspace.gitAuthed(fetchBranchesSubcommand([r]));
         log.push(`fetched ${r}`);
       } catch {
         log.push(`fetch ${r} failed (branch may not exist remotely)`);
@@ -355,7 +450,7 @@ async function provisionMergeWorkspace(
     log.push(`origin/${targetBranch} not found; starting from defaultBranch`);
   }
 
-  return { log, workspace };
+  return { defaultBranch: repo.defaultBranch, log, workspace };
 }
 
 async function pushAndCapture(
@@ -363,6 +458,8 @@ async function pushAndCapture(
   targetBranch: string,
   log: string[]
 ): Promise<string> {
+  // Never push on behalf of a run that has already been cancelled.
+  throwIfActivityCancelled();
   await workspace.gitAuthed(`push origin ${shellQuote(targetBranch)}`);
   const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
   log.push(`pushed ${targetBranch} (head ${headSha})`);
@@ -379,7 +476,7 @@ async function mergeOneWithResolver(
     messagePrefix: string;
     tracer: AgentTracer;
   }
-): Promise<{ passed: boolean; output: string }> {
+): Promise<{ passed: boolean; output: string; resolution?: ResolverCommit }> {
   const commitMessage = `${opts.messagePrefix}: merge ${source} into ${targetBranch}`;
 
   try {
@@ -394,78 +491,131 @@ async function mergeOneWithResolver(
     );
   }
 
-  for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
-    const conflictedFiles = await listConflictedFiles(workspace);
-    if (conflictedFiles.length === 0) {
-      // Merge threw without leaving unmerged stages — non-conflict failure
-      // (dirty tree, lock, etc.). Abort + surface so the run doesn't loop.
-      await tryMergeAbort(workspace);
-      return { output: 'merge failed without conflicted files', passed: false };
-    }
+  // The conflict set is fixed by the merge. Nothing is staged until every file
+  // in it is clean, so git keeps reporting the same unmerged paths across
+  // attempts — read it once.
+  let conflictedFiles: string[];
+  try {
+    conflictedFiles = await listConflictedFiles(workspace);
+  } catch (err) {
+    await tryMergeAbort(workspace);
+    return {
+      output: `could not list conflicted files: ${getExecErrorOutput(err, 800)}`,
+      passed: false,
+    };
+  }
+  if (conflictedFiles.length === 0) {
+    // Merge threw without leaving unmerged stages — non-conflict failure
+    // (dirty tree, lock, etc.). Abort + surface so the run doesn't loop.
+    await tryMergeAbort(workspace);
+    return { output: 'merge failed without conflicted files', passed: false };
+  }
 
+  const activityCtx = await currentRequestContext();
+  const systemPrompt = await resolveSystemPrompt(
+    'mergeConflictResolver',
+    MERGE_CONFLICT_RESOLVER_PROMPT
+  );
+
+  for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
+    throwIfActivityCancelled();
     opts.log.push(
       `resolver attempt ${attempt}/${opts.maxAttempts} for ${source}: ${conflictedFiles.length} files`
     );
 
-    const activityCtx = await currentRequestContext();
-    const { agent, promptSuffix, closeMcp } = await buildImplementerForActivity(
+    const { agent, promptSuffix, closeMcp, maxSteps } = await buildImplementerForActivity(
       workspace,
       opts.tracer,
-      activityCtx
+      activityCtx,
+      'mergeConflictResolver'
     );
+    const fullSystemPrompt = systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
+    const userMessage = JSON.stringify({
+      attempt,
+      conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
+      sourceBranch: source,
+      targetBranch,
+    });
+    const start = Date.now();
     try {
       await assertBudgetAvailable('decomposition');
       const result = await agent.generate(
         [
-          {
-            content: MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : ''),
-            role: 'system',
-          },
-          {
-            content: JSON.stringify({
-              attempt,
-              conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
-              sourceBranch: source,
-              targetBranch,
-            }),
-            role: 'user',
-          },
+          { content: fullSystemPrompt, role: 'system' },
+          { content: userMessage, role: 'user' },
         ],
-        { toolChoice: 'auto' }
+        { maxSteps, toolChoice: 'auto', ...abortSignalOption() }
       );
 
+      let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
       if (result.usage) {
-        // Capture attribution but discard — no tracer addLlmResponse here since
-        // the agent drives tool calls internally and we don't have text/object output
-        // to record at this point. The OTel span from recordLlmUsage still fires.
-        await recordLlmUsage(
+        attribution = await recordLlmUsage(
           currentWorkflowId(),
-          'implementer',
+          'mergeConflictResolver',
           result.usage,
           `llm.resolve_conflict.${source}.attempt_${attempt}`
         );
       }
+
+      // LLM output scanner — advisory, non-blocking (the helper never throws).
+      await recordSuspiciousLlmOutput(opts.tracer, result.text ?? '', {
+        inputJson: { attempt, source },
+      });
+
+      // Recorded even when the model only made tool calls: the tool calls are
+      // already on the tracer, and this is the row that carries the prompt,
+      // the cost, and the attempt they belong to.
+      opts.tracer.addLlmResponse({
+        costUsd: attribution.costUsd,
+        durationMs: Date.now() - start,
+        inputJson: { attempt, source, systemPrompt: fullSystemPrompt, userMessage },
+        inputTokens: attribution.inputTokens,
+        model: attribution.modelSpec || undefined,
+        outputJson: result.text
+          ? { text: result.text }
+          : { toolCallCount: result.steps?.length ?? 0 },
+        outputTokens: attribution.outputTokens,
+        role: 'mergeConflictResolver',
+      });
+    } catch (err) {
+      opts.tracer.addLlmResponse({
+        durationMs: Date.now() - start,
+        error: getErrorMessage(err),
+        inputJson: { attempt, source, systemPrompt: fullSystemPrompt, userMessage },
+        role: 'mergeConflictResolver',
+      });
+      throw err;
     } finally {
       await closeMcp?.();
     }
 
-    const remaining = await listConflictedFiles(workspace);
-    if (remaining.length === 0 && !(await hasConflictMarkers(workspace))) {
-      await workspace.exec('git add -A');
-      try {
-        await workspace.exec(`git commit -m ${shellQuote(commitMessage)}`);
-        opts.log.push(`resolved ${source} on attempt ${attempt}`);
-        return { output: '', passed: true };
-      } catch (commitErr) {
-        // Resolver may have re-introduced a marker via writeFile or staged
-        // an empty tree; fall through to retry or terminal failure.
-        opts.log.push(
-          `commit after resolver failed on ${source} attempt ${attempt}: ${getExecErrorOutput(commitErr, 1000)}`
-        );
-      }
-    } else {
+    const withMarkers = await filesWithConflictMarkers(workspace, conflictedFiles);
+    if (withMarkers.length > 0) {
       opts.log.push(
-        `resolver attempt ${attempt} for ${source} left ${remaining.length} files in conflict`
+        `resolver attempt ${attempt} for ${source} left conflict markers in ${withMarkers.length} file(s): ${withMarkers.join(', ')}`
+      );
+      continue;
+    }
+
+    try {
+      // Stage exactly the conflicted paths: `git add` is what clears an
+      // unmerged index entry, and a path the resolver deleted is staged as a
+      // removal. Anything else the agent touched stays out of the commit.
+      await workspace.exec(`git add -- ${conflictedFiles.map((f) => shellQuote(f)).join(' ')}`);
+      const stillUnmerged = await listConflictedFiles(workspace);
+      if (stillUnmerged.length > 0) {
+        opts.log.push(
+          `resolver attempt ${attempt} for ${source}: ${stillUnmerged.length} path(s) still unmerged after staging`
+        );
+        continue;
+      }
+      await workspace.exec(`git commit -m ${shellQuote(commitMessage)}`);
+      const sha = (await workspace.exec('git rev-parse HEAD')).trim();
+      opts.log.push(`resolved ${source} on attempt ${attempt} (${sha})`);
+      return { output: '', passed: true, resolution: { files: conflictedFiles, sha } };
+    } catch (commitErr) {
+      opts.log.push(
+        `staging/commit after resolver failed on ${source} attempt ${attempt}: ${getExecErrorOutput(commitErr, 1000)}`
       );
     }
   }
@@ -477,12 +627,17 @@ async function mergeOneWithResolver(
   };
 }
 
-async function listConflictedFiles(workspace: Workspace): Promise<string[]> {
-  const raw = await workspace.exec('git diff --name-only --diff-filter=U || true');
-  return raw
-    .split('\n')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+/**
+ * The paths git holds as unmerged. `-z` is load-bearing: without it git
+ * C-quotes any path with a space-adjacent, non-ASCII or control character
+ * (`"caf\303\251.md"`), and the quoted form names no file on disk. Entries are
+ * NUL-separated and taken verbatim — never trimmed, since a leading or trailing
+ * space is part of a path. A failing `git diff` throws rather than reading as
+ * "nothing unmerged", which is the answer that would let a merge be committed.
+ */
+export async function listConflictedFiles(workspace: Workspace): Promise<string[]> {
+  const raw = await workspace.exec('git diff --name-only -z --diff-filter=U');
+  return [...new Set(raw.split('\0').filter((s) => s.length > 0))];
 }
 
 async function readConflictPayloads(
@@ -502,13 +657,41 @@ async function readConflictPayloads(
   return out;
 }
 
-async function hasConflictMarkers(workspace: Workspace): Promise<boolean> {
-  try {
-    await workspace.exec('git diff --check');
-    return false;
-  } catch {
-    return true;
+/**
+ * A line that opens or closes a conflict hunk: `<<<<<<< ours`, `>>>>>>> theirs`,
+ * and the diff3 base marker `||||||| base` — exactly seven characters, then a
+ * space or the end of the line, so a `<<<` heredoc or an 8-character rule does
+ * not match.
+ *
+ * The `=======` separator is deliberately absent. It is the Markdown and
+ * reStructuredText setext underline for a seven-letter heading (`License`,
+ * `Changes`), so matching it bare fails every merge that touches such a README.
+ * It is also redundant: git never writes a separator without the opening and
+ * closing markers around it, and a file still holding either is already caught.
+ */
+export const CONFLICT_MARKER_ERE = '^(<{7}|>{7}|[|]{7})( |$)';
+
+/**
+ * The conflicted files that still contain a conflict marker in the working
+ * tree. `git diff --check` is not a substitute: it inspects unstaged changes
+ * only, and it also fails on trailing whitespace, which is not a conflict. A
+ * file the resolver deleted has no markers. A grep that cannot run at all
+ * (exit ≥ 2 on a file that exists) counts as markers present — an unverified
+ * file is not a resolved one.
+ */
+async function filesWithConflictMarkers(workspace: Workspace, files: string[]): Promise<string[]> {
+  const dirty: string[] = [];
+  for (const file of files) {
+    const quoted = shellQuote(file);
+    const res = await workspace.execCapture(
+      `if [ -e ${quoted} ]; then grep -qE ${shellQuote(CONFLICT_MARKER_ERE)} -- ${quoted}; else exit 1; fi`
+    );
+    // grep: 0 = a marker line matched, 1 = none, ≥2 = error.
+    if (res.exitCode !== 1) {
+      dirty.push(file);
+    }
   }
+  return dirty;
 }
 
 async function tryMergeAbort(workspace: Workspace): Promise<void> {

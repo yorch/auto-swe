@@ -46,6 +46,13 @@ describe('/api/v1/scheduled-work-requests', () => {
   let membershipRole = 'LEAD';
   let scheduleRow: Record<string, unknown> | null = null;
   let syncShouldFail = false;
+  let isOrgMember = true;
+  let orgSpentUsd = 0;
+  /** Team owning the explicit-override template; null = GLOBAL. */
+  let overrideTemplateTeamId: string | null = null;
+  /** Team ids the caller belongs to, for the template-visibility filter. */
+  const callerTeamIds = ['team-1'];
+  let failScheduleUpdate = false;
 
   const syncCalls: WorkRequestScheduleInput[] = [];
   const triggeredIds: string[] = [];
@@ -55,6 +62,7 @@ describe('/api/v1/scheduled-work-requests', () => {
   const deletedRowIds: string[] = [];
   const deletedWorkRequestIds: string[] = [];
   const scheduleUpdates: Array<Record<string, unknown>> = [];
+  const auditRows: Array<Record<string, unknown>> = [];
 
   function rowWithInclude(data: Record<string, unknown>) {
     return {
@@ -93,6 +101,12 @@ describe('/api/v1/scheduled-work-requests', () => {
         },
         deleteMany: async () => ({ count: 1 }),
       },
+      configAuditLog: {
+        create: async (args: { data: Record<string, unknown> }) => {
+          auditRows.push(args.data);
+          return { id: 'audit-1', ...args.data };
+        },
+      },
       connection: {
         findFirst: async () => ({
           id: REPO_ID,
@@ -102,10 +116,18 @@ describe('/api/v1/scheduled-work-requests', () => {
           team: {
             memberships:
               membershipRole === 'NONE' ? [] : [{ role: membershipRole, userId: 'user-1' }],
+            organization: { id: 'org-1', monthlyBudgetUsdCents: 1000 },
+            orgId: 'org-1',
           },
           teamId: 'team-1',
           type: 'git_repo',
         }),
+      },
+      organizationMembership: {
+        findUnique: async () => (isOrgMember ? { role: 'ORG_MEMBER' } : null),
+      },
+      orgMonthlyUsage: {
+        findUnique: async () => ({ costUsdAccrued: orgSpentUsd }),
       },
       runInput: {
         create: async (args: { data: Record<string, unknown> }) => {
@@ -116,6 +138,7 @@ describe('/api/v1/scheduled-work-requests', () => {
           deletedWorkRequestIds.push(args.where.id);
           return {};
         },
+        findUnique: async () => ({ templateId: 'tpl-1', templateVersion: 3 }),
         update: async (args: { data: Record<string, unknown> }) => ({ ...args.data }),
       },
       scheduledWorkRequest: {
@@ -128,13 +151,31 @@ describe('/api/v1/scheduled-work-requests', () => {
         findUnique: async (args: { where: { id: string } }) =>
           scheduleRow && args.where.id === SCHEDULE_ID ? { ...scheduleRow } : null,
         update: async (args: { data: Record<string, unknown> }) => {
+          if (failScheduleUpdate && !('lastFiredAt' in args.data)) {
+            throw new Error('db down');
+          }
           scheduleUpdates.push(args.data);
           return rowWithInclude({ ...scheduleRow, ...args.data });
         },
       },
       workflowTemplate: {
-        // resolveDefaultTemplate path (team default)
-        findFirst: async () => ({ activeVersion: 3, id: 'tpl-1' }),
+        // Explicit override (by id, with the caller-visibility filter) or the
+        // resolveDefaultTemplate path (team default).
+        findFirst: async (args: {
+          where: { id?: string; OR?: Array<{ teamId?: null; team?: unknown }> };
+        }) => {
+          if (!args.where.id) {
+            return { activeVersion: 3, id: 'tpl-1' };
+          }
+          if (args.where.id !== TPL_ID) {
+            return null;
+          }
+          const visible =
+            !args.where.OR ||
+            overrideTemplateTeamId === null ||
+            callerTeamIds.includes(overrideTemplateTeamId);
+          return visible ? { activeVersion: 7, id: TPL_ID, teamId: overrideTemplateTeamId } : null;
+        },
         findUnique: async (args: { where: { id: string } }) =>
           args.where.id === TPL_ID ? { activeVersion: 7, id: TPL_ID } : null,
       },
@@ -174,6 +215,10 @@ describe('/api/v1/scheduled-work-requests', () => {
     membershipRole = 'LEAD';
     scheduleRow = null;
     syncShouldFail = false;
+    isOrgMember = true;
+    orgSpentUsd = 0;
+    overrideTemplateTeamId = null;
+    failScheduleUpdate = false;
     syncCalls.length = 0;
     triggeredIds.length = 0;
     deletedScheduleIds.length = 0;
@@ -343,6 +388,177 @@ describe('/api/v1/scheduled-work-requests', () => {
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].paused).toBe(true);
     expect(syncCalls[0].request.workRequestId).toBe(WR_ID);
+  });
+
+  const pausedRow = () => ({
+    budgetTier: 'STANDARD',
+    cronExpression: '0 3 * * 1',
+    description: 'Update all dependencies',
+    externalTicketPrefix: 'DEPS',
+    id: SCHEDULE_ID,
+    isActive: false,
+    name: 'Weekly dependency update',
+    repoId: REPO_ID,
+    templateId: null,
+    templateVersion: null,
+    workRequestId: WR_ID,
+  });
+
+  it('refuses to create a schedule for a caller outside the repo org', async () => {
+    isOrgMember = false;
+    const res = await inject({
+      method: 'POST',
+      payload: validBody,
+      token: 'lead-token',
+      url: '/api/v1/scheduled-work-requests',
+    });
+    expect(res.statusCode).toBe(403);
+    expect(createdWorkRequests).toHaveLength(0);
+  });
+
+  it('refuses to create a schedule when the org is over its monthly cap', async () => {
+    orgSpentUsd = 10; // 1000 cents == the cap
+    const res = await inject({
+      method: 'POST',
+      payload: validBody,
+      token: 'lead-token',
+      url: '/api/v1/scheduled-work-requests',
+    });
+    expect(res.statusCode).toBe(402);
+    expect(JSON.parse(res.payload).error.code).toBe('ORG_BUDGET_EXCEEDED');
+  });
+
+  it('rejects a template override from a team the caller does not belong to', async () => {
+    overrideTemplateTeamId = 'team-other';
+    const res = await inject({
+      method: 'POST',
+      payload: { ...validBody, templateId: TPL_ID },
+      token: 'lead-token',
+      url: '/api/v1/scheduled-work-requests',
+    });
+    expect(res.statusCode).toBe(422);
+    expect(createdWorkRequests).toHaveLength(0);
+  });
+
+  it('takes the launch decision when PATCH re-activates a paused schedule', async () => {
+    scheduleRow = pausedRow();
+    isOrgMember = false;
+    const res = await inject({
+      method: 'PATCH',
+      payload: { isActive: true },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(syncCalls).toHaveLength(0);
+    expect(scheduleUpdates).toHaveLength(0);
+  });
+
+  it('takes the launch decision when PATCH re-times an active schedule', async () => {
+    scheduleRow = { ...pausedRow(), isActive: true };
+    isOrgMember = false;
+    const res = await inject({
+      method: 'PATCH',
+      payload: { cronExpression: '* * * * *' },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(syncCalls).toHaveLength(0);
+    expect(scheduleUpdates).toHaveLength(0);
+  });
+
+  it('makes whoever re-activates a schedule its owner, since every fire checks the owner', async () => {
+    scheduleRow = { ...pausedRow(), createdById: 'user-original' };
+    const res = await inject({
+      method: 'PATCH',
+      payload: { isActive: true },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(scheduleUpdates.at(-1)).toMatchObject({ createdById: 'user-1' });
+    // The takeover is recorded, never silent.
+    expect(auditRows.at(-1)).toMatchObject({
+      actorId: 'user-1',
+      afterJson: { createdById: 'user-1', event: 'owner-transferred' },
+      beforeJson: { createdById: 'user-original' },
+      entityId: SCHEDULE_ID,
+      entityType: 'ScheduledWorkRequest',
+    });
+  });
+
+  it('does not change the owner on a pause or rename', async () => {
+    scheduleRow = { ...pausedRow(), createdById: 'user-original', isActive: true };
+    const paused = await inject({
+      method: 'PATCH',
+      payload: { isActive: false },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(paused.statusCode).toBe(200);
+    expect(scheduleUpdates.at(-1)).not.toHaveProperty('createdById');
+
+    scheduleRow = { ...pausedRow(), createdById: 'user-original' };
+    const renamed = await inject({
+      method: 'PATCH',
+      payload: { name: 'Renamed' },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(renamed.statusCode).toBe(200);
+    expect(scheduleUpdates.at(-1)).not.toHaveProperty('createdById');
+  });
+
+  it('still lets an owner who lost access pause an active schedule', async () => {
+    scheduleRow = { ...pausedRow(), isActive: true };
+    isOrgMember = false;
+    const res = await inject({
+      method: 'PATCH',
+      payload: { cronExpression: '* * * * *', isActive: false },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('still lets an owner who lost access rename a paused schedule', async () => {
+    scheduleRow = pausedRow();
+    isOrgMember = false;
+    const res = await inject({
+      method: 'PATCH',
+      payload: { name: 'Renamed' },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('leaves the row untouched when the Temporal sync fails on PATCH', async () => {
+    scheduleRow = { ...pausedRow(), isActive: true };
+    syncShouldFail = true;
+    const res = await inject({
+      method: 'PATCH',
+      payload: { cronExpression: '0 4 * * 1' },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(res.statusCode).toBe(502);
+    expect(scheduleUpdates).toHaveLength(0);
+  });
+
+  it('restores the Temporal schedule when the row update fails after a sync', async () => {
+    scheduleRow = { ...pausedRow(), isActive: true };
+    failScheduleUpdate = true;
+    const res = await inject({
+      method: 'PATCH',
+      payload: { cronExpression: '0 4 * * 1' },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(res.statusCode).toBe(500);
+    // The new schedule, then the stored one put back.
+    expect(syncCalls.map((c) => c.cronExpression)).toEqual(['0 4 * * 1', '0 3 * * 1']);
   });
 
   it('fires the schedule now via the Temporal trigger', async () => {

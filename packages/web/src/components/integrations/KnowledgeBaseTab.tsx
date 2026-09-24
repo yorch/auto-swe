@@ -12,6 +12,8 @@ import {
   useUpdateKnowledgeBaseConfig,
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { usePrefilledField } from '@/hooks/usePrefilledField';
+import { clearableField, clearableIntField } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { SecretInput } from './SecretInput';
 
@@ -39,12 +41,12 @@ export function KnowledgeBaseTab() {
 
   const [provider, setProvider] = useState<'' | 'disabled' | KnowledgeBaseProvider>('');
   const [enabled, setEnabled] = useState<boolean | undefined>(undefined);
-  const [baseUrl, setBaseUrl] = useState('');
+  const [baseUrl, setBaseUrl] = usePrefilledField(data?.baseUrl);
   const [allowPrivateNetwork, setAllowPrivateNetwork] = useState<boolean | undefined>(undefined);
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = usePrefilledField(data?.email);
   const [apiToken, setApiToken] = useState('');
   const [spacesRaw, setSpacesRaw] = useState('');
-  const [maxPages, setMaxPages] = useState('');
+  const [maxPages, setMaxPages] = usePrefilledField(data?.maxPages);
   const [testQuery, setTestQuery] = useState('');
 
   const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
@@ -69,15 +71,12 @@ export function KnowledgeBaseTab() {
     if (enabled !== undefined) {
       body.enabled = enabled;
     }
-    if (baseUrl) {
-      body.baseUrl = baseUrl;
-    }
+    // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
+    body.baseUrl = clearableField(baseUrl, data?.baseUrl);
     if (allowPrivateNetwork !== undefined) {
       body.allowPrivateNetwork = allowPrivateNetwork;
     }
-    if (email) {
-      body.email = email;
-    }
+    body.email = clearableField(email, data?.email);
     if (apiToken) {
       body.apiToken = apiToken;
     }
@@ -87,12 +86,7 @@ export function KnowledgeBaseTab() {
         .map((s) => s.trim())
         .filter(Boolean);
     }
-    if (maxPages) {
-      const parsed = Number.parseInt(maxPages, 10);
-      if (!Number.isNaN(parsed)) {
-        body.maxPages = parsed;
-      }
-    }
+    body.maxPages = clearableIntField(maxPages, data?.maxPages);
 
     submit(
       () => update.mutateAsync(body),

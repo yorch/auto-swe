@@ -26,7 +26,9 @@ import { z } from 'zod';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 import { getTemporalClient } from '../lib/temporalClient.js';
+import { allocateTicketWorkflowId } from '../lib/workflowIdAllocation.js';
 import { runAgent } from './runAgent.js';
 import { resolveTemplateForRepo } from './templates.js';
 
@@ -114,6 +116,15 @@ export async function analyzePrd(
   request: RepoWorkRequest,
   systemPromptOverride?: string
 ): Promise<PrdAnalysis> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('analyzePrd', analyzePrdImpl(request, systemPromptOverride));
+}
+
+async function analyzePrdImpl(
+  request: RepoWorkRequest,
+  systemPromptOverride?: string
+): Promise<PrdAnalysis> {
   heartbeat('loading PRD payload');
   const payload = await loadPrdPayload(request.workRequestId);
 
@@ -148,6 +159,16 @@ export async function analyzePrd(
  * Decompose the PRD into epics and stories using PM feedback (if any).
  */
 export async function decomposePrd(
+  request: RepoWorkRequest,
+  inputs: { analysis: unknown; pmFeedback?: unknown },
+  systemPromptOverride?: string
+): Promise<PrdDecomposition> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('decomposePrd', decomposePrdImpl(request, inputs, systemPromptOverride));
+}
+
+async function decomposePrdImpl(
   request: RepoWorkRequest,
   inputs: { analysis: unknown; pmFeedback?: unknown },
   systemPromptOverride?: string
@@ -357,7 +378,27 @@ export async function submitPrdWorkRequests(
         storyTicketMap.get(story.title.toLowerCase()) ?? `${prdPrefix}-${storyIndex}`;
 
       const workRequestId = crypto.randomUUID();
-      const workflowId = `eng-${repoInfo.organizationName}-${repoInfo.repoName}-${externalTicketId}`;
+      if (!repoInfo.organizationName || !repoInfo.repoName) {
+        // A git connection with no owner/name has nothing a child could clone.
+        heartbeat(`story ${storyIndex}: repository ${repo.id} has no owner/name; skipped`);
+        continue;
+      }
+      // The shared allocator, not a hand-built ID: the base is not unique across
+      // repositories, and a collision with another tenant's running workflow
+      // would otherwise be swallowed below as "already started".
+      const allocation = await allocateTicketWorkflowId({
+        externalTicketId,
+        id: repo.id,
+        organizationName: repoInfo.organizationName,
+        repoName: repoInfo.repoName,
+      });
+      if ('conflictWorkflowId' in allocation) {
+        // This story's ticket already has a run in flight — a retry of this
+        // activity that got past the start last time. Nothing new to submit.
+        heartbeat(`story ${storyIndex} already running as ${allocation.conflictWorkflowId}`);
+        continue;
+      }
+      const { workflowId } = allocation;
 
       // Build the description with acceptance criteria appended.
       const description = [

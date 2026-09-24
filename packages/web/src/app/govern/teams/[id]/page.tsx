@@ -14,27 +14,33 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
+import { Table } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRemoveTeamMember, useTeam, useUpdateTeam, useUpdateTeamMember } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { isRole } from '@/lib/roles';
 import { validateRouteParam } from '@/lib/routeParams';
+import { teamPermissions } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: team, isLoading } = useTeam(id ?? '');
+  const { data: team, isLoading, isError, error: loadError } = useTeam(id ?? '');
   const updateMember = useUpdateTeamMember(id ?? '');
   const removeMember = useRemoveTeamMember(id ?? '');
-  const platformRole = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
+  const platformRole = useAuthStore((s) => s.user?.role);
   const userId = useAuthStore((s) => s.user?.sub ?? null);
-  const canManage = platformRole === 'ADMIN' || platformRole === 'LEAD';
-  // The model-config team-scoped endpoints require team-ADMIN role (or
-  // platform ADMIN as bypass). Compute the user's actual team-role here so
-  // we don't render a section that 403s on every API call. Platform LEAD
-  // without a team-ADMIN membership sees nothing.
+  // Offer only what the gateway will accept from this caller on this team, so
+  // no control renders that 403s on use — see teamPermissions for the rules.
   const ownTeamRole = team?.memberships?.find((m) => m.user?.id === userId)?.role;
-  const canManageTeamConfig = platformRole === 'ADMIN' || ownTeamRole === 'ADMIN';
+  const {
+    canManageMembers: canManage,
+    grantableRoles,
+    canEditAllowlists,
+    canManageTeamAgents,
+  } = teamPermissions(platformRole, ownTeamRole);
+  const [memberError, setMemberError] = useState<string | null>(null);
 
   const updateTeam = useUpdateTeam(id ?? '');
 
@@ -62,6 +68,11 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   if (isLoading) {
     return <LoadingState />;
   }
+  if (isError) {
+    return (
+      <Alert variant="error">Could not load team: {errMsg(loadError, 'request failed')}</Alert>
+    );
+  }
   if (!team) {
     return <div className="text-center py-12 text-paper-400">Team not found</div>;
   }
@@ -74,7 +85,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       <PageHeader
         actions={
           <>
-            <Link className="text-ember-400 hover:underline text-sm" href="/teams">
+            <Link className="text-ember-400 hover:underline text-sm" href="/govern/teams">
               &larr; Teams
             </Link>
             {canManage && (
@@ -98,7 +109,12 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               </Button>
             )}
           </CardHeader>
-          <table className="w-full text-sm">
+          {memberError && (
+            <Alert className="mb-3" variant="error">
+              {memberError}
+            </Alert>
+          )}
+          <Table>
             <thead>
               <tr className="border-b border-ink-600">
                 <th className="text-left py-2">Email</th>
@@ -113,23 +129,35 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                   <td className="py-2">{m.user?.email}</td>
                   <td className="py-2 text-paper-400">{m.user?.role}</td>
                   <td className="py-2">
-                    {canManage && m.user?.id ? (
+                    {canManage &&
+                    m.user?.id &&
+                    isRole(m.role) &&
+                    grantableRoles.includes(m.role) ? (
                       <Select
+                        aria-label={`Team role for ${m.user.email ?? 'member'}`}
                         className="h-7 w-auto px-2 text-xs"
-                        onChange={(e) =>
-                          m.user?.id &&
-                          (() => {
-                            const role = e.target.value;
-                            if (role === 'ADMIN' || role === 'LEAD' || role === 'ENGINEER') {
-                              updateMember.mutate({ role, userId: m.user.id });
-                            }
-                          })()
-                        }
+                        disabled={updateMember.isPending}
+                        onChange={(e) => {
+                          const role = e.target.value;
+                          const memberId = m.user?.id;
+                          if (memberId && isRole(role)) {
+                            setMemberError(null);
+                            updateMember.mutate(
+                              { role, userId: memberId },
+                              {
+                                onError: (err) =>
+                                  setMemberError(errMsg(err, 'Failed to change the member role')),
+                              }
+                            );
+                          }
+                        }}
                         value={m.role}
                       >
-                        <option value="ENGINEER">ENGINEER</option>
-                        <option value="LEAD">LEAD</option>
-                        <option value="ADMIN">ADMIN</option>
+                        {grantableRoles.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
                       </Select>
                     ) : (
                       m.role
@@ -167,7 +195,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                 </tr>
               )}
             </tbody>
-          </table>
+          </Table>
         </Card>
 
         <Card>
@@ -201,11 +229,12 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         </Card>
       </div>
 
-      {canManageTeamConfig && <ShellAllowlistEditor teamId={id} />}
-      {canManageTeamConfig && <EgressAllowlistEditor teamId={id} />}
-      {canManageTeamConfig && <TeamAgentLibrarySection teamId={id} />}
+      {canEditAllowlists && <ShellAllowlistEditor teamId={id} />}
+      {canEditAllowlists && <EgressAllowlistEditor teamId={id} />}
+      {canManageTeamAgents && <TeamAgentLibrarySection teamId={id} />}
 
-      {canManageTeamConfig && (
+      {/* The persona is a field on the team itself: PATCH /teams/:id, team LEAD. */}
+      {canManage && (
         <Card>
           <CardHeader>
             <CardTitle eyebrow="Channel Assistant">Default Persona</CardTitle>
@@ -241,7 +270,11 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                 disabled={updateTeam.isPending}
                 onClick={() => {
                   setPersonaInput('');
-                  updateTeam.mutate({ defaultPersonaPrompt: null });
+                  setPersonaError(null);
+                  updateTeam.mutate(
+                    { defaultPersonaPrompt: null },
+                    { onError: (err) => setPersonaError(errMsg(err, 'Failed to clear persona')) }
+                  );
                 }}
                 variant="ghost"
               >
@@ -263,6 +296,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       />
       <AddMemberModal
         existingUserIds={existingUserIds}
+        grantableRoles={grantableRoles}
         onClose={() => setAdding(false)}
         open={adding}
         teamId={id}
@@ -275,9 +309,10 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           setConfirmRemoveId(null);
           setConfirmRemoveEmail(null);
         }}
-        onConfirm={() => {
+        onConfirm={async () => {
+          // Awaited so ConfirmModal keeps the dialog open and shows a failure.
           if (confirmRemoveId) {
-            removeMember.mutate(confirmRemoveId);
+            await removeMember.mutateAsync(confirmRemoveId);
           }
         }}
         open={confirmRemoveId !== null}

@@ -3,6 +3,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {},
 }));
 
+import { Prisma } from '@auto-swe/shared';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -276,6 +277,112 @@ describe('PATCH /admin/autonomy-policies/:id', () => {
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('INVALID_SCOPE');
     expect(prisma.autonomyPolicy.update).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
+describe('PATCH /admin/autonomy-policies/:id scope moves', () => {
+  const TEAM_ID = '33333333-3333-4333-8333-333333333333';
+  const TEMPLATE_ID = '44444444-4444-4444-8444-444444444444';
+
+  it('moves a global default to a team default', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { teamId: TEAM_ID },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/platform/autonomy-policies/${EXISTING.id}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.autonomyPolicy.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { teamId: TEAM_ID } })
+    );
+    await app.close();
+  });
+
+  it('moves a team default to a template override', async () => {
+    const app = await buildApp();
+    prisma.autonomyPolicy.findUnique.mockResolvedValueOnce({ ...EXISTING, teamId: TEAM_ID });
+    const res = await app.inject({
+      body: { isDefault: false, teamId: null, templateId: TEMPLATE_ID },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/platform/autonomy-policies/${EXISTING.id}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.autonomyPolicy.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { isDefault: false, teamId: null, templateId: TEMPLATE_ID },
+      })
+    );
+    await app.close();
+  });
+
+  it('rejects a move that leaves both a team and a template', async () => {
+    const app = await buildApp();
+    prisma.autonomyPolicy.findUnique.mockResolvedValueOnce({ ...EXISTING, teamId: TEAM_ID });
+    const res = await app.inject({
+      body: { templateId: TEMPLATE_ID },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/platform/autonomy-policies/${EXISTING.id}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(prisma.autonomyPolicy.update).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
+describe('autonomy policy writes naming a missing team or template', () => {
+  const MISSING = '55555555-5555-4555-8555-555555555555';
+  const fkError = () =>
+    new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', {
+      clientVersion: 'test',
+      code: 'P2003',
+    });
+
+  it('POST maps a foreign-key failure to 400 INVALID_SCOPE_TARGET, not a 500', async () => {
+    const app = await buildApp();
+    prisma.autonomyPolicy.create.mockRejectedValueOnce(fkError());
+    const res = await app.inject({
+      body: { isDefault: true, name: 'Ghost team', rules: {}, teamId: MISSING },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/autonomy-policies',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('INVALID_SCOPE_TARGET');
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('PATCH maps a foreign-key failure to 400 INVALID_SCOPE_TARGET, not a 500', async () => {
+    const app = await buildApp();
+    prisma.autonomyPolicy.update.mockRejectedValueOnce(fkError());
+    const res = await app.inject({
+      body: { isDefault: false, teamId: null, templateId: MISSING },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/platform/autonomy-policies/${EXISTING.id}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('INVALID_SCOPE_TARGET');
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('still surfaces an unrelated Prisma error as a 500', async () => {
+    const app = await buildApp();
+    prisma.autonomyPolicy.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('boom', { clientVersion: 'test', code: 'P1001' })
+    );
+    const res = await app.inject({
+      body: { isDefault: true, name: 'X', rules: {} },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/autonomy-policies',
+    });
+    expect(res.statusCode).toBe(500);
     await app.close();
   });
 });

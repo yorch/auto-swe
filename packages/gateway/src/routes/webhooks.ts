@@ -16,6 +16,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
+import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
 
@@ -42,6 +43,7 @@ import { postSlackMessage } from '../lib/slack.js';
 // TRANSIENT failure. See `lib/temporalErrors.ts` for why a terminal one keeps
 // the write and answers 2xx instead.
 import { isTerminalSignalError } from '../lib/temporalErrors.js';
+import { isValidTicketId } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { resolveDefaultTemplate } from './workRequests.js';
 
@@ -894,45 +896,49 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: z.object({}).passthrough() },
     },
     async (request, reply) => {
+      // Every acknowledgement is a 200 so Jira does not retry it; a skip says
+      // why in the standard `{ data }` envelope.
+      const skip = (reason: string) => reply.code(200).send({ data: { reason, skipped: true } });
+
       // 1. Verify HMAC-SHA256 signature — fail closed. No configured secret
       // means the webhook can't be authenticated at all, so (mirroring /git
       // and /ci) it is rejected rather than silently accepted.
       const config = await resolveIssueTrackerConfig();
       if (!config.webhookSecret) {
-        return reply.code(401).send({ error: 'Jira webhook secret not configured' });
+        return sendError(reply, 401, 'UNAUTHORIZED', 'Jira webhook secret not configured');
       }
       const signature = request.headers['x-hub-signature-256'] as string | undefined;
       if (!signature) {
-        return reply.code(401).send({ error: 'Missing signature' });
+        return sendError(reply, 401, 'UNAUTHORIZED', 'Missing signature');
       }
       const rawBody = (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody;
       if (!rawBody) {
-        return reply.code(401).send({ error: 'Missing raw body' });
+        return sendError(reply, 401, 'UNAUTHORIZED', 'Missing raw body');
       }
       if (!verifyGitHubSignature(rawBody, signature, config.webhookSecret)) {
-        return reply.code(401).send({ error: 'Invalid signature' });
+        return sendError(reply, 401, 'UNAUTHORIZED', 'Invalid signature');
       }
 
       // 2. Parse the Jira webhook payload
       const parsed = JiraWebhookSchema.safeParse(request.body);
       if (!parsed.success) {
-        return reply
-          .code(422)
-          .send({ error: { code: 'VALIDATION_ERROR', issues: parsed.error.issues } });
+        return sendError(reply, 422, 'VALIDATION_ERROR', 'Invalid Jira webhook payload', {
+          issues: parsed.error.issues,
+        });
       }
       const { issue, transition } = parsed.data;
       if (!issue || !transition) {
-        return reply.code(200).send({ skipped: true }); // not an issue transition event
+        return skip('not an issue transition event');
       }
 
       // 3. Check if the transition matches webhookTriggerStatus
       const triggerStatus = config.webhookTriggerStatus;
       const toStatus = transition.to.name;
       if (!triggerStatus || !toStatus) {
-        return reply.code(200).send({ skipped: true });
+        return skip('no trigger status configured');
       }
       if (toStatus.toLowerCase() !== triggerStatus.toLowerCase()) {
-        return reply.code(200).send({ skipped: true });
+        return skip('transition does not match the trigger status');
       }
 
       // 4. Auto-create a work request. The tracker config is a platform-wide
@@ -942,6 +948,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // route one tenant's tickets — and spend — into another tenant's repo, so
       // the transition is acknowledged and skipped instead.
       const ticketId = issue.key;
+      // The key becomes the branch name and the Temporal workflow id, so it
+      // takes the same validation as an authenticated submission.
+      if (!isValidTicketId(ticketId)) {
+        return skip('invalid ticket id');
+      }
       const fields = issue.fields;
       const summary = (fields?.summary as string | undefined) ?? ticketId;
       const candidateRepos = await runUnscoped(
@@ -960,14 +971,14 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           })
       );
       if (candidateRepos.length === 0) {
-        return reply.code(200).send({ reason: 'no active repos', skipped: true });
+        return skip('no active repos');
       }
       if (candidateRepos.length > 1) {
         fastify.log.warn(
           { ticketId },
           'Jira auto-trigger skipped: more than one active repository — submit via POST /work-requests or a template webhook instead'
         );
-        return reply.code(200).send({ reason: 'ambiguous target repository', skipped: true });
+        return skip('ambiguous target repository');
       }
       const defaultRepo = candidateRepos[0];
       // This path starts a real run — a push and a pull request — without an
@@ -979,7 +990,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           { repoId: defaultRepo.id, ticketId },
           'Jira auto-trigger skipped: the GitHub App installation this repository uses has been retired'
         );
-        return reply.code(200).send({ reason: 'installation retired', skipped: true });
+        return skip('installation retired');
       }
       // Team default first, then the global default — the same resolution (and
       // A/B bucketing) an authenticated submission for this repo would get,
@@ -989,7 +1000,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         ? await fastify.prisma.workflowTemplate.findUnique({ where: { id: resolved.templateId } })
         : null;
       if (!resolved || !defaultTemplate) {
-        return reply.code(200).send({ reason: 'no active default template', skipped: true });
+        return skip('no active default template');
       }
       const templateVersion = resolved.version;
       // The run spends the repo's org budget exactly like an authenticated
@@ -1058,10 +1069,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         { log: fastify.log }
       );
       if (!launch.ok) {
-        return reply.code(200).send({ duplicate: true, ok: true, ticketId });
+        return reply.code(200).send({ data: { duplicate: true, ticketId } });
       }
 
-      return reply.code(200).send({ ok: true, ticketId });
+      return reply.code(200).send({ data: { duplicate: false, ticketId } });
     }
   );
 };

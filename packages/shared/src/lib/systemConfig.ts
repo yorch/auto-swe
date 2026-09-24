@@ -337,7 +337,7 @@ export interface ResolvedWorkflowDefaults {
    * CI-wait strategy. `signal` (default) blocks for a GitHub webhook; `poll`
    * actively queries the GitHub CI APIs — use it where no inbound webhook can
    * reach the gateway (local dev, air-gapped). Stored on the `WorkflowDefaults`
-   * row (edited at `/admin/workflow`); a null column falls back to `CI_WAIT_MODE`.
+   * row (edited at `/govern/workflow-defaults`); a null column falls back to `CI_WAIT_MODE`.
    */
   ciWaitMode: CiWaitMode;
   ciPollIntervalSec: number;

@@ -166,12 +166,16 @@ export function RepoDependenciesModal({
   repo,
   repos,
   canManage,
+  canManageTeam,
   open,
   onClose,
 }: {
   repo: RepositorySummary;
   repos: RepositorySummary[];
+  /** The caller leads this repo's team (or is platform ADMIN). */
   canManage: boolean;
+  /** Whether the caller leads `teamId` — a manual edge needs LEAD on both teams. */
+  canManageTeam: (teamId: string | null | undefined) => boolean;
   open: boolean;
   onClose: () => void;
 }) {
@@ -185,8 +189,12 @@ export function RepoDependenciesModal({
   const [pendingRemove, setPendingRemove] = useState<{ id: string; label: string } | null>(null);
 
   const candidates = useMemo(
-    () => repos.filter((r) => (r.type ?? 'git_repo') === 'git_repo' && r.id !== repo.id),
-    [repos, repo.id]
+    () =>
+      repos.filter(
+        (r) =>
+          (r.type ?? 'git_repo') === 'git_repo' && r.id !== repo.id && canManageTeam(r.team?.id)
+      ),
+    [repos, repo.id, canManageTeam]
   );
 
   const dismiss = (id: string) => setStatus.mutate({ edgeId: id, status: 'dismissed' });

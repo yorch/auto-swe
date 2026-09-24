@@ -16,6 +16,7 @@ import {
   postSlackThreadMessage,
 } from '../lib/slackNotify.js';
 import { accrueChannelUsage } from './channelAssistant.js';
+import { assertScheduledFireAuthorized } from './scheduledFireAuthorization.js';
 
 /**
  * Workflow run lifecycle activities. These live OUTSIDE the workflow file so
@@ -31,35 +32,85 @@ export interface CreateWorkflowRunInput {
   /// for the life of the run, and the run is tagged isCanary=true.
   canaryAgentKey?: string;
   canaryVersion?: number;
+  /**
+   * Set when this run is a child of an epic orchestrator. The gateway writes
+   * the ledger row for the epic, not for its children, so the child's row is
+   * created here — see {@link ensureEpicChildLedgerRow}.
+   */
+  parentWorkflowId?: string;
+  /** The child's target connection, recorded on its ledger row. */
+  repoId?: string | null;
+}
+
+/**
+ * Give an epic child run its own `ActiveWorkflow` ledger row, linked to the
+ * epic's work request, its repository and its parent.
+ *
+ * Every budget read and write keys on the workflow's own row
+ * (`assertBudgetAvailable` / `recordLlmUsage`), and a child had none until a
+ * template's first `updateDomainState` self-registered a bare one — so a
+ * child's LLM spend before that was unmetered and uncapped, and after it sat on
+ * a row nothing linked back to the epic's work request. The run finalizer then
+ * found no ledger for the child and org usage never saw its spend.
+ *
+ * Idempotent (a Temporal retry, or a row `updateDomainState` already created,
+ * just gets its links filled in) and it never touches `currentStatus` or the
+ * counters on an existing row. The child inherits the epic's budget tier.
+ */
+async function ensureEpicChildLedgerRow(input: CreateWorkflowRunInput): Promise<void> {
+  if (!input.parentWorkflowId) {
+    return;
+  }
+  const parent = await prisma.activeWorkflow.findUnique({
+    select: { budgetTier: true },
+    where: { temporalWorkflowId: input.parentWorkflowId },
+  });
+  const links = {
+    parentWorkflowId: input.parentWorkflowId,
+    repoId: input.repoId ?? null,
+    workRequestId: input.workRequestId ?? null,
+  };
+  await prisma.activeWorkflow.upsert({
+    create: {
+      ...links,
+      budgetTier: parent?.budgetTier ?? 'STANDARD',
+      currentStatus: 'STARTING',
+      temporalWorkflowId: input.workflowId,
+    },
+    update: links,
+    where: { temporalWorkflowId: input.workflowId },
+  });
 }
 
 /**
  * The refusal message when a run's repository points at a retired installation,
  * or null when it does not.
  *
- * Resolves the connection through the work request, which is the one handle
- * every caller of this activity supplies. A run with no work request, or one
- * that targets no connection, has no installation to be retired.
+ * Resolves the connection from the run's own `repoId` when it carries one (an
+ * epic child), else through the work request. A run with neither, or whose
+ * work request targets no connection, is not checked here — see the
+ * Limitations in docs/repo-access-gating.md.
  */
 async function installationRetiredForRun(
-  workRequestId: string | undefined
+  input: Pick<CreateWorkflowRunInput, 'repoId' | 'workRequestId'>
 ): Promise<string | null> {
-  if (!workRequestId) {
-    return null;
-  }
-  const runInput = await prisma.runInput.findUnique({
-    select: {
-      connection: {
-        select: {
-          installation: { select: { isActive: true } },
-          organizationName: true,
-          repoName: true,
-        },
-      },
-    },
-    where: { id: workRequestId },
-  });
-  const connection = runInput?.connection;
+  const select = {
+    installation: { select: { isActive: true } },
+    organizationName: true,
+    repoName: true,
+  } as const;
+  // An epic child names its own repository; its work request is the epic's,
+  // which targets no single connection, so it must be checked by `repoId`.
+  const connection = input.repoId
+    ? await prisma.connection.findUnique({ select, where: { id: input.repoId } })
+    : input.workRequestId
+      ? ((
+          await prisma.runInput.findUnique({
+            select: { connection: { select } },
+            where: { id: input.workRequestId },
+          })
+        )?.connection ?? null)
+      : null;
   if (!connection?.installation || connection.installation.isActive) {
     return null;
   }
@@ -100,7 +151,14 @@ export async function createWorkflowRun(
   //
   // This is the run's start, so nothing already under way is affected, which is
   // what "retirement stops new work" was supposed to mean everywhere.
-  const retired = await installationRetiredForRun(input.workRequestId);
+  // A scheduled fire re-takes the owner's launch decision (repository access,
+  // org membership, the org's cap) before anything else, including the
+  // retirement check below — which it subsumes for a fire, and whose returned
+  // `{ error }` would wedge the schedule. Throws a non-retryable failure; a
+  // no-op for every run that is not a scheduled fire.
+  await assertScheduledFireAuthorized(input);
+
+  const retired = await installationRetiredForRun(input);
   if (retired) {
     return { error: retired };
   }
@@ -122,6 +180,13 @@ export async function createWorkflowRun(
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
+
+  // An epic child's ledger row must exist before its first LLM call, and this
+  // is the run's first activity. Written only once the template has resolved
+  // and parsed: every `{ error }` return above ends the run before it starts,
+  // and a row written ahead of one would sit in STARTING forever, counted as
+  // live work that nothing will ever finish.
+  await ensureEpicChildLedgerRow(input);
 
   // P1/WS3: snapshot the active GLOBAL Agent versions so this run resolves a
   // fixed Agent version regardless of later library edits. One row per key
@@ -163,6 +228,10 @@ export async function createWorkflowRun(
   const run = await prisma.workflowRun.upsert({
     create: {
       agentVersions,
+      // An epic child's own repository. Its work request is the epic's and
+      // spans every repository, so run visibility reads this instead — a member
+      // of one of the epic's teams reaches that team's child, not all of them.
+      ...(input.parentWorkflowId && input.repoId ? { connectionId: input.repoId } : {}),
       estimatedHumanTimeSaved: version.template?.estimatedHumanTimeSavedMinutes ?? null,
       isCanary,
       outcomeDomain: version.template?.workspaceProvider ?? null,
@@ -310,7 +379,13 @@ export async function finalizeWorkflowRun(
       workRequest: {
         select: {
           activeWorkflows: {
-            select: { costUsdAccrued: true, tokensInputUsed: true, tokensOutputUsed: true },
+            select: {
+              costUsdAccrued: true,
+              repository: { select: { team: { select: { orgId: true } } } },
+              temporalWorkflowId: true,
+              tokensInputUsed: true,
+              tokensOutputUsed: true,
+            },
           },
           connection: {
             select: { team: { select: { orgId: true } } },
@@ -327,7 +402,14 @@ export async function finalizeWorkflowRun(
     },
     where: { id: runId },
   });
-  const workflows = run?.workRequest?.activeWorkflows ?? [];
+  // The run's ledger is its OWN row when it has one. An epic's work request
+  // carries the epic's row plus one per child, so summing every row under the
+  // work request would bill each child for the whole epic — and add the same
+  // spend to org usage once per child. Falls back to every row under the work
+  // request when none matches (the historical behaviour).
+  const requestWorkflows = run?.workRequest?.activeWorkflows ?? [];
+  const ownWorkflows = requestWorkflows.filter((aw) => aw.temporalWorkflowId === run?.workflowId);
+  const workflows = ownWorkflows.length > 0 ? ownWorkflows : requestWorkflows;
   let costUsdAccrued = workflows.reduce((sum, aw) => sum + aw.costUsdAccrued, 0);
   let tokensInputTotal = workflows.reduce((sum, aw) => sum + (aw.tokensInputUsed ?? 0n), 0n);
   let tokensOutputTotal = workflows.reduce((sum, aw) => sum + (aw.tokensOutputUsed ?? 0n), 0n);
@@ -405,7 +487,10 @@ export async function finalizeWorkflowRun(
     return;
   }
 
-  const orgId = run?.workRequest?.connection?.team?.orgId;
+  // An epic's work request targets no single connection, so an epic child
+  // reaches its org through its own ledger row's repository instead.
+  const orgId =
+    run?.workRequest?.connection?.team?.orgId ?? ownWorkflows[0]?.repository?.team?.orgId;
   const runsIncrement = status === 'SUCCESS' ? 1 : 0;
 
   // Write the terminal status back to the ActiveWorkflow row. Templates only

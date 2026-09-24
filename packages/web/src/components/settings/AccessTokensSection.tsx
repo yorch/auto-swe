@@ -190,9 +190,10 @@ export function AccessTokensSection() {
         dangerous
         message={`Revoke "${revoking?.name}"? Anything using this token will stop working.`}
         onClose={() => setRevoking(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
+          // Awaited so ConfirmModal keeps the dialog open and shows a failure.
           if (revoking) {
-            revoke.mutate(revoking.id);
+            await revoke.mutateAsync(revoking.id);
           }
         }}
         open={revoking !== null}

@@ -56,4 +56,16 @@ describe('zendesk connector', () => {
 
     await expect(fetchZendeskTicket(connection, '42')).rejects.toThrow('authentication failed');
   });
+
+  it.each(['evil.com/x?', 'evil.com#', 'a@evil.com', 'a.b', '-bad', ''])(
+    'rejects subdomain %j before any request',
+    async (subdomain) => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      await expect(
+        fetchZendeskTicket({ ...connection, config: { ...connection.config, subdomain } }, '42')
+      ).rejects.toThrow(/subdomain/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
 });

@@ -18,6 +18,7 @@ function newMockPrisma() {
       count: vi.fn().mockResolvedValue(0),
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
   };
@@ -246,7 +247,7 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
 describe('workflowRunRoutes POST /:id/cancel', () => {
   const runId = '6f9619ff-8b86-4a08-8b86-3e6f9619ffd1';
 
-  it('returns 409 and skips the Temporal cancel when the run already left RUNNING', async () => {
+  it('returns 409 when the run finished on its own before the cancel landed', async () => {
     const { app, prisma, temporal } = await buildApp();
     prisma.workflowRun.findFirst.mockResolvedValue({
       id: runId,
@@ -254,6 +255,7 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
       workflowId: 'wf-1',
     });
     prisma.workflowRun.updateMany.mockResolvedValue({ count: 0 });
+    prisma.workflowRun.findUnique.mockResolvedValue({ status: 'COMPLETED' });
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -263,7 +265,65 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     expect(res.json()).toEqual({
       error: { code: 'RUN_NOT_RUNNING', message: 'Run reached a terminal state before cancel' },
     });
-    expect(temporal.cancelWorkflow).not.toHaveBeenCalled();
+    expect(temporal.cancelWorkflow).toHaveBeenCalledWith('wf-1');
+    expect(prisma.activeWorkflow.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('succeeds when the workflow finalised itself as CANCELLED before the row write', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: runId,
+      status: 'RUNNING',
+      workflowId: 'wf-1',
+    });
+    prisma.workflowRun.updateMany.mockResolvedValue({ count: 0 });
+    prisma.workflowRun.findUnique.mockResolvedValue({ status: 'CANCELLED' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${runId}/cancel`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: { id: runId, status: 'CANCELLED' } });
+  });
+
+  it('returns 502 and leaves the run RUNNING when Temporal refuses the cancel', async () => {
+    const { app, prisma, temporal } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: runId,
+      status: 'RUNNING',
+      workflowId: 'wf-1',
+    });
+    temporal.cancelWorkflow.mockRejectedValue(new Error('temporal unreachable'));
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${runId}/cancel`,
+    });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().error.code).toBe('TEMPORAL_CANCEL_FAILED');
+    expect(prisma.workflowRun.updateMany).not.toHaveBeenCalled();
+    expect(prisma.activeWorkflow.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('treats a workflow Temporal no longer knows as cancelled', async () => {
+    const { app, prisma, temporal } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: runId,
+      status: 'RUNNING',
+      workflowId: 'wf-1',
+    });
+    const notFound = Object.assign(new Error('workflow not found'), {
+      name: 'WorkflowNotFoundError',
+    });
+    temporal.cancelWorkflow.mockRejectedValue(notFound);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${runId}/cancel`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.workflowRun.updateMany).toHaveBeenCalled();
   });
 
   it('cancels the Temporal workflow when the guarded update transitions exactly one row', async () => {

@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { WORKFLOW_RUN_FAILURE_STATUSES } from '@auto-swe/shared/types/api';
 
 /**
  * Skill-library service: create/update flows (with the injection/exfiltration
@@ -127,7 +128,9 @@ export async function getSkillEffectivenessReport(prisma: PrismaClient, windowDa
     select: { costUsdAccrued: true, id: true, status: true },
     where: {
       startedAt: { gte: since },
-      status: { in: ['SUCCESS', 'FAILED', 'TIMED_OUT', 'CANCELLED'] },
+      // Finished runs that either succeeded or failed — SKIPPED is terminal but
+      // neither, so it would dilute the success rate without saying anything.
+      status: { in: ['SUCCESS', ...WORKFLOW_RUN_FAILURE_STATUSES] },
     },
   });
 

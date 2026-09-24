@@ -2,7 +2,12 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { requireRepoId } from '../lib/requireRepoId.js';
-import { CiPollDeadlineError, runCiPollLoop } from '../lib/scm/ciPollLoop.js';
+import {
+  CiPollDeadlineError,
+  CiPollFetchError,
+  normalizeCiPollOpts,
+  runCiPollLoop,
+} from '../lib/scm/ciPollLoop.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 
 export interface CiWaitConfig {
@@ -58,6 +63,17 @@ export async function waitForCiByPolling(
   const repoRef = toRepoRef(repo);
   const scm = getScmProvider(repoRef);
 
+  // The timings arrive from spec inputs, which a template may leave unbound —
+  // fill any missing one from the resolved workflow defaults, then clamp to
+  // what the activity's heartbeat and start-to-close timeouts can survive.
+  const needsDefaults = [input.intervalSec, input.graceSec, input.deadlineSec].some(
+    (v) => typeof v !== 'number' || !Number.isFinite(v) || v <= 0
+  );
+  const fallback = needsDefaults
+    ? await resolveCiWaitConfig()
+    : { deadlineSec: 0, graceSec: 0, intervalSec: 0 };
+  const opts = normalizeCiPollOpts(input, fallback);
+
   try {
     const result = await runCiPollLoop(
       {
@@ -66,17 +82,17 @@ export async function waitForCiByPolling(
         now: () => Date.now(),
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       },
-      {
-        deadlineSec: input.deadlineSec,
-        graceSec: input.graceSec,
-        intervalSec: input.intervalSec,
-      }
+      opts
     );
     return { ciPassed: result.passed, logsUrl: result.logsUrl };
   } catch (err) {
     if (err instanceof CiPollDeadlineError) {
       // Deadline is terminal, not transient — don't let Temporal retry the poll.
       throw ApplicationFailure.nonRetryable(err.message, 'CI_POLL_DEADLINE');
+    }
+    if (err instanceof CiPollFetchError) {
+      // Credentials, access or a missing ref: a retry would fail the same way.
+      throw ApplicationFailure.nonRetryable(err.message, 'CI_POLL_FETCH_FAILED');
     }
     throw err;
   }

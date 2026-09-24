@@ -82,7 +82,7 @@ packages/
 | `src/prisma/migrations/` | Generated `init` baseline, a hand-written constraints/indexes migration, and appended migrations for later changes |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
 | `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — synced at gateway startup |
-| `src/lib/syncBuiltins.ts` | Seeded built-in agents, skills, and scanner patterns; idempotent |
+| `src/lib/syncBuiltins.ts` | Seeded built-in templates, agents, skills, and scanner patterns; idempotent, and never overwrites admin-owned state (see [Versioning and reproducibility](#versioning-and-reproducibility)) |
 | `src/lib/skillScanner.ts` | `scanSkillContent(text)` — injection/exfiltration scan of skill text and LLM output |
 | `src/lib/crypto.ts` | AES-256-GCM helpers for encrypted credential columns |
 | `src/lib/systemConfig.ts` | `resolveXxxConfig()` resolvers for every singleton config table |
@@ -90,6 +90,7 @@ packages/
 | `src/lib/connectionTypes.ts` | Typed registry of supported `Connection.type` values and their metadata |
 | `src/lib/outcomePublishers.ts` | Typed registry of outcome publishers (`openPullRequest`, `updateRecord`, `sendMessage`, etc.) |
 | `src/lib/workspaceProviders.ts` | Typed registry of workspace provider types (`git_repo`, `document`, `record`, `api_only`) |
+| `src/lib/integrations/` | Read-only issue-tracker (Jira / Linear / GitHub Issues), knowledge-base (Confluence / Notion) and Figma connectors, fetched at work-request submit time; best-effort, never block a submission |
 | `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — the node-type union |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects go through `Dispatcher` |
 | `src/workflow/expr.ts` | Expression evaluator for `cond` predicates (jsonpath + comparison, no JS sandbox) |
@@ -110,10 +111,11 @@ packages/
 | `src/lib/betterAuth.ts` | better-auth instance — email+password, GitHub/Google OAuth, Okta SSO (OIDC), magic-link, cookie sessions |
 | `src/lib/workflowLaunch.ts` | `launchTrackedWorkflow` — the single launch path; every route that starts a run goes through it. Writes the `RunInput` (+ `ActiveWorkflow`, when the launch keeps one) in one transaction, **then** starts the Temporal workflow, deleting the rows if the start fails. The unique index on `ActiveWorkflow.temporalWorkflowId` is the atomic dedup gate, so a run cannot execute without a ledger row to attribute its spend and PRs to. |
 | `src/lib/idempotency.ts` | `Idempotency-Key` support for the two generic triggers — hashes the caller's key into a deterministic workflow ID so the dedup gate above has something stable to fire on |
-| `src/lib/github.ts` | Octokit singleton + GitHub webhook HMAC verification |
-| `src/lib/slack.ts` | Slack client; slash-command, events, and interactive handlers |
-| `src/lib/ticketTracker.ts` | Read-only issue-tracker connectors (Jira / Linear / GitHub Issues); best-effort, never throws |
-| `src/lib/orgAccess.ts` | `assertOrgAccess` — the inline org gate for handlers that derive their org from the body rather than a route param |
+| `src/lib/github.ts` | GitHub webhook HMAC verification + the paginated repository listing behind repo import (plain `fetch`; the gateway carries no Octokit) |
+| `src/lib/slack.ts` | Slack request-signature verification + Web API helpers (post a message, publish App Home, open a view) |
+| `src/routes/slack.ts` | Slack slash-command, events, and interactive handlers (mounted at `/api/v1/auth/slack`) |
+| `src/lib/launchAuthorization.ts` | `authorizeLaunch` — the one launch decision (repository access, org membership, org monthly cap) every launch path takes |
+| `src/lib/orgAccess.ts` | Org membership and monthly-cap checks behind `authorizeLaunch`, plus `assertOrgAccess` / `assertOrgBudget` for handlers that derive their org from the body rather than a route param |
 | `src/lib/auditLog.ts` | `writeAuditLog()` — `ConfigAuditLog` rows for every config mutation |
 | `src/lib/telemetry.ts` | OpenTelemetry SDK init |
 | `src/routes/` | Work requests, workflows, runs, templates, projections, webhooks, epics, connections, teams, users, memory, skills, agent library, tokens, model config, admin, scanner patterns, security events, inbox (HITL), system config, schedules, Slack, organizations, bundles, evals |
@@ -133,11 +135,12 @@ packages/
 | `src/activities/decomposition.ts` | `planDecomposition` → `Subtask[]` for fan-out |
 | `src/activities/validateContext.ts` | Context validator → `ContextSnapshot` |
 | `src/activities/commitToMemory.ts` | Memory summarization → `MemoryItem` + embedding |
-| `src/activities/createOrUpdatePullRequest.ts` | PR create/update via Octokit; idempotent on branch |
+| `src/activities/createOrUpdatePullRequest.ts` | PR create/update through the SCM provider; idempotent on branch |
+| `src/lib/scm/` | `ScmProvider` abstraction; `github.ts` builds the authenticated Octokit client (the only Octokit in the codebase) and `ciStatus.ts` reads check runs |
 || `src/activities/resolveWorkspace.ts` | Materialise workspace context for a declared `workspaceProvider` |
 || `src/activities/genericActions.ts` | Generic `readSource`/`writeOutcome`/`runTool` activities dispatched by `Connection.type` |
-| `src/activities/templates.ts` | Resolves the run's `WorkflowSpec` (cascade + A/B routing); `finalizeWorkflowRun` |
-| `src/activities/state.ts` | `updateDomainState`, `createWorkflowRun`, `recordWorkflowStep` |
+| `src/activities/templates.ts` | Resolves the run's `WorkflowSpec` (cascade + A/B routing); `createWorkflowRun`, `recordWorkflowStep`, `finalizeWorkflowRun` |
+| `src/activities/state.ts` | `updateDomainState` and the human-step lifecycle (`createHumanStep`, `resolveHumanStep`, `cancelPendingHumanSteps`) |
 | `src/activities/shellStep.ts` | `runShellStep` — ephemeral container, image allowlist, audit write |
 | `src/lib/config/agentResolver.ts` | `resolveAgent(key, ctx)` — the sole model/skill/tool resolver |
 | `src/lib/config/agentSpec.ts`, `agentRef.ts`, `agentSkills.ts`, `resolver.ts`, `mcpConnection.ts` | Spec composition, `key@version` parsing, skill/tool loading, credential + embedding resolution, MCP URL resolution |
@@ -251,7 +254,9 @@ than at the point of the mistake.
 agent decomposes the brief into per-repo subtasks, a dependency graph is built, child
 `RunnableWorkflow`s fan out in dependency order, and the parent reports
 `PLANNING → FANNING_OUT → COMPLETED/FAILED/CANCELLED`. Repos downstream of a failure are marked
-`SKIPPED` with a reason rather than silently omitted.
+`SKIPPED` with a reason rather than silently omitted. The epic list shows a non-admin the epics
+they requested and those with a started child on a repository they can reach, so an epic still in
+`PLANNING` is listed only for its requester and ADMINs until its first child starts.
 
 ---
 
@@ -339,6 +344,15 @@ what an in-flight or already-completed run did. Template versions are immutable;
 is promoted explicitly, and a second version can be routed as an A/B experiment by a deterministic
 per-ticket split.
 
+Built-in templates follow the same rule. `syncBuiltins()` runs at every gateway start and creates
+a missing built-in template, but on an existing one it never touches `status`, `isDefault` or
+`activeVersion`, and never rewrites a version. When a release changes a built-in spec it appends a
+new version, and activates it only when the template is still active on the previous built-in
+version; a template an admin archived or moved onto their own version keeps that choice. A
+built-in version is one with no author (`createdBy` and `generatedBy` both null). The same
+create-if-missing rule covers the GLOBAL agents and their skill refs: a ref an admin removed stays
+removed, and only a built-in skill new in this release is attached to an existing agent.
+
 ### Configuration cascade
 
 Every per-agent config — model, prompt, skills, tools — resolves through five scopes, most specific
@@ -384,13 +398,32 @@ flowchart LR
 | PAT bearer | `ats_<base64url-32B>` | `personal_access_tokens` (hash only) | Settings → API tokens |
 | JWT bearer | `eyJ…` (HS256/RS256) | — | `POST /api/v1/auth/session-token`, which exchanges an active session cookie for a short-lived JWT |
 
+A JWT's role claim is not trusted on its own: after verifying the signature, the gateway re-reads
+the user's current role and `isActive` flag (behind a 30 s in-process cache), so a demotion or
+deactivation applies before the token expires. Changing a user's role or active flag drops that
+user's cached sessions and bearer state on the node that made the change at once; other gateway
+nodes pick it up when their cache entries expire.
+
 **Authorization** is declarative on the `requireAuth` hook. Platform roles are
 `ENGINEER < LEAD < ADMIN`. `requiredTeamRole` resolves team membership from a route's team param;
 `requiredOrgRole` resolves `OrganizationMembership` from its `:orgId` param and checks
 `ORG_ADMIN > ORG_MEMBER`. An `ORG_ADMIN` therefore self-serves their own org regardless of platform
 role, and a platform `ADMIN` bypasses the org check. Handlers that derive the org from the request
-body rather than a route param — work-request submit, notably — call `assertOrgAccess` inline
-instead. Tenant isolation is enforced in the application layer, not by database row policies.
+body rather than a route param — every launch path, notably — take the org checks inline through
+`authorizeLaunch` instead. Tenant isolation is enforced in the application layer, not by database row policies.
+
+**Run visibility** keys on the run, never on its template: a non-admin sees a run they requested, a
+run whose work request targets a repository they can reach, a run of a template their team owns, or
+a channel-assistant run in a Slack channel their team owns. That one predicate also gates
+cancelling a run and resolving its human steps, from the dashboard and from Slack buttons, and it
+filters each template's "last run" summary. A run of a GLOBAL template is therefore not visible to
+everyone. Every term is an exact relational match, and a multi-repository run is decided per run:
+an epic child is reached through its own repository (`WorkflowRun.connectionId`), never through the
+epic's shared work request, so a member of one of the epic's teams reaches that team's child and
+not the others. A PRD run records its primary repository as its work request's connection, and a
+channel run links its channel (`WorkflowRun.channelId`).
+What falls outside every term is visible to its requester and platform ADMINs only — see
+[`hitl-workflows.md`](./hitl-workflows.md#limitations).
 
 ---
 
@@ -463,7 +496,13 @@ erDiagram
 `OrgMonthlyUsage` increment-upsert in one transaction, guarded by a pre-read of `endedAt`, so a
 Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost and tokens
 accrue for every terminal status. `Organization.monthlyBudgetUsdCents` caps monthly spend —
-work-request submit returns `402 ORG_BUDGET_EXCEEDED` once the month's accrued cost meets the cap.
+every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's accrued cost meets the cap.
+The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
+the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
+repository access, then membership of every org the launch spends against, then each org's cap.
+The cap reads committed spend and is best-effort under concurrency: spend is recorded when a run
+finishes, so launches that arrive together all see the same total and a burst can overshoot the
+cap by the cost of the runs already in flight.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
 `/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
 so the worker writer and the gateway reader cannot disagree about which month a run lands in.
@@ -552,8 +591,11 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 | Resources | Memory, CPU, and PID caps from the Tier-2 defaults |
 | Network | Kept — git and package installs need it. Egress is **not** IP-filtered |
 | Clone credential | Scrubbed from `.git/config` immediately after clone, then re-injected per-call by `gitAuthed` via `http.extraheader` for push and fetch only, so it never sits at rest in the workspace |
+| Authenticated git calls | Each one (`authedGitScript`) first rewrites `.git/config` from an allow-list — repository format, `origin` pinned to the scrubbed URL, plain `origin` fetch refspecs — so a planted `url.*.insteadOf`, `http.<url>.proxy`, `include.path`, `credential.helper` or rewritten remote cannot redirect the header; refuses a `.git` that is a gitfile or symlink; pins `GIT_DIR` / `GIT_WORK_TREE` to the repository and refuses unless `git rev-parse --absolute-git-dir` names exactly that `.git`, so a `.git` broken on purpose is an error rather than a fallback to a parent `/workspace/.git` or `/.git` whose config was never rewritten; in the agent workspace, first SIGKILLs every process except PID 1, the container's keeper and the call's own process tree, so nothing the agent left running can read the header from `/proc/<pid>/cmdline` or rewrite the config between the rewrite and the call; runs with hooks off (`core.hooksPath=/dev/null`), system and global config ignored, `core.fsmonitor`/`ext::`/submodule recursion disabled; and pushes to the scrubbed URL explicitly with `--no-verify`. A built-in `SENSITIVE_FILE` pattern also hard-blocks `writeFile` and shell redirects into `.git/` |
 | Cloud metadata | `169.254.169.254`, the ECS endpoint, and the IPv6 IMDS address are blackholed by a short-lived `--cap-add=NET_ADMIN` sidecar sharing the workspace netns (`buildMetadataBlockArgs`). Best-effort, gated by `WORKSPACE_BLOCK_METADATA` (default on) |
 | Docker socket | **Not** mounted into the workspace — there is no daemon-level escape path |
+| Timed-out commands | Every `docker exec` carries a per-call `AUTO_SWE_EXEC_ID` tag; when a command overruns its timeout, its whole in-container process tree (found by that tag in `/proc/*/environ`) is stopped and killed, not just the local `docker exec` client. The container runs under `--init`, so the killed processes are reaped rather than left holding PIDs |
+| Provisioning failure | The container is named before `docker run`, and any failure from `docker run` onward removes it by that name |
 
 `shellQuote()` wraps every `docker exec … sh -c` and every clone/checkout argument. It is the
 injection boundary for agent-generated commands; treat any change to it, or any caller that
@@ -568,8 +610,11 @@ the container running the author-supplied command, so a token left in `.git/conf
 readable by that command — and, on a `network: 'egress'` step, exfiltratable. `origin` is therefore
 reset to the credential-free URL in the same script as the clone, and the post-command commit/push
 (a separate container, after the command has exited) authenticates per-call through
-`http.extraheader`. Both paths share `splitCloneCredential()` / `gitWithAuthHeader()` with
-`createWorkspace`. Output redaction of the token remains on every sink as defense in depth, but it
+`http.extraheader`. Both paths share `splitCloneCredential()` / `authedGitScript()` with
+`createWorkspace`, and the finalize container runs every git command — `status`, `add`, `commit`,
+not just `push` — hardened, pinned to the repository and after the config rewrite, since the author
+command had write access to the volume's `.git/`. Filter, diff and merge drivers need a config entry
+to run and the rewrite keeps none, so an in-tree `.gitattributes` naming one is inert. Output redaction of the token remains on every sink as defense in depth, but it
 is not the containment: it matches the exact substring, so any transform (`base64`, `rev`, `tr`)
 would defeat it.
 
@@ -617,7 +662,8 @@ Current constraints of the system as built. Deliberate product boundaries are in
   query (`findMany` / `count` / `aggregate` / `groupBy` / `updateMany` / `deleteMany`) on a model
   with a `teamId`/`orgId` when the query has no tenant predicate. A predicate has to *narrow*:
   `NOT`, a `not`/`none` operator, and a null `channelId` are all read as unscoped, since each
-  matches every tenant but one. Every
+  matches every tenant but one; so is an `undefined` value (`{ teamId: undefined }`), which Prisma
+  drops from the filter entirely. Every
   call site is accounted for: a deliberate cross-tenant read declares itself with
   `runUnscoped(reason, models, fn)`, and the common `admin ? {} : filter` shape uses
   `asPlatformAdmin`,
@@ -626,6 +672,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   `TENANT_GUARD_WARN=1` to warn instead of throw while triaging false positives. Single-row lookups
   are deliberately unguarded — `findUnique` by id is the normal fetch-then-check shape — and raw SQL
   bypasses the extension entirely. This is defence in depth, not the row-level security it stands in for.
+- **A built-in template's template-level fields follow its spec.** `inputSchema` and
+  `workspaceProvider` are updated only together with an auto-activated new built-in version, so a
+  release that changes one of them without changing the spec does not reach an existing
+  deployment.
 - **A `runUnscoped` exemption still covers repeat queries on the models it names.** It is an
   `AsyncLocalStorage` region, so everything awaited inside inherits it; naming the models bounds
   that — a query on anything else inside the block still fails — but a *second* query on an
@@ -651,6 +701,16 @@ Current constraints of the system as built. Deliberate product boundaries are in
   `network: 'egress'` against the team's allowlist. A team that allowlists the GitHub API host and
   supplies a token can author a DAG that merges. The guarantee covers what the platform ships; it
   is not enforced against what a team authors.
+- **Authenticated git runs inside the container the agent controls.** The agent runs as root in its
+  workspace. The sweep before each authenticated call kills what the agent left running, but it is a
+  scan of `/proc`, not a freeze of the container: a process that forks faster than the two stop
+  passes can reach it may survive, and a process started by another `docker exec` in the instant
+  between the sweep and the call is not covered. A replaced `git` binary (or `sh`, `sed`) is not
+  touched by the sweep at all; the config rewrite, the repository pin and hook suppression close
+  the configuration routes, not that one. Closing it means performing the push from a separate trusted
+  container, which the workspace (a container layer, not a volume) does not support today. The
+  hardening also ignores `/etc/gitconfig`, so a custom workspace image that configures a private CA
+  or proxy there must set it through the environment (`GIT_SSL_CAINFO`, `HTTPS_PROXY`) instead.
 - **The agent workspace keeps network access** — git and package installs need it — so its egress is
   not default-deny. The metadata blackhole (§8) is best-effort, env-gated, and exercised only
   against argument construction, not a live Docker daemon.

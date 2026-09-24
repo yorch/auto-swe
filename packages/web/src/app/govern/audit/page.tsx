@@ -1,14 +1,15 @@
 'use client';
 
 import { Card } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Th } from '@/components/ui/Table';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAuditLog } from '@/hooks/useAdmin';
+import { navLabel } from '@/lib/navigation';
 import { formatDate } from '@/lib/utils';
 
 export default function GovernAuditPage() {
-  const { data: rows, isLoading } = useAuditLog(200);
+  const { data: rows, isLoading, isError, error } = useAuditLog(200);
 
   return (
     <div className="space-y-10">
@@ -16,55 +17,61 @@ export default function GovernAuditPage() {
         <PageHeader
           chapter={`§ Admin · Audit log · ${(rows ?? []).length} most recent`}
           subtitle="Lifecycle changes to users, access tokens, sessions, and configuration. Secret values and credential hashes are never stored here."
-          title="Audit log."
+          title={navLabel('/govern/audit')}
         />
       </div>
 
       <section className="fade-up stagger-1">
         <Card className="overflow-hidden p-0" variant="inset">
-          {isLoading && <LoadingState message="loading audit log…" />}
-          {!isLoading && (rows ?? []).length === 0 && (
-            <p className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-              no audit entries yet
-            </p>
-          )}
-          {!isLoading && (rows ?? []).length > 0 && (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
+          <QueryBoundary
+            error={error}
+            isError={isError}
+            isLoading={isLoading}
+            label="audit log"
+            loadingMessage="loading audit log…"
+          >
+            {(rows ?? []).length === 0 ? (
+              <p className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
+                no audit entries yet
+              </p>
+            ) : (
+              <Table>
+                <THead>
                   <Th>Time</Th>
                   <Th>Action</Th>
                   <Th>Actor</Th>
                   <Th>Entity</Th>
                   <Th>Safe detail</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {(rows ?? []).map((row) => (
-                  <tr className="border-b border-ink-600 last:border-b-0" key={row.id}>
-                    <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
-                      {formatDate(row.createdAt, { showSeconds: true })}
-                    </td>
-                    <td className="px-4 py-3">
-                      <AuditActionBadge action={row.action} />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
-                      {row.actorId ? `${row.actorId.slice(0, 8)}…` : 'system'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-[11px] text-paper-200">{row.entityType}</span>
-                      <span className="block font-mono text-[10px] text-paper-500">
-                        {row.entityId.slice(0, 8)}…
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[10px] text-paper-400">
-                      <AuditDetail after={row.afterJson} before={row.beforeJson} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </THead>
+                <tbody>
+                  {(rows ?? []).map((row) => (
+                    <TRow key={row.id}>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                        {formatDate(row.createdAt, { showSeconds: true })}
+                      </Td>
+                      <Td className="px-4 py-3">
+                        <AuditActionBadge action={row.action} />
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                        {row.actorId ? `${row.actorId.slice(0, 8)}…` : 'system'}
+                      </Td>
+                      <Td className="px-4 py-3">
+                        <span className="font-mono text-[11px] text-paper-200">
+                          {row.entityType}
+                        </span>
+                        <span className="block font-mono text-[10px] text-paper-500">
+                          {row.entityId.slice(0, 8)}…
+                        </span>
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[10px] text-paper-400">
+                        <AuditDetail after={row.afterJson} before={row.beforeJson} />
+                      </Td>
+                    </TRow>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </QueryBoundary>
         </Card>
       </section>
     </div>

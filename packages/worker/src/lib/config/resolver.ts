@@ -79,7 +79,7 @@ async function resolveProviderCredentialUncached(
   }
 
   throw new ConfigMissingError(
-    `No ProviderCredential for provider '${provider}'. Add one via the admin dashboard at /admin/model-config.`
+    `No ProviderCredential for provider '${provider}'. Add one via the admin dashboard at /studio/models.`
   );
 }
 
@@ -106,7 +106,7 @@ async function resolveEmbeddingConfigUncached(): Promise<ResolvedEmbeddingConfig
   });
   if (!row) {
     throw new ConfigMissingError(
-      'No EmbeddingConfig row. Set the embedding model at /admin/model-config (Embeddings tab) before starting the worker.'
+      'No EmbeddingConfig row. Set the embedding model at /studio/models (Embeddings tab) before starting the worker.'
     );
   }
 
@@ -140,7 +140,7 @@ function decryptRow(row: ProviderCredentialRow): { apiBase?: string; apiKey: str
     // Surface as ConfigMissingError so the calling activity sees the same
     // "fix it in the dashboard" affordance as a missing row.
     throw new ConfigMissingError(
-      `Failed to decrypt ProviderCredential id=${row.id} (provider='${row.provider}', lastFour='${row.lastFour}'): ${err instanceof Error ? err.message : err}. Delete and re-create the credential via /admin/model-config.`
+      `Failed to decrypt ProviderCredential id=${row.id} (provider='${row.provider}', lastFour='${row.lastFour}'): ${err instanceof Error ? err.message : err}. Delete and re-create the credential via /studio/models.`
     );
   }
   return { apiBase: row.apiBase ?? undefined, apiKey };

@@ -2,12 +2,16 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
+import { Table } from '@/components/ui/Table';
 import { useGlobalAnalytics } from '@/hooks/useTemplates';
-import { formatPercent } from '@/lib/utils';
+import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
+import { formatCost, formatPercent } from '@/lib/utils';
 
 const WINDOWS = [
   { days: 7, label: '7d' },
@@ -22,10 +26,6 @@ function fmt(n: number | null, digits = 1): string {
     return '—';
   }
   return n.toFixed(digits);
-}
-
-function fmtCost(n: number): string {
-  return `$${n.toFixed(2)}`;
 }
 
 function KpiTile({
@@ -80,7 +80,7 @@ export default function GlobalAnalyticsPage() {
   const [sortKey, setSortKey] = useState<SortKey>('runs');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(0);
-  const { data, isLoading } = useGlobalAnalytics(windowDays);
+  const { data, isLoading, isError, error } = useGlobalAnalytics(windowDays);
 
   const handleSort = (k: SortKey) => {
     if (k === sortKey) {
@@ -152,10 +152,12 @@ export default function GlobalAnalyticsPage() {
             ))}
           </div>
         }
-        title="Platform Analytics"
+        title={navLabel('/govern/analytics')}
       />
 
-      {isLoading || !data ? (
+      {isError ? (
+        <Alert variant="error">Could not load analytics: {errMsg(error, 'request failed')}</Alert>
+      ) : isLoading || !data ? (
         <LoadingState />
       ) : (
         <>
@@ -177,10 +179,10 @@ export default function GlobalAnalyticsPage() {
             />
             <KpiTile label="Succeeded" value={String(data.succeeded)} valueClass="text-moss-400" />
             <KpiTile label="Failed" value={String(data.failed)} valueClass="text-brick-400" />
-            <KpiTile label="Total cost" value={fmtCost(data.totalCost)} />
+            <KpiTile label="Total cost" value={formatCost(data.totalCost)} />
             <KpiTile
               label="Avg cost/run"
-              value={data.totalRuns > 0 ? fmtCost(data.totalCost / data.totalRuns) : '—'}
+              value={data.totalRuns > 0 ? formatCost(data.totalCost / data.totalRuns) : '—'}
             />
             <KpiTile
               label="Time saved"
@@ -214,7 +216,7 @@ export default function GlobalAnalyticsPage() {
             ) : (
               <>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <Table>
                     <thead>
                       <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
                         <th className="px-4 py-2 font-medium">Template</th>
@@ -284,16 +286,16 @@ export default function GlobalAnalyticsPage() {
                               )}
                             </td>
                             <td className="px-4 py-2 text-right tabular-nums">
-                              {fmtCost(row.totalCost)}
+                              {formatCost(row.totalCost)}
                             </td>
                             <td className="px-4 py-2 text-right tabular-nums">
-                              {avgCost !== null ? fmtCost(avgCost) : '—'}
+                              {avgCost !== null ? formatCost(avgCost) : '—'}
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
-                  </table>
+                  </Table>
                 </div>
                 {totalPages > 1 && (
                   <Pagination
@@ -316,7 +318,7 @@ export default function GlobalAnalyticsPage() {
                 <CardTitle>By domain</CardTitle>
               </CardHeader>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <Table>
                   <thead>
                     <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
                       <th className="px-4 py-2 font-medium">Domain</th>
@@ -334,7 +336,7 @@ export default function GlobalAnalyticsPage() {
                         <td className="px-4 py-2">{d.domain}</td>
                         <td className="px-4 py-2 text-right tabular-nums">{d.totalRuns}</td>
                         <td className="px-4 py-2 text-right tabular-nums">
-                          {fmtCost(d.totalCost)}
+                          {formatCost(d.totalCost)}
                         </td>
                         <td className="px-4 py-2 text-right tabular-nums">
                           {d.estimatedHumanTimeSavedTotal != null
@@ -361,7 +363,7 @@ export default function GlobalAnalyticsPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </Table>
               </div>
             </Card>
           )}
@@ -372,7 +374,7 @@ export default function GlobalAnalyticsPage() {
                 <CardTitle>By outcome</CardTitle>
               </CardHeader>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <Table>
                   <thead>
                     <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
                       <th className="px-4 py-2 font-medium">Outcome</th>
@@ -386,12 +388,12 @@ export default function GlobalAnalyticsPage() {
                         <td className="px-4 py-2">{o.outcomeType}</td>
                         <td className="px-4 py-2 text-right tabular-nums">{o.runCount}</td>
                         <td className="px-4 py-2 text-right tabular-nums">
-                          {fmtCost(o.totalCost)}
+                          {formatCost(o.totalCost)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </Table>
               </div>
             </Card>
           )}

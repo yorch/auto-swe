@@ -15,6 +15,11 @@ const { runEvalHarnessActivity } = proxyActivities<{
   runEvalHarnessActivity: typeof runEvalHarnessActivityType;
 }>({
   heartbeatTimeout: T_5_MINUTES,
+  // One attempt. The activity is the whole benchmark: a retry re-runs every
+  // case (each a Docker + LLM run) from the start, and the default policy
+  // retries without limit. A failure already marks the EvalRun FAILED; the
+  // next run is a fresh, deliberate decision.
+  retry: { maximumAttempts: 1 },
   // A full benchmark is many multi-minute Docker + LLM cases.
   startToCloseTimeout: T_4_HOURS,
 });

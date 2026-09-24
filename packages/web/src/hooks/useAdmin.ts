@@ -7,6 +7,7 @@ import type {
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import type { ScannerPatternType } from '@/lib/scannerPatternTypes';
 
 export interface ScannerPattern {
   createdAt: string;
@@ -17,7 +18,7 @@ export interface ScannerPattern {
   label: string;
   origin: string | null;
   pattern: string;
-  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
+  type: ScannerPatternType;
   updatedAt: string;
 }
 
@@ -36,7 +37,7 @@ export function useCreateScannerPattern() {
       flags: string;
       label: string;
       pattern: string;
-      type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
+      type: ScannerPatternType;
     }) =>
       api
         .post<{ data: ScannerPattern }>('/api/v1/platform/scanner-patterns', body)
@@ -57,7 +58,7 @@ export function useUpdateScannerPattern() {
       isActive?: boolean;
       label?: string;
       pattern?: string;
-      type?: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
+      type?: ScannerPatternType;
     }) =>
       api
         .put<{ data: ScannerPattern }>(`/api/v1/platform/scanner-patterns/${id}`, body)

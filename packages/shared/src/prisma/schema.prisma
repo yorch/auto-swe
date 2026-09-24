@@ -339,6 +339,7 @@ model Connection {
   memoryItems           MemoryItem[]
   runInputs             RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
+  workflowRuns          WorkflowRun[]
   mcpAgents             Agent[]                @relation("AgentMcpConnection")
   /// Repo dependency graph edges (repo-dependency-graph feature). `dependenciesFrom`
   /// are edges where this repo is the dependent; `dependenciesTo` where it is depended upon.
@@ -769,6 +770,7 @@ model SlackChannel {
   openItems      ChannelOpenItem[]
   threadSessions ChannelThreadSession[]
   configSettings ConfigSetting[]
+  workflowRuns   WorkflowRun[]
 
   @@unique([workspaceId, slackChannelId])
   @@index([teamId])
@@ -1118,6 +1120,18 @@ model WorkflowRun {
   templateVersion   Int               @map("template_version")
   workRequestId     String?           @map("work_request_id") @db.Uuid
   workRequest       RunInput?         @relation(fields: [workRequestId], references: [id])
+  /// The Slack channel a channel-assistant run (mention, ambient digest,
+  /// reactive interjection) belongs to. Null for every other run. Relational so
+  /// run visibility can reach the channel's owning team — the same metadata in
+  /// `specSnapshot.channel` is JSON, which a visibility predicate cannot join.
+  channelId         String?           @map("channel_id") @db.Uuid
+  channel           SlackChannel?     @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  /// The repository this run itself acts on, when that differs from what its
+  /// work request names: an epic child, whose work request is the epic's and
+  /// spans every repository. Run visibility reads it so a member of one of the
+  /// epic's teams reaches that team's child, not every child of the epic.
+  connectionId      String?           @map("connection_id") @db.Uuid
+  connection        Connection?       @relation(fields: [connectionId], references: [id], onDelete: SetNull)
   specSnapshot      Json              @map("spec_snapshot")
   contextSnapshot   Json?             @map("context_snapshot")
   /// P1/WS3 Agent-version snapshot taken at run start: a `{ agentKey: version }`
@@ -1180,6 +1194,8 @@ model WorkflowRun {
 
   @@index([templateId])
   @@index([workRequestId])
+  @@index([channelId])
+  @@index([connectionId])
   @@map("workflow_runs")
 }
 
@@ -1502,7 +1518,9 @@ model HumanApproval {
 model WorkflowTemplate {
   id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   teamId            String?                @map("team_id") @db.Uuid
-  team              Team?                  @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  /// Restrict, not SetNull: a null `teamId` means GLOBAL, so nulling it on team
+  /// deletion would publish that team's private templates to every tenant.
+  team              Team?                  @relation(fields: [teamId], references: [id], onDelete: Restrict)
   name              String
   description       String                 @default("")
   /// Declarative input contract for run submission — a JSON-Schema-subset
@@ -2107,16 +2125,13 @@ model ConfigAuditLog {
 }
 
 /// A reusable prompt-fragment skill injected into an agent's system prompt.
-/// Skills are assigned to Agents via `AgentSkillRef` (P1.5 — the legacy
-/// per-scope AgentSkillAssignment/AgentToolConfig tables were retired; see
-/// `agentResolver.ts`). Tool access is a separate concern (`Agent.toolKeys`).
+/// Skills are assigned to Agents via `AgentSkillRef` (see `agentResolver.ts`).
+/// Tool access is a separate concern (`Agent.toolKeys`).
 ///
-/// (D8) Intentionally global, not tenant-scoped: there is no `teamId`/`orgId`
-/// column here by design. The library is a single ADMIN-curated set — creation
-/// (`POST /api/v1/platform/skills`) and updates are ADMIN-only routes; tenant
-/// isolation happens one layer up, via which Agents (which ARE tenant-scoped)
-/// reference a given skill through `skillRefs`, not via row ownership on Skill
-/// itself.
+/// Tenant-scoped by `scope` + `teamId`/`orgId`, like `ProviderCredential` and
+/// `Agent`: built-ins are GLOBAL, a custom skill belongs to one team or org. The
+/// `skills_scope_keys_check` constraint (hand-written migration) ties the
+/// scope to which owner column is set.
 model Skill {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String

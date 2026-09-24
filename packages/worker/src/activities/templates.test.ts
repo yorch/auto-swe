@@ -44,6 +44,11 @@ vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
   syncTrackerOnEvent: vi.fn(),
 }));
 
+// Covered by its own suite; here only the wiring into createWorkflowRun.
+vi.mock('./scheduledFireAuthorization.js', () => ({
+  assertScheduledFireAuthorized: vi.fn(async () => undefined),
+}));
+
 vi.mock('@auto-swe/shared/db', () => {
   const prisma = {
     $executeRaw: vi.fn(async () => 1),
@@ -61,7 +66,9 @@ vi.mock('@auto-swe/shared/db', () => {
       // The run's tenant is derived from here as well as from RunInput, because
       // the Slack and scheduled launch paths carry the repo only on this row.
       findFirst: vi.fn(async () => null),
+      findUnique: vi.fn(async () => ({ budgetTier: 'LARGE' })),
       updateMany: vi.fn(),
+      upsert: vi.fn(async () => ({})),
     },
     agent: {
       findMany: vi.fn(),
@@ -76,6 +83,7 @@ vi.mock('@auto-swe/shared/db', () => {
     // definition default, i.e. the constant it replaced.
     configSetting: { findMany: vi.fn(async () => []) },
     connection: {
+      findUnique: vi.fn(async () => null),
       findUniqueOrThrow: vi.fn(),
     },
     evalResult: {
@@ -120,6 +128,7 @@ vi.mock('@auto-swe/shared/db', () => {
 import { prisma } from '@auto-swe/shared/db';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { notifySlackRunComplete, notifySlackStepFailure } from '../lib/slackNotify.js';
+import { assertScheduledFireAuthorized } from './scheduledFireAuthorization.js';
 import {
   createWorkflowRun,
   finalizeWorkflowRun,
@@ -178,6 +187,45 @@ describe('createWorkflowRun', () => {
     ] as never);
   });
 
+  it('re-takes a scheduled fire’s launch decision first, and a refusal stops the run', async () => {
+    const assertFire = vi.mocked(assertScheduledFireAuthorized);
+    assertFire.mockRejectedValueOnce(new Error('scheduled fire refused: owner left the team'));
+    findVersion.mockClear();
+    const input = {
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'sched-row-1-2026-09-24T14:00:00Z',
+      workRequestId: 'wr-1',
+    };
+    await expect(createWorkflowRun(input)).rejects.toThrow(/owner left the team/);
+    expect(assertFire).toHaveBeenCalledWith(input);
+    // Refused before any row is written or template loaded.
+    expect(findVersion).not.toHaveBeenCalled();
+    expect(upsertRun).not.toHaveBeenCalled();
+  });
+
+  it('links an epic child run to its own repository, and no other run', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    upsertRun.mockClear();
+    await createWorkflowRun({
+      parentWorkflowId: 'epic-T-1',
+      repoId: 'repo-b',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'epic-T-1-repo-b',
+      workRequestId: 'wr-epic',
+    });
+    expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({ connectionId: 'repo-b' });
+
+    await createWorkflowRun({
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-plain',
+      workRequestId: 'wr-1',
+    });
+    expect(upsertRun.mock.calls.at(-1)?.[0].create).not.toHaveProperty('connectionId');
+  });
+
   describe('retired installation', () => {
     const findRunInput = vi.mocked(prisma.runInput.findUnique);
 
@@ -215,6 +263,27 @@ describe('createWorkflowRun', () => {
       expect((result as { error: string }).error).toContain('retired');
       // Refused before the template is even loaded.
       expect(findVersion).not.toHaveBeenCalled();
+    });
+
+    it('refuses an epic child whose own repository points at a retired installation', async () => {
+      // An epic child's work request is the epic's and names no connection, so
+      // the check must read the child's own repository.
+      findRunInput.mockResolvedValue(null as never);
+      vi.mocked(prisma.connection.findUnique).mockResolvedValueOnce(
+        connection(false).connection as never
+      );
+      const result = await createWorkflowRun({
+        parentWorkflowId: 'epic-T-1',
+        repoId: 'repo-b',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'epic-T-1-repo-b',
+        workRequestId: 'wr-epic',
+      });
+      expect((result as { error: string }).error).toContain('retired');
+      expect(prisma.connection.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'repo-b' } })
+      );
     });
 
     it('starts normally through a live installation', async () => {
@@ -292,6 +361,52 @@ describe('createWorkflowRun', () => {
     });
     expect('error' in out).toBe(true);
     expect(upsertRun).not.toHaveBeenCalled();
+  });
+
+  describe('epic child ledger row', () => {
+    const child = {
+      parentWorkflowId: 'epic-1',
+      repoId: 'repo-1',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-child-1',
+      workRequestId: undefined,
+    };
+
+    it("writes the child's ledger row, inheriting the epic's budget tier", async () => {
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+      vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+      await createWorkflowRun(child);
+      expect(prisma.activeWorkflow.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            budgetTier: 'LARGE',
+            currentStatus: 'STARTING',
+            parentWorkflowId: 'epic-1',
+            temporalWorkflowId: 'wf-child-1',
+          }),
+        })
+      );
+    });
+
+    it('writes no ledger row when the template cannot be resolved', async () => {
+      // A row written before this return would sit in STARTING forever.
+      findVersion.mockResolvedValue(null as never);
+      vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+      const out = await createWorkflowRun(child);
+      expect('error' in out).toBe(true);
+      expect(prisma.activeWorkflow.upsert).not.toHaveBeenCalled();
+    });
+
+    it('writes no ledger row when the stored spec is malformed', async () => {
+      findVersion.mockResolvedValue({
+        spec: { nodes: {}, schemaVersion: SPEC_SCHEMA_VERSION },
+      } as never);
+      vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+      const out = await createWorkflowRun(child);
+      expect('error' in out).toBe(true);
+      expect(prisma.activeWorkflow.upsert).not.toHaveBeenCalled();
+    });
   });
 
   it('migrates a stored v1 spec via the registered codemod chain', async () => {

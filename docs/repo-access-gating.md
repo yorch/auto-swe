@@ -287,6 +287,8 @@ steering.
 | `POST /workflow-templates/:id/runs` | yes | `write` |
 | `POST /scheduled-work-requests` | yes | `write` |
 | `POST /scheduled-work-requests/:id/fire` | yes | `write` |
+| A scheduled work request's cron fire (decided for the schedule's owner, in the run's first activity) | yes | `write` |
+| `PATCH /scheduled-work-requests/:id` (re-activating, or changing what an active schedule runs) | yes | `write` |
 | `POST /prd-runs` (per repository) | yes | `write` |
 | Slack `/auto-swe run` modal | yes | `write` |
 | `POST /human-steps/:id/respond` and the Slack HITL buttons | yes | `read` |
@@ -338,6 +340,10 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   cloning, pushing and reading CI through a retired installation, and so does the sweep. The mark
   says what may start next; pulling the credential out from under running work would make a
   bookkeeping toggle into an outage.
+- **The retirement check at run start needs to know the run's repository.** It reads the run's own
+  repository (an epic child) or its work request's connection. A run launched from a Slack slash
+  command records its repository only on its ledger row, so that start is not refused by the mark;
+  scheduled fires are, through the fire-time launch decision.
 - **Team membership remains the outer bound.** The gate can only remove access. A user with GitHub
   admin rights on a repository still sees nothing unless they are a member of the owning team.
 - **Non-git connections are exempt, necessarily.** A `Connection` is also how an MCP server and
@@ -349,12 +355,19 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   so a call site that forgot it compiled and ran ungated — which is how the Slack routes and the
   human-step resolver ended up outside the gate. Required, forgetting is a compile error and
   passing `undefined` is a decision someone made.
-- **Editing or deleting a schedule is not gated, and a cron fire is not GitHub-gated.** Neither
-  editing nor deleting causes a push, and refusing a delete would strand a schedule its owner can
-  no longer stop. A schedule created before a user's GitHub access was revoked keeps firing until
-  someone deletes it: the gate is checked when the schedule is created and when it is fired by
-  hand, not on each cron fire, which has no user to check. A **retired installation** does stop
-  those fires, because that check reads no user — see below.
+- **Pausing, renaming or deleting a schedule is not gated.** None of them causes a push, and
+  refusing a pause or delete would strand a schedule its owner can no longer stop.
+- **A cron fire acts for the schedule's owner, and is decided again at every fire.** The run's first
+  activity re-takes the launch decision for the owner — team membership, the GitHub gate,
+  installation retirement, org membership and the org's monthly cap — and refuses the fire with a
+  non-retryable failure when any of them no longer holds; the next tick decides again, so restoring
+  access resumes the schedule. A refused fire is logged by the worker and audited against the
+  schedule (`config_audit_log`, entity `ScheduledWorkRequest`) at most once an hour per reason. The
+  owner is whoever created the schedule, or whoever last re-activated it or changed what it runs —
+  that edit takes the launch decision, so it also takes ownership. A schedule whose owner was
+  deleted or deactivated refuses every fire until someone re-activates it. An unreadable access
+  policy refuses the fire rather than falling back to `off`: nobody is watching an unattended
+  fire.
 - **A template run started by a public or webhook caller is not GitHub-gated.** There is no
   authenticated user to ask GitHub about; those callers are scoped to the template's own team
   instead, which is the pre-existing behaviour. A retired installation still stops them.
@@ -385,8 +398,7 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   and trusting the newest, turns the same move into a way to steer somebody else's run.
 - **A deferred code task is decided when it is asked for, not when it runs.** A task scheduled with
   `runAt` takes the requester's decision at creation and nothing re-asks GitHub at the moment the
-  run starts, so access lost in between does not stop it. This is the same window every other
-  deferred launch has — a scheduled work request is checked when the schedule is created, not on
-  each fire — and it exists because a re-check needs a user and the run's start does not have one in
-  hand. A **retired installation** is the one condition re-read at the start of every run, because
-  that check reads no user.
+  run starts, so access lost in between does not stop it. A scheduled work request does not have
+  this window — its owner is re-decided at every fire — but a deferred code task's run start does
+  not re-take the requester's decision. A **retired installation** is re-read at the start of every
+  run, because that check reads no user.

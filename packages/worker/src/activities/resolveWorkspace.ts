@@ -5,6 +5,7 @@ import {
   parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import type { WorkspaceProviderType } from '@auto-swe/shared/lib/workspaceProviders';
 import { ApplicationFailure } from '@temporalio/activity';
 import { fetchIssue } from '../connectors/issueTracker.js';
@@ -70,11 +71,14 @@ async function resolveGitRepoWorkspace(connectionId: string): Promise<WorkspaceC
       `git_repo connection ${connectionId} is missing owner/name`
     );
   }
+  // `githubUrl` is a per-repository HOST override (`https://ghe.example.com`),
+  // not a clone URL — the same meaning `toRepoRef` / `cloneCredentials` give
+  // it. Without one, the platform's configured GitHub base applies, so a
+  // deployment on GitHub Enterprise does not silently point at github.com.
+  const host = (connection.githubUrl ?? (await resolveGitHubConfig()).baseUrl).replace(/\/+$/, '');
   return {
     branch: connection.defaultBranch,
-    cloneUrl:
-      connection.githubUrl ??
-      `https://github.com/${connection.organizationName}/${connection.repoName}.git`,
+    cloneUrl: `${host}/${connection.organizationName}/${connection.repoName}.git`,
     connectionId,
     defaultBranch: connection.defaultBranch,
     provider: 'git_repo',

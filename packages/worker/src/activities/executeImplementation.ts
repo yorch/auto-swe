@@ -18,6 +18,7 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentAttempt, currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { abortSignalOption, throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
@@ -39,8 +40,9 @@ import {
   parseDiffToFileChanges,
   parseTestOutput,
   TEST_RUN_TIMEOUT_MS,
+  testRunCommand,
 } from './utils.js';
-import { createWorkspace, shellQuote } from './workspace.js';
+import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
 
 /**
  * Render the stored Figma design summary (a `FigmaDesignSummary[]` written by
@@ -142,7 +144,7 @@ export async function executeImplementation(
     // whatever a previous attempt pushed, exactly as the fix sessions do.
     if (currentAttempt() > 1) {
       try {
-        await workspace.gitAuthed(`fetch origin ${shellQuote(branch)}`);
+        await workspace.gitAuthed(fetchBranchesSubcommand([branch]));
         await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
       } catch {
         // Nothing pushed yet — the previous attempt failed before its push.
@@ -152,7 +154,7 @@ export async function executeImplementation(
 
     // Detect test framework
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
-    const testCommand = detectTestCommand(packageJson);
+    const testCommand = detectTestCommand(packageJson, repo.gateCommands);
 
     // Load tool config + skills (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade),
     // resolve any MCP server, and build the agent — bound to the workspace so
@@ -163,6 +165,7 @@ export async function executeImplementation(
       agent,
       promptSuffix,
       closeMcp: cm,
+      maxSteps,
       skills,
     } = await buildImplementerForActivity(workspace, tracer, activityCtx);
     closeMcp = cm;
@@ -281,6 +284,8 @@ export async function executeImplementation(
     const maxTddIterations = workflowDefaults.maxTddIterations;
     for (let iteration = 0; iteration < maxTddIterations; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${maxTddIterations}`);
+      // A cancelled run stops here rather than spending another iteration.
+      throwIfActivityCancelled();
 
       const llmUserMessage = JSON.stringify({
         description: subtask?.description ?? request.description,
@@ -301,7 +306,7 @@ export async function executeImplementation(
           { content: llmSystemPrompt, role: 'system' },
           { content: llmUserMessage, role: 'user' },
         ],
-        { toolChoice: 'auto' }
+        { maxSteps, toolChoice: 'auto', ...abortSignalOption() }
       );
 
       let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
@@ -335,8 +340,11 @@ export async function executeImplementation(
       // Run tests
       const testStart = Date.now();
       try {
-        const testOutput = await workspace.exec(testCommand, { timeoutMs: TEST_RUN_TIMEOUT_MS });
-        testResult = parseTestOutput(testOutput, Date.now() - testStart);
+        const testOutput = await workspace.exec(testRunCommand(testCommand), {
+          timeoutMs: TEST_RUN_TIMEOUT_MS,
+        });
+        // exec resolves only on exit 0.
+        testResult = parseTestOutput(testOutput, Date.now() - testStart, 0);
         tracer.addActivityEvent({
           durationMs: Date.now() - testStart,
           inputJson: { iteration },
@@ -378,6 +386,8 @@ export async function executeImplementation(
     // the pushed branch the agent may have had nothing left to change, and an
     // empty `git commit` exits non-zero.
     await workspace.exec(`git diff --cached --quiet || git commit -m ${shellQuote(commitSummary)}`);
+    // Never push on behalf of a run that has already been cancelled.
+    throwIfActivityCancelled();
     await workspace.gitAuthed(`push origin ${shellQuote(branch)}`);
 
     // Collect results

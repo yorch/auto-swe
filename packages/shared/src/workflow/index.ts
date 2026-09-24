@@ -90,6 +90,7 @@ export type {
 } from './spec.js';
 export {
   BindingSchema,
+  MAX_FANOUT_CONCURRENCY,
   NodeSchema,
   nodeEdges,
   parseWorkflowSpec,

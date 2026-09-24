@@ -375,10 +375,12 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         return reply;
       }
       return {
-        channelId: row.id,
-        channelName: row.name,
-        currentMonthUsage: serializeUsage(usage),
-        monthlyBudgetUsdCents: row.monthlyBudgetUsdCents,
+        data: {
+          channelId: row.id,
+          channelName: row.name,
+          currentMonthUsage: serializeUsage(usage),
+          monthlyBudgetUsdCents: row.monthlyBudgetUsdCents,
+        },
       };
     }
   );
@@ -451,10 +453,12 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'SlackChannel',
       });
       return {
-        channelId: row.id,
-        currentMonthUsage: serializeUsage(usage),
-        holdsReleased,
-        reclaimedUsd,
+        data: {
+          channelId: row.id,
+          currentMonthUsage: serializeUsage(usage),
+          holdsReleased,
+          reclaimedUsd,
+        },
       };
     }
   );

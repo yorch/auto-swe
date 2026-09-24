@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
-import { decideRepoAccess, repoAccessErrorBody } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { reachableConnections } from '../lib/tenantScope.js';
+import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { memberTeams, reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import type { WorkRequestScheduleInput } from '../plugins/temporal.js';
 import { resolveDefaultTemplate } from './workRequests.js';
@@ -110,6 +110,8 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
       team: {
         select: {
           memberships: { select: { role: true, userId: true }, where: { userId } },
+          organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+          orgId: true,
         },
       },
     },
@@ -118,35 +120,35 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
 }
 
 /**
- * The GitHub permission gate, for the endpoints that cause a push.
+ * The launch decision, for the endpoints that cause a push or put a schedule in
+ * a position to.
  *
- * A schedule is a standing instruction to push and open pull requests, so
- * creating one and firing one are launch paths in exactly the same sense as
- * submitting a work request. Gating only the interactive submit would leave a
- * schedule as a way to keep acting on a repository after GitHub access was
- * revoked. Editing and deleting are not gated: neither causes a push, and
- * refusing a delete would strand a schedule that its owner can no longer stop.
+ * A schedule is a standing instruction to push, open pull requests and spend, so
+ * creating one, firing one and (re-)activating one are launch paths in exactly
+ * the same sense as submitting a work request: repository access, org
+ * membership and the org's monthly cap. Gating only the interactive submit would
+ * leave a schedule as a way to keep acting on a repository after access was
+ * revoked. Pausing and deleting are not gated: neither causes a push, and
+ * refusing either would strand a schedule its owner can no longer stop.
  *
  * Returns false having already sent the reply.
  */
-async function passesRepoLaunchGate(
+async function passesLaunchAuthorization(
   fastify: FastifyInstance,
   request: FastifyRequest,
   user: JwtPayload,
   repo: RepoWithMembership,
   reply: FastifyReply
 ): Promise<boolean> {
-  const decision = await decideRepoAccess(
-    fastify.prisma,
-    user,
-    repo,
-    request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-    request.log
-  );
-  if (decision.allowed) {
+  const authorization = await authorizeLaunch(fastify.prisma, user, {
+    gate: request.repoAccessGate,
+    log: request.log,
+    repos: [repo],
+  });
+  if (authorization.ok) {
     return true;
   }
-  await reply.status(403).send(repoAccessErrorBody(decision.reason));
+  await sendLaunchRefusal(reply, authorization.refusal);
   return false;
 }
 
@@ -163,16 +165,30 @@ function canManage(user: { role: string }, repo: RepoWithMembership): boolean {
  * Resolve the template snapshot for a schedule: explicit override when set,
  * otherwise the repo team's default (same resolution as POST /work-requests).
  * Returns an error string when nothing resolvable is configured.
+ *
+ * `viewer` is the caller choosing the override. When set, the override must be
+ * one they can see — a GLOBAL template or one of their teams' — the same rule
+ * the template picker and POST /workflow-templates/:id/runs apply, so a guessed
+ * id cannot schedule another team's workflow. It is null when the override is
+ * the one already stored on the schedule, which was checked when it was set.
  */
 async function resolveScheduleTemplate(
   prisma: Prisma,
   repo: { teamId: string },
   templateId: string | null,
   templateVersion: number | null,
-  ticketId: string
+  ticketId: string,
+  viewer: { role: string; sub: string } | null
 ): Promise<{ templateId: string; templateVersion: number } | { error: string }> {
   if (templateId) {
-    const tpl = await prisma.workflowTemplate.findUnique({ where: { id: templateId } });
+    const tpl = await prisma.workflowTemplate.findFirst({
+      where: {
+        id: templateId,
+        ...(viewer && viewer.role !== 'ADMIN'
+          ? { OR: [{ teamId: null }, { team: memberTeams(viewer) }] }
+          : {}),
+      },
+    });
     if (!tpl) {
       return { error: `Template ${templateId} not found` };
     }
@@ -324,7 +340,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           },
         });
       }
-      if (!(await passesRepoLaunchGate(fastify, request, user, repo, reply))) {
+      if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply))) {
         return;
       }
 
@@ -339,7 +355,8 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         repo,
         body.templateId ?? null,
         body.templateVersion ?? null,
-        ticketId
+        ticketId,
+        user
       );
       if ('error' in template) {
         return reply
@@ -483,6 +500,37 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       }
 
       const body = request.body;
+      const workRequestId = existing.workRequestId;
+      const nextIsActive = body.isActive ?? existing.isActive;
+
+      // Activating a schedule, or changing what an active one runs or when it
+      // fires, is a launch decision like creating one: re-timing an active
+      // schedule to every minute is a way to spend more. Pausing and renaming
+      // are not — and must stay possible for an owner who has since lost
+      // access, or they could not stop their own schedule.
+      const changesWhatRuns =
+        !existing.isActive ||
+        body.templateId !== undefined ||
+        body.templateVersion !== undefined ||
+        body.description !== undefined ||
+        body.budgetTier !== undefined ||
+        (body.cronExpression !== undefined && body.cronExpression !== existing.cronExpression);
+      // Whoever takes this launch decision becomes the schedule's owner: every
+      // fire re-checks the OWNER's access in the worker, so a lead or admin who
+      // re-activates a schedule whose original owner has left must be the one
+      // it acts for from now on, or it would stay refused on every tick.
+      const reauthorized = nextIsActive && changesWhatRuns;
+      if (reauthorized) {
+        if (!repo.isActive) {
+          return reply.status(409).send({
+            error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
+          });
+        }
+        if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply))) {
+          return;
+        }
+      }
+
       // `templateId: null` clears the override (→ team default); omitted keeps it.
       const nextTemplateId = body.templateId === undefined ? existing.templateId : body.templateId;
       const nextTemplateVersion =
@@ -496,7 +544,10 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         repo,
         nextTemplateId,
         nextTemplateVersion,
-        ticketId
+        ticketId,
+        // Only a newly chosen override is checked against the caller; the stored
+        // one was checked by whoever set it.
+        nextTemplateId !== existing.templateId ? user : null
       );
       if ('error' in template) {
         return reply
@@ -504,36 +555,25 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           .send({ error: { code: 'TEMPLATE_NOT_RESOLVABLE', message: template.error } });
       }
 
-      const row = await fastify.prisma.scheduledWorkRequest.update({
-        data: {
-          ...(body.budgetTier !== undefined ? { budgetTier: body.budgetTier } : {}),
-          ...(body.cronExpression !== undefined ? { cronExpression: body.cronExpression } : {}),
-          ...(body.description !== undefined ? { description: body.description } : {}),
-          ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
-          ...(body.name !== undefined ? { name: body.name } : {}),
-          templateId: nextTemplateId,
-          templateVersion: nextTemplateId ? template.templateVersion : null,
-        },
-        include: scheduleInclude,
-        where: { id: existing.id },
-      });
+      const next: ScheduleRowForSync = {
+        budgetTier: body.budgetTier ?? existing.budgetTier,
+        cronExpression: body.cronExpression ?? existing.cronExpression,
+        description: body.description ?? existing.description,
+        externalTicketPrefix: existing.externalTicketPrefix,
+        id: existing.id,
+        isActive: nextIsActive,
+        name: body.name ?? existing.name,
+        repoId: existing.repoId,
+        workRequestId,
+      };
 
-      // Keep the standing WorkRequest's description/template snapshot in step
-      // so the /runs attribution stays truthful.
-      if (row.workRequestId) {
-        await fastify.prisma.runInput.update({
-          data: {
-            description: row.description,
-            templateId: template.templateId,
-            templateVersion: template.templateVersion,
-          },
-          where: { id: row.workRequestId },
-        });
-      }
-
+      // Temporal first, then the rows. The schedule is what actually fires, so
+      // a failed sync must leave the stored row describing the schedule that is
+      // really there — updating the row first and then failing the sync left the
+      // dashboard showing a schedule Temporal never received.
       try {
         await fastify.temporal.syncWorkRequestSchedule(
-          buildScheduleInput(row, template, existing.workRequestId)
+          buildScheduleInput(next, template, workRequestId)
         );
       } catch (err) {
         request.log.error({ err }, 'failed to sync Temporal schedule after update');
@@ -541,6 +581,84 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
         });
       }
+
+      const restorePriorSchedule = async (): Promise<void> => {
+        // The rows did not move, so put the Temporal schedule back to match
+        // them. Best-effort: if this fails too, the error is logged and the
+        // next successful edit re-syncs it.
+        const prior = await fastify.prisma.runInput
+          .findUnique({
+            select: { templateId: true, templateVersion: true },
+            where: { id: workRequestId },
+          })
+          .catch(() => null);
+        if (!(prior?.templateId && prior.templateVersion)) {
+          return;
+        }
+        await fastify.temporal
+          .syncWorkRequestSchedule(
+            buildScheduleInput(
+              existing,
+              { templateId: prior.templateId, templateVersion: prior.templateVersion },
+              workRequestId
+            )
+          )
+          .catch((restoreErr: unknown) => {
+            request.log.error(
+              { err: restoreErr, scheduleId: existing.id },
+              'schedule update failed and the Temporal schedule could not be restored'
+            );
+          });
+      };
+
+      const [row] = await fastify.prisma
+        .$transaction([
+          fastify.prisma.scheduledWorkRequest.update({
+            data: {
+              ...(body.budgetTier !== undefined ? { budgetTier: body.budgetTier } : {}),
+              ...(body.cronExpression !== undefined ? { cronExpression: body.cronExpression } : {}),
+              ...(body.description !== undefined ? { description: body.description } : {}),
+              ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+              ...(body.name !== undefined ? { name: body.name } : {}),
+              ...(reauthorized ? { createdById: user.sub } : {}),
+              templateId: nextTemplateId,
+              templateVersion: nextTemplateId ? template.templateVersion : null,
+            },
+            include: scheduleInclude,
+            where: { id: existing.id },
+          }),
+          // Keep the standing WorkRequest's description/template snapshot in
+          // step so the /runs attribution stays truthful.
+          fastify.prisma.runInput.update({
+            data: {
+              description: next.description,
+              templateId: template.templateId,
+              templateVersion: template.templateVersion,
+            },
+            where: { id: workRequestId },
+          }),
+          // Taking a schedule over changes whose access every later fire is
+          // checked against, and whose authority it pushes with — so the
+          // transfer is recorded, never silent.
+          ...(reauthorized && existing.createdById !== user.sub
+            ? [
+                fastify.prisma.configAuditLog.create({
+                  data: {
+                    action: 'UPDATE',
+                    actorId: user.sub,
+                    afterJson: { createdById: user.sub, event: 'owner-transferred' },
+                    beforeJson: { createdById: existing.createdById },
+                    entityId: existing.id,
+                    entityType: 'ScheduledWorkRequest',
+                  },
+                }),
+              ]
+            : []),
+        ])
+        .catch(async (err: unknown) => {
+          await restorePriorSchedule();
+          throw err;
+        });
 
       const status = await fastify.temporal
         .getWorkRequestScheduleStatus(row.id)
@@ -577,7 +695,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           },
         });
       }
-      if (!(await passesRepoLaunchGate(fastify, request, user, repo, reply))) {
+      if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply))) {
         return;
       }
 

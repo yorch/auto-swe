@@ -34,7 +34,7 @@ interface AuthState {
    *  social / magic-link callback lands back on /login?bridge=1 — no JWT
    *  is minted; instead the gateway authenticates every subsequent API
    *  call by reading the session cookie via credentials: 'include'. */
-  hydrateFromSession: () => Promise<boolean>;
+  hydrateFromSession: () => Promise<SessionProbeStatus>;
   /** Kick off the OAuth dance for the given provider. better-auth's
    *  `sign-in/social` returns `{ url, redirect: true }` — we navigate the
    *  browser to that provider auth URL; the round-trip lands back on
@@ -171,6 +171,8 @@ async function betterAuthRedirect(
  * answer — a network failure, a 429 or a 5xx — and says nothing about whether
  * the session cookie is still valid, so callers must leave the cookies alone.
  */
+export type SessionProbeStatus = 'authenticated' | 'anonymous' | 'unknown';
+
 type SessionProbe =
   | { status: 'authenticated'; user: NonNullable<AuthState['user']> }
   | { status: 'anonymous' }
@@ -242,12 +244,14 @@ export const useAuthStore = create<AuthState>((set) => ({
   hydrateFromSession: async () => {
     const probe = await fetchBetterAuthSession();
     if (probe.status !== 'authenticated') {
-      return false;
+      // 'unknown' (gateway down, 429, 5xx) is reported as such: the caller
+      // must not tell the user their session expired when nobody could check.
+      return probe.status;
     }
     setSessionMarkerCookie();
     await api.refreshToken().catch(() => {});
     set({ isAuthenticated: true, user: probe.user });
-    return true;
+    return 'authenticated';
   },
   isAuthenticated: false,
 

@@ -1,3 +1,4 @@
+import type { ConfigGrant as ConfigGrantRule } from '@auto-swe/shared/config/permissions';
 import type { SettingScope, SettingSource } from '@auto-swe/shared/config/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -83,14 +84,9 @@ export function useClearConfigSetting(selection: ScopeSelection) {
   });
 }
 
-export interface ConfigGrant {
+/** A grant row as the API returns it: the shared grant shape plus row metadata. */
+export interface ConfigGrant extends ConfigGrantRule {
   id: string;
-  keyPattern: string;
-  userId: string | null;
-  role: 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
-  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
-  teamId: string | null;
-  orgId: string | null;
   createdAt: string;
   user?: { email: string } | null;
   team?: { name: string } | null;

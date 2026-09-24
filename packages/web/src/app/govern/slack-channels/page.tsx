@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -12,6 +13,7 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Table } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import {
   type ChannelAuditKind,
@@ -33,6 +35,7 @@ import {
 } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
@@ -1086,7 +1089,12 @@ const AUDIT_KIND_TONES: Record<ChannelAuditKind, BadgeTone> = {
 
 function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClose: () => void }) {
   const [kindFilter, setKindFilter] = useState<ChannelAuditKind | 'all'>('all');
-  const { data: entries, isLoading } = useChannelAudit(channel?.id ?? null, kindFilter);
+  const {
+    data: entries,
+    isLoading,
+    isError: auditIsError,
+    error: auditError,
+  } = useChannelAudit(channel?.id ?? null, kindFilter);
 
   return (
     <Modal
@@ -1119,6 +1127,10 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
 
         {isLoading ? (
           <LoadingState />
+        ) : auditIsError ? (
+          <Alert variant="error">
+            Could not load channel activity: {errMsg(auditError, 'request failed')}
+          </Alert>
         ) : !entries || entries.length === 0 ? (
           <p className="py-4 text-center text-sm text-paper-500">
             No {kindFilter !== 'all' ? kindFilter : ''} activity recorded for this channel yet.
@@ -1287,7 +1299,7 @@ function ChannelRow({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function GovernSlackChannelsPage() {
-  const { data: channels, isLoading } = useSlackChannels();
+  const { data: channels, isLoading, isError, error: loadError } = useSlackChannels();
   const deleteChannel = useDeleteSlackChannel();
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -1320,12 +1332,15 @@ export default function GovernSlackChannelsPage() {
           </Button>
         }
         subtitle="Registered Slack channels that channel-assistant workflows respond in. Each channel is scoped to a team and can override agent key, ambient scheduling, and monthly spend caps."
-        title="Slack Channels"
+        title={navLabel('/govern/slack-channels')}
       />
 
-      {isLoading ? (
-        <LoadingState />
-      ) : (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="Slack channels"
+      >
         <Card>
           <CardHeader>
             <CardTitle eyebrow="Channels">Registered channels</CardTitle>
@@ -1335,7 +1350,7 @@ export default function GovernSlackChannelsPage() {
               No Slack channels registered yet. Click &ldquo;+ Register Channel&rdquo; to add one.
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <Table>
               <thead>
                 <tr className="border-b border-ink-600">
                   <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
@@ -1375,10 +1390,10 @@ export default function GovernSlackChannelsPage() {
                   />
                 ))}
               </tbody>
-            </table>
+            </Table>
           )}
         </Card>
-      )}
+      </QueryBoundary>
 
       <CreateChannelModal onClose={() => setCreateOpen(false)} open={createOpen} />
 

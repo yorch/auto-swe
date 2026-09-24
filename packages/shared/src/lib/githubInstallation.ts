@@ -16,6 +16,7 @@
  * into a 503. Only the credential mechanics are shared.
  */
 import { createHash, createSign } from 'node:crypto';
+import { isTrustedGitHubHost, UntrustedGitHubHostError } from './githubHostTrust.js';
 import type { ResolvedGitHubConfig } from './systemConfig.js';
 
 export class GitHubTokenMissingError extends Error {
@@ -169,6 +170,11 @@ export async function resolveGitHubToken(
       // condition, and the worker maps only this class to a non-retryable
       // Temporal failure — a plain Error would be retried to exhaustion.
       throw new GitHubTokenMissingError();
+    }
+    // The App JWT goes to this host. A per-repository override naming a host
+    // the deployment never configured must not receive it.
+    if (target.apiUrl && !isTrustedGitHubHost(target.apiUrl, config)) {
+      throw new UntrustedGitHubHostError('api', target.apiUrl);
     }
     const apiUrl = target.apiUrl ?? config.apiUrl;
     // Key on the installation *and* where it lives: the same numeric id on two

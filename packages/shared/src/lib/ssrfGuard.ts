@@ -17,22 +17,46 @@
 
 export type SafeProbeUrlResult = { ok: true; url: URL } | { ok: false; reason: string };
 
-/// Detects IPv4-mapped IPv6 addresses and returns the embedded IPv4 in
-/// dotted-quad. Accepts both human-friendly (`::ffff:127.0.0.1`) and the
-/// Node-normalised hex form (`::ffff:7f00:1`). Returns null for anything
-/// else so the caller can fall through to its normal IPv6 checks.
-function extractIpv4FromMapped(host: string): string | null {
-  const m1 = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
-  if (m1) {
-    return m1[1];
+function hexPairToIpv4(hiHex: string, loHex: string): string | null {
+  const hi = Number.parseInt(hiHex, 16);
+  const lo = Number.parseInt(loHex, 16);
+  if (!Number.isFinite(hi) || !Number.isFinite(lo)) {
+    return null;
   }
-  const m2 = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-  if (m2) {
-    const hi = Number.parseInt(m2[1], 16);
-    const lo = Number.parseInt(m2[2], 16);
-    if (Number.isFinite(hi) && Number.isFinite(lo)) {
-      return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+}
+
+/**
+ * IPv6 forms that carry an IPv4 address the network stack (or a NAT64 / 6to4
+ * gateway) will deliver to: IPv4-mapped (`::ffff:a.b.c.d`), IPv4-translated
+ * (`::ffff:0:a.b.c.d`), IPv4-compatible (`::a.b.c.d`), the NAT64 well-known
+ * prefix (`64:ff9b::a.b.c.d`, RFC 6052) and 6to4 (`2002:AABB:CCDD::`).
+ * Each prefix accepts both the dotted tail and the Node-normalised hex tail.
+ */
+const EMBEDDED_IPV4_PREFIXES: readonly RegExp[] = [/^::ffff:/, /^::ffff:0:/, /^::/, /^64:ff9b::/];
+
+/// Returns the IPv4 address embedded in an IPv6 literal (see
+/// EMBEDDED_IPV4_PREFIXES), in dotted-quad, or null when there is none so the
+/// caller falls through to its normal IPv6 checks.
+function extractEmbeddedIpv4(host: string): string | null {
+  for (const prefix of EMBEDDED_IPV4_PREFIXES) {
+    const m = prefix.exec(host);
+    if (!m) {
+      continue;
     }
+    const tail = host.slice(m[0].length);
+    const dotted = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(tail);
+    if (dotted) {
+      return dotted[1];
+    }
+    const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(tail);
+    if (hex) {
+      return hexPairToIpv4(hex[1], hex[2]);
+    }
+  }
+  const sixToFour = /^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})(:|$)/.exec(host);
+  if (sixToFour) {
+    return hexPairToIpv4(sixToFour[1], sixToFour[2]);
   }
   return null;
 }
@@ -58,15 +82,24 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
   // (e.g. `http://[::1]/` → hostname='[::1]'). Strip them so the string
   // / regex checks below match the bare address — otherwise `host === '::1'`
   // never triggers and an SSRF probe slips through to IPv6 loopback.
-  const host = rawHost.startsWith('[') && rawHost.endsWith(']') ? rawHost.slice(1, -1) : rawHost;
+  const bracketless =
+    rawHost.startsWith('[') && rawHost.endsWith(']') ? rawHost.slice(1, -1) : rawHost;
+  // A fully-qualified name may end in a dot (`localhost.`,
+  // `metadata.google.internal.`) and resolves exactly like the bare name, so
+  // strip it before any suffix comparison.
+  const host = bracketless.replace(/\.+$/, '');
 
   // Loopback / link-local / unspecified / IPv6 ::1 — text-level checks.
   if (
+    host === '' ||
     host === 'localhost' ||
+    host.endsWith('.localhost') ||
     host === '0.0.0.0' ||
     host === '::' ||
     host === '::1' ||
+    host === 'local' ||
     host.endsWith('.local') ||
+    host === 'internal' ||
     host.endsWith('.internal')
   ) {
     return { ok: false, reason: `host '${host}' is internal` };
@@ -87,11 +120,12 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
     }
   }
 
-  // IPv4-mapped IPv6: Node renders '::ffff:127.0.0.1' canonically as
-  // '::ffff:7f00:1'. Pull the embedded IPv4 in either form so it gets
-  // routed through the same private-network checks as a bare IPv4.
-  const ipv4FromMapped = extractIpv4FromMapped(host);
-  const effective = ipv4FromMapped ?? host;
+  // IPv6 forms that embed an IPv4 address (mapped, compatible, NAT64, 6to4):
+  // Node renders '::ffff:127.0.0.1' canonically as '::ffff:7f00:1'. Pull the
+  // embedded IPv4 in either form so it gets routed through the same
+  // private-network checks as a bare IPv4.
+  const embeddedIpv4 = extractEmbeddedIpv4(host);
+  const effective = embeddedIpv4 ?? host;
 
   // RFC 1918 IPv4 + link-local + AWS metadata + IPv6 ULA + IPv6 link-local.
   if (
@@ -100,6 +134,17 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
     /^192\.168\./.test(effective) ||
     /^172\.(1[6-9]|2[0-9]|3[01])\./.test(effective) ||
     /^169\.254\./.test(effective) ||
+    // 0.0.0.0/8 "this network" in any spelling that reached dotted-quad.
+    /^0\./.test(effective) ||
+    // RFC 6598 carrier-grade NAT, 100.64.0.0/10 — includes Alibaba Cloud's
+    // metadata endpoint 100.100.100.200.
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(effective) ||
+    // NAT64 local-use prefix (RFC 8215), 64:ff9b:1::/48: translated by a
+    // site-local gateway, so its target cannot be read from the address.
+    /^64:ff9b:1:/.test(effective) ||
+    // Deprecated IPv6 site-local, fec0::/10 — still routed internally by some
+    // stacks.
+    /^fe[c-f][0-9a-f]:/.test(effective) ||
     // IPv6 unique-local is fc00::/7 — BOTH the fc00::/8 and fd00::/8 halves.
     // In practice ULAs are fd00::/8 (RFC 4193 sets the L bit for locally
     // assigned prefixes), so matching only `fc` let the common case through.

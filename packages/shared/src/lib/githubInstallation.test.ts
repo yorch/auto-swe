@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { UntrustedGitHubHostError } from './githubHostTrust.js';
 import {
   clearInstallationTokenCache,
   GitHubTokenMissingError,
@@ -87,12 +88,28 @@ describe('installation token resolution', () => {
 
   it('treats the same installation id on a different host as a different installation', async () => {
     const { spy } = mintingFetch();
-    await resolveGitHubToken(config(), { apiUrl: 'https://api.github.com', installationId: '7' });
-    await resolveGitHubToken(config(), {
+    // A GitHub Enterprise instance is configured; public GitHub is always trusted.
+    const ghe = config({
+      apiUrl: 'https://ghe.example.com/api/v3',
+      baseUrl: 'https://ghe.example.com',
+    });
+    await resolveGitHubToken(ghe, { apiUrl: 'https://api.github.com', installationId: '7' });
+    await resolveGitHubToken(ghe, {
       apiUrl: 'https://ghe.example.com/api/v3',
       installationId: '7',
     });
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses to send the App JWT to an API host the deployment never configured', async () => {
+    const { spy } = mintingFetch();
+    await expect(
+      resolveGitHubToken(config(), {
+        apiUrl: 'https://attacker.example/api/v3',
+        installationId: '7',
+      })
+    ).rejects.toBeInstanceOf(UntrustedGitHubHostError);
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it('re-mints when the App private key rotates', async () => {

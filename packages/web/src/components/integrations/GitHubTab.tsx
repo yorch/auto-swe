@@ -12,7 +12,9 @@ import {
   useUpdateGitHubConfig,
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { API_BASE } from '@/lib/config';
+import { clearableField } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
@@ -26,15 +28,15 @@ export function GitHubTab() {
 
   const [token, setToken] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
-  const [oauthClientId, setOauthClientId] = useState('');
+  const [oauthClientId, setOauthClientId] = usePrefilledField(data?.oauthClientId);
   const [oauthClientSecret, setOauthClientSecret] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [apiUrl, setApiUrl] = useState('');
-  const [appId, setAppId] = useState('');
-  const [appClientId, setAppClientId] = useState('');
+  const [baseUrl, setBaseUrl] = usePrefilledField(data?.baseUrl);
+  const [apiUrl, setApiUrl] = usePrefilledField(data?.apiUrl);
+  const [appId, setAppId] = usePrefilledField(data?.appId);
+  const [appClientId, setAppClientId] = usePrefilledField(data?.appClientId);
   const [appClientSecret, setAppClientSecret] = useState('');
   const [appPrivateKey, setAppPrivateKey] = useState('');
-  const [appInstallationId, setAppInstallationId] = useState('');
+  const [appInstallationId, setAppInstallationId] = usePrefilledField(data?.appInstallationId);
   const [authMode, setAuthMode] = useState<string | null>(null);
 
   const { saved, error, requiresRestart, testing, testResult, submit, runTest } =
@@ -55,33 +57,22 @@ export function GitHubTab() {
     if (webhookSecret) {
       body.webhookSecret = webhookSecret;
     }
-    if (oauthClientId) {
-      body.oauthClientId = oauthClientId;
-    }
+    // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
+    body.oauthClientId = clearableField(oauthClientId, data?.oauthClientId);
     if (oauthClientSecret) {
       body.oauthClientSecret = oauthClientSecret;
     }
-    if (baseUrl) {
-      body.baseUrl = baseUrl;
-    }
-    if (apiUrl) {
-      body.apiUrl = apiUrl;
-    }
-    if (appId) {
-      body.appId = appId;
-    }
-    if (appClientId) {
-      body.appClientId = appClientId;
-    }
+    body.baseUrl = clearableField(baseUrl, data?.baseUrl);
+    body.apiUrl = clearableField(apiUrl, data?.apiUrl);
+    body.appId = clearableField(appId, data?.appId);
+    body.appClientId = clearableField(appClientId, data?.appClientId);
     if (appClientSecret) {
       body.appClientSecret = appClientSecret;
     }
     if (appPrivateKey) {
       body.appPrivateKey = appPrivateKey;
     }
-    if (appInstallationId) {
-      body.appInstallationId = appInstallationId;
-    }
+    body.appInstallationId = clearableField(appInstallationId, data?.appInstallationId);
     if (authMode !== null) {
       body.authMode = authMode;
     }

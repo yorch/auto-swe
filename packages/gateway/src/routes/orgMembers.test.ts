@@ -52,8 +52,8 @@ describe('GET /:orgId/members', () => {
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/members` });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
-    expect(Array.isArray(body)).toBe(true);
-    expect(body[0].userId).toBe(TARGET_USER);
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data[0].userId).toBe(TARGET_USER);
   });
 
   it('returns 403 when non-member tries to list', async () => {
@@ -77,6 +77,8 @@ describe('POST /:orgId/members', () => {
       url: `${PREFIX}/${ORG_ID}/members`,
     });
     expect(res.statusCode).toBeOneOf([200, 201]);
+    // The standard `{ data }` envelope, not a bare row.
+    expect(JSON.parse(res.body).data.id).toBe('row-1');
   });
 
   it('allows an ORG_ADMIN who is only a platform ENGINEER to manage members', async () => {

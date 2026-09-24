@@ -15,6 +15,7 @@ import {
   useSetConfigSetting,
 } from '@/hooks/useConfigSettings';
 import { useTeams } from '@/hooks/useTeams';
+import { navLabel } from '@/lib/navigation';
 
 /**
  * Every configurable knob, rendered from the registry definitions rather than
@@ -85,7 +86,7 @@ export default function GovernSettingsPage() {
     <div className="space-y-6">
       <PageHeader
         subtitle="Operator policy that used to be compiled into the worker. Values shown are what this scope resolves to; each row says where its value came from."
-        title="Admin — Settings"
+        title={navLabel('/govern/platform-settings')}
       />
 
       <Card>

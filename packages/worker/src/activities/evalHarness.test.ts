@@ -52,7 +52,10 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 // The harness resolves the implementer's tool-output budget the same way it
 // resolves the model; without this the registry resolver reaches for Prisma.
 vi.mock('@auto-swe/shared/config', () => ({
-  resolveSettings: vi.fn(async () => ({ 'workspace.maxToolOutputChars': 20_000 })),
+  resolveSettings: vi.fn(async () => ({
+    'workspace.agentMaxSteps': 64,
+    'workspace.maxToolOutputChars': 20_000,
+  })),
 }));
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
@@ -179,6 +182,15 @@ describe('runCaseDefault iteration cap', () => {
       'llm.eval.implementer.iteration_0'
     );
     expect(persistActivityTrace).toHaveBeenCalledWith(expect.anything(), 'implementer');
+  });
+
+  it('passes the resolved step budget to every generate call', async () => {
+    generate.mockResolvedValue({ text: 'done', usage: { inputTokens: 10, outputTokens: 5 } });
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 1 } as never);
+
+    await runCaseDefault(cases[0], 'implementer');
+
+    expect((generate.mock.calls[0] as unknown[])[1]).toMatchObject({ maxSteps: 64 });
   });
 
   it('persists the trace even when the agent throws', async () => {

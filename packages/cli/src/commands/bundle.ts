@@ -1,5 +1,6 @@
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { signBundle, validateBundle } from '@auto-swe/sdk';
 import { parseFlags } from '../lib/flags.js';
 
@@ -111,8 +112,9 @@ async function cmdInit(args: string[]): Promise<number> {
   const name = flags.name && flags.name !== 'true' ? flags.name : path.basename(path.resolve(dir));
   const version = flags.version && flags.version !== 'true' ? flags.version : '0.1.0';
 
+  const sdkDir = locateSdk();
   await fs.mkdir(path.join(dir, 'src'), { recursive: true });
-  await writeIfAbsent(path.join(dir, 'package.json'), scaffoldPackageJson(name));
+  await writeIfAbsent(path.join(dir, 'package.json'), scaffoldPackageJson(name, sdkDir));
   await writeIfAbsent(path.join(dir, 'tsconfig.json'), SCAFFOLD_TSCONFIG);
   await writeIfAbsent(path.join(dir, 'src', 'bundle.ts'), scaffoldBundleTs(name, version));
   await writeIfAbsent(path.join(dir, 'README.md'), scaffoldReadme(name));
@@ -121,7 +123,48 @@ async function cmdInit(args: string[]): Promise<number> {
       '  next: edit src/bundle.ts, then `tsx src/bundle.ts > my.bundle.json`\n' +
       '  validate: `auto-swe bundle validate my.bundle.json`\n'
   );
+  if (!sdkDir) {
+    process.stderr.write(
+      'note: @auto-swe/sdk is not published to a registry and no auto-swe checkout was found\n' +
+        '  next to this CLI, so package.json does not depend on it yet. Add it from a checkout:\n' +
+        '    "@auto-swe/sdk": "link:<auto-swe checkout>/packages/sdk"\n'
+    );
+  }
   return 0;
+}
+
+/**
+ * The `packages/sdk` directory of the auto-swe checkout this CLI runs from, or
+ * null when the CLI is not running from one. The SDK is a private workspace
+ * package that is never published, so a scaffold that named it by version
+ * (`"*"`) would fail to install — or worse, resolve to whatever a stranger
+ * published under that name. A `link:` to the checkout is the only source
+ * that is certainly this SDK.
+ */
+export function locateSdk(): string | null {
+  // src/commands/bundle.ts and dist/commands/bundle.js both sit three levels
+  // below packages/.
+  const candidate = fileURLToPath(new URL('../../../sdk/', import.meta.url));
+  const manifest = path.join(candidate, 'package.json');
+  if (!existsSync(manifest)) {
+    return null;
+  }
+  try {
+    const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as { name?: string };
+    return pkg.name === '@auto-swe/sdk' ? path.resolve(candidate) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * An agent key the starter bundle can install without colliding with a
+ * built-in. Keys allow letters, digits, dot, dash and underscore; the bundle
+ * name becomes the namespace.
+ */
+export function starterAgentKey(bundleName: string): string {
+  const ns = bundleName.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'bundle';
+  return `${ns}.reviewer`;
 }
 
 /** Write a file only if it doesn't already exist (never clobber author work). */
@@ -137,10 +180,10 @@ async function writeIfAbsent(file: string, contents: string): Promise<void> {
   }
 }
 
-function scaffoldPackageJson(name: string): string {
+function scaffoldPackageJson(name: string, sdkDir: string | null): string {
   return `${JSON.stringify(
     {
-      dependencies: { '@auto-swe/sdk': '*' },
+      dependencies: sdkDir ? { '@auto-swe/sdk': `link:${sdkDir}` } : {},
       devDependencies: { tsx: '*', typescript: '*' },
       name: `bundle-${name}`,
       private: true,
@@ -175,8 +218,11 @@ function scaffoldBundleTs(name: string, version: string): string {
 // Author your library content here, then assemble + print the manifest.
 // Run: tsx src/bundle.ts > bundle.json   (then: auto-swe bundle validate bundle.json)
 
+// Namespaced key: a bundle agent keyed like a built-in (\`reviewer\`,
+// \`implementer\`, …) would replace the platform's own agent on install, so the
+// gateway refuses that without --overwrite-protected.
 const reviewer = defineAgent({
-  key: 'reviewer',
+  key: '${starterAgentKey(name)}',
   name: 'Reviewer',
   description: 'Reviews proposed changes.',
   modelSpec: 'anthropic/claude-opus-4-8',
@@ -206,6 +252,11 @@ function scaffoldReadme(name: string): string {
 An auto-swe distribution bundle authored with [\`@auto-swe/sdk\`](https://github.com/yorch/auto-swe/blob/main/docs/bundles.md).
 
 ## Author
+
+\`@auto-swe/sdk\` is not published to a registry. \`package.json\` links it from
+an auto-swe checkout (\`link:<checkout>/packages/sdk\`), so build that checkout
+once (\`yarn install && yarn build\` there) and install with Yarn or pnpm, which
+understand the \`link:\` protocol.
 
 \`\`\`bash
 yarn install

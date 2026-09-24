@@ -10,8 +10,11 @@ import { Pagination } from '@/components/ui/Pagination';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TabBar } from '@/components/ui/TabBar';
-import { useTemplateRuns, useWorkflowTemplate } from '@/hooks/useTemplates';
+import { Table } from '@/components/ui/Table';
+import { useAllWorkflowRuns } from '@/hooks/useRuns';
+import { useWorkflowTemplate } from '@/hooks/useTemplates';
 import { validateRouteParam } from '@/lib/routeParams';
+import { isRunStatus, runStatusOptions } from '@/lib/runStatusOptions';
 import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
@@ -29,14 +32,7 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 
 const PAGE_SIZE = 20;
 
-const RUN_STATUSES = [
-  { label: 'All statuses', value: '' },
-  { label: 'Running', value: 'RUNNING' },
-  { label: 'Succeeded', value: 'SUCCEEDED' },
-  { label: 'Failed', value: 'FAILED' },
-  { label: 'Cancelled', value: 'CANCELLED' },
-  { label: 'Timed out', value: 'TIMED_OUT' },
-];
+const RUN_STATUSES = runStatusOptions();
 
 function runDuration(start: string, end: string | null): string {
   if (!end) {
@@ -54,10 +50,17 @@ export default function TemplateRunsPage({ params }: PageProps) {
   const [statusFilter, setStatusFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
 
-  const { data, isLoading } = useTemplateRuns(id ?? '', { limit: PAGE_SIZE, offset });
+  // Status is filtered server-side so pagination and the total reflect it;
+  // the run list endpoint takes the template as a filter too.
+  const { data, isLoading } = useAllWorkflowRuns({
+    limit: PAGE_SIZE,
+    offset,
+    status: isRunStatus(statusFilter) ? statusFilter : undefined,
+    templateId: id ?? undefined,
+  });
 
   const rows = data?.data ?? [];
-  const total = data?.total ?? 0;
+  const total = data?.meta.total ?? 0;
 
   const versions = useMemo(() => {
     const seen = new Set<number>();
@@ -69,16 +72,10 @@ export default function TemplateRunsPage({ params }: PageProps) {
 
   const filteredRows = useMemo(
     () =>
-      rows.filter((r) => {
-        if (statusFilter && r.status !== statusFilter) {
-          return false;
-        }
-        if (versionFilter && r.templateVersion !== Number(versionFilter)) {
-          return false;
-        }
-        return true;
-      }),
-    [rows, statusFilter, versionFilter]
+      // Version stays a filter over the current page: the endpoint has no
+      // version parameter.
+      rows.filter((r) => !versionFilter || r.templateVersion === Number(versionFilter)),
+    [rows, versionFilter]
   );
 
   const handleTabChange = (tab: SubTab) => {
@@ -113,9 +110,9 @@ export default function TemplateRunsPage({ params }: PageProps) {
         </Link>
         <div className="mt-4">
           <PageHeader
-            chapter={`§ Runs · ${total} total`}
+            chapter={`§ Runs · ${total} ${statusFilter ? 'matching' : 'total'}`}
             subtitle="Every execution of this template, newest first. Click a row to drill into a specific run."
-            title="Run history."
+            title="Run history"
           />
         </div>
       </div>
@@ -170,9 +167,9 @@ export default function TemplateRunsPage({ params }: PageProps) {
             Clear filters
           </button>
         )}
-        {(statusFilter || versionFilter) && (
+        {versionFilter && (
           <span className="font-mono text-[11px] text-paper-500">
-            {filteredRows.length} of {rows.length} shown
+            {filteredRows.length} of {rows.length} on this page shown
           </span>
         )}
       </div>
@@ -185,7 +182,7 @@ export default function TemplateRunsPage({ params }: PageProps) {
       ) : (
         <>
           <Card className="fade-up stagger-2 overflow-hidden p-0" variant="inset">
-            <table className="w-full text-sm">
+            <Table>
               <thead>
                 <tr className="border-b border-ink-600">
                   <Th>Started</Th>
@@ -251,14 +248,14 @@ export default function TemplateRunsPage({ params }: PageProps) {
                       className="px-4 py-12 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
                       colSpan={5}
                     >
-                      {rows.length === 0
+                      {rows.length === 0 && !statusFilter
                         ? 'no runs yet — start a new request to trigger one'
                         : 'no runs match the current filters'}
                     </td>
                   </tr>
                 )}
               </tbody>
-            </table>
+            </Table>
           </Card>
 
           {total > PAGE_SIZE && (

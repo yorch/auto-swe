@@ -75,7 +75,7 @@ Run `ls packages/<name>/src` for the actual layout — only non-obvious rules li
 | Package            | Purpose                                              | Critical conventions                                                                                                                                                                          |
 | ------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/shared`  | Prisma schema, DB client, shared types, workflow spec + interpreter, config registry | Singleton `PrismaClient` exported from `db.ts`; types re-exported via the `index.ts` barrel; `src/prisma/` holds `schema.prisma`, `seed.ts`, migrations; `skills/` holds built-in skill definitions (one file per skill); `config/` holds the setting registry + its resolver and permission rules |
-| `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; Octokit lives in `lib/github.ts`; entry point `src/index.ts`                                              |
+| `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; no Octokit here — `lib/github.ts` is webhook HMAC + a `fetch`-based repo listing, and the one Octokit client is the worker's `lib/scm/github.ts`; entry point `src/index.ts` |
 | `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external packages.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
 | `packages/cli`     | `auto-swe` CLI                                       | ESM Node 26+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API. `bundle init/validate/sign` is token-free local authoring over `@auto-swe/sdk`; `bundles list/export/install` hits the admin API |
@@ -459,14 +459,14 @@ Six scanners run during agent execution, each independently advisory or blocking
 | Scanner | Stage | Behaviour | Source |
 |---|---|---|---|
 | **Sensitive file** | Pre-write of every `writeFile` | **Hard-block** | `SENSITIVE_FILE` patterns via `sensitiveFileScanner.ts` |
-| **Pre-write content** | Pre-write of every `writeFile` | **Soft-block** (CRITICAL hard-blocks) | Static rules in `preWriteSecurityCheck.ts`; tags traces with `SECURITY_CHECK_FAILED_PREFIX` / `SECURITY_WARNINGS_PREFIX` |
+| **Pre-write content** | Pre-write of every `writeFile` | **Soft-block** (CRITICAL hard-blocks) | Static rules in `preWriteSecurityCheck.ts`; the tool result the agent sees starts `SECURITY_CHECK_FAILED_PREFIX` / `SECURITY_WARNINGS_PREFIX` |
 | **Shell command** | Pre-exec of every `bash` call | **Soft-block** (returns an error string to the agent) | `SHELL_COMMAND` patterns via `shellCommandScanner.ts` |
 | **Code security** | Post-commit diff scan | Advisory | `CODE_SECURITY` patterns via `codeSecurityScanner.ts`; findings reach the security reviewer through `CodeResult.codeSecurityFindings` |
 | **Skill content** | Skill save + LLM output per TDD iteration | Advisory | `INJECTION` / `EXFILTRATION` patterns via `skillScanner.ts` |
 | **LLM output** | Post-generate per TDD iteration | Advisory | `scanSkillContent`; wrapped in try/catch — a DB failure must never abort the activity |
 
-**Built-in patterns:** 62 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION,
-11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE, 4 PII. Synced idempotently by
+**Built-in patterns:** 63 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION,
+11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 7 SENSITIVE_FILE, 4 PII. Synced idempotently by
 `syncBuiltins()` at gateway startup and admin-extensible at `/govern/scanner`.
 
 `EXFILTRATION` patterns are written for **prose** — skill text and LLM output — and several are far
@@ -523,9 +523,13 @@ than the entire budget for one pattern.
   it did find; `scanDiffForCodeIssues` logs and returns partial findings. No scanner throws — per
   the observability rules a scan must never abort the calling activity.
 - **Blocking scanners never truncate.** Truncation in a blocking scanner is a bypass (20k of
-  leading `# ` comment pushes a real command past a cap). They use `chunkScanText`, which covers
-  the whole input in overlapping windows. `capScanText` (20 k) remains, restricted to the advisory
-  scanners where a missed match past the cap costs only a warning.
+  leading `# ` comment pushes a real command past a cap). The file-path scanner uses
+  `chunkScanText`, which covers the whole input in overlapping windows. The shell scanner uses
+  `shellScanTargets` instead: fixed windows miss any match longer than their overlap, and the
+  built-in shell rules run unbounded from the command word to the flag — so its windows start on
+  `;`/`&`/`|` boundaries, hold whole segments, and are also taken over the whitespace-collapsed,
+  continuation-joined spelling of the command. `capScanText` (20 k) remains, restricted to the
+  advisory scanners where a missed match past the cap costs only a warning.
 - **Write time is empirical, not structural.** `POST`/`PUT /admin/scanner-patterns` runs the
   candidate through `probeRegexBacktracking`, which executes it under the same budget against
   repetition-heavy input built from its own alphabet, and rejects with `REDOS_RISK` if it overruns.
@@ -552,8 +556,13 @@ Limitations of this arrangement, stated so nothing above reads as more than it i
 - N distinct pathological patterns cost N × two budgets per target before they are all
   quarantined. The budget bounds a hang; it does not make scanning free.
 
-**Security events:** blocks tag `AgentTrace.error` with the prefixes above; advisory events write
-named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The
+**Security events:** a scanner that refuses (or warns on) an implementer tool call tags that call's
+`AgentTrace.error` with one of the `SECURITY_TRACE_ERRORS` strings in
+`packages/shared/src/lib/securityTraceTags.ts` (imported through
+`@auto-swe/shared/lib/scannerCache`) — `'blocked by content security check'`,
+`'content security warning'`, `'blocked by sensitive file scanner'`,
+`'blocked by shell command scanner'` — the one definition the worker writes and the gateway and
+trajectory scorer read. Advisory events write named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The
 `GET /api/v1/platform/security-events` endpoint derives each `SecurityEventType` with DB-level
 predicates so pagination stays correct.
 
@@ -693,14 +702,19 @@ Dockerfile; it has the specific rules and what has already been tried and does n
 npm install -g corepack && corepack enable && yarn install
 
 # 2. Start infrastructure (postgres + postgres-temporal + temporal + garage)
-cp .env.example .env    # Fill in CONFIG_ENCRYPTION_KEY, SEED_ADMIN_PASSWORD, and optionally
-                        # GITHUB_TOKEN / GITHUB_WEBHOOK_SECRET as bootstrap fallbacks
+cp .env.example .env    # Fill in the required-secrets block: CONFIG_ENCRYPTION_KEY,
+                        # BETTER_AUTH_SECRET, JWT_SECRET, SEED_ADMIN_PASSWORD (each line
+                        # carries its `openssl rand` command); optionally GITHUB_TOKEN /
+                        # GITHUB_WEBHOOK_SECRET as bootstrap fallbacks
 yarn docker:infra:up
 
-# 3. Database setup
-yarn db:migrate && yarn db:generate && yarn db:seed
+# 3. Database setup — db:deploy, never db:migrate, on a fresh database: `migrate dev`
+#    reads the hand-written HNSW/CHECK DDL as drift (see the prisma-pgvector-hnsw skill)
+yarn db:deploy && yarn db:generate && yarn db:seed
 #  ↳ seeds the admin user, default team, sample connection, default workflow template,
-#    built-in skills + scanner patterns, and the GLOBAL Agent rows.
+#    built-in skills + scanner patterns, and the GLOBAL Agent rows. The seed refuses to
+#    run without SEED_ADMIN_PASSWORD and BETTER_AUTH_SECRET: its better-auth step runs
+#    without NODE_ENV, which the gateway treats as production.
 
 # 4. Start gateway + web first (the worker needs GitHub config in the DB before it starts)
 yarn dev:gateway         # Terminal 1 — http://localhost:8080

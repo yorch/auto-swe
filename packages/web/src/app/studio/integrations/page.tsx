@@ -12,6 +12,7 @@ import { SlackTab } from '@/components/integrations/SlackTab';
 import { StorageTab } from '@/components/integrations/StorageTab';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar } from '@/components/ui/TabBar';
+import { navLabel } from '@/lib/navigation';
 
 type Tab =
   | 'github'
@@ -69,7 +70,7 @@ function StudioIntegrationsPageInner() {
             badge means the value is currently read from an environment variable.
           </>
         }
-        title="Admin — Integrations"
+        title={navLabel('/studio/integrations')}
       />
       <TabBar active={active} onChange={setActive} tabs={TABS} />
       {active === 'github' && <GitHubTab />}

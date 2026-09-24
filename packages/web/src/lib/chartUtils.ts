@@ -4,6 +4,10 @@
  */
 
 import type { WorkflowSummary } from '@auto-swe/shared/types/api';
+import {
+  isTerminalActiveWorkflowStatus,
+  isTerminalWorkflowRunStatus,
+} from '@auto-swe/shared/types/api';
 
 type LessonForChart = { failureType: string | null; createdAt: string };
 
@@ -38,6 +42,34 @@ function lastDays(days: number): string[] {
   return out;
 }
 
+// ── Workflow status classes ───────────────────────────────────────────
+
+/**
+ * Buckets a workflow status for display. What counts as "over" is the shared
+ * definition — `ActiveWorkflow` statuses (COMPLETED/FAILED/TIMED_OUT/CANCELLED)
+ * and, for template-driven domain state that uses the run vocabulary,
+ * `WorkflowRun` statuses (SUCCESS/SKIPPED/…). Anything not terminal in either —
+ * including a status never heard of — is treated as still running. Terminal
+ * statuses then split into success, a deliberate stop, or a failure.
+ */
+const SUCCEEDED_WORKFLOW_STATUSES: ReadonlySet<string> = new Set(['COMPLETED', 'SUCCESS']);
+const STOPPED_WORKFLOW_STATUSES: ReadonlySet<string> = new Set(['CANCELLED', 'SKIPPED']);
+
+export type WorkflowStatusClass = 'active' | 'completed' | 'failed' | 'stopped';
+
+export function workflowStatusClass(status: string): WorkflowStatusClass {
+  if (!(isTerminalActiveWorkflowStatus(status) || isTerminalWorkflowRunStatus(status))) {
+    return 'active';
+  }
+  if (SUCCEEDED_WORKFLOW_STATUSES.has(status)) {
+    return 'completed';
+  }
+  if (STOPPED_WORKFLOW_STATUSES.has(status)) {
+    return 'stopped';
+  }
+  return 'failed';
+}
+
 // ── Workflow transformations ──────────────────────────────────────────
 
 export function groupWorkflowsByStatus(
@@ -66,12 +98,11 @@ export function groupWorkflowsByDate(
     if (!map[key]) {
       continue;
     }
-    if (w.currentStatus === 'COMPLETED') {
-      map[key].completed++;
-    } else if (w.currentStatus === 'FAILED' || w.currentStatus === 'TIMED_OUT') {
-      map[key].failed++;
-    } else {
-      map[key].active++;
+    const cls = workflowStatusClass(w.currentStatus);
+    // A cancelled or skipped workflow is neither a success, a failure, nor
+    // still running — it is left out of all three series.
+    if (cls !== 'stopped') {
+      map[key][cls]++;
     }
   }
   return buckets.map((date) => ({ date, ...map[date] }));

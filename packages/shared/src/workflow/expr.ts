@@ -95,21 +95,24 @@ export function evalBoolean(expr: string, ctx: Context): boolean {
  * Validate an expression's SYNTAX without caring whether it resolves at runtime.
  * Returns the syntax-error message, or `null` if the expression is well-formed.
  *
- * It evaluates against an empty context and treats only {@link ExprSyntaxError}
- * (tokenizer/parser failures) as a problem — runtime type errors raised by the
- * operators on absent/undefined operands (e.g. `count >= 3` against `{}`) are
- * NOT syntax errors and must not be reported, or every comparison/arithmetic
- * over a context path would be a false positive.
+ * This is a parse-only pass: the whole expression is parsed with evaluation
+ * switched off, so no path is read and no operator runs. An evaluating pass
+ * would stop at the first runtime type error (e.g. `count >= 3` against `{}`)
+ * and never reach a syntax error further right (`count >= 3 && (a`).
  */
 export function checkExprSyntax(expr: string): string | null {
   try {
-    evalExpr(expr, {});
+    const parser = new Parser(tokenizeExpr(expr), {}, false);
+    parser.parseOr();
+    parser.expectEnd();
     return null;
   } catch (err) {
     if (err instanceof ExprSyntaxError) {
       return err.message;
     }
-    return null;
+    // Parse-only mode raises nothing else; anything here is a parser bug, and
+    // reporting it beats silently accepting the expression.
+    return err instanceof Error ? err.message : String(err);
   }
 }
 
@@ -313,10 +316,36 @@ function tokenizeExpr(input: string): Tok[] {
 
 class Parser {
   private pos = 0;
+  /**
+   * Depth of "parse but do not evaluate" regions. Non-zero while parsing the
+   * right-hand side of a short-circuited `&&` / `||` / `??`, and for the whole
+   * expression in a syntax-only pass ({@link checkExprSyntax}). While skipping,
+   * every production still consumes its tokens — so a syntax error anywhere is
+   * still reported — but no path is read and no operator runs, so no runtime
+   * type error can be raised.
+   */
+  private skip: number;
   constructor(
     private readonly toks: Tok[],
-    private readonly ctx: Context
-  ) {}
+    private readonly ctx: Context,
+    evaluate = true
+  ) {
+    this.skip = evaluate ? 0 : 1;
+  }
+
+  private get evaluating(): boolean {
+    return this.skip === 0;
+  }
+
+  /** Parse one production without evaluating it. */
+  private skipping<T>(parse: () => T): void {
+    this.skip++;
+    try {
+      parse();
+    } finally {
+      this.skip--;
+    }
+  }
 
   expectEnd(): void {
     if (this.pos < this.toks.length) {
@@ -327,8 +356,13 @@ class Parser {
   parseOr(): unknown {
     let left = this.parseAnd();
     while (this.matchOp('||')) {
-      const right = this.parseAnd();
-      left = Boolean(left) || Boolean(right);
+      if (!this.evaluating || left) {
+        // Short-circuit: the right side is parsed for syntax but never evaluated.
+        this.skipping(() => this.parseAnd());
+        left = this.evaluating ? true : undefined;
+        continue;
+      }
+      left = Boolean(this.parseAnd());
     }
     return left;
   }
@@ -336,8 +370,14 @@ class Parser {
   parseAnd(): unknown {
     let left = this.parseCoalesce();
     while (this.matchOp('&&')) {
-      const right = this.parseCoalesce();
-      left = Boolean(left) && Boolean(right);
+      if (!this.evaluating || !left) {
+        // Short-circuit: `a != null && a.count > 0` must not evaluate the right
+        // side when `a` is null.
+        this.skipping(() => this.parseCoalesce());
+        left = this.evaluating ? false : undefined;
+        continue;
+      }
+      left = Boolean(this.parseCoalesce());
     }
     return left;
   }
@@ -345,8 +385,11 @@ class Parser {
   parseCoalesce(): unknown {
     let left = this.parseCompare();
     while (this.matchOp('??')) {
-      const right = this.parseCompare();
-      left = left == null ? right : left;
+      if (!this.evaluating || left != null) {
+        this.skipping(() => this.parseCompare());
+        continue;
+      }
+      left = this.parseCompare();
     }
     return left;
   }
@@ -357,7 +400,7 @@ class Parser {
     if (op === '==' || op === '!=' || op === '<' || op === '<=' || op === '>' || op === '>=') {
       this.pos++;
       const right = this.parseAdd();
-      return compare(op, left, right);
+      return this.evaluating ? compare(op, left, right) : undefined;
     }
     return left;
   }
@@ -367,10 +410,10 @@ class Parser {
     while (true) {
       if (this.matchOp('+')) {
         const right = this.parseMul();
-        left = requireNumber(left, '+') + requireNumber(right, '+');
+        left = this.evaluating ? requireNumber(left, '+') + requireNumber(right, '+') : undefined;
       } else if (this.matchOp('-')) {
         const right = this.parseMul();
-        left = requireNumber(left, '-') - requireNumber(right, '-');
+        left = this.evaluating ? requireNumber(left, '-') - requireNumber(right, '-') : undefined;
       } else {
         break;
       }
@@ -383,10 +426,10 @@ class Parser {
     while (true) {
       if (this.matchOp('*')) {
         const right = this.parseUnary();
-        left = requireNumber(left, '*') * requireNumber(right, '*');
+        left = this.evaluating ? requireNumber(left, '*') * requireNumber(right, '*') : undefined;
       } else if (this.matchOp('/')) {
         const right = this.parseUnary();
-        left = requireNumber(left, '/') / requireNumber(right, '/');
+        left = this.evaluating ? requireNumber(left, '/') / requireNumber(right, '/') : undefined;
       } else {
         break;
       }
@@ -397,11 +440,11 @@ class Parser {
   parseUnary(): unknown {
     if (this.matchOp('!')) {
       const v = this.parseUnary();
-      return !v;
+      return this.evaluating ? !v : undefined;
     }
     if (this.matchOp('-')) {
       const v = this.parseUnary();
-      return -requireNumber(v, 'unary -');
+      return this.evaluating ? -requireNumber(v, 'unary -') : undefined;
     }
     return this.parsePrimary();
   }
@@ -427,8 +470,15 @@ class Parser {
         return tok.val;
       case 'null':
         return null;
-      case 'path':
+      case 'path': {
+        if (!this.evaluating) {
+          // Still tokenize the path so a malformed / reserved segment is a
+          // syntax error even in a skipped branch.
+          tokenizePath(tok.val);
+          return undefined;
+        }
         return lookupPath(this.ctx, tok.val);
+      }
       default:
         throw new ExprSyntaxError(`unexpected operator ${tok.val}`);
     }

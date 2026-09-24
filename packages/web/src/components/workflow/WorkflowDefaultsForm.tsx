@@ -339,9 +339,10 @@ export function WorkflowDefaultsForm() {
               </Select>
             </FieldWrapper>
             <NumberField
-              hint="Seconds between CI polls. Only used in poll mode."
+              hint="Seconds between CI polls, at most 60 — the gateway clamps larger values. Only used in poll mode."
               id="ci-poll-interval"
               label="Poll interval (s)"
+              max={60}
               min={1}
               onChange={num('ciPollIntervalSec')}
               value={form.ciPollIntervalSec}
@@ -355,9 +356,10 @@ export function WorkflowDefaultsForm() {
               value={form.ciPollGraceSec}
             />
             <NumberField
-              hint="Give up waiting for CI after this long."
+              hint="Give up waiting for CI after this long, at most 20700 s (5 h 45 min) — the gateway clamps larger values."
               id="ci-poll-deadline"
               label="Deadline (s)"
+              max={20_700}
               min={1}
               onChange={num('ciPollDeadlineSec')}
               value={form.ciPollDeadlineSec}

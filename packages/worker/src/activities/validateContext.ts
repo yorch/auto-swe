@@ -2,8 +2,13 @@ import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest, RunRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
+import { persistActivityTrace } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
+import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { getErrorMessage } from '../lib/errors.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 import { runAgent } from './runAgent.js';
 
 // ── Zod schema for structured output ──
@@ -40,6 +45,15 @@ export async function validateContext(
   workRequest: RunRequest,
   systemPromptOverride?: string
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('validateContext', validateContextImpl(workRequest, systemPromptOverride));
+}
+
+async function validateContextImpl(
+  workRequest: RunRequest,
+  systemPromptOverride?: string
+): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   heartbeat('extracting success criteria');
 
   const ctx = await currentRequestContext();
@@ -60,8 +74,26 @@ export async function validateContext(
       spanName: 'llm.context_validation',
     });
     successCriteria = result.object?.successCriteria ?? [];
-  } catch {
-    // Graceful degradation: empty criteria still allows the workflow to proceed.
+  } catch (err) {
+    // A cancelled activity must stop, not persist a snapshot for a run the
+    // workflow has already abandoned.
+    throwIfActivityCancelled();
+    // Graceful degradation: empty criteria still allows the workflow to
+    // proceed — but say so. Downstream, the domain-logic reviewer checks the
+    // diff against these criteria, and an empty list silently turns that check
+    // off; an operator reading the run must be able to see why.
+    const error = getErrorMessage(err);
+    console.warn(
+      `[validateContext] success-criteria extraction failed; continuing with none: ${error}`
+    );
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({
+      error,
+      name: 'context_validation.degraded',
+      outputJson: { successCriteria: 0 },
+    });
+    // Best-effort: the trace write must not turn a degraded run into a failed one.
+    await persistActivityTrace(tracer, 'validateContext').catch(() => undefined);
   }
 
   heartbeat('persisting context snapshot');

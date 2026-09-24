@@ -70,7 +70,7 @@ export async function assertConfigReady(): Promise<void> {
   if (missing.length > 0) {
     throw new Error(
       `LLM configuration incomplete. The worker cannot start until the following are resolvable:\n${missing.join('\n')}\n\n` +
-        'The built-in agents are created by the DB seed; add the missing ProviderCredential(s) and the EmbeddingConfig at /admin/model-config, and any custom agents at /admin/agents/library. See docs/model-configuration.md.'
+        'The built-in agents are created by the DB seed; add the missing ProviderCredential(s) and the EmbeddingConfig at /studio/models, and any custom agents at /studio/agents/library. See docs/model-configuration.md.'
     );
   }
 }

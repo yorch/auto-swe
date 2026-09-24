@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runBundlesCommand } from './bundles.js';
+import { parseInstallArgs, runBundlesCommand } from './bundles.js';
 
 const ENV = { apiUrl: 'http://gw', token: 't' };
 
@@ -90,8 +90,26 @@ describe('runBundlesCommand (gateway-backed)', () => {
     const code = await runBundlesCommand(['install', file], ENV);
     expect(code).toBe(0);
     expect(captured[0]?.url).toContain('/api/v1/platform/bundles/install');
-    expect(captured[0]?.body).toEqual({ bundle: { bundleSchemaVersion: 1 } });
+    expect(captured[0]?.body).toEqual({
+      bundle: { bundleSchemaVersion: 1 },
+      overwriteProtected: false,
+    });
     expect(stdoutWrites.join('')).toContain('2 agents, 1 skills');
+  });
+
+  it('parseInstallArgs keeps the path when --overwrite-protected precedes it', () => {
+    expect(parseInstallArgs(['--overwrite-protected', 'b.json'])).toEqual({
+      overwriteProtected: true,
+      positional: ['b.json'],
+    });
+    expect(parseInstallArgs(['b.json', '--overwrite-protected'])).toEqual({
+      overwriteProtected: true,
+      positional: ['b.json'],
+    });
+    expect(parseInstallArgs(['b.json'])).toEqual({
+      overwriteProtected: false,
+      positional: ['b.json'],
+    });
   });
 
   it('export requires both name and version', async () => {

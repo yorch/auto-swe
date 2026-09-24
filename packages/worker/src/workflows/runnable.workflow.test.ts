@@ -61,6 +61,8 @@ let currentSpec: Record<string, unknown> = {};
  * those runs silently.
  */
 let currentPinnedSettings: Record<string, unknown> | undefined;
+/** When set, the fake createWorkflowRun reports this setup error instead of a run. */
+let createRunError: string | undefined;
 let updateDomainStateImpl: (workflowId: string, status: string) => Promise<void> = async (
   _wf,
   status
@@ -85,6 +87,9 @@ const fakeActivities = {
   createHumanStep: async () => {},
   createWorkflowRun: async (input: unknown) => {
     calls.createWorkflowRun.push(input);
+    if (createRunError) {
+      return { error: createRunError };
+    }
     return { pinnedSettings: currentPinnedSettings, runId: 'run-test-1', spec: currentSpec };
   },
   executeImplementation: async (_request: unknown, subtask: unknown) => {
@@ -164,6 +169,7 @@ beforeEach((ctx: TestContext) => {
   // Default to the pre-existing-run shape so a test that cares about pinning
   // has to opt in, and one that doesn't cannot accidentally depend on it.
   currentPinnedSettings = undefined;
+  createRunError = undefined;
 });
 
 afterAll(async () => {
@@ -220,6 +226,19 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect((result as { status: string }).status).toBe('SUCCESS');
     expect(calls.domainStates).toContain('IMPLEMENTING');
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
+  }, 120_000);
+
+  it('fails the run once, without retrying the task, when run setup reports an error', async () => {
+    // A plain Error thrown from workflow code fails the workflow *task*, which
+    // Temporal retries forever; the run must fail as a non-retryable failure.
+    createRunError = 'template not found';
+    const handle = await env.client.workflow.start('RunnableWorkflow', startArgs('wf-setup-err'));
+    const failure = await handle.result().then(
+      () => null,
+      (err: unknown) => err as { cause?: { type?: string; message?: string } }
+    );
+    expect(failure?.cause?.type).toBe('WORKFLOW_RUN_SETUP_FAILED');
+    expect(failure?.cause?.message).toContain('template not found');
   }, 120_000);
 
   it('runs a spec with no pinned-settings snapshot at all', async () => {

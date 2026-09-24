@@ -7,14 +7,14 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { useRepositories } from '@/hooks/useRepositories';
 import { API_BASE, TEMPORAL_UI_URL } from '@/lib/config';
-
-type Role = 'ADMIN' | 'LEAD' | 'ENGINEER' | string;
+import { navLabel } from '@/lib/navigation';
+import { hasRole } from '@/lib/roles';
 
 export function DashboardOnboarding({
   role,
   onNewRequest,
 }: {
-  role: Role;
+  role: string | null | undefined;
   onNewRequest?: () => void;
 }) {
   const { data: repos = [], isLoading: connectionsLoading } = useRepositories();
@@ -26,7 +26,8 @@ export function DashboardOnboarding({
     setTemporalUiUrl(TEMPORAL_UI_URL);
   }, []);
 
-  const canManageRepos = role === 'ADMIN' || role === 'LEAD';
+  const canManageRepos = hasRole(role, 'LEAD');
+  const isAdmin = hasRole(role, 'ADMIN');
   const hasConnections = repos.length > 0;
 
   const curlExample = `curl -X POST ${API_BASE}/api/v1/workflow-templates/<template-id>/runs \\
@@ -42,12 +43,12 @@ export function DashboardOnboarding({
       <div className="fade-up">
         <PageHeader
           chapter="§ Welcome"
-          subtitle="No runs yet. Here's the shortest path to your first validated outcome."
-          title="Let's get the workshop running."
+          subtitle="No runs yet. Here's the shortest path to getting the workshop running and your first validated outcome."
+          title={navLabel('/')}
         />
       </div>
 
-      {role === 'ADMIN' && (
+      {isAdmin && (
         <section className="fade-up stagger-1">
           <SectionHeader
             hint="admins only · do this first"

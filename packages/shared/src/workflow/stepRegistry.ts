@@ -27,7 +27,7 @@ const REGISTRY = new Map<string, StepMetadata>();
 
 const SYSTEM_PROMPT_FIELD = {
   description:
-    'Override the agent system prompt for this step. Leave empty to use the team/global default configured at /admin/model-config.',
+    'Override the agent system prompt for this step. Leave empty to use the team/global default configured at /studio/models.',
   key: 'systemPrompt',
   label: 'System prompt',
   multiline: true,

@@ -22,6 +22,16 @@ vi.mock('@auto-swe/shared', () => ({
   Role: { ADMIN: 'ADMIN', ENGINEER: 'ENGINEER', LEAD: 'LEAD' },
 }));
 
+// The configured GitHub instance — a GitHub Enterprise host, so public GitHub
+// and the configured instance are distinguishable in the host-override tests.
+const ghConfig = vi.hoisted(() => ({
+  apiUrl: 'https://ghe.corp.example/api/v3',
+  baseUrl: 'https://ghe.corp.example',
+}));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubConfig: vi.fn(async () => ghConfig),
+}));
+
 import { repositoryRoutes } from './repositories.js';
 
 interface AuthState {
@@ -171,6 +181,81 @@ describe('repositoryRoutes', () => {
       expect(findManyArgs.where).toEqual({
         isActive: true,
         team: { memberships: { some: { userId: 'engineer-7' } } },
+      });
+    });
+
+    it('includes deactivated connections for a LEAD+ caller that asks for them', async () => {
+      ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([]);
+      ctx.mockPrisma.connection.count.mockResolvedValueOnce(0);
+
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories?includeInactive=true',
+      });
+
+      const findManyArgs = ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0];
+      expect(findManyArgs.where).toEqual({});
+    });
+
+    it('shows a platform LEAD deactivated connections only on teams they lead', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-3';
+      ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([]);
+      ctx.mockPrisma.connection.count.mockResolvedValueOnce(0);
+
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories?includeInactive=true',
+      });
+
+      const findManyArgs = ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0];
+      expect(findManyArgs.where).toEqual({
+        // Active rows on any of their teams; inactive rows only where they are
+        // team LEAD/ADMIN and so could reactivate them.
+        AND: [
+          {
+            OR: [
+              { isActive: true },
+              {
+                team: {
+                  memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: 'lead-3' } },
+                },
+              },
+            ],
+          },
+        ],
+        team: { memberships: { some: { userId: 'lead-3' } } },
+      });
+      expect(ctx.mockPrisma.connection.count.mock.calls.at(-1)?.[0].where).toEqual(
+        findManyArgs.where
+      );
+    });
+
+    it('ignores includeInactive for an ENGINEER, and treats "false" as false', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.authState.sub = 'engineer-7';
+      ctx.mockPrisma.connection.findMany.mockResolvedValue([]);
+      ctx.mockPrisma.connection.count.mockResolvedValue(0);
+
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories?includeInactive=true',
+      });
+      expect(ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0].where).toMatchObject({
+        isActive: true,
+      });
+
+      ctx.authState.role = 'ADMIN';
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories?includeInactive=false',
+      });
+      expect(ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0].where).toEqual({
+        isActive: true,
       });
     });
 
@@ -462,5 +547,118 @@ describe('repositoryRoutes', () => {
       });
       expect(res.statusCode).toBe(400);
     });
+  });
+});
+
+describe('repository GitHub host overrides (credential destinations)', () => {
+  let ctx: Awaited<ReturnType<typeof buildApp>>;
+  const body = { organizationName: 'acme', repoName: 'widgets', teamId: TEAM_ID, type: 'git_repo' };
+
+  beforeAll(async () => {
+    ctx = await buildApp();
+  });
+  afterAll(() => ctx.app.close());
+  beforeEach(() => {
+    ctx.authState.role = 'ADMIN';
+    ctx.authState.sub = 'admin-1';
+    for (const fn of Object.values(ctx.mockPrisma.connection)) {
+      fn.mockReset();
+    }
+    ctx.mockPrisma.team.findUnique.mockReset().mockResolvedValue({ id: TEAM_ID, isActive: true });
+    ctx.mockPrisma.teamMembership.findUnique
+      .mockReset()
+      .mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
+    ctx.mockPrisma.connection.findFirst.mockResolvedValue(null);
+    ctx.mockPrisma.connection.create.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+    ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+  });
+
+  const post = (payload: Record<string, unknown>) =>
+    ctx.app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: { ...body, ...payload },
+      url: '/api/v1/repositories',
+    });
+  const patch = (payload: Record<string, unknown>) =>
+    ctx.app.inject({
+      headers: AUTH_HEADER,
+      method: 'PATCH',
+      payload,
+      url: `/api/v1/repositories/${REPO_ID}`,
+    });
+
+  it('an ADMIN may set a configured-instance override; it is stored normalised', async () => {
+    const res = await post({
+      githubApiUrl: 'https://GHE.corp.example/api/v3/',
+      githubUrl: 'https://ghe.corp.example/',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(ctx.mockPrisma.connection.create.mock.calls[0]?.[0].data).toMatchObject({
+      githubApiUrl: 'https://ghe.corp.example/api/v3',
+      githubUrl: 'https://ghe.corp.example',
+    });
+  });
+
+  it('rejects a host nobody configured, even from an ADMIN', async () => {
+    const res = await post({ githubApiUrl: 'https://attacker.example/api/v3' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVALID_GITHUB_HOST');
+    expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a per-repository URL in a host column', async () => {
+    const res = await post({ githubUrl: 'https://ghe.corp.example/acme/widgets' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVALID_GITHUB_HOST');
+  });
+
+  it('a team LEAD may not point a repository at a different (even trusted) host', async () => {
+    ctx.authState.role = 'LEAD';
+    ctx.authState.sub = 'lead-1';
+    const res = await post({ githubApiUrl: 'https://api.github.com' });
+    expect(res.statusCode).toBe(403);
+    expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+  });
+
+  it('a team LEAD may import onto the configured instance (no credential moves)', async () => {
+    ctx.authState.role = 'LEAD';
+    ctx.authState.sub = 'lead-1';
+    const res = await post({
+      githubApiUrl: 'https://ghe.corp.example/api/v3',
+      githubUrl: 'https://ghe.corp.example',
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('a team LEAD may re-send an unchanged override or clear it on PATCH, but not change it', async () => {
+    ctx.authState.role = 'LEAD';
+    ctx.authState.sub = 'lead-1';
+    const current = {
+      githubApiUrl: 'https://api.github.com',
+      githubUrl: 'https://github.com',
+      id: REPO_ID,
+      teamId: TEAM_ID,
+      type: 'git_repo',
+    };
+    ctx.mockPrisma.connection.findUnique.mockResolvedValue(current);
+
+    expect(
+      (await patch({ description: 'x', githubApiUrl: 'https://api.github.com/' })).statusCode
+    ).toBe(200);
+    expect((await patch({ githubApiUrl: null })).statusCode).toBe(200);
+
+    ctx.mockPrisma.connection.update.mockClear();
+    const res = await patch({ githubUrl: 'https://ghe.corp.example/api/v3' });
+    expect(res.statusCode).toBe(400);
+    const res2 = await patch({
+      githubApiUrl: 'https://ghe.corp.example/api/v3',
+      githubUrl: 'https://github.com',
+    });
+    expect(res2.statusCode).toBe(200);
+    // …but a different trusted host that is neither current nor configured is ADMIN-only.
+    current.githubApiUrl = 'https://ghe.corp.example/api/v3';
+    const res3 = await patch({ githubApiUrl: 'https://api.github.com' });
+    expect(res3.statusCode).toBe(403);
   });
 });

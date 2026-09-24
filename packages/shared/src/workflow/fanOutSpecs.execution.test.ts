@@ -102,28 +102,115 @@ describe('CONSENSUS_REVIEW_SPEC executes', () => {
 });
 
 describe('PARALLEL_FAN_OUT_SPEC executes', () => {
-  it('runs one implementer per subtask, exports each code result, and opens the PR', async () => {
-    let n = 0;
-    const { dispatcher, calls } = makeDispatcher({
-      createOrUpdatePullRequest: { prNumber: 3, prUrl: 'https://example/pr/3' },
-      executeImplementation: () => ({ branch: `auto/TEST-1-${++n}`, headSha: `sha-${n}` }),
-      updateDomainState: ({ status }: Inputs) => ({ status }),
-      validateContext: { successCriteria: [] },
-    });
+  // Scripted like the worker: each subtask's implementer pushes its own
+  // `<prefix>/<ticket>/<subtask.id>` branch.
+  const implement = (inputs: Inputs) => {
+    const subtask = inputs.subtask as { id: string };
+    return { branch: `auto/TEST-1/${subtask.id}`, headSha: `sha-${subtask.id}` };
+  };
+  const script = (merge: unknown, resolve?: unknown): StepScript => ({
+    createOrUpdatePullRequest: { prNumber: 3, prUrl: 'https://example/pr/3' },
+    executeImplementation: implement,
+    mergeBranches: merge,
+    ...(resolve ? { resolveMergeConflict: resolve } : {}),
+    updateDomainState: ({ status }: Inputs) => ({ status }),
+    validateContext: { successCriteria: [] },
+  });
+  const inputsOf = (calls: Array<{ step: string; inputs: Inputs }>, step: string) =>
+    calls.find((c) => c.step === step)?.inputs;
+
+  it('implements each subtask on its own branch, merges them, and opens ONE PR for the merge', async () => {
+    const { dispatcher, calls } = makeDispatcher(
+      script({
+        headSha: 'sha-merged',
+        mergedBranches: [],
+        passed: true,
+        unmergedBranches: [],
+      })
+    );
     const result = await runSpec(parsed(PARALLEL_FAN_OUT_SPEC), baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
     expect(result.result).toEqual({ prNumber: 3, prUrl: 'https://example/pr/3' });
-    expect(calls.filter((c) => c.step === 'executeImplementation')).toHaveLength(3);
-    const fan = (result.finalContext.context as Record<string, unknown>).fanOutResults as {
-      failed: number;
-      results: Array<{ exports?: Record<string, unknown> }>;
-    };
-    expect(fan.failed).toBe(0);
-    expect(
-      fan.results.map(
-        (r) => (r.exports?.['context.currentCodeResult'] as { branch?: string } | undefined)?.branch
+
+    // Every implementer received a real Subtask (the worker names the branch
+    // from `subtask.id`).
+    const subtasks = calls
+      .filter((c) => c.step === 'executeImplementation')
+      .map((c) => c.inputs.subtask as { id: string; title: string; description: string });
+    expect(subtasks.map((t) => t.id)).toEqual(['feature', 'tests', 'docs']);
+    expect(subtasks.every((t) => t.title && t.description)).toBe(true);
+
+    // The merge integrates exactly the pushed branches into a branch that is
+    // not a git-ref parent of them.
+    expect(inputsOf(calls, 'mergeBranches')).toEqual({
+      sourceBranches: ['auto/TEST-1/feature', 'auto/TEST-1/tests', 'auto/TEST-1/docs'],
+      targetBranch: 'eng-test-1',
+    });
+
+    // The PR step is bound to a CodeResult for the integrated branch — the
+    // step would throw on an unbound `context.currentCodeResult`.
+    const codeResult = inputsOf(calls, 'createOrUpdatePullRequest')?.codeResult as Record<
+      string,
+      unknown
+    >;
+    expect(codeResult).toMatchObject({
+      branch: 'eng-test-1',
+      filesChanged: [],
+      headSha: 'sha-merged',
+      repoId: 'repo-1',
+      testResults: { passed: true },
+    });
+  });
+
+  it('routes a merge conflict through the resolver with every branch, then opens the PR', async () => {
+    const { dispatcher, calls } = makeDispatcher(
+      script(
+        {
+          conflicts: [{ branch: 'auto/TEST-1/docs', output: 'CONFLICT' }],
+          mergedBranches: ['auto/TEST-1/feature', 'auto/TEST-1/tests'],
+          passed: false,
+          unmergedBranches: ['auto/TEST-1/docs'],
+        },
+        { headSha: 'sha-resolved', passed: true }
       )
-    ).toEqual(['auto/TEST-1-1', 'auto/TEST-1-2', 'auto/TEST-1-3']);
+    );
+    const result = await runSpec(parsed(PARALLEL_FAN_OUT_SPEC), baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(inputsOf(calls, 'resolveMergeConflict')).toEqual({
+      sourceBranches: ['auto/TEST-1/feature', 'auto/TEST-1/tests', 'auto/TEST-1/docs'],
+      targetBranch: 'eng-test-1',
+    });
+    const pr = inputsOf(calls, 'createOrUpdatePullRequest');
+    expect((pr?.codeResult as { headSha?: string } | undefined)?.headSha).toBe('sha-resolved');
+  });
+
+  it('fails without opening a PR when the conflict cannot be resolved', async () => {
+    const { dispatcher, calls } = makeDispatcher(
+      script(
+        { conflicts: [], mergedBranches: [], passed: false, unmergedBranches: [] },
+        { conflicts: [{ branch: 'x', output: 'still' }], passed: false }
+      )
+    );
+    const result = await runSpec(parsed(PARALLEL_FAN_OUT_SPEC), baseCtx(), dispatcher);
+    expect(result.status).toBe('FAILED');
+    expect(calls.some((c) => c.step === 'createOrUpdatePullRequest')).toBe(false);
+  });
+
+  it('fails without merging when a branch failed', async () => {
+    let n = 0;
+    const { dispatcher, calls } = makeDispatcher({
+      ...script({ passed: true }),
+      executeImplementation: (inputs: Inputs) => {
+        n++;
+        if (n === 2) {
+          throw new Error('implementer blew up');
+        }
+        return implement(inputs);
+      },
+    });
+    const result = await runSpec(parsed(PARALLEL_FAN_OUT_SPEC), baseCtx(), dispatcher);
+    expect(result.status).toBe('FAILED');
+    expect(calls.some((c) => c.step === 'mergeBranches')).toBe(false);
   });
 });
 

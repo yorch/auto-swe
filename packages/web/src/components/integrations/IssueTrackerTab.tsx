@@ -13,6 +13,8 @@ import {
   useUpdateIssueTrackerConfig,
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { usePrefilledField } from '@/hooks/usePrefilledField';
+import { clearableField } from '@/lib/configFieldPatch';
 import { errMsg } from '@/lib/errors';
 import { ConfigField } from './ConfigField';
 import { SecretInput } from './SecretInput';
@@ -45,16 +47,18 @@ export function IssueTrackerTab() {
   const update = useUpdateIssueTrackerConfig();
 
   const [provider, setProvider] = useState<'' | 'disabled' | IssueTrackerProvider>('');
-  const [baseUrl, setBaseUrl] = useState('');
+  const [baseUrl, setBaseUrl] = usePrefilledField(data?.baseUrl);
   const [allowPrivateNetwork, setAllowPrivateNetwork] = useState<boolean | undefined>(undefined);
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = usePrefilledField(data?.email);
   const [apiToken, setApiToken] = useState('');
-  const [storyPointsFieldId, setStoryPointsFieldId] = useState('');
-  const [epicIssueType, setEpicIssueType] = useState('');
-  const [storyIssueType, setStoryIssueType] = useState('');
-  const [defaultProjectKey, setDefaultProjectKey] = useState('');
+  const [storyPointsFieldId, setStoryPointsFieldId] = usePrefilledField(data?.storyPointsFieldId);
+  const [epicIssueType, setEpicIssueType] = usePrefilledField(data?.epicIssueType);
+  const [storyIssueType, setStoryIssueType] = usePrefilledField(data?.storyIssueType);
+  const [defaultProjectKey, setDefaultProjectKey] = usePrefilledField(data?.defaultProjectKey);
   const [webhookSecret, setWebhookSecret] = useState('');
-  const [webhookTriggerStatus, setWebhookTriggerStatus] = useState('');
+  const [webhookTriggerStatus, setWebhookTriggerStatus] = usePrefilledField(
+    data?.webhookTriggerStatus
+  );
 
   const detectFields = useDetectJiraFields();
 
@@ -79,36 +83,23 @@ export function IssueTrackerTab() {
     if (provider) {
       body.provider = provider === 'disabled' ? null : provider;
     }
-    if (baseUrl) {
-      body.baseUrl = baseUrl;
-    }
+    // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
+    body.baseUrl = clearableField(baseUrl, data?.baseUrl);
     if (allowPrivateNetwork !== undefined) {
       body.allowPrivateNetwork = allowPrivateNetwork;
     }
-    if (email) {
-      body.email = email;
-    }
+    body.email = clearableField(email, data?.email);
     if (apiToken) {
       body.apiToken = apiToken;
     }
-    if (storyPointsFieldId) {
-      body.storyPointsFieldId = storyPointsFieldId;
-    }
-    if (epicIssueType) {
-      body.epicIssueType = epicIssueType;
-    }
-    if (storyIssueType) {
-      body.storyIssueType = storyIssueType;
-    }
-    if (defaultProjectKey) {
-      body.defaultProjectKey = defaultProjectKey;
-    }
+    body.storyPointsFieldId = clearableField(storyPointsFieldId, data?.storyPointsFieldId);
+    body.epicIssueType = clearableField(epicIssueType, data?.epicIssueType);
+    body.storyIssueType = clearableField(storyIssueType, data?.storyIssueType);
+    body.defaultProjectKey = clearableField(defaultProjectKey, data?.defaultProjectKey);
     if (webhookSecret) {
       body.webhookSecret = webhookSecret;
     }
-    if (webhookTriggerStatus) {
-      body.webhookTriggerStatus = webhookTriggerStatus;
-    }
+    body.webhookTriggerStatus = clearableField(webhookTriggerStatus, data?.webhookTriggerStatus);
 
     submit(
       () => update.mutateAsync(body),

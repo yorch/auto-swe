@@ -29,8 +29,11 @@ COMMANDS
   workflows generate "<description>" [--name=N] [--team=<slug>]
                                        Generate a DRAFT template from plain language (AI)
   workflows explain <name>             Explain a template's active version in plain language (AI)
+                                       show / export / import / run / explain take --team=<slug> or
+                                       --global: names are unique per team, and a name found in more
+                                       than one scope is an error until one is picked
 
-  runs list [--status=S] [--template-id=ID] [--limit=N]
+  runs list [--status=S] [--template-id=ID] [--work-request-id=ID] [--limit=N]
                                        List recent workflow runs
   runs show <runId>                    Print one run (with steps) as JSON
   runs tail <runId> [--interval=SEC] [--max=N]
@@ -48,14 +51,19 @@ COMMANDS
   bundles list                         List installed bundles (admin token)
   bundles export <name> <version> [--origin=TAG] [-o <path>]
                                        Export GLOBAL content to a bundle file
-  bundles install <path>               Install a bundle from a file
-  bundles install-from-url <url>       Install a bundle from a URL
+  bundles install <path> [--overwrite-protected]
+                                       Install a bundle from a file; a bundle agent that would
+                                       replace a built-in or admin-authored one is refused unless
+                                       --overwrite-protected is passed
+  bundles install-from-url <url> [--overwrite-protected]
+                                       Install a bundle from a URL
 
   evals list                           List eval datasets (admin token)
   evals show <id>                      Print a dataset's cases
   evals results [--source=…] [--run=…] Query captured eval signals
   evals run <slug> --candidate=<ref> --against=<ref>
-                                       Run the regression gate (exit 1 on a regression)
+                                       Run the regression gate (exit 1 on a regression,
+                                       2 when the eval run fails without a verdict)
 
   help                                 Show this message
 
@@ -68,7 +76,8 @@ EXIT CODES
   0  success
   1  user error (missing arg, no token, etc.) — or, for evals run, a regression
   2  remote error (HTTP non-2xx from the gateway) — or, for runs tail, a run that
-     ended in a non-success status
+     ended in a non-success status; for evals run, an eval run that failed
+     without reaching a verdict
 `;
 
 async function main(argv: string[]): Promise<number> {

@@ -9,6 +9,7 @@ import type {
   WorkflowRunSummary,
   WorkflowSummary,
 } from '@auto-swe/shared/types/api';
+import { isTerminalWorkflowRunStatus } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { api } from '@/lib/api';
@@ -42,7 +43,7 @@ export function useWorkflowRun(id: string, includeTraces = true) {
     queryKey: ['workflow-run', id, includeTraces],
     refetchInterval: (q) => {
       const data = q.state.data;
-      return data?.status === 'RUNNING' ? 3_000 : 30_000;
+      return data && !isTerminalWorkflowRunStatus(data.status) ? 3_000 : 30_000;
     },
   });
 }
@@ -111,16 +112,16 @@ export function useAllWorkflowRuns(
   });
 }
 
-export function useRunsForWorkRequest(workRequestId?: string) {
+export function useRunsForWorkRequest(workRequestId?: string | null, limit = 20) {
   return useQuery({
     enabled: !!workRequestId,
     queryFn: () =>
       api
         .get<{ data: WorkflowRunSummary[] }>(
-          `/api/v1/workflow-runs?workRequestId=${workRequestId}&limit=20&offset=0`
+          `/api/v1/workflow-runs?workRequestId=${workRequestId}&limit=${limit}&offset=0`
         )
         .then((r) => r.data),
-    queryKey: ['workflow-runs', 'by-work-request', workRequestId],
+    queryKey: ['workflow-runs', 'by-work-request', workRequestId, limit],
     refetchInterval: 10_000,
   });
 }

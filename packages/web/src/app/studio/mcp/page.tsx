@@ -19,6 +19,7 @@ import {
 } from '@/hooks/useMcpConnections';
 import { useTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
 /**
@@ -326,7 +327,7 @@ export default function StudioMcpConnectionsPage() {
             then load at run time alongside the agent&apos;s built-in tools.
           </>
         }
-        title="MCP Connections"
+        title={navLabel('/studio/mcp')}
       />
 
       <QueryBoundary

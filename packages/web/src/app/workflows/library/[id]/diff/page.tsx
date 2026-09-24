@@ -212,7 +212,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
             }
             chapter="§ Compare versions"
             subtitle="Side-by-side diff of two versions of this template. Changed nodes are highlighted on both diagrams and expanded below."
-            title="Version diff."
+            title="Version diff"
           />
         </div>
       </div>

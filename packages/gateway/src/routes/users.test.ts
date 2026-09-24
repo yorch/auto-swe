@@ -26,6 +26,7 @@ vi.mock('../lib/betterAuth.js', () => ({
   })),
 }));
 
+import { _cacheSessionForTests, _hasCachedSessionForTests } from '../plugins/auth.js';
 import { userRoutes } from './users.js';
 
 interface AuthState {
@@ -150,6 +151,110 @@ describe('userRoutes', () => {
         url: '/api/v1/users',
       });
       expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe('GET /api/v1/users/lookup', () => {
+    it('resolves an active user by exact email for a LEAD', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
+        { email: 'a@example.com', id: USER_ID, name: 'Ada' },
+      ]);
+
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/users/lookup?email=A@example.com',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data).toEqual({
+        email: 'a@example.com',
+        id: USER_ID,
+        name: 'Ada',
+      });
+      expect(ctx.mockPrisma.user.findMany).toHaveBeenCalledWith({
+        // No `role`: the lookup must not tell a LEAD which addresses are admins.
+        select: { email: true, id: true, name: true },
+        take: 50,
+        where: { email: { equals: 'A@example.com', mode: 'insensitive' }, isActive: true },
+      });
+    });
+
+    it('does not answer for a row matched only by an ILIKE wildcard', async () => {
+      ctx.authState.role = 'LEAD';
+      // `_` is a one-character wildcard if the database compared with ILIKE.
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
+        { email: 'ab@example.com', id: USER_ID, name: 'Ada' },
+      ]);
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/users/lookup?email=a_@example.com',
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('is rate-limited per caller', async () => {
+      const { default: rateLimit } = await import('@fastify/rate-limit');
+      const app = Fastify();
+      app.setValidatorCompiler(validatorCompiler);
+      app.setSerializerCompiler(serializerCompiler);
+      app.decorate('prisma', {
+        user: { findMany: vi.fn().mockResolvedValue([]) },
+      } as unknown as never);
+      app.decorate('auth', {
+        verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'LEAD', sub: 'lead-1' }),
+      } as unknown as never);
+      // A global limit far above the route's, as in index.ts.
+      await app.register(rateLimit, { max: 1000, timeWindow: '1 minute' });
+      await app.register(userRoutes, { prefix: '/api/v1/users' });
+      await app.ready();
+      try {
+        const statuses: number[] = [];
+        for (let i = 0; i < 31; i++) {
+          const res = await app.inject({
+            headers: AUTH_HEADER,
+            method: 'GET',
+            url: `/api/v1/users/lookup?email=u${i}@example.com`,
+          });
+          statuses.push(res.statusCode);
+        }
+        expect(statuses.slice(0, 30).every((s) => s === 404)).toBe(true);
+        expect(statuses[30]).toBe(429);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('returns 404 when no active user matches', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([]);
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/users/lookup?email=nobody@example.com',
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('rejects an ENGINEER and a malformed email', async () => {
+      ctx.authState.role = 'ENGINEER';
+      const forbidden = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/users/lookup?email=a@example.com',
+      });
+      expect(forbidden.statusCode).toBe(403);
+
+      ctx.authState.role = 'LEAD';
+      const bad = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/users/lookup?email=not-an-email',
+      });
+      expect(bad.statusCode).toBe(400);
+      expect(ctx.mockPrisma.user.findMany).not.toHaveBeenCalled();
     });
   });
 
@@ -632,6 +737,33 @@ describe('userRoutes', () => {
 
         expect(res.statusCode).toBe(200);
         expect(ctx.mockPrisma.user.update).toHaveBeenCalled();
+      });
+
+      it('drops the deactivated user’s cached browser sessions immediately', async () => {
+        // The cache is keyed by the signed cookie value (`<token>.<sig>`), which
+        // the sessions table never stores — invalidation keys on the user id.
+        const payload = { exp: 0, iat: 0, role: 'ENGINEER' as const, sub: USER_ID };
+        _cacheSessionForTests('tok-a.sig-a', payload);
+        _cacheSessionForTests('tok-other.sig', { ...payload, sub: 'someone-else' });
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID, isActive: true });
+        ctx.mockPrisma.user.update.mockResolvedValueOnce({
+          email: 'other@example.com',
+          id: USER_ID,
+          isActive: false,
+          role: 'ENGINEER',
+          slackId: null,
+        });
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { isActive: false },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(_hasCachedSessionForTests('tok-a.sig-a')).toBe(false);
+        expect(_hasCachedSessionForTests('tok-other.sig')).toBe(true);
       });
 
       it('allows an admin to demote a different user', async () => {

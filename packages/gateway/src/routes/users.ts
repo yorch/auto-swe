@@ -7,7 +7,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
-import { invalidateSessionCache, requireAuth, requireUser } from '../plugins/auth.js';
+import { invalidateUserAuthCache, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateUserSchema = z.object({
   email: z.string().email(),
@@ -18,6 +18,8 @@ const CreateUserSchema = z.object({
 });
 
 const UserParamsSchema = z.object({ id: z.string().uuid() });
+
+const UserLookupQuery = z.object({ email: z.string().trim().email() });
 
 const UpdateUserSchema = z.object({
   email: z.string().email().optional(),
@@ -106,6 +108,45 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       return { data: users };
+    }
+  );
+
+  // GET /api/v1/users/lookup?email= — resolve one active user by exact email
+  // (LEAD+). The "add member" pickers on the team and organization pages are
+  // reachable by LEADs, who cannot list every user; an exact-match lookup lets
+  // them add someone they can name without exposing the directory.
+  //
+  // It answers "does this address belong to an active user" and nothing more:
+  // no platform role (that would tell a LEAD which addresses are platform
+  // admins — a target list) and no memberships. The lookup is platform-wide by
+  // necessity, since the person being added is by definition not yet on the
+  // caller's team, so it is rate-limited per caller to keep it from doubling as
+  // a directory enumeration oracle.
+  app.get(
+    '/lookup',
+    {
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { querystring: UserLookupQuery },
+    },
+    async (request, reply) => {
+      // A case-insensitive `equals` can compile to ILIKE on Postgres, where `_`
+      // (legal in an email) is a one-character wildcard — so the candidates are
+      // re-checked for an exact, case-folded match here rather than trusting
+      // the database to have compared literally.
+      const wanted = request.query.email.toLowerCase();
+      const candidates = await fastify.prisma.user.findMany({
+        select: { email: true, id: true, name: true },
+        take: 50,
+        where: { email: { equals: request.query.email, mode: 'insensitive' }, isActive: true },
+      });
+      const user = candidates.find((u) => u.email.toLowerCase() === wanted);
+      if (!user) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'USER_NOT_FOUND', message: 'No active user with that email' } });
+      }
+      return { data: user };
     }
   );
 
@@ -324,19 +365,15 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           select: { email: true, id: true, isActive: true, role: true, slackId: true },
           where: { id: request.params.id },
         });
-        // A demotion or deactivation must take effect now, not after the
-        // session cache's TTL — drop every cached session for the user.
+        // A demotion or deactivation must take effect now, not after a cache
+        // TTL — drop every cached session and the cached bearer-token state for
+        // the user. Keyed by user id: the session cache is keyed by the signed
+        // cookie value, which the database never sees.
         const privilegeChanged =
           (request.body.role !== undefined && request.body.role !== user.role) ||
           (request.body.isActive !== undefined && request.body.isActive !== user.isActive);
         if (privilegeChanged) {
-          const sessions = await fastify.prisma.session.findMany({
-            select: { token: true },
-            where: { userId: updated.id },
-          });
-          for (const session of sessions) {
-            invalidateSessionCache(session.token);
-          }
+          invalidateUserAuthCache(updated.id);
         }
         await writeAuditLog(fastify, {
           action: 'UPDATE',

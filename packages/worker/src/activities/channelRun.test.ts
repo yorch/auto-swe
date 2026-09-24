@@ -39,7 +39,7 @@ const TEMPLATE = { activeVersion: 1, id: 'tmpl-channel' };
 beforeEach(() => {
   vi.clearAllMocks();
   p.workflowTemplate.findFirst.mockResolvedValue(TEMPLATE);
-  p.slackChannel.findUnique.mockResolvedValue({ orgId: 'org-1', teamId: 'team-1' });
+  p.slackChannel.findUnique.mockResolvedValue({ id: 'chan-1', orgId: 'org-1', teamId: 'team-1' });
 });
 
 describe('startChannelRun', () => {
@@ -60,7 +60,9 @@ describe('startChannelRun', () => {
     expect(data.templateId).toBe('tmpl-channel');
     expect(data.templateVersion).toBe(1);
     expect(data.workRequestId).toBeNull();
-    // Channel metadata rides along in the spec snapshot (no schema column).
+    // Linked relationally so run visibility can reach the channel's team.
+    expect(data.channelId).toBe('chan-1');
+    // Channel metadata also rides along in the spec snapshot for the audit feed.
     expect(data.specSnapshot.channel).toMatchObject({
       channelId: 'chan-1',
       kind: 'mention',
@@ -81,6 +83,19 @@ describe('startChannelRun', () => {
     expect(p.slackChannel.findUnique).toHaveBeenCalledTimes(1);
     const data = p.workflowRun.create.mock.calls[0][0].data;
     expect(data.specSnapshot.channel).toMatchObject({ orgId: 'org-1', teamId: 'team-1' });
+  });
+
+  it('leaves channelId null when the channel row no longer exists (orphaned schedule)', async () => {
+    p.slackChannel.findUnique.mockResolvedValueOnce(null);
+    await startChannelRun({
+      channelId: 'chan-gone',
+      kind: 'ambient',
+      label: 'chan-gone',
+      workflowId: 'channel-ambient-gone',
+    });
+    const data = p.workflowRun.create.mock.calls[0][0].data;
+    expect(data.channelId).toBeNull();
+    expect(data.specSnapshot.channel.channelId).toBe('chan-gone');
   });
 
   it('is idempotent: a P2002 unique-constraint violation is swallowed (no throw)', async () => {

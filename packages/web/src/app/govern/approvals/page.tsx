@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/Select';
 import { TabBar } from '@/components/ui/TabBar';
 import { type ApprovalFilter, type ApprovalSort, useApprovals } from '@/hooks/useApprovals';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 
 const TABS: { id: ApprovalFilter; label: string }[] = [
   { id: 'PENDING', label: 'Pending' },
@@ -67,7 +68,7 @@ export default function GovernApprovalsPage() {
               : `${count} pending action${count !== 1 ? 's' : ''}`
             : `${count} step${count !== 1 ? 's' : ''} total`
         }
-        title="Inbox"
+        title={navLabel('/govern/approvals')}
       />
 
       <TabBar active={filter} onChange={setFilter} tabs={TABS} />

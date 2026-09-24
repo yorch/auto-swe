@@ -17,8 +17,10 @@ export interface CreatedUser extends UserSummary {
   temporaryPassword?: string;
 }
 
-export function useUsers() {
+/** The full directory — `GET /users` is ADMIN-only, so pass `enabled: false` otherwise. */
+export function useUsers(enabled = true) {
   return useQuery({
+    enabled,
     queryFn: () => api.get<{ data: UserSummary[] }>('/api/v1/users').then((r) => r.data),
     queryKey: ['users'],
   });
@@ -27,12 +29,28 @@ export function useUsers() {
 /**
  * Active users who aren't already members of the scope being edited — the
  * candidate list for an "add member" picker. Shared by the teams AddMemberModal
- * and the org admin page so the eligibility rule lives in one place.
+ * and the org admin page so the eligibility rule lives in one place. Only an
+ * ADMIN can list the directory; other callers get `[]` and should use
+ * `lookupUserByEmail` instead.
  */
-export function useEligibleUsers(existingUserIds: string[]): UserSummary[] {
-  const { data: users = [] } = useUsers();
+export function useEligibleUsers(existingUserIds: string[], enabled = true): UserSummary[] {
+  const { data: users = [] } = useUsers(enabled);
   const existing = new Set(existingUserIds);
   return users.filter((u) => u.isActive && !existing.has(u.id));
+}
+
+/** Only identity: the lookup deliberately reveals no platform role. */
+export interface LookedUpUser {
+  id: string;
+  email: string;
+  name: string | null;
+}
+
+/** Resolve one active user by exact email (`GET /users/lookup`, LEAD+). */
+export function lookupUserByEmail(email: string): Promise<LookedUpUser> {
+  return api
+    .get<{ data: LookedUpUser }>(`/api/v1/users/lookup?email=${encodeURIComponent(email)}`)
+    .then((r) => r.data);
 }
 
 export function useUpdateUser() {

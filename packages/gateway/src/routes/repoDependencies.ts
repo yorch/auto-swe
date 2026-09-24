@@ -168,7 +168,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       try {
         await fastify.temporal.triggerRepoDependencyScanNow();
-        return { triggered: true };
+        return { data: { triggered: true } };
       } catch (err) {
         // The handle only exists once the schedule has been synced. A Temporal
         // outage lands here too, and the two are not the same problem for an
@@ -222,7 +222,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         }
         throw err;
       }
-      return reply.status(202).send({ started: true });
+      return reply.status(202).send({ data: { started: true } });
     }
   );
 
@@ -296,8 +296,10 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         });
 
       return {
-        dependedOnBy: view(incoming, 'fromRepoId'),
-        dependsOn: view(outgoing, 'toRepoId'),
+        data: {
+          dependedOnBy: view(incoming, 'fromRepoId'),
+          dependsOn: view(outgoing, 'toRepoId'),
+        },
       };
     }
   );
@@ -360,7 +362,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
             toRepoId: to.id,
           },
         });
-        return reply.status(201).send(edge);
+        return reply.status(201).send({ data: edge });
       } catch (err) {
         if (isUniqueConstraintError(err)) {
           return reply.status(409).send({
@@ -419,7 +421,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
             },
           });
         }
-        return fastify.prisma.repoDependency.update({
+        const confirmed = await fastify.prisma.repoDependency.update({
           data: {
             confirmedAt: new Date(),
             confirmedById: user.sub,
@@ -429,6 +431,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
           },
           where: { id: edge.id },
         });
+        return { data: confirmed };
       }
 
       // Dismiss is the depended-upon team's veto. For a resolved edge that is the
@@ -443,10 +446,11 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       }
-      return fastify.prisma.repoDependency.update({
+      const dismissed = await fastify.prisma.repoDependency.update({
         data: { dismissedAt: new Date(), dismissedById: user.sub, status: 'dismissed' },
         where: { id: edge.id },
       });
+      return { data: dismissed };
     }
   );
 

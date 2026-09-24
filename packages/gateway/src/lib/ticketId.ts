@@ -19,3 +19,8 @@ export const ExternalTicketIdSchema = z
   .refine((id) => !id.includes('..') && !id.endsWith('/') && !id.endsWith('.'), {
     message: 'ticket id is not a valid git ref component',
   });
+
+/** Does `id` satisfy {@link ExternalTicketIdSchema}? For callers outside a Zod body. */
+export function isValidTicketId(id: string): boolean {
+  return ExternalTicketIdSchema.safeParse(id).success;
+}

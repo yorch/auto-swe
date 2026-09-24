@@ -10,6 +10,7 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { TabBar } from '@/components/ui/TabBar';
+import { Table } from '@/components/ui/Table';
 import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useTemplates';
 import { validateRouteParam } from '@/lib/routeParams';
 import { cn, formatCost, formatDuration, formatPercent } from '@/lib/utils';
@@ -73,7 +74,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
           <PageHeader
             chapter={`§ Analytics · last ${windowDays} days`}
             subtitle="Observed performance and cost metrics for this template across the chosen rolling window."
-            title="Observed performance."
+            title="Observed performance"
           />
           <div className="flex items-end gap-2">
             <label
@@ -348,7 +349,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                   no step executions recorded
                 </div>
               ) : (
-                <table className="w-full text-sm">
+                <Table>
                   <thead>
                     <tr className="border-b border-ink-600">
                       <Th>Node</Th>
@@ -382,7 +383,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </Table>
               )}
             </Card>
           </section>

@@ -155,6 +155,8 @@ interface FakeState {
   runnableStarts: Array<{ id: string; args: unknown }>;
   /** When set, `startRunnableWorkflow` rejects with this. */
   runnableStartError: Error | null;
+  /** Whether the Slack-linked user belongs to the repository's org. */
+  orgMember: boolean;
   /** Whether an open channel-task execution exists for the thread being replied to. */
   threadTaskRunning: boolean;
 }
@@ -257,6 +259,24 @@ function buildApp(state: FakeState): FastifyInstance {
         return { id: `aw-${state.activeWorkflowCreates.length}`, ...data };
       },
       delete: async () => ({}),
+      // `allocateWorkflowId`'s lookup: every row for the base id or an `-rN` rerun.
+      findMany: async ({
+        where,
+      }: {
+        where: { OR: Array<{ temporalWorkflowId: string | { startsWith: string } }> };
+      }) =>
+        state.activeWorkflowCreates
+          .filter((a) =>
+            where.OR.some((c) =>
+              typeof c.temporalWorkflowId === 'string'
+                ? a.temporalWorkflowId === c.temporalWorkflowId
+                : String(a.temporalWorkflowId).startsWith(c.temporalWorkflowId.startsWith)
+            )
+          )
+          .map((a) => ({
+            currentStatus: a.currentStatus,
+            temporalWorkflowId: a.temporalWorkflowId,
+          })),
     },
     autonomyDecision: {
       create: async () => ({ id: 'audit-1' }),
@@ -266,8 +286,6 @@ function buildApp(state: FakeState): FastifyInstance {
     channelThreadSession: {
       findUnique: async () => null,
     },
-    // Used by buildRunModalView (the run picker the /auto-swe run slash command +
-    // the global "Run a workflow" shortcut open).
     connection: {
       findMany: async () => [
         {
@@ -284,6 +302,14 @@ function buildApp(state: FakeState): FastifyInstance {
         // twice; otherwise the single shared row every other test uses.
         return state.connectionRows[where.id] ?? state.connectionRow;
       },
+    },
+    // Used by buildRunModalView (the run picker the /auto-swe run slash command +
+    // the global "Run a workflow" shortcut open).
+    organizationMembership: {
+      findUnique: async () => (state.orgMember ? { role: 'ORG_MEMBER' } : null),
+    },
+    orgMonthlyUsage: {
+      findUnique: async () => null,
     },
     repository: {
       findMany: async () => [],
@@ -435,6 +461,7 @@ beforeEach(async () => {
     humanStepUpdateCount: 1,
     installer: { id: 'u1', isActive: true, role: 'ADMIN' },
     launchOrder: [],
+    orgMember: true,
     runInputCreates: [],
     runInputFindManyCalls: [],
     runInputFindManyThrows: false,
@@ -532,6 +559,25 @@ describe('POST /api/v1/auth/slack/commands', () => {
     const json = res.json() as { response_type: string; text: string };
     expect(json.response_type).toBe('ephemeral');
     expect(json.text).toMatch(/not linked/i);
+  });
+
+  it('does not serve a deactivated user whose Slack id is still linked', async () => {
+    const body = `user_id=U-DEACTIVATED&text=${encodeURIComponent('workflows list')}`;
+    const { ts, sig } = signRequest(body);
+    const res = await app.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/commands',
+    });
+    expect(res.statusCode).toBe(200);
+    const json = res.json() as { text: string };
+    expect(json.text).toMatch(/not linked/i);
+    expect(json.text).not.toContain('default-engineering');
   });
 
   it('lists workflow templates for a linked user', async () => {
@@ -685,6 +731,15 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     const res = await injectInteractive(interactivePayload(), false);
     expect(res.statusCode).toBe(401);
     expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('treats a deactivated user whose Slack id is still linked as unlinked', async () => {
+    state.humanStep = pendingHumanStep();
+    const res = await injectInteractive(interactivePayload({ user: { id: 'U-DEACTIVATED' } }));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: { ignored: true, reason: 'slack_user_not_linked' } });
+    expect(state.signalCalls).toHaveLength(0);
+    expect(state.humanStepUpdateCalls).toHaveLength(0);
   });
 
   it('politely rejects a Slack user with no linked account (no 403, ephemeral hint)', async () => {
@@ -1929,7 +1984,7 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
     });
 
     expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toContain('/admin/integrations?tab=slack&slack_installed=T-NEW');
+    expect(res.headers.location).toContain('/studio/integrations?tab=slack&slack_installed=T-NEW');
 
     // New workspace → create (not update), carrying encrypted token columns +
     // install metadata, and never the plaintext token.
@@ -2045,7 +2100,11 @@ describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
     isActive: true,
     organizationName: 'acme',
     repoName: 'payments',
-    team: { memberships: [{ userId: 'u1' }] },
+    team: {
+      memberships: [{ userId: 'u1' }],
+      organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+      orgId: 'org-1',
+    },
     teamId: 'team-a',
     type: 'git_repo',
   };
@@ -2107,13 +2166,72 @@ describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
     await submit(runModalPayload());
     const second = await submit(runModalPayload());
 
-    // The workflow ID is deterministic per (org, repo, ticket), so the ledger
-    // insert loses the race and Temporal is never reached a second time.
+    // The first run is still in flight, so allocation refuses the second
+    // before any ledger row is written and Temporal is never reached again.
     expect(second.json()).toEqual({
-      errors: { ticket_block: 'Workflow already running for JIRA-42' },
+      errors: {
+        ticket_block: expect.stringContaining('Workflow already running for JIRA-42'),
+      },
       response_action: 'errors',
     });
     expect(state.runnableStarts).toHaveLength(1);
+    expect(state.activeWorkflowCreates).toHaveLength(1);
+  });
+
+  it('allocates an -rN workflow id when re-submitting a finished ticket', async () => {
+    await submit(runModalPayload());
+    (state.activeWorkflowCreates[0] as { currentStatus: string }).currentStatus = 'COMPLETED';
+
+    const again = await submit(runModalPayload());
+
+    expect(again.json()).toEqual({ response_action: 'clear' });
+    expect(state.runnableStarts).toHaveLength(2);
+    expect(state.runnableStarts[1]?.id).toBe(`${state.runnableStarts[0]?.id}-r1`);
+  });
+
+  it('records the requester, connection and payload on the RunInput', async () => {
+    await submit(runModalPayload());
+    expect(state.runInputCreates[0]).toMatchObject({
+      connectionId: 'conn-1',
+      payload: { connectionId: 'conn-1', ticketId: 'JIRA-42' },
+      requestedById: 'u1',
+    });
+  });
+
+  it('rejects a ticket id that is not a valid branch component', async () => {
+    const res = await submit(runModalPayload({ ticket: 'fix it; rm -rf /' }));
+    expect(res.json()).toMatchObject({
+      errors: { ticket_block: expect.stringContaining('Ticket ID may only contain') },
+      response_action: 'errors',
+    });
+    expect(state.runInputCreates).toHaveLength(0);
+  });
+
+  it('refuses a requester outside the repository org', async () => {
+    // Platform ADMINs bypass org membership, so the requester is an engineer.
+    (state.users[0] as { role: string }).role = 'ENGINEER';
+    state.orgMember = false;
+    const res = await submit(runModalPayload());
+    expect(res.json()).toEqual({
+      errors: { repo_block: 'You are not a member of this organization' },
+      response_action: 'errors',
+    });
+    expect(state.runnableStarts).toHaveLength(0);
+  });
+
+  it('validates the run against the template input schema', async () => {
+    const tpl = state.templates.find((t) => t.id === 't1') as unknown as Record<string, unknown>;
+    tpl.inputSchema = {
+      properties: { mustHave: { type: 'string' } },
+      required: ['mustHave'],
+      type: 'object',
+    };
+    const res = await submit(runModalPayload());
+    expect(res.json()).toMatchObject({
+      errors: { template_block: expect.stringContaining('mustHave') },
+      response_action: 'errors',
+    });
+    expect(state.runInputCreates).toHaveLength(0);
   });
 
   it('starts separate runs for different tickets', async () => {
