@@ -124,6 +124,8 @@ describe('repoDependencyRoutes', () => {
       });
 
       expect(res.statusCode).toBe(201);
+      // The standard `{ data }` envelope, not a bare row.
+      expect(JSON.parse(res.payload)).toEqual({ data: { id: EDGE, status: 'active' } });
       const data = ctx.mockPrisma.repoDependency.create.mock.calls[0][0].data;
       expect(data).toMatchObject({
         fromRepoId: FROM,
@@ -227,6 +229,7 @@ describe('repoDependencyRoutes', () => {
       });
 
       expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ data: { id: EDGE, status: 'dismissed' } });
       expect(ctx.mockPrisma.repoDependency.update.mock.calls[0][0].data).toMatchObject({
         status: 'dismissed',
       });
@@ -345,7 +348,7 @@ describe('repoDependencyRoutes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.payload);
+      const body = JSON.parse(res.payload).data;
       expect(body.dependsOn).toHaveLength(1);
       expect(body.dependsOn[0].repo.repoName).toBe('sdk');
       expect(body.dependedOnBy).toEqual([]);

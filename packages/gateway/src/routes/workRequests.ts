@@ -8,7 +8,6 @@ import {
   createFigmaDesignProvider,
   createKnowledgeBaseProvider,
 } from '@auto-swe/shared/lib/integrations/registry';
-import { decideRepoAccess, repoAccessErrorBody } from '@auto-swe/shared/lib/repoAccessDecision';
 import {
   resolveCanaryConfig,
   resolveFigmaConfig,
@@ -23,11 +22,11 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
-import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
+import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
-import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
+import { allocateWorkflowId, launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -70,8 +69,9 @@ async function resolveCanaryPin(
  * (unique on workRequestId) but only writes `successCriteria` on the update
  * path, so the ticket payload survives.
  *
- * Never throws and never blocks submission — every failure is logged and
- * swallowed.
+ * Nothing reads `rawTicketData` or `rawDocumentation` yet, so this runs after
+ * the 201 rather than in front of it. Never throws — every failure is logged
+ * and swallowed.
  */
 async function enrichWithTicketData(
   fastify: FastifyInstance,
@@ -276,42 +276,6 @@ export async function resolveDefaultTemplate(
   return { isExperiment: false, templateId: tpl.id, version: tpl.activeVersion };
 }
 
-/** ActiveWorkflow statuses that mean "this execution is over". */
-const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED']);
-
-/**
- * Allocate the Temporal workflow ID for a ticket+repo. First submission uses
- * the deterministic base ID; re-running a finished ticket gets an `-rN`
- * suffix so Temporal, WorkflowRun (unique on workflowId), and ActiveWorkflow
- * (unique on temporalWorkflowId) all see a fresh execution instead of
- * colliding with the previous one. Returns a conflict when an execution for
- * this ticket+repo is still in flight.
- */
-async function allocateWorkflowId(
-  prisma: FastifyInstance['prisma'],
-  baseId: string
-): Promise<{ workflowId: string; isRerun: boolean } | { conflictWorkflowId: string }> {
-  const rows = await prisma.activeWorkflow.findMany({
-    select: { currentStatus: true, temporalWorkflowId: true },
-    where: {
-      OR: [{ temporalWorkflowId: baseId }, { temporalWorkflowId: { startsWith: `${baseId}-r` } }],
-    },
-  });
-  // The startsWith match can catch a *different* ticket whose ID happens to
-  // extend this one — keep only the base ID and exact `-r<N>` suffixes.
-  const suffixRe = new RegExp(`^${baseId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-r\\d+)?$`);
-  const existing = rows.filter((w) => suffixRe.test(w.temporalWorkflowId));
-  if (existing.length === 0) {
-    return { isRerun: false, workflowId: baseId };
-  }
-  const active = existing.find((w) => !TERMINAL_STATUSES.has(w.currentStatus));
-  if (active) {
-    return { conflictWorkflowId: active.temporalWorkflowId };
-  }
-  const reruns = existing.filter((w) => w.temporalWorkflowId !== baseId);
-  return { isRerun: true, workflowId: `${baseId}-r${reruns.length + 1}` };
-}
-
 const CreateWorkRequestSchema = z.object({
   budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).optional().default('STANDARD'),
   description: z
@@ -425,33 +389,15 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Team membership AND GitHub permission, in one call. They used to be two
-      // separate checks here, which is how six other launch paths shipped with
-      // the first and without the second.
-      const decision = await decideRepoAccess(
-        fastify.prisma,
-        user,
-        repo,
-        request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-        request.log
-      );
-      if (!decision.allowed) {
-        return reply.status(403).send(repoAccessErrorBody(decision.reason));
-      }
-
-      // Org access check (P5): non-admins must be members of the repo's org.
-      const orgId = repo.team.orgId;
-      if (user.role !== 'ADMIN') {
-        const hasAccess = await assertOrgAccess(fastify.prisma, user, orgId, reply);
-        if (!hasAccess) {
-          return;
-        }
-      }
-
-      // Org budget cap check (P5): reject if the org has exceeded its monthly cap.
-      const budgetCap = repo.team.organization?.monthlyBudgetUsdCents;
-      if (!(await assertOrgBudget(fastify.prisma, orgId, budgetCap, reply))) {
-        return;
+      // Repository access, org membership and the org's monthly cap — the one
+      // decision every launch path takes.
+      const authorization = await authorizeLaunch(fastify.prisma, user, {
+        gate: request.repoAccessGate,
+        log: request.log,
+        repos: [repo],
+      });
+      if (!authorization.ok) {
+        return sendLaunchRefusal(reply, authorization.refusal);
       }
 
       // A SWE work request targets a git_repo connection (org/repo are nullable
@@ -474,7 +420,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repo.organizationName,
         repo.repoName
       );
-      const allocated = await allocateWorkflowId(fastify.prisma, baseWorkflowId);
+      const allocated = await allocateWorkflowId(fastify.prisma, baseWorkflowId, {
+        externalTicketId,
+        repoId: repo.id,
+      });
       if ('conflictWorkflowId' in allocated) {
         return reply.status(409).send({
           error: {
@@ -593,32 +542,27 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       }
-      const workRequest = { id: workRequestId };
-      const activeWorkflow = { id: launch.activeWorkflowId };
-
-      // Best-effort: seed the context snapshot with the external ticket's
-      // content when a tracker connector is configured. Failures are logged
-      // and never affect the 201. (The retry endpoint intentionally skips
-      // this — it reuses the original snapshot.)
-      const ticketText = await enrichWithTicketData(fastify, {
-        externalTicketId,
-        repo: { organizationName: repo.organizationName, repoName: repo.repoName },
-        workRequestId: workRequest.id,
-      });
-
-      // Best-effort: seed the snapshot with a compact Figma design summary when
-      // the request references a Figma file/node. Runs after ticket enrichment
-      // and reuses its fetched ticket text (no extra snapshot read).
-      await enrichWithDesignData(fastify, {
-        description,
-        ticketText,
-        workRequestId: workRequest.id,
+      // Best-effort enrichment runs after the response: the ticket and
+      // knowledge-base fetches are network calls to third parties, and nothing
+      // they write gates the submission. Design enrichment reuses the fetched
+      // ticket text, so the two stay sequential. (The retry endpoint skips this
+      // — it reuses the original snapshot.)
+      const { organizationName, repoName } = repo;
+      void (async () => {
+        const ticketText = await enrichWithTicketData(fastify, {
+          externalTicketId,
+          repo: { organizationName, repoName },
+          workRequestId,
+        });
+        await enrichWithDesignData(fastify, { description, ticketText, workRequestId });
+      })().catch((err: unknown) => {
+        fastify.log.warn({ err, workRequestId }, 'work-request enrichment failed');
       });
 
       return reply.status(201).send({
         data: {
-          workflowIds: [activeWorkflow.id],
-          workRequestId: workRequest.id,
+          workflowIds: [launch.activeWorkflowId],
+          workRequestId,
         },
       });
     }
@@ -669,37 +613,17 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
         });
       }
-      // A re-run pushes and opens a pull request exactly like a fresh
+      // A re-run pushes, opens a pull request and spends exactly like a fresh
       // submission, so it takes the same decision. Skipping it would leave a
       // standing way to act on a repository after access was revoked, for as
       // long as an old work request exists.
-      const retryDecision = await decideRepoAccess(
-        fastify.prisma,
-        user,
-        repo,
-        request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-        request.log
-      );
-      if (!retryDecision.allowed) {
-        return reply.status(403).send(repoAccessErrorBody(retryDecision.reason));
-      }
-      // A re-run spends exactly like a fresh submission, so it passes the same
-      // org access and monthly budget gates.
-      if (
-        user.role !== 'ADMIN' &&
-        !(await assertOrgAccess(fastify.prisma, user, repo.team.orgId, reply))
-      ) {
-        return;
-      }
-      if (
-        !(await assertOrgBudget(
-          fastify.prisma,
-          repo.team.orgId,
-          repo.team.organization?.monthlyBudgetUsdCents,
-          reply
-        ))
-      ) {
-        return;
+      const authorization = await authorizeLaunch(fastify.prisma, user, {
+        gate: request.repoAccessGate,
+        log: request.log,
+        repos: [repo],
+      });
+      if (!authorization.ok) {
+        return sendLaunchRefusal(reply, authorization.refusal);
       }
       if (!workRequest.templateId || !workRequest.templateVersion) {
         return reply.status(409).send({
@@ -721,7 +645,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repo.organizationName,
         repo.repoName
       );
-      const allocated = await allocateWorkflowId(fastify.prisma, baseWorkflowId);
+      const allocated = await allocateWorkflowId(fastify.prisma, baseWorkflowId, {
+        externalTicketId: workRequest.externalTicketId,
+        repoId: repo.id,
+      });
       if ('conflictWorkflowId' in allocated) {
         return reply.status(409).send({
           error: {
@@ -774,11 +701,9 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       }
-      const activeWorkflow = { id: launch.activeWorkflowId };
-
       return reply.status(201).send({
         data: {
-          workflowIds: [activeWorkflow.id],
+          workflowIds: [launch.activeWorkflowId],
           workRequestId: workRequest.id,
         },
       });

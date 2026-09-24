@@ -38,6 +38,10 @@ interface State {
   userId: string;
   teams: TeamRow[];
   memberships: MembershipRow[];
+  /** Row locks taken on the team (`SELECT … FOR UPDATE`), in order. */
+  locks?: string[];
+  /** When true, `teamMembership.create` loses a concurrent race (P2002). */
+  createConflict?: boolean;
 }
 
 const TEAM_ID = '00000000-0000-4000-8000-000000000001';
@@ -91,7 +95,12 @@ function buildApp(state: State): FastifyInstance {
     }),
   } as unknown as never);
 
-  app.decorate('prisma', {
+  const prisma: Record<string, unknown> = {
+    $executeRaw: async (_sql: TemplateStringsArray, ...values: unknown[]) => {
+      state.locks = [...(state.locks ?? []), String(values[0])];
+      return 1;
+    },
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
     organization: {
       findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
         // Single default org for the create-path test.
@@ -132,6 +141,18 @@ function buildApp(state: State): FastifyInstance {
       },
     },
     teamMembership: {
+      count: async ({ where }: { where: { role?: string; teamId: string } }) =>
+        state.memberships.filter(
+          (m) => m.teamId === where.teamId && (!where.role || m.role === where.role)
+        ).length,
+      create: async ({ data }: { data: Omit<MembershipRow, 'id'> }) => {
+        if (state.createConflict) {
+          throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+        }
+        const row = { id: `m-${state.memberships.length + 1}`, ...data };
+        state.memberships.push(row);
+        return row;
+      },
       delete: async ({ where }: { where: { id: string } }) => {
         const idx = state.memberships.findIndex((m) => m.id === where.id);
         if (idx < 0) {
@@ -154,7 +175,8 @@ function buildApp(state: State): FastifyInstance {
         );
       },
     },
-  } as unknown as never);
+  };
+  app.decorate('prisma', prisma as unknown as never);
 
   // The shell-allowlist route looks up the team via prisma directly; nothing
   // else needs the verify-PAT path so we leave that decorator out.
@@ -249,6 +271,72 @@ describe('DELETE /api/v1/teams/:id/members/:userId', () => {
     expect(state.memberships.map((m) => m.userId).sort()).toEqual(
       [ADMIN_USER_ID, TARGET_USER_ID].sort()
     );
+  });
+});
+
+describe('team admin floor', () => {
+  it('refuses to remove the last team ADMIN, under a row lock on the team', async () => {
+    const state = freshState({ userRole: 'ADMIN' });
+    state.memberships[1].role = 'ADMIN'; // the only ADMIN
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'DELETE',
+      url: `/api/v1/teams/${TEAM_ID}/members/${TARGET_USER_ID}`,
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('LAST_TEAM_ADMIN');
+    expect(state.locks).toEqual([TEAM_ID]);
+    expect(state.memberships).toHaveLength(2);
+  });
+
+  it('removes one of two ADMINs, counting under the same lock', async () => {
+    const state = freshState({ userRole: 'ADMIN' });
+    state.memberships[0].role = 'ADMIN';
+    state.memberships[1].role = 'ADMIN';
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'DELETE',
+      url: `/api/v1/teams/${TEAM_ID}/members/${TARGET_USER_ID}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(state.locks).toEqual([TEAM_ID]);
+    expect(state.memberships.map((m) => m.userId)).toEqual([ADMIN_USER_ID]);
+  });
+
+  it('takes no lock for a change that removes no ADMIN', async () => {
+    const state = freshState();
+    const app = buildApp(state);
+    await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'DELETE',
+      url: `/api/v1/teams/${TEAM_ID}/members/${TARGET_USER_ID}`,
+    });
+    expect(state.locks ?? []).toEqual([]);
+  });
+});
+
+describe('POST /api/v1/teams/:id/members', () => {
+  const NEW_USER_ID = '00000000-0000-4000-8000-0000000000cc';
+
+  it('answers 409 MEMBER_EXISTS when a concurrent add wins the unique index', async () => {
+    const state = freshState({ createConflict: true });
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      payload: { role: 'ENGINEER', userId: NEW_USER_ID },
+      url: `/api/v1/teams/${TEAM_ID}/members`,
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('MEMBER_EXISTS');
   });
 });
 

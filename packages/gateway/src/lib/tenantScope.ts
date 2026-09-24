@@ -152,3 +152,11 @@ export function permissionRequirement(
     ],
   };
 }
+
+/**
+ * Teams the actor leads: LEAD or ADMIN membership. Nest under a `team` key.
+ * The team-scoped write bar — `canManageTeamRepos` is its single-row form.
+ */
+export function ledTeams(actor: ScopeActor): Prisma.TeamWhereInput {
+  return { memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: actor.sub } } };
+}

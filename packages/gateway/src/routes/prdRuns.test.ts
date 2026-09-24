@@ -22,6 +22,12 @@ interface Harness {
   activeWorkflowCreates: Array<Record<string, unknown>>;
   started: string[];
   startError?: Error;
+  /** Platform role the token carries. */
+  role: 'ADMIN' | 'LEAD';
+  /** Whether the caller belongs to the repository's org. */
+  orgMember: boolean;
+  /** The org's accrued spend this month, in USD, against a 1000-cent cap. */
+  orgSpentUsd: number;
 }
 
 async function buildHarness(): Promise<Harness> {
@@ -29,6 +35,9 @@ async function buildHarness(): Promise<Harness> {
     activeWorkflowCreates: [],
     app: Fastify(),
     order: [],
+    orgMember: true,
+    orgSpentUsd: 0,
+    role: 'ADMIN',
     runInputs: [],
     started: [],
   };
@@ -36,7 +45,7 @@ async function buildHarness(): Promise<Harness> {
   h.app.setValidatorCompiler(validatorCompiler);
   h.app.setSerializerCompiler(serializerCompiler);
   h.app.decorate('auth', {
-    verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ADMIN', sub: 'user-1' }),
+    verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: h.role, sub: 'user-1' }),
   } as unknown as never);
 
   const prismaMock: Record<string, unknown> = {
@@ -53,9 +62,19 @@ async function buildHarness(): Promise<Harness> {
           id: REPO_ID,
           organizationName: 'acme',
           repoName: 'payments',
-          team: { memberships: [{ userId: 'user-1' }] },
+          team: {
+            memberships: [{ userId: 'user-1' }],
+            organization: { id: 'org-1', monthlyBudgetUsdCents: 1000 },
+            orgId: 'org-1',
+          },
         },
       ],
+    },
+    organizationMembership: {
+      findUnique: async () => (h.orgMember ? { role: 'ORG_MEMBER' } : null),
+    },
+    orgMonthlyUsage: {
+      findUnique: async () => ({ costUsdAccrued: h.orgSpentUsd }),
     },
     runInput: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -128,6 +147,13 @@ describe('POST /prd-runs', () => {
     expect(h.runInputs).toHaveLength(1);
   });
 
+  it('records the primary repository as the RunInput connection, so run visibility reaches its team', async () => {
+    const res = await submit(h);
+
+    expect(res.statusCode).toBe(201);
+    expect(h.runInputs[0]).toMatchObject({ connectionId: REPO_ID, isCrossRepo: true });
+  });
+
   it('writes no ActiveWorkflow row', async () => {
     const res = await submit(h);
 
@@ -193,6 +219,24 @@ describe('POST /prd-runs', () => {
 
     expect(res.statusCode).toBe(404);
     expect(h.runInputs).toHaveLength(0);
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('refuses a caller outside the repository org before writing anything', async () => {
+    h.role = 'LEAD';
+    h.orgMember = false;
+    const res = await submit(h);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
+    expect(h.runInputs).toHaveLength(0);
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('refuses with 402 when the repository org is over its monthly cap', async () => {
+    h.orgSpentUsd = 10;
+    const res = await submit(h);
+    expect(res.statusCode).toBe(402);
+    expect(res.json().error.code).toBe('ORG_BUDGET_EXCEEDED');
     expect(h.started).toHaveLength(0);
   });
 });

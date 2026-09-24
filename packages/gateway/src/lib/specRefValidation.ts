@@ -48,7 +48,7 @@ export async function validateSpecRefs(
     for (const r of agentRefs) {
       if (!present.has(r.key)) {
         warnings.push(
-          `Node '${r.id}': agent '${r.key}' has no active Agent at any scope — create it at /admin/agents/library or this node will fail at run time.`
+          `Node '${r.id}': agent '${r.key}' has no active Agent at any scope — create it at /studio/agents/library or this node will fail at run time.`
         );
       }
     }
@@ -71,7 +71,7 @@ export async function validateSpecRefs(
     for (const r of mcpRefs) {
       if (!present.has(r.connectionRef)) {
         warnings.push(
-          `Node '${r.id}': mcp connection '${r.connectionRef}' is not an active mcp connection — create one at /admin/mcp-connections or this node will fail at run time.`
+          `Node '${r.id}': mcp connection '${r.connectionRef}' is not an active mcp connection — create one at /studio/mcp or this node will fail at run time.`
         );
       }
     }

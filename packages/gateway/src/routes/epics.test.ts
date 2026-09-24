@@ -25,6 +25,8 @@ interface ActiveWorkflowFixture {
   temporalWorkflowId: string;
   parentWorkflowId: string | null;
   repoId: string | null;
+  /** Set on an epic child's ledger row (the epic's work request). */
+  workRequestId?: string | null;
   currentStatus: string;
   assignedBranch: string | null;
   updatedAt: Date;
@@ -77,6 +79,58 @@ const orgMembershipFixtures: Record<string, string[]> = {
 
 // Keyed by `${orgId}:${yearMonth}` — populated per-test for the budget check.
 let orgMonthlyUsageFixtures: Record<string, { costUsdAccrued: number }> = {};
+
+type RunInputWhere = {
+  isCrossRepo?: boolean;
+  templateId?: string | null;
+  OR?: Array<Record<string, unknown>>;
+};
+
+// A strict evaluator for the list query's where clause. Anything it does not
+// recognise throws, so a new or reshaped term cannot silently read as a match —
+// and a substring term over the payload, which this replaced, would throw.
+function matchesRunInputWhere(
+  wr: Record<string, unknown>,
+  where: RunInputWhere,
+  ctx: { sub: string; ledger: ActiveWorkflowFixture[] }
+): boolean {
+  const { isCrossRepo, templateId, OR, ...rest } = where;
+  if (Object.keys(rest).length > 0) {
+    throw new Error(`unrecognised RunInput where: ${JSON.stringify(rest)}`);
+  }
+  if (isCrossRepo !== undefined && wr.isCrossRepo !== isCrossRepo) {
+    return false;
+  }
+  if (templateId !== undefined && (wr.templateId ?? null) !== templateId) {
+    return false;
+  }
+  if (!OR) {
+    return true;
+  }
+  return OR.some((term) => {
+    const keys = Object.keys(term);
+    if (keys.length !== 1) {
+      throw new Error(`unrecognised OR term: ${JSON.stringify(term)}`);
+    }
+    if ('requestedById' in term) {
+      return wr.requestedById === term.requestedById;
+    }
+    if ('activeWorkflows' in term) {
+      const repoWhere = (term.activeWorkflows as { some: { repository: { team?: unknown } } }).some
+        .repository;
+      if (!repoWhere?.team) {
+        throw new Error(`unrecognised repository predicate: ${JSON.stringify(repoWhere)}`);
+      }
+      return ctx.ledger.some(
+        (row) =>
+          row.workRequestId === wr.id &&
+          row.repoId !== null &&
+          repoFixtures.some((r) => r.id === row.repoId && r.memberIds.includes(ctx.sub))
+      );
+    }
+    throw new Error(`unrecognised OR term: ${JSON.stringify(term)}`);
+  });
+}
 
 describe('epic routes', () => {
   const app = Fastify();
@@ -205,6 +259,16 @@ describe('epic routes', () => {
         },
       },
       runInput: {
+        // Models the list query's where clause (cross-repo, no template, and the
+        // non-admin repo-id substring OR) plus DB-side pagination, so the route
+        // is tested on what it asks the database for rather than on a JS filter.
+        count: async (args: { where: RunInputWhere }) =>
+          workRequestFixtures.filter((wr) =>
+            matchesRunInputWhere(wr, args.where, {
+              ledger: activeWorkflowFixtures,
+              sub: currentSub,
+            })
+          ).length,
         create: async (args: { data: Record<string, unknown> }) => {
           createdWorkRequests.push(args.data);
           return { ...args.data };
@@ -215,7 +279,16 @@ describe('epic routes', () => {
         findFirst: async (args: { where: { externalTicketId: string } }) =>
           workRequestFixtures.find((wr) => wr.externalTicketId === args.where.externalTicketId) ??
           null,
-        findMany: async () => workRequestFixtures,
+        findMany: async (args: { where: RunInputWhere; skip?: number; take?: number }) => {
+          const rows = workRequestFixtures.filter((wr) =>
+            matchesRunInputWhere(wr, args.where, {
+              ledger: activeWorkflowFixtures,
+              sub: currentSub,
+            })
+          );
+          const start = args.skip ?? 0;
+          return rows.slice(start, args.take === undefined ? undefined : start + args.take);
+        },
       },
     };
 
@@ -405,8 +478,31 @@ describe('epic routes', () => {
           repoId: null,
           temporalWorkflowId: 'epic-EPIC-1',
           updatedAt: new Date('2026-06-01T01:00:00Z'),
+          workRequestId: 'wr-1',
         },
-        // No row for epic-EPIC-2 → STARTING
+        // EPIC-1's child on repo A, linked to the epic's work request.
+        {
+          assignedBranch: null,
+          currentStatus: 'IMPLEMENTING',
+          id: 'aw-epic-1-a',
+          parentWorkflowId: 'epic-EPIC-1',
+          repoId: REPO_A,
+          temporalWorkflowId: `epic-EPIC-1-${REPO_A}`,
+          updatedAt: new Date('2026-06-01T02:00:00Z'),
+          workRequestId: 'wr-1',
+        },
+        // EPIC-2's child on repo B.
+        {
+          assignedBranch: null,
+          currentStatus: 'IMPLEMENTING',
+          id: 'aw-epic-2-b',
+          parentWorkflowId: 'epic-EPIC-2',
+          repoId: REPO_B,
+          temporalWorkflowId: `epic-EPIC-2-${REPO_B}`,
+          updatedAt: new Date('2026-06-02T02:00:00Z'),
+          workRequestId: 'wr-2',
+        },
+        // No row for epic-EPIC-2 itself → STARTING
       ];
     });
 
@@ -430,6 +526,38 @@ describe('epic routes', () => {
       });
     });
 
+    it('excludes PRD runs, which are cross-repo too but carry a template', async () => {
+      currentRole = 'ADMIN';
+      workRequestFixtures.push({
+        createdAt: new Date('2026-06-03T00:00:00Z'),
+        description: 'A PRD',
+        externalTicketId: 'PRD-1',
+        id: 'wr-prd',
+        isCrossRepo: true,
+        requestedBy: null,
+        requestPayload: JSON.stringify({ repoIds: [REPO_A] }),
+        templateId: 'tpl-prd',
+      });
+      const res = await app.inject({ headers: auth, method: 'GET', url: '/api/v1/epics' });
+      const body = JSON.parse(res.payload);
+      expect(body.meta.total).toBe(2);
+      expect(body.data.map((e: { externalTicketId: string }) => e.externalTicketId)).not.toContain(
+        'PRD-1'
+      );
+    });
+
+    it('paginates in the query and reports the full total', async () => {
+      currentRole = 'ADMIN';
+      const res = await app.inject({
+        headers: auth,
+        method: 'GET',
+        url: '/api/v1/epics?limit=1&offset=1',
+      });
+      const body = JSON.parse(res.payload);
+      expect(body.meta).toMatchObject({ limit: 1, offset: 1, total: 2 });
+      expect(body.data).toHaveLength(1);
+    });
+
     it('filters out epics with no repo on the requesting user team', async () => {
       currentRole = 'ENGINEER'; // user-1 is only a member of repo A's team
       const res = await app.inject({ headers: auth, method: 'GET', url: '/api/v1/epics' });
@@ -438,6 +566,59 @@ describe('epic routes', () => {
       expect(body.meta.total).toBe(1);
       expect(body.data).toHaveLength(1);
       expect(body.data[0].externalTicketId).toBe('EPIC-1');
+    });
+
+    it('does not match a repo id that merely appears inside another epic’s payload', async () => {
+      currentRole = 'ENGINEER';
+      // The old substring filter matched any payload containing a reachable
+      // repo id in quotes — here, inside the description field.
+      workRequestFixtures.push({
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+        description: 'decoy',
+        externalTicketId: 'EPIC-DECOY',
+        id: 'wr-decoy',
+        isCrossRepo: true,
+        requestedBy: null,
+        requestedById: 'user-other',
+        requestPayload: JSON.stringify({ description: `"${REPO_A}"`, repoIds: [REPO_B] }),
+      });
+      const res = await app.inject({ headers: auth, method: 'GET', url: '/api/v1/epics' });
+      const body = JSON.parse(res.payload);
+      expect(body.data.map((e: { externalTicketId: string }) => e.externalTicketId)).toEqual([
+        'EPIC-1',
+      ]);
+    });
+
+    it('lists a planning epic (no child rows yet) to its requester, not to other team members', async () => {
+      currentRole = 'ENGINEER';
+      workRequestFixtures.push({
+        createdAt: new Date('2026-06-05T00:00:00Z'),
+        description: 'planning',
+        externalTicketId: 'EPIC-PLAN',
+        id: 'wr-plan',
+        isCrossRepo: true,
+        requestedBy: null,
+        requestedById: 'user-lead',
+        requestPayload: JSON.stringify({ repoIds: [REPO_A] }),
+      });
+      const asMember = JSON.parse(
+        (await app.inject({ headers: auth, method: 'GET', url: '/api/v1/epics' })).payload
+      );
+      expect(
+        asMember.data.map((e: { externalTicketId: string }) => e.externalTicketId)
+      ).not.toContain('EPIC-PLAN');
+
+      currentSub = 'user-lead';
+      try {
+        const asRequester = JSON.parse(
+          (await app.inject({ headers: auth, method: 'GET', url: '/api/v1/epics' })).payload
+        );
+        expect(
+          asRequester.data.map((e: { externalTicketId: string }) => e.externalTicketId)
+        ).toEqual(['EPIC-PLAN']);
+      } finally {
+        currentSub = 'user-1';
+      }
     });
   });
 

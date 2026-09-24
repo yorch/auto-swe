@@ -1,6 +1,11 @@
 import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma, Role } from '@auto-swe/shared';
+import {
+  checkGitHubHostOverride,
+  type HostOverrideKind,
+} from '@auto-swe/shared/lib/githubPermission';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { sendConflict } from '../lib/conflict.js';
@@ -9,7 +14,8 @@ import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import { reachableConnections } from '../lib/tenantScope.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
+import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -51,11 +57,17 @@ const CreateRepoSchema = z.object({
   // A team LEAD must not be able to create or point one at an arbitrary URL
   // through the repository onboarding path.
   type: ConnectionTypeSchema.refine((t) => t !== 'mcp', {
-    message: 'MCP connections are managed at /admin/mcp-connections',
+    message: 'MCP connections are managed at /studio/mcp',
   }).default('git_repo'),
 });
 
-const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 });
+const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 }).extend({
+  /**
+   * Include deactivated connections. Only LEAD and above may reactivate one,
+   * so only they are shown them; the default keeps every picker active-only.
+   */
+  includeInactive: booleanQueryParam(false),
+});
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
 
@@ -117,6 +129,84 @@ function rejectsInstallationChange(
   return installationId !== undefined && user.role !== Role.ADMIN;
 }
 
+type HostOverrideField = 'githubUrl' | 'githubApiUrl';
+
+const HOST_OVERRIDE_FIELDS: readonly [HostOverrideField, HostOverrideKind][] = [
+  ['githubUrl', 'web'],
+  ['githubApiUrl', 'api'],
+];
+
+type HostOverrideValues = Partial<Record<HostOverrideField, string | null>>;
+
+/**
+ * Validate the GitHub host overrides on a create or update, and decide whether
+ * this caller may write them.
+ *
+ * These columns are where the platform's GitHub credential is sent for the
+ * repository — the PAT, the App JWT, the installation token and the
+ * authenticated clone URL all go to the host they name. So:
+ *
+ * - every value must be a bare host on a trusted origin (public GitHub or the
+ *   instance configured at `/studio/integrations`), with `/api/v3` allowed on
+ *   an API base, and is stored normalised;
+ * - only a platform ADMIN may point one somewhere new. Anyone who may edit the
+ *   repository may leave a value as it is, clear it, or set it to the configured
+ *   instance's own URL — none of which moves the credential anywhere it was not
+ *   already going.
+ *
+ * Returns the normalised values to write, or sends the rejection and returns
+ * null.
+ */
+async function resolveHostOverrides(
+  reply: FastifyReply,
+  user: { role: string },
+  body: HostOverrideValues,
+  current: Record<HostOverrideField, string | null> | null
+): Promise<HostOverrideValues | null> {
+  const out: HostOverrideValues = {};
+  const supplied = HOST_OVERRIDE_FIELDS.filter(([field]) => typeof body[field] === 'string');
+  const ghConfig = supplied.length > 0 ? await resolveGitHubConfig() : null;
+  for (const [field, kind] of HOST_OVERRIDE_FIELDS) {
+    const raw = body[field];
+    if (raw === undefined || raw === null) {
+      out[field] = raw;
+      continue;
+    }
+    // `supplied` is non-empty here, so the config was resolved.
+    const config = ghConfig as NonNullable<typeof ghConfig>;
+    const check = checkGitHubHostOverride(kind, raw, config);
+    if (!check.ok) {
+      reply.status(400).send({
+        error: { code: 'INVALID_GITHUB_HOST', message: `${field} ${check.reason}` },
+      });
+      return null;
+    }
+    if (user.role !== Role.ADMIN) {
+      const configured = checkGitHubHostOverride(
+        kind,
+        kind === 'api' ? config.apiUrl : config.baseUrl,
+        config
+      );
+      const existing = current?.[field]
+        ? checkGitHubHostOverride(kind, current[field], config)
+        : null;
+      const unchanged = existing?.ok === true && existing.value === check.value;
+      const isConfigured = configured.ok && configured.value === check.value;
+      if (!(unchanged || isConfigured)) {
+        reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: `Only a platform admin may point ${field} at a different GitHub host`,
+          },
+        });
+        return null;
+      }
+    }
+    out[field] = check.value;
+  }
+  return out;
+}
+
 export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -174,9 +264,21 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { limit, offset } = request.query;
+      const { includeInactive, limit, offset } = request.query;
+      const showInactive = includeInactive && hasRole(user.role, Role.LEAD);
+      // A deactivated connection is listed only to someone who could reactivate
+      // it: a platform ADMIN, or a LEAD/ADMIN of the owning team (the bar
+      // `canManageTeamRepos` sets for the write). The platform LEAD role alone
+      // is not that — on a team where they are a plain ENGINEER they would be
+      // shown rows they can do nothing with. Nested under `AND` because the
+      // reachability predicate below may carry its own `OR`.
+      const activeFilter: Prisma.ConnectionWhereInput = !showInactive
+        ? { isActive: true }
+        : user.role === Role.ADMIN
+          ? {}
+          : { AND: [{ OR: [{ isActive: true }, { team: ledTeams(user) }] }] };
       const where: Prisma.ConnectionWhereInput = {
-        isActive: true,
+        ...activeFilter,
         ...(user.role !== Role.ADMIN && reachableConnections(user, request.repoAccessGate)),
       };
 
@@ -252,6 +354,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const hosts = await resolveHostOverrides(reply, user, request.body, null);
+      if (!hosts) {
+        return reply;
+      }
+
       // Check for duplicate (org/repo uniqueness is a partial index scoped to
       // git_repo connections, so query by fields rather than a compound unique).
       if (type === 'git_repo' && organizationName && repoName) {
@@ -289,6 +396,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             teamId,
             type: type ?? 'git_repo',
             ...rest,
+            githubApiUrl: hosts.githubApiUrl ?? null,
+            githubUrl: hosts.githubUrl ?? null,
           },
           include: { team: { select: { id: true, name: true, slug: true } } },
         });
@@ -321,7 +430,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const repo = await fastify.prisma.connection.findUnique({
-        select: { id: true, teamId: true, type: true },
+        select: { githubApiUrl: true, githubUrl: true, id: true, teamId: true, type: true },
         where: { id: request.params.id },
       });
       // MCP rows are invisible to this route (see CreateRepoSchema.type): their
@@ -357,6 +466,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      const hosts = await resolveHostOverrides(reply, user, request.body, {
+        githubApiUrl: repo.githubApiUrl,
+        githubUrl: repo.githubUrl,
+      });
+      if (!hosts) {
+        return reply;
+      }
+
       const {
         apiToken,
         config,
@@ -364,8 +481,6 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         defaultBranch,
         description,
         executorImage,
-        githubApiUrl,
-        githubUrl,
         isActive,
         language,
         name,
@@ -397,8 +512,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           defaultBranch,
           description,
           executorImage,
-          githubApiUrl,
-          githubUrl,
+          githubApiUrl: hosts.githubApiUrl,
+          githubUrl: hosts.githubUrl,
           isActive,
           language,
           name,

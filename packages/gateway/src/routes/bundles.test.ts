@@ -31,7 +31,8 @@ function newMockPrisma() {
           version: '1.0.0',
         },
       ]),
-      upsert: vi.fn().mockResolvedValue({}),
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue({ id: '99999999-9999-4999-8999-999999999999' }),
     },
     scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
     skill: { findMany: vi.fn().mockResolvedValue([]) },
@@ -220,6 +221,91 @@ describe('bundleRoutes', () => {
       scannerPatterns: 0,
       skills: 0,
       templates: 0,
+    });
+    await app.close();
+  });
+
+  it('409s when a bundle agent would overwrite a built-in, unless overwriteProtected', async () => {
+    const app = await buildApp();
+    const prisma = (app as unknown as { prisma: Record<string, Record<string, unknown>> }).prisma;
+    prisma.agent.findFirst = vi.fn().mockResolvedValue({ id: 'builtin', origin: 'swe-starter' });
+    prisma.agent.update = vi.fn().mockResolvedValue({ id: 'builtin' });
+    prisma.agentSkillRef = { deleteMany: vi.fn() };
+    const entities = {
+      agents: [{ key: 'reviewer', name: 'Reviewer' }],
+      scannerPatterns: [],
+      skills: [],
+      templates: [],
+    } as unknown as BundleEntities;
+    const metadata = { createdAt: 'now', name: 'n', version: '1' };
+    const bundle = {
+      bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+      dependencies: [],
+      entities,
+      metadata: {
+        ...metadata,
+        contentHash: computeContentHash({
+          bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+          dependencies: [],
+          entities,
+          metadata,
+        }),
+      },
+    };
+
+    const refused = await app.inject({
+      body: { bundle },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/bundles/install',
+    });
+    expect(refused.statusCode).toBe(409);
+    const refusal = JSON.parse(refused.payload).error;
+    expect(refusal.code).toBe('PROTECTED_CONTENT_OVERWRITE');
+    expect(refusal.conflicts).toEqual({
+      agents: ['reviewer'],
+      scannerPatterns: [],
+      skills: [],
+      templates: [],
+    });
+    expect(prisma.agent.update).not.toHaveBeenCalled();
+    // The refusal is audited, against a uuid entity id (the column is uuid).
+    const audit = prisma.configAuditLog.create as ReturnType<typeof vi.fn>;
+    expect(audit).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: expect.objectContaining({
+          bundleName: 'n',
+          outcome: 'refused',
+          reason: 'protected-overwrite',
+        }),
+        entityId: '00000000-0000-0000-0000-000000000000',
+        entityType: 'Bundle',
+      }),
+    });
+    audit.mockClear();
+
+    const forced = await app.inject({
+      body: { bundle, overwriteProtected: true },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/bundles/install',
+    });
+    expect(forced.statusCode).toBe(200);
+    expect(prisma.agent.update).toHaveBeenCalledTimes(1);
+    // A forced install records what it replaced, keyed to the registry row.
+    expect(audit).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: expect.objectContaining({
+          overwriteProtected: true,
+          replacedProtected: {
+            agents: ['reviewer'],
+            scannerPatterns: [],
+            skills: [],
+            templates: [],
+          },
+        }),
+        entityId: '99999999-9999-4999-8999-999999999999',
+      }),
     });
     await app.close();
   });

@@ -1,3 +1,8 @@
+import {
+  chooseWorkflowId,
+  type WorkflowIdAllocation,
+  workflowIdFamilyBases,
+} from '@auto-swe/shared/lib/workflowId';
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../plugins/auth.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
@@ -176,4 +181,50 @@ async function compensate(
       );
     }
   }
+}
+
+/**
+ * Allocate the Temporal workflow ID for a ticket+repo. First submission uses
+ * the deterministic base ID; re-running a finished ticket gets an `-rN`
+ * suffix so Temporal, WorkflowRun (unique on workflowId), and ActiveWorkflow
+ * (unique on temporalWorkflowId) all see a fresh execution instead of
+ * colliding with the previous one. Returns a conflict when an execution for
+ * this ticket+repo is still in flight.
+ *
+ * Pass `owner` whenever the repository is known. The base ID is not unique
+ * across repositories (`generateWorkflowId` joins hyphenated names with
+ * hyphens), so without it another tenant's running workflow that merely shares
+ * the string reads as "already running" here; with it, that row is recognised
+ * as foreign and this ticket gets a disambiguated ID (`chooseWorkflowId`).
+ */
+export async function allocateWorkflowId(
+  prisma: FastifyInstance['prisma'],
+  baseId: string,
+  owner?: { repoId: string; externalTicketId?: string }
+): Promise<WorkflowIdAllocation> {
+  const bases = workflowIdFamilyBases(baseId, owner?.repoId);
+  const rows = await prisma.activeWorkflow.findMany({
+    select: {
+      currentStatus: true,
+      repoId: true,
+      temporalWorkflowId: true,
+      workRequest: { select: { externalTicketId: true } },
+    },
+    where: {
+      OR: bases.flatMap((b) => [
+        { temporalWorkflowId: b },
+        { temporalWorkflowId: { startsWith: `${b}-r` } },
+      ]),
+    },
+  });
+  return chooseWorkflowId(
+    baseId,
+    rows.map((r) => ({
+      currentStatus: r.currentStatus,
+      externalTicketId: r.workRequest?.externalTicketId ?? null,
+      repoId: r.repoId,
+      temporalWorkflowId: r.temporalWorkflowId,
+    })),
+    owner
+  );
 }

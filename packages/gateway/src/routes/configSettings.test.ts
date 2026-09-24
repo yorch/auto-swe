@@ -285,6 +285,29 @@ describe('PUT /config/settings/:key', () => {
     await app.close();
   });
 
+  it('updates the winning row when a concurrent writer creates it first', async () => {
+    // Read sees nothing, the create loses the partial unique index, and the
+    // re-read finds the row the other writer committed.
+    configSetting.findFirst
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: 'row-won', value: 7 } as never);
+    configSetting.create.mockRejectedValueOnce(
+      Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+    );
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { value: 12 },
+      headers: auth('ADMIN'),
+      method: 'PUT',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(configSetting.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'row-won' } })
+    );
+    await app.close();
+  });
+
   it('denies a lead with no grant', async () => {
     const app = await buildApp();
     const res = await app.inject({

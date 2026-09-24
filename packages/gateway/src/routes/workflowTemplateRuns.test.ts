@@ -9,6 +9,7 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
 
   let app: ReturnType<typeof Fastify>;
   let startedWorkflows: Array<{ input: unknown; workflowId: string }>;
+  let isOrgMember = true;
 
   beforeAll(() => {
     app = Fastify();
@@ -54,6 +55,9 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
       },
       connection: {
         findUnique: async () => null,
+      },
+      organizationMembership: {
+        findUnique: async () => (isOrgMember ? { role: 'ORG_MEMBER' } : null),
       },
       orgMonthlyUsage: {
         findUnique: async () => null,
@@ -178,6 +182,7 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
       team: {
         memberships: [{ userId: USER_ID }],
         organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+        orgId: 'org-1',
       },
       type: 'notion',
     });
@@ -228,5 +233,50 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
     expect((input as { request: { payload: Record<string, unknown> } }).request.payload).toEqual(
       payload
     );
+  });
+
+  it('refuses a caller outside the org the run would spend against', async () => {
+    startedWorkflows.length = 0;
+    isOrgMember = false;
+    (
+      app.prisma as unknown as {
+        workflowTemplate: { findFirst: (args: { where: Record<string, unknown> }) => unknown };
+      }
+    ).workflowTemplate.findFirst = async ({ where }: { where: Record<string, unknown> }) =>
+      where.id === TEMPLATE_ID
+        ? {
+            activeVersion: 1,
+            id: TEMPLATE_ID,
+            inputSchema: null,
+            team: { id: 'team-1', organization: { id: 'org-1', monthlyBudgetUsdCents: null } },
+            teamId: 'team-1',
+            workspaceProvider: 'api_only',
+          }
+        : null;
+    try {
+      const response = await app.inject({
+        headers: { authorization: 'Bearer test-token' },
+        method: 'POST',
+        payload: { label: 'test-run', payload: { budget: 'STANDARD' } },
+        url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+      });
+      expect(response.statusCode).toBe(403);
+      expect(startedWorkflows).toHaveLength(0);
+    } finally {
+      isOrgMember = true;
+    }
+  });
+
+  it('rejects a payload ticketId that is not a valid ticket id', async () => {
+    startedWorkflows.length = 0;
+    const response = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: { payload: { ticketId: 'bad ticket; rm -rf' } },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.payload).error.code).toBe('INVALID_TICKET_ID');
+    expect(startedWorkflows).toHaveLength(0);
   });
 });

@@ -15,6 +15,7 @@ import {
   type WriteDenial,
 } from '@auto-swe/shared/config';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isUniqueConstraintError } from './prismaErrors.js';
 
 // NOTE ON CACHE SCOPE: `invalidateSettingsCache()` below clears only THIS
 // process's cache. The worker is a separate process and keeps serving its own
@@ -322,15 +323,36 @@ export async function setSetting(
       where: { id: existing.id },
     });
   } else {
-    await prisma.configSetting.create({
-      data: {
-        key,
-        scope: selector.scope,
-        updatedById: actor.id,
-        value: parsed.data as never,
-        ...columns,
-      },
-    });
+    try {
+      await prisma.configSetting.create({
+        data: {
+          key,
+          scope: selector.scope,
+          updatedById: actor.id,
+          value: parsed.data as never,
+          ...columns,
+        },
+      });
+    } catch (err) {
+      // A concurrent writer created the row between the read and this create;
+      // the partial unique index refused ours. Last write wins, as it would
+      // have had the two arrived in sequence — update the row that won.
+      if (!isUniqueConstraintError(err)) {
+        throw err;
+      }
+      const winner = await prisma.configSetting.findFirst({
+        where: { key, scope: selector.scope, ...columns },
+      });
+      if (!winner) {
+        throw err;
+      }
+      await prisma.configSetting.update({
+        data: { updatedById: actor.id, value: parsed.data as never },
+        where: { id: winner.id },
+      });
+      invalidateSettingsCache();
+      return { after: parsed.data, before: winner.value };
+    }
   }
 
   invalidateSettingsCache();
