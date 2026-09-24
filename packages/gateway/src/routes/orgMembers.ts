@@ -79,14 +79,16 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         orderBy: { createdAt: 'asc' },
         where: { orgId },
       });
-      return rows.map((r) => ({
-        createdAt: r.createdAt,
-        id: r.id,
-        orgId: r.orgId,
-        role: r.role,
-        user: r.user,
-        userId: r.userId,
-      }));
+      return {
+        data: rows.map((r) => ({
+          createdAt: r.createdAt,
+          id: r.id,
+          orgId: r.orgId,
+          role: r.role,
+          user: r.user,
+          userId: r.userId,
+        })),
+      };
     }
   );
 
@@ -121,12 +123,12 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           data: { role },
           where: { id: existing.id },
         });
-        return reply.status(200).send(updated);
+        return reply.status(200).send({ data: updated });
       }
       const created = await fastify.prisma.organizationMembership.create({
         data: { orgId, role, userId },
       });
-      return reply.status(201).send(created);
+      return reply.status(201).send({ data: created });
     }
   );
 
@@ -219,7 +221,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         data: { role },
         where: { id: row.id },
       });
-      return updated;
+      return { data: updated };
     }
   );
 

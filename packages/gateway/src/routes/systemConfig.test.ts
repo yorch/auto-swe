@@ -396,6 +396,59 @@ describe('PUT /config/workflow-defaults', () => {
   });
 });
 
+describe('PUT /config/workflow-defaults CI poll bounds', () => {
+  it('saves when the form re-sends a stored over-max poll interval and deadline, clamped', async () => {
+    // The settings form sends every field on every save. A row stored before
+    // the bounds existed must not turn an unrelated edit into a 400.
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { branchPrefix: 'auto', ciPollDeadlineSec: 86_400, ciPollIntervalSec: 300 },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/platform/config/workflow-defaults',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(updateWorkflowDefaultsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        branchPrefix: 'auto',
+        ciPollDeadlineSec: 6 * 3600 - 15 * 60,
+        ciPollIntervalSec: 60,
+      })
+    );
+    await app.close();
+  });
+
+  it('keeps in-range values and null (env fallback) as sent', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { ciPollDeadlineSec: null, ciPollIntervalSec: 30 },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/platform/config/workflow-defaults',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(updateWorkflowDefaultsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ciPollDeadlineSec: null, ciPollIntervalSec: 30 })
+    );
+    await app.close();
+  });
+
+  it('still rejects a zero or negative interval', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { ciPollIntervalSec: 0 },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/platform/config/workflow-defaults',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(updateWorkflowDefaultsMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
 describe('PUT /config/canary', () => {
   it('rejects a candidateVersion that has no active agent', async () => {
     resolveCanaryConfigMock.mockResolvedValue({

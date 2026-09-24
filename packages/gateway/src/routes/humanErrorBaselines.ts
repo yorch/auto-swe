@@ -2,6 +2,7 @@ import { Role } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { memberOrgs } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -32,25 +33,34 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const rows = await fastify.prisma.humanErrorBaseline.findMany({
-        orderBy: { recordedAt: 'desc' },
-        select: {
-          domain: true,
-          errorCount: true,
-          errorRate: true,
-          id: true,
-          outcomeType: true,
-          recordedAt: true,
-          sampleSize: true,
-        },
-        where:
-          user.role === Role.ADMIN
-            ? { orgId: request.query.orgId }
-            : {
-                organization: memberOrgs(user),
-                orgId: request.query.orgId,
-              },
-      });
+      const { orgId } = request.query;
+      // No `orgId: undefined` key: Prisma drops it, so it filters nothing, and
+      // the tenant guard rightly refuses to count it as scoping. An ADMIN
+      // listing every org's baselines is a deliberate cross-tenant read, said
+      // so through `asPlatformAdmin`; everyone else stays behind membership.
+      const orgFilter = orgId ? { orgId } : {};
+      const rows = await asPlatformAdmin(
+        user,
+        "admin lists every organization's error baselines",
+        ['HumanErrorBaseline'],
+        () =>
+          fastify.prisma.humanErrorBaseline.findMany({
+            orderBy: { recordedAt: 'desc' },
+            select: {
+              domain: true,
+              errorCount: true,
+              errorRate: true,
+              id: true,
+              outcomeType: true,
+              recordedAt: true,
+              sampleSize: true,
+            },
+            where:
+              user.role === Role.ADMIN
+                ? orgFilter
+                : { organization: memberOrgs(user), ...orgFilter },
+          })
+      );
       return {
         data: rows.map((b) => ({
           domain: b.domain,

@@ -1,10 +1,11 @@
 import type { Prisma, Role } from '@auto-swe/shared';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { sendConflict } from '../lib/conflict.js';
+import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { memberTeams } from '../lib/tenantScope.js';
@@ -46,17 +47,18 @@ interface TeamGuardResult {
   message: string;
 }
 
-/** Prevent self-removal/self-demotion, hierarchy violations, and removing the last team admin. */
-async function guardTeamMembershipChange(
-  fastify: Parameters<typeof teamRoutes>[0],
-  teamId: string,
+/**
+ * Prevent self-removal/self-demotion and hierarchy violations. Removing the last
+ * team admin is refused inside the write — see `applyMembershipChange`.
+ */
+function guardTeamMembershipChange(
   actorUserId: string,
   actorRole: Role,
   targetUserId: string,
   targetRole: Role,
   action: 'delete' | 'update',
   newRole?: Role
-): Promise<TeamGuardResult | null> {
+): TeamGuardResult | null {
   if (actorUserId === targetUserId) {
     if (action === 'delete') {
       return { code: 'SELF_REMOVAL', message: 'Cannot remove yourself from the team' };
@@ -71,15 +73,48 @@ async function guardTeamMembershipChange(
   if (newRole && roleMeets(newRole, actorRole) && newRole !== actorRole) {
     return { code: 'PRIVILEGE_ESCALATION', message: 'Cannot grant a role higher than your own' };
   }
-  if (targetRole === 'ADMIN' && (action === 'delete' || (newRole && newRole !== 'ADMIN'))) {
-    const adminCount = await fastify.prisma.teamMembership.count({
-      where: { role: 'ADMIN', teamId },
-    });
-    if (adminCount <= 1) {
-      return { code: 'LAST_TEAM_ADMIN', message: 'Cannot remove or demote the last team admin' };
-    }
-  }
   return null;
+}
+
+const LAST_TEAM_ADMIN: TeamGuardResult = {
+  code: 'LAST_TEAM_ADMIN',
+  message: 'Cannot remove or demote the last team admin',
+};
+
+/** Does this change take an ADMIN away from the team? */
+function removesTeamAdmin(targetRole: Role, action: 'delete' | 'update', newRole?: Role): boolean {
+  return targetRole === 'ADMIN' && (action === 'delete' || (!!newRole && newRole !== 'ADMIN'));
+}
+
+/**
+ * Apply a membership change, refusing it when it would leave the team with no
+ * ADMIN.
+ *
+ * Count-then-write on its own is a race: two admins demoting each other both
+ * count two admins, both proceed, and the team ends with none. The team row is
+ * locked for the transaction, so concurrent admin removals on one team queue
+ * behind each other and each counts what the previous one committed. Only
+ * changes that remove an admin take the lock; everything else writes directly.
+ */
+async function applyMembershipChange<T>(
+  prisma: FastifyInstance['prisma'],
+  teamId: string,
+  removesAdmin: boolean,
+  write: (db: Prisma.TransactionClient) => Promise<T>
+): Promise<{ ok: true; value: T } | { ok: false; guard: TeamGuardResult }> {
+  if (!removesAdmin) {
+    return { ok: true, value: await write(prisma) };
+  }
+  return prisma.$transaction(async (tx) => {
+    // CLAUDE.md §7 exception: a row lock on the team serialises concurrent
+    // admin removals; Prisma has no `SELECT … FOR UPDATE`.
+    await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
+    const adminCount = await tx.teamMembership.count({ where: { role: 'ADMIN', teamId } });
+    if (adminCount <= 1) {
+      return { guard: LAST_TEAM_ADMIN, ok: false as const };
+    }
+    return { ok: true as const, value: await write(tx) };
+  });
 }
 
 export const teamRoutes: FastifyPluginAsync = async (fastify) => {
@@ -453,16 +488,25 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return sendConflict(reply, 'MEMBER_EXISTS', 'User is already a member of this team');
       }
 
-      const membership = await fastify.prisma.teamMembership.create({
-        data: {
-          role,
-          teamId: request.params.id,
-          userId,
-        },
-        include: { user: { select: { email: true, id: true, role: true } } },
-      });
-
-      return reply.status(201).send({ data: membership });
+      // The read above is only the friendly early answer; the unique index on
+      // (userId, teamId) decides a concurrent double-add, which must be a 409,
+      // not a 500.
+      try {
+        const membership = await fastify.prisma.teamMembership.create({
+          data: {
+            role,
+            teamId: request.params.id,
+            userId,
+          },
+          include: { user: { select: { email: true, id: true, role: true } } },
+        });
+        return reply.status(201).send({ data: membership });
+      } catch (err) {
+        if (isUniqueConstraintError(err)) {
+          return sendConflict(reply, 'MEMBER_EXISTS', 'User is already a member of this team');
+        }
+        throw err;
+      }
     }
   );
 
@@ -484,9 +528,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const guard = await guardTeamMembershipChange(
-        fastify,
-        request.params.id,
+      const guard = guardTeamMembershipChange(
         requireUser(request).sub,
         actorRole,
         request.params.userId,
@@ -498,12 +540,21 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
       }
 
-      const updated = await fastify.prisma.teamMembership.update({
-        data: { role: request.body.role },
-        where: { id: membership.id },
-      });
+      const result = await applyMembershipChange(
+        fastify.prisma,
+        request.params.id,
+        removesTeamAdmin(membership.role, 'update', request.body.role),
+        (db) =>
+          db.teamMembership.update({
+            data: { role: request.body.role },
+            where: { id: membership.id },
+          })
+      );
+      if (!result.ok) {
+        return sendError(reply, 409, result.guard.code, result.guard.message);
+      }
 
-      return { data: updated };
+      return { data: result.value };
     }
   );
 
@@ -525,9 +576,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const guard = await guardTeamMembershipChange(
-        fastify,
-        request.params.id,
+      const guard = guardTeamMembershipChange(
         requireUser(request).sub,
         actorRole,
         request.params.userId,
@@ -538,9 +587,15 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
       }
 
-      await fastify.prisma.teamMembership.delete({
-        where: { id: membership.id },
-      });
+      const result = await applyMembershipChange(
+        fastify.prisma,
+        request.params.id,
+        removesTeamAdmin(membership.role, 'delete'),
+        (db) => db.teamMembership.delete({ where: { id: membership.id } })
+      );
+      if (!result.ok) {
+        return sendError(reply, 409, result.guard.code, result.guard.message);
+      }
 
       return { data: { removed: true } };
     }

@@ -12,7 +12,8 @@ import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import { reachableConnections } from '../lib/tenantScope.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
+import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -54,11 +55,17 @@ const CreateRepoSchema = z.object({
   // A team LEAD must not be able to create or point one at an arbitrary URL
   // through the repository onboarding path.
   type: ConnectionTypeSchema.refine((t) => t !== 'mcp', {
-    message: 'MCP connections are managed at /admin/mcp-connections',
+    message: 'MCP connections are managed at /studio/mcp',
   }).default('git_repo'),
 });
 
-const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 });
+const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 }).extend({
+  /**
+   * Include deactivated connections. Only LEAD and above may reactivate one,
+   * so only they are shown them; the default keeps every picker active-only.
+   */
+  includeInactive: booleanQueryParam(false),
+});
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
 
@@ -275,11 +282,29 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { limit, offset } = request.query;
-      const where: Prisma.ConnectionWhereInput = {
-        isActive: true,
-        ...(user.role !== Role.ADMIN && reachableConnections(user, request.repoAccessGate)),
-      };
+      const { includeInactive, limit, offset } = request.query;
+      const showInactive = includeInactive && hasRole(user.role, Role.LEAD);
+      // A deactivated connection is listed only to someone who could reactivate
+      // it: a platform ADMIN, or a LEAD/ADMIN of the owning team (the bar
+      // `canManageTeamRepos` sets for the write). The platform LEAD role alone
+      // is not that — on a team where they are a plain ENGINEER they would be
+      // shown rows they can do nothing with.
+      const reach =
+        user.role === Role.ADMIN ? null : reachableConnections(user, request.repoAccessGate);
+      // Combined, never blindly spread: the reachability predicate is itself an
+      // `AND` of `OR`s, and spreading two objects that set the same key keeps
+      // only whichever came last — silently dropping either the reachability
+      // check or the active filter. `isActive` has its own key, so it spreads;
+      // the LEAD view needs an `OR` of its own beside the reachability `AND`, so
+      // the two are joined explicitly.
+      let where: Prisma.ConnectionWhereInput;
+      if (!showInactive) {
+        where = { ...reach, isActive: true };
+      } else if (reach === null) {
+        where = {};
+      } else {
+        where = { AND: [reach, { OR: [{ isActive: true }, { team: ledTeams(user) }] }] };
+      }
 
       const [repos, total] = await asPlatformAdmin(
         user,

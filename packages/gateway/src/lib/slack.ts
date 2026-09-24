@@ -287,7 +287,7 @@ export async function openSlackView(
 ): Promise<{ ok: boolean; viewId?: string; error?: string }> {
   if (!token) {
     // Keep the bespoke, user-facing hint (surfaced in the slash-command ephemeral).
-    return { error: 'Slack bot token not configured — set it at /admin/integrations', ok: false };
+    return { error: 'Slack bot token not configured — set it at /studio/integrations', ok: false };
   }
   const res = await slackApiPost<SlackViewsOpenResponse>(
     'views.open',

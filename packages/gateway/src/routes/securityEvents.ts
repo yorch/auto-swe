@@ -1,3 +1,4 @@
+import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -18,7 +19,8 @@ export type SecurityEventType =
 // filter is applied at the DB level, not post-fetch in JavaScript.
 
 // Activity-event rows are matched by toolName within an AND[type, toolName] clause;
-// block/warn rows are matched by error string prefix or exact value.
+// block/warn rows are matched by the tag the worker's tools write — the shared
+// `SECURITY_TRACE_ERRORS`, so a reworded tag cannot silently stop matching.
 function activityEvent(toolName: string) {
   return { AND: [{ type: 'activity_event' }, { toolName }] };
 }
@@ -26,11 +28,11 @@ function activityEvent(toolName: string) {
 const TYPE_PREDICATES: Record<SecurityEventType, object> = {
   CHANNEL_SUSPICIOUS: activityEvent('channel.suspicious_input'),
   CODE_SECURITY: activityEvent('code_security.scan'),
-  CONTENT_SECURITY_BLOCK: { error: { startsWith: 'blocked by content security' } },
-  CONTENT_SECURITY_WARN: { error: 'content security warning' },
-  FILE_BLOCK: { error: { startsWith: 'blocked by sensitive file' } },
+  CONTENT_SECURITY_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.CONTENT_BLOCK } },
+  CONTENT_SECURITY_WARN: { error: SECURITY_TRACE_ERRORS.CONTENT_WARN },
+  FILE_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.FILE_BLOCK } },
   LLM_SUSPICIOUS: activityEvent('llm.suspicious_output'),
-  SHELL_BLOCK: { error: { startsWith: 'blocked by shell command' } },
+  SHELL_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.SHELL_BLOCK } },
 };
 
 function classifyEvent(trace: {
@@ -38,16 +40,16 @@ function classifyEvent(trace: {
   toolName: string | null;
   type: string;
 }): SecurityEventType {
-  if (trace.error?.startsWith('blocked by shell command')) {
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.SHELL_BLOCK)) {
     return 'SHELL_BLOCK';
   }
-  if (trace.error?.startsWith('blocked by sensitive file')) {
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.FILE_BLOCK)) {
     return 'FILE_BLOCK';
   }
-  if (trace.error?.startsWith('blocked by content security')) {
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.CONTENT_BLOCK)) {
     return 'CONTENT_SECURITY_BLOCK';
   }
-  if (trace.error === 'content security warning') {
+  if (trace.error === SECURITY_TRACE_ERRORS.CONTENT_WARN) {
     return 'CONTENT_SECURITY_WARN';
   }
   if (trace.type === 'activity_event' && trace.toolName === 'llm.suspicious_output') {
