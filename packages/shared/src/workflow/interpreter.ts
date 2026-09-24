@@ -85,6 +85,16 @@ export class BranchCancelledError extends Error {
   }
 }
 
+/**
+ * The per-branch handle a fan-out hands down to everything that runs inside the
+ * branch. `token` is written by whoever is currently blocking the branch — a
+ * dispatcher around an activity, the interpreter around a signal/HITL wait or a
+ * nested fan-out — so the fan-out's block-mode can interrupt it. `shouldAbort`
+ * reports whether the fan-out has already been decided, for checks between
+ * blocking operations (the next node, the next retry attempt, the next wait).
+ */
+type BranchSink = { token?: CancellationToken; shouldAbort?: () => boolean };
+
 function isBranchCancelled(err: unknown): boolean {
   return (
     err instanceof BranchCancelledError ||
@@ -357,7 +367,7 @@ async function walk(
   dispatcher: Dispatcher,
   cursor: Cursor,
   nodeIdPrefix: string,
-  cancellationSink?: { token?: CancellationToken },
+  cancellationSink?: BranchSink,
   shouldAbort?: () => boolean
 ): Promise<BranchOutcome> {
   let currentNodeId: string | undefined = entry;
@@ -449,7 +459,14 @@ async function walk(
           break;
         }
         case 'signal': {
-          currentNodeId = await runSignal(recordingId, nodeId, node, ctx, dispatcher);
+          currentNodeId = await runSignal(
+            recordingId,
+            nodeId,
+            node,
+            ctx,
+            dispatcher,
+            cancellationSink
+          );
           break;
         }
         case 'terminate': {
@@ -466,7 +483,8 @@ async function walk(
             ctx,
             dispatcher,
             cursor,
-            nodeIdPrefix
+            nodeIdPrefix,
+            cancellationSink
           );
           break;
         }
@@ -485,7 +503,14 @@ async function walk(
         case 'humanDecision':
         case 'humanInput':
         case 'humanReview': {
-          currentNodeId = await runHumanNode(recordingId, nodeId, node, ctx, dispatcher);
+          currentNodeId = await runHumanNode(
+            recordingId,
+            nodeId,
+            node,
+            ctx,
+            dispatcher,
+            cancellationSink
+          );
           break;
         }
       }
@@ -517,7 +542,7 @@ async function runStep(
   node: StepNode,
   ctx: Context,
   dispatcher: Dispatcher,
-  cancellationSink?: { token?: CancellationToken }
+  cancellationSink?: BranchSink
 ): Promise<string | undefined> {
   const config = node.config ?? {};
   const inputs = resolveInputs(node.inputs, ctx);
@@ -538,6 +563,7 @@ async function runStep(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    shouldAbort: cancellationSink?.shouldAbort,
     specNodeId,
   });
 }
@@ -548,7 +574,7 @@ async function runAgentNode(
   node: import('./spec.js').AgentNode,
   ctx: Context,
   dispatcher: Dispatcher,
-  cancellationSink?: { token?: CancellationToken }
+  cancellationSink?: BranchSink
 ): Promise<string | undefined> {
   const inputs = resolveInputs(node.inputs, ctx);
   // Pack the agent-node fields into the step config; the worker's `runAgentNode`
@@ -590,6 +616,7 @@ async function runAgentNode(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    shouldAbort: cancellationSink?.shouldAbort,
     specNodeId,
   });
 }
@@ -600,7 +627,7 @@ async function runEvalNode(
   node: import('./spec.js').EvalNode,
   ctx: Context,
   dispatcher: Dispatcher,
-  cancellationSink?: { token?: CancellationToken }
+  cancellationSink?: BranchSink
 ): Promise<string | undefined> {
   const inputs = resolveInputs(node.inputs, ctx);
   // Pack the eval-node fields into the step config; the worker's `runEvalNode`
@@ -636,6 +663,7 @@ async function runEvalNode(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    shouldAbort: cancellationSink?.shouldAbort,
     specNodeId,
   });
 }
@@ -646,7 +674,7 @@ async function runMcpNode(
   node: import('./spec.js').McpNode,
   ctx: Context,
   dispatcher: Dispatcher,
-  cancellationSink?: { token?: CancellationToken }
+  cancellationSink?: BranchSink
 ): Promise<string | undefined> {
   const inputs = resolveInputs(node.inputs, ctx);
   // Pack the mcp-node fields into the step config; the worker's `mcpCallTool`
@@ -674,6 +702,7 @@ async function runMcpNode(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    shouldAbort: cancellationSink?.shouldAbort,
     specNodeId,
   });
 }
@@ -684,7 +713,7 @@ async function runContainerStep(
   node: import('./spec.js').ContainerStepNode,
   ctx: Context,
   dispatcher: Dispatcher,
-  cancellationSink?: { token?: CancellationToken }
+  cancellationSink?: BranchSink
 ): Promise<string | undefined> {
   const inputs = resolveInputs(node.inputs, ctx);
   // Pack the container-contract fields into the step config; the worker's
@@ -729,6 +758,7 @@ async function runContainerStep(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    shouldAbort: cancellationSink?.shouldAbort,
     specNodeId,
   });
 }
@@ -739,7 +769,7 @@ async function runShell(
   node: ShellNode,
   ctx: Context,
   dispatcher: Dispatcher,
-  cancellationSink?: { token?: CancellationToken }
+  cancellationSink?: BranchSink
 ): Promise<string | undefined> {
   if (!dispatcher.dispatchShell) {
     throw new Error(
@@ -764,6 +794,7 @@ async function runShell(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    shouldAbort: cancellationSink?.shouldAbort,
     specNodeId,
   });
 }
@@ -804,6 +835,8 @@ async function runRetryable(args: {
   onFail: StepNode['onFail'];
   onError: StepNode['onError'];
   dispatcher: Dispatcher;
+  /** Fan-out branch abort check; a retry must not start once the fan-out is decided. */
+  shouldAbort?: () => boolean;
 }): Promise<string | undefined> {
   const { nodeId, specNodeId, inputs, ctx, invoke, next, onFail, onError, dispatcher } = args;
 
@@ -824,6 +857,19 @@ async function runRetryable(args: {
   let lastFailedAsGate = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // `walk` checks before the node; this covers the gap between attempts,
+    // where a block-mode sibling failure would otherwise let a retrying branch
+    // start another full activity run after the fan-out was decided.
+    if (attempt > 1 && args.shouldAbort?.()) {
+      const cancelled = new BranchCancelledError();
+      await safeRecord(dispatcher, {
+        attempt,
+        error: cancelled.message,
+        nodeId,
+        status: 'FAILED',
+      });
+      throw cancelled;
+    }
     try {
       const output = await invoke();
 
@@ -939,9 +985,13 @@ async function runSignal(
   specNodeId: string,
   node: SignalNode,
   ctx: Context,
-  dispatcher: Dispatcher
+  dispatcher: Dispatcher,
+  cancellationSink?: BranchSink
 ): Promise<string> {
-  const payload = await dispatcher.waitSignal(node.name, node.timeout);
+  const payload = await waitCancellable(
+    () => dispatcher.waitSignal(node.name, node.timeout),
+    cancellationSink
+  );
   if (payload === undefined) {
     await safeRecord(dispatcher, { nodeId, status: 'SKIPPED' });
     return node.onTimeout;
@@ -959,7 +1009,8 @@ async function runHumanNode(
   specNodeId: string,
   node: HumanApprovalNode | HumanDecisionNode | HumanInputNode | HumanReviewNode,
   ctx: Context,
-  dispatcher: Dispatcher
+  dispatcher: Dispatcher,
+  cancellationSink?: BranchSink
 ): Promise<string | undefined> {
   // The signal name and the human-step row are keyed by the RECORDING id, so a
   // HITL node inside a fanOut branch gets its own slot per branch
@@ -1010,8 +1061,14 @@ async function runHumanNode(
       : undefined
   );
 
-  // Wait for human response
-  const payload = await dispatcher.waitSignal(signalName, node.timeout);
+  // Wait for human response. Inside a fan-out branch the wait is cancellable:
+  // a block-mode sibling failure must not leave this branch — and so the whole
+  // fan-out join — waiting on a human for the rest of the timeout. The pending
+  // human-step row is closed by run finalization (`cancelPendingHumanSteps`).
+  const payload = await waitCancellable(
+    () => dispatcher.waitSignal(signalName, node.timeout),
+    cancellationSink
+  );
 
   if (payload === undefined) {
     // Timed out — update the step record, mark the DB row, and route to timeout path
@@ -1066,6 +1123,35 @@ async function runHumanNode(
   return node.onSubmit;
 }
 
+/**
+ * Await a signal wait so a fan-out's block-mode can interrupt it. Outside a
+ * branch (no sink) this is exactly `wait()`. Inside one, the branch sink's
+ * token is pointed at this wait for its duration, and an abort that already
+ * happened (during the activities before the wait) is honoured up front.
+ */
+async function waitCancellable<T>(wait: () => Promise<T>, sink?: BranchSink): Promise<T> {
+  if (!sink) {
+    return wait();
+  }
+  if (sink.shouldAbort?.()) {
+    throw new BranchCancelledError();
+  }
+  let cancel: (() => void) | undefined;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    cancel = () => reject(new BranchCancelledError());
+  });
+  const previous = sink.token;
+  const token: CancellationToken = { cancel: () => cancel?.() };
+  sink.token = token;
+  try {
+    return await Promise.race([wait(), cancelled]);
+  } finally {
+    if (sink.token === token) {
+      sink.token = previous;
+    }
+  }
+}
+
 function runTerminate(
   node: TerminateNode,
   ctx: Context
@@ -1101,7 +1187,8 @@ async function runFanOut(
   ctx: Context,
   dispatcher: Dispatcher,
   cursor: Cursor,
-  parentPrefix: string
+  parentPrefix: string,
+  parentSink?: BranchSink
 ): Promise<string> {
   const resolved = resolveBinding(node.over, ctx);
   if (!Array.isArray(resolved)) {
@@ -1144,6 +1231,11 @@ async function runFanOut(
   let firstError: unknown = null;
   let nextIndex = 0;
   let stop = false;
+  // A nested fan-out runs inside an enclosing branch: that branch's abort
+  // stops this one too, so no new inner branch starts and running ones stop at
+  // their next node.
+  const parentAborted = (): boolean => parentSink?.shouldAbort?.() ?? false;
+  const aborted = (): boolean => stop || parentAborted();
 
   function cancelAllExcept(exceptIndex: number): void {
     for (const [idx, sink] of branchSinks.entries()) {
@@ -1162,7 +1254,7 @@ async function runFanOut(
   }
 
   async function worker(): Promise<void> {
-    while (!stop) {
+    while (!aborted()) {
       const i = nextIndex++;
       if (i >= raw.length) {
         return;
@@ -1170,7 +1262,7 @@ async function runFanOut(
       const item = raw[i];
       const branchPrefix = `${parentPrefix}${nodeId}[${i}]/`;
       const childCtx = makeChildContext(ctx, node.itemKey, item, i);
-      const sink: { token?: CancellationToken } = {};
+      const sink: BranchSink = { shouldAbort: aborted };
       branchSinks.set(i, sink);
 
       try {
@@ -1182,7 +1274,7 @@ async function runFanOut(
           cursor,
           branchPrefix,
           sink,
-          () => stop
+          aborted
         );
         const exports = collectExports(node.exports, childCtx);
         slots[i] = {
@@ -1215,8 +1307,26 @@ async function runFanOut(
     }
   }
 
+  // The enclosing branch's block-mode cancel reaches this fan-out through the
+  // parent sink: point its token at "cancel every inner branch" while we run.
+  const parentPrevious = parentSink?.token;
+  const parentToken: CancellationToken = {
+    cancel: () => {
+      stop = true;
+      cancelAllExcept(-1);
+    },
+  };
+  if (parentSink) {
+    parentSink.token = parentToken;
+  }
   const workerCount = Math.min(concurrency, raw.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  try {
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  } finally {
+    if (parentSink && parentSink.token === parentToken) {
+      parentSink.token = parentPrevious;
+    }
+  }
 
   // Drop holes (branches that block-mode skipped) but preserve index order
   // for everything that did run.
@@ -1249,6 +1359,19 @@ async function runFanOut(
   }
   setPath(ctx, `nodes.${nodeId}.output`, aggregate);
 
+  if (parentAborted()) {
+    // The enclosing branch was cancelled: report that, not this fan-out's own
+    // (possibly clean) outcome, so the outer fan-out's policy applies.
+    const cancelled = new BranchCancelledError();
+    await safeRecord(dispatcher, {
+      error: cancelled.message,
+      nodeId: recordingId,
+      outputs: aggregate,
+      status: 'FAILED',
+    });
+    throw cancelled;
+  }
+
   if (firstError !== null && node.onBranchFail === 'block') {
     await safeRecord(dispatcher, {
       error: firstError instanceof Error ? firstError.message : String(firstError),
@@ -1279,15 +1402,45 @@ async function runFanOut(
  */
 function makeChildContext(parent: Context, itemKey: string, item: unknown, index: number): Context {
   const child: Context = {
-    [itemKey]: item,
+    [itemKey]: cloneData(item),
     [`${itemKey}Index`]: index,
-    context: { ...((parent.context as Record<string, unknown> | undefined) ?? {}) },
+    context: cloneData((parent.context as Record<string, unknown> | undefined) ?? {}),
     fanOut: { index, itemKey },
     nodes: {},
-    request: parent.request,
-    workflow: parent.workflow,
+    request: cloneData(parent.request),
+    workflow: cloneData(parent.workflow),
   };
   return child;
+}
+
+/**
+ * Deep copy of context data, so a branch's `set` on a nested path
+ * (`context.plan.status`) cannot write through a shared object into its parent
+ * or its siblings. Context holds JSON — activity outputs, spec literals,
+ * the request — so arrays and plain (or null-prototype) objects are copied and
+ * anything else is kept as is. Hand-rolled because `structuredClone` is not
+ * guaranteed inside the Temporal workflow isolate; it is deterministic, and it
+ * never walks a reserved segment into a prototype.
+ */
+function cloneData<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((v) => cloneData(v)) as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      return value;
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (RESERVED_SEGMENTS.has(k)) {
+        continue;
+      }
+      out[k] = cloneData(v);
+    }
+    return out as T;
+  }
+  return value;
 }
 
 function collectExports(

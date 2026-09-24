@@ -7,6 +7,7 @@
  * side that has the row in hand.
  */
 import type { PrismaClient } from '../index.js';
+import { isTrustedGitHubHost } from './githubHostTrust.js';
 import { GITHUB_ACCOUNT_API_URL, verifyGithubLoginOwnership } from './githubIdentityCheck.js';
 import { resolveGitHubToken } from './githubInstallation.js';
 import { fetchRepoPermission, type PermissionLookup } from './githubPermission.js';
@@ -47,6 +48,13 @@ export async function lookupRepoPermission(
   }
   const ghConfig = await resolveGitHubConfig();
   const apiUrl = repo.githubApiUrl ?? ghConfig.apiUrl;
+  // The override is where the credential goes — the App JWT when minting an
+  // installation token, and the token itself on the lookup. A row pointing it
+  // at a host nobody configured must not get either. Reported as a failure,
+  // not a verdict: nothing was asked.
+  if (repo.githubApiUrl && !isTrustedGitHubHost(repo.githubApiUrl, ghConfig)) {
+    return { failure: 'credential-rejected', ok: false };
+  }
   let token: string;
   try {
     token = await resolveGitHubToken(ghConfig, {

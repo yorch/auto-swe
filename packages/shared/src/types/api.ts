@@ -221,6 +221,45 @@ export const WORKFLOW_RUN_STATUSES = [
 ] as const;
 export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
 
+/**
+ * `WorkflowRun` statuses a run never leaves: every status except `RUNNING`.
+ * `SKIPPED` is terminal — a run that decided there was nothing to do is over,
+ * it is not "still running". The one definition every consumer (dashboard,
+ * gateway, CLI, analytics) should read instead of spelling its own set.
+ */
+export const WORKFLOW_RUN_TERMINAL_STATUSES: ReadonlySet<WorkflowRunStatus> = new Set(
+  WORKFLOW_RUN_STATUSES.filter((s) => s !== 'RUNNING')
+);
+
+/**
+ * Terminal `WorkflowRun` statuses that count as a failure. `SKIPPED` is
+ * terminal but neither a success nor a failure.
+ */
+export const WORKFLOW_RUN_FAILURE_STATUSES: ReadonlySet<WorkflowRunStatus> = new Set([
+  'FAILED',
+  'TIMED_OUT',
+  'CANCELLED',
+]);
+
+export function isTerminalWorkflowRunStatus(status: string): boolean {
+  return WORKFLOW_RUN_TERMINAL_STATUSES.has(status as WorkflowRunStatus);
+}
+
+/**
+ * `ActiveWorkflow.currentStatus` values that mean "this execution is over" —
+ * the ledger row's vocabulary (`COMPLETED`), not the run's (`SUCCESS`).
+ */
+export const ACTIVE_WORKFLOW_TERMINAL_STATUSES: ReadonlySet<WorkflowStatus> = new Set([
+  'COMPLETED',
+  'FAILED',
+  'TIMED_OUT',
+  'CANCELLED',
+]);
+
+export function isTerminalActiveWorkflowStatus(status: string): boolean {
+  return ACTIVE_WORKFLOW_TERMINAL_STATUSES.has(status as WorkflowStatus);
+}
+
 export const WORKFLOW_STEP_RECORD_STATUSES = [
   'PENDING',
   'RUNNING',

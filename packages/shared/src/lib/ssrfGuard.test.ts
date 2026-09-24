@@ -123,9 +123,66 @@ describe('isSafeProbeUrl', () => {
       expectBlocked('http://[fe80::1]/', /private network/);
       expectBlocked('http://[febf::1]/', /private network/);
     });
+  });
 
-    it('does not over-block fec0:: (deprecated site-local, outside fe80::/10)', () => {
-      expectAllowed('http://[fec0::1]/');
+  describe('IPv6 site-local (fec0::/10, deprecated)', () => {
+    it('blocks the range', () => {
+      expectBlocked('http://[fec0::1]/', /private network/);
+      expectBlocked('http://[feff::1]/', /private network/);
+    });
+  });
+
+  describe('trailing-dot and reserved names', () => {
+    it('blocks fully-qualified spellings with a trailing dot', () => {
+      expectBlocked('http://localhost./', /internal/);
+      expectBlocked('http://metadata.google.internal./', /internal/);
+      expectBlocked('http://printer.local./', /internal/);
+    });
+
+    it('blocks every *.localhost name (RFC 6761 loopback)', () => {
+      expectBlocked('http://a.localhost/', /internal/);
+      expectBlocked('http://deep.sub.localhost./', /internal/);
+    });
+
+    it('does not over-block names that merely contain the words', () => {
+      expectAllowed('http://mylocalhost.com/');
+      expectAllowed('http://internal.example.com/');
+    });
+  });
+
+  describe('carrier-grade NAT (100.64.0.0/10)', () => {
+    it('blocks the range, including the Alibaba metadata address', () => {
+      expectBlocked('http://100.100.100.200/', /private network/);
+      expectBlocked('http://100.64.0.1/', /private network/);
+      expectBlocked('http://100.127.255.255/', /private network/);
+    });
+
+    it('does not over-block its neighbours', () => {
+      expectAllowed('http://100.63.255.255/');
+      expectAllowed('http://100.128.0.1/');
+    });
+  });
+
+  describe('IPv6 forms that embed an IPv4 address', () => {
+    it('blocks NAT64 (64:ff9b::/96) around a metadata or private address', () => {
+      expectBlocked('http://[64:ff9b::169.254.169.254]/', /private network/);
+      expectBlocked('http://[64:ff9b::a9fe:a9fe]/', /private network/);
+      expectBlocked('http://[64:ff9b::10.0.0.1]/', /private network/);
+    });
+
+    it('blocks the NAT64 local-use prefix outright', () => {
+      expectBlocked('http://[64:ff9b:1::8.8.8.8]/', /private network/);
+    });
+
+    it('blocks IPv4-compatible, IPv4-translated and 6to4 embeddings', () => {
+      expectBlocked('http://[::127.0.0.1]/', /private network/);
+      expectBlocked('http://[::ffff:0:10.0.0.1]/', /private network/);
+      expectBlocked('http://[2002:a9fe:a9fe::1]/', /private network/);
+    });
+
+    it('allows the same forms around a public address', () => {
+      expectAllowed('http://[64:ff9b::8.8.8.8]/');
+      expectAllowed('http://[2002:808:808::1]/');
     });
   });
 

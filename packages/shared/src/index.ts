@@ -103,4 +103,11 @@ export {
   WorkspaceProviderTypeSchema,
 } from './lib/workspaceProviders.js';
 export type * from './types/api.js';
+export {
+  ACTIVE_WORKFLOW_TERMINAL_STATUSES,
+  isTerminalActiveWorkflowStatus,
+  isTerminalWorkflowRunStatus,
+  WORKFLOW_RUN_FAILURE_STATUSES,
+  WORKFLOW_RUN_TERMINAL_STATUSES,
+} from './types/api.js';
 export type * from './types/workflow.js';

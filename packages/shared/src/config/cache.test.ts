@@ -4,6 +4,7 @@ import {
   _resetConfigCacheForTests,
   configCacheTtlMs,
   invalidate,
+  invalidatePrefix,
   withCache,
 } from './cache.js';
 
@@ -139,5 +140,84 @@ describe('configCacheTtlMs', () => {
     expect(configCacheTtlMs()).toBe(30_000);
     process.env.CONFIG_CACHE_TTL_MS = '-100';
     expect(configCacheTtlMs()).toBe(30_000);
+  });
+});
+
+describe('withCache — invalidation during an in-flight fetch', () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it('does not store a value whose fetch began before invalidatePrefix', async () => {
+    const slow = deferred<string>();
+    const first = withCache('setting:a:ctx1', 30_000, () => slow.promise);
+    // An admin saves while the read is in flight.
+    invalidatePrefix('setting:a:');
+    slow.resolve('stale');
+    // The caller that asked before the write still gets its answer…
+    await expect(first).resolves.toBe('stale');
+    // …but it is not cached for anyone else.
+    const fresh = vi.fn().mockResolvedValue('fresh');
+    await expect(withCache('setting:a:ctx1', 30_000, fresh)).resolves.toBe('fresh');
+    expect(fresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not store a value whose fetch began before invalidate(key)', async () => {
+    const slow = deferred<string>();
+    const first = withCache('k', 30_000, () => slow.promise);
+    invalidate('k');
+    slow.resolve('stale');
+    await first;
+    const fresh = vi.fn().mockResolvedValue('fresh');
+    await expect(withCache('k', 30_000, fresh)).resolves.toBe('fresh');
+  });
+
+  it('a caller arriving after the invalidation does not join the stale fetch', async () => {
+    const slow = deferred<string>();
+    const first = withCache('k', 30_000, () => slow.promise);
+    invalidate('k');
+    const fresh = vi.fn().mockResolvedValue('fresh');
+    const second = withCache('k', 30_000, fresh);
+    slow.resolve('stale');
+    await expect(first).resolves.toBe('stale');
+    await expect(second).resolves.toBe('fresh');
+    // And the fresh value is the one that stuck.
+    const third = vi.fn().mockResolvedValue('never');
+    await expect(withCache('k', 30_000, third)).resolves.toBe('fresh');
+    expect(third).not.toHaveBeenCalled();
+  });
+
+  it('leaves unrelated in-flight fetches cacheable', async () => {
+    const slow = deferred<string>();
+    const other = withCache('other:k', 30_000, () => slow.promise);
+    invalidatePrefix('setting:');
+    slow.resolve('v');
+    await other;
+    const again = vi.fn().mockResolvedValue('x');
+    await expect(withCache('other:k', 30_000, again)).resolves.toBe('v');
+    expect(again).not.toHaveBeenCalled();
+  });
+
+  it('dedupes concurrent misses on one key into a single fetch', async () => {
+    const slow = deferred<string>();
+    const fetcher = vi.fn(() => slow.promise);
+    const a = withCache('k', 30_000, fetcher);
+    const b = withCache('k', 30_000, fetcher);
+    slow.resolve('v');
+    await expect(Promise.all([a, b])).resolves.toEqual(['v', 'v']);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares a rejection with joined callers and does not wedge the key', async () => {
+    const fetcher = vi.fn().mockRejectedValueOnce(new Error('db down')).mockResolvedValue('ok');
+    const a = withCache('k', 30_000, fetcher);
+    const b = withCache('k', 30_000, fetcher);
+    await expect(a).rejects.toThrow('db down');
+    await expect(b).rejects.toThrow('db down');
+    await expect(withCache('k', 30_000, fetcher)).resolves.toBe('ok');
   });
 });

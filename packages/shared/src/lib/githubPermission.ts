@@ -11,6 +11,10 @@
  * lookup.
  */
 
+// Host trust travels with the permission lookup: both decide where a GitHub
+// credential is sent, and this module is the subpath every caller already imports.
+export * from './githubHostTrust.js';
+
 /** GitHub's collaborator permission levels, weakest first. */
 export const REPO_PERMISSIONS = ['none', 'read', 'write', 'admin'] as const;
 

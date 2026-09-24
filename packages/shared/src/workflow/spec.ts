@@ -235,12 +235,20 @@ const TerminateNodeSchema = z.object({
  * Branches run in parallel through a concurrency-bounded worker pool (phase
  * 3.5); see `concurrency` below.
  */
+/**
+ * Upper bound on fan-out branch concurrency — for a node's own `concurrency`
+ * and for the `workflow.fanoutConcurrency` setting that supplies the default.
+ * One constant so a value the setting accepts is always one a spec could state.
+ */
+export const MAX_FANOUT_CONCURRENCY = 20;
+
 const FanOutNodeSchema = z.object({
   /**
    * Max number of branches to run concurrently (default 4 in the interpreter,
-   * capped at 20). Enforced by the interpreter's bounded worker pool.
+   * capped at {@link MAX_FANOUT_CONCURRENCY}). Enforced by the interpreter's
+   * bounded worker pool.
    */
-  concurrency: z.number().int().min(1).max(20).optional(),
+  concurrency: z.number().int().min(1).max(MAX_FANOUT_CONCURRENCY).optional(),
   /** Optional dot-path exports lifted from each branch's child context. */
   exports: z.array(z.string().min(1).max(120)).max(20).optional(),
   /** Key under which each element is bound in the branch's child context. */

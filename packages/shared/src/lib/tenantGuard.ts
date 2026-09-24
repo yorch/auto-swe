@@ -87,13 +87,26 @@ const NEGATING_OPERATORS = new Set(['none', 'not', 'isNot', 'notIn']);
 
 /** Does `value`, sitting under tenant key `key`, actually narrow to a tenant? */
 function narrowsToTenant(key: string, value: unknown): boolean {
-  if (value === null || value === undefined) {
+  // Prisma drops an `undefined` filter entirely — `{ teamId: undefined }` is
+  // `{}` — so it never scopes, whatever the key. Only `null` is a real filter.
+  if (value === undefined) {
+    return false;
+  }
+  if (value === null) {
     return NULL_SCOPES_TENANT.has(key);
   }
   if (typeof value === 'object') {
+    // Same rule one level down: `{ teamId: { equals: undefined } }` and
+    // `{ team: { id: undefined } }` filter nothing.
+    const defined = Object.entries(value as Record<string, unknown>).filter(
+      ([, v]) => v !== undefined
+    );
+    if (defined.length === 0) {
+      return false;
+    }
     // `{ teamId: { not: x } }` and `{ memberships: { none: … } }` match every
     // tenant but one, which is the opposite of scoping.
-    return !Object.keys(value as Record<string, unknown>).some((k) => NEGATING_OPERATORS.has(k));
+    return !defined.some(([k]) => NEGATING_OPERATORS.has(k));
   }
   return true;
 }

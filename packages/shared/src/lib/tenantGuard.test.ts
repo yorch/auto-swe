@@ -61,6 +61,13 @@ describe('hasTenantPredicate', () => {
     // A MemoryItem with no channel is still owned by a team, so this selects
     // every team's non-channel lessons.
     ['a null channelId', { channelId: null }],
+    // Prisma drops an `undefined` filter, so these select every tenant's rows.
+    ['an undefined teamId', { teamId: undefined }],
+    ['an undefined orgId', { orgId: undefined }],
+    ['an undefined organizationId', { organizationId: undefined }],
+    ['an undefined teamId beside an unrelated filter', { status: 'A', teamId: undefined }],
+    ['an operator object whose operand is undefined', { teamId: { equals: undefined } }],
+    ['a relation filter whose fields are undefined', { team: { id: undefined } }],
   ])('rejects %s', (_label, where) => {
     expect(hasTenantPredicate(where)).toBe(false);
   });

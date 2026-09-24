@@ -6,6 +6,7 @@ vi.mock('../db.js', () => ({ prisma: { configSetting: { findMany } } }));
 import { invalidateSettingsCache } from '../config/resolveSetting.js';
 import { BUILTIN_SCANNER_PATTERNS } from '../scannerPatterns/index.js';
 import {
+  __evaluateGroupForTests,
   DEFAULT_REGEX_BUDGET_MS,
   isRegexQuarantined,
   probeRegexBacktracking,
@@ -303,7 +304,7 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
       BUILTIN_SCANNER_PATTERNS.map((p) => ({ flags: p.flags, label: p.label, source: p.pattern }))
     );
 
-    // In-thread, per window: the sum over all 62 patterns must be a small
+    // In-thread, per window: the sum over all built-in patterns must be a small
     // fraction of the budget, or a modestly loaded host will overrun it.
     for (const text of windows) {
       const started = performance.now();
@@ -345,6 +346,50 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
     expect(bad.timedOutPatternKeys).toEqual(['evil']);
     expect(good.incomplete).toBe(false);
     expect(good.hits.map((h) => h.patternKey)).toEqual(['ok']);
+  });
+});
+
+describe('bisection bookkeeping (scripted executor, no timing)', () => {
+  type Run = Parameters<typeof __evaluateGroupForTests>[3];
+  type Outcome = Awaited<ReturnType<Run>>;
+  const P = (key: string) => ({ flags: '', key, source: key });
+  const target = [{ key: 't', text: 'x' }];
+  const TIMEOUT: Outcome = { ok: false, reason: 'timeout' };
+  const FAULT: Outcome = { ok: false, reason: 'fault' };
+  const done = (keys: string[] = []): Outcome => ({
+    hits: keys.map((k) => ({ match: 'x', patternKey: k, targetKey: 't' })),
+    ok: true,
+  });
+
+  it('reports complete when a batch overran once but both halves then completed', async () => {
+    // Only the full batch "overruns"; every smaller group finishes and reports
+    // one hit per pattern. All hits are known, so a blocking caller must be
+    // able to clear on it.
+    const run: Run = async (patterns) =>
+      patterns.length > 1 ? TIMEOUT : done(patterns.map((p) => p.key));
+    const result = await __evaluateGroupForTests([P('a'), P('b')], target, 100, run);
+    expect(result.incomplete).toBe(false);
+    expect(result.timedOutPatternKeys).toEqual([]);
+    expect(result.hits.map((h) => h.patternKey)).toEqual(['a', 'b']);
+  });
+
+  it('stays incomplete when a half could not be evaluated', async () => {
+    const run: Run = async (patterns) =>
+      patterns.length > 1 || patterns[0]?.key === 'b' ? TIMEOUT : done();
+    const result = await __evaluateGroupForTests([P('a'), P('b')], target, 100, run);
+    expect(result.incomplete).toBe(true);
+    expect(result.timedOutPatternKeys).toEqual(['b']);
+  });
+
+  it('stays incomplete on an executor fault inside a half', async () => {
+    let calls = 0;
+    const run: Run = async () => {
+      calls++;
+      return calls === 1 ? TIMEOUT : calls === 2 ? FAULT : done();
+    };
+    const result = await __evaluateGroupForTests([P('a'), P('b')], target, 100, run);
+    expect(result.incomplete).toBe(true);
+    expect(result.timedOutPatternKeys).toEqual([]);
   });
 });
 

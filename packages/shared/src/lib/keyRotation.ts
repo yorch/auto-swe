@@ -18,6 +18,14 @@ import { runUnscoped } from './tenantGuard.js';
  * with the current one, and written back in a single update. There is no global
  * transaction: a row already at the current version is skipped, so an
  * interrupted run is simply resumed by running it again.
+ *
+ * The write-back is conditional. Rotation runs against a live deployment, so an
+ * admin can save a new secret between this read and its write; an update keyed
+ * by `id` alone would then overwrite the fresh secret with the re-encrypted OLD
+ * one. Every rotated field's nonce and key version as read are part of the
+ * `where` (a nonce is random per encryption, so a re-save always changes it),
+ * and a row whose update matches nothing is reported in `conflicted` and left
+ * alone — the next run picks it up.
  */
 
 /** One encrypted field: the three ciphertext columns plus its version column. */
@@ -102,6 +110,11 @@ export interface RotationReport {
   skipped: number;
   /** Fields that failed to decrypt — reported, never swallowed. */
   failed: Array<{ model: string; id: string; field: string; reason: string }>;
+  /**
+   * Rows whose secret changed between the read and the write-back (or that
+   * were deleted). Not written — run rotation again to move them.
+   */
+  conflicted: Array<{ model: string; id: string }>;
   toVersion: number;
 }
 
@@ -114,13 +127,19 @@ type Row = Record<string, unknown> & { id: string };
  */
 export async function rotateEncryptionKey(opts?: { dryRun?: boolean }): Promise<RotationReport> {
   const toVersion = currentKeyVersion();
-  const report: RotationReport = { failed: [], rotated: {}, skipped: 0, toVersion };
+  const report: RotationReport = {
+    conflicted: [],
+    failed: [],
+    rotated: {},
+    skipped: 0,
+    toVersion,
+  };
 
   // The one cast that lets a typo'd model name compile, named and hoisted so it
   // is not buried in the loop body.
   type Delegate = {
     findMany: (a: unknown) => Promise<Row[]>;
-    update: (a: unknown) => Promise<unknown>;
+    updateMany: (a: unknown) => Promise<{ count: number }>;
   };
   const client = prisma as unknown as Record<string, Delegate | undefined>;
 
@@ -141,6 +160,8 @@ export async function rotateEncryptionKey(opts?: { dryRun?: boolean }): Promise<
     );
     for (const row of rows) {
       const data: Record<string, unknown> = {};
+      // What the row must still hold for the write-back to be safe.
+      const expected: Record<string, unknown> = {};
 
       for (const field of fields) {
         const ciphertext = row[field.ciphertext];
@@ -166,6 +187,8 @@ export async function rotateEncryptionKey(opts?: { dryRun?: boolean }): Promise<
           data[field.nonce] = sealed.nonce;
           data[field.authTag] = sealed.authTag;
           data[field.keyVersion] = sealed.keyVersion;
+          expected[field.nonce] = row[field.nonce];
+          expected[field.keyVersion] = version;
           if (field.lastFour) {
             data[field.lastFour] = sealed.lastFour;
           }
@@ -182,10 +205,20 @@ export async function rotateEncryptionKey(opts?: { dryRun?: boolean }): Promise<
       if (Object.keys(data).length === 0) {
         continue;
       }
-      report.rotated[model] = (report.rotated[model] ?? 0) + 1;
-      if (!opts?.dryRun) {
-        await delegate.update({ data, where: { id: row.id } });
+      if (opts?.dryRun) {
+        report.rotated[model] = (report.rotated[model] ?? 0) + 1;
+        continue;
       }
+      const { count } = await runUnscoped(
+        'key rotation must re-encrypt every row; a skipped tenant loses its secrets',
+        [modelName(model)],
+        () => delegate.updateMany({ data, where: { ...expected, id: row.id } })
+      );
+      if (count === 0) {
+        report.conflicted.push({ id: row.id, model });
+        continue;
+      }
+      report.rotated[model] = (report.rotated[model] ?? 0) + 1;
     }
   }
 
