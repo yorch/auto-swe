@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { defineBundle } from '@auto-swe/sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { runBundleCommand } from './bundle.js';
+import { locateSdk, runBundleCommand, starterAgentKey } from './bundle.js';
 
 describe('runBundleCommand (local authoring)', () => {
   let stderrWrites: string[];
@@ -93,5 +93,24 @@ describe('runBundleCommand (local authoring)', () => {
     await fs.writeFile(path.join(dir, 'src', 'bundle.ts'), '// mine');
     await runBundleCommand(['init', dir]);
     expect(await fs.readFile(path.join(dir, 'src', 'bundle.ts'), 'utf8')).toBe('// mine');
+  });
+
+  it('init links the unpublished SDK from this checkout instead of a registry range', async () => {
+    const code = await runBundleCommand(['init', dir, '--name=acme']);
+    expect(code).toBe(0);
+    const pkg = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8'));
+    const spec: string = pkg.dependencies['@auto-swe/sdk'];
+    expect(spec).toMatch(/^link:/);
+    const linked = JSON.parse(await fs.readFile(path.join(spec.slice(5), 'package.json'), 'utf8'));
+    expect(linked.name).toBe('@auto-swe/sdk');
+    expect(locateSdk()).toBe(spec.slice(5));
+  });
+
+  it('init scaffolds a namespaced agent key that cannot replace a built-in', async () => {
+    await runBundleCommand(['init', dir, '--name=acme pack']);
+    const src = await fs.readFile(path.join(dir, 'src', 'bundle.ts'), 'utf8');
+    expect(src).toContain("key: 'acme-pack.reviewer'");
+    expect(src).not.toContain("key: 'reviewer'");
+    expect(starterAgentKey('!!')).toBe('bundle.reviewer');
   });
 });

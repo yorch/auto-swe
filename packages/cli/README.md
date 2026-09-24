@@ -44,8 +44,11 @@ workflows run <name> --payload=<json> [--label=<text>]
 workflows generate "<description>" [--name=N] [--team=<slug>]
                                      Generate a DRAFT template from plain language (AI)
 workflows explain <name>             Explain a template's active version in plain language (AI)
+                                     show / export / import / run / explain take --team=<slug> or
+                                     --global: names are unique per team, and a name found in more
+                                     than one scope is an error until one is picked
 
-runs list [--status=S] [--template-id=ID] [--limit=N]
+runs list [--status=S] [--template-id=ID] [--work-request-id=ID] [--limit=N]
                                      List recent workflow runs
 runs show <runId>                    Print one run (with steps) as JSON
 runs tail <runId> [--interval=SEC] [--max=N]
@@ -65,15 +68,20 @@ bundle sign <path> --key=<pem> [--signed-by=ID] [-o <path>]
 bundles list                         List installed bundles (admin token)
 bundles export <name> <version> [--origin=TAG] [-o <path>]
                                      Export GLOBAL content to a bundle file
-bundles install <path>               Install a bundle from a file
-bundles install-from-url <url>       Install a bundle from a URL
+bundles install <path> [--overwrite-protected]
+                                     Install a bundle from a file; a bundle agent that would
+                                     replace a built-in or admin-authored one is refused unless
+                                     --overwrite-protected is passed
+bundles install-from-url <url> [--overwrite-protected]
+                                     Install a bundle from a URL
 
 evals list                           List eval datasets (admin token)
 evals show <id>                      Print a dataset's cases
 evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=N]
                                      Query captured eval signals
 evals run <dataset-slug> --candidate=<ref> --against=<ref>
-                                     Run the regression gate; exits 1 on a regression
+                                     Run the regression gate; exits 1 on a regression,
+                                     2 when the eval run fails without a verdict
 
 help                                 Show usage
 ```
@@ -89,7 +97,7 @@ admin token; `evals run` is the regression gate a nightly CI job polls to comple
 | ---- | ----------------------------------------- |
 | `0`  | Success                                   |
 | `1`  | User error (missing arg, no token, etc.); `evals run` also exits 1 on a regression |
-| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail` also exits 2 when the run ends in a non-success status |
+| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail` also exits 2 when the run ends in a non-success status, and `evals run` when the eval run fails without reaching a verdict |
 
 ## Examples
 

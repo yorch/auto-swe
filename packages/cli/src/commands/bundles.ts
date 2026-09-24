@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import type { BundleManifest } from '@auto-swe/shared/bundle';
 import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
-import { parseFlags } from '../lib/flags.js';
+import { FLAG_PRESENT, parseFlags } from '../lib/flags.js';
 import { pad } from '../lib/format.js';
 
 /**
@@ -15,8 +15,13 @@ const SUB_HELP = `auto-swe bundles — distribute library bundles (admin)
   bundles list                              List installed bundles
   bundles export <name> <version> [--origin=TAG] [-o <path>]
                                             Export GLOBAL content to a bundle file (or stdout)
-  bundles install <path>                    Install a bundle from a local file
-  bundles install-from-url <url>            Fetch + install a bundle from an http(s) URL
+  bundles install <path> [--overwrite-protected]
+                                            Install a bundle from a local file
+  bundles install-from-url <url> [--overwrite-protected]
+                                            Fetch + install a bundle from an http(s) URL
+
+  An install that would replace a built-in or admin-authored GLOBAL agent with
+  the same key is refused; --overwrite-protected replaces it deliberately.
 `;
 
 interface InstalledBundleRow {
@@ -118,7 +123,7 @@ async function cmdExport(args: string[], env: CliEnv): Promise<number> {
 }
 
 async function cmdInstall(args: string[], env: CliEnv): Promise<number> {
-  const { positional } = parseFlags(args);
+  const { positional, overwriteProtected } = parseInstallArgs(args);
   const path = positional[0];
   if (!path) {
     process.stderr.write('Usage: bundles install <path>\n');
@@ -135,13 +140,14 @@ async function cmdInstall(args: string[], env: CliEnv): Promise<number> {
   }
   const result = await apiRequest<InstallResult>(env, 'POST', '/api/v1/platform/bundles/install', {
     bundle,
+    overwriteProtected,
   });
   printInstall(result);
   return 0;
 }
 
 async function cmdInstallFromUrl(args: string[], env: CliEnv): Promise<number> {
-  const { positional } = parseFlags(args);
+  const { positional, overwriteProtected } = parseInstallArgs(args);
   const url = positional[0];
   if (!url) {
     process.stderr.write('Usage: bundles install-from-url <url>\n');
@@ -151,10 +157,27 @@ async function cmdInstallFromUrl(args: string[], env: CliEnv): Promise<number> {
     env,
     'POST',
     '/api/v1/platform/bundles/install-from-url',
-    { url }
+    { overwriteProtected, url }
   );
   printInstall(result);
   return 0;
+}
+
+/**
+ * `--overwrite-protected` is a boolean, but parseFlags binds the next bare word
+ * to it — `install --overwrite-protected b.json` would swallow the path. Hand
+ * that word back as the positional it is.
+ */
+export function parseInstallArgs(args: string[]): {
+  positional: string[];
+  overwriteProtected: boolean;
+} {
+  const { positional, flags } = parseFlags(args);
+  const raw = flags['overwrite-protected'];
+  if (raw !== undefined && raw !== FLAG_PRESENT) {
+    positional.unshift(raw);
+  }
+  return { overwriteProtected: raw !== undefined, positional };
 }
 
 function printInstall(r: InstallResult): void {

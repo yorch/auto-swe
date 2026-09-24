@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runEvalsCommand } from './evals.js';
+import { evalRunExitCode, runEvalsCommand } from './evals.js';
 
 const ENV = { apiUrl: 'http://gw', token: 't' };
 
@@ -182,6 +182,46 @@ describe('runEvalsCommand', () => {
     expect(started?.method).toBe('POST');
     expect(stdoutWrites.join('')).toContain('Started eval run run-9');
     expect(stdoutWrites.join('')).toContain('2 cases regressed');
+  });
+
+  function runFetch(finalStatus: string, summary: unknown = null) {
+    return vi.fn(async (url: string) => {
+      if (url.endsWith('/api/v1/platform/evals')) {
+        return jsonResponse({
+          data: [{ caseCount: 1, id: 'ds-1', name: 'Golden', scope: 'GLOBAL', slug: 'golden' }],
+        });
+      }
+      if (url.endsWith('/api/v1/platform/evals/runs')) {
+        return jsonResponse({ data: { id: 'run-9', status: 'RUNNING', summary: null } });
+      }
+      return jsonResponse({ data: { id: 'run-9', status: finalStatus, summary } });
+    }) as unknown as typeof fetch;
+  }
+
+  it('run exits 0 only on SUCCESS', async () => {
+    globalThis.fetch = runFetch('SUCCESS', { summary: 'no significant regression' });
+    const code = await runEvalsCommand(
+      ['run', 'golden', '--candidate=feat', '--against=main'],
+      ENV
+    );
+    expect(code).toBe(0);
+  });
+
+  it('run exits non-zero when the eval run FAILED without a verdict', async () => {
+    globalThis.fetch = runFetch('FAILED');
+    const code = await runEvalsCommand(
+      ['run', 'golden', '--candidate=feat', '--against=main'],
+      ENV
+    );
+    expect(code).toBe(2);
+    expect(stdoutWrites.join('')).toContain('FAILED');
+  });
+
+  it('evalRunExitCode treats every status but SUCCESS as a failed gate', () => {
+    expect(evalRunExitCode('SUCCESS')).toBe(0);
+    expect(evalRunExitCode('REGRESSION')).toBe(1);
+    expect(evalRunExitCode('FAILED')).toBe(2);
+    expect(evalRunExitCode('CANCELLED')).toBe(2);
   });
 
   it('run fails with a clear message when the slug is unknown', async () => {
