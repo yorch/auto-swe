@@ -65,8 +65,21 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 
 ### Sub-role personas (11)
 
-No `modelSpec`; each carries `inheritsModelFrom` so it runs on its parent's model. They exist so
-skills and tools can be assigned at per-sub-agent granularity.
+No `modelSpec`; each carries `inheritsModelFrom` so it runs on its parent's model. The activity that
+runs a persona resolves its `systemPrompt`, skills, `toolKeys`, and MCP binding from the persona's
+own row, with three exceptions that keep an edit to the parent row in force:
+
+- **Fix and merge-resolver tools are bounded by the implementer's.** A `ciFixer`, `reviewFixer`,
+  `gateFixer`, or `mergeConflictResolver` session runs with the intersection of its own `toolKeys`
+  and the implementer's (`null` meaning every tool on either side), so removing `bash` or `mcp` from
+  the implementer removes it from every fix path. A persona can narrow the implementer's tools,
+  never widen them. An intersection with no workspace tool left falls back to the implementer's
+  workspace tools, because an empty list reads as "every tool".
+- **A fix or merge-resolver persona with no MCP binding uses the implementer's**, subject to the same
+  bound: it binds only when both rows allow `mcp`. The same goes for skills: a persona with none of
+  its own is given the implementer's, since the seeded ones carry none.
+- **A customised `reviewer` prompt still reaches the review personas.** See
+  [the review network](#4-the-review-network) for the prompt order.
 
 | Key | Inherits from | Used by |
 |---|---|---|
@@ -143,7 +156,18 @@ Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is fo
 
 Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present whenever an MCP server was contacted (including a connect that returned zero tools) and **must** be called in a `finally` block.
 
-Activities don't call the factory directly — they use the **`buildImplementerForActivity(workspace, tracer, ctx)`** helper (same file), which loads `toolKeys` + skills at the current scope, resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent in one call (returning `{ agent, promptSuffix, closeMcp, skills, toolKeys }`). `executeImplementation` and `implementerSession` both go through it, so the load + MCP-binding lifecycle lives in one place.
+Activities don't call the factory directly — they use the **`buildImplementerForActivity(workspace, tracer, ctx, agentKey?)`** helper (same file), which loads `toolKeys` + skills at the current scope, resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent in one call (returning `{ agent, promptSuffix, closeMcp, maxSteps, skills, toolKeys }`). `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer` and `resolveMergeConflict` passes `mergeConflictResolver`, so each runs on its own row and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, and `resolveMergeConflict` all go through it, so the load + MCP-binding lifecycle lives in one place.
+
+**Step budget.** One `agent.generate` call is a *turn*: the model calls tools until it answers or
+runs out of steps, and every tool call counts as one step. The budget is the
+`workspace.agentMaxSteps` setting (default 50, bounded 5–500, overridable per team and
+organization — see [configuration.md](./configuration.md)), returned as `maxSteps` and passed on
+every implementer, fixer, resolver, and eval-replay `generate`. The generic `runAgent` (agent
+nodes, channel-assistant turns) passes the same budget whenever the agent carries tools — an agent
+node with MCP tools, say — resolved at the caller's scope; a tool-free call is a single step and
+does not read it. Mastra's own default when no budget is passed is 5 steps, which ends a turn
+before the agent has read, edited, and tested anything. Like `workspace.maxToolOutputChars`, it is
+read once per agent build.
 
 ### 3.1 Workspace Tools (4, configurable)
 
@@ -187,7 +211,7 @@ Use the `loadSkill` tool to load the full guidance for any skill before applying
 `writeFile` runs through two sequential checks before writing:
 
 1. **Sensitive file scanner** (`checkSensitiveFilePath`) — hard-block. Rejects `.env`, PEM/key files, SSH private keys, credential JSON files. Returns the block message to the agent and records a trace with `error: 'blocked by sensitive file scanner'`.
-2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/govern/security` can classify the event without raw SQL.
+2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/govern/security` can classify the event without raw SQL. Every trace tag (including the shell scanner's `'blocked by shell command scanner'`) is defined once, in `SECURITY_TRACE_ERRORS` (`@auto-swe/shared/lib/scannerCache`), which the tools write and the security-events endpoint and the eval trajectory scorer's guardrail count both read.
 
 ### 3.5 MCP Tools (first-class `mcp` Connection, opt-in)
 
@@ -276,13 +300,13 @@ command is covered the same as a passing one.
 
 **Entry point:** `runReviewNetwork(codeResult, successCriteria?, tracer?, systemPromptOverride?, securitySkillSuffix?, domainSkillSuffix?, performanceSkillSuffix?)`
 
-Runs three Mastra `Agent` instances in parallel via `Promise.allSettled`. All three use the `reviewer` model (resolved via `getModel('reviewer')`). Each reviewer receives its own skill suffix appended to its system prompt.
+Runs three Mastra `Agent` instances in parallel via `Promise.allSettled`. Each reviewer runs as its own persona Agent: the `runReviewNetwork` activity resolves `securityReviewer`, `domainLogicReviewer`, and `performanceReviewer` and hands each one its own row's `systemPrompt` and skills, and each binds its model with `getModel(<persona>)` — the `reviewer` model through `inheritsModelFrom` unless the persona row overrides it. Each persona's base prompt is chosen in this order: a step-level `systemPrompt` on the review node (replacing all three); the persona row's own prompt, when an admin has customised it (it differs from that persona's built-in prompt); the parent `reviewer` row's prompt, when an admin has customised it; the persona row's seeded prompt; the built-in constant. The `reviewer` row is seeded with the domain-logic prompt, so it counts as customised only when it differs both from that constant and from the `domainLogicReviewer` row's text — the second comparison keeps a deployment seeded before a later rewording from handing the domain-logic prompt to all three. Each reviewer keeps its own skill suffix whichever prompt it runs.
 
-| Reviewer | Persona | Skill role |
+| Reviewer | Agent row | Built-in prompt (when the row has none) |
 |---|---|---|
-| `SECURITY` | `SECURITY_AUDITOR_PROMPT` | `securityReviewer` |
-| `DOMAIN_LOGIC` | `DOMAIN_LOGIC_REVIEWER_PROMPT` + success criteria | `domainLogicReviewer` |
-| `PERFORMANCE` | `PERFORMANCE_REVIEWER_PROMPT` | `performanceReviewer` |
+| `SECURITY` | `securityReviewer` | `SECURITY_AUDITOR_PROMPT` |
+| `DOMAIN_LOGIC` | `domainLogicReviewer` | `DOMAIN_LOGIC_REVIEWER_PROMPT` (+ success criteria) |
+| `PERFORMANCE` | `performanceReviewer` | `PERFORMANCE_REVIEWER_PROMPT` |
 
 If a reviewer crashes, it returns a synthetic `REVIEWER_CRASH` finding at `CRITICAL` severity rather than failing the whole network. The overall `approved` flag requires all three verdicts to be `approved: true`.
 
@@ -304,7 +328,7 @@ The code security scanner findings (`codeResult.codeSecurityFindings`) are forma
 
 **Planner:** `packages/worker/src/agents/plannerAgent.ts` — decomposes a multi-repo epic brief into per-repo `Subtask[]`. No tools; structured output (Zod schema). Uses `planner` model.
 
-**Decomposer:** `packages/worker/src/agents/decomposer.ts` — sub-agent that refines per-repo work into feature-level subtasks. No tools; structured output. Inherits `planner` model. Caps at 8 subtasks; subtask IDs must match `^[a-z][a-z0-9-]{0,39}$`. Falls back to a singleton plan if the LLM returns unstructured output.
+**Decomposer:** `packages/worker/src/agents/decomposer.ts` — sub-agent that refines per-repo work into feature-level subtasks. No tools; structured output. Runs as the `decomposer` Agent (its own prompt and skills) on the `planner` model it inherits. Caps at 8 subtasks; subtask IDs must match `^[a-z][a-z0-9-]{0,39}$`. Falls back to a singleton plan if the LLM returns unstructured output.
 
 ---
 

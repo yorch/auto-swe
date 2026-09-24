@@ -88,8 +88,11 @@ npm install -g corepack && corepack enable && yarn install
 
 # 2. Configure environment
 cp .env.example .env
-# Fill in: GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, and CONFIG_ENCRYPTION_KEY
-# (generate with `openssl rand -base64 32`).
+# Fill in the required-secrets block — CONFIG_ENCRYPTION_KEY, BETTER_AUTH_SECRET,
+# JWT_SECRET and SEED_ADMIN_PASSWORD; each line there carries its generation
+# command (`openssl rand -base64 32|48|24`). The seed in step 4 fails without
+# BETTER_AUTH_SECRET and SEED_ADMIN_PASSWORD.
+# Optionally GITHUB_TOKEN / GITHUB_WEBHOOK_SECRET as bootstrap fallbacks.
 # LLM provider keys and model picks are NOT env vars — add them via the
 # dashboard at /studio/models after starting the gateway+web. See
 # docs/model-configuration.md for the bootstrap flow.
@@ -99,7 +102,9 @@ cp .env.example .env
 yarn docker:infra:up
 
 # 4. Set up the database
-yarn db:migrate && yarn db:generate && yarn db:seed
+# db:deploy (`prisma migrate deploy`) applies the committed migrations verbatim.
+# Not db:migrate: `migrate dev` reads the hand-written HNSW/CHECK DDL as drift.
+yarn db:deploy && yarn db:generate && yarn db:seed
 
 # 5. Start services (two terminals)
 yarn dev:gateway     # Terminal 1 → http://localhost:8080
@@ -175,8 +180,8 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | `JWT_PRIVATE_KEY_PATH`      | Optional¹ | Path to RSA private key. Setting this switches JWT signing to RS256                            |
 | `JWT_PUBLIC_KEY_PATH`       | Optional¹ | Path to RSA public key. Required when using RS256                                              |
 | `BETTER_AUTH_URL`           | Prod²     | Gateway base URL used as the OAuth callback origin                                             |
-| `BETTER_AUTH_SECRET`        | Prod²     | ≥32-char secret for signing better-auth session cookies                                        |
-| `SEED_ADMIN_PASSWORD`       | Seed only | Password for the seeded admin user (required in production)                                    |
+| `BETTER_AUTH_SECRET`        | Yes²      | ≥32-char secret for signing better-auth session cookies; `yarn db:seed` needs it too          |
+| `SEED_ADMIN_PASSWORD`       | Seed      | Password for the seeded admin user; `yarn db:seed` refuses to run without it                   |
 | `SEED_ADMIN_EMAIL`          | Optional  | Override for the seeded admin email (default: `admin@auto-swe.local`)                          |
 | `PORT`                      | Optional  | Gateway HTTP port (default: `8080`)                                                            |
 | `CORS_ORIGIN`               | Optional  | Comma-separated browser origins; first entry is the better-auth client origin                  |
@@ -203,7 +208,7 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | `ARTIFACT_S3_*`             | Optional  | S3-compatible artifact store; falls back to Postgres-inline when unset. `yarn docker:infra:up` ships a Garage container at `localhost:9000` that provisions its key and bucket on first boot, or point it at AWS S3 / R2 / B2 instead (see `.env.example`) |
 
 ¹ JWT auth has two modes: HS256 (default — set `JWT_SECRET`) or RS256 (set `JWT_PRIVATE_KEY_PATH` + `JWT_PUBLIC_KEY_PATH`).
-² Required when running the gateway in production — better-auth refuses to start with the dev defaults.
+² Required everywhere except `yarn dev:gateway`, which sets `NODE_ENV=development` and may fall back to a dev-only placeholder. The seed's better-auth step and every Docker image run without that, and refuse the placeholder.
 ³ Magic-link email transport. Choose one: SMTP (`SMTP_*` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Without either, links print to gateway stdout (dev only).
 ⁴ OAuth providers — the matching login button is hidden when its env vars are unset. See [`docs/oauth-setup.md`](./docs/oauth-setup.md) for the full setup.
 ⁵ GitHub credentials are DB-primary: configure them at `/studio/integrations → GitHub` after first boot (`resolveGitHubConfig()` falls back to the env vars only when no DB row exists). One of the two must be configured somewhere for the worker/webhooks to function; GitHub App auth is also available (see [`docs/github-app-setup.md`](./docs/github-app-setup.md)).
@@ -220,7 +225,8 @@ yarn test                # Run all tests (Vitest)
 yarn lint                # Lint + format check (Biome)
 yarn lint:fix            # Auto-fix safe lint issues + format
 yarn docs:check          # Fail on stale doc claims or broken doc links
-yarn db:migrate          # Run Prisma migrations
+yarn db:deploy           # Apply the committed Prisma migrations
+yarn db:migrate          # Create a new migration from a schema.prisma change (dev only)
 yarn db:generate         # Regenerate Prisma client
 yarn db:seed             # Seed admin user + sample repository
 yarn dev:gateway         # Gateway in watch mode

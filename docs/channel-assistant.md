@@ -292,6 +292,12 @@ unproven on real traffic, and turn them on one channel at a time.
   admits. `finalizeChannelTaskRun` spends on the ledger with no hold at all. A hold lost to a worker
   crash over-counts the channel until the sweep reclaims it — which only happens once the channel
   reaches its cap, or an admin calls `/:id/budget/reset` (API-only; there is no UI control).
+- **A channel's turn runs are visible to its owning team, not to everyone in the Slack channel.**
+  A turn run links its channel (`WorkflowRun.channelId`), and run visibility admits members of the
+  channel's owning team — the same people who can open the channel's settings and audit feed.
+  Someone who talks to the assistant in Slack but is not on that team does not see the run in
+  `/runs`. A run whose channel row has since been deleted loses the link and is visible to platform
+  ADMINs only.
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.

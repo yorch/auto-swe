@@ -41,7 +41,7 @@ Before touching infrastructure, gather these:
 - **GitHub PAT** with `repo` scope, or a GitHub App (short-lived installation tokens; see [`github-app-setup.md`](./github-app-setup.md)).
 - **GitHub webhook secret** — any strong random string; you'll add it to GitHub repo webhooks pointing at `https://api.example.com/api/v1/webhooks/git`.
 - **LLM provider key(s)** — configured via the admin UI (`/studio/models`) after first boot. There is no env-var fallback for LLM credentials: model + credential config is fully DB-driven (see [`model-configuration.md`](./model-configuration.md)).
-- **Email transport** — pick one of SMTP (`SMTP_HOST/PORT/USER/PASS` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Required if you want magic-link and password-reset emails actually delivered — without one the gateway only logs the link to stdout.
+- **Email transport** — pick one of SMTP (`SMTP_HOST/PORT/USER/PASS` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Required for magic-link sign-in and password reset outside development — without one those requests fail, and the gateway logs an error that never contains the link. Only with `NODE_ENV=development` or `test` does it print the link to stdout instead.
 - **OAuth credentials** (optional but recommended) — register a GitHub OAuth app, a Google OAuth client, and/or an Okta OIDC app, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google,okta}`. Credentials are configured via `/studio/integrations` after first boot (GitHub tab for GitHub, OAuth tab for Google and Okta). See [`oauth-setup.md`](./oauth-setup.md).
 - **Slack credentials** (optional) — configured via `/studio/integrations` (Slack tab) after first boot.
 - **S3-compatible artifact store** (optional but recommended in prod) — configured via `/studio/integrations` (Storage tab) after first boot. Without it, large step outputs are stored inline in Postgres.
@@ -100,6 +100,8 @@ NEXT_PUBLIC_TEMPORAL_UI_URL=https://temporal.example.com   # optional; omit to h
 # Browser-facing gateway
 CORS_ORIGIN=https://app.example.com,https://admin.example.com  # first entry = better-auth client origin
 PUBLIC_URL=https://api.example.com                              # used for Slack OAuth callback
+TRUST_PROXY=10.0.0.0/8   # behind a reverse proxy: the proxy IPs/CIDRs whose X-Forwarded-For
+                         # is trusted (or `true`). Unset = do not trust it
 
 # Config encryption — REQUIRED for gateway and worker to start
 # Encrypts all DB-stored secrets (GitHub token, Slack tokens, S3 credentials, OAuth secrets)
@@ -215,6 +217,9 @@ yarn db:seed
 #    ↳ builds @auto-swe/shared first (the gateway half resolves it through its compiled
 #      dist/), then runs provisionAuthAdmin to set up the better-auth credential account
 #      so the seeded admin can sign in via the password tab on /login.
+#      Needs SEED_ADMIN_PASSWORD (both halves hash it; neither generates one) and
+#      BETTER_AUTH_SECRET (provisionAuthAdmin runs without NODE_ENV, which the
+#      gateway treats as production) in the environment or the root .env.
 ```
 
 **Inside Docker.** The gateway image's entrypoint runs `node node_modules/prisma/build/index.js migrate deploy` before starting Fastify, so the runtime image needs the full `prisma` CLI and its transitive dependencies — `prisma` is declared in the package's `dependencies` (not `devDependencies`) so `yarn workspaces focus --production` keeps them. The CLI is invoked by path, so no `.bin` symlink is involved. The simplest pattern for a separate migration step is a one-shot init container. Details in the [`prisma-docker-migrations`](../.claude/skills/prisma-docker-migrations/SKILL.md) skill.
@@ -298,10 +303,10 @@ docker compose \
 Things to know:
 
 - **Pin image tags via `APP_IMAGE_GATEWAY` / `APP_IMAGE_WORKER` / `APP_IMAGE_WEB`.** The compose defaults are the mutable `:main` tags. CI also publishes an immutable `<timestamp>-<commit>` tag per build (plus `:latest` and git-tag refs) — prefer pinning those in production so a rollback is a one-line `.env` change rather than registry archaeology.
-- **Image publishing is CI-gated.** The publish job in `docker.yml` only runs after lint, typecheck, and tests pass, so `:main` only moves on green builds. If you run Watchtower against `:main`, that gate is your only protection — a passing-but-bad commit still auto-deploys. Pinned immutable tags + manual bumps are the conservative choice.
+- **Image publishing is CI-gated.** The publish job in `docker.yml` runs only after its `checks` job, which calls `ci.yml` itself — docs drift, source invariants, typecheck, lint, tests, build, and the real-database migrations job — so `:main` only moves on builds that pass everything a pull request must. If you run Watchtower against `:main`, that gate is your only protection — a passing-but-bad commit still auto-deploys. Pinned immutable tags + manual bumps are the conservative choice.
 - **Required secrets.** The gateway and worker images run with `NODE_ENV=production` and refuse the in-source dev fallbacks, so `.env` must contain real values for `JWT_SECRET`, `BETTER_AUTH_SECRET` (≥32 chars), and `CONFIG_ENCRYPTION_KEY`. `docker-compose.prod.yml` enforces all three with `:?` interpolation errors at `up` time, and both processes additionally validate `CONFIG_ENCRYPTION_KEY` at boot — a key that is present but not base64-encoded 32 bytes exits with a descriptive error before anything is served.
 - **Managed DB.** Set `DATABASE_URL_OVERRIDE` to point gateway + worker at a managed Postgres instead of the compose `postgres` service.
-- **Worker DinD.** Same as everywhere else: the worker mounts `/var/run/docker.sock`; set `DOCKER_GID` to the host's docker group ID.
+- **Worker DinD.** Same as everywhere else: the worker mounts `/var/run/docker.sock`; set `DOCKER_GID` to the group that owns that socket (`stat -c %g /var/run/docker.sock` on Linux; `0` under Docker Desktop on macOS, where the socket a container sees is `root:root`).
 - **Object store selection.** `COMPOSE_PROFILES` in `.env` decides whether the bundled Garage service runs. `objectstore` (the `.env.example` default) starts it; an empty value starts nothing, and the worker's `depends_on` is `required: false` so it comes up regardless. See §5c.
 
 ---
@@ -427,8 +432,8 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] OAuth consent screens are published (Google) and homepage URLs filled (GitHub) for prod-grade UX.
 - [ ] Magic-link transport is verified end-to-end against a real inbox (not just SMTP 2xx).
 - [ ] Worker host is isolated — separate VPC subnet, no shared Docker socket, no inbound traffic.
-- [ ] Infra ports are not world-reachable. `docker-compose.infra.yml` publishes Postgres (5432), Temporal (7233/8233) and the object store (9000) on all interfaces so the runbook can reach them from the host. None is meant to be reachable from off-host: bind them to loopback (`POSTGRES_PORT=127.0.0.1:5432`, `GARAGE_API_PORT=127.0.0.1:9000`, `TEMPORAL_GRPC_PORT=127.0.0.1:7233`, `TEMPORAL_UI_PORT=127.0.0.1:8233`) or firewall them.
-- [ ] Reverse proxy enforces HTTPS and forwards `X-Forwarded-For` / `X-Forwarded-Proto`.
+- [ ] Infra ports are not world-reachable. `docker-compose.infra.yml` publishes Postgres (5432), Temporal (7233/8233) and the object store (9000) — and `docker-compose.app.yml` Grafana (3001) and OTLP (4317/4318) — on loopback by default so the runbook can reach them from the host. An override such as `POSTGRES_PORT=55432` without the `127.0.0.1:` prefix publishes on every interface; keep the prefix, or firewall the port.
+- [ ] Reverse proxy enforces HTTPS and forwards `X-Forwarded-For` / `X-Forwarded-Proto`, and `TRUST_PROXY` names that proxy's IPs or CIDRs. The gateway rate-limits a verified user by user id and everything else by client IP; without `TRUST_PROXY` every anonymous request behind the proxy shares the proxy's IP and one limit. Do not set it when clients can reach the gateway directly — they could then choose their own IP.
 - [ ] Postgres connection uses TLS (`?sslmode=require`).
 - [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).
 - [ ] Temporal namespace retention is set deliberately (default in self-hosted = 30d; tune for your humanMergeSignal wait).
