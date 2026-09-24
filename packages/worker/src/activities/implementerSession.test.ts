@@ -48,6 +48,10 @@ const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) =>
   if (cmd.includes('cat package.json')) {
     return '{}';
   }
+  if (cmd.endsWith('} 2>&1')) {
+    // The test run: a green suite has to show that tests ran.
+    return 'Tests  3 passed (3)';
+  }
   return '';
 });
 // Mirrors the real gitAuthed: injects a (fake) credential header per-call and
@@ -65,20 +69,24 @@ vi.mock('./workspace.js', () => ({
     execCapture: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
     gitAuthed: gitAuthedMock,
   })),
+  fetchBranchesSubcommand: (branches: string[]) =>
+    `fetch origin ${branches.map((b) => `'+refs/heads/${b}:refs/remotes/origin/${b}'`).join(' ')}`,
   shellQuote: (s: string) => `'${s.replace(/'/g, "'\\''")}'`,
 }));
 
-const generateMock = vi.fn(async () => ({
+const generateMock = vi.fn(async (..._args: unknown[]) => ({
   text: 'fixed it',
   usage: { inputTokens: 10, outputTokens: 5 },
 }));
+const buildImplementerMock = vi.fn(async (..._args: unknown[]) => ({
+  agent: { generate: generateMock },
+  maxSteps: 42,
+  promptSuffix: '',
+  skills: [],
+  toolKeys: null,
+}));
 vi.mock('../agents/implementer.js', () => ({
-  buildImplementerForActivity: vi.fn(async () => ({
-    agent: { generate: generateMock },
-    promptSuffix: '',
-    skills: [],
-    toolKeys: null,
-  })),
+  buildImplementerForActivity: (...args: unknown[]) => buildImplementerMock(...args),
 }));
 
 const scanDiffForSecurityIssuesMock = vi.fn(async (_diff: string) => ({
@@ -100,14 +108,15 @@ vi.mock('../lib/activityContext.js', () => ({
   persistActivityTrace: (...args: unknown[]) => persistMock(...args),
 }));
 
+const recordLlmUsageMock = vi.fn(async (..._args: unknown[]) => ({
+  costUsd: 0,
+  inputTokens: 0,
+  modelSpec: '',
+  outputTokens: 0,
+}));
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
-  recordLlmUsage: vi.fn(async () => ({
-    costUsd: 0,
-    inputTokens: 0,
-    modelSpec: '',
-    outputTokens: 0,
-  })),
+  recordLlmUsage: (...args: unknown[]) => recordLlmUsageMock(...args),
 }));
 
 vi.mock('../lib/config/agentSkills.js', () => ({
@@ -123,8 +132,21 @@ vi.mock('../lib/config/mcpConnection.js', () => ({
   resolveAgentMcpUrl: vi.fn(async () => null),
 }));
 
+// Every seeded Agent row carries its own systemPrompt, so a resolver mock
+// that ignores the role and returns the fallback cannot tell 'implementer'
+// from 'ciFixer' — which is exactly how the fix paths ran the implementer's
+// prompt unnoticed. Resolve per role, like the real cascade.
+const SEEDED_PROMPTS: Record<string, string> = {
+  ciFixer: 'CI FIXER ROW PROMPT',
+  gateFixer: 'GATE FIXER ROW PROMPT',
+  implementer: 'IMPLEMENTER ROW PROMPT',
+  reviewFixer: 'REVIEW FIXER ROW PROMPT',
+};
 vi.mock('../lib/models.js', () => ({
-  resolveSystemPrompt: vi.fn(async (_role: string, fallback: string) => fallback),
+  resolveSystemPrompt: vi.fn(
+    async (role: string, fallback: string, override?: string) =>
+      override || SEEDED_PROMPTS[role] || fallback
+  ),
 }));
 
 import { prisma } from '@auto-swe/shared/db';
@@ -235,7 +257,7 @@ describe('runImplementerFixSession', () => {
     findRepo.mockResolvedValue(REPO as never);
     generateMock.mockRejectedValueOnce(new Error('LLM exploded'));
     await expect(runImplementerFixSession(input())).rejects.toThrow('LLM exploded');
-    expect(persistMock).toHaveBeenCalledWith(expect.anything(), 'implementer');
+    expect(persistMock).toHaveBeenCalledWith(expect.anything(), 'ciFixer');
     expect(destroyMock).toHaveBeenCalled();
   });
 
@@ -246,7 +268,10 @@ describe('runImplementerFixSession', () => {
     // fetch now goes through gitAuthed (credential injected per-call rather
     // than a plain `git fetch`), so match on the subcommand rather than a
     // literal `git fetch` prefix.
-    expect(commands.some((c) => c.includes('fetch origin'))).toBe(true);
+    // An explicit refspec: the clone is single-branch, so a bare branch name
+    // would never create the origin/<branch> the reset below needs.
+    const fetch = commands.find((c) => c.includes('fetch origin'));
+    expect(fetch).toMatch(/'\+refs\/heads\/(\S+):refs\/remotes\/origin\/\1'/);
     expect(commands.some((c) => c.startsWith('git reset --hard origin/'))).toBe(true);
   });
 
@@ -278,7 +303,47 @@ describe('runImplementerFixSession', () => {
     const out = await runImplementerFixSession(
       input({ afterGenerate: async () => 'runTests passing' })
     );
-    expect(out.implementationNotes).toBe('notes(false, runTests passing)');
+    expect(out.implementationNotes).toBe('notes(true, runTests passing)');
+  });
+
+  it("runs as its own persona: the persona's prompt, tools and model, not the implementer's", async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    await runImplementerFixSession(input());
+    expect(buildImplementerMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      'ciFixer'
+    );
+    const messages = generateMock.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
+    const system = messages.find((m) => m.role === 'system')?.content;
+    expect(system).toBe('CI FIXER ROW PROMPT');
+    expect(recordLlmUsageMock).toHaveBeenCalledWith(
+      'wf-1',
+      'ciFixer',
+      expect.anything(),
+      'llm.ci_fix'
+    );
+  });
+
+  it('prefers a step-level prompt override over the persona row', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    await runImplementerFixSession(input({ systemPromptOverride: 'STEP OVERRIDE' }));
+    const messages = generateMock.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
+    expect(messages.find((m) => m.role === 'system')?.content).toBe('STEP OVERRIDE');
+  });
+
+  it('passes the resolved step budget to generate', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    await runImplementerFixSession(input());
+    expect(generateMock.mock.calls[0]?.[1]).toMatchObject({ maxSteps: 42, toolChoice: 'auto' });
+  });
+
+  it("runs the repo's configured test command instead of guessing from package.json", async () => {
+    findRepo.mockResolvedValue({ ...REPO, gateCommands: { runTests: 'pytest -q' } } as never);
+    await runImplementerFixSession(input());
+    const testCall = execMock.mock.calls.find((c) => c[1]?.timeoutMs === 600_000);
+    expect(testCall?.[0]).toBe('{ pytest -q\n} 2>&1');
   });
 
   it('swallows afterGenerate failures (informational hook)', async () => {
@@ -290,6 +355,6 @@ describe('runImplementerFixSession', () => {
         },
       })
     );
-    expect(out.implementationNotes).toBe('notes(false)');
+    expect(out.implementationNotes).toBe('notes(true)');
   });
 });

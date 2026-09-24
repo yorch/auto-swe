@@ -2,6 +2,7 @@ import { loadMcpTools, sanitizeToolName } from '../agents/mcpTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { mcpUrlForConnection } from '../lib/config/mcpConnection.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 
 export interface McpCallToolInput {
   /** Id of an `mcp`-type Connection (its `config.url` is the server URL). */
@@ -28,6 +29,12 @@ export interface McpCallToolResult {
  * policy governs it. The MCP client is always disconnected in `finally`.
  */
 export async function mcpCallTool(input: McpCallToolInput): Promise<McpCallToolResult> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('mcpCallTool', mcpCallToolImpl(input));
+}
+
+async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResult> {
   const target = await mcpUrlForConnection(input.connectionRef);
   if (!target) {
     throw new Error(

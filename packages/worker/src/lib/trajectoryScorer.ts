@@ -10,6 +10,8 @@
  * Pure function over trace-like records; unit-tested directly.
  */
 
+import { isSecurityBlockTraceError } from '@auto-swe/shared/lib/scannerCache';
+
 /** The subset of an AgentTrace row this scorer reads. */
 export interface TraceLike {
   /** "tool_call" | "llm_response" | "activity_event". */
@@ -30,23 +32,13 @@ export interface TrajectoryMetrics {
 }
 
 /**
- * Error-tag prefixes the security scanners write onto `AgentTrace.error` when a
- * tool call is blocked. Kept in sync with the worker's scanner prefixes; used
- * only to *count* guardrail events here (the scanners themselves do the
- * blocking).
+ * A tool call counts as a guardrail hit when its `AgentTrace.error` carries one
+ * of the block tags the implementer's tools write (`SECURITY_TRACE_ERRORS` in
+ * shared) — the same strings the security-events endpoint filters on. Used only
+ * to *count* guardrail events here; the scanners themselves do the blocking.
  */
-const GUARDRAIL_ERROR_MARKERS = [
-  'SECURITY_CHECK_FAILED',
-  'SENSITIVE_FILE',
-  'SHELL_COMMAND_BLOCKED',
-  'BLOCKED_BY_SCANNER',
-];
-
 function isGuardrailHit(error: string | null | undefined): boolean {
-  if (!error) {
-    return false;
-  }
-  return GUARDRAIL_ERROR_MARKERS.some((m) => error.includes(m));
+  return isSecurityBlockTraceError(error);
 }
 
 export function scoreTrajectory(traces: TraceLike[]): TrajectoryMetrics {

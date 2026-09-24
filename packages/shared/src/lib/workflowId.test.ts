@@ -138,3 +138,51 @@ describe('generateWorkflowId', () => {
     );
   });
 });
+
+describe('chooseWorkflowId — the id from before repository ids carried a host', () => {
+  const NEW = 'eng-ghe.corp-acme-api-T-1';
+  const LEGACY = 'eng-acme-api-T-1';
+  const ME = { externalTicketId: 'T-1', repoId: 'repo-mine' };
+  const row = (id: string, status: string, repoId: string | null) => ({
+    currentStatus: status,
+    externalTicketId: 'T-1',
+    repoId,
+    temporalWorkflowId: id,
+  });
+
+  it('is blocked by this repository’s execution still running under it', () => {
+    expect(chooseWorkflowId(NEW, [row(LEGACY, 'IMPLEMENTING', 'repo-mine')], ME, LEGACY)).toEqual({
+      conflictWorkflowId: LEGACY,
+    });
+    expect(
+      chooseWorkflowId(NEW, [row(`${LEGACY}-r2`, 'IMPLEMENTING', 'repo-mine')], ME, LEGACY)
+    ).toEqual({ conflictWorkflowId: `${LEGACY}-r2` });
+  });
+
+  it('is not blocked once that execution has finished', () => {
+    expect(chooseWorkflowId(NEW, [row(LEGACY, 'COMPLETED', 'repo-mine')], ME, LEGACY)).toEqual({
+      isRerun: false,
+      workflowId: NEW,
+    });
+  });
+
+  it('is not blocked by ANOTHER repository whose legacy id is the same string', () => {
+    expect(
+      chooseWorkflowId(NEW, [row(LEGACY, 'IMPLEMENTING', 'repo-someone-else')], ME, LEGACY)
+    ).toEqual({ isRerun: false, workflowId: NEW });
+  });
+
+  it('never lets legacy rows influence which id is chosen', () => {
+    // A finished legacy run is not "ours in the base family": the new id is used as is.
+    const result = chooseWorkflowId(NEW, [row(LEGACY, 'FAILED', 'repo-mine')], ME, LEGACY);
+    expect(result).toEqual({ isRerun: false, workflowId: NEW });
+  });
+
+  it('adds the legacy base to the query families only when it differs', () => {
+    expect(workflowIdFamilyBases(NEW, 'repo-mine', LEGACY)).toContain(LEGACY);
+    expect(workflowIdFamilyBases(LEGACY, 'repo-mine', LEGACY)).not.toContain(undefined);
+    expect(
+      workflowIdFamilyBases(LEGACY, 'repo-mine', LEGACY).filter((b) => b === LEGACY)
+    ).toHaveLength(1);
+  });
+});

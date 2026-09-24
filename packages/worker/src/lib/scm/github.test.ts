@@ -237,6 +237,22 @@ describe("GitHubScmProvider and the run launcher's own credential", () => {
     expect(resolveUserCredential).not.toHaveBeenCalled();
   });
 
+  it('mints no platform token to fetch CI logs for a repository on an unapproved host', async () => {
+    // fetchCiLogs reaches the token-minting call without going through the clone
+    // or Octokit paths, so it applies the allowlist itself.
+    vi.mocked(repositoryHostsAllowed).mockResolvedValueOnce({
+      ok: false,
+      url: 'https://collector.example/api/v3',
+    });
+    const out = await provider.fetchCiLogs('https://github.com/acme/api/actions/runs/1', {
+      ...REPO,
+      apiUrl: 'https://collector.example/api/v3',
+    });
+    expect(out).toContain('not on an allowed GitHub host');
+    expect(resolveGitHubToken).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('never looks for a user token on a ref built without a connection', async () => {
     vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
     await provider.cloneCredentials({ organizationName: 'acme', repoName: 'api' });

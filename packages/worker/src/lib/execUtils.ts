@@ -56,17 +56,49 @@ export async function withHeartbeat<T>(label: string, work: Promise<T>): Promise
  */
 export async function execShellAsync(
   command: string,
-  options?: { timeoutMs?: number; heartbeatLabel?: string }
+  options?: { timeoutMs?: number; heartbeatLabel?: string; onTimeout?: OnTimeout }
 ): Promise<string> {
-  const { stdout } = await withHeartbeat(
-    options?.heartbeatLabel ?? 'exec',
-    execAsyncRaw(command, {
-      encoding: 'utf-8',
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: options?.timeoutMs ?? 120_000,
-    })
-  );
-  return stdout;
+  try {
+    const { stdout } = await withHeartbeat(
+      options?.heartbeatLabel ?? 'exec',
+      execAsyncRaw(command, {
+        encoding: 'utf-8',
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: options?.timeoutMs ?? 120_000,
+      })
+    );
+    return stdout;
+  } catch (err) {
+    // `exec` reports its own kill — timeout, or the output cap — as
+    // `killed: true` + the kill signal. Either way the local client is gone
+    // and the in-container process would run on unobserved.
+    const e = err as { killed?: unknown; signal?: unknown };
+    if (e?.killed === true && e.signal) {
+      await runOnTimeout(options?.onTimeout);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Called when a command outlives its timeout, after the local child has been
+ * killed. Killing the local child is not enough for `docker exec`: that child
+ * is only the client, and the process it started inside the container keeps
+ * running — a hung test suite would go on eating the workspace's CPU and PIDs
+ * and hold files the next step reads. The workspace passes a callback that
+ * kills the in-container process tree (see `workspace.ts`).
+ */
+export type OnTimeout = () => Promise<void> | void;
+
+async function runOnTimeout(onTimeout: OnTimeout | undefined): Promise<void> {
+  if (!onTimeout) {
+    return;
+  }
+  try {
+    await onTimeout();
+  } catch {
+    /* best-effort: the timeout itself is what the caller reports */
+  }
 }
 
 /**
@@ -82,6 +114,8 @@ export function spawnCaptureAsync(
     timeoutMs?: number;
     maxBuffer?: number;
     heartbeatLabel?: string;
+    /** See {@link OnTimeout}. Awaited before the timed-out result resolves. */
+    onTimeout?: OnTimeout;
     /**
      * Invoked once per complete newline-terminated stdout line as it arrives
      * (the trailing partial line is flushed on close). Enables streaming
@@ -173,7 +207,19 @@ export function spawnCaptureAsync(
     });
   });
 
-  return withHeartbeat(options?.heartbeatLabel ?? 'exec', work);
+  return withHeartbeat(options?.heartbeatLabel ?? 'exec', afterTimeout(work, options?.onTimeout));
+}
+
+/** Run `onTimeout` before handing back a result that reports a timeout kill. */
+async function afterTimeout(
+  work: Promise<CapturedResult>,
+  onTimeout: OnTimeout | undefined
+): Promise<CapturedResult> {
+  const result = await work;
+  if (result.exitCode === 124 && result.signal && result.signal !== 'SPAWN_ERROR') {
+    await runOnTimeout(onTimeout);
+  }
+  return result;
 }
 
 /**
@@ -186,7 +232,12 @@ export function spawnWithStdinAsync(
   file: string,
   args: string[],
   stdin: string | Buffer,
-  options?: { timeoutMs?: number; maxBuffer?: number; heartbeatLabel?: string }
+  options?: {
+    timeoutMs?: number;
+    maxBuffer?: number;
+    heartbeatLabel?: string;
+    onTimeout?: OnTimeout;
+  }
 ): Promise<CapturedResult> {
   const timeoutMs = options?.timeoutMs ?? 600_000;
   const maxBuffer = options?.maxBuffer ?? 10 * 1024 * 1024;
@@ -245,7 +296,7 @@ export function spawnWithStdinAsync(
     child.stdin?.end(stdin);
   });
 
-  return withHeartbeat(options?.heartbeatLabel ?? 'exec', work);
+  return withHeartbeat(options?.heartbeatLabel ?? 'exec', afterTimeout(work, options?.onTimeout));
 }
 
 export interface CapturedResult {

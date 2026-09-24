@@ -85,10 +85,16 @@ function familyRe(base: string): RegExp {
 
 /**
  * Prefixes whose rows {@link chooseWorkflowId} needs to see, for building the
- * `startsWith` / equality query. Pass `repoId` when known.
+ * `startsWith` / equality query. Pass `repoId` when known, and `legacyBaseId`
+ * when the repository has a host override (see {@link chooseWorkflowId}).
  */
-export function workflowIdFamilyBases(baseId: string, repoId?: string | null): string[] {
-  return repoId ? [baseId, disambiguatedWorkflowIdBase(baseId, repoId)] : [baseId];
+export function workflowIdFamilyBases(
+  baseId: string,
+  repoId?: string | null,
+  legacyBaseId?: string | null
+): string[] {
+  const bases = repoId ? [baseId, disambiguatedWorkflowIdBase(baseId, repoId)] : [baseId];
+  return legacyBaseId && legacyBaseId !== baseId ? [...bases, legacyBaseId] : bases;
 }
 
 /**
@@ -102,12 +108,20 @@ export function workflowIdFamilyBases(baseId: string, repoId?: string | null): s
  * - Otherwise the first unused ID in the chosen family: the base, then `-r1`,
  *   `-r2`, … — `isRerun` when we have run this ticket before.
  *
+ * `legacyBaseId` is the id the same ticket had before repository ids carried
+ * their host (only a repository with a host override has one). An execution of
+ * OUR repository still in flight under it blocks a second one exactly as one
+ * under `baseId` does — otherwise the upgrade, or giving a repository a host
+ * override, would let two runs push the same branch. Its rows never influence
+ * which ID is chosen: they are only ever a reason to refuse.
+ *
  * Without `owner` every row counts as ours, which is the old behaviour.
  */
 export function chooseWorkflowId(
   baseId: string,
   rows: readonly WorkflowIdCandidate[],
-  owner?: { repoId: string; externalTicketId?: string }
+  owner?: { repoId: string; externalTicketId?: string },
+  legacyBaseId?: string | null
 ): WorkflowIdAllocation {
   const bases = workflowIdFamilyBases(baseId, owner?.repoId);
   const inFamily = rows.filter((r) => bases.some((b) => familyRe(b).test(r.temporalWorkflowId)));
@@ -117,6 +131,18 @@ export function chooseWorkflowId(
       (owner.externalTicketId == null ||
         r.externalTicketId == null ||
         r.externalTicketId === owner.externalTicketId));
+  if (legacyBaseId && legacyBaseId !== baseId) {
+    const legacyFamily = familyRe(legacyBaseId);
+    const legacyActive = rows.find(
+      (r) =>
+        legacyFamily.test(r.temporalWorkflowId) &&
+        isOurs(r) &&
+        !isTerminalActiveWorkflowStatus(r.currentStatus)
+    );
+    if (legacyActive) {
+      return { conflictWorkflowId: legacyActive.temporalWorkflowId };
+    }
+  }
   const ours = inFamily.filter(isOurs);
   const active = ours.find((r) => !isTerminalActiveWorkflowStatus(r.currentStatus));
   if (active) {

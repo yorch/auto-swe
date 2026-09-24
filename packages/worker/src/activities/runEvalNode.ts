@@ -28,6 +28,7 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
 import { resolveAutonomyPolicy } from '../lib/resolveAutonomyPolicy.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -277,6 +278,12 @@ export function assembleScores(
 }
 
 export async function runEvalNode(input: RunEvalNodeInput): Promise<RunEvalNodeResult> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('runEvalNode', runEvalNodeImpl(input));
+}
+
+async function runEvalNodeImpl(input: RunEvalNodeInput): Promise<RunEvalNodeResult> {
   const runId = await currentWorkflowRunId();
   const judgeAdvisory = input.judgeAdvisory ?? true;
 

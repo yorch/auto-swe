@@ -21,9 +21,15 @@
  * Attribution notes (verified against the activities):
  *   - `executeImplementation` and the three fix loops run an implementer
  *     session AND a post-diff security scan (`scanDiffForSecurityIssues`),
- *     so they need both `implementer` and `securityReview`.
- *   - `runReviewNetwork`'s three sub-reviewers all bind the `reviewer` model.
- *   - `planDecomposition` binds `planner`.
+ *     so they need both `implementer` and `securityReview`. Each fix loop runs
+ *     as its own persona (`ciFixer` / `reviewFixer` / `gateFixer`), which
+ *     inherits the `implementer` model — so it needs the persona row and the
+ *     parent its model resolves through.
+ *   - `resolveMergeConflict` runs the `mergeConflictResolver` persona (model
+ *     from `implementer`) and scans a resolved merge with `securityReview`.
+ *   - `runReviewNetwork`'s three sub-reviewers each resolve their own persona
+ *     row and bind the `reviewer` model through it.
+ *   - `planDecomposition` runs the `decomposer` persona on the `planner` model.
  *   - `planChannelTask` + `runChannelSubtasks` (general-route decomposition) both
  *     run the channel's `channelAssistant` model (planner/subtask/synthesis calls).
  *
@@ -48,16 +54,16 @@
  */
 export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | null> = {
   commitToMemory: ['commitToMemory'],
-  executeCIFixImplementation: ['implementer', 'securityReview'],
-  executeGateFixImplementation: ['implementer', 'securityReview'],
+  executeCIFixImplementation: ['ciFixer', 'implementer', 'securityReview'],
+  executeGateFixImplementation: ['gateFixer', 'implementer', 'securityReview'],
   executeImplementation: ['implementer', 'securityReview'],
-  executeReviewFixImplementation: ['implementer', 'securityReview'],
+  executeReviewFixImplementation: ['reviewFixer', 'implementer', 'securityReview'],
   planChannelTask: ['channelAssistant'],
-  planDecomposition: ['planner'],
-  resolveMergeConflict: ['implementer'],
+  planDecomposition: ['decomposer', 'planner'],
+  resolveMergeConflict: ['mergeConflictResolver', 'implementer', 'securityReview'],
   runAgentNode: null,
   runChannelSubtasks: ['channelAssistant'],
   runEvalNode: ['evalJudge'],
-  runReviewNetwork: ['reviewer'],
+  runReviewNetwork: ['securityReviewer', 'domainLogicReviewer', 'performanceReviewer', 'reviewer'],
   validateContext: ['validateContext'],
 };

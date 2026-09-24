@@ -1,5 +1,5 @@
 import { resolveRegexBudgetMs, runRegexBatch, toRegexSpecs } from '@auto-swe/shared/lib/regexExec';
-import { chunkScanText } from '@auto-swe/shared/lib/regexSafety';
+import { canonicalizeShellForScan, shellScanTargets } from '@auto-swe/shared/lib/regexSafety';
 import {
   checkContentSecurity,
   SECURITY_CHECK_FAILED_PREFIX,
@@ -149,9 +149,13 @@ export function extractShellWrites(command: string): ShellWrite[] {
  *
  * This is a BLOCKING scanner, which drives two choices:
  *
- * - The whole command is scanned, in overlapping windows. Truncating it would
- *   be a bypass: 20k of leading `#` comment would push a forbidden command past
- *   a plain cap and out of the rule's sight.
+ * - The whole command is scanned, in windows that follow command structure
+ *   (`shellScanTargets`). Truncating it would be a bypass: 20k of leading `#`
+ *   comment would push a forbidden command past a plain cap and out of the
+ *   rule's sight. Fixed-offset windows are one too: a `curl` padded with
+ *   thousands of spaces before its `-T /etc/passwd` is a match longer than any
+ *   overlap, so windows start at `;`/`&`/`|` boundaries, hold whole segments,
+ *   and are also taken over the whitespace-collapsed spelling of the command.
  * - A scan that cannot complete blocks. If a pattern burns its execution budget
  *   the scanner cannot say the command is clean, so it does not.
  */
@@ -177,7 +181,7 @@ export async function scanShellCommand(command: string): Promise<string | null> 
   const budgetMs = await resolveRegexBudgetMs();
   const { hits, incomplete, quarantinedPatternKeys } = await runRegexBatch(
     toRegexSpecs(patterns),
-    chunkScanText(command).map((text, i) => ({ key: String(i), text })),
+    shellScanTargets(command).map((text, i) => ({ key: String(i), text })),
     { budgetMs, label: 'shellCommandScanner' }
   );
   const hit = hits[0];
@@ -194,7 +198,7 @@ export async function scanShellCommand(command: string): Promise<string | null> 
     return (
       `Command blocked: the shell security rule [${quarantinedPatternKeys[0]}] is quarantined ` +
       `and was not enforced, so the command could not be cleared.\n  ${truncate()}\n` +
-      'An administrator must fix the offending pattern at /admin/scanner.'
+      'An administrator must fix the offending pattern at /govern/scanner.'
     );
   }
   if (incomplete) {
@@ -202,11 +206,18 @@ export async function scanShellCommand(command: string): Promise<string | null> 
       `Command blocked: the shell security scan could not complete.\n  ${truncate()}\n` +
       'A scanner pattern exceeded its execution budget, so the command could not be ' +
       'cleared. Retry; if this persists, an administrator must fix the offending ' +
-      'pattern at /admin/scanner.'
+      'pattern at /govern/scanner.'
     );
   }
 
-  const writeTargets = extractShellWriteTargets(command);
+  // A line continuation can split a redirect from its target (`> \<newline>.env`);
+  // the canonical spelling joins them again.
+  const writeTargets = [
+    ...new Set([
+      ...extractShellWriteTargets(command),
+      ...extractShellWriteTargets(canonicalizeShellForScan(command)),
+    ]),
+  ];
   if (writeTargets.length > 0) {
     // One combined round trip for every write target this command has, rather
     // than one `checkSensitiveFilePath` call — and one serialized trip through

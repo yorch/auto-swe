@@ -1,6 +1,7 @@
 import { ApplicationFailure } from '@temporalio/activity';
 
 const ZENDESK_TIMEOUT_MS = 30_000;
+const ZENDESK_SUBDOMAIN_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 
 export interface ZendeskConnectionLike {
   apiToken: string;
@@ -11,6 +12,15 @@ function zendeskBaseUrl(connection: ZendeskConnectionLike): string {
   const subdomain = connection.config.subdomain;
   if (!subdomain) {
     throw ApplicationFailure.nonRetryable('Zendesk connection is missing subdomain');
+  }
+  // The subdomain is interpolated into the host, so it must be exactly one DNS
+  // label. Anything else rewrites the URL: `evil.com/x?` or `evil.com#` sends
+  // the credentialed request to evil.com, `a@evil.com` does the same via the
+  // userinfo part, and a dot reaches any other host under the suffix.
+  if (!ZENDESK_SUBDOMAIN_RE.test(subdomain)) {
+    throw ApplicationFailure.nonRetryable(
+      'Zendesk connection subdomain must be a single DNS label (letters, digits, hyphens)'
+    );
   }
   return `https://${subdomain}.zendesk.com/api/v2`;
 }
@@ -37,6 +47,8 @@ async function zendeskFetch<T>(
       'Content-Type': 'application/json',
       ...(init.headers ?? {}),
     },
+    // Never follow a redirect off the Zendesk host with the credential attached.
+    redirect: 'error',
     signal: init.signal ? AbortSignal.any([timeoutSignal, init.signal]) : timeoutSignal,
   });
 

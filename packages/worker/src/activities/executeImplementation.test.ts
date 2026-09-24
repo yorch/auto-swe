@@ -52,6 +52,7 @@ vi.mock('../agents/implementer.js', () => ({
   buildImplementerForActivity: vi.fn(async () => ({
     agent: { generate: generateMock },
     closeMcp: undefined,
+    maxSteps: 50,
     promptSuffix: '',
     skills: [],
   })),
@@ -98,6 +99,8 @@ vi.mock('../lib/scm/index.js', () => ({
 
 vi.mock('./workspace.js', () => ({
   createWorkspace: vi.fn(async () => workspaceMock),
+  fetchBranchesSubcommand: (branches: string[]) =>
+    `fetch origin ${branches.map((b) => `'+refs/heads/${b}:refs/remotes/origin/${b}'`).join(' ')}`,
   shellQuote: (s: string) => `'${s}'`,
 }));
 
@@ -137,6 +140,29 @@ beforeEach(() => {
   workspaceMock.exec.mockResolvedValue('');
 });
 
+describe('executeImplementation agent turn', () => {
+  it('passes the resolved step budget to every TDD iteration', async () => {
+    await executeImplementation(REQUEST);
+    expect(generateMock.mock.calls[0]?.[1]).toMatchObject({ maxSteps: 50, toolChoice: 'auto' });
+  });
+
+  it("runs the repo's configured runTests command", async () => {
+    prismaMock.connection.findUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      executorImage: null,
+      gateCommands: { runTests: 'go test ./...' },
+      id: 'repo-1',
+      organizationName: 'acme',
+      repoName: 'api',
+    });
+    await executeImplementation(REQUEST);
+    const testCall = workspaceMock.exec.mock.calls.find(
+      (c: unknown[]) => (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === 600_000
+    );
+    expect(testCall?.[0]).toBe('{ go test ./...\n} 2>&1');
+  });
+});
+
 describe('executeImplementation cross-repo context', () => {
   it('appends the dependency block to the implementer system prompt', async () => {
     loadMock.mockResolvedValue('\n\n## Cross-Repo Dependency Context\n- acme/web — kinds: code');
@@ -158,7 +184,7 @@ describe('executeImplementation cross-repo context', () => {
   it('leaves the image undefined when the connection pins none, so the config default applies', async () => {
     // The 4th argument must be `undefined`, not a literal. `createWorkspace`
     // resolves `image ?? cfg.workspaceImage`, so ANY string here wins the `??`
-    // and the operator's /admin/workflow setting is never read — which is
+    // and the operator's /govern/workflow-defaults setting is never read — which is
     // exactly how it was silently unreachable on every workspace path.
     await executeImplementation(REQUEST);
     expect(vi.mocked(createWorkspace)).toHaveBeenCalled();
@@ -235,14 +261,18 @@ describe('executeImplementation retry safety', () => {
 
   it('starts from the clone HEAD on the first attempt', async () => {
     await executeImplementation(REQUEST);
-    expect(workspaceMock.gitAuthed).not.toHaveBeenCalledWith("fetch origin 'auto/JIRA-1'");
+    expect(workspaceMock.gitAuthed).not.toHaveBeenCalledWith(
+      "fetch origin '+refs/heads/auto/JIRA-1:refs/remotes/origin/auto/JIRA-1'"
+    );
     expect(execCommands()).not.toContain("git reset --hard origin/'auto/JIRA-1'");
   });
 
   it('syncs to the branch a previous attempt pushed when retried', async () => {
     vi.mocked(currentAttempt).mockReturnValue(2);
     await executeImplementation(REQUEST);
-    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith("fetch origin 'auto/JIRA-1'");
+    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith(
+      "fetch origin '+refs/heads/auto/JIRA-1:refs/remotes/origin/auto/JIRA-1'"
+    );
     expect(execCommands()).toContain("git reset --hard origin/'auto/JIRA-1'");
     // The push still happens after the agent's work.
     expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith("push origin 'auto/JIRA-1'");

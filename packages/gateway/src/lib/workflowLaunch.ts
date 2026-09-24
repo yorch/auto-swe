@@ -3,7 +3,6 @@ import {
   type WorkflowIdAllocation,
   workflowIdFamilyBases,
 } from '@auto-swe/shared/lib/workflowId';
-import { isTerminalActiveWorkflowStatus } from '@auto-swe/shared/types/api';
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../plugins/auth.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
@@ -213,8 +212,7 @@ export async function allocateWorkflowId(
   owner?: { repoId: string; externalTicketId?: string },
   legacyBaseId?: string
 ): Promise<WorkflowIdAllocation> {
-  const legacy = legacyBaseId && legacyBaseId !== baseId ? legacyBaseId : undefined;
-  const bases = [...workflowIdFamilyBases(baseId, owner?.repoId), ...(legacy ? [legacy] : [])];
+  const bases = workflowIdFamilyBases(baseId, owner?.repoId, legacyBaseId);
   const rows = await prisma.activeWorkflow.findMany({
     select: {
       currentStatus: true,
@@ -229,18 +227,6 @@ export async function allocateWorkflowId(
       ]),
     },
   });
-  if (legacy) {
-    const legacyFamily = new RegExp(`^${legacy.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-r\\d+)?$`);
-    const legacyActive = rows.find(
-      (r) =>
-        legacyFamily.test(r.temporalWorkflowId) &&
-        !isTerminalActiveWorkflowStatus(r.currentStatus) &&
-        (!owner || r.repoId === owner.repoId)
-    );
-    if (legacyActive) {
-      return { conflictWorkflowId: legacyActive.temporalWorkflowId };
-    }
-  }
   return chooseWorkflowId(
     baseId,
     rows.map((r) => ({
@@ -249,6 +235,7 @@ export async function allocateWorkflowId(
       repoId: r.repoId,
       temporalWorkflowId: r.temporalWorkflowId,
     })),
-    owner
+    owner,
+    legacyBaseId
   );
 }
