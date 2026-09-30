@@ -4,7 +4,7 @@
  *
  * `check-doc-drift.mjs` is the compiler for prose. This is the compiler for a
  * narrower thing: rules the type checker cannot state and the test suite does
- * not execute. Both invariants below are here because the bug happened — each
+ * not execute. Each invariant below is here because the bug happened — each
  * shipped to main past a green `yarn test`, `yarn typecheck` and `yarn lint`,
  * and was found by hand afterwards.
  *
@@ -201,9 +201,37 @@ function checkDockerfileYarnProvisioning() {
 }
 
 // ---------------------------------------------------------------------------
+// INVARIANT 3 — a layout that reads NEXT_PUBLIC_* at request time renders per request.
+//
+// `app/layout.tsx` copies NEXT_PUBLIC_API_URL into window.__APP_CONFIG__ so one web image can be
+// pointed at any gateway. Next prerenders a layout that has no dynamic API, at `next build`,
+// where the variable is unset — so the `?? 'http://localhost:8080'` fallback is written into the
+// HTML of every page and the env var set on the running container is never read. The page
+// renders, the gateway is healthy, and sign-in fails in the browser with "Service unavailable".
+// Locally it is invisible, because the fallback is the address the dev gateway listens on.
+// ---------------------------------------------------------------------------
+
+function checkLayoutRendersPerRequest() {
+  const file = 'packages/web/src/app/layout.tsx';
+  const src = read(file);
+  const reads = src.match(/process\.env\.NEXT_PUBLIC_\w+/);
+  if (reads && !/export\s+const\s+dynamic\s*=\s*['"]force-dynamic['"]/.test(src)) {
+    fail(
+      file,
+      src.slice(0, src.indexOf(reads[0])).split('\n').length,
+      'layout-renders-per-request',
+      `the root layout reads ${reads[0]} but does not export dynamic = 'force-dynamic'`,
+      'Without it Next prerenders the layout at build time, where the variable is unset, and ' +
+        'bakes the fallback into every page. The env var on the running container is ignored.'
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 checkWorkspaceImageLiterals();
 checkDockerfileYarnProvisioning();
+checkLayoutRendersPerRequest();
 
 if (failures.length > 0) {
   console.error(`Invariant check failed — ${failures.length} violation(s).\n`);
@@ -218,6 +246,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('Invariant check passed — 2 invariants, no violations.');
+console.log('Invariant check passed — 3 invariants, no violations.');
 console.log('  workspace image is inherited, never written inline at a call site');
 console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
+console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');

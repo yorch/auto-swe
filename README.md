@@ -69,7 +69,7 @@ For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per
 | Database            | PostgreSQL 18 + pgvector (Prisma 7.9)                      |
 | Embeddings          | OpenAI `text-embedding-3-large` (1536d)                    |
 | Workspace isolation | Docker-in-Docker                                           |
-| Observability       | OpenTelemetry → Grafana LGTM (`grafana/otel-lgtm:0.30.2`)  |
+| Observability       | OpenTelemetry → Grafana LGTM (`grafana/otel-lgtm:0.33.1`)  |
 | Web dashboard       | Next.js 16 + React 19 + Tailwind CSS 4 + TanStack Query 5  |
 | Language            | TypeScript 7 (strict mode, Yarn 4.18 monorepo)             |
 | Tests / Lint+Format | Vitest 4 / Biome 2.5                                       |

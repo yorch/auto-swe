@@ -25,6 +25,12 @@ export const metadata: Metadata = {
   title: 'auto·swe',
 };
 
+// Render per request. The layout injects NEXT_PUBLIC_API_URL / NEXT_PUBLIC_TEMPORAL_UI_URL into
+// window.__APP_CONFIG__ from the running container's environment. Left static, Next prerenders
+// it during `next build` — where neither is set — and bakes the localhost fallbacks into every
+// page, so the published image can only ever talk to a gateway on localhost:8080.
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const appConfig = JSON.stringify({
     apiUrl: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080',
