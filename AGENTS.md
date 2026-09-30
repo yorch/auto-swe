@@ -181,6 +181,7 @@ install, and every rule in it is there because that bug already shipped past a g
 |---|---|
 | No `createWorkspace(…)` call writes its image argument as a string literal | A literal wins `image ?? cfg.workspaceImage`, so the operator's configured image is silently never read. Both types are `string`; a wrong image is a working image. A named constant is allowed — it forces somewhere to write down why (`EVAL_WORKSPACE_IMAGE`) |
 | Every Dockerfile stage that runs `yarn` provisions one first — and no other stage does | `node:26` ships no Corepack and no `yarn`, so the stage exits 127 at build time. Nothing else runs inside an image, so tests, typecheck, lint and the doc check all stay green while no image can be built |
+| The root layout renders per request (`dynamic = 'force-dynamic'`) while it reads `NEXT_PUBLIC_*` | Otherwise Next prerenders it at `next build`, where the variable is unset, and bakes the `localhost` fallback into every page; the env var on the running container is never read. The page renders and the gateway is healthy — sign-in just fails in the browser. Invisible locally, because the fallback is the dev gateway's address |
 
 Add a rule only when its violation is **silent** under the existing gates and **decidable** by
 reading the source. A rule the type system can enforce belongs in the type system; a rule a unit
