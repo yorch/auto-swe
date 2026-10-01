@@ -37,6 +37,7 @@ import {
   publishAppHome,
   verifySlackSignature,
 } from '../lib/slack.js';
+import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
 import { isTerminalSignalError } from '../lib/temporalErrors.js';
 import { memberTeams, reachableConnections } from '../lib/tenantScope.js';
 import { isValidTicketId, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
@@ -1633,13 +1634,15 @@ async function listVisibleTemplates(
   fastify: FastifyInstance,
   user: { id: string; role: Role }
 ): Promise<SimpleTemplateRow[]> {
-  const where =
+  const visible =
     user.role === 'ADMIN'
       ? {}
       : {
           OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }],
         };
-  // `where` is `{}` for a platform admin — the deliberate cross-tenant branch.
+  // System templates ("Agent Run") are never offered, whoever is asking.
+  const where = { AND: [visible, EXCLUDE_SYSTEM_TEMPLATES] };
+  // `where` is only the visibility rule for a platform admin — the deliberate cross-tenant branch.
   const rows = await asPlatformAdmin(
     user,
     "admin lists every team's templates",
@@ -1987,9 +1990,10 @@ async function handleRunModalSubmission(
       where: {
         id: templateId,
         status: 'ACTIVE',
+        ...EXCLUDE_SYSTEM_TEMPLATES,
         ...(user.role === 'ADMIN'
           ? {}
-          : { OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }] }),
+          : { AND: [{ OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }] }] }),
       },
     });
     if (!tpl?.activeVersion) {

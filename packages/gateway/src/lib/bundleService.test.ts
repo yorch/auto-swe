@@ -24,11 +24,12 @@ import {
 function manifestFor(
   entities: BundleEntities,
   dependencies: { connectionType: string }[] = [],
-  metaOver: { name?: string; version?: string } = {}
+  metaOver: { name?: string; version?: string; source?: string } = {}
 ): BundleManifest {
   const metadata = {
     createdAt: 'now',
     name: metaOver.name ?? 'test',
+    ...(metaOver.source !== undefined ? { source: metaOver.source } : {}),
     version: metaOver.version ?? '1.0.0',
   };
   return {
@@ -57,6 +58,23 @@ const RUNNABLE_SPEC = {
   nodes: { end: { status: 'SUCCESS', type: 'terminate' } },
   schemaVersion: 1,
 };
+
+describe('exportBundle and system templates', () => {
+  it('excludes system templates from the export query', async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const prisma = {
+      agent: { findMany: vi.fn().mockResolvedValue([]) },
+      scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
+      skill: { findMany: vi.fn().mockResolvedValue([]) },
+      workflowTemplate: { findMany },
+    } as unknown as Parameters<typeof exportBundle>[0];
+    await exportBundle(prisma, { name: 'all', version: '1.0.0' });
+    expect(findMany.mock.calls[0]?.[0].where).toMatchObject({
+      AND: [{ OR: [{ origin: null }, { NOT: { origin: { startsWith: 'system:' } } }] }],
+      teamId: null,
+    });
+  });
+});
 
 describe('exportBundle', () => {
   it('serializes GLOBAL content, strips locals, and derives the mcp dependency', async () => {
@@ -630,6 +648,51 @@ describe('installBundle', () => {
       expect(err).toBeInstanceOf(BundleProtectedContentError);
       expect((err as BundleProtectedContentError).conflicts.templates).toEqual(['std']);
       expect(prisma.workflowTemplateVersion.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the Agent Run system template', () => {
+    it('can never be installed over or recreated, even with overwriteProtected', async () => {
+      const m = manifestFor({
+        ...EMPTY,
+        templates: [{ name: 'Agent Run', spec: RUNNABLE_SPEC }],
+      } as unknown as BundleEntities);
+      await expect(
+        installBundle(asArg(), m, { allowUnverified: true, overwriteProtected: true })
+      ).rejects.toBeInstanceOf(BundleIntegrityError);
+      expect(prisma.workflowTemplate.create).not.toHaveBeenCalled();
+      expect(prisma.workflowTemplateVersion.create).not.toHaveBeenCalled();
+      expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+    });
+
+    it('cannot be stamped by a bundle that claims a system: source', async () => {
+      const m = manifestFor(
+        {
+          ...EMPTY,
+          templates: [{ name: 'ordinary', spec: RUNNABLE_SPEC }],
+        } as unknown as BundleEntities,
+        [],
+        { source: 'system:agent-run' }
+      );
+      await expect(installBundle(asArg(), m, { allowUnverified: true })).rejects.toThrow(
+        /reserved system:/
+      );
+      expect(prisma.workflowTemplate.create).not.toHaveBeenCalled();
+    });
+
+    it('treats a system-origin row as protected like the starter content', async () => {
+      prisma.workflowTemplate.findFirst.mockResolvedValue({
+        activeVersion: 1,
+        id: 'sys',
+        origin: 'system:agent-run',
+        status: 'ACTIVE',
+      });
+      const m = manifestFor({
+        ...EMPTY,
+        templates: [{ name: 'std', spec: RUNNABLE_SPEC }],
+      } as unknown as BundleEntities);
+      const err = await installBundle(asArg(), m, { allowUnverified: true }).catch((e) => e);
+      expect(err).toBeInstanceOf(BundleProtectedContentError);
     });
   });
 

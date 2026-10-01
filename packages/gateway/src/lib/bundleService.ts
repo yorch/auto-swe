@@ -16,6 +16,7 @@ import {
   verifyBundleSignature,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
+import { isReservedTemplateOrigin } from '@auto-swe/shared/lib/agentRun';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
 /**
@@ -95,7 +96,9 @@ const SWE_STARTER_ORIGIN = 'swe-starter';
  * starter's, so only those rows are a bundle's to replace.
  */
 function isDeploymentOwned(origin: string | null): boolean {
-  return origin === null || origin === SWE_STARTER_ORIGIN;
+  // `system:` rows are the platform's: protected like the starter's, and unlike it
+  // never overridable (the install refuses a reserved name before it gets here).
+  return origin === null || origin === SWE_STARTER_ORIGIN || isReservedTemplateOrigin(origin);
 }
 
 type InstallTx = Prisma.TransactionClient;
@@ -393,7 +396,12 @@ export async function exportBundle(
 
   const templateRows = await prisma.workflowTemplate.findMany({
     orderBy: { name: 'asc' },
-    where: { teamId: null, ...originWhere },
+    // System templates are not content: an export must never carry one out.
+    where: {
+      AND: [{ OR: [{ origin: null }, { NOT: { origin: { startsWith: 'system:' } } }] }],
+      teamId: null,
+      ...originWhere,
+    },
   });
   const templates: BundleTemplate[] = [];
   for (const t of templateRows) {
@@ -509,6 +517,11 @@ export async function installBundle(
   }
 
   const origin = manifest.metadata.source ?? `bundle:${manifest.metadata.name}`;
+  if (isReservedTemplateOrigin(origin)) {
+    // A bundle chooses its own origin; one that claims `system:` would stamp every
+    // row it writes as the platform's own.
+    throw new BundleIntegrityError(`bundle source '${origin}' uses the reserved system: prefix`);
+  }
   const counts = { agents: 0, scannerPatterns: 0, skills: 0, templates: 0 };
   let replacedProtected = emptyConflicts();
   let installedBundleId = '';

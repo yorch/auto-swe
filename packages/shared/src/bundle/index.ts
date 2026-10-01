@@ -6,6 +6,7 @@ import {
   verify as cryptoVerify,
 } from 'node:crypto';
 import { z } from 'zod';
+import { AGENT_RUN_TEMPLATE_NAME, isReservedTemplateOrigin } from '../lib/agentRun.js';
 import { isInputSchema } from '../lib/inputSchema.js';
 import {
   checkRegexSafety,
@@ -392,6 +393,19 @@ export function validateBundleScannerPatterns(manifest: BundleManifest): string[
 export function validateBundleTemplates(manifest: BundleManifest): string[] {
   const errors: string[] = [];
   for (const t of manifest.entities.templates) {
+    // The system template is the platform's. A bundle template with its name
+    // would be matched to it by name and given the bundle's spec, and one that
+    // claims a `system:` origin would be mistaken for it. No overwrite flag
+    // lifts this: it is checked before any conflict handling.
+    if (
+      t.name.trim().toLowerCase() === AGENT_RUN_TEMPLATE_NAME.toLowerCase() ||
+      isReservedTemplateOrigin(t.origin)
+    ) {
+      errors.push(
+        `template '${t.name}': the name and the system: origin are reserved for platform templates`
+      );
+      continue;
+    }
     const parsed = WorkflowSpecSchema.safeParse(t.spec);
     if (!parsed.success) {
       errors.push(

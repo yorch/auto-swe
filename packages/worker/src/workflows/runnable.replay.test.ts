@@ -66,6 +66,7 @@ describe('RunnableWorkflow — history replay', () => {
     // while the suite stayed green.
     expect(fixtures.map((f) => f.name)).toEqual([
       'agent-node',
+      'agent-run',
       'cond-loop',
       'container-step',
       'context-spill',
@@ -141,6 +142,7 @@ describe('RunnableWorkflow — history replay', () => {
     const covered = new Set(fixtures.map((f) => f.name));
     const expected = [
       'agent-node', // agent
+      'agent-run', // the Agent Run system template: step -> terminate on its own proxy
       'container-step', // containerStep
       'eval', // eval
       'fan-out', // fanOut

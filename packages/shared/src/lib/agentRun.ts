@@ -106,3 +106,45 @@ export const AGENT_RUN_MAX_TEXT_CHARS = 20_000;
 export const AGENT_RUN_MAX_CHANGED_FILES = 500;
 /** Largest single changed file a delivered run may publish. */
 export const AGENT_RUN_MAX_FILE_BYTES = 1_000_000;
+
+/**
+ * `WorkflowSpec` of the system template: one internal step, then terminate. The
+ * workspace, the gate and the push all live inside `runAgentTask`, so there is no
+ * node an author could remove, reorder or route around. Typed loosely (object
+ * literal) like the channel templates, and parsed wherever it is consumed.
+ */
+export const AGENT_RUN_SPEC = {
+  description:
+    'System template behind POST /api/v1/agent-runs: runs one library agent against one repository in a throwaway workspace and optionally publishes the result. Not editable.',
+  entry: 'run',
+  name: AGENT_RUN_TEMPLATE_NAME,
+  nodes: {
+    done: {
+      result: {
+        baseSha: { from: 'nodes.run.output.baseSha' },
+        branch: { from: 'nodes.run.output.branch' },
+        deliver: { from: 'nodes.run.output.deliver' },
+        diff: { from: 'nodes.run.output.diff' },
+        diffTruncated: { from: 'nodes.run.output.diffTruncated' },
+        diffVerified: { from: 'nodes.run.output.diffVerified' },
+        filesChanged: { from: 'nodes.run.output.filesChanged' },
+        gate: { from: 'nodes.run.output.gate' },
+        headSha: { from: 'nodes.run.output.headSha' },
+        prNumber: { from: 'nodes.run.output.prNumber' },
+        prUrl: { from: 'nodes.run.output.prUrl' },
+        stoppedReason: { from: 'nodes.run.output.stoppedReason' },
+        text: { from: 'nodes.run.output.text' },
+      },
+      status: 'SUCCESS',
+      type: 'terminate',
+    },
+    run: {
+      inputs: { task: { from: 'request.description' } },
+      next: 'done',
+      spanName: 'llm.agent_run',
+      step: AGENT_RUN_STEP,
+      type: 'step',
+    },
+  },
+  schemaVersion: 1,
+} as const;

@@ -19,6 +19,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENT_RUN_SPEC } from '@auto-swe/shared/lib/agentRun';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import proto from '@temporalio/proto';
@@ -188,6 +189,28 @@ const SCENARIOS: Scenario[] = [
       },
       'ask'
     ),
+  },
+  {
+    // The Agent Run system template's own graph: the internal `runAgentTask`
+    // step (single attempt, long timeout, its own activity proxy) feeding a
+    // terminate whose result binds the step's output.
+    activities: () => ({
+      runAgentTask: async () => ({
+        agent: 'contentWriter',
+        baseSha: 'a'.repeat(40),
+        branch: 'auto/agent-0a1b2c3d',
+        deliver: 'branch',
+        diff: 'diff --git a/x b/x',
+        diffTruncated: false,
+        diffVerified: true,
+        filesChanged: [],
+        gate: 'passed',
+        headSha: 'b'.repeat(40),
+        text: 'fixture',
+      }),
+    }),
+    name: 'agent-run',
+    spec: spec(AGENT_RUN_SPEC.nodes as unknown as Record<string, unknown>, AGENT_RUN_SPEC.entry),
   },
   {
     // Container-contract coded capability.

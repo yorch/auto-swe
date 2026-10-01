@@ -8,6 +8,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest 
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
 import { memberTeams, reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import type { WorkRequestScheduleInput } from '../plugins/temporal.js';
@@ -287,8 +288,9 @@ async function resolveScheduleTemplate(
     const tpl = await prisma.workflowTemplate.findFirst({
       where: {
         id: templateId,
+        ...EXCLUDE_SYSTEM_TEMPLATES,
         ...(viewer && viewer.role !== 'ADMIN'
-          ? { OR: [{ teamId: null }, { team: memberTeams(viewer) }] }
+          ? { AND: [{ OR: [{ teamId: null }, { team: memberTeams(viewer) }] }] }
           : {}),
       },
     });

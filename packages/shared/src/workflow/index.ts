@@ -112,5 +112,15 @@ export {
   listSteps,
   MCP_TOOL_KEY,
 } from './stepRegistry.js';
-export type { ValidationIssue, ValidationReport, ValidationSeverity } from './validateSpec.js';
-export { formatValidationErrors, formatValidationIssue, validateSpec } from './validateSpec.js';
+export type {
+  ValidateSpecOptions,
+  ValidationIssue,
+  ValidationReport,
+  ValidationSeverity,
+} from './validateSpec.js';
+export {
+  findInternalSteps,
+  formatValidationErrors,
+  formatValidationIssue,
+  validateSpec,
+} from './validateSpec.js';
