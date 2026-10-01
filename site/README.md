@@ -58,6 +58,12 @@ for a workflow nobody can run, is exactly the drift the check exists to stop. Th
 is the other thing to keep honest — it restates `docs/product-overview.md` §8, so when that section
 changes, `MATURITY` changes with it.
 
+The index ends with **workflows you could build** — `WORKFLOW_IDEAS` in the same file. These have
+no spec, so nothing about them is generated, and the page prints them under a heading saying none
+ship. The one thing a test does check is that every node type, step, template, or agent an idea
+names in code formatting exists, so an idea cannot recommend a building block nobody can use. An
+idea that becomes a built-in template moves to `USE_CASES`.
+
 Because the templates are TypeScript, `sync` runs under `tsx`, not bare `node`.
 
 ## The design

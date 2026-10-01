@@ -305,7 +305,7 @@ async function syncEvalRubrics(prisma: PrismaClient): Promise<void> {
  * credential is still resolved by provider from `ProviderCredential` at run
  * time, so a fresh deploy only needs the admin to add a credential.
  */
-interface SweAgentDef {
+export interface SweAgentDef {
   key: string;
   name: string;
   description: string;
@@ -348,7 +348,7 @@ You MUST respond with valid JSON matching this schema:
   ]
 }`;
 
-const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
+export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     description: 'Writes code in the workspace via the TDD loop.',
     key: 'implementer',
