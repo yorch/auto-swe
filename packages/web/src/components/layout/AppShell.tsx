@@ -5,7 +5,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { useApprovalsStream } from '@/hooks/useApprovals';
 
-const CHROMELESS_ROUTES = ['/login'];
+const CHROMELESS_ROUTES = ['/login', '/reset-password'];
 
 // Run detail and template diff pages manage their own full-height layout.
 function isFullscreenRoute(pathname: string): boolean {
@@ -33,10 +33,7 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
   useApprovalsStream();
 
   return (
-    <div
-      className="h-screen overflow-hidden text-paper-200"
-      style={{ display: 'grid', gridAutoRows: 'minmax(0, 1fr)', gridTemplateColumns: '234px 1fr' }}
-    >
+    <div className="grid h-screen auto-rows-[minmax(0,1fr)] grid-cols-[234px_1fr] overflow-hidden text-paper-200">
       <Sidebar />
       <div className="flex flex-col overflow-hidden">
         <TopBar />

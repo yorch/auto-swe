@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
+import { AuthHeading, AuthLayout } from '@/components/layout/AuthLayout';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -61,87 +62,72 @@ function ResetPasswordInner() {
 
   if (done) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-ink-900 px-6 py-12">
-        <div className="w-full max-w-sm text-center">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.24em] text-moss-400">
-            ¶ § auth/reset · done
-          </div>
-          <h1 className="mb-3 font-display text-4xl font-light tracking-tight text-paper-50">
-            Password reset.
-          </h1>
+      <AuthLayout className="text-center">
+        <AuthHeading kicker="¶ § auth/reset · done" kickerTone="moss" title="Password reset.">
           <p className="text-sm text-paper-400">Sending you back to sign in…</p>
-        </div>
-      </div>
+        </AuthHeading>
+      </AuthLayout>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-ink-900 px-6 py-12">
-      <div className="w-full max-w-sm">
-        <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.24em] text-ember-400">
-          ¶ § auth/reset
-        </div>
-        <h1 className="mb-3 font-display text-4xl font-light tracking-tight text-paper-50">
-          Choose a new password.
-        </h1>
+    <AuthLayout>
+      <AuthHeading kicker="¶ § auth/reset" title="Choose a new password.">
         <p className="mb-8 text-sm text-paper-400">
           Enter a new password (≥ 8 chars). You'll be signed back in once it's saved.
         </p>
+      </AuthHeading>
 
-        {!token && (
-          <Alert className="mb-4" variant="warning">
-            no reset token in the url — request a fresh link from the login page
-          </Alert>
-        )}
-        {error && (
-          <Alert className="mb-4" variant="error">
-            {error}
-          </Alert>
-        )}
+      {!token && (
+        <Alert className="mb-4" variant="warning">
+          no reset token in the url — request a fresh link from the login page
+        </Alert>
+      )}
+      {error && (
+        <Alert className="mb-4" variant="error">
+          {error}
+        </Alert>
+      )}
 
-        <form className="space-y-5" onSubmit={handleSubmit}>
-          <Input
-            autoComplete="new-password"
-            label="New password"
-            minLength={8}
-            name="password"
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••••"
-            required
-            type="password"
-            value={password}
-          />
-          <Input
-            autoComplete="new-password"
-            label="Confirm new password"
-            minLength={8}
-            name="confirm"
-            onChange={(e) => setConfirm(e.target.value)}
-            placeholder="••••••••••"
-            required
-            type="password"
-            value={confirm}
-          />
-          <Button
-            className="w-full"
-            disabled={loading || !token}
-            size="lg"
-            type="submit"
-            variant="primary"
-          >
-            {loading ? 'Saving…' : 'Save new password →'}
-          </Button>
-        </form>
+      <form className="space-y-5" onSubmit={handleSubmit}>
+        <Input
+          autoComplete="new-password"
+          label="New password"
+          minLength={8}
+          name="password"
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="••••••••••"
+          required
+          type="password"
+          value={password}
+        />
+        <Input
+          autoComplete="new-password"
+          label="Confirm new password"
+          minLength={8}
+          name="confirm"
+          onChange={(e) => setConfirm(e.target.value)}
+          placeholder="••••••••••"
+          required
+          type="password"
+          value={confirm}
+        />
+        <Button
+          className="w-full"
+          disabled={loading || !token}
+          size="lg"
+          type="submit"
+          variant="primary"
+        >
+          {loading ? 'Saving…' : 'Save new password →'}
+        </Button>
+      </form>
 
-        <div className="mt-6 text-center">
-          <Link
-            className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
-            href="/login"
-          >
-            ← back to sign in
-          </Link>
-        </div>
+      <div className="mt-6 text-center">
+        <Link className="label-mono transition-colors hover:text-ember-400" href="/login">
+          ← back to sign in
+        </Link>
       </div>
-    </div>
+    </AuthLayout>
   );
 }

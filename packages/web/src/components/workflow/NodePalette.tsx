@@ -11,7 +11,10 @@
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/utils';
+import { NODE_TYPE_TONE } from './nodeTypeTone';
 
 export const PaletteDragSchema = z.union([
   z.object({ kind: z.literal('primitive'), nodeType: z.string() }),
@@ -29,7 +32,6 @@ type GroupLabel = (typeof GROUP_ORDER)[number];
 type PrimitiveDef = {
   label: string;
   hint: string;
-  swatch: string;
   group: GroupLabel;
   elevated?: boolean;
 };
@@ -52,88 +54,74 @@ const PRIMITIVES: Record<SpecNode['type'], PrimitiveDef> = {
     group: 'Execution',
     hint: 'Run a library Agent by reference',
     label: 'Agent',
-    swatch: 'bg-ember-300',
   },
   cond: {
     group: 'Control flow',
     hint: 'Branch on an expression',
     label: 'Conditional',
-    swatch: 'bg-violet-400',
   },
   containerStep: {
     elevated: true,
     group: 'Advanced',
     hint: 'Coded capability container — JSON in/out (⚠ elevated)',
     label: 'Container step',
-    swatch: 'bg-brick-400',
   },
   eval: {
     group: 'Execution',
     hint: 'Score a value with a scorer',
     label: 'Eval',
-    swatch: 'bg-moss-400',
   },
   fanOut: {
     group: 'Control flow',
     hint: 'Fan out into parallel subtasks',
     label: 'Fan-out',
-    swatch: 'bg-moss-400',
   },
   humanApproval: {
     group: 'Human-in-loop',
     hint: 'Pause for human approval',
     label: 'Approval',
-    swatch: 'bg-amber-500',
   },
   humanDecision: {
     group: 'Human-in-loop',
     hint: 'Pause for human decision',
     label: 'Decision',
-    swatch: 'bg-amber-500',
   },
   humanInput: {
     group: 'Human-in-loop',
     hint: 'Pause for human input',
     label: 'Input',
-    swatch: 'bg-amber-500',
   },
   humanReview: {
     group: 'Human-in-loop',
     hint: 'Pause for human review',
     label: 'Review',
-    swatch: 'bg-amber-500',
   },
   mcp: {
     group: 'Execution',
     hint: 'Call one tool on an MCP server',
     label: 'MCP tool',
-    swatch: 'bg-dust-400',
   },
-  set: { group: 'Control flow', hint: 'Set spec values', label: 'Set', swatch: 'bg-amber-400' },
+  set: { group: 'Control flow', hint: 'Set spec values', label: 'Set' },
   shell: {
     elevated: true,
     group: 'Advanced',
     hint: 'Run a shell command (⚠ elevated)',
     label: 'Shell',
-    swatch: 'bg-brick-400',
   },
   signal: {
     group: 'Control flow',
     hint: 'Wait for an external signal',
     label: 'Signal',
-    swatch: 'bg-dust-400',
   },
   step: {
     group: 'Execution',
     hint: 'Run a registered step',
     label: 'Step',
-    swatch: 'bg-ember-400',
   },
   terminate: {
     group: 'Control flow',
     hint: 'End the workflow',
     label: 'Terminate',
-    swatch: 'bg-paper-500',
   },
 };
 
@@ -156,13 +144,22 @@ interface StepEntry {
 
 interface Props {
   steps: StepEntry[];
+  /** Keyboard alternative to drag-and-drop: Enter/Space on an item adds it. */
+  onAdd: (payload: PaletteDragKind) => void;
 }
 
-function PrimitiveGroup({ group }: { group: PrimitiveGroup }) {
+function PrimitiveGroup({
+  group,
+  onAdd,
+}: {
+  group: PrimitiveGroup;
+  onAdd: (payload: PaletteDragKind) => void;
+}) {
   const [open, setOpen] = useState(true);
   return (
     <div className="mb-1">
       <button
+        aria-expanded={open}
         className="flex w-full items-center justify-between px-1 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-paper-600 hover:text-paper-400"
         onClick={() => setOpen((v) => !v)}
         type="button"
@@ -179,7 +176,8 @@ function PrimitiveGroup({ group }: { group: PrimitiveGroup }) {
               hint={p.hint}
               key={p.type}
               label={p.label}
-              swatch={p.swatch}
+              onAdd={onAdd}
+              swatch={NODE_TYPE_TONE[p.type].swatch}
             />
           ))}
         </ul>
@@ -188,7 +186,7 @@ function PrimitiveGroup({ group }: { group: PrimitiveGroup }) {
   );
 }
 
-export function NodePalette({ steps }: Props) {
+export function NodePalette({ steps, onAdd }: Props) {
   const [query, setQuery] = useState('');
 
   const filteredSteps = useMemo(() => {
@@ -221,29 +219,25 @@ export function NodePalette({ steps }: Props) {
           ¶ Palette
         </div>
         <p className="mt-1 text-[11px] leading-snug text-paper-400">
-          Drag onto the canvas to add a node.
+          Drag onto the canvas, or press Enter, to add a node.
         </p>
       </div>
 
       {/* Primitives — grouped */}
       <div className="border-b border-ink-600 px-3 py-3">
-        <div className="mb-1 px-1 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-          Primitives
-        </div>
+        <div className="label-mono mb-1 px-1">Primitives</div>
         {PRIMITIVE_GROUPS.map((g) => (
-          <PrimitiveGroup group={g} key={g.label} />
+          <PrimitiveGroup group={g} key={g.label} onAdd={onAdd} />
         ))}
       </div>
 
       {/* Steps */}
       <div className="flex flex-1 flex-col overflow-hidden">
         <div className="border-b border-ink-600 px-3 py-3">
-          <div className="mb-2 px-1 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-            Step registry
-          </div>
-          <input
+          <div className="label-mono mb-2 px-1">Step registry</div>
+          <Input
             aria-label="Filter the step registry"
-            className="h-7 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
+            compact
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter steps…"
             type="search"
@@ -251,11 +245,7 @@ export function NodePalette({ steps }: Props) {
           />
         </div>
         <div className="flex-1 overflow-y-auto px-3 py-3">
-          {groupedSteps.length === 0 && (
-            <div className="px-1 py-3 text-center font-mono text-[10px] uppercase tracking-wider text-paper-500">
-              — no matches —
-            </div>
-          )}
+          {groupedSteps.length === 0 && <EmptyState className="py-3 text-xs" title="No matches." />}
           {groupedSteps.map(([category, items]) => (
             <div className="mb-4" key={category}>
               <div className="mb-1 px-1 font-mono text-[9px] uppercase tracking-[0.18em] text-paper-600">
@@ -268,7 +258,8 @@ export function NodePalette({ steps }: Props) {
                     hint={s.label}
                     key={s.name}
                     label={s.name}
-                    swatch="bg-ember-400"
+                    onAdd={onAdd}
+                    swatch={NODE_TYPE_TONE.step.swatch}
                     title={s.description}
                   />
                 ))}
@@ -288,6 +279,7 @@ function PaletteItem({
   dragPayload,
   title,
   elevated,
+  onAdd,
 }: {
   label: string;
   hint?: string;
@@ -295,6 +287,7 @@ function PaletteItem({
   dragPayload: PaletteDragKind;
   title?: string;
   elevated?: boolean;
+  onAdd: (payload: PaletteDragKind) => void;
 }) {
   return (
     <li>
@@ -314,8 +307,7 @@ function PaletteItem({
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            // Keep the element keyboard-focusable even though DnD itself is
-            // pointer-driven; screen-reader users can discover the purpose.
+            onAdd(dragPayload);
           }
         }}
         role="button"

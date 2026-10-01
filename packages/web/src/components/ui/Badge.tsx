@@ -72,6 +72,7 @@ const VARIANT_BASE: Record<BadgeVariant, string> = {
 export function Badge({
   children,
   className,
+  dot = false,
   title,
   tone,
   uppercase = false,
@@ -79,6 +80,8 @@ export function Badge({
 }: {
   children: ReactNode;
   className?: string;
+  /** Leading status dot in the badge's own colour; `'pulse'` animates the dot alone, for a live state. */
+  dot?: boolean | 'pulse';
   title?: string;
   tone: BadgeTone;
   uppercase?: boolean;
@@ -89,12 +92,22 @@ export function Badge({
       className={cn(
         'font-mono text-[10px]',
         VARIANT_BASE[variant],
+        dot && 'inline-flex items-center gap-1.5',
         uppercase && 'uppercase tracking-wider',
         TONE_CLASSES[tone][variant],
         className
       )}
       title={title}
     >
+      {dot && (
+        <span
+          aria-hidden
+          className={cn(
+            'h-1.5 w-1.5 shrink-0 rounded-full bg-current',
+            dot === 'pulse' && 'pulse-dot'
+          )}
+        />
+      )}
       {children}
     </span>
   );

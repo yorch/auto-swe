@@ -2,13 +2,16 @@
 
 import { useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
@@ -25,6 +28,9 @@ export default function UsersPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [creatingDirect, setCreatingDirect] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<string | null>(null);
+  const [suspendTarget, setSuspendTarget] = useState<{ email: string; id: string } | null>(null);
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
   // users get a dedicated top section so admins notice them; the rest go
@@ -54,8 +60,17 @@ export default function UsersPage() {
     );
   }
 
-  const handleApprove = (id: string) => updateUser.mutate({ id, patch: { isActive: true } });
-  const handleSuspend = (id: string) => updateUser.mutate({ id, patch: { isActive: false } });
+  const handleApprove = async (id: string) => {
+    setApproveError(null);
+    setApprovingId(id);
+    try {
+      await updateUser.mutateAsync({ id, patch: { isActive: true } });
+    } catch (err) {
+      setApproveError(errMsg(err, 'approve failed'));
+    } finally {
+      setApprovingId(null);
+    }
+  };
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,14 +87,12 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="space-y-10">
-      <div className="fade-up">
-        <PageHeader
-          chapter={`§ Users · ${(users ?? []).length} total · ${pending.length} pending`}
-          subtitle="Manage who can sign in to the control plane. Sign-ups via GitHub / Google / magic link start in the pending queue and need admin approval."
-          title="Members."
-        />
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        chapter="§ Govern"
+        subtitle="Manage who can sign in to the control plane. Sign-ups via GitHub / Google / magic link start in the pending queue and need admin approval."
+        title="Members"
+      />
 
       {/* Invite by email — admin sends a magic-link to the address. The
           invitee lands pre-active + pre-membered to the default team.
@@ -90,7 +103,7 @@ export default function UsersPage() {
         <SectionHeader
           actions={
             <Button onClick={() => setCreatingDirect(true)} size="sm" variant="secondary">
-              + Create directly
+              Create directly
             </Button>
           }
           hint="email + magic link"
@@ -121,15 +134,10 @@ export default function UsersPage() {
               />
             </div>
             <div>
-              <label
-                className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-                htmlFor="invite-role"
-              >
-                Role
-              </label>
               <Select
-                className="mt-1.5 w-auto"
+                className="w-auto"
                 id="invite-role"
+                label="Role"
                 onChange={(e) => setInviteRole(e.target.value as Role)}
                 value={inviteRole}
               >
@@ -139,7 +147,7 @@ export default function UsersPage() {
               </Select>
             </div>
             <Button disabled={inviteUser.isPending} size="md" type="submit" variant="primary">
-              {inviteUser.isPending ? 'Sending…' : 'Send invite →'}
+              {inviteUser.isPending ? 'Sending…' : 'Send invite'}
             </Button>
           </form>
         </Card>
@@ -153,14 +161,18 @@ export default function UsersPage() {
             title="Pending sign-ups"
           />
           <Card variant="inset">
+            {approveError && (
+              <Alert className="mb-3" variant="error">
+                {approveError}
+              </Alert>
+            )}
             <ul className="divide-y divide-ink-600">
               {pending.map((u) => (
                 <li className="flex items-center justify-between py-3" key={u.id}>
                   <div className="flex items-center gap-3">
-                    <span
-                      aria-hidden
-                      className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400"
-                    />
+                    <Badge dot tone="amber" uppercase variant="text">
+                      pending
+                    </Badge>
                     <div>
                       <div className="text-sm text-paper-100">{u.email}</div>
                       <div className="font-mono text-[11px] text-paper-500">
@@ -178,12 +190,12 @@ export default function UsersPage() {
                     </div>
                   </div>
                   <Button
-                    disabled={updateUser.isPending}
+                    disabled={approvingId !== null}
                     onClick={() => handleApprove(u.id)}
                     size="sm"
                     variant="primary"
                   >
-                    {updateUser.isPending ? 'Approving…' : 'Approve →'}
+                    {approvingId === u.id ? 'Approving…' : 'Approve'}
                   </Button>
                 </li>
               ))}
@@ -212,9 +224,9 @@ export default function UsersPage() {
                 <TRow key={u.id}>
                   <Td className="px-4 py-3 text-sm text-paper-100">{u.email}</Td>
                   <Td className="px-4 py-3">
-                    <span className="rounded border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
+                    <Badge tone="ember" uppercase variant="outline">
                       {u.role}
-                    </span>
+                    </Badge>
                   </Td>
                   <Td className="px-4 py-3 font-mono text-xs text-paper-400">
                     {u.slackId ?? <span className="text-paper-500">—</span>}
@@ -227,10 +239,9 @@ export default function UsersPage() {
                   </Td>
                   <Td className="px-4 py-3 text-right">
                     <Button
-                      disabled={updateUser.isPending}
-                      onClick={() => handleSuspend(u.id)}
+                      onClick={() => setSuspendTarget({ email: u.email, id: u.id })}
                       size="sm"
-                      variant="ghost"
+                      variant="danger"
                     >
                       Suspend
                     </Button>
@@ -238,14 +249,9 @@ export default function UsersPage() {
                 </TRow>
               ))}
               {active.length === 0 && (
-                <TRow>
-                  <Td
-                    className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
-                    colSpan={5}
-                  >
-                    no active members
-                  </Td>
-                </TRow>
+                <TableStatusRow colSpan={5}>
+                  <EmptyState title="No active members" />
+                </TableStatusRow>
               )}
             </tbody>
           </Table>
@@ -253,6 +259,19 @@ export default function UsersPage() {
       </section>
 
       <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
+      <ConfirmModal
+        confirmLabel="Suspend"
+        dangerous
+        message={`${suspendTarget?.email ?? 'This user'} will no longer be able to sign in and moves back to the pending queue. You can approve them again later.`}
+        onClose={() => setSuspendTarget(null)}
+        onConfirm={async () => {
+          if (suspendTarget) {
+            await updateUser.mutateAsync({ id: suspendTarget.id, patch: { isActive: false } });
+          }
+        }}
+        open={suspendTarget !== null}
+        title="Suspend user?"
+      />
     </div>
   );
 }

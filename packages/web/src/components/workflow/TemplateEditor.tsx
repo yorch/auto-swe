@@ -18,12 +18,8 @@
 import type { Node as SpecNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { readNodeEdge, setNodeEdge } from '@auto-swe/shared/workflow';
 import {
-  Background,
-  BackgroundVariant,
   type Connection,
-  Controls,
   type EdgeChange,
-  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   type Node as RFNode,
@@ -33,9 +29,12 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { TOKEN } from '@/lib/palette';
+import { formatCost } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
+import { FlowChrome } from './flowChrome';
 import { makeDefaultNodeFor } from './makeDefaultNode';
 import { NodeInspector } from './NodeInspector';
 import { NodePalette, PALETTE_MIME, type PaletteDragKind, PaletteDragSchema } from './NodePalette';
@@ -139,24 +138,13 @@ function EditorInner({
     [spec, onChange]
   );
 
-  /** Drop-from-palette → new node in the spec at the cursor position. We
-   *  don't persist position in the spec (spec is purely logical), but the
-   *  newly added node will render at the drop position for this session
-   *  because we'll seed an override in the local React Flow state. */
-  const handleDrop = useCallback(
-    (event: React.DragEvent) => {
-      event.preventDefault();
-      const payloadRaw = event.dataTransfer.getData(PALETTE_MIME);
-      if (!payloadRaw) {
-        return;
-      }
-      const parsed = PaletteDragSchema.safeParse(JSON.parse(payloadRaw));
-      if (!parsed.success) {
-        return;
-      }
-      const payload: PaletteDragKind = parsed.data;
-
-      const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+  /** Palette item → new node in the spec at a screen position. We don't
+   *  persist position in the spec (spec is purely logical), but the newly
+   *  added node will render at that position for this session because we'll
+   *  seed an override in the local React Flow state. */
+  const addNodeAt = useCallback(
+    (payload: PaletteDragKind, screen: { x: number; y: number }) => {
+      const pos = screenToFlowPosition(screen);
 
       const existingIds = Object.keys(spec.nodes);
       const baseName =
@@ -186,6 +174,35 @@ function EditorInner({
       });
     },
     [spec, onChange, onSelect, screenToFlowPosition, setNodes]
+  );
+
+  /** Drop-from-palette → new node at the cursor position. */
+  const handleDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      const payloadRaw = event.dataTransfer.getData(PALETTE_MIME);
+      if (!payloadRaw) {
+        return;
+      }
+      const parsed = PaletteDragSchema.safeParse(JSON.parse(payloadRaw));
+      if (!parsed.success) {
+        return;
+      }
+      addNodeAt(parsed.data, { x: event.clientX, y: event.clientY });
+    },
+    [addNodeAt]
+  );
+
+  /** Keyboard add from the palette → new node at the centre of the canvas. */
+  const handlePaletteAdd = useCallback(
+    (payload: PaletteDragKind) => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) {
+        return;
+      }
+      addNodeAt(payload, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+    },
+    [addNodeAt]
   );
 
   const handleDragOver = useCallback((event: React.DragEvent) => {
@@ -340,7 +357,7 @@ function EditorInner({
     <div className="flex h-[calc(100vh-180px)] min-h-[560px] flex-col overflow-hidden rounded-sm border border-ink-600 bg-ink-900">
       {/* Action bar */}
       <div className="flex items-center justify-between gap-4 border-b border-ink-600 px-4 py-2">
-        <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+        <div className="label-mono flex items-center gap-3">
           <span>nodes</span>
           <span className="tabular text-paper-200">{Object.keys(spec.nodes).length}</span>
           <span className="text-ink-500">·</span>
@@ -350,14 +367,14 @@ function EditorInner({
             <>
               <span className="text-ink-500">·</span>
               <span>est</span>
-              <span className="tabular text-paper-200">${costEstimateUsd.toFixed(2)}/run</span>
+              <span className="tabular text-paper-200">{formatCost(costEstimateUsd)}/run</span>
             </>
           )}
           {observedCostUsd != null && (
             <>
               <span className="text-ink-500">·</span>
               <span>observed</span>
-              <span className="tabular text-paper-200">${observedCostUsd.toFixed(2)}/run</span>
+              <span className="tabular text-paper-200">{formatCost(observedCostUsd)}/run</span>
             </>
           )}
         </div>
@@ -365,13 +382,13 @@ function EditorInner({
       </div>
 
       {parseError && (
-        <div className="border-b border-ink-600 bg-brick-400/10 px-4 py-2 font-mono text-[11px] text-brick-400">
-          ! {parseError}
-        </div>
+        <Alert className="rounded-none border-x-0 border-t-0 font-mono text-[11px]">
+          {parseError}
+        </Alert>
       )}
 
       <div className="flex flex-1 overflow-hidden" ref={wrapperRef}>
-        <NodePalette steps={stepRegistry} />
+        <NodePalette onAdd={handlePaletteAdd} steps={stepRegistry} />
 
         {/* Canvas — this wrapper is the HTML5 drag-and-drop target; the React Flow
             canvas inside it is the interactive surface. */}
@@ -403,16 +420,7 @@ function EditorInner({
             proOptions={{ hideAttribution: true }}
             zoomOnDoubleClick={false}
           >
-            <Background color={TOKEN.ink600} gap={24} size={1.2} variant={BackgroundVariant.Dots} />
-            <MiniMap
-              maskColor="rgba(10, 12, 18, 0.85)"
-              nodeColor={() => TOKEN.ink700}
-              nodeStrokeColor={TOKEN.ink500}
-              pannable
-              style={{ background: TOKEN.ink900, border: `1px solid ${TOKEN.ink600}` }}
-              zoomable
-            />
-            <Controls fitViewOptions={FIT_VIEW_OPTIONS} showInteractive={false} />
+            <FlowChrome />
           </ReactFlow>
         </div>
 

@@ -17,6 +17,7 @@ function pageTitle(pathname: string): string {
     ['/govern/approvals', 'Approvals'],
     ['/workflows/library', 'Workflow library'],
     ['/workflows', 'Request queue'],
+    ['/epics', 'Epics'],
     ['/connections', 'Connections'],
     ['/govern/security', 'Security'],
     ['/govern/scanner', 'Scanner'],
@@ -77,54 +78,18 @@ export function TopBar() {
   const title = pageTitle(pathname);
 
   return (
-    <header
-      className="flex items-center gap-[14px] px-[26px]"
-      style={{
-        backdropFilter: 'blur(12px)',
-        background: 'rgba(10, 12, 18, 0.72)',
-        borderBottom: '1px solid var(--color-ink-400)',
-        height: 60,
-        position: 'sticky',
-        top: 0,
-        zIndex: 20,
-      }}
-    >
+    <header className="sticky top-0 z-20 flex h-[60px] items-center gap-[14px] border-b border-ink-400 bg-ink-950/70 px-[26px] backdrop-blur-md">
       {/* Page title */}
-      <h2
-        style={{
-          color: 'var(--color-paper-100)',
-          fontSize: 17,
-          fontWeight: 650,
-          letterSpacing: '-0.02em',
-          margin: 0,
-        }}
-      >
-        {title}
-      </h2>
+      <h2 className="m-0 text-[17px] font-[650] tracking-[-0.02em] text-paper-100">{title}</h2>
 
       {/* Team context selector */}
       <label
-        className="relative flex cursor-pointer items-center gap-[6px]"
+        className="relative ml-2 flex cursor-pointer items-center gap-[6px] rounded-[8px] focus-within:ring-2 focus-within:ring-ember-400"
         htmlFor="topbar-team-select"
-        style={{ marginLeft: 8 }}
       >
-        <span
-          style={{
-            alignItems: 'center',
-            background: 'var(--color-ink-700)',
-            border: '1px solid var(--color-ink-400)',
-            borderRadius: 8,
-            color: 'var(--color-paper-400)',
-            cursor: 'pointer',
-            display: 'inline-flex',
-            fontSize: 12.5,
-            gap: 6,
-            padding: '5px 10px',
-          }}
-        >
-          team:{' '}
-          <span style={{ color: 'var(--color-ember-400)', fontWeight: 600 }}>{teamLabel}</span>
-          <span style={{ color: 'var(--color-paper-500)', fontSize: 10 }}>▾</span>
+        <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-[8px] border border-ink-400 bg-ink-700 px-2.5 py-[5px] text-[12.5px] text-paper-400">
+          team: <span className="font-semibold text-ember-400">{teamLabel}</span>
+          <span className="text-[10px] text-paper-500">▾</span>
         </span>
         <Select
           aria-label="Select team"
@@ -145,89 +110,33 @@ export function TopBar() {
       {/* Inbox badge */}
       {inboxCount > 0 && (
         <Link
+          className="inline-flex items-center gap-1.5 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-2.5 py-[5px] text-[12.5px] font-semibold text-amber-400 no-underline"
           href="/govern/approvals"
-          style={{
-            alignItems: 'center',
-            background: 'rgba(246, 181, 69, 0.1)',
-            border: '1px solid rgba(246, 181, 69, 0.4)',
-            borderRadius: 8,
-            color: 'var(--color-amber-400)',
-            display: 'inline-flex',
-            fontSize: 12.5,
-            fontWeight: 600,
-            gap: 6,
-            padding: '5px 10px',
-            textDecoration: 'none',
-          }}
         >
-          <span
-            style={{
-              background: 'var(--color-amber-400)',
-              borderRadius: '50%',
-              display: 'inline-block',
-              height: 7,
-              width: 7,
-            }}
-          />
+          <span className="inline-block h-[7px] w-[7px] rounded-full bg-amber-400" />
           {inboxCount} pending
         </Link>
       )}
 
       {/* Spacer */}
-      <div style={{ flex: 1 }} />
+      <div className="flex-1" />
 
       {/* Right side */}
       <div className="flex items-center gap-3">
         {/* Online dot */}
         <div className="flex items-center gap-2">
-          <span
-            className="pulse-dot"
-            style={{
-              background: 'var(--color-moss-400)',
-              borderRadius: '50%',
-              display: 'inline-block',
-              height: 6,
-              width: 6,
-            }}
-          />
-          <span
-            style={{
-              color: 'var(--color-paper-500)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 10,
-              letterSpacing: '0.18em',
-              textTransform: 'uppercase',
-            }}
-          >
-            online
-          </span>
+          <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
+          <span className="label-mono">online</span>
         </div>
 
-        <span
-          style={{
-            background: 'var(--color-ink-400)',
-            display: 'inline-block',
-            height: 14,
-            width: 1,
-          }}
-        />
+        <span className="inline-block h-3.5 w-px bg-ink-400" />
 
         <button
+          className="cursor-pointer border-none bg-transparent p-0 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500 hover:text-paper-200"
           onClick={handleLogout}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: 'var(--color-paper-500)',
-            cursor: 'pointer',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 10,
-            letterSpacing: '0.14em',
-            padding: 0,
-            textTransform: 'uppercase',
-          }}
           type="button"
         >
-          Logout ↗
+          Sign out
         </button>
       </div>
     </header>

@@ -1,14 +1,17 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Th } from '@/components/ui/Table';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type ConfigGrant,
   useConfigGrantPreview,
@@ -23,7 +26,7 @@ type GrantScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
 type GrantRole = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
 export default function GovernConfigGrantsPage() {
-  const { data: grants, isLoading } = useConfigGrants();
+  const { data: grants, isLoading, isError, error: loadError } = useConfigGrants();
   const createGrant = useCreateConfigGrant();
   const revokeGrant = useRevokeConfigGrant();
   const [revokeTarget, setRevokeTarget] = useState<ConfigGrant | null>(null);
@@ -68,32 +71,31 @@ export default function GovernConfigGrantsPage() {
     }
   };
 
-  const confirmRevoke = () => {
+  const confirmRevoke = async () => {
     if (revokeTarget) {
-      revokeGrant.mutate(revokeTarget.id);
-      setRevokeTarget(null);
+      await revokeGrant.mutateAsync(revokeTarget.id);
     }
   };
 
-  if (isLoading) {
-    return <LoadingState message="loading grants…" />;
-  }
-
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
       <div className="fade-up">
         <PageHeader
-          chapter={`§ Admin · Config grants · ${(grants ?? []).length} active`}
+          chapter="§ Govern"
           subtitle="Delegate fine-grained permission to change platform settings. Grants are bounded to known keys or groups — they never grant generic IAM or the ability to mint further grants."
-          title="Configuration grants."
+          title="Configuration grants"
         />
       </div>
 
       <section className="fade-up stagger-1">
         <SectionHeader number="01" title="Create a grant" />
         <Card variant="inset">
-          {formError && <p className="mb-3 font-mono text-[11px] text-brick-400">{formError}</p>}
-          {formSuccess && <p className="mb-3 font-mono text-[11px] text-moss-400">{formSuccess}</p>}
+          {formError && <Alert className="mb-3">{formError}</Alert>}
+          {formSuccess && (
+            <Alert className="mb-3" variant="success">
+              {formSuccess}
+            </Alert>
+          )}
           <form className="space-y-4" onSubmit={handleCreate}>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <Input
@@ -160,7 +162,7 @@ export default function GovernConfigGrantsPage() {
             </div>
             <div className="flex items-center gap-3">
               <Button disabled={createGrant.isPending} size="md" type="submit" variant="primary">
-                {createGrant.isPending ? 'Creating…' : 'Create grant →'}
+                {createGrant.isPending ? 'Creating…' : 'Create grant'}
               </Button>
               {preview.isFetching && (
                 <span className="font-mono text-[11px] text-paper-500">preview…</span>
@@ -173,13 +175,11 @@ export default function GovernConfigGrantsPage() {
             preview.data.keyPattern === pattern &&
             pattern.length > 0 && (
               <div className="mt-5 border-t border-ink-600 pt-4">
-                <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                  Effective permission preview
-                </p>
+                <p className="label-mono mb-2">Effective permission preview</p>
                 <p className="mb-2 text-sm text-paper-200">
-                  <span className="rounded bg-ink-600 px-1.5 py-0.5 font-mono text-[11px]">
+                  <Badge className="text-[11px]" tone="neutral">
                     {preview.data.keys.length}
-                  </span>{' '}
+                  </Badge>{' '}
                   matching keys
                   {preview.data.requiredRole && (
                     <>
@@ -190,9 +190,7 @@ export default function GovernConfigGrantsPage() {
                   )}
                 </p>
                 {preview.data.keys.length === 0 && (
-                  <p className="text-xs text-brick-400">
-                    Pattern does not match any known setting.
-                  </p>
+                  <Alert variant="warning">Pattern does not match any known setting.</Alert>
                 )}
                 {preview.data.keys.length > 0 && (
                   <ul className="max-h-48 overflow-y-auto rounded border border-ink-600 bg-ink-900/40 p-2 text-xs">
@@ -209,9 +207,7 @@ export default function GovernConfigGrantsPage() {
               </div>
             )}
           {preview.isError && pattern.length > 0 && (
-            <p className="mt-3 font-mono text-[11px] text-brick-400">
-              {errMsg(preview.error, 'preview failed')}
-            </p>
+            <Alert className="mt-3">{errMsg(preview.error, 'preview failed')}</Alert>
           )}
         </Card>
       </section>
@@ -230,55 +226,59 @@ export default function GovernConfigGrantsPage() {
       <section className="fade-up stagger-3">
         <SectionHeader number="03" title="Active grants" />
         <Card className="overflow-hidden p-0" variant="inset">
-          {(grants ?? []).length === 0 ? (
-            <p className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-              no grants configured
-            </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
+          <QueryBoundary
+            error={loadError}
+            isError={isError}
+            isLoading={isLoading}
+            label="grants"
+            loadingMessage="loading grants…"
+          >
+            {(grants ?? []).length === 0 ? (
+              <EmptyState title="No grants configured." />
+            ) : (
+              <Table>
+                <THead>
                   <Th>Pattern</Th>
                   <Th>Scope</Th>
                   <Th>Grantee</Th>
                   <Th>Bound to</Th>
                   <Th>Created</Th>
                   <Th align="right">Actions</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {(grants ?? []).map((g) => (
-                  <tr className="border-b border-ink-600 last:border-b-0" key={g.id}>
-                    <td className="px-4 py-3 font-mono text-[11px] text-paper-200">
-                      {g.keyPattern}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[10px] uppercase text-paper-400">
-                      {g.scope}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-paper-300">
-                      {g.user?.email ?? g.role ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-paper-500">
-                      {g.team?.name ?? g.organization?.name ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
-                      {formatRelativeTime(g.createdAt)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Button
-                        disabled={revokeGrant.isPending}
-                        onClick={() => setRevokeTarget(g)}
-                        size="sm"
-                        variant="danger"
-                      >
-                        Revoke
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </THead>
+                <tbody>
+                  {(grants ?? []).map((g) => (
+                    <TRow key={g.id}>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-200">
+                        {g.keyPattern}
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[10px] uppercase text-paper-400">
+                        {g.scope}
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-300">
+                        {g.user?.email ?? g.role ?? '—'}
+                      </Td>
+                      <Td className="px-4 py-3 text-xs text-paper-500">
+                        {g.team?.name ?? g.organization?.name ?? '—'}
+                      </Td>
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                        {formatRelativeTime(g.createdAt)}
+                      </Td>
+                      <Td className="px-4 py-3 text-right">
+                        <Button
+                          disabled={revokeGrant.isPending}
+                          onClick={() => setRevokeTarget(g)}
+                          size="sm"
+                          variant="danger"
+                        >
+                          Revoke
+                        </Button>
+                      </Td>
+                    </TRow>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </QueryBoundary>
         </Card>
       </section>
 

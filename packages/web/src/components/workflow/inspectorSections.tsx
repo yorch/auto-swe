@@ -10,8 +10,10 @@
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
 import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
 import { OnFailSection, SchemaAwareForm } from './inspectorFields';
@@ -41,6 +43,7 @@ export function StepConfigSection({
         ))}
       </datalist>
       <Input
+        compact
         hint={stepMeta?.label ?? 'type or pick a step from the registry'}
         label="Step"
         list="step-registry-datalist"
@@ -67,14 +70,12 @@ export function StepConfigSection({
         />
       )}
       {stepMeta && stepMeta.configFields.length === 0 && (
-        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-          — no configurable fields —
-        </p>
+        <EmptyState className="py-0 text-left text-xs" title="No configurable fields." />
       )}
       {node.step && !stepMeta && (
-        <p className="font-mono text-[10px] uppercase tracking-wider text-amber-400">
-          ! Step not in registry — config schema unknown
-        </p>
+        <Alert className="text-xs" variant="warning">
+          Step not in registry — config schema unknown
+        </Alert>
       )}
       <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
@@ -84,6 +85,7 @@ export function StepConfigSection({
 export function CondSection({ expr, onChange }: { expr: string; onChange: (v: string) => void }) {
   return (
     <Input
+      compact
       hint="JS-like expression evaluated against the workflow context"
       label="Expression"
       onChange={(e) => onChange(e.target.value)}
@@ -107,12 +109,14 @@ export function SignalSection({
   return (
     <div className="space-y-3">
       <Input
+        compact
         label="Signal name"
         onChange={(e) => onNameChange(e.target.value)}
         placeholder="e.g. human.approval"
         value={name}
       />
       <Input
+        compact
         hint="Duration string — fires onTimeout if exceeded"
         label="Timeout"
         onChange={(e) => onTimeoutChange(e.target.value)}
@@ -148,6 +152,7 @@ export function FanOutSection({
   return (
     <div className="space-y-3">
       <Input
+        compact
         hint="Context path that yields the parallel items (array)"
         label="Over (from path)"
         onChange={(e) => onChange({ ...node, over: { from: e.target.value } })}
@@ -155,6 +160,7 @@ export function FanOutSection({
         value={overFrom}
       />
       <Input
+        compact
         hint="Name each element is bound under inside the per-branch context"
         label="Item key"
         onChange={(e) => onChange({ ...node, itemKey: e.target.value })}
@@ -162,7 +168,7 @@ export function FanOutSection({
         value={node.itemKey ?? 'subtask'}
       />
       <Select
-        className="h-9 px-2 font-mono text-xs"
+        compact
         id="fanout-branch-fail"
         label="On branch fail"
         onChange={(e) => {
@@ -176,61 +182,47 @@ export function FanOutSection({
         <option value="block">Block (default) — stop on first failure</option>
         <option value="continue">Continue — collect all results</option>
       </Select>
-      <div>
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-          htmlFor="fanout-concurrency"
-        >
-          Max concurrency
-        </label>
-        <input
-          className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
-          id="fanout-concurrency"
-          max={20}
-          min={1}
-          onChange={(e) => {
-            const v =
-              e.target.value === '' ? undefined : Math.max(1, Math.min(20, Number(e.target.value)));
-            onChange({ ...node, concurrency: v });
-          }}
-          placeholder="4 (default)"
-          type="number"
-          value={node.concurrency ?? ''}
-        />
-      </div>
       <Input
+        compact
+        id="fanout-concurrency"
+        label="Max concurrency"
+        max={20}
+        min={1}
+        onChange={(e) => {
+          const v =
+            e.target.value === '' ? undefined : Math.max(1, Math.min(20, Number(e.target.value)));
+          onChange({ ...node, concurrency: v });
+        }}
+        placeholder="4 (default)"
+        type="number"
+        value={node.concurrency ?? ''}
+      />
+      <Input
+        compact
         hint="Dot-path projected from each branch result into output.plucked — e.g. result.branch"
         label="Pluck path"
         onChange={(e) => onChange({ ...node, pluck: e.target.value || undefined })}
         placeholder="result.branch"
         value={node.pluck ?? ''}
       />
-      <div>
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-          htmlFor="fanout-exports"
-        >
-          Exports <span className="normal-case text-paper-600">(one per line)</span>
-        </label>
-        <p className="mt-0.5 text-[10px] leading-snug text-paper-500">
-          Context paths that flow back to the parent scope after the fan-out joins.
-        </p>
-        <textarea
-          className="mt-1.5 h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
-          id="fanout-exports"
-          onBlur={() => {
-            const exports = exportsText
-              .split('\n')
-              .map((s) => s.trim())
-              .filter(Boolean);
-            onChange({ ...node, exports: exports.length > 0 ? exports : undefined });
-          }}
-          onChange={(e) => setExportsText(e.target.value)}
-          placeholder="ctx.result"
-          spellCheck={false}
-          value={exportsText}
-        />
-      </div>
+      <Textarea
+        className="h-20"
+        compact
+        hint="Context paths that flow back to the parent scope after the fan-out joins."
+        id="fanout-exports"
+        label="Exports (one per line)"
+        onBlur={() => {
+          const exports = exportsText
+            .split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          onChange({ ...node, exports: exports.length > 0 ? exports : undefined });
+        }}
+        onChange={(e) => setExportsText(e.target.value)}
+        placeholder="ctx.result"
+        spellCheck={false}
+        value={exportsText}
+      />
     </div>
   );
 }
@@ -244,34 +236,30 @@ export function ShellSection({
 }) {
   return (
     <div className="space-y-3">
-      <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-brick-400">
-        ⚠ shell — elevated privileges · team-admin authoring only
-      </div>
+      <Alert className="text-xs" variant="warning">
+        Shell — elevated privileges · team-admin authoring only
+      </Alert>
       <Input
+        compact
         hint="Must be on the team's image allowlist"
+        id="shell-image"
         label="Container image"
         onChange={(e) => onChange({ ...node, image: e.target.value })}
         placeholder="node:24-alpine"
         value={node.image ?? ''}
       />
-      <div>
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-          htmlFor="shell-command"
-        >
-          Command
-        </label>
-        <textarea
-          className="mt-1.5 h-24 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
-          id="shell-command"
-          onChange={(e) => onChange({ ...node, command: e.target.value })}
-          placeholder="echo hello"
-          spellCheck={false}
-          value={node.command ?? ''}
-        />
-      </div>
+      <Textarea
+        className="h-24"
+        compact
+        id="shell-command"
+        label="Command"
+        onChange={(e) => onChange({ ...node, command: e.target.value })}
+        placeholder="echo hello"
+        spellCheck={false}
+        value={node.command ?? ''}
+      />
       <Select
-        className="h-9 px-2 font-mono text-xs"
+        compact
         id="shell-network"
         label="Network"
         onChange={(e) => {
@@ -286,45 +274,31 @@ export function ShellSection({
         <option value="egress">Egress — outbound via team allowlist</option>
       </Select>
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label
-            className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-            htmlFor="shell-memory"
-          >
-            Memory limit
-          </label>
-          <input
-            className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
-            id="shell-memory"
-            onChange={(e) => onChange({ ...node, memory: e.target.value || undefined })}
-            placeholder="512m"
-            value={node.memory ?? ''}
-          />
-        </div>
-        <div>
-          <label
-            className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-            htmlFor="shell-cpus"
-          >
-            CPUs
-          </label>
-          <input
-            className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
-            id="shell-cpus"
-            max={8}
-            min={0.1}
-            onChange={(e) =>
-              onChange({
-                ...node,
-                cpus: e.target.value === '' ? undefined : Number(e.target.value),
-              })
-            }
-            placeholder="1"
-            step={0.1}
-            type="number"
-            value={node.cpus ?? ''}
-          />
-        </div>
+        <Input
+          compact
+          id="shell-memory"
+          label="Memory limit"
+          onChange={(e) => onChange({ ...node, memory: e.target.value || undefined })}
+          placeholder="512m"
+          value={node.memory ?? ''}
+        />
+        <Input
+          compact
+          id="shell-cpus"
+          label="CPUs"
+          max={8}
+          min={0.1}
+          onChange={(e) =>
+            onChange({
+              ...node,
+              cpus: e.target.value === '' ? undefined : Number(e.target.value),
+            })
+          }
+          placeholder="1"
+          step={0.1}
+          type="number"
+          value={node.cpus ?? ''}
+        />
       </div>
       <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
@@ -340,37 +314,31 @@ export function ContainerStepSection({
 }) {
   return (
     <div className="space-y-3">
-      <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-brick-400">
-        ⚠ container step — coded capability · team-admin authoring only
-      </div>
+      <Alert className="text-xs" variant="warning">
+        Container step — coded capability · team-admin authoring only
+      </Alert>
       <Input
+        compact
         hint="Must be on the team's image allowlist"
+        id="container-image"
         label="Container image"
         onChange={(e) => onChange({ ...node, image: e.target.value })}
         placeholder="ghcr.io/acme/my-capability:1.0"
         value={node.image ?? ''}
       />
-      <div>
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-          htmlFor="container-command"
-        >
-          Command
-          <span className="ml-2 text-paper-500">
-            — reads JSON from $CONTAINER_STEP_INPUT, prints a JSON result to stdout
-          </span>
-        </label>
-        <textarea
-          className="mt-1.5 h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
-          id="container-command"
-          onChange={(e) => onChange({ ...node, command: e.target.value || undefined })}
-          placeholder="node /app/run.js"
-          spellCheck={false}
-          value={node.command ?? ''}
-        />
-      </div>
+      <Textarea
+        className="h-20"
+        compact
+        hint="Reads JSON from $CONTAINER_STEP_INPUT, prints a JSON result to stdout"
+        id="container-command"
+        label="Command"
+        onChange={(e) => onChange({ ...node, command: e.target.value || undefined })}
+        placeholder="node /app/run.js"
+        spellCheck={false}
+        value={node.command ?? ''}
+      />
       <Select
-        className="h-9 px-2 font-mono text-xs"
+        compact
         id="container-network"
         label="Network"
         onChange={(e) => {
@@ -402,6 +370,7 @@ export function TerminateSection({
 }) {
   return (
     <Select
+      compact
       id="terminate-status"
       label="Status"
       onChange={(e) => {
@@ -444,39 +413,29 @@ export function SetSection({
   }, [serialized]);
 
   return (
-    <div>
-      <label
-        className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-        htmlFor="set-values"
-      >
-        Values (JSON)
-      </label>
-      <textarea
-        className="mt-1.5 h-40 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
-        id="set-values"
-        onBlur={() => {
-          try {
-            const parsed: unknown = JSON.parse(draft);
-            if (isRecord(parsed)) {
-              setErr(null);
-              onChange(parsed);
-            } else {
-              setErr('Must be a JSON object');
-            }
-          } catch (e) {
-            setErr(errMsg(e, 'invalid JSON'));
+    <Textarea
+      className="h-40"
+      compact
+      error={err ?? undefined}
+      id="set-values"
+      label="Values (JSON)"
+      onBlur={() => {
+        try {
+          const parsed: unknown = JSON.parse(draft);
+          if (isRecord(parsed)) {
+            setErr(null);
+            onChange(parsed);
+          } else {
+            setErr('Must be a JSON object');
           }
-        }}
-        onChange={(e) => setDraft(e.target.value)}
-        spellCheck={false}
-        value={draft}
-      />
-      {err && (
-        <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-brick-400">
-          ! {err}
-        </div>
-      )}
-    </div>
+        } catch (e) {
+          setErr(errMsg(e, 'invalid JSON'));
+        }
+      }}
+      onChange={(e) => setDraft(e.target.value)}
+      spellCheck={false}
+      value={draft}
+    />
   );
 }
 
@@ -487,48 +446,35 @@ export function AgentSection({
   node: Extract<SpecNode, { type: 'agent' }>;
   onChange: (next: SpecNode) => void;
 }) {
-  const textarea =
-    'h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 py-1 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400';
   return (
     <div className="space-y-4">
       <Input
+        compact
         hint="library agent: <key> or <key>@<version>"
         label="Agent reference"
         onChange={(e) => onChange({ ...node, agentRef: e.target.value })}
         value={node.agentRef}
       />
-      <div className="space-y-1">
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-          htmlFor="agent-user-message"
-        >
-          <span className="text-paper-200">userMessage</span>
-          <span className="ml-2 text-paper-500">— literal prompt (else node inputs as JSON)</span>
-        </label>
-        <textarea
-          className={textarea}
-          id="agent-user-message"
-          onChange={(e) => onChange({ ...node, userMessage: e.target.value || undefined })}
-          spellCheck={false}
-          value={node.userMessage ?? ''}
-        />
-      </div>
-      <div className="space-y-1">
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-          htmlFor="agent-system-prompt"
-        >
-          <span className="text-paper-200">systemPrompt</span>
-          <span className="ml-2 text-paper-500">— per-node prompt override (optional)</span>
-        </label>
-        <textarea
-          className={textarea}
-          id="agent-system-prompt"
-          onChange={(e) => onChange({ ...node, systemPrompt: e.target.value || undefined })}
-          spellCheck={false}
-          value={node.systemPrompt ?? ''}
-        />
-      </div>
+      <Textarea
+        className="h-20"
+        compact
+        hint="Literal prompt (else node inputs as JSON)"
+        id="agent-user-message"
+        label="userMessage"
+        onChange={(e) => onChange({ ...node, userMessage: e.target.value || undefined })}
+        spellCheck={false}
+        value={node.userMessage ?? ''}
+      />
+      <Textarea
+        className="h-20"
+        compact
+        hint="Per-node prompt override (optional)"
+        id="agent-system-prompt"
+        label="systemPrompt"
+        onChange={(e) => onChange({ ...node, systemPrompt: e.target.value || undefined })}
+        spellCheck={false}
+        value={node.systemPrompt ?? ''}
+      />
       <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
   );
@@ -552,6 +498,7 @@ export function McpSection({
         <Alert>{errMsg(connectionsError, 'Failed to load MCP connections')}</Alert>
       )}
       <Select
+        compact
         hint="Choose an active MCP connection (managed at /studio/mcp)"
         label="Connection"
         onChange={(e) => onChange({ ...node, connectionRef: e.target.value })}
@@ -567,9 +514,10 @@ export function McpSection({
         ))}
       </Select>
       {!connectionsLoading && !connectionsError && (connections ?? []).length === 0 && (
-        <p className="text-sm text-paper-500">No MCP connections configured.</p>
+        <EmptyState className="py-0 text-left text-xs" title="No MCP connections configured." />
       )}
       <Input
+        compact
         hint="tool name exposed by the MCP server; its args come from Inputs below"
         label="Tool"
         onChange={(e) => onChange({ ...node, tool: e.target.value })}

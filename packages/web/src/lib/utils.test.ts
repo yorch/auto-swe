@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatCents,
   formatCost,
   formatDate,
   formatDuration,
@@ -118,6 +119,16 @@ describe('formatCost', () => {
 
   it('formats representable amounts as USD', () => {
     expect(formatCost(1234.5)).toBe(ref.usd.format(1234.5));
+  });
+});
+
+describe('formatCents', () => {
+  it('renders zero as a real amount, unlike formatCost', () => {
+    expect(formatCents(0)).toBe(ref.usd.format(0));
+  });
+
+  it('converts cents to dollars', () => {
+    expect(formatCents(123_456)).toBe(ref.usd.format(1234.56));
   });
 });
 

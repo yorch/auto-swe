@@ -1,10 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Button } from '@/components/ui/Button';
+import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type SlackConfigInput,
   testSlackConnection,
@@ -15,7 +19,7 @@ import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { useSlackWorkspaces } from '@/hooks/useSlackChannels';
 import { API_BASE } from '@/lib/config';
 import { ConfigField } from './ConfigField';
-import { RestartWarning } from './RestartWarning';
+import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
 import { UrlRow } from './UrlRow';
 
@@ -25,7 +29,7 @@ interface SlackTabProps {
 }
 
 export function SlackTab({ installedTeamId }: SlackTabProps) {
-  const { data: resp, isLoading } = useSlackConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useSlackConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateSlackConfig();
@@ -73,8 +77,15 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
     runTest(() => testSlackConnection());
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="Slack config"
+      />
+    );
   }
 
   return (
@@ -94,8 +105,8 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
             label="Client ID"
             source={sources.clientId}
           >
-            <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+            <Input
+              compact
               id="slack-client-id"
               onChange={(e) => setClientId(e.target.value)}
               placeholder="1234567890.123456789012"
@@ -141,11 +152,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
           </Button>
         </div>
 
-        {testResult && (
-          <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
-            {testResult.ok ? '✓' : '✗'} {testResult.detail}
-          </p>
-        )}
+        <TestResultAlert result={testResult} />
       </Card>
 
       <WorkspaceInstallCard installedTeamId={installedTeamId} />
@@ -164,15 +171,12 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
         </div>
       </Card>
 
-      {requiresRestart && <RestartWarning />}
-      {saved && !requiresRestart && <p className="text-sm text-moss-400">Settings saved.</p>}
-      {error && <p className="text-sm text-brick-400">{error}</p>}
-
-      <div className="flex justify-end">
-        <Button disabled={update.isPending} type="submit" variant="primary">
-          {update.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      <IntegrationFormFooter
+        error={error}
+        isPending={update.isPending}
+        requiresRestart={requiresRestart}
+        saved={saved}
+      />
     </form>
   );
 }
@@ -185,7 +189,12 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
  * form) so navigating to the install endpoint doesn't trip the form submit.
  */
 function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
-  const { data: workspaces, isLoading } = useSlackWorkspaces();
+  const {
+    data: workspaces,
+    error: workspacesError,
+    isError: workspacesIsError,
+    isLoading,
+  } = useSlackWorkspaces();
 
   return (
     <Card>
@@ -198,30 +207,30 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
       </p>
 
       {installedTeamId && (
-        <p className="mb-4 text-sm text-moss-400">
-          ✓ Installed into workspace <span className="font-mono">{installedTeamId}</span>.
-        </p>
+        <Alert className="mb-4" variant="success">
+          Installed into workspace <span className="font-mono">{installedTeamId}</span>.
+        </Alert>
       )}
 
       <div className="mb-4">
-        <a
-          className="inline-block rounded-sm bg-ember-500 px-4 py-2 text-sm font-medium text-ink-950 hover:bg-ember-400"
-          href={`${API_BASE}/api/v1/auth/slack/install`}
-        >
+        <ButtonLink href={`${API_BASE}/api/v1/auth/slack/install`} variant="primary">
           Add to Slack
-        </a>
+        </ButtonLink>
       </div>
 
       {isLoading ? (
         <LoadingState compact message="loading workspaces…" />
+      ) : workspacesIsError ? (
+        <QueryBoundary error={workspacesError} isError isLoading={false} label="workspaces" />
       ) : !workspaces || workspaces.length === 0 ? (
         <EmptyState className="py-0 text-left text-paper-500" title="No workspaces yet." />
       ) : (
         <div className="space-y-2">
           {workspaces.map((w) => (
-            <div
-              className="flex items-center justify-between rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 text-xs"
+            <Card
+              className="flex items-center justify-between px-3 py-2 text-xs"
               key={w.workspaceId}
+              variant="inset"
             >
               <div className="flex flex-col">
                 <span className="font-mono text-paper-300">{w.name ?? w.slackTeamId}</span>
@@ -230,13 +239,13 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
                 </span>
               </div>
               {w.installed ? (
-                <span className="text-moss-400">
+                <Badge tone="moss">
                   Installed{w.tokenLastFour ? ` · …${w.tokenLastFour}` : ''}
-                </span>
+                </Badge>
               ) : (
-                <span className="text-paper-500">Singleton fallback</span>
+                <Badge tone="muted">Singleton fallback</Badge>
               )}
-            </div>
+            </Card>
           ))}
         </div>
       )}

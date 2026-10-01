@@ -64,7 +64,7 @@ describe('SkillRefEditor', () => {
       />
     );
 
-    fireEvent.click(screen.getAllByRole('button', { name: '×' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove tdd' }));
 
     expect(onChange).toHaveBeenCalledWith([{ skillId: 's2', sortOrder: 0 }]);
   });
@@ -82,7 +82,7 @@ describe('SkillRefEditor', () => {
       />
     );
 
-    fireEvent.click(screen.getAllByRole('button', { name: '↓' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Move tdd down' }));
 
     expect(onChange).toHaveBeenCalledWith([
       { skillId: 's2', sortOrder: 0 },

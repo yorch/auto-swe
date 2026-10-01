@@ -19,19 +19,19 @@ interface ConfigFieldProps {
 }
 
 /**
- * Label chrome for a field on the admin integrations tabs: the uppercase
+ * Label chrome for a field on the admin integrations tabs: the `label-mono`
  * caption, the db/env `SourceBadge`, and the echo of what the backend already
- * holds. `SecretInput` renders the same chrome for masked fields; this covers
- * every other control, which is why it takes the control as children rather
- * than owning an `<input>` — the tabs use inputs, selects and a textarea.
+ * holds. The control is the child — an `Input` / `Select` / `Textarea` with
+ * `compact`, no `label` of its own, and the same `id`. `SecretInput` is this
+ * chrome around a masked `Input`.
  */
 export function ConfigField({ id, label, source, current, note, children }: ConfigFieldProps) {
   const showCurrent =
     current !== undefined && current !== null && current !== false && current !== '';
 
   return (
-    <div>
-      <label className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500" htmlFor={id}>
+    <div className="space-y-1.5">
+      <label className="label-mono flex items-center gap-2" htmlFor={id}>
         {label}
         <SourceBadge source={source} />
         {showCurrent && (

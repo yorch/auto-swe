@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { Badge } from '@/components/ui/Badge';
+import { Card } from '@/components/ui/Card';
 
 interface RunOutcomeCardProps {
   result: unknown;
@@ -35,7 +37,7 @@ function isSafeWebUrl(value: string): boolean {
 function OutcomeLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
-      className="inline-flex items-center gap-1 text-ember-400 hover:text-ember-300 transition-colors"
+      className="inline-flex items-center gap-1 text-ember-400 transition-colors hover:text-ember-600"
       href={href}
       rel="noopener noreferrer"
       target="_blank"
@@ -43,7 +45,7 @@ function OutcomeLink({ href, label }: { href: string; label: string }) {
       <span className="truncate max-w-[220px]" title={href}>
         {label}
       </span>
-      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>↗</span>
+      <span className="font-mono text-[11px]">↗</span>
     </Link>
   );
 }
@@ -62,8 +64,8 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
   ) {
     const pageId = typeof result.targetPageId === 'string' ? result.targetPageId : undefined;
     return (
-      <div className="border border-ink-600/40 rounded-md p-3 bg-ink-900/40">
-        <div className="kicker mb-2 text-paper-500">Outcome</div>
+      <Card className="p-3" variant="inset">
+        <div className="label-mono mb-2">Outcome</div>
         {pageId ? (
           <div className="mb-2">
             <OutcomeLink href={notionUrl(pageId)} label={`Notion page ${pageId}`} />
@@ -72,27 +74,22 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
         <p className="text-paper-300 text-[12px] leading-relaxed whitespace-pre-wrap">
           {truncate(result.text)}
         </p>
-      </div>
+      </Card>
     );
   }
 
   if (name === 'zendesk-ticket-reply') {
     const ticketId = typeof result.ticketId === 'string' ? result.ticketId : undefined;
     return (
-      <div className="border border-ink-600/40 rounded-md p-3 bg-ink-900/40">
-        <div className="kicker mb-2 text-paper-500">Outcome</div>
+      <Card className="p-3" variant="inset">
+        <div className="label-mono mb-2">Outcome</div>
         {ticketId ? (
-          <div
-            className="mb-2 text-paper-300 text-[12px]"
-            style={{ fontFamily: 'var(--font-mono)' }}
-          >
-            Ticket {ticketId}
-          </div>
+          <div className="mb-2 font-mono text-[12px] text-paper-300">Ticket {ticketId}</div>
         ) : null}
         <p className="text-paper-300 text-[12px] leading-relaxed whitespace-pre-wrap">
           {truncate(result.text)}
         </p>
-      </div>
+      </Card>
     );
   }
 
@@ -100,25 +97,16 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
     const channelId = typeof result.channelId === 'string' ? result.channelId : undefined;
     const posted = result.posted === true;
     return (
-      <div className="border border-ink-600/40 rounded-md p-3 bg-ink-900/40">
-        <div className="kicker mb-2 text-paper-500">Outcome</div>
+      <Card className="p-3" variant="inset">
+        <div className="label-mono mb-2">Outcome</div>
         <div className="flex items-center gap-2 mb-2 text-[12px]">
-          {channelId ? (
-            <span className="text-paper-300" style={{ fontFamily: 'var(--font-mono)' }}>
-              #{channelId}
-            </span>
-          ) : null}
-          <span
-            className={posted ? 'text-success-400' : 'text-ember-400'}
-            style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-          >
-            {posted ? 'posted' : 'not posted'}
-          </span>
+          {channelId ? <span className="font-mono text-paper-300">#{channelId}</span> : null}
+          <Badge tone={posted ? 'moss' : 'amber'}>{posted ? 'posted' : 'not posted'}</Badge>
         </div>
         <p className="text-paper-300 text-[12px] leading-relaxed whitespace-pre-wrap">
           {truncate(result.text)}
         </p>
-      </div>
+      </Card>
     );
   }
 
@@ -127,8 +115,8 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
     const issueUrl = rawIssueUrl && isSafeWebUrl(rawIssueUrl) ? rawIssueUrl : undefined;
     const title = typeof result.title === 'string' ? result.title : undefined;
     return (
-      <div className="border border-ink-600/40 rounded-md p-3 bg-ink-900/40">
-        <div className="kicker mb-2 text-paper-500">Outcome</div>
+      <Card className="p-3" variant="inset">
+        <div className="label-mono mb-2">Outcome</div>
         {issueUrl ? (
           <div className="mb-2">
             <OutcomeLink href={issueUrl} label={title ?? issueUrl} />
@@ -137,7 +125,7 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
         <p className="text-paper-300 text-[12px] leading-relaxed whitespace-pre-wrap">
           {truncate(result.description)}
         </p>
-      </div>
+      </Card>
     );
   }
 

@@ -45,7 +45,7 @@ describe('RepoDependencySuggestions', () => {
 
   it('shows an error message', () => {
     render(<RepoDependencySuggestions error={new Error('boom')} isError suggestions={undefined} />);
-    expect(screen.getByText('boom')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('boom');
   });
 
   it('shows the empty state when there are no suggestions', () => {

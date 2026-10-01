@@ -9,6 +9,7 @@ import { IssueTrackerTab } from '@/components/integrations/IssueTrackerTab';
 import { KnowledgeBaseTab } from '@/components/integrations/KnowledgeBaseTab';
 import { OAuthTab } from '@/components/integrations/OAuthTab';
 import { SlackTab } from '@/components/integrations/SlackTab';
+import { SourceBadge } from '@/components/integrations/SourceBadge';
 import { StorageTab } from '@/components/integrations/StorageTab';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar } from '@/components/ui/TabBar';
@@ -57,19 +58,18 @@ function StudioIntegrationsPageInner() {
   const installedSlackTeamId = searchParams.get('slack_installed');
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
+        chapter="§ Studio"
         subtitle={
           <>
             Configure GitHub, Slack, storage backend, issue tracker, and OAuth provider credentials.
             Masked fields show only the last four characters — enter a new value to rotate. An{' '}
-            <span className="rounded bg-amber-900/40 px-1 font-mono text-[10px] text-amber-400">
-              env
-            </span>{' '}
-            badge means the value is currently read from an environment variable.
+            <SourceBadge source="env" /> badge means the value is currently read from an environment
+            variable.
           </>
         }
-        title="Admin — Integrations"
+        title="Integrations"
       />
       <TabBar active={active} onChange={setActive} tabs={TABS} />
       {active === 'github' && <GitHubTab />}

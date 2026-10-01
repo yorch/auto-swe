@@ -1,7 +1,61 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Button } from './Button';
+
+/**
+ * The action row every modal ends with: a `ghost` Cancel on the left of the
+ * primary action, right-aligned. Without `onSubmit` the primary button is
+ * `type="submit"`, so a modal whose body is a `<form>` submits on Enter;
+ * with it, the button is a plain click target. `isPending` disables the
+ * action and swaps in `pendingLabel` (default: `submitLabel` + "…").
+ * `children` render on the left of the row — a status line, a secondary
+ * link, or a destructive action that sits apart from the pair. Leave out
+ * `submitLabel` for a read-only modal: the row is then a single
+ * `secondary` button (pass `cancelLabel="Close"`), since a lone ghost
+ * button reads as disabled.
+ */
+export function ModalFooter({
+  cancelLabel = 'Cancel',
+  children,
+  dangerous = false,
+  disabled = false,
+  isPending = false,
+  onCancel,
+  onSubmit,
+  pendingLabel,
+  submitLabel,
+}: {
+  cancelLabel?: string;
+  children?: ReactNode;
+  dangerous?: boolean;
+  disabled?: boolean;
+  isPending?: boolean;
+  onCancel: () => void;
+  onSubmit?: () => void;
+  pendingLabel?: string;
+  submitLabel?: string;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
+      {children && <div className="mr-auto min-w-0">{children}</div>}
+      <Button onClick={onCancel} type="button" variant={submitLabel ? 'ghost' : 'secondary'}>
+        {cancelLabel}
+      </Button>
+      {submitLabel && (
+        <Button
+          disabled={disabled || isPending}
+          onClick={onSubmit}
+          type={onSubmit ? 'button' : 'submit'}
+          variant={dangerous ? 'danger' : 'primary'}
+        >
+          {isPending ? (pendingLabel ?? `${submitLabel}…`) : submitLabel}
+        </Button>
+      )}
+    </div>
+  );
+}
 
 export function Modal({
   open,

@@ -1,12 +1,15 @@
 'use client';
 
 import { useState } from 'react';
+import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
+import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -69,56 +72,52 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
   }
 
   return (
-    <Modal eyebrow="Admin / Scanner" onClose={onClose} open={open} title="New Scanner Pattern">
+    <Modal onClose={onClose} open={open} title="New scanner pattern">
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <FieldWrapper label="Label">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-            placeholder="my-custom-pattern"
-            required
-            value={form.label}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Type">
-          <Select
-            onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
-            value={form.type}
-          >
-            {patternTypeOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-        </FieldWrapper>
-        <FieldWrapper label="Pattern (regex source)">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
-            placeholder="my\s+pattern"
-            required
-            value={form.pattern}
-          />
-        </FieldWrapper>
-        <FieldWrapper
-          hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
-          label="Flags"
+        <Input
+          id="scanner-new-label"
+          label="Label"
+          onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+          placeholder="my-custom-pattern"
+          required
+          value={form.label}
+        />
+        <Select
+          id="scanner-new-type"
+          label="Type"
+          onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
+          value={form.type}
         >
-          <Input
-            maxLength={10}
-            onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
-            placeholder="i"
-            value={form.flags}
-          />
-        </FieldWrapper>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={create.isPending} type="submit" variant="primary">
-            {create.isPending ? 'Creating…' : 'Create Pattern'}
-          </Button>
-        </div>
+          {patternTypeOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
+        <Input
+          id="scanner-new-pattern"
+          label="Pattern (regex source)"
+          onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
+          placeholder="my\s+pattern"
+          required
+          value={form.pattern}
+        />
+        <Input
+          hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
+          id="scanner-new-flags"
+          label="Flags"
+          maxLength={10}
+          onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
+          placeholder="i"
+          value={form.flags}
+        />
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          isPending={create.isPending}
+          onCancel={onClose}
+          pendingLabel="Creating…"
+          submitLabel="Create pattern"
+        />
       </form>
     </Modal>
   );
@@ -181,7 +180,6 @@ function PatternDetailModal({
 
   return (
     <Modal
-      eyebrow="Admin / Scanner"
       onClose={() => {
         setEditing(false);
         onClose();
@@ -192,87 +190,68 @@ function PatternDetailModal({
     >
       {editing ? (
         <form className="space-y-4" onSubmit={handleSave}>
-          <FieldWrapper label="Label">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-              required
-              value={form.label}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Type">
-            <Select
-              onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
-              value={form.type}
-            >
-              {patternTypeOptions.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </FieldWrapper>
-          <FieldWrapper label="Pattern (regex source)">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
-              required
-              value={form.pattern}
-            />
-          </FieldWrapper>
-          <FieldWrapper
-            hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
-            label="Flags"
+          <Input
+            id="scanner-edit-label"
+            label="Label"
+            onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+            required
+            value={form.label}
+          />
+          <Select
+            id="scanner-edit-type"
+            label="Type"
+            onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
+            value={form.type}
           >
-            <Input
-              maxLength={10}
-              onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
-              value={form.flags}
-            />
-          </FieldWrapper>
-          {error && <p className="text-xs text-brick-400">{error}</p>}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button onClick={cancelEdit} type="button" variant="ghost">
-              Cancel
-            </Button>
-            <Button disabled={update.isPending} type="submit" variant="primary">
-              {update.isPending ? 'Saving…' : 'Save Changes'}
-            </Button>
-          </div>
+            {patternTypeOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
+          <Input
+            id="scanner-edit-pattern"
+            label="Pattern (regex source)"
+            onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
+            required
+            value={form.pattern}
+          />
+          <Input
+            hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
+            id="scanner-edit-flags"
+            label="Flags"
+            maxLength={10}
+            onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
+            value={form.flags}
+          />
+          {error && <Alert>{error}</Alert>}
+          <ModalFooter
+            isPending={update.isPending}
+            onCancel={cancelEdit}
+            pendingLabel="Saving…"
+            submitLabel="Save changes"
+          />
         </form>
       ) : (
         <div className="space-y-5">
-          <div className="flex flex-wrap gap-2 text-xs">
-            {pattern.isBuiltIn && (
-              <span className="rounded bg-ink-600 px-2 py-0.5 font-mono uppercase tracking-wider text-paper-400">
-                built-in
-              </span>
-            )}
-            {pattern.origin && (
-              <span className="rounded bg-ink-600 px-2 py-0.5 font-mono text-paper-400">
-                origin: {pattern.origin}
-              </span>
-            )}
-            <span className="rounded bg-ink-600 px-2 py-0.5 font-mono text-paper-400">
+          <EntityMetaBadges
+            isActive={pattern.isActive}
+            isBuiltIn={pattern.isBuiltIn}
+            origin={pattern.origin}
+          >
+            <Badge tone="neutral">
               {patternTypeOptions.find((o) => o.value === pattern.type)?.label ?? pattern.type}
-            </span>
-            <span
-              className={`rounded px-2 py-0.5 font-mono ${
-                pattern.isActive ? 'bg-ember-900/40 text-ember-400' : 'bg-ink-600 text-paper-500'
-              }`}
-            >
-              {pattern.isActive ? 'active' : 'inactive'}
-            </span>
-          </div>
+            </Badge>
+          </EntityMetaBadges>
 
           <div>
-            <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-paper-500">
-              Regex Pattern
-            </div>
-            <pre className="overflow-x-auto rounded-sm border border-ink-600 bg-ink-800 p-3 font-mono text-sm text-paper-200 whitespace-pre-wrap break-all">
+            <div className="label-mono mb-1.5">Regex pattern</div>
+            <pre className="overflow-x-auto rounded-sm border border-ink-600 bg-ink-900 p-3 font-mono text-sm text-paper-200 whitespace-pre-wrap break-all">
               /{pattern.pattern}/{pattern.flags}
             </pre>
           </div>
 
-          <div className="flex items-center justify-between border-t border-ink-700 pt-4">
+          <div className="flex items-center justify-between border-t border-ink-600 pt-4">
             <div className="space-y-0.5 text-xs text-paper-500">
               <div>Created {formatDate(pattern.createdAt)}</div>
               <div>Updated {formatDate(pattern.updatedAt)}</div>
@@ -296,9 +275,15 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
   const [viewTarget, setViewTarget] = useState<ScannerPattern | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScannerPattern | null>(null);
   const deletePattern = useDeleteScannerPattern();
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
-  function toggleActive() {
-    update.mutate({ id: pattern.id, isActive: !pattern.isActive });
+  async function toggleActive() {
+    setToggleError(null);
+    try {
+      await update.mutateAsync({ id: pattern.id, isActive: !pattern.isActive });
+    } catch (err) {
+      setToggleError(errMsg(err, `Failed to update "${pattern.label}"`));
+    }
   }
 
   return (
@@ -313,9 +298,9 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
             {pattern.label}
           </button>
           {pattern.origin && (
-            <span className="ml-1.5 rounded bg-ink-600 px-1 py-0.5 font-mono text-[10px] text-paper-400">
+            <Badge className="ml-1.5" tone="neutral">
               {pattern.origin}
-            </span>
+            </Badge>
           )}
         </Td>
         <Td className="max-w-xs py-2 pr-4">
@@ -325,9 +310,9 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
         </Td>
         <Td className="py-2 pr-4">
           {pattern.isBuiltIn && (
-            <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+            <Badge tone="muted" uppercase variant="text">
               built-in
-            </span>
+            </Badge>
           )}
         </Td>
         <Td className="py-2 pr-4">
@@ -336,6 +321,7 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
             disabled={update.isPending}
             onChange={toggleActive}
           />
+          {toggleError && <Alert className="mt-2 text-xs">{toggleError}</Alert>}
         </Td>
         <Td className="py-2 text-right">
           <div className="flex items-center justify-end gap-2">
@@ -382,12 +368,12 @@ function PatternSection({
 }) {
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className={description ? 'mb-1' : undefined}>
         <CardTitle>{title}</CardTitle>
-        {description && <p className="mt-1 text-xs text-paper-400">{description}</p>}
       </CardHeader>
+      {description && <p className="mb-4 text-xs text-paper-400">{description}</p>}
       {patterns.length === 0 ? (
-        <div className="py-4 text-center text-sm text-paper-400">No patterns in this category.</div>
+        <EmptyState className="py-4" title="No patterns in this category." />
       ) : (
         <Table>
           <THead>
@@ -421,15 +407,16 @@ export default function GovernScannerPage() {
   const sensitiveFile = patterns?.filter((p) => p.type === 'SENSITIVE_FILE') ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
-            + New Pattern
+            Create pattern
           </Button>
         }
+        chapter="§ Govern"
         subtitle="Regex patterns used across four scanning stages: skill content injection/exfiltration detection, shell command blocking in the agent workspace, and advisory code security findings fed to the security reviewer. Built-in patterns can be toggled but not deleted."
-        title="Scanner Patterns"
+        title="Scanner patterns"
       />
 
       <QueryBoundary
@@ -443,27 +430,27 @@ export default function GovernScannerPage() {
             <PatternSection
               description="Checked when custom skill content is saved. Detects attempts to override agent instructions."
               patterns={injection}
-              title="Injection Patterns"
+              title="Injection patterns"
             />
             <PatternSection
               description="Checked when custom skill content is saved. Detects attempts to exfiltrate data via skill prompts."
               patterns={exfiltration}
-              title="Exfiltration Patterns"
+              title="Exfiltration patterns"
             />
             <PatternSection
               description="Checked before each bash tool invocation. Dangerous matches are soft-blocked — the agent receives an error and can self-correct."
               patterns={shellCommand}
-              title="Shell Command Patterns"
+              title="Shell command patterns"
             />
             <PatternSection
               description="Checked against added lines in the final diff. Findings are advisory — passed to the security reviewer agent as structured context."
               patterns={codeSecurity}
-              title="Code Security Patterns"
+              title="Code security patterns"
             />
             <PatternSection
               description="Checked against file paths before each writeFile tool call. Matches are hard-blocked — the agent cannot write to the matched path."
               patterns={sensitiveFile}
-              title="Sensitive File Patterns"
+              title="Sensitive file patterns"
             />
           </>
         }

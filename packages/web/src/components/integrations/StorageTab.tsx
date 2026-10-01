@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { Input } from '@/components/ui/Input';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type StorageBackend,
   type StorageConfigInput,
@@ -13,11 +15,12 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { ConfigField } from './ConfigField';
+import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
 
 export function StorageTab() {
-  const { data: resp, isLoading } = useStorageConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useStorageConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateStorageConfig();
@@ -83,8 +86,15 @@ export function StorageTab() {
     runTest(() => testStorageConnection());
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="storage config"
+      />
+    );
   }
 
   return (
@@ -97,7 +107,7 @@ export function StorageTab() {
           <label className="flex cursor-pointer items-start gap-3">
             <input
               checked={backend === 'inline'}
-              className="mt-0.5 accent-ember-400"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-ember-400"
               name="storage-backend"
               onChange={() => setBackend('inline')}
               type="radio"
@@ -120,7 +130,7 @@ export function StorageTab() {
           <label className="flex cursor-pointer items-start gap-3">
             <input
               checked={backend === 's3'}
-              className="mt-0.5 accent-ember-400"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-ember-400"
               name="storage-backend"
               onChange={() => setBackend('s3')}
               type="radio"
@@ -144,8 +154,8 @@ export function StorageTab() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <ConfigField id="s3-bucket" label="Bucket" source={sources.s3Bucket}>
-                <input
-                  className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                <Input
+                  compact
                   id="s3-bucket"
                   onChange={(e) => setS3Bucket(e.target.value)}
                   placeholder="my-auto-swe-bucket"
@@ -153,8 +163,8 @@ export function StorageTab() {
                 />
               </ConfigField>
               <ConfigField id="s3-region" label="Region" source={sources.s3Region}>
-                <input
-                  className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                <Input
+                  compact
                   id="s3-region"
                   onChange={(e) => setS3Region(e.target.value)}
                   placeholder="us-east-1"
@@ -168,8 +178,8 @@ export function StorageTab() {
               note="(optional — leave blank for AWS)"
               source={sources.s3Endpoint}
             >
-              <input
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              <Input
+                compact
                 id="s3-endpoint"
                 onChange={(e) => setS3Endpoint(e.target.value)}
                 placeholder="https://s3.example.com"
@@ -182,33 +192,29 @@ export function StorageTab() {
               note="(optional)"
               source={sources.s3Prefix}
             >
-              <input
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              <Input
+                compact
                 id="s3-prefix"
                 onChange={(e) => setS3Prefix(e.target.value)}
                 placeholder="auto-swe/"
                 value={s3Prefix}
               />
             </ConfigField>
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                checked={s3ForcePathStyle}
-                className="accent-ember-400"
-                id="s3-force-path-style"
-                onChange={(e) => setS3ForcePathStyle(e.target.checked)}
-                type="checkbox"
-              />
-              <span className="text-sm text-paper-300">Force path-style URLs</span>
-              <span className="text-xs text-paper-500">
-                (required for Garage and Backblaze B2; leave off for AWS S3 and R2)
-              </span>
-              <SourceBadge source={sources.s3ForcePathStyle} />
-            </label>
+            <Checkbox
+              checked={s3ForcePathStyle}
+              hint="(required for Garage and Backblaze B2; leave off for AWS S3 and R2)"
+              id="s3-force-path-style"
+              label={
+                <span className="inline-flex items-center gap-2">
+                  Force path-style URLs
+                  <SourceBadge source={sources.s3ForcePathStyle} />
+                </span>
+              }
+              onChange={(e) => setS3ForcePathStyle(e.target.checked)}
+            />
 
-            <div className="border-t border-ink-700 pt-4">
-              <div className="mb-4 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-                Credentials
-              </div>
+            <div className="border-t border-ink-600 pt-4">
+              <div className="label-mono mb-4">Credentials</div>
               <div className="space-y-4">
                 <ConfigField
                   current={data?.awsAccessKeyId || undefined}
@@ -216,8 +222,8 @@ export function StorageTab() {
                   label="Access key ID"
                   source={sources.awsAccessKeyId}
                 >
-                  <input
-                    className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                  <Input
+                    compact
                     id="aws-access-key-id"
                     onChange={(e) => setAwsAccessKeyId(e.target.value)}
                     placeholder="AKIAIOSFODNN7EXAMPLE"
@@ -248,22 +254,11 @@ export function StorageTab() {
             </Button>
           </div>
 
-          {testResult && (
-            <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
-              {testResult.ok ? '✓' : '✗'} {testResult.detail}
-            </p>
-          )}
+          <TestResultAlert result={testResult} />
         </Card>
       )}
 
-      {saved && <p className="text-sm text-moss-400">Settings saved.</p>}
-      {error && <p className="text-sm text-brick-400">{error}</p>}
-
-      <div className="flex justify-end">
-        <Button disabled={update.isPending} type="submit" variant="primary">
-          {update.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
     </form>
   );
 }

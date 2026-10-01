@@ -75,9 +75,9 @@ describe('TracesTab', () => {
 
 /**
  * TraceOutput renders three different bodies — llm_response, activity_event
- * and the tool_call fallback — that share one <pre> treatment but disagree on
- * border radius and error tint. `TracePre`/`TraceErrorBanner` collapse the
- * markup while keeping those three renderings, so these pin the renderings.
+ * and the tool_call fallback. They share one <pre> treatment (`TracePre`) and
+ * one error banner (`TraceErrorBanner`, an error `Alert`); these pin that every
+ * branch renders through them.
  */
 describe('TraceOutput', () => {
   function expand(trace: AgentTraceRecord) {
@@ -92,7 +92,7 @@ describe('TraceOutput', () => {
     fireEvent.click(screen.getAllByRole('button')[0]);
   }
 
-  it('renders an llm_response Response body at 2px and truncates past the cap', () => {
+  it('renders an llm_response Response body and truncates past the cap', () => {
     // Distinct head and tail markers so a head-only cut is visibly wrong: a
     // truncated body's conclusion is at the end, so the cap keeps both ends.
     expand({
@@ -102,7 +102,7 @@ describe('TraceOutput', () => {
     });
 
     const pre = document.querySelector('pre') as HTMLPreElement;
-    expect(pre.style.borderRadius).toBe('2px');
+    expect(pre.className).toContain('bg-ink-900');
     expect(pre.textContent).toMatch(/^HEADx+\n… \d+ characters hidden …\nx+TAIL$/);
     expect((pre.textContent ?? '').length).toBeLessThan(3100);
   });
@@ -118,11 +118,11 @@ describe('TraceOutput', () => {
     expect(pres).toContain('short output');
   });
 
-  it('falls back to the 6px body when an llm_response carries no systemPrompt', () => {
+  it('falls back to the plain body when an llm_response carries no systemPrompt', () => {
     expand({ ...makeTrace('implement'), outputJson: { text: 'raw' } });
 
     const pre = document.querySelector('pre') as HTMLPreElement;
-    expect(pre.style.borderRadius).toBe('6px');
+    expect(pre.className).toContain('bg-ink-900');
     expect(pre.textContent).toBe('raw');
   });
 
@@ -141,7 +141,7 @@ describe('TraceOutput', () => {
     expect(document.querySelector('pre')).not.toBeNull();
   });
 
-  it('tints an activity_event error with the oklch banner at 2px', () => {
+  it('renders an activity_event error in the error alert', () => {
     expand({
       ...makeTrace('implement'),
       error: 'activity blew up',
@@ -149,12 +149,12 @@ describe('TraceOutput', () => {
       type: 'activity_event',
     });
 
-    const banner = screen.getByText('activity blew up');
-    expect(banner.style.borderRadius).toBe('2px');
-    expect(banner.style.background).toContain('oklch');
+    const banner = screen.getByRole('alert');
+    expect(banner.textContent).toContain('activity blew up');
+    expect(banner.className).toContain('text-brick-400');
   });
 
-  it('tints a tool_call error with the brick banner at 6px', () => {
+  it('renders a tool_call error in the same error alert', () => {
     expand({
       ...makeTrace('implement'),
       error: 'tool blew up',
@@ -163,10 +163,10 @@ describe('TraceOutput', () => {
       type: 'tool_call',
     });
 
-    const banner = screen.getByText('tool blew up');
-    expect(banner.style.borderRadius).toBe('6px');
-    expect(banner.style.background).toContain('rgba(255, 122, 122');
-    expect((document.querySelector('pre') as HTMLPreElement).style.borderRadius).toBe('6px');
+    const banner = screen.getByRole('alert');
+    expect(banner.textContent).toContain('tool blew up');
+    expect(banner.className).toContain('text-brick-400');
+    expect((document.querySelector('pre') as HTMLPreElement).textContent).toBe('stderr');
   });
 
   it('renders both the INPUT and the output block for an activity_event', () => {

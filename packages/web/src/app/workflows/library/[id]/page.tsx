@@ -4,28 +4,36 @@ import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchem
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { estimateSpecCost, parseWorkflowSpec } from '@auto-swe/shared/workflow';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { SparkleIcon, SparkleTextIcon } from '@/components/ui/icons';
 import { LoadingState } from '@/components/ui/LoadingState';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { TabBar } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { InputSchemaBuilder } from '@/components/workflow/InputSchemaBuilder';
+import { KeyValueRow } from '@/components/workflow/KeyValueRow';
 import { RefineChatPanel } from '@/components/workflow/RefineChatPanel';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { SchemaFormPreview } from '@/components/workflow/SchemaFormPreview';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
+import {
+  TemplateBackLink,
+  TemplateNotFound,
+  TemplateSubNav,
+} from '@/components/workflow/templateNav';
+import { VersionTags } from '@/components/workflow/VersionTags';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import {
   useCreateWorkflowVersion,
@@ -43,7 +51,7 @@ import {
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
-import { formatPercent, formatRelativeTime } from '@/lib/utils';
+import { formatCost, formatDuration, formatPercent, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
 interface PageProps {
@@ -51,14 +59,6 @@ interface PageProps {
 }
 
 type ViewMode = 'view' | 'edit' | 'json';
-type SubTab = 'editor' | 'analytics' | 'runs' | 'compare';
-
-const SUB_TABS: { id: SubTab; label: string }[] = [
-  { id: 'editor', label: 'Editor' },
-  { id: 'analytics', label: 'Analytics' },
-  { id: 'runs', label: 'Run history' },
-  { id: 'compare', label: 'Compare versions' },
-];
 
 function formatSpecError(err: unknown): string {
   if (err instanceof Error && 'issues' in err) {
@@ -169,23 +169,18 @@ function EditMetadataModal({
           type="number"
           value={estimatedMinutes ?? ''}
         />
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-paper-300">
-          <input
-            checked={defaultChecked}
-            className="rounded border-ink-400 bg-ink-900 text-ember-400 focus:ring-ember-400"
-            onChange={(e) => setDefaultChecked(e.target.checked)}
-            type="checkbox"
-          />
-          Set as default template
-        </label>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={onClose} variant="secondary">
-            Cancel
-          </Button>
-          <Button disabled={updateTemplate.isPending} onClick={handleSave} variant="primary">
-            {updateTemplate.isPending ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
+        <ToggleSwitch
+          checked={defaultChecked}
+          label="Set as default template"
+          onChange={() => setDefaultChecked((v) => !v)}
+        />
+        <ModalFooter
+          isPending={updateTemplate.isPending}
+          onCancel={onClose}
+          onSubmit={handleSave}
+          pendingLabel="Saving…"
+          submitLabel="Save changes"
+        />
       </div>
     </Modal>
   );
@@ -252,30 +247,28 @@ function EditSchemaModal({
         ) : (
           <InputSchemaBuilder key={builderKey} onChange={setSchema} value={schema ?? undefined} />
         )}
-        <div className="flex justify-end gap-2 border-t border-ink-600 pt-4">
-          <Button onClick={onClose} variant="secondary">
-            Cancel
-          </Button>
-          <Button
-            disabled={updateTemplate.isPending || preview}
-            onClick={handleSave}
-            variant="primary"
-          >
-            {updateTemplate.isPending ? 'Saving…' : 'Save schema'}
-          </Button>
-        </div>
+        <ModalFooter
+          disabled={preview}
+          isPending={updateTemplate.isPending}
+          onCancel={onClose}
+          onSubmit={handleSave}
+          pendingLabel="Saving…"
+          submitLabel="Save changes"
+        />
       </div>
     </Modal>
   );
 }
 
 function ExperimentCard({
+  number,
   templateId,
   versions,
   activeVersion,
   experimentVersion,
   experimentSplit,
 }: {
+  number: string;
   templateId: string;
   versions: { id: string; version: number }[];
   activeVersion: number | null;
@@ -320,11 +313,11 @@ function ExperimentCard({
 
   return (
     <Card variant="inset">
-      <SectionHeader hint="A/B" number="03" title="Experiment" />
+      <SectionHeader hint="A/B" number={number} title="Experiment" />
       {error && <Alert className="mb-3 text-xs">{error}</Alert>}
       <div className="space-y-3">
         <Select
-          className="h-9 px-2 font-mono text-xs"
+          compact
           label="Experiment version"
           onChange={(e) => setExpVer(e.target.value ? Number(e.target.value) : null)}
           value={expVer ?? ''}
@@ -338,10 +331,7 @@ function ExperimentCard({
         </Select>
         {expVer && (
           <div className="space-y-1">
-            <label
-              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-              htmlFor="exp-split"
-            >
+            <label className="label-mono block" htmlFor="exp-split">
               Traffic split (% to experiment)
             </label>
             <div className="flex items-center gap-3">
@@ -368,7 +358,7 @@ function ExperimentCard({
             size="sm"
             variant="primary"
           >
-            {saved ? 'Saved ✓' : updateTemplate.isPending ? 'Saving…' : 'Save'}
+            {saved ? 'Saved ✓' : updateTemplate.isPending ? 'Saving…' : 'Save changes'}
           </Button>
           {(experimentVersion || expVer) && (
             <Button onClick={handleClear} size="sm" variant="secondary">
@@ -414,7 +404,7 @@ function ExplainModal({
           </div>
         )}
         <div className="flex justify-end">
-          <Button onClick={onClose} variant="secondary">
+          <Button onClick={onClose} variant="ghost">
             Close
           </Button>
         </div>
@@ -423,10 +413,52 @@ function ExplainModal({
   );
 }
 
+/** Regenerate / Revoke for an existing webhook URL. Both invalidate the
+ *  current URL, so each goes through a confirmation. */
+function WebhookActions({
+  onRegenerate,
+  onRevoke,
+}: {
+  onRegenerate: () => Promise<void>;
+  onRevoke: () => Promise<void>;
+}) {
+  const [confirming, setConfirming] = useState<'regenerate' | 'revoke' | null>(null);
+  return (
+    <div className="flex gap-2">
+      <Button onClick={() => setConfirming('regenerate')} size="sm" variant="secondary">
+        Regenerate
+      </Button>
+      <Button onClick={() => setConfirming('revoke')} size="sm" variant="danger">
+        Revoke
+      </Button>
+      <ConfirmModal
+        confirmLabel="Regenerate"
+        dangerous
+        message="A new webhook URL is issued and the current URL stops working immediately. Anything calling the old URL must be updated."
+        onClose={() => setConfirming(null)}
+        onConfirm={onRegenerate}
+        open={confirming === 'regenerate'}
+        title="Regenerate webhook URL?"
+      />
+      <ConfirmModal
+        confirmLabel="Revoke"
+        dangerous
+        message="The current webhook URL stops working immediately. You can generate a new one later, but the old URL cannot be restored."
+        onClose={() => setConfirming(null)}
+        onConfirm={onRevoke}
+        open={confirming === 'revoke'}
+        title="Revoke webhook URL?"
+      />
+    </div>
+  );
+}
+
 function WebhookCard({
+  number,
   template,
   canManage,
 }: {
+  number: string;
   template: WorkflowTemplateSummary;
   canManage: boolean;
 }) {
@@ -452,47 +484,33 @@ function WebhookCard({
     }
   };
 
-  const handleRevoke = async () => {
+  // Confirmed from WebhookActions: errors propagate so the ConfirmModal shows them.
+  const confirmRegenerate = async () => {
     setError(null);
-    try {
-      await revoke.mutateAsync();
-      setFreshToken(null);
-    } catch (err) {
-      setError(errMsg(err, 'revoke failed'));
-    }
+    const { webhookToken } = await regenerate.mutateAsync();
+    setFreshToken(webhookToken);
+  };
+
+  const confirmRevoke = async () => {
+    setError(null);
+    await revoke.mutateAsync();
+    setFreshToken(null);
   };
 
   return (
     <Card variant="inset">
-      <SectionHeader hint="HTTP" number="04" title="Webhook trigger" />
+      <SectionHeader hint="HTTP" number={number} title="Webhook trigger" />
       {error && <Alert className="mb-3 text-xs">{error}</Alert>}
       {webhookUrl ? (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded bg-ink-800 px-2 py-1 font-mono text-[10px] text-paper-300">
+            <code className="flex-1 truncate rounded bg-ink-900 px-2 py-1 font-mono text-[10px] text-paper-300">
               {webhookUrl}
             </code>
             <CopyButton value={webhookUrl} />
           </div>
           {canManage && (
-            <div className="flex gap-2">
-              <Button
-                disabled={regenerate.isPending}
-                onClick={handleRegenerate}
-                size="sm"
-                variant="secondary"
-              >
-                {regenerate.isPending ? 'Regenerating…' : 'Regenerate'}
-              </Button>
-              <Button
-                disabled={revoke.isPending}
-                onClick={handleRevoke}
-                size="sm"
-                variant="secondary"
-              >
-                {revoke.isPending ? 'Revoking…' : 'Revoke'}
-              </Button>
-            </div>
+            <WebhookActions onRegenerate={confirmRegenerate} onRevoke={confirmRevoke} />
           )}
         </div>
       ) : template.webhookConfigured ? (
@@ -502,47 +520,32 @@ function WebhookCard({
             regenerate to issue a new one (the previous URL stops working) or revoke it.
           </p>
           {canManage && (
-            <div className="flex gap-2">
+            <WebhookActions onRegenerate={confirmRegenerate} onRevoke={confirmRevoke} />
+          )}
+        </div>
+      ) : (
+        <EmptyState
+          action={
+            canManage && (
               <Button
                 disabled={regenerate.isPending}
                 onClick={handleRegenerate}
                 size="sm"
                 variant="secondary"
               >
-                {regenerate.isPending ? 'Regenerating…' : 'Regenerate'}
+                {regenerate.isPending ? 'Generating…' : 'Generate webhook URL'}
               </Button>
-              <Button
-                disabled={revoke.isPending}
-                onClick={handleRevoke}
-                size="sm"
-                variant="secondary"
-              >
-                {revoke.isPending ? 'Revoking…' : 'Revoke'}
-              </Button>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <p className="text-xs text-paper-500">No webhook configured.</p>
-          {canManage && (
-            <Button
-              disabled={regenerate.isPending}
-              onClick={handleRegenerate}
-              size="sm"
-              variant="secondary"
-            >
-              {regenerate.isPending ? 'Generating…' : 'Generate webhook URL'}
-            </Button>
-          )}
-        </div>
+            )
+          }
+          className="py-0 text-left text-xs"
+          title="No webhook configured."
+        />
       )}
     </Card>
   );
 }
 
 export default function TemplateDetailPage({ params }: PageProps) {
-  const router = useRouter();
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
   const { data: template, isLoading, isError, error } = useWorkflowTemplate(id ?? '');
@@ -601,22 +604,22 @@ export default function TemplateDetailPage({ params }: PageProps) {
   }, [visualSpec, stepRegistryByName]);
 
   if (!id) {
+    return <TemplateNotFound />;
+  }
+  // Before the not-found branch, so a 403 or 500 is not reported as "not found".
+  if (isLoading || isError) {
     return (
-      <div className="p-8">
-        <Alert>Template not found</Alert>
-      </div>
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isLoading={isLoading}
+        label="template"
+        loadingMessage="loading template…"
+      />
     );
   }
-
-  if (isLoading) {
-    return <LoadingState message="loading template…" />;
-  }
-  if (isError || !template) {
-    return (
-      <div className="p-8">
-        <Alert>{errMsg(error, 'Failed to load template')}</Alert>
-      </div>
-    );
+  if (!template) {
+    return <TemplateNotFound />;
   }
 
   const commitSave = async (spec: WorkflowSpec) => {
@@ -662,15 +665,36 @@ export default function TemplateDetailPage({ params }: PageProps) {
     if (effectiveVersion === null) {
       return;
     }
-    await promoteVersion.mutateAsync(effectiveVersion);
+    try {
+      await promoteVersion.mutateAsync(effectiveVersion);
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(errMsg(err, 'promote failed'));
+    }
   };
 
   const handleReview = async () => {
     if (effectiveVersion === null) {
       return;
     }
-    await reviewVersion.mutateAsync(effectiveVersion);
+    try {
+      await reviewVersion.mutateAsync(effectiveVersion);
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(errMsg(err, 'review failed'));
+    }
   };
+
+  // Right-rail sections, in render order — numbered from this one list so a
+  // conditional section never leaves a gap or a duplicate.
+  const railSections = [
+    template.versions.length > 1 && 'versions',
+    analytics && analytics.totalRuns > 0 && 'observed',
+    'schema',
+    template.versions.length > 1 && 'experiment',
+    'webhook',
+  ].filter(Boolean);
+  const railNumber = (key: string) => String(railSections.indexOf(key) + 1).padStart(2, '0');
 
   const selectedNeedsReview =
     canManage &&
@@ -763,85 +787,67 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       <RefineChatPanel onClose={() => setRefineOpen(false)} open={refineOpen} templateId={id} />
 
-      {/* Back + header */}
-      <div className="fade-up">
-        <Link
-          className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
-          href="/workflows/library"
-        >
-          <span>←</span> workflows
-        </Link>
-        <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
-          <div className="flex-1">
-            <PageHeader
-              chapter={`§ Workflows · v${effectiveVersion ?? '?'}`}
-              subtitle={template.description ?? undefined}
-              title={template.name}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            {template.status === 'ACTIVE' && template.activeVersion !== null && (
-              <Button onClick={() => setRunOpen(true)} size="sm" variant="primary">
-                Run →
+      <div>
+        <TemplateBackLink href="/workflows/library" label="Workflow library" />
+        <PageHeader
+          actions={
+            <>
+              {template.status === 'ACTIVE' && template.activeVersion !== null && (
+                <Button onClick={() => setRunOpen(true)} size="sm" variant="primary">
+                  Run →
+                </Button>
+              )}
+              {template.activeVersion !== null && (
+                <Button onClick={() => setExplainOpen(true)} size="sm" variant="secondary">
+                  <SparkleTextIcon />
+                  Explain
+                </Button>
+              )}
+              {canManage && (
+                <Button onClick={() => setRefineOpen(true)} size="sm" variant="secondary">
+                  <SparkleIcon />
+                  Refine with AI
+                </Button>
+              )}
+              <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
+                Edit metadata
               </Button>
-            )}
-            {template.activeVersion !== null && (
-              <Button onClick={() => setExplainOpen(true)} size="sm" variant="secondary">
-                <SparkleTextIcon />
-                Explain
-              </Button>
-            )}
-            {canManage && (
-              <Button onClick={() => setRefineOpen(true)} size="sm" variant="secondary">
-                <SparkleIcon />
-                Refine with AI
-              </Button>
-            )}
-            <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
-              Edit metadata
-            </Button>
-          </div>
-        </div>
+            </>
+          }
+          chapter="§ Workflows"
+          className="mb-0 mt-4"
+          subtitle={
+            template.description ||
+            'A workflow template: its versions, run schema, experiment and triggers.'
+          }
+          title={template.name}
+        />
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <StatusBadge status={template.status} />
-          {template.isDefault && (
-            <span className="rounded border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
-              default
-            </span>
+          {effectiveVersion !== null && (
+            <Badge tone="neutral" variant="outline">
+              v{effectiveVersion}
+            </Badge>
           )}
-          {effectiveVersion === template.activeVersion && (
-            <span className="rounded border border-moss-400/40 bg-moss-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-moss-400">
-              active
-            </span>
-          )}
+          <VersionTags
+            active={effectiveVersion === template.activeVersion}
+            isDefault={template.isDefault}
+          />
           {template.experimentVersion && (
-            <span className="rounded border border-violet-400/40 bg-violet-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-violet-400">
+            <Badge tone="violet" uppercase variant="outline">
               A/B: v{template.experimentVersion} ({template.experimentSplit ?? 0}%)
-            </span>
+            </Badge>
           )}
         </div>
       </div>
 
-      {/* Sub-page tab bar */}
-      <TabBar
-        active="editor"
-        className="fade-up"
-        onChange={(tab: SubTab) => {
-          if (tab === 'editor') {
-            return;
-          }
-          router.push(
-            `/workflows/library/${id}/${tab === 'analytics' ? 'analytics' : tab === 'runs' ? 'runs' : 'diff'}`
-          );
-        }}
-        tabs={SUB_TABS}
-      />
+      <TemplateSubNav active="editor" templateId={id} />
 
       {saveError && <Alert>{saveError}</Alert>}
 
       {/* Edit mode: full-bleed canvas */}
       {mode === 'edit' && editorSpec && stepRegistry && (
-        <div className="fade-up stagger-1 -mx-10">
+        <div className="-mx-10">
           <TemplateEditor
             actions={editorActions}
             costEstimateUsd={costEstimate?.totalUsd}
@@ -859,13 +865,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
       {/* View / JSON mode with versions + analytics rail */}
       {mode !== 'edit' && (
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_280px]">
-          <div className="fade-up stagger-1 min-w-0 space-y-4">
+          <div className="min-w-0 space-y-4">
             {mode === 'view' && visualSpec && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-                    Spec — read-only
-                  </div>
+                  <div className="label-mono">Spec — read-only</div>
                   <div className="flex items-center gap-2">{editorActions}</div>
                 </div>
                 <WorkflowDag
@@ -880,13 +884,15 @@ export default function TemplateDetailPage({ params }: PageProps) {
             {mode === 'json' && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+                  <label className="label-mono" htmlFor="spec-json">
                     Raw JSON
-                  </div>
+                  </label>
                   <div className="flex items-center gap-2">{editorActions}</div>
                 </div>
-                <textarea
-                  className="h-[520px] w-full rounded-[9px] border border-ink-500 bg-ink-900 p-4 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+                <Textarea
+                  className="h-[520px] p-4"
+                  compact
+                  id="spec-json"
                   onChange={(e) => handleJsonChange(e.target.value)}
                   spellCheck={false}
                   value={editorJson}
@@ -897,13 +903,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
           </div>
 
           {/* Right rail */}
-          <aside className="fade-up stagger-2 space-y-4">
+          <aside className="space-y-4">
             {/* Versions */}
             {template.versions.length === 1 ? (
               <Card variant="inset">
-                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-                  Version
-                </div>
+                <div className="label-mono">Version</div>
                 <div className="mt-2 flex items-baseline justify-between gap-2">
                   <span className="tabular font-mono text-sm text-paper-100">
                     v{template.versions[0]?.version}
@@ -915,16 +919,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   )}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
-                  {template.versions[0]?.version === template.activeVersion && (
-                    <span className="rounded border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
-                      active
-                    </span>
-                  )}
-                  {template.versions[0]?.generatedBy && !template.versions[0]?.reviewedAt && (
-                    <span className="rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ember-400">
-                      needs review
-                    </span>
-                  )}
+                  <VersionTags
+                    active={template.versions[0]?.version === template.activeVersion}
+                    needsReview={
+                      !!template.versions[0]?.generatedBy && !template.versions[0]?.reviewedAt
+                    }
+                  />
                 </div>
                 <p className="mt-3 text-[11px] leading-snug text-paper-500">
                   Save changes to create a second version and unlock A/B testing.
@@ -932,7 +932,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
               </Card>
             ) : (
               <Card variant="inset">
-                <SectionHeader hint={`${template.versions.length}`} number="01" title="Versions" />
+                <SectionHeader
+                  hint={`${template.versions.length}`}
+                  number={railNumber('versions')}
+                  title="Versions"
+                />
                 <ul className="space-y-1">
                   {template.versions.map((v) => (
                     <li key={v.id}>
@@ -952,21 +956,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
                           </span>
                         </div>
                         <div className="mt-1 flex flex-wrap gap-1">
-                          {v.version === template.activeVersion && (
-                            <span className="rounded border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
-                              active
-                            </span>
-                          )}
-                          {v.version === template.experimentVersion && (
-                            <span className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
-                              experiment
-                            </span>
-                          )}
-                          {v.generatedBy && !v.reviewedAt && (
-                            <span className="rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ember-400">
-                              needs review
-                            </span>
-                          )}
+                          <VersionTags
+                            active={v.version === template.activeVersion}
+                            experiment={v.version === template.experimentVersion}
+                            needsReview={!!v.generatedBy && !v.reviewedAt}
+                          />
                         </div>
                       </button>
                     </li>
@@ -978,45 +972,41 @@ export default function TemplateDetailPage({ params }: PageProps) {
             {/* Observed analytics summary */}
             {analytics && analytics.totalRuns > 0 && (
               <Card variant="inset">
-                <SectionHeader hint="30d" number="02" title="Observed" />
-                <dl className="space-y-3 text-sm">
-                  <VersionStat label="Runs" value={analytics.totalRuns} />
-                  <VersionStat label="Success rate" value={formatPercent(analytics.successRate)} />
+                <SectionHeader hint="30d" number={railNumber('observed')} title="Observed" />
+                <dl className="space-y-2">
+                  <KeyValueRow label="Runs">{analytics.totalRuns}</KeyValueRow>
+                  <KeyValueRow label="Success rate">
+                    {formatPercent(analytics.successRate)}
+                  </KeyValueRow>
                   {template.estimatedHumanTimeSavedMinutes != null && (
-                    <VersionStat
-                      label="Est. time saved"
-                      value={`${template.estimatedHumanTimeSavedMinutes} min/run`}
-                    />
+                    <KeyValueRow label="Est. time saved">
+                      {formatDuration(template.estimatedHumanTimeSavedMinutes * 60_000)}/run
+                    </KeyValueRow>
                   )}
                   {analytics.agentErrorRate != null && (
-                    <VersionStat
-                      label="Agent error rate"
-                      value={`${(analytics.agentErrorRate * 100).toFixed(1)}%`}
-                    />
+                    <KeyValueRow label="Agent error rate">
+                      {formatPercent(analytics.agentErrorRate)}
+                    </KeyValueRow>
                   )}
                   {analytics.autonomyRate != null && (
-                    <VersionStat
-                      label="Autonomy rate"
-                      value={formatPercent(analytics.autonomyRate)}
-                    />
+                    <KeyValueRow label="Autonomy rate">
+                      {formatPercent(analytics.autonomyRate)}
+                    </KeyValueRow>
                   )}
                   {analytics.humanReviewRate != null && (
-                    <VersionStat
-                      label="Human review rate"
-                      value={formatPercent(analytics.humanReviewRate)}
-                    />
+                    <KeyValueRow label="Human review rate">
+                      {formatPercent(analytics.humanReviewRate)}
+                    </KeyValueRow>
                   )}
                   {analytics.avgCostPerRun != null && (
-                    <VersionStat
-                      label="Avg cost / run"
-                      value={`$${analytics.avgCostPerRun.toFixed(2)}`}
-                    />
+                    <KeyValueRow label="Avg cost / run">
+                      {formatCost(analytics.avgCostPerRun)}
+                    </KeyValueRow>
                   )}
                   {analytics.p50DurationMs != null && (
-                    <VersionStat
-                      label="p50 duration"
-                      value={`${Math.round(analytics.p50DurationMs / 1000)}s`}
-                    />
+                    <KeyValueRow label="p50 duration">
+                      {formatDuration(analytics.p50DurationMs)}
+                    </KeyValueRow>
                   )}
                 </dl>
               </Card>
@@ -1024,17 +1014,23 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
             {/* Run schema */}
             <Card variant="inset">
-              <div className="flex items-center justify-between">
-                <SectionHeader number="03" title="Run schema" />
-                <Button onClick={() => setEditSchemaOpen(true)} size="sm" variant="ghost">
-                  Edit
-                </Button>
-              </div>
+              <SectionHeader
+                actions={
+                  <Button onClick={() => setEditSchemaOpen(true)} size="sm" variant="ghost">
+                    Edit
+                  </Button>
+                }
+                number={railNumber('schema')}
+                title="Run schema"
+              />
               {(() => {
                 const inputSchema = template.inputSchema;
                 if (!isInputSchema(inputSchema)) {
                   return (
-                    <p className="mt-1 text-xs text-paper-500">No schema — runs accept any input</p>
+                    <EmptyState
+                      className="py-0 text-left text-xs"
+                      title="No schema — runs accept any input"
+                    />
                   );
                 }
                 return (
@@ -1044,7 +1040,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
                         <span className="font-mono text-paper-200">{key}</span>
                         <span className="text-paper-500">{prop.type}</span>
                         {inputSchema.required?.includes(key) && (
-                          <span className="text-brick-400">required</span>
+                          <Badge tone="brick" variant="text">
+                            required
+                          </Badge>
                         )}
                       </li>
                     ))}
@@ -1059,13 +1057,14 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 activeVersion={template.activeVersion}
                 experimentSplit={template.experimentSplit ?? null}
                 experimentVersion={template.experimentVersion ?? null}
+                number={railNumber('experiment')}
                 templateId={id}
                 versions={template.versions}
               />
             )}
 
             {/* Webhook trigger */}
-            <WebhookCard canManage={canManage} template={template} />
+            <WebhookCard canManage={canManage} number={railNumber('webhook')} template={template} />
           </aside>
         </div>
       )}
@@ -1099,15 +1098,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
         open={pendingShellSpec !== null}
         title="Shell steps detected"
       />
-    </div>
-  );
-}
-
-function VersionStat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="flex items-baseline justify-between border-t border-ink-600 pt-2 first:border-t-0 first:pt-0">
-      <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-paper-500">{label}</dt>
-      <dd className="tabular font-mono text-sm text-paper-100">{value}</dd>
     </div>
   );
 }

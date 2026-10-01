@@ -2,11 +2,14 @@
 
 import Link from 'next/link';
 import { use, useRef } from 'react';
+import { Alert } from '@/components/ui/Alert';
+import { ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEpic } from '@/hooks/useEpics';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -31,11 +34,7 @@ export default function EpicDetailPage({ params }: PageProps) {
   const { data: epic, isLoading, error } = useEpic(workflowId ?? '');
 
   if (!workflowId) {
-    return (
-      <Card>
-        <p className="text-sm text-brick-400">Epic not found</p>
-      </Card>
-    );
+    return <EpicNotFound />;
   }
 
   if (isLoading) {
@@ -48,36 +47,31 @@ export default function EpicDetailPage({ params }: PageProps) {
     if (Date.now() - mountedAtRef.current < STARTUP_GRACE_MS) {
       return <LoadingState message="epic is starting…" />;
     }
+    // A load failure is not a missing epic: only an errorless miss reads as "not found".
+    if (!error) {
+      return <EpicNotFound />;
+    }
     return (
-      <Card>
-        <p className="text-sm text-brick-400">{errMsg(error, `Epic ${workflowId} not found`)}</p>
-        <p className="mt-2 text-xs text-paper-500">
-          <Link className="text-ember-400 hover:underline" href="/epics">
-            ← Back to epics
-          </Link>
-        </p>
-      </Card>
+      <div className="space-y-8">
+        <BackToEpics />
+        <Alert>{errMsg(error, `Could not load epic ${workflowId}`)}</Alert>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      <BackToEpics />
       <PageHeader
-        actions={
-          <>
-            <StatusBadge status={epic.status} />
-            <Link className="text-sm text-ember-400 hover:underline" href="/epics">
-              ← All epics
-            </Link>
-          </>
-        }
-        chapter="§ Epics"
+        actions={<StatusBadge status={epic.status} />}
+        chapter="§ Requests"
+        subtitle="A multi-repository change and the child workflows it fans out to."
         title={epic.externalTicketId}
       />
 
       <Card>
         <div className="space-y-2">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+          <p className="label-mono">
             {epic.epicWorkflowId}
             {epic.createdAt ? ` · created ${formatRelativeTime(epic.createdAt)}` : ''}
             {epic.requestedBy ? ` · by ${epic.requestedBy.name ?? epic.requestedBy.email}` : ''}
@@ -99,11 +93,12 @@ export default function EpicDetailPage({ params }: PageProps) {
           </THead>
           <tbody>
             {epic.children.length === 0 && (
-              <TRow>
-                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={4}>
-                  No child workflows yet — the Planner agent is still decomposing the epic.
-                </Td>
-              </TRow>
+              <TableStatusRow colSpan={4}>
+                <EmptyState
+                  hint="The Planner agent is still decomposing the epic."
+                  title="No child workflows yet."
+                />
+              </TableStatusRow>
             )}
             {epic.children.map((child) => (
               <TRow hover key={child.temporalWorkflowId ?? child.repoId ?? child.status}>
@@ -136,5 +131,22 @@ export default function EpicDetailPage({ params }: PageProps) {
         </Table>
       </Card>
     </div>
+  );
+}
+
+function BackToEpics() {
+  return (
+    <Link className="label-mono hover:text-paper-200" href="/epics">
+      ← Epics
+    </Link>
+  );
+}
+
+function EpicNotFound() {
+  return (
+    <EmptyState
+      action={<ButtonLink href="/epics">Back to epics</ButtonLink>}
+      title="Epic not found"
+    />
   );
 }

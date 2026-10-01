@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { formatDate } from '@/lib/utils';
 
 /** The columns every config audit row carries, whichever endpoint it came from. */
@@ -48,7 +49,8 @@ const ENTITY_LABELS: Record<string, string> = {
   WorkflowDefaults: 'Workflow defaults',
 };
 
-const TH = 'px-3 py-2 font-mono uppercase tracking-wider text-paper-500';
+const TH = 'px-3 py-2';
+const TD = 'px-3 py-2';
 
 /**
  * Config audit log table shared by the integrations and model-config admin
@@ -84,24 +86,22 @@ export function AuditLogTable<T extends AuditLogEntry>({
       ) : (
         <div className="space-y-2">
           {caption && <p className="text-xs text-paper-500">{caption}</p>}
-          <div className="overflow-x-auto rounded-sm border border-ink-700">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-ink-700 bg-ink-900 text-left">
-                  <th className={TH}>Time</th>
-                  <th className={TH}>What</th>
-                  <th className={TH}>Action</th>
-                  <th className={TH}>By</th>
-                  <th className={TH}>{summaryHeader}</th>
-                </tr>
-              </thead>
+          <div className="overflow-x-auto rounded-sm border border-ink-600">
+            <Table className="text-xs">
+              <THead className="bg-ink-900">
+                <Th className={TH}>Time</Th>
+                <Th className={TH}>What</Th>
+                <Th className={TH}>Action</Th>
+                <Th className={TH}>By</Th>
+                <Th className={TH}>{summaryHeader}</Th>
+              </THead>
               <tbody>
                 {entries.map((entry) => (
-                  <tr className="border-b border-ink-800 hover:bg-ink-800/50" key={entry.id}>
-                    <td className="whitespace-nowrap px-3 py-2 font-mono text-paper-400">
+                  <TRow hover key={entry.id}>
+                    <Td className={`whitespace-nowrap font-mono text-paper-400 ${TD}`}>
                       {formatDate(entry.createdAt, { showSeconds: true })}
-                    </td>
-                    <td className="px-3 py-2 text-paper-300">
+                    </Td>
+                    <Td className={`text-paper-300 ${TD}`}>
                       {ENTITY_LABELS[entry.entityType] ?? entry.entityType}
                       {showEntityId && (
                         <span className="font-mono text-paper-500">
@@ -109,8 +109,8 @@ export function AuditLogTable<T extends AuditLogEntry>({
                           · {entry.entityId.slice(0, 8)}…
                         </span>
                       )}
-                    </td>
-                    <td className="px-3 py-2">
+                    </Td>
+                    <Td className={TD}>
                       <Badge
                         className="text-xs font-semibold"
                         tone={ACTION_TONES[entry.action] ?? 'neutral'}
@@ -118,15 +118,15 @@ export function AuditLogTable<T extends AuditLogEntry>({
                       >
                         {entry.action}
                       </Badge>
-                    </td>
-                    <td className="px-3 py-2 text-paper-400">
+                    </Td>
+                    <Td className={`text-paper-400 ${TD}`}>
                       {entry.actorEmail ?? (entry.actorId ? entry.actorId.slice(0, 8) : 'system')}
-                    </td>
-                    <td className="px-3 py-2 font-mono">{summary(entry)}</td>
-                  </tr>
+                    </Td>
+                    <Td className={`font-mono ${TD}`}>{summary(entry)}</Td>
+                  </TRow>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         </div>
       )}

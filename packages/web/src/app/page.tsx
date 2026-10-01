@@ -2,13 +2,14 @@
 
 import type { HumanStepSummary, WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
 import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
 import { DashboardOnboarding } from '@/components/dashboard/DashboardOnboarding';
-import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Stat } from '@/components/ui/Stat';
@@ -41,9 +42,9 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
                 href={`/runs/${step.runId}`}
               >
                 <div className="flex min-w-0 items-baseline gap-3">
-                  <span className="shrink-0 rounded bg-amber-400/15 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-amber-400">
+                  <Badge className="shrink-0" tone="amber" uppercase>
                     {step.kind}
-                  </span>
+                  </Badge>
                   <span className="truncate text-sm text-paper-200 group-hover:text-ember-400">
                     {step.title}
                   </span>
@@ -71,7 +72,6 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
 }
 
 export default function DashboardPage() {
-  const router = useRouter();
   const workflowsQuery = useWorkflows();
   const { data: workflows, isLoading } = workflowsQuery;
   const loadFailed = workflowsQuery.isError;
@@ -108,7 +108,7 @@ export default function DashboardPage() {
   }
 
   // The request modals live outside both branches: the onboarding view's
-  // "+ New request" button toggles `newOpen` too, and an early return that
+  // "New request" button toggles `newOpen` too, and an early return that
   // omitted the modal left that button doing nothing on a fresh deployment.
   const requestModals = (
     <>
@@ -144,28 +144,22 @@ export default function DashboardPage() {
   }).format(now);
 
   return (
-    <div className="space-y-12">
-      <div className="fade-up">
-        <PageHeader
-          actions={
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={() => router.push('/workflows/library')}
-                size="sm"
-                variant="secondary"
-              >
-                Browse workflows
-              </Button>
-              <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
-                + New request
-              </Button>
-            </div>
-          }
-          chapter={`§ Home · ${today}`}
-          subtitle="Describe what you need and let the platform reach a validated outcome."
-          title="What do you want to achieve?"
-        />
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        actions={
+          <>
+            <ButtonLink href="/workflows/library" size="sm" variant="secondary">
+              Browse workflows
+            </ButtonLink>
+            <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
+              New request
+            </Button>
+          </>
+        }
+        chapter={`§ Start · ${today}`}
+        subtitle="Describe what you need and let the platform reach a validated outcome."
+        title="What do you want to achieve?"
+      />
       {requestModals}
 
       {/* HITL inbox — shown first so approvals are never missed */}
@@ -202,27 +196,34 @@ export default function DashboardPage() {
       <section className="fade-up stagger-4">
         <SectionHeader hint="recent · 10" number="02" title="My outcomes" />
         <Card variant="inset">
-          <ul className="divide-y divide-ink-600">
-            {outcomes.slice(0, 10).map((r) => (
-              <li key={r.id}>
-                <Link
-                  className="group grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 py-3 transition-colors hover:text-ember-400"
-                  href={`/runs/${r.id}`}
-                >
-                  <StatusBadge showDot status={r.status} />
-                  <span className="min-w-0 truncate text-sm text-paper-200 group-hover:text-ember-400">
-                    {r.workRequest?.description || r.templateName || '—'}
-                  </span>
-                  <span className="hidden font-mono text-[11px] text-paper-500 sm:inline">
-                    {r.outcomeDomain ?? r.domain ?? '—'}
-                  </span>
-                  <span className="tabular font-mono text-[11px] uppercase tracking-wider text-paper-500">
-                    {formatRelativeTime(r.endedAt ?? r.startedAt)}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          {outcomes.length === 0 ? (
+            <EmptyState
+              hint="Runs you started that finished successfully appear here."
+              title="No outcomes yet"
+            />
+          ) : (
+            <ul className="divide-y divide-ink-600">
+              {outcomes.slice(0, 10).map((r) => (
+                <li key={r.id}>
+                  <Link
+                    className="group grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 py-3 transition-colors hover:text-ember-400"
+                    href={`/runs/${r.id}`}
+                  >
+                    <StatusBadge showDot status={r.status} />
+                    <span className="min-w-0 truncate text-sm text-paper-200 group-hover:text-ember-400">
+                      {r.workRequest?.description || r.templateName || '—'}
+                    </span>
+                    <span className="hidden font-mono text-[11px] text-paper-500 sm:inline">
+                      {r.outcomeDomain ?? r.domain ?? '—'}
+                    </span>
+                    <span className="tabular font-mono text-[11px] uppercase tracking-wider text-paper-500">
+                      {formatRelativeTime(r.endedAt ?? r.startedAt)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       </section>
     </div>

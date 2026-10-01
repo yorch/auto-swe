@@ -1,6 +1,9 @@
 /**
  * Chart colours, drawn from the one checked copy of the design tokens.
  *
+ * `STATUS_CHART_COLORS` mirrors the text colour of each status in
+ * `STATUS_META` (lib/utils.ts), so a slice matches the StatusBadge beside it.
+ *
  * Recharts hands several of these to SVG presentation attributes, which do not
  * resolve `var()` — see `lib/palette.ts`.
  */
@@ -8,14 +11,14 @@ import { TOKEN } from '@/lib/palette';
 
 export const STATUS_CHART_COLORS: Record<string, string> = {
   AWAITING_CI: TOKEN.amber400,
-  AWAITING_HUMAN_MERGE: TOKEN.ember400,
+  AWAITING_HUMAN_MERGE: TOKEN.amber400,
   COMPLETED: TOKEN.moss400,
   FAILED: TOKEN.brick400,
   IMPLEMENTING: TOKEN.ember400,
   IN_REVIEW: TOKEN.violet400,
   RUNNING: TOKEN.dust400,
   TIMED_OUT: TOKEN.paper500,
-  VALIDATING_CONTEXT: TOKEN.ember300,
+  VALIDATING_CONTEXT: TOKEN.ember400,
 };
 
 /** Generic palette for charts that aren't status-based. */

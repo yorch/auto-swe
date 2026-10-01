@@ -1,8 +1,10 @@
 'use client';
 
 import type { WorkflowStepRecord } from '@auto-swe/shared/types/api';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { cn } from '@/lib/utils';
 
 interface FailureCardProps {
   step: WorkflowStepRecord;
@@ -50,43 +52,29 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
 
   return (
     <div
-      className="relative"
-      style={{
-        background: 'oklch(0.64 0.17 28 / 0.07)',
-        border: '1px solid oklch(0.64 0.17 28 / 0.38)',
-        borderRadius: '4px',
-        padding: size === 'full' ? '16px' : '12px',
-      }}
+      className={cn(
+        'relative rounded border border-brick-400/40 bg-brick-400/10',
+        size === 'full' ? 'p-4' : 'p-3'
+      )}
     >
       {/* Header row */}
       <div className="flex items-center gap-2 mb-2">
         <StatusBadge status="FAILED" />
-        <span
-          className="text-brick-400"
-          style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.1em' }}
-        >
-          {errorCode}
-        </span>
+        <span className="font-mono text-[10px] tracking-[0.1em] text-brick-400">{errorCode}</span>
       </div>
 
       {/* Serif title */}
       <h4
-        className="text-paper-100 mb-1"
-        style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: size === 'full' ? '16px' : '14px',
-          fontWeight: 500,
-          letterSpacing: '-0.01em',
-        }}
+        className={cn(
+          'mb-1 font-display font-medium tracking-[-0.01em] text-paper-100',
+          size === 'full' ? 'text-base' : 'text-sm'
+        )}
       >
         {errorTitle}
       </h4>
 
       {/* Mono locator */}
-      <div
-        className="text-brick-400 mb-2"
-        style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.08em' }}
-      >
+      <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-brick-400">
         at {step.nodeId}
       </div>
 
@@ -99,27 +87,9 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
 
       {/* Suggested fix (full size only) */}
       {suggestedFix && (
-        <div
-          className="mb-3 p-2.5"
-          style={{
-            background: 'oklch(0.78 0.11 80 / 0.07)',
-            border: '1px solid oklch(0.78 0.11 80 / 0.25)',
-            borderRadius: '3px',
-          }}
-        >
-          <span
-            className="text-amber-400"
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: '10px',
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase',
-            }}
-          >
-            ✦ Suggested fix
-          </span>
-          <p className="text-paper-400 text-[12px] leading-relaxed mt-1">{suggestedFix}</p>
-        </div>
+        <Alert className="mb-3" title="Suggested fix" variant="warning">
+          {suggestedFix}
+        </Alert>
       )}
 
       {/* Actions */}
@@ -132,7 +102,7 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
           )}
           {onReRun && (
             <Button onClick={onReRun} size="sm" variant="primary">
-              ↻ Re-run
+              Re-run
             </Button>
           )}
         </div>

@@ -2,47 +2,38 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Stat } from '@/components/ui/Stat';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useGlobalAnalytics } from '@/hooks/useTemplates';
-import { formatPercent } from '@/lib/utils';
+import { formatCost, formatDuration, formatPercent } from '@/lib/utils';
 
 const WINDOWS = [
-  { days: 7, label: '7d' },
-  { days: 30, label: '30d' },
-  { days: 90, label: '90d' },
+  { label: '7d', value: '7' },
+  { label: '30d', value: '30' },
+  { label: '90d', value: '90' },
 ];
 
 type SortKey = 'runs' | 'successRate' | 'totalCost' | 'avgCost';
 
-function fmt(n: number | null, digits = 1): string {
-  if (n === null) {
-    return '—';
+/** Minutes, as the analytics API reports time saved, rendered as a duration. */
+function formatMinutes(min: number): string {
+  return formatDuration(Math.round(min) * 60_000);
+}
+
+/** Text colour for a 0–1 success rate. */
+function successRateClass(rate: number): string {
+  if (rate >= 0.8) {
+    return 'text-moss-400';
   }
-  return n.toFixed(digits);
-}
-
-function fmtCost(n: number): string {
-  return `$${n.toFixed(2)}`;
-}
-
-function KpiTile({
-  label,
-  value,
-  valueClass,
-}: {
-  label: string;
-  value: string;
-  valueClass?: string;
-}) {
-  return (
-    <Card>
-      <div className="px-4 pt-4 pb-1 text-xs text-paper-400">{label}</div>
-      <p className={`text-3xl font-bold px-4 pb-4 ${valueClass ?? ''}`}>{value}</p>
-    </Card>
-  );
+  return rate >= 0.5 ? 'text-amber-400' : 'text-brick-400';
 }
 
 function SortHeader({
@@ -60,7 +51,7 @@ function SortHeader({
 }) {
   const active = sortKey === col;
   return (
-    <th className="px-4 py-2 font-medium text-right">
+    <Th align="right" variant="dense">
       <button
         className={`hover:underline ${active ? 'text-paper-200' : 'text-paper-400'}`}
         onClick={() => onSort(col)}
@@ -68,7 +59,7 @@ function SortHeader({
       >
         {label} {active ? (sortDir === 'desc' ? '↓' : '↑') : ''}
       </button>
-    </th>
+    </Th>
   );
 }
 
@@ -80,7 +71,7 @@ export default function GlobalAnalyticsPage() {
   const [sortKey, setSortKey] = useState<SortKey>('runs');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(0);
-  const { data, isLoading } = useGlobalAnalytics(windowDays);
+  const { data, isLoading, isError, error } = useGlobalAnalytics(windowDays);
 
   const handleSort = (k: SortKey) => {
     if (k === sortKey) {
@@ -129,95 +120,91 @@ export default function GlobalAnalyticsPage() {
   const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
-          <div className="flex gap-1 bg-ink-800 rounded-md p-1">
-            {WINDOWS.map((w) => (
-              <button
-                className={`px-3 py-1 text-sm rounded transition-colors ${
-                  windowDays === w.days
-                    ? 'bg-ink-600 text-paper-100'
-                    : 'text-paper-400 hover:text-paper-200'
-                }`}
-                key={w.days}
-                onClick={() => {
-                  setWindowDays(w.days);
-                  setPage(0);
-                }}
-                type="button"
-              >
-                {w.label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            ariaLabel="Time window"
+            onChange={(v) => {
+              setWindowDays(Number(v));
+              setPage(0);
+            }}
+            options={WINDOWS}
+            value={String(windowDays)}
+          />
         }
-        title="Platform Analytics"
+        chapter="§ Govern"
+        subtitle="Run volume, outcomes, cost, and time saved across every workflow template on the platform."
+        title="Platform analytics"
       />
 
-      {isLoading || !data ? (
-        <LoadingState />
-      ) : (
-        <>
-          {data.isTruncated && (
-            <div className="rounded-md bg-amber-900/30 border border-amber-700 px-4 py-3 text-sm text-amber-200">
-              Results capped at the 10,000 most recent runs. Totals and rates reflect the capped
-              window — older runs are omitted.
+      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="analytics">
+        {!data ? (
+          <EmptyState title="No analytics data available." />
+        ) : (
+          <>
+            {data.isTruncated && (
+              <Alert variant="warning">
+                Results capped at the 10,000 most recent runs. Totals and rates reflect the capped
+                window — older runs are omitted.
+              </Alert>
+            )}
+
+            <div className="grid grid-cols-2 gap-y-8 lg:grid-cols-4">
+              <Stat label="Total runs" value={data.totalRuns} />
+              <Stat label="Completed runs" value={data.completedRuns} />
+              <Stat label="Running runs" value={data.runningRuns} />
+              <Stat
+                label="Success rate (completed)"
+                tone="moss"
+                value={formatPercent(data.successRate)}
+              />
+              <Stat label="Succeeded" tone="moss" value={data.succeeded} />
+              <Stat label="Failed" tone="brick" value={data.failed} />
+              <Stat label="Total cost" value={formatCost(data.totalCost)} />
+              <Stat
+                label="Avg cost/run"
+                value={data.totalRuns > 0 ? formatCost(data.totalCost / data.totalRuns) : '—'}
+              />
+              <Stat
+                label="Time saved"
+                tone="moss"
+                value={formatMinutes(data.estimatedHumanTimeSavedTotal ?? 0)}
+              />
+              <Stat label="Autonomy rate" value={formatPercent(data.autonomyRate)} />
+              <Stat label="Human review rate" value={formatPercent(data.humanReviewRate)} />
             </div>
-          )}
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <KpiTile label="Total runs" value={String(data.totalRuns)} />
-            <KpiTile label="Completed runs" value={String(data.completedRuns)} />
-            <KpiTile label="Running runs" value={String(data.runningRuns)} />
-            <KpiTile
-              label="Success rate (completed)"
-              value={formatPercent(data.successRate)}
-              valueClass="text-moss-400"
-            />
-            <KpiTile label="Succeeded" value={String(data.succeeded)} valueClass="text-moss-400" />
-            <KpiTile label="Failed" value={String(data.failed)} valueClass="text-brick-400" />
-            <KpiTile label="Total cost" value={fmtCost(data.totalCost)} />
-            <KpiTile
-              label="Avg cost/run"
-              value={data.totalRuns > 0 ? fmtCost(data.totalCost / data.totalRuns) : '—'}
-            />
-            <KpiTile
-              label="Time saved"
-              value={`${Math.round(data.estimatedHumanTimeSavedTotal ?? 0)} min`}
-              valueClass="text-moss-400"
-            />
-            <KpiTile label="Autonomy rate" value={formatPercent(data.autonomyRate)} />
-            <KpiTile label="Human review rate" value={formatPercent(data.humanReviewRate)} />
-          </div>
-
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Templates — ranked by traffic</CardTitle>
-                <input
-                  aria-label="Filter templates by name"
-                  className="text-sm border border-ink-600 rounded px-2 py-1 bg-ink-900 w-48"
-                  onChange={(e) => handleFilter(e.target.value)}
-                  placeholder="Filter templates…"
-                  type="text"
-                  value={filter}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Templates — ranked by traffic</CardTitle>
+                  <div className="w-48">
+                    <Input
+                      aria-label="Filter templates by name"
+                      compact
+                      onChange={(e) => handleFilter(e.target.value)}
+                      placeholder="Filter templates…"
+                      type="text"
+                      value={filter}
+                    />
+                  </div>
+                </div>
+              </CardHeader>
+              {rows.length === 0 ? (
+                <EmptyState
+                  title={
+                    filter
+                      ? 'No templates match your filter.'
+                      : `No runs in the last ${windowDays} days.`
+                  }
                 />
-              </div>
-            </CardHeader>
-            {rows.length === 0 ? (
-              <p className="px-4 pb-4 text-sm text-paper-400">
-                {filter
-                  ? 'No templates match your filter.'
-                  : `No runs in the last ${windowDays} days.`}
-              </p>
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
-                        <th className="px-4 py-2 font-medium">Template</th>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <THead className="text-left text-xs text-paper-400">
+                        <Th variant="dense">Template</Th>
                         <SortHeader
                           col="runs"
                           label="Runs"
@@ -246,157 +233,158 @@ export default function GlobalAnalyticsPage() {
                           sortDir={sortDir}
                           sortKey={sortKey}
                         />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pageRows.map((row) => {
-                        const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
-                        const srPct = row.successRate !== null ? row.successRate * 100 : null;
-                        return (
-                          <tr
-                            className="border-b border-ink-600 last:border-0 hover:bg-ink-800"
-                            key={row.templateId}
-                          >
-                            <td className="px-4 py-2">
-                              <Link
-                                className="text-ember-400 hover:underline"
-                                href={`/workflows/library/${row.templateId}`}
-                              >
-                                {row.templateName}
-                              </Link>
-                            </td>
-                            <td className="px-4 py-2 text-right tabular-nums">{row.totalRuns}</td>
-                            <td className="px-4 py-2 text-right tabular-nums">
-                              {srPct !== null ? (
-                                <span
-                                  className={
-                                    srPct >= 80
-                                      ? 'text-moss-400'
-                                      : srPct >= 50
-                                        ? 'text-amber-600'
-                                        : 'text-brick-400'
-                                  }
+                      </THead>
+                      <tbody>
+                        {pageRows.map((row) => {
+                          const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
+                          return (
+                            <TRow hover key={row.templateId}>
+                              <Td className="px-4 py-2">
+                                <Link
+                                  className="text-ember-400 hover:underline"
+                                  href={`/workflows/library/${row.templateId}`}
                                 >
-                                  {fmt(srPct)}%
-                                </span>
-                              ) : (
-                                '—'
-                              )}
-                            </td>
-                            <td className="px-4 py-2 text-right tabular-nums">
-                              {fmtCost(row.totalCost)}
-                            </td>
-                            <td className="px-4 py-2 text-right tabular-nums">
-                              {avgCost !== null ? fmtCost(avgCost) : '—'}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                                  {row.templateName}
+                                </Link>
+                              </Td>
+                              <Td className="px-4 py-2 text-right tabular-nums">{row.totalRuns}</Td>
+                              <Td className="px-4 py-2 text-right tabular-nums">
+                                {row.successRate !== null ? (
+                                  <span className={successRateClass(row.successRate)}>
+                                    {formatPercent(row.successRate)}
+                                  </span>
+                                ) : (
+                                  '—'
+                                )}
+                              </Td>
+                              <Td className="px-4 py-2 text-right tabular-nums">
+                                {formatCost(row.totalCost)}
+                              </Td>
+                              <Td className="px-4 py-2 text-right tabular-nums">
+                                {avgCost !== null ? formatCost(avgCost) : '—'}
+                              </Td>
+                            </TRow>
+                          );
+                        })}
+                      </tbody>
+                    </Table>
+                  </div>
+                  {totalPages > 1 && (
+                    <Pagination
+                      hasNext={page < totalPages - 1}
+                      hasPrev={page > 0}
+                      onNext={() => setPage((p) => p + 1)}
+                      onPrev={() => setPage((p) => p - 1)}
+                      rangeEnd={Math.min((page + 1) * PAGE_SIZE, rows.length)}
+                      rangeStart={rows.length === 0 ? 0 : page * PAGE_SIZE + 1}
+                      total={rows.length}
+                    />
+                  )}
+                </>
+              )}
+            </Card>
+
+            {data.perDomain.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>By domain</CardTitle>
+                </CardHeader>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <THead className="text-left text-xs text-paper-400">
+                      <Th variant="dense">Domain</Th>
+                      <Th align="right" variant="dense">
+                        Runs
+                      </Th>
+                      <Th align="right" variant="dense">
+                        Total cost
+                      </Th>
+                      <Th align="right" variant="dense">
+                        Time saved
+                      </Th>
+                      <Th align="right" variant="dense">
+                        Agent error
+                      </Th>
+                      <Th align="right" variant="dense">
+                        Human error
+                      </Th>
+                      <Th align="right" variant="dense">
+                        vs human
+                      </Th>
+                    </THead>
+                    <tbody>
+                      {data.perDomain.map((d) => (
+                        <TRow key={d.domain}>
+                          <Td className="px-4 py-2">{d.domain}</Td>
+                          <Td className="px-4 py-2 text-right tabular-nums">{d.totalRuns}</Td>
+                          <Td className="px-4 py-2 text-right tabular-nums">
+                            {formatCost(d.totalCost)}
+                          </Td>
+                          <Td className="px-4 py-2 text-right tabular-nums">
+                            {d.estimatedHumanTimeSavedTotal != null
+                              ? formatMinutes(d.estimatedHumanTimeSavedTotal)
+                              : '—'}
+                          </Td>
+                          <Td className="px-4 py-2 text-right tabular-nums">
+                            {formatPercent(d.agentErrorRate ?? null)}
+                          </Td>
+                          <Td className="px-4 py-2 text-right tabular-nums">
+                            {formatPercent(d.humanErrorRate ?? null)}
+                          </Td>
+                          <Td className="px-4 py-2 text-right tabular-nums">
+                            {d.errorRateVsHuman != null ? (
+                              // Percentage points — no shared formatter carries the "pp" unit.
+                              `${(d.errorRateVsHuman * 100).toFixed(1)}pp`
+                            ) : d.baselineSampleSize != null && d.baselineSampleSize < 30 ? (
+                              <span className="text-paper-400" title="Baseline sample too small">
+                                n={d.baselineSampleSize}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </Td>
+                        </TRow>
+                      ))}
                     </tbody>
-                  </table>
+                  </Table>
                 </div>
-                {totalPages > 1 && (
-                  <Pagination
-                    hasNext={page < totalPages - 1}
-                    hasPrev={page > 0}
-                    onNext={() => setPage((p) => p + 1)}
-                    onPrev={() => setPage((p) => p - 1)}
-                    rangeEnd={Math.min((page + 1) * PAGE_SIZE, rows.length)}
-                    rangeStart={rows.length === 0 ? 0 : page * PAGE_SIZE + 1}
-                    total={rows.length}
-                  />
-                )}
-              </>
+              </Card>
             )}
-          </Card>
 
-          {data.perDomain.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>By domain</CardTitle>
-              </CardHeader>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
-                      <th className="px-4 py-2 font-medium">Domain</th>
-                      <th className="px-4 py-2 font-medium text-right">Runs</th>
-                      <th className="px-4 py-2 font-medium text-right">Total cost</th>
-                      <th className="px-4 py-2 font-medium text-right">Time saved</th>
-                      <th className="px-4 py-2 font-medium text-right">Agent error</th>
-                      <th className="px-4 py-2 font-medium text-right">Human error</th>
-                      <th className="px-4 py-2 font-medium text-right">vs human</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.perDomain.map((d) => (
-                      <tr className="border-b border-ink-600 last:border-0" key={d.domain}>
-                        <td className="px-4 py-2">{d.domain}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{d.totalRuns}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {fmtCost(d.totalCost)}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {d.estimatedHumanTimeSavedTotal != null
-                            ? `${Math.round(d.estimatedHumanTimeSavedTotal)} min`
-                            : '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {d.agentErrorRate != null ? `${fmt(d.agentErrorRate * 100, 1)}%` : '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {d.humanErrorRate != null ? `${fmt(d.humanErrorRate * 100, 1)}%` : '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {d.errorRateVsHuman != null ? (
-                            `${fmt(d.errorRateVsHuman * 100, 1)}pp`
-                          ) : d.baselineSampleSize != null && d.baselineSampleSize < 30 ? (
-                            <span className="text-paper-400" title="Baseline sample too small">
-                              n={d.baselineSampleSize}
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          )}
-
-          {data.perOutcome.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>By outcome</CardTitle>
-              </CardHeader>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
-                      <th className="px-4 py-2 font-medium">Outcome</th>
-                      <th className="px-4 py-2 font-medium text-right">Runs</th>
-                      <th className="px-4 py-2 font-medium text-right">Total cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.perOutcome.map((o) => (
-                      <tr className="border-b border-ink-600 last:border-0" key={o.outcomeType}>
-                        <td className="px-4 py-2">{o.outcomeType}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{o.runCount}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {fmtCost(o.totalCost)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          )}
-        </>
-      )}
+            {data.perOutcome.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>By outcome</CardTitle>
+                </CardHeader>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <THead className="text-left text-xs text-paper-400">
+                      <Th variant="dense">Outcome</Th>
+                      <Th align="right" variant="dense">
+                        Runs
+                      </Th>
+                      <Th align="right" variant="dense">
+                        Total cost
+                      </Th>
+                    </THead>
+                    <tbody>
+                      {data.perOutcome.map((o) => (
+                        <TRow key={o.outcomeType}>
+                          <Td className="px-4 py-2">{o.outcomeType}</Td>
+                          <Td className="px-4 py-2 text-right tabular-nums">{o.runCount}</Td>
+                          <Td className="px-4 py-2 text-right tabular-nums">
+                            {formatCost(o.totalCost)}
+                          </Td>
+                        </TRow>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+              </Card>
+            )}
+          </>
+        )}
+      </QueryBoundary>
     </div>
   );
 }

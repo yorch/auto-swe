@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
@@ -99,21 +100,21 @@ export function SettingRow({
   const dirty = isBoolean ? boolDraft !== setting.value : formatValue(setting.value) !== draft;
 
   return (
-    <div className="border-t border-ink-400/40 py-4 first:border-t-0">
+    <div className="border-t border-ink-600 py-4 first:border-t-0">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="text-sm font-medium text-paper-100">{setting.label}</span>
             <code className="font-mono text-[10px] text-paper-500">{setting.key}</code>
             {setting.restartRequired && (
-              <span className="font-mono text-[10px] uppercase tracking-wider text-amber-400">
+              <Badge tone="amber" uppercase variant="text">
                 restart required
-              </span>
+              </Badge>
             )}
             {setting.runPinned && (
-              <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+              <Badge tone="neutral" uppercase variant="text">
                 frozen per run
-              </span>
+              </Badge>
             )}
           </div>
           <p className="mt-1 max-w-prose text-xs leading-relaxed text-paper-400">
@@ -130,15 +131,24 @@ export function SettingRow({
           {isBoolean ? (
             <ToggleSwitch
               checked={boolDraft}
-              disabled={!canWriteHere || busy}
-              label={boolDraft ? 'Enabled' : 'Disabled'}
+              disabled={!canWriteHere || busy || setting.redacted}
+              // ToggleSwitch takes no aria-label; the visually hidden prefix gives
+              // the switch the setting's name instead of just its state.
+              label={
+                <>
+                  <span className="sr-only">{setting.label}: </span>
+                  {boolDraft ? 'Enabled' : 'Disabled'}
+                </>
+              }
               onChange={() => setBoolDraft((current) => !current)}
             />
           ) : (
             <Input
+              aria-label={setting.label}
               disabled={!canWriteHere || busy || setting.redacted}
               error={invalidNumber ? 'Must be a number' : undefined}
               hint={setting.unit ?? (isList ? 'comma-separated' : undefined)}
+              id={`setting-${setting.key}`}
               inputMode={isNumber ? 'numeric' : undefined}
               onChange={(e) => setDraft(e.target.value)}
               // Withheld by the server for anyone below the setting's role.

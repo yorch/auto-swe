@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { errMsg } from '@/lib/errors';
 
 /**
@@ -68,19 +67,14 @@ export function ConfirmModal({
     <Modal onClose={handleClose} open={open} title={title}>
       <p className="text-sm text-paper-400">{message}</p>
       {shownError && <Alert>{shownError}</Alert>}
-      <div className="flex justify-end gap-3 pt-2">
-        <Button onClick={handleClose} type="button" variant="ghost">
-          Cancel
-        </Button>
-        <Button
-          disabled={pending}
-          onClick={handleConfirm}
-          type="button"
-          variant={dangerous ? 'danger' : 'primary'}
-        >
-          {pending ? (pendingLabel ?? `${confirmLabel}…`) : confirmLabel}
-        </Button>
-      </div>
+      <ModalFooter
+        dangerous={dangerous}
+        isPending={pending}
+        onCancel={handleClose}
+        onSubmit={handleConfirm}
+        pendingLabel={pendingLabel}
+        submitLabel={confirmLabel}
+      />
     </Modal>
   );
 }

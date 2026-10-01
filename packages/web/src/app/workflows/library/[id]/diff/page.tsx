@@ -1,15 +1,19 @@
 'use client';
 
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
-import { TabBar } from '@/components/ui/TabBar';
+import {
+  TemplateBackLink,
+  TemplateNotFound,
+  TemplateSubNav,
+} from '@/components/workflow/templateNav';
 import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
@@ -19,15 +23,6 @@ import { cn } from '@/lib/utils';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
-
-type SubTab = 'editor' | 'analytics' | 'runs' | 'compare';
-
-const SUB_TABS: { id: SubTab; label: string }[] = [
-  { id: 'editor', label: 'Editor' },
-  { id: 'analytics', label: 'Analytics' },
-  { id: 'runs', label: 'Run history' },
-  { id: 'compare', label: 'Compare versions' },
-];
 
 function diffMarkers(
   diff: { addedNodes: string[]; changedNodes: string[]; removedNodes: string[] },
@@ -66,30 +61,26 @@ function NodeJsonDiff({
 
   return (
     <details className="rounded-lg border border-ink-600 bg-ink-900/50">
-      <summary className="flex cursor-pointer items-center justify-between px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-amber-400 hover:text-amber-300">
+      <summary className="flex cursor-pointer items-center justify-between px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-amber-400 hover:text-amber-600">
         <span>changed · {nodeId}</span>
         <span className="text-paper-600">▸</span>
       </summary>
       <div className="grid grid-cols-1 gap-px border-t border-ink-600 xl:grid-cols-2">
         <div className="p-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="font-mono text-[9px] uppercase tracking-wider text-paper-500">
-              Before
-            </span>
+            <span className="label-mono">Before</span>
             <CopyButton value={beforeStr} />
           </div>
-          <pre className="overflow-auto rounded-sm bg-ink-950/60 p-2 font-mono text-[10px] leading-relaxed text-brick-400/80">
+          <pre className="overflow-auto rounded-sm bg-ink-900 p-2 font-mono text-[10px] leading-relaxed text-brick-400/80">
             {beforeStr}
           </pre>
         </div>
         <div className="border-t border-ink-600 p-3 xl:border-l xl:border-t-0">
           <div className="mb-2 flex items-center justify-between">
-            <span className="font-mono text-[9px] uppercase tracking-wider text-paper-500">
-              After
-            </span>
+            <span className="label-mono">After</span>
             <CopyButton value={afterStr} />
           </div>
-          <pre className="overflow-auto rounded-sm bg-ink-950/60 p-2 font-mono text-[10px] leading-relaxed text-moss-400/80">
+          <pre className="overflow-auto rounded-sm bg-ink-900 p-2 font-mono text-[10px] leading-relaxed text-moss-400/80">
             {afterStr}
           </pre>
         </div>
@@ -99,7 +90,6 @@ function NodeJsonDiff({
 }
 
 export default function TemplateDiffPage({ params }: PageProps) {
-  const router = useRouter();
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
   const { data: template } = useWorkflowTemplate(id ?? '');
@@ -147,16 +137,6 @@ export default function TemplateDiffPage({ params }: PageProps) {
     }
   }, [diffPayload]);
 
-  const handleTabChange = (tab: SubTab) => {
-    if (tab === 'editor') {
-      router.push(`/workflows/library/${id}`);
-    } else if (tab === 'analytics') {
-      router.push(`/workflows/library/${id}/analytics`);
-    } else if (tab === 'runs') {
-      router.push(`/workflows/library/${id}/runs`);
-    }
-  };
-
   const changedNodeDiffs = useMemo(() => {
     if (!diffPayload || !specPair) {
       return [];
@@ -169,62 +149,47 @@ export default function TemplateDiffPage({ params }: PageProps) {
   }, [diffPayload, specPair]);
 
   if (!id) {
-    return (
-      <div className="p-8">
-        <Alert>Template not found</Alert>
-      </div>
-    );
+    return <TemplateNotFound />;
   }
 
   return (
-    <div className="space-y-10">
-      <div className="fade-up">
-        <Link
-          className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
-          href={`/workflows/library/${id}`}
-        >
-          <span>←</span> {template?.name ?? 'template'}
-        </Link>
-        <div className="mt-4">
-          <PageHeader
-            actions={
-              <div className="flex flex-wrap items-end gap-4">
-                <VersionSelect
-                  activeVersion={template?.activeVersion ?? null}
-                  label="A · before"
-                  onChange={setA}
-                  value={a}
-                  versions={sortedVersions}
-                />
-                <VersionSelect
-                  activeVersion={template?.activeVersion ?? null}
-                  label="B · after"
-                  onChange={setB}
-                  value={b}
-                  versions={sortedVersions}
-                />
-                {a !== null && b !== null && a === b && (
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-amber-400">
-                    ! pick two distinct versions
-                  </span>
-                )}
-              </div>
-            }
-            chapter="§ Compare versions"
-            subtitle="Side-by-side diff of two versions of this template. Changed nodes are highlighted on both diagrams and expanded below."
-            title="Version diff."
-          />
-        </div>
+    <div className="space-y-8">
+      <div>
+        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Template'} />
+        <PageHeader
+          actions={
+            <div className="flex flex-wrap items-end gap-4">
+              <VersionSelect
+                activeVersion={template?.activeVersion ?? null}
+                label="A · before"
+                onChange={setA}
+                value={a}
+                versions={sortedVersions}
+              />
+              <VersionSelect
+                activeVersion={template?.activeVersion ?? null}
+                label="B · after"
+                onChange={setB}
+                value={b}
+                versions={sortedVersions}
+              />
+              {a !== null && b !== null && a === b && (
+                <Badge tone="amber" uppercase variant="text">
+                  ! pick two distinct versions
+                </Badge>
+              )}
+            </div>
+          }
+          chapter="§ Workflows"
+          className="mb-0 mt-4"
+          subtitle="Side-by-side diff of two versions of this template. Changed nodes are highlighted on both diagrams and expanded below."
+          title="Version diff"
+        />
       </div>
 
-      <TabBar active="compare" className="fade-up" onChange={handleTabChange} tabs={SUB_TABS} />
+      <TemplateSubNav active="compare" templateId={id} />
 
-      {isLoading && (
-        <div className="fade-up stagger-1 flex items-center justify-center py-12 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-          <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-          computing diff…
-        </div>
-      )}
+      {isLoading && <LoadingState message="computing diff…" />}
 
       {(isDiffError || parseError) && (
         <Alert>{parseError ?? errMsg(diffError, 'Failed to load diff')}</Alert>
@@ -232,7 +197,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
 
       {diffPayload && !parseError && specPair && (
         <>
-          <section className="fade-up stagger-1">
+          <section>
             <SectionHeader hint="changes" number="01" title="Summary" />
             <Card variant="inset">
               <ul className="space-y-2 text-sm">
@@ -259,9 +224,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
                 </li>
                 {diffPayload.diff.metaChanges.length > 0 && (
                   <li className="mt-3 border-t border-ink-600 pt-3">
-                    <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-                      Metadata changes
-                    </div>
+                    <div className="label-mono mb-2">Metadata changes</div>
                     <ul className="space-y-1 text-xs">
                       {diffPayload.diff.metaChanges.map((m) => (
                         <li className="font-mono" key={m.field}>
@@ -282,7 +245,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
 
           {/* Per-changed-node JSON diff */}
           {changedNodeDiffs.length > 0 && (
-            <section className="fade-up stagger-2">
+            <section>
               <SectionHeader hint="field-level" number="02" title="Changed node details" />
               <div className="space-y-2">
                 {changedNodeDiffs.map(({ nodeId, before, after }) => (
@@ -292,7 +255,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
             </section>
           )}
 
-          <section className="fade-up stagger-3">
+          <section>
             <SectionHeader
               hint="side-by-side"
               number={changedNodeDiffs.length > 0 ? '03' : '02'}
@@ -367,26 +330,20 @@ interface VersionSelectProps {
 function VersionSelect({ label, versions, value, onChange, activeVersion }: VersionSelectProps) {
   const selectId = `version-${label.replace(/[^a-z]/gi, '-').toLowerCase()}`;
   return (
-    <div className="space-y-1.5">
-      <label
-        className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-        htmlFor={selectId}
-      >
-        {label}
-      </label>
-      <Select
-        className="h-9 w-auto px-2 font-mono text-xs"
-        id={selectId}
-        onChange={(e) => onChange(Number(e.target.value))}
-        value={value ?? ''}
-      >
-        {versions.map((v) => (
-          <option key={v.id} value={v.version}>
-            v{v.version}
-            {v.version === activeVersion ? ' (active)' : ''}
-          </option>
-        ))}
-      </Select>
-    </div>
+    <Select
+      className="w-auto"
+      compact
+      id={selectId}
+      label={label}
+      onChange={(e) => onChange(Number(e.target.value))}
+      value={value ?? ''}
+    >
+      {versions.map((v) => (
+        <option key={v.id} value={v.version}>
+          v{v.version}
+          {v.version === activeVersion ? ' (active)' : ''}
+        </option>
+      ))}
+    </Select>
   );
 }

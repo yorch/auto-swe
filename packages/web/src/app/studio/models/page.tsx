@@ -21,19 +21,20 @@ export default function StudioModelConfigPage() {
   const [active, setActive] = useState<Tab>('credentials');
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
+        chapter="§ Studio"
         subtitle={
           <>
             Encrypted provider credentials, the embedding model, and the audit trail. Per-role
             model, prompt, skill, and tool config now lives in the{' '}
-            <Link className="text-ember-400 hover:text-ember-300" href="/studio/agents/library">
+            <Link className="text-ember-400 hover:text-ember-600" href="/studio/agents/library">
               Agent library
             </Link>
             .
           </>
         }
-        title="Admin — Model configuration"
+        title="Model configuration"
       />
       <MidRunWarning />
       <TabBar active={active} onChange={setActive} tabs={TABS} />

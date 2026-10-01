@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui/Button';
+import { Alert } from '@/components/ui/Alert';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { useCreateTeam, useUpdateTeam } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 
@@ -78,7 +78,6 @@ export function TeamFormModal({
 
   return (
     <Modal
-      eyebrow={isEdit ? '§ Edit team' : '§ New team'}
       onClose={onClose}
       open={open}
       subtitle="Teams scope repositories, workflow templates, and agent lessons."
@@ -109,17 +108,13 @@ export function TeamFormModal({
           placeholder="What this team owns"
           value={description}
         />
-        {error && (
-          <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">{error}</p>
-        )}
-        <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={busy} type="submit" variant="primary">
-            {busy ? 'Saving…' : isEdit ? 'Save changes' : 'Create team'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          isPending={busy}
+          onCancel={onClose}
+          pendingLabel="Saving…"
+          submitLabel={isEdit ? 'Save changes' : 'Create team'}
+        />
       </form>
     </Modal>
   );

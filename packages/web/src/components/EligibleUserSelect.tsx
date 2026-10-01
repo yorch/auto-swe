@@ -1,6 +1,8 @@
 'use client';
 
 import type { UserSummary } from '@auto-swe/shared/types/api';
+import Link from 'next/link';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Select } from '@/components/ui/Select';
 
 /**
@@ -24,10 +26,19 @@ export function EligibleUserSelect({
 }) {
   if (eligible.length === 0) {
     return (
-      <p className="text-xs text-paper-500">
-        No active users left to add. Invite one from <span className="text-paper-200">/users</span>{' '}
-        first.
-      </p>
+      <EmptyState
+        className="py-0 text-left"
+        hint={
+          <>
+            Invite one from{' '}
+            <Link className="text-ember-400 hover:underline" href="/govern/users">
+              Users
+            </Link>{' '}
+            first.
+          </>
+        }
+        title="No active users left to add."
+      />
     );
   }
   return (

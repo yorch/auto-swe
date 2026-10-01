@@ -8,15 +8,15 @@ function isUnifiedDiff(str: string): boolean {
 function DiffLine({ line }: { line: string }) {
   // added line (not +++ header)
   if (line.startsWith('+') && !line.startsWith('+++')) {
-    return <div className="bg-moss-400/10 text-moss-300 px-1">{line || ' '}</div>;
+    return <div className="bg-moss-400/10 text-moss-400 px-1">{line || ' '}</div>;
   }
   // removed line (not --- header)
   if (line.startsWith('-') && !line.startsWith('---')) {
-    return <div className="bg-brick-400/10 text-brick-300 px-1">{line || ' '}</div>;
+    return <div className="bg-brick-400/10 text-brick-400 px-1">{line || ' '}</div>;
   }
   // hunk header
   if (line.startsWith('@@ ')) {
-    return <div className="bg-violet-400/5 text-violet-300 px-1">{line}</div>;
+    return <div className="bg-dust-400/5 text-dust-400 px-1">{line}</div>;
   }
   // file header lines
   if (

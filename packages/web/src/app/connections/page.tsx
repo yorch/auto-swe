@@ -9,11 +9,12 @@ import { MyCredentialModal } from '@/components/repositories/MyCredentialModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
 import { ShareRepoModal } from '@/components/repositories/ShareRepoModal';
+import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   useRepoDependencySuggestions,
@@ -94,23 +95,23 @@ export default function ConnectionsPage() {
     myCredentials.data?.credentials.find((c) => c.connectionId === id);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           canManage ? (
-            <div className="flex items-center gap-2">
+            <>
               <Button onClick={() => setMode({ kind: 'import' })} size="sm" variant="secondary">
                 Import from GitHub
               </Button>
               <Button onClick={() => setMode({ kind: 'create' })} size="sm" variant="primary">
-                + Add connection
+                Add connection
               </Button>
-            </div>
+            </>
           ) : undefined
         }
-        chapter="§ Library"
+        chapter="§ Workflows"
         subtitle="External systems — git repos, REST APIs, and other integrations — available to your workflows."
-        title="Connections."
+        title="Connections"
       />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {(repos ?? []).map((r) => {
@@ -146,11 +147,9 @@ export default function ConnectionsPage() {
                 {r.description && <p className="truncate text-xs">{r.description}</p>}
               </div>
               <div className="mt-3 flex items-center justify-between">
-                <span
-                  className={`text-xs font-medium ${r.isActive ? 'text-moss-400' : 'text-brick-400'}`}
-                >
+                <Badge dot tone={r.isActive ? 'moss' : 'brick'} uppercase>
                   {r.isActive ? 'Active' : 'Inactive'}
-                </span>
+                </Badge>
                 <div className="flex items-center gap-1">
                   {showCredential && (
                     <Button
@@ -196,7 +195,7 @@ export default function ConnectionsPage() {
           );
         })}
         {meta !== undefined && meta.total > (repos ?? []).length && (
-          <p className="text-center font-mono text-[11px] uppercase tracking-wider text-paper-500">
+          <p className="col-span-full text-center font-mono text-[11px] uppercase tracking-wider text-paper-500">
             showing the first {(repos ?? []).length} of {meta.total} connections
           </p>
         )}
@@ -214,30 +213,32 @@ export default function ConnectionsPage() {
       </div>
 
       <section className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="font-semibold text-sm">Suggested repositories to onboard</h2>
-          {role === 'ADMIN' && (
-            <Button
-              disabled={scan.isPending}
-              onClick={() => scan.mutate()}
-              size="sm"
-              variant="secondary"
-            >
-              {scan.isPending ? 'Starting…' : 'Re-scan dependencies'}
-            </Button>
-          )}
-        </div>
+        <SectionHeader
+          actions={
+            role === 'ADMIN' && (
+              <Button
+                disabled={scan.isPending}
+                onClick={() => scan.mutate()}
+                size="sm"
+                variant="secondary"
+              >
+                {scan.isPending ? 'Starting…' : 'Re-scan dependencies'}
+              </Button>
+            )
+          }
+          title="Suggested repositories to onboard"
+        />
         {scan.isError && (
-          <p className="text-brick-400 text-xs">
+          <Alert>
             {errMsg(scan.error, 'Could not start the scan — the schedule may not be registered.')}
-          </p>
+          </Alert>
         )}
         {scan.isSuccess && !scan.isError && (
           // The POST only *starts* the sweep, so the list below is still
           // pre-scan; say so rather than letting it read as "nothing changed".
-          <p className="text-paper-500 text-xs">
+          <Alert variant="success">
             Scan started. Suggestions update as it works through the repositories.
-          </p>
+          </Alert>
         )}
         <RepoDependencySuggestions
           error={suggestions.error}

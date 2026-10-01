@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -9,10 +10,11 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   type Skill,
@@ -23,11 +25,7 @@ import {
   useUpdateSkill,
 } from '@/hooks/useSkills';
 import { errMsg } from '@/lib/errors';
-import { formatDate } from '@/lib/utils';
-
-function pct(v: number | null): string {
-  return v == null ? '—' : `${(v * 100).toFixed(0)}%`;
-}
+import { formatCost, formatDate, formatPercent } from '@/lib/utils';
 
 function OriginBadge({ origin }: { origin: string | null }) {
   if (!origin) {
@@ -99,7 +97,6 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
 
   return (
     <Modal
-      eyebrow="Admin / Skills"
       onClose={() => {
         setEditing(false);
         onClose();
@@ -110,100 +107,68 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     >
       {editing ? (
         <form className="space-y-4" onSubmit={handleSave}>
-          <FieldWrapper label="Name">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              required
-              value={form.name}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Description">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              value={form.description}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Prompt Text">
-            {skill.isBuiltIn ? (
-              <pre className="w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
+          <Input
+            id="skill-edit-name"
+            label="Name"
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            required
+            value={form.name}
+          />
+          <Input
+            id="skill-edit-description"
+            label="Description"
+            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            value={form.description}
+          />
+          {skill.isBuiltIn ? (
+            <FieldWrapper hint="Prompt text is locked for built-in skills." label="Prompt text">
+              <pre className="w-full rounded-[9px] border border-ink-500 bg-ink-900 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
                 {skill.promptText}
               </pre>
-            ) : (
-              <textarea
-                className="w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 font-mono text-xs text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
-                onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
-                required
-                rows={12}
-                value={form.promptText}
-              />
-            )}
-            {skill.isBuiltIn && (
-              <p className="mt-1 text-xs text-paper-500">
-                Prompt text is locked for built-in skills.
-              </p>
-            )}
-          </FieldWrapper>
-          <FieldWrapper label="Active">
-            <ToggleSwitch
-              checked={form.isActive}
-              label={form.isActive ? 'Enabled' : 'Disabled'}
-              onChange={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
+            </FieldWrapper>
+          ) : (
+            <Textarea
+              id="skill-edit-prompt-text"
+              label="Prompt text"
+              onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
+              required
+              rows={12}
+              value={form.promptText}
             />
-          </FieldWrapper>
+          )}
+          <ToggleSwitch
+            checked={form.isActive}
+            label={form.isActive ? 'Active' : 'Inactive'}
+            onChange={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
+          />
           {error && <Alert variant="error">{error}</Alert>}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button onClick={cancelEdit} type="button" variant="ghost">
-              Cancel
-            </Button>
-            <Button disabled={update.isPending} type="submit" variant="primary">
-              {update.isPending ? 'Saving…' : 'Save Changes'}
-            </Button>
-          </div>
+          <ModalFooter
+            isPending={update.isPending}
+            onCancel={cancelEdit}
+            pendingLabel="Saving…"
+            submitLabel="Save changes"
+          />
         </form>
       ) : (
         <div className="space-y-5">
-          <div className="flex flex-wrap gap-2 text-xs">
-            {skill.isBuiltIn && (
-              <span className="rounded bg-ink-600 px-2 py-0.5 font-mono uppercase tracking-wider text-paper-400">
-                built-in
-              </span>
-            )}
-            {skill.origin && (
-              <span className="rounded bg-ink-600 px-2 py-0.5 font-mono text-paper-400">
-                origin: {skill.origin}
-              </span>
-            )}
-            {skill.isVerified && (
-              <span className="rounded bg-moss-400/15 px-2 py-0.5 font-mono text-moss-400">
-                verified
-              </span>
-            )}
-            {!skill.isVerified && !skill.isBuiltIn && (
-              <span className="rounded bg-amber-900/40 px-2 py-0.5 font-mono text-amber-400">
-                unverified
-              </span>
-            )}
-            <span
-              className={`rounded px-2 py-0.5 font-mono ${
-                skill.isActive ? 'bg-ember-900/40 text-ember-400' : 'bg-ink-600 text-paper-500'
-              }`}
-            >
-              {skill.isActive ? 'active' : 'inactive'}
-            </span>
-            <span className="rounded bg-ink-600 px-2 py-0.5 font-mono text-paper-400">
+          <EntityMetaBadges
+            isActive={skill.isActive}
+            isBuiltIn={skill.isBuiltIn}
+            isVerified={skill.isVerified}
+            origin={skill.origin}
+          >
+            <Badge tone="neutral">
               used by {skill.usedByCount} agent{skill.usedByCount !== 1 ? 's' : ''}
-            </span>
-          </div>
+            </Badge>
+          </EntityMetaBadges>
           {skill.description && <p className="text-sm text-paper-300">{skill.description}</p>}
           <div>
-            <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-paper-500">
-              Prompt Text
-            </div>
-            <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-800 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
+            <div className="label-mono mb-1.5">Prompt text</div>
+            <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
               {skill.promptText}
             </pre>
           </div>
-          <div className="flex items-center justify-between border-t border-ink-700 pt-4">
+          <div className="flex items-center justify-between border-t border-ink-600 pt-4">
             <div className="space-y-0.5 text-xs text-paper-500">
               <div>Created {formatDate(skill.createdAt)}</div>
               <div>Updated {formatDate(skill.updatedAt)}</div>
@@ -248,39 +213,36 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
   }
 
   return (
-    <Modal eyebrow="Admin / Skills" onClose={onClose} open={open} title="New Skill">
+    <Modal onClose={onClose} open={open} title="New skill">
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <FieldWrapper label="Name">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            required
-            value={form.name}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Description">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            value={form.description}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Prompt Text">
-          <textarea
-            className="w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 font-mono text-xs text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
-            onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
-            required
-            rows={8}
-            value={form.promptText}
-          />
-        </FieldWrapper>
+        <Input
+          id="skill-new-name"
+          label="Name"
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          required
+          value={form.name}
+        />
+        <Input
+          id="skill-new-description"
+          label="Description"
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          value={form.description}
+        />
+        <Textarea
+          id="skill-new-prompt-text"
+          label="Prompt text"
+          onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
+          required
+          rows={8}
+          value={form.promptText}
+        />
         {error && <Alert variant="error">{error}</Alert>}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={create.isPending} type="submit" variant="primary">
-            {create.isPending ? 'Creating…' : 'Create Skill'}
-          </Button>
-        </div>
+        <ModalFooter
+          isPending={create.isPending}
+          onCancel={onClose}
+          pendingLabel="Creating…"
+          submitLabel="Create skill"
+        />
       </form>
     </Modal>
   );
@@ -297,9 +259,9 @@ function EffectivenessCard() {
       </CardHeader>
       <p className="mb-3 text-xs text-paper-500">
         Run outcomes for runs where each skill was active, vs. the all-runs baseline (
-        {pct(data?.baselineSuccessRate ?? null)} success across {data?.totalRuns ?? 0} runs).
-        Correlational — skills are assigned per team/template, so differences may reflect the team
-        or workload, not the skill.
+        {formatPercent(data?.baselineSuccessRate ?? null)} success across {data?.totalRuns ?? 0}{' '}
+        runs). Correlational — skills are assigned per team/template, so differences may reflect the
+        team or workload, not the skill.
       </p>
       <QueryBoundary
         error={loadError}
@@ -329,10 +291,10 @@ function EffectivenessCard() {
                   <Td className="py-2 pr-4 font-medium text-paper-100">{s.name}</Td>
                   <Td className="py-2 text-right tabular-nums text-paper-400">{s.runs}</Td>
                   <Td className="py-2 text-right tabular-nums text-paper-400">
-                    {pct(s.successRate)}
+                    {formatPercent(s.successRate)}
                   </Td>
                   <Td className="py-2 text-right tabular-nums text-paper-400">
-                    {s.avgCostUsd == null ? '—' : `$${s.avgCostUsd.toFixed(2)}`}
+                    {formatCost(s.avgCostUsd)}
                   </Td>
                 </TRow>
               ))}
@@ -353,23 +315,39 @@ export default function StudioSkillsPage() {
   const deleteSkill = useDeleteSkill();
   const { data: skills, isLoading, isError, error: loadError } = useSkills();
   const update = useUpdateSkill();
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+
+  async function handleToggleActive(skill: Skill) {
+    setToggleError(null);
+    setTogglingId(skill.id);
+    try {
+      await update.mutateAsync({ id: skill.id, isActive: !skill.isActive });
+    } catch (err) {
+      setToggleError(errMsg(err, `Failed to update "${skill.name}"`));
+    } finally {
+      setTogglingId(null);
+    }
+  }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
-            + New Skill
+            Create skill
           </Button>
         }
+        chapter="§ Studio"
         subtitle="Reusable prompt-fragment instructions injected into an agent's system prompt. Assigned to agent roles at any scope. Tool access control is managed separately via Agent Tool Access."
-        title="Skill Library"
+        title="Skill library"
       />
 
       <Card>
         <CardHeader>
-          <CardTitle>All Skills</CardTitle>
+          <CardTitle>All skills</CardTitle>
         </CardHeader>
+        {toggleError && <Alert variant="error">{toggleError}</Alert>}
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="skills">
           {!skills?.length ? (
             <EmptyState title="No skills yet. Create one with the button above." />
@@ -395,16 +373,20 @@ export default function StudioSkillsPage() {
                       </button>
                       <div className="mt-0.5 flex flex-wrap items-center gap-1">
                         {skill.isBuiltIn && (
-                          <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                          <Badge tone="muted" uppercase variant="text">
                             built-in
-                          </span>
+                          </Badge>
                         )}
                         {skill.origin && <OriginBadge origin={skill.origin} />}
                         {skill.isVerified && (
-                          <span className="font-mono text-[10px] text-moss-400">verified</span>
+                          <Badge tone="moss" variant="text">
+                            verified
+                          </Badge>
                         )}
                         {!skill.isVerified && !skill.isBuiltIn && (
-                          <span className="font-mono text-[10px] text-amber-400">unverified</span>
+                          <Badge tone="amber" variant="text">
+                            unverified
+                          </Badge>
                         )}
                       </div>
                     </Td>
@@ -417,8 +399,8 @@ export default function StudioSkillsPage() {
                     <Td className="py-2 pr-4">
                       <ToggleSwitch
                         checked={skill.isActive}
-                        disabled={update.isPending}
-                        onChange={() => update.mutate({ id: skill.id, isActive: !skill.isActive })}
+                        disabled={togglingId === skill.id}
+                        onChange={() => handleToggleActive(skill)}
                       />
                     </Td>
                     <Td className="py-2 text-right">

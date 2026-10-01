@@ -122,6 +122,7 @@ export function NodeInspector({
         <div className="mt-1.5 flex items-end gap-2">
           <div className="flex-1">
             <Input
+              compact
               hint="rename — references update automatically"
               label="Node ID"
               onBlur={(e) => {
@@ -227,9 +228,7 @@ export function NodeInspector({
 
         {/* Raw JSON escape hatch */}
         <details className="mt-6 border-t border-ink-600 pt-4">
-          <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 hover:text-paper-200">
-            Raw JSON
-          </summary>
+          <summary className="label-mono cursor-pointer hover:text-paper-200">Raw JSON</summary>
           <div className="mt-2 flex items-center justify-end">
             <CopyButton value={JSON.stringify(node, null, 2)} />
           </div>
@@ -261,9 +260,7 @@ function EdgeConnectionsSection({
 
   return (
     <div className="mt-6 space-y-3 border-t border-ink-600 pt-4">
-      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-        Outgoing edges
-      </div>
+      <div className="label-mono">Outgoing edges</div>
       {handles.map((h) => {
         // An option port has no entry in HANDLE_LABEL_FULL — its label is the
         // option's own text, which says more than "submit" would anyway.
@@ -276,7 +273,7 @@ function EdgeConnectionsSection({
         const clearable = !isEdgeFieldRequired(node, h.id);
         return (
           <Select
-            className="h-9 px-2 font-mono text-xs"
+            compact
             id={`edge-${h.id}`}
             key={h.id}
             label={label}

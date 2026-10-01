@@ -8,22 +8,57 @@ import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySection';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRemoveTeamMember, useTeam, useUpdateTeam, useUpdateTeamMember } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
 import { useAuthStore } from '@/stores/authStore';
 
+const SUBTITLE = 'Members, repositories, sandbox allowlists and agent overrides for one team.';
+
+function BackLink() {
+  return (
+    <Link className="label-mono hover:text-paper-200" href="/govern/teams">
+      ← Teams
+    </Link>
+  );
+}
+
+/** Header-only frame for the branches that have no team to show. */
+function TeamFrame({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="space-y-8">
+      <BackLink />
+      <PageHeader chapter="§ Govern" subtitle={SUBTITLE} title="Team" />
+      {children}
+    </div>
+  );
+}
+
+function TeamNotFound() {
+  return (
+    <TeamFrame>
+      <EmptyState
+        action={<ButtonLink href="/govern/teams">Back to teams</ButtonLink>}
+        title="Team not found"
+      />
+    </TeamFrame>
+  );
+}
+
 export default function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: team, isLoading } = useTeam(id ?? '');
+  const { data: team, error, isError, isLoading } = useTeam(id ?? '');
   const updateMember = useUpdateTeamMember(id ?? '');
   const removeMember = useRemoveTeamMember(id ?? '');
   const platformRole = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
@@ -44,9 +79,11 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
   const [personaInput, setPersonaInput] = useState('');
   const [personaError, setPersonaError] = useState<string | null>(null);
+  const [confirmClearPersona, setConfirmClearPersona] = useState(false);
+  const [memberError, setMemberError] = useState<string | null>(null);
 
   if (!id) {
-    return <div className="text-center py-12 text-paper-400">Team not found</div>;
+    return <TeamNotFound />;
   }
 
   async function handleSavePersona() {
@@ -59,32 +96,33 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     }
   }
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <TeamFrame>
+        <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="team" />
+      </TeamFrame>
+    );
   }
   if (!team) {
-    return <div className="text-center py-12 text-paper-400">Team not found</div>;
+    return <TeamNotFound />;
   }
 
   const memberships = team.memberships ?? [];
   const existingUserIds = memberships.map((m) => m.user?.id ?? '').filter(Boolean);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      <BackLink />
       <PageHeader
         actions={
-          <>
-            <Link className="text-ember-400 hover:underline text-sm" href="/teams">
-              &larr; Teams
-            </Link>
-            {canManage && (
-              <Button onClick={() => setEditing(true)} size="sm" variant="ghost">
-                Edit team
-              </Button>
-            )}
-          </>
+          canManage && (
+            <Button onClick={() => setEditing(true)} size="sm" variant="ghost">
+              Edit team
+            </Button>
+          )
         }
-        chapter="§ Teams"
+        chapter="§ Govern"
+        subtitle={team.description || SUBTITLE}
         title={team.name}
       />
 
@@ -94,34 +132,45 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             <CardTitle>Members ({memberships.length})</CardTitle>
             {canManage && (
               <Button onClick={() => setAdding(true)} size="sm" variant="primary">
-                + Add
+                Add member
               </Button>
             )}
           </CardHeader>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ink-600">
-                <th className="text-left py-2">Email</th>
-                <th className="text-left py-2">Platform Role</th>
-                <th className="text-left py-2">Team Role</th>
-                {canManage && <th className="py-2" />}
-              </tr>
-            </thead>
+          {memberError && <Alert variant="error">{memberError}</Alert>}
+          <Table>
+            <THead>
+              <Th className="pr-3" variant="compact">
+                Email
+              </Th>
+              <Th className="pr-3" variant="compact">
+                Platform role
+              </Th>
+              <Th className="pr-3" variant="compact">
+                Team role
+              </Th>
+              {canManage && <Th variant="compact" />}
+            </THead>
             <tbody>
               {memberships.map((m) => (
-                <tr className="border-b border-ink-600" key={m.id}>
-                  <td className="py-2">{m.user?.email}</td>
-                  <td className="py-2 text-paper-400">{m.user?.role}</td>
-                  <td className="py-2">
+                <TRow key={m.id}>
+                  <Td className="py-2 pr-3">{m.user?.email}</Td>
+                  <Td className="py-2 pr-3 text-paper-400">{m.user?.role}</Td>
+                  <Td className="py-2 pr-3">
                     {canManage && m.user?.id ? (
                       <Select
-                        className="h-7 w-auto px-2 text-xs"
+                        className="w-auto"
+                        compact
                         onChange={(e) =>
                           m.user?.id &&
                           (() => {
                             const role = e.target.value;
                             if (role === 'ADMIN' || role === 'LEAD' || role === 'ENGINEER') {
-                              updateMember.mutate({ role, userId: m.user.id });
+                              setMemberError(null);
+                              updateMember
+                                .mutateAsync({ role, userId: m.user.id })
+                                .catch((err) =>
+                                  setMemberError(errMsg(err, 'Failed to change role'))
+                                );
                             }
                           })()
                         }
@@ -134,9 +183,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                     ) : (
                       m.role
                     )}
-                  </td>
+                  </Td>
                   {canManage && (
-                    <td className="py-2 text-right">
+                    <Td align="right" className="py-2">
                       {m.user?.id && (
                         <Button
                           disabled={removeMember.isPending}
@@ -152,22 +201,17 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                           Remove
                         </Button>
                       )}
-                    </td>
+                    </Td>
                   )}
-                </tr>
+                </TRow>
               ))}
               {memberships.length === 0 && (
-                <tr>
-                  <td
-                    className="py-4 text-center text-xs text-paper-500"
-                    colSpan={canManage ? 4 : 3}
-                  >
-                    No members yet.
-                  </td>
-                </tr>
+                <TableStatusRow colSpan={canManage ? 4 : 3}>
+                  <EmptyState className="py-4" title="No members yet." />
+                </TableStatusRow>
               )}
             </tbody>
-          </table>
+          </Table>
         </Card>
 
         <Card>
@@ -183,19 +227,25 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                 <span className="font-medium">
                   {r.organizationName}/{r.repoName}
                 </span>
-                <span className={`text-xs ${r.isActive ? 'text-moss-400' : 'text-paper-400'}`}>
+                <Badge tone={r.isActive ? 'moss' : 'neutral'} variant="text">
                   {r.isActive ? 'Active' : 'Inactive'}
-                </span>
+                </Badge>
               </div>
             ))}
             {(team.repositories ?? []).length === 0 && (
-              <p className="py-4 text-center text-xs text-paper-500">
-                No repositories yet. Add one from{' '}
-                <Link className="text-ember-400 hover:underline" href="/connections">
-                  Connections
-                </Link>
-                .
-              </p>
+              <EmptyState
+                className="py-4"
+                hint={
+                  <>
+                    Add one from{' '}
+                    <Link className="text-ember-400 hover:underline" href="/connections">
+                      Connections
+                    </Link>
+                    .
+                  </>
+                }
+                title="No repositories yet."
+              />
             )}
           </div>
         </Card>
@@ -208,7 +258,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       {canManageTeamConfig && (
         <Card>
           <CardHeader>
-            <CardTitle eyebrow="Channel Assistant">Default Persona</CardTitle>
+            <CardTitle eyebrow="Channel assistant">Default persona</CardTitle>
           </CardHeader>
           <div className="space-y-4">
             {personaError ? <Alert variant="error">{personaError}</Alert> : null}
@@ -233,17 +283,15 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                 />
               </div>
               <Button disabled={updateTeam.isPending} onClick={handleSavePersona} variant="primary">
-                {team.defaultPersonaPrompt ? 'Update' : 'Set'}
+                {updateTeam.isPending ? 'Saving…' : 'Save persona'}
               </Button>
             </div>
             {team.defaultPersonaPrompt && (
               <Button
                 disabled={updateTeam.isPending}
-                onClick={() => {
-                  setPersonaInput('');
-                  updateTeam.mutate({ defaultPersonaPrompt: null });
-                }}
-                variant="ghost"
+                onClick={() => setConfirmClearPersona(true)}
+                size="sm"
+                variant="danger"
               >
                 Clear persona
               </Button>
@@ -275,13 +323,25 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           setConfirmRemoveId(null);
           setConfirmRemoveEmail(null);
         }}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (confirmRemoveId) {
-            removeMember.mutate(confirmRemoveId);
+            await removeMember.mutateAsync(confirmRemoveId);
           }
         }}
         open={confirmRemoveId !== null}
         title="Remove member"
+      />
+      <ConfirmModal
+        confirmLabel="Clear"
+        dangerous
+        message="The team-wide default persona is removed; channels that set their own persona are unaffected. The current text is not kept."
+        onClose={() => setConfirmClearPersona(false)}
+        onConfirm={async () => {
+          await updateTeam.mutateAsync({ defaultPersonaPrompt: null });
+          setPersonaInput('');
+        }}
+        open={confirmClearPersona}
+        title="Clear persona?"
       />
     </div>
   );

@@ -2,14 +2,14 @@
 
 import { useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
-import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { TabBar } from '@/components/ui/TabBar';
 import { type ApprovalFilter, type ApprovalSort, useApprovals } from '@/hooks/useApprovals';
-import { errMsg } from '@/lib/errors';
 
 const TABS: { id: ApprovalFilter; label: string }[] = [
   { id: 'PENDING', label: 'Pending' },
@@ -37,35 +37,25 @@ export default function GovernApprovalsPage() {
     isFetching,
   } = useApprovals(filter, sort, overdueOnly);
 
-  if (isLoading) {
-    return <LoadingState />;
-  }
-
-  if (isError) {
-    return (
-      <div className="p-8">
-        <Alert>{errMsg(error, 'Failed to load inbox')}</Alert>
-      </div>
-    );
-  }
-
   const count = steps?.length ?? 0;
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="max-w-3xl space-y-8">
       <PageHeader
         actions={
           <Button disabled={isFetching} onClick={() => refetch()} size="sm" variant="ghost">
             {isFetching ? 'Refreshing…' : 'Refresh'}
           </Button>
         }
-        chapter="§ Inbox"
+        chapter="§ Govern"
         subtitle={
-          filter === 'PENDING'
-            ? count === 0
-              ? 'No pending actions'
-              : `${count} pending action${count !== 1 ? 's' : ''}`
-            : `${count} step${count !== 1 ? 's' : ''} total`
+          isLoading || isError
+            ? undefined
+            : filter === 'PENDING'
+              ? count === 0
+                ? 'No pending actions'
+                : `${count} pending action${count !== 1 ? 's' : ''}`
+              : `${count} step${count !== 1 ? 's' : ''} total`
         }
         title="Inbox"
       />
@@ -74,6 +64,7 @@ export default function GovernApprovalsPage() {
 
       <div className="flex flex-wrap items-center gap-3">
         <Select
+          aria-label="Sort"
           className="w-40"
           onChange={(e) => setSort(e.target.value as ApprovalSort)}
           value={sort}
@@ -85,30 +76,26 @@ export default function GovernApprovalsPage() {
           ))}
         </Select>
 
-        <label className="flex items-center gap-2 text-sm text-paper-300">
-          <input
-            checked={overdueOnly}
-            className="rounded border-ink-500 bg-ink-700 text-ember-400 focus:ring-ember-400"
-            onChange={(e) => setOverdueOnly(e.target.checked)}
-            type="checkbox"
-          />
-          Overdue only
-        </label>
+        <Checkbox
+          checked={overdueOnly}
+          label="Overdue only"
+          onChange={(e) => setOverdueOnly(e.target.checked)}
+        />
       </div>
 
-      {count > 0 && (
-        <div className="space-y-3">
-          {steps?.map((step) => (
-            <HumanStepCard key={step.id} step={step} />
-          ))}
-        </div>
-      )}
+      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="inbox">
+        {count > 0 && (
+          <div className="space-y-3">
+            {steps?.map((step) => (
+              <HumanStepCard key={step.id} step={step} />
+            ))}
+          </div>
+        )}
 
-      {count === 0 && !isLoading && (
-        <p className="text-sm text-paper-400">
-          {filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'}
-        </p>
-      )}
+        {count === 0 && (
+          <EmptyState title={filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'} />
+        )}
+      </QueryBoundary>
     </div>
   );
 }

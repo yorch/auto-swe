@@ -61,7 +61,7 @@ const docCode: Components['code'] = ({ children, className, node: _node, ...rest
   return (
     <code className={className} {...rest}>
       {language === 'mermaid' ? (
-        <span className="block mb-2 pb-2 border-b border-white/10 text-[0.9em] not-italic text-paper-400">
+        <span className="block mb-2 pb-2 border-b border-ink-600 text-[0.9em] not-italic text-paper-400">
           Mermaid diagram source — renders as a diagram in the repository
         </span>
       ) : null}
@@ -98,7 +98,7 @@ export function Markdown({
         '[&_li]:leading-relaxed',
         '[&_blockquote]:border-l-4 [&_blockquote]:border-ink-600 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-paper-400 [&_blockquote]:my-4',
         '[&_code]:font-mono [&_code]:text-[0.85em] [&_code]:bg-ink-700 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded',
-        '[&_pre]:bg-[#0f172a] [&_pre]:text-[#e2e8f0] [&_pre]:p-4 [&_pre]:rounded-md [&_pre]:overflow-x-auto [&_pre]:my-4 [&_pre]:text-xs',
+        '[&_pre]:bg-ink-900 [&_pre]:text-paper-200 [&_pre]:p-4 [&_pre]:rounded-md [&_pre]:overflow-x-auto [&_pre]:my-4 [&_pre]:text-xs',
         '[&_pre_code]:bg-transparent [&_pre_code]:text-inherit [&_pre_code]:p-0',
         '[&_table]:w-full [&_table]:my-4 [&_table]:border-collapse [&_table]:text-xs',
         '[&_th]:border [&_th]:border-ink-600 [&_th]:bg-ink-700 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold',

@@ -4,9 +4,9 @@ import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchem
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { useRunTemplate } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 import { buildInitialPayload, SchemaFieldInput, validatePayload } from './schemaForm';
@@ -30,13 +30,14 @@ export function RunTemplateModal({
   );
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [launched, setLaunched] = useState(false);
+  // The launched workflow's id; non-null once the run has started.
+  const [launchedId, setLaunchedId] = useState<string | null>(null);
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
   const handleClose = () => {
     onClose();
     setError(null);
-    setLaunched(false);
+    setLaunchedId(null);
     setAttemptedSubmit(false);
     setLabel('');
     setPayload(schema ? buildInitialPayload(schema) : {});
@@ -52,8 +53,11 @@ export function RunTemplateModal({
       return;
     }
     try {
-      await runTemplate.mutateAsync({ label: label.trim() || undefined, payload });
-      setLaunched(true);
+      const { workflowId } = await runTemplate.mutateAsync({
+        label: label.trim() || undefined,
+        payload,
+      });
+      setLaunchedId(workflowId);
     } catch (err) {
       const msg = errMsg(err, 'Run failed');
       setError(msg);
@@ -67,7 +71,7 @@ export function RunTemplateModal({
   const hasSchema = schema && Object.keys(schema.properties).length > 0;
   const requiredKeys = new Set(schema?.required ?? []);
 
-  if (launched) {
+  if (launchedId) {
     return (
       <Modal
         eyebrow={`§ ${template.name}`}
@@ -75,15 +79,16 @@ export function RunTemplateModal({
         open={open}
         title="Workflow started"
       >
-        <div className="space-y-6 py-2 text-center">
-          <div className="text-3xl text-moss-400">✓</div>
-          <p className="text-sm text-paper-300">
-            Your workflow is running. It will appear in the runs list shortly.
-          </p>
-          <div className="flex justify-center gap-3 pt-2">
-            <Button onClick={handleClose} variant="secondary">
+        <div className="space-y-6">
+          <Alert variant="success">Your workflow is running.</Alert>
+          {/* ModalFooter's action is a button; this one navigates, so it is a link. */}
+          <div className="flex justify-end gap-3 border-t border-ink-600 pt-4">
+            <Button onClick={handleClose} variant="ghost">
               Close
             </Button>
+            <ButtonLink href={`/workflows/${launchedId}`} onClick={handleClose} variant="primary">
+              View workflow →
+            </ButtonLink>
           </div>
         </div>
       </Modal>
@@ -124,18 +129,14 @@ export function RunTemplateModal({
             />
           ))}
 
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={handleClose} variant="secondary">
-            Cancel
-          </Button>
-          <Button
-            disabled={!isValid || runTemplate.isPending}
-            onClick={handleRun}
-            variant="primary"
-          >
-            {runTemplate.isPending ? 'Starting…' : 'Run →'}
-          </Button>
-        </div>
+        <ModalFooter
+          disabled={!isValid}
+          isPending={runTemplate.isPending}
+          onCancel={handleClose}
+          onSubmit={handleRun}
+          pendingLabel="Starting…"
+          submitLabel="Run →"
+        />
       </div>
     </Modal>
   );

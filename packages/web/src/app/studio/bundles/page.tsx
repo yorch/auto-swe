@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -53,8 +54,9 @@ export default function StudioBundlesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
+        chapter="§ Studio"
         subtitle={
           <>
             Distribute library content (Agents, Skills, scanner patterns, Templates) across
@@ -142,12 +144,10 @@ export default function StudioBundlesPage() {
                     <Td className="py-2 pr-4 font-mono text-xs text-paper-100">{b.name}</Td>
                     <Td className="py-2 pr-4 text-paper-300">{b.version}</Td>
                     <Td className="py-2 pr-4">
-                      <span
-                        className={b.trustState === 'VERIFIED' ? 'text-moss-400' : 'text-amber-400'}
-                      >
+                      <Badge tone={b.trustState === 'VERIFIED' ? 'moss' : 'amber'} variant="text">
                         {b.trustState}
                         {b.signedBy ? ` · ${b.signedBy}` : ''}
-                      </span>
+                      </Badge>
                     </Td>
                     <Td className="py-2 pr-4 text-xs text-paper-400">{b.source ?? '—'}</Td>
                   </TRow>

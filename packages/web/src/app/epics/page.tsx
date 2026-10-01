@@ -3,13 +3,18 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { LoadingState } from '@/components/ui/LoadingState';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Textarea } from '@/components/ui/Textarea';
 import { useCreateEpic, useEpics } from '@/hooks/useEpics';
 import { useRepositories } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
@@ -59,7 +64,7 @@ export default function EpicsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           canCreate && (
@@ -69,11 +74,12 @@ export default function EpicsPage() {
               title={repos.length < 2 ? 'Connect at least two repositories first' : undefined}
               variant="primary"
             >
-              + New epic
+              New epic
             </Button>
           )
         }
-        chapter="§ Epics"
+        chapter="§ Requests"
+        subtitle="Changes that span several repositories, decomposed by the Planner agent and run as ordered child workflows."
         title="Epics"
       />
 
@@ -97,25 +103,22 @@ export default function EpicsPage() {
           </THead>
           <tbody>
             {epicsLoading && (
-              <TRow>
-                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
-                  Loading…
-                </Td>
-              </TRow>
+              <TableStatusRow colSpan={5}>
+                <LoadingState compact message="loading epics…" />
+              </TableStatusRow>
             )}
             {!epicsLoading && epicsError && (
-              <TRow>
-                <Td className="px-4 py-6 text-center text-xs text-brick-400" colSpan={5}>
-                  {errMsg(epicsError, 'Failed to load epics')}
-                </Td>
-              </TRow>
+              <TableStatusRow colSpan={5}>
+                <Alert>{errMsg(epicsError, 'Failed to load epics')}</Alert>
+              </TableStatusRow>
             )}
             {!epicsLoading && !epicsError && epics.length === 0 && (
-              <TRow>
-                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
-                  No epics yet. Launch one to fan work out across repositories.
-                </Td>
-              </TRow>
+              <TableStatusRow colSpan={5}>
+                <EmptyState
+                  hint="Launch one to fan work out across repositories."
+                  title="No epics yet."
+                />
+              </TableStatusRow>
             )}
             {epics.map((epic) => (
               <TRow hover key={epic.workRequestId}>
@@ -156,64 +159,52 @@ export default function EpicsPage() {
             required
             value={externalTicketId}
           />
-          <div className="space-y-1.5">
-            <label
-              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-              htmlFor="epic-description"
-            >
-              Description
-            </label>
-            <textarea
-              className="min-h-[120px] w-full rounded-[9px] border border-ink-500 bg-ink-900/60 px-3 py-2 text-sm text-paper-100 outline-none focus:border-ember-400"
-              id="epic-description"
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Migrate all services from the legacy /v1 auth endpoint to /v2 and deprecate the legacy gateway plugin."
-              required
-              value={description}
-            />
-          </div>
+          <Textarea
+            id="epic-description"
+            label="Description"
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Migrate all services from the legacy /v1 auth endpoint to /v2 and deprecate the legacy gateway plugin."
+            required
+            value={description}
+          />
           <div className="space-y-1.5">
             <div className="flex items-baseline justify-between">
-              <span className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-                Repositories ({repoIds.length} selected)
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                pick 2 or more
-              </span>
+              <span className="label-mono block">Repositories ({repoIds.length} selected)</span>
+              <span className="label-mono">pick 2 or more</span>
             </div>
             <div className="max-h-64 overflow-y-auto rounded-[9px] border border-ink-500">
               {repos.map((r) => {
                 const checked = repoIds.includes(r.id);
                 return (
-                  <label
-                    className={`flex cursor-pointer items-center gap-3 border-b border-ink-700/50 px-3 py-2 text-sm last:border-b-0 ${
+                  <Checkbox
+                    checked={checked}
+                    className={`border-b border-ink-600 px-3 py-2 last:border-b-0 ${
                       checked ? 'bg-ember-400/5' : 'hover:bg-ink-700/30'
                     }`}
                     key={r.id}
-                  >
-                    <input checked={checked} onChange={() => toggleRepo(r.id)} type="checkbox" />
-                    <span className="text-paper-100">
-                      {r.organizationName}/{r.repoName}
-                    </span>
-                    <span className="ml-auto font-mono text-[10px] text-paper-500">
-                      {r.defaultBranch}
-                    </span>
-                  </label>
+                    label={
+                      <>
+                        <span className="text-paper-100">
+                          {r.organizationName}/{r.repoName}
+                        </span>
+                        <span className="ml-2 font-mono text-[10px] text-paper-500">
+                          {r.defaultBranch}
+                        </span>
+                      </>
+                    }
+                    onChange={() => toggleRepo(r.id)}
+                  />
                 );
               })}
             </div>
           </div>
-          {error && (
-            <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">{error}</p>
-          )}
-          <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
-            <Button onClick={() => setOpen(false)} type="button" variant="ghost">
-              Cancel
-            </Button>
-            <Button disabled={create.isPending} type="submit" variant="primary">
-              {create.isPending ? 'Submitting…' : 'Launch epic'}
-            </Button>
-          </div>
+          {error && <Alert>{error}</Alert>}
+          <ModalFooter
+            isPending={create.isPending}
+            onCancel={() => setOpen(false)}
+            pendingLabel="Launching…"
+            submitLabel="Launch epic"
+          />
         </form>
       </Modal>
     </div>

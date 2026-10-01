@@ -1,16 +1,20 @@
 'use client';
 
+import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useAdmin';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 export default function GovernSessionsPage() {
   const { data: sessions, isLoading, isError, error: loadError } = useAdminSessions();
   const revoke = useAdminRevokeSession();
+  const [revokeTarget, setRevokeTarget] = useState<{ email: string; id: string } | null>(null);
 
   if (isLoading || isError) {
     return (
@@ -27,17 +31,15 @@ export default function GovernSessionsPage() {
   const rows = sessions ?? [];
 
   return (
-    <div className="space-y-10">
-      <div className="fade-up">
-        <PageHeader
-          chapter={`§ Admin · Sessions · ${rows.length} active`}
-          subtitle="Every active browser session (better-auth). Revoke immediately locks the cookie out and clears the in-memory auth cache."
-          title="Active sessions."
-        />
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        chapter="§ Govern"
+        subtitle="Every active browser session (better-auth). Revoke immediately locks the cookie out and clears the in-memory auth cache."
+        title="Active sessions"
+      />
 
       <section className="fade-up stagger-1">
-        <SectionHeader hint="newest first" number="01" title="Sessions" />
+        <SectionHeader hint={`${rows.length} active · newest first`} number="01" title="Sessions" />
         <Card className="overflow-hidden p-0" variant="inset">
           <Table>
             <THead>
@@ -73,8 +75,7 @@ export default function GovernSessionsPage() {
                   <Td className="px-4 py-3 font-mono text-[10px] text-paper-500">{s.token}</Td>
                   <Td className="px-4 py-3 text-right">
                     <Button
-                      disabled={revoke.isPending}
-                      onClick={() => revoke.mutate(s.id)}
+                      onClick={() => setRevokeTarget({ email: s.user.email, id: s.id })}
                       size="sm"
                       variant="danger"
                     >
@@ -84,19 +85,28 @@ export default function GovernSessionsPage() {
                 </TRow>
               ))}
               {rows.length === 0 && (
-                <TRow>
-                  <Td
-                    className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
-                    colSpan={7}
-                  >
-                    no active sessions
-                  </Td>
-                </TRow>
+                <TableStatusRow colSpan={7}>
+                  <EmptyState title="No active sessions" />
+                </TableStatusRow>
               )}
             </tbody>
           </Table>
         </Card>
       </section>
+
+      <ConfirmModal
+        confirmLabel="Revoke"
+        dangerous
+        message={`${revokeTarget?.email ?? 'The user'} is signed out of this session immediately and must sign in again. This cannot be undone.`}
+        onClose={() => setRevokeTarget(null)}
+        onConfirm={async () => {
+          if (revokeTarget) {
+            await revoke.mutateAsync(revokeTarget.id);
+          }
+        }}
+        open={revokeTarget !== null}
+        title="Revoke session?"
+      />
     </div>
   );
 }

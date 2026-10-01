@@ -3,7 +3,7 @@
 import type { AgentTraceRecord, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { formatDate } from '@/lib/utils';
+import { cn, formatDate } from '@/lib/utils';
 import { TracesTab } from './TracesTab';
 
 interface SplitRunPanelProps {
@@ -28,11 +28,8 @@ export function SplitRunPanel({
   return (
     <div className="flex h-full">
       {/* Step list column */}
-      <div className="shrink-0 overflow-y-auto border-r border-ink-600/40" style={{ width: '38%' }}>
-        <div
-          className="sticky top-0 z-10 px-4 py-2 border-b border-ink-600/40 kicker"
-          style={{ background: 'var(--color-ink-900)' }}
-        >
+      <div className="w-[38%] shrink-0 overflow-y-auto border-r border-ink-600/40">
+        <div className="kicker sticky top-0 z-10 border-b border-ink-600/40 bg-ink-900 px-4 py-2">
           Steps · {steps.length}
         </div>
         {steps.length === 0 ? (
@@ -43,15 +40,12 @@ export function SplitRunPanel({
               const isSelected = selectedNodeId === s.nodeId;
               return (
                 <button
-                  className="w-full flex items-start gap-2.5 px-4 py-3 text-left transition-colors hover:bg-ink-600/20"
+                  className={cn(
+                    'flex w-full items-start gap-2.5 border-l-2 px-4 py-3 text-left transition-colors hover:bg-ink-600/20',
+                    isSelected ? 'border-ember-400 bg-ink-600' : 'border-transparent'
+                  )}
                   key={s.id}
                   onClick={() => handleSelect(s.nodeId)}
-                  style={{
-                    background: isSelected ? 'var(--color-ink-600)' : undefined,
-                    borderLeft: isSelected
-                      ? '2px solid var(--color-ember-400)'
-                      : '2px solid transparent',
-                  }}
                   type="button"
                 >
                   <div className="pt-0.5 shrink-0">
@@ -60,35 +54,24 @@ export function SplitRunPanel({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span
-                        className={isSelected ? 'text-ember-300' : 'text-paper-200'}
-                        style={{
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: '11px',
-                          fontWeight: 500,
-                        }}
+                        className={cn(
+                          'font-mono text-[11px] font-medium',
+                          isSelected ? 'text-ember-300' : 'text-paper-200'
+                        )}
                       >
                         {s.nodeId}
                       </span>
-                      <span
-                        className="text-paper-600 shrink-0"
-                        style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
-                      >
+                      <span className="shrink-0 font-mono text-[9px] text-paper-600">
                         ×{s.attempt}
                       </span>
                     </div>
                     {s.error && (
-                      <div
-                        className="text-brick-400 mt-0.5 truncate"
-                        style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-                      >
+                      <div className="mt-0.5 truncate font-mono text-[10px] text-brick-400">
                         {s.error}
                       </div>
                     )}
                     {(s.startedAt || s.endedAt) && (
-                      <div
-                        className="text-paper-600 mt-0.5"
-                        style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-                      >
+                      <div className="mt-0.5 font-mono text-[10px] text-paper-600">
                         {s.startedAt ? formatDate(s.startedAt) : '?'}
                         {s.endedAt ? ` → ${formatDate(s.endedAt)}` : ''}
                       </div>

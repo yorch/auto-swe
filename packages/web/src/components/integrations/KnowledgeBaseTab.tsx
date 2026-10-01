@@ -3,7 +3,10 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { Input } from '@/components/ui/Input';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
 import {
   type KnowledgeBaseConfigInput,
   type KnowledgeBaseProvider,
@@ -13,6 +16,7 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { ConfigField } from './ConfigField';
+import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
 
 const PROVIDER_HINTS: Record<
@@ -32,7 +36,7 @@ const PROVIDER_HINTS: Record<
 };
 
 export function KnowledgeBaseTab() {
-  const { data: resp, isLoading } = useKnowledgeBaseConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useKnowledgeBaseConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateKnowledgeBaseConfig();
@@ -104,8 +108,15 @@ export function KnowledgeBaseTab() {
     runTest(() => testKnowledgeBaseConnection(testQuery.trim()));
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="knowledge base config"
+      />
+    );
   }
 
   return (
@@ -126,8 +137,8 @@ export function KnowledgeBaseTab() {
             label="Provider"
             source={sources.provider}
           >
-            <select
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs focus:border-ember-400 focus:outline-none"
+            <Select
+              compact
               id="kb-provider"
               onChange={(e) => {
                 const v = e.target.value;
@@ -141,7 +152,7 @@ export function KnowledgeBaseTab() {
               <option value="disabled">Disabled</option>
               <option value="confluence">Confluence</option>
               <option value="notion">Notion</option>
-            </select>
+            </Select>
           </ConfigField>
           <ConfigField
             current={data?.enabled === undefined ? undefined : data.enabled ? 'yes' : 'no'}
@@ -149,8 +160,8 @@ export function KnowledgeBaseTab() {
             label="Enabled"
             source={sources.enabled}
           >
-            <select
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs focus:border-ember-400 focus:outline-none"
+            <Select
+              compact
               id="kb-enabled"
               onChange={(e) => {
                 const v = e.target.value;
@@ -161,7 +172,7 @@ export function KnowledgeBaseTab() {
               <option value="">(keep current)</option>
               <option value="true">Yes</option>
               <option value="false">No</option>
-            </select>
+            </Select>
           </ConfigField>
           <ConfigField
             current={data?.baseUrl || undefined}
@@ -169,33 +180,28 @@ export function KnowledgeBaseTab() {
             label="Base URL"
             source={sources.baseUrl}
           >
-            <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+            <Input
+              compact
               id="kb-base-url"
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
               value={baseUrl}
             />
           </ConfigField>
-          <div>
-            <div className="flex items-center gap-3">
-              <input
-                checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
-                className="h-4 w-4 accent-ember-400"
-                id="kb-allow-private-network"
-                onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
-                type="checkbox"
-              />
-              <label className="text-sm text-paper-300" htmlFor="kb-allow-private-network">
-                Allow private/internal network base URL
-              </label>
-            </div>
-            <p className="mt-1 text-[11px] text-paper-600">
-              Bypasses the SSRF guard that otherwise rejects internal/<code>.local</code>/private-IP
-              base URLs. Only enable this for a trusted self-hosted instance you control — it
-              reopens the server to requests against your internal network for this connector.
-            </p>
-          </div>
+          <Checkbox
+            checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
+            hint={
+              <>
+                Bypasses the SSRF guard that otherwise rejects internal/<code>.local</code>
+                /private-IP base URLs. Only enable this for a trusted self-hosted instance you
+                control — it reopens the server to requests against your internal network for this
+                connector.
+              </>
+            }
+            id="kb-allow-private-network"
+            label="Allow private/internal network base URL"
+            onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
+          />
           {effectiveProvider === 'confluence' && (
             <ConfigField
               current={data?.email || undefined}
@@ -203,8 +209,8 @@ export function KnowledgeBaseTab() {
               label="Email (Confluence only)"
               source={sources.email}
             >
-              <input
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              <Input
+                compact
                 id="kb-email"
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com (Confluence basic-auth user)"
@@ -227,8 +233,8 @@ export function KnowledgeBaseTab() {
             label="Spaces"
             source={sources.spaces}
           >
-            <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+            <Input
+              compact
               id="kb-spaces"
               onChange={(e) => setSpacesRaw(e.target.value)}
               placeholder={hints?.spaces ?? 'ENG, ARCH'}
@@ -241,8 +247,8 @@ export function KnowledgeBaseTab() {
             label="Max pages"
             source={sources.maxPages}
           >
-            <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+            <Input
+              compact
               id="kb-max-pages"
               inputMode="numeric"
               onChange={(e) => setMaxPages(e.target.value)}
@@ -262,12 +268,10 @@ export function KnowledgeBaseTab() {
         </p>
         <div className="flex items-end gap-3">
           <div className="flex-1">
-            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="kb-test-query">
-              Search query
-            </label>
-            <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+            <Input
+              compact
               id="kb-test-query"
+              label="Search query"
               onChange={(e) => setTestQuery(e.target.value)}
               placeholder="deployment runbook"
               value={testQuery}
@@ -283,21 +287,10 @@ export function KnowledgeBaseTab() {
             {testing ? 'Testing…' : 'Test connection'}
           </Button>
         </div>
-        {testResult && (
-          <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
-            {testResult.ok ? '✓' : '✗'} {testResult.detail}
-          </p>
-        )}
+        <TestResultAlert result={testResult} />
       </Card>
 
-      {saved && <p className="text-sm text-moss-400">Settings saved.</p>}
-      {error && <p className="text-sm text-brick-400">{error}</p>}
-
-      <div className="flex justify-end">
-        <Button disabled={update.isPending} type="submit" variant="primary">
-          {update.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
     </form>
   );
 }

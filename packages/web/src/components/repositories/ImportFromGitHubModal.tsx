@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { Button } from '@/components/ui/Button';
+import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useGitHubAvailableRepos } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
@@ -49,20 +51,21 @@ export function ImportFromGitHubModal({
         {isLoading && <LoadingState message="Fetching repositories…" />}
 
         {error && !isLoading && (
-          <p className="text-sm text-brick-400">
+          <Alert>
             {errMsg(error, 'Failed to load repositories.')}{' '}
             <a className="underline" href="/studio/integrations">
               Check GitHub integration.
             </a>
-          </p>
+          </Alert>
         )}
 
         {!isLoading && !error && (
           <div className="max-h-[360px] overflow-y-auto -mx-1 px-1 space-y-0.5">
             {filtered.length === 0 && (
-              <p className="text-sm text-paper-400 py-10 text-center">
-                {search ? 'No matching repositories.' : 'No repositories found.'}
-              </p>
+              <EmptyState
+                className="py-10"
+                title={search ? 'No matching repositories.' : 'No repositories found.'}
+              />
             )}
             {filtered.map((r) => (
               <button
@@ -78,14 +81,14 @@ export function ImportFromGitHubModal({
                   </span>
                   <div className="flex items-center gap-2 shrink-0">
                     {r.language && (
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-paper-500 bg-ink-700 px-1.5 py-0.5 rounded">
+                      <Badge tone="muted" uppercase>
                         {r.language}
-                      </span>
+                      </Badge>
                     )}
                     {r.alreadyImported && (
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-moss-400 bg-moss-900/30 px-1.5 py-0.5 rounded">
+                      <Badge tone="moss" uppercase>
                         Imported
-                      </span>
+                      </Badge>
                     )}
                   </div>
                 </div>
@@ -97,11 +100,7 @@ export function ImportFromGitHubModal({
           </div>
         )}
 
-        <div className="flex justify-end border-t border-ink-600 pt-4">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-        </div>
+        <ModalFooter cancelLabel="Close" onCancel={onClose} />
       </div>
     </Modal>
   );

@@ -254,106 +254,45 @@ export function Sidebar() {
   const avatarLetter = (user?.email ?? 'G')[0].toUpperCase();
 
   return (
-    <aside
-      className="flex flex-col border-r"
-      style={{
-        background: 'var(--color-ink-900)',
-        borderColor: 'var(--color-ink-400)',
-        width: 234,
-      }}
-    >
+    <aside className="flex w-[234px] flex-col border-r border-ink-400 bg-ink-900">
       {/* Brand */}
-      <Link
-        className="flex items-center gap-3 px-[18px] py-[18px]"
-        href="/"
-        style={{ textDecoration: 'none' }}
-      >
+      <Link className="flex items-center gap-3 px-[18px] py-[18px] no-underline" href="/">
         {/* Gradient logo mark */}
-        <span
-          className="flex shrink-0 items-center justify-center"
-          style={{
-            background: 'linear-gradient(135deg, var(--color-ember-400), var(--color-violet-400))',
-            borderRadius: 7,
-            boxShadow: '0 6px 18px -6px rgba(124, 108, 255, 0.7)',
-            height: 26,
-            width: 26,
-          }}
-        >
-          <svg aria-hidden="true" fill="none" height={15} viewBox="0 0 24 24" width={15}>
+        <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] bg-gradient-to-br from-ember-400 to-violet-400 shadow-[0_6px_18px_-6px_color-mix(in_oklab,var(--color-ember-400)_70%,transparent)]">
+          <svg
+            aria-hidden="true"
+            className="text-paper-50"
+            fill="none"
+            height={15}
+            viewBox="0 0 24 24"
+            width={15}
+          >
             <path
               d="M4 7h7M4 12h16M13 17h7"
-              stroke="#fff"
+              stroke="currentColor"
               strokeLinecap="round"
               strokeWidth={2.2}
             />
-            <circle cx={17} cy={7} fill="#fff" r={2.4} />
-            <circle cx={7} cy={17} fill="#fff" r={2.4} />
+            <circle cx={17} cy={7} fill="currentColor" r={2.4} />
+            <circle cx={7} cy={17} fill="currentColor" r={2.4} />
           </svg>
         </span>
         <span className="flex items-baseline gap-[3px]">
-          <span
-            style={{
-              color: 'var(--color-paper-100)',
-              fontSize: 15,
-              fontWeight: 700,
-              letterSpacing: '-0.02em',
-            }}
-          >
-            auto
-          </span>
-          <span
-            style={{
-              color: 'var(--color-ember-400)',
-              fontFamily: 'var(--font-display)',
-              fontSize: 15,
-              fontStyle: 'italic',
-              fontWeight: 600,
-            }}
-          >
-            ·swe
-          </span>
+          <span className="text-[15px] font-bold tracking-[-0.02em] text-paper-100">auto</span>
+          <span className="font-display text-[15px] font-semibold italic text-ember-400">·swe</span>
         </span>
       </Link>
 
       {/* Team context chip */}
-      <div
-        className="mx-[14px] mb-[10px] flex items-center gap-[9px] px-[11px] py-[9px]"
-        style={{
-          background: 'var(--color-ink-700)',
-          border: '1px solid var(--color-ink-400)',
-          borderRadius: 10,
-          cursor: 'default',
-          fontSize: 12.5,
-        }}
-      >
-        <span
-          className="flex shrink-0 items-center justify-center"
-          style={{
-            background: 'linear-gradient(135deg, var(--color-dust-400), var(--color-ember-400))',
-            borderRadius: 6,
-            color: '#fff',
-            fontSize: 11,
-            fontWeight: 700,
-            height: 22,
-            width: 22,
-          }}
-        >
+      <div className="mx-[14px] mb-[10px] flex cursor-default items-center gap-[9px] rounded-[10px] border border-ink-400 bg-ink-700 px-[11px] py-[9px] text-[12.5px]">
+        <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] bg-gradient-to-br from-dust-400 to-ember-400 text-[11px] font-bold text-paper-50">
           {avatarLetter}
         </span>
         <div className="min-w-0 flex-1">
-          <div
-            style={{
-              color: 'var(--color-paper-200)',
-              fontSize: 12.5,
-              fontWeight: 600,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
+          <div className="truncate text-[12.5px] font-semibold text-paper-200">
             {user?.email?.split('@')[0] ?? 'user'}
           </div>
-          <div style={{ color: 'var(--color-paper-500)', fontSize: 10.5 }}>
+          <div className="text-[10.5px] text-paper-500">
             {user?.role?.toLowerCase() ?? 'member'}
           </div>
         </div>
@@ -371,16 +310,7 @@ export function Sidebar() {
 
           return (
             <div key={group.label}>
-              <div
-                className="px-5 pb-[6px] pt-[14px]"
-                style={{
-                  color: 'var(--color-paper-600)',
-                  fontSize: 10,
-                  fontWeight: 700,
-                  letterSpacing: '0.12em',
-                  textTransform: 'uppercase',
-                }}
-              >
+              <div className="px-5 pb-[6px] pt-[14px] text-[10px] font-bold uppercase tracking-[0.12em] text-paper-600">
                 {group.label}
               </div>
               {visible.map((item) => {
@@ -388,32 +318,18 @@ export function Sidebar() {
                 return (
                   <Link
                     className={cn(
-                      'flex items-center gap-[11px] px-[18px] py-[8px] transition-all',
-                      active ? 'text-paper-100' : 'text-paper-500 hover:text-paper-200'
+                      'flex items-center gap-[11px] border-l-2 px-[18px] py-[8px] text-[13.5px] font-[550] no-underline transition-all',
+                      active
+                        ? 'border-ember-400 bg-ink-700 text-paper-100'
+                        : 'border-transparent text-paper-500 hover:text-paper-200'
                     )}
                     href={item.href}
                     key={item.href}
-                    style={{
-                      background: active ? 'var(--color-ink-700)' : undefined,
-                      borderLeft: `2px solid ${active ? 'var(--color-ember-400)' : 'transparent'}`,
-                      fontSize: 13.5,
-                      fontWeight: 550,
-                      textDecoration: 'none',
-                    }}
                   >
                     <NavIcon name={item.icon} />
                     <span className="flex-1">{item.label}</span>
                     {item.href === '/govern/approvals' && inboxCount > 0 && (
-                      <span
-                        style={{
-                          background: 'var(--color-ember-400)',
-                          borderRadius: 999,
-                          color: '#fff',
-                          fontSize: 10.5,
-                          fontWeight: 700,
-                          padding: '1px 7px',
-                        }}
-                      >
+                      <span className="rounded-full bg-ember-400 px-[7px] py-px text-[10.5px] font-bold text-paper-50">
                         {inboxCount}
                       </span>
                     )}
@@ -426,44 +342,15 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-[18px] py-[14px]" style={{ borderTop: '1px solid var(--color-ink-400)' }}>
+      <div className="border-t border-ink-400 px-[18px] py-[14px]">
         <div className="flex items-center gap-3">
-          <span
-            className="flex shrink-0 items-center justify-center"
-            style={{
-              background: 'var(--color-ink-500)',
-              borderRadius: 8,
-              color: 'var(--color-paper-300)',
-              fontSize: 11,
-              fontWeight: 600,
-              height: 28,
-              width: 28,
-            }}
-          >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-ink-500 text-[11px] font-semibold text-paper-300">
             {avatarLetter}
           </span>
           <div className="min-w-0 flex-1">
-            <div
-              style={{
-                color: 'var(--color-paper-400)',
-                fontSize: 12,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {user?.email ?? 'guest'}
-            </div>
+            <div className="truncate text-xs text-paper-400">{user?.email ?? 'guest'}</div>
           </div>
-          <span
-            style={{
-              color: 'var(--color-ember-400)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 9,
-              letterSpacing: '0.14em',
-              textTransform: 'uppercase',
-            }}
-          >
+          <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ember-400">
             {user?.role ?? '—'}
           </span>
         </div>

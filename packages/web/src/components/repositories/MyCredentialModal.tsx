@@ -2,6 +2,7 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -78,25 +79,22 @@ export function MyCredentialModal({
             value={token}
           />
         ) : (
-          <p className="text-sm text-paper-400">
+          <Alert variant="warning">
             Personal GitHub credentials are turned off on this platform, so a saved token is not
             used. You can still remove it.
-          </p>
+          </Alert>
         )}
 
-        {error && (
-          <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">
-            {errMsg(error, 'Could not update the credential.')}
-          </p>
-        )}
+        {error && <Alert>{errMsg(error, 'Could not update the credential.')}</Alert>}
         <div className="flex items-center justify-between gap-3 border-t border-ink-600 pt-4">
           <div>
             {credential && (
               <Button
                 disabled={busy}
                 onClick={() => void handleRemove().catch(() => {})}
+                size="sm"
                 type="button"
-                variant="ghost"
+                variant="danger"
               >
                 {remove.isPending ? 'Removing…' : 'Remove token'}
               </Button>

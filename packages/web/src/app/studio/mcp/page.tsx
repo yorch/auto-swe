@@ -1,11 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -43,35 +45,38 @@ function parseTimeoutInputs(form: {
 /** The list/call timeout grid, shared by the create + edit connection modals. */
 function McpTimeoutFields({
   callTimeoutMs,
+  idPrefix,
   listTimeoutMs,
   onChange,
 }: {
+  /** Distinguishes the create and edit forms' field ids, which can be mounted together. */
+  idPrefix: string;
   listTimeoutMs: string;
   callTimeoutMs: string;
   onChange: (patch: { listTimeoutMs?: string; callTimeoutMs?: string }) => void;
 }) {
   return (
     <div className="grid grid-cols-2 gap-4">
-      <FieldWrapper label="List timeout (ms)">
-        <Input
-          min={1}
-          onChange={(e) => onChange({ listTimeoutMs: e.target.value })}
-          placeholder="15000"
-          step={1}
-          type="number"
-          value={listTimeoutMs}
-        />
-      </FieldWrapper>
-      <FieldWrapper label="Call timeout (ms)">
-        <Input
-          min={1}
-          onChange={(e) => onChange({ callTimeoutMs: e.target.value })}
-          placeholder="60000"
-          step={1}
-          type="number"
-          value={callTimeoutMs}
-        />
-      </FieldWrapper>
+      <Input
+        id={`${idPrefix}-list-timeout`}
+        label="List timeout (ms)"
+        min={1}
+        onChange={(e) => onChange({ listTimeoutMs: e.target.value })}
+        placeholder="15000"
+        step={1}
+        type="number"
+        value={listTimeoutMs}
+      />
+      <Input
+        id={`${idPrefix}-call-timeout`}
+        label="Call timeout (ms)"
+        min={1}
+        onChange={(e) => onChange({ callTimeoutMs: e.target.value })}
+        placeholder="60000"
+        step={1}
+        type="number"
+        value={callTimeoutMs}
+      />
     </div>
   );
 }
@@ -108,55 +113,54 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
   }
 
   return (
-    <Modal eyebrow="Admin / MCP" onClose={onClose} open={open} title="New MCP Connection">
+    <Modal onClose={onClose} open={open} title="New MCP connection">
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <FieldWrapper label="Name">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            placeholder="docs-server"
-            required
-            value={form.name}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Server URL (http/https)">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-            placeholder="https://mcp.example.com/mcp"
-            required
-            type="url"
-            value={form.url}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Team">
-          <Select
-            onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
-            required
-            value={form.teamId}
-          >
-            <option disabled value="">
-              Select a team…
+        <Input
+          id="mcp-new-name"
+          label="Name"
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          placeholder="docs-server"
+          required
+          value={form.name}
+        />
+        <Input
+          id="mcp-new-server-url"
+          label="Server URL (http/https)"
+          onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+          placeholder="https://mcp.example.com/mcp"
+          required
+          type="url"
+          value={form.url}
+        />
+        <Select
+          id="mcp-new-team"
+          label="Team"
+          onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
+          required
+          value={form.teamId}
+        >
+          <option disabled value="">
+            Select a team…
+          </option>
+          {teams?.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
             </option>
-            {teams?.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
-        </FieldWrapper>
+          ))}
+        </Select>
         <McpTimeoutFields
           callTimeoutMs={form.callTimeoutMs}
+          idPrefix="mcp-new"
           listTimeoutMs={form.listTimeoutMs}
           onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
         />
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={create.isPending} type="submit" variant="primary">
-            {create.isPending ? 'Creating…' : 'Create Connection'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          isPending={create.isPending}
+          onCancel={onClose}
+          pendingLabel="Creating…"
+          submitLabel="Create connection"
+        />
       </form>
     </Modal>
   );
@@ -215,91 +219,37 @@ function EditMcpConnectionModal({
   }
 
   return (
-    <Modal
-      eyebrow="Admin / MCP"
-      onClose={onClose}
-      open={!!connection}
-      title={`Edit "${connection.name}"`}
-    >
+    <Modal onClose={onClose} open={!!connection} title={`Edit "${connection.name}"`}>
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <FieldWrapper label="Name">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            required
-            value={form.name}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Server URL (http/https)">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-            required
-            type="url"
-            value={form.url}
-          />
-        </FieldWrapper>
+        <Input
+          id="mcp-edit-name"
+          label="Name"
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          required
+          value={form.name}
+        />
+        <Input
+          id="mcp-edit-server-url"
+          label="Server URL (http/https)"
+          onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+          required
+          type="url"
+          value={form.url}
+        />
         <McpTimeoutFields
           callTimeoutMs={form.callTimeoutMs}
+          idPrefix="mcp-edit"
           listTimeoutMs={form.listTimeoutMs}
           onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
         />
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={update.isPending} type="submit" variant="primary">
-            {update.isPending ? 'Saving…' : 'Save changes'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          isPending={update.isPending}
+          onCancel={onClose}
+          pendingLabel="Saving…"
+          submitLabel="Save changes"
+        />
       </form>
-    </Modal>
-  );
-}
-
-function DeleteMcpConnectionModal({
-  connection,
-  onClose,
-}: {
-  connection: McpConnectionRow | null;
-  onClose: () => void;
-}) {
-  const del = useDeleteMcpConnection();
-  const [error, setError] = useState<string | null>(null);
-
-  if (!connection) {
-    return null;
-  }
-
-  async function handleDelete() {
-    if (!connection) {
-      return;
-    }
-    setError(null);
-    try {
-      await del.mutateAsync(connection.id);
-      onClose();
-    } catch (err) {
-      setError(errMsg(err, 'Failed to delete connection'));
-    }
-  }
-
-  return (
-    <Modal onClose={onClose} open={!!connection} title={`Delete "${connection.name}"?`}>
-      <div className="space-y-4">
-        <p className="text-sm text-paper-400">
-          Agents referencing this connection will fall back to their built-in tools. This
-          deactivates the connection; it cannot be undone.
-        </p>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={del.isPending} onClick={handleDelete} variant="danger">
-            {del.isPending ? 'Deleting…' : 'Delete'}
-          </Button>
-        </div>
-      </div>
     </Modal>
   );
 }
@@ -309,15 +259,17 @@ export default function StudioMcpConnectionsPage() {
   const [editTarget, setEditTarget] = useState<McpConnectionRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<McpConnectionRow | null>(null);
   const { data: connections, isLoading, isError, error: loadError } = useMcpConnections();
+  const del = useDeleteMcpConnection();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
-            + New Connection
+            Create connection
           </Button>
         }
+        chapter="§ Studio"
         subtitle={
           <>
             MCP servers (http/https) that an Agent can bind tools from. Attach one to an Agent via
@@ -326,7 +278,7 @@ export default function StudioMcpConnectionsPage() {
             then load at run time alongside the agent&apos;s built-in tools.
           </>
         }
-        title="MCP Connections"
+        title="MCP connections"
       />
 
       <QueryBoundary
@@ -341,9 +293,10 @@ export default function StudioMcpConnectionsPage() {
               <CardTitle>Connections</CardTitle>
             </CardHeader>
             {!connections || connections.length === 0 ? (
-              <div className="py-4 text-center text-sm text-paper-400">
-                No MCP connections yet. Create one to enable MCP tools for an agent.
-              </div>
+              <EmptyState
+                className="py-4"
+                title="No MCP connections yet. Create one to enable MCP tools for an agent."
+              />
             ) : (
               <Table>
                 <THead>
@@ -392,7 +345,20 @@ export default function StudioMcpConnectionsPage() {
         key={editTarget?.id}
         onClose={() => setEditTarget(null)}
       />
-      <DeleteMcpConnectionModal connection={deleteTarget} onClose={() => setDeleteTarget(null)} />
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message="Agents referencing this connection will fall back to their built-in tools. This deactivates the connection; it cannot be undone."
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (deleteTarget) {
+            await del.mutateAsync(deleteTarget.id);
+          }
+        }}
+        open={deleteTarget !== null}
+        pendingLabel="Deleting…"
+        title={`Delete "${deleteTarget?.name ?? ''}"?`}
+      />
     </div>
   );
 }

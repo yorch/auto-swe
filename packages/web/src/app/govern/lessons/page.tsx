@@ -1,12 +1,16 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Stat } from '@/components/ui/Stat';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
 import {
   type LessonRepoStats,
@@ -37,22 +41,22 @@ function RepoStatsRow({
   };
 
   return (
-    <tr className="border-t border-ink-700">
-      <td className="py-3 pr-4 font-mono text-xs text-paper-300">
+    <TRow>
+      <Td className="py-3 pr-4 font-mono text-xs text-paper-300">
         {repo.organizationName}/{repo.repoName}
-      </td>
-      <td className="py-3 pr-4 text-center font-mono text-xs text-paper-200">{repo.activeCount}</td>
-      <td className="py-3 pr-4 text-center font-mono text-xs text-paper-500">
+      </Td>
+      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-200">{repo.activeCount}</Td>
+      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-500">
         {repo.consolidatedCount}
-      </td>
-      <td className="py-3 pr-4 font-mono text-xs text-paper-500">
+      </Td>
+      <Td className="py-3 pr-4 font-mono text-xs text-paper-500">
         {repo.lastConsolidatedAt ? (
           formatDate(repo.lastConsolidatedAt)
         ) : (
-          <span className="text-paper-700">never</span>
+          <span className="text-paper-600">never</span>
         )}
-      </td>
-      <td className="py-3 text-right">
+      </Td>
+      <Td className="py-3 text-right">
         <Button
           disabled={triggering || repo.activeCount === 0}
           onClick={handleTrigger}
@@ -61,14 +65,25 @@ function RepoStatsRow({
         >
           {triggering ? 'Triggering…' : 'Run now'}
         </Button>
-      </td>
-    </tr>
+      </Td>
+    </TRow>
   );
 }
 
 export default function GovernLessonsPage() {
-  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminLessonStats();
-  const { data: lessons, isLoading: lessonsLoading } = useLessons(false, { limit: 20 });
+  const {
+    data: stats,
+    isLoading: statsLoading,
+    isError: statsIsError,
+    error: statsError,
+    refetch: refetchStats,
+  } = useAdminLessonStats();
+  const {
+    data: lessons,
+    isLoading: lessonsLoading,
+    isError: lessonsIsError,
+    error: lessonsError,
+  } = useLessons(false, { limit: 20 });
   const { data: consolidation } = useConsolidationConfig();
   const deleteLesson = useDeleteLesson();
 
@@ -90,112 +105,96 @@ export default function GovernLessonsPage() {
   };
 
   const handleTriggerRepo = async (repoId: string) => {
-    await triggerRepoConsolidation(repoId);
-    void refetchStats();
+    setTriggerError(null);
+    try {
+      await triggerRepoConsolidation(repoId);
+      void refetchStats();
+    } catch (err) {
+      setTriggerError(errMsg(err, 'Failed to trigger'));
+    }
   };
 
   const totalActive = stats?.reduce((sum, r) => sum + r.activeCount, 0) ?? 0;
   const totalConsolidated = stats?.reduce((sum, r) => sum + r.consolidatedCount, 0) ?? 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
+        chapter="§ Govern"
         subtitle="Agent lessons captured from completed workflows. Consolidation merges semantically similar lessons to reduce redundancy."
-        title="Admin — Lessons"
+        title="Lessons"
       />
 
       {/* Summary stats */}
-      <div className="grid grid-cols-3 gap-4">
-        <Card>
-          <div className="py-1">
-            <div className="font-mono text-[10px] uppercase tracking-widest text-paper-500">
-              Active
+      <div className="grid grid-cols-3 gap-6">
+        <Stat label="Active" value={totalActive} />
+        <Stat label="Consolidated" value={totalConsolidated} />
+        <div>
+          <Stat
+            label="Schedule"
+            tone={
+              consolidation?.schedule.exists && !consolidation.schedule.paused ? 'moss' : 'default'
+            }
+            value={
+              consolidation?.schedule.exists
+                ? consolidation.schedule.paused
+                  ? 'Paused'
+                  : 'Active'
+                : 'Not set'
+            }
+          />
+          {consolidation?.schedule.nextRunAt && (
+            <div className="mt-2 pl-5 font-mono text-[10px] text-paper-600">
+              Next: {formatDate(consolidation.schedule.nextRunAt)}
             </div>
-            <div className="mt-1 font-mono text-3xl font-medium text-paper-100">{totalActive}</div>
-          </div>
-        </Card>
-        <Card>
-          <div className="py-1">
-            <div className="font-mono text-[10px] uppercase tracking-widest text-paper-500">
-              Consolidated
-            </div>
-            <div className="mt-1 font-mono text-3xl font-medium text-paper-500">
-              {totalConsolidated}
-            </div>
-          </div>
-        </Card>
-        <Card>
-          <div className="py-1">
-            <div className="font-mono text-[10px] uppercase tracking-widest text-paper-500">
-              Schedule
-            </div>
-            <div className="mt-1 font-mono text-sm text-paper-200">
-              {consolidation?.schedule.exists ? (
-                consolidation.schedule.paused ? (
-                  <span className="text-paper-500">Paused</span>
-                ) : (
-                  <span className="text-moss-400">Active</span>
-                )
-              ) : (
-                <span className="text-paper-700">Not set</span>
-              )}
-            </div>
-            {consolidation?.schedule.nextRunAt && (
-              <div className="mt-0.5 font-mono text-[10px] text-paper-600">
-                Next: {formatDate(consolidation.schedule.nextRunAt)}
-              </div>
-            )}
-          </div>
-        </Card>
+          )}
+        </div>
       </div>
 
       {/* Per-repo breakdown */}
       <Card>
         <CardHeader>
           <CardTitle eyebrow="Repositories">Lesson breakdown by repository</CardTitle>
-          <div className="flex items-center gap-3">
-            {triggerError && <p className="text-xs text-brick-400">{triggerError}</p>}
-            <Button
-              disabled={triggeringAll || !consolidation?.schedule.exists}
-              onClick={handleTriggerAll}
-              size="sm"
-              variant="secondary"
-            >
-              {triggeringAll ? 'Triggering…' : 'Run all now'}
-            </Button>
-          </div>
+          <Button
+            disabled={triggeringAll || !consolidation?.schedule.exists}
+            onClick={handleTriggerAll}
+            size="sm"
+            variant="secondary"
+          >
+            {triggeringAll ? 'Triggering…' : 'Run all now'}
+          </Button>
         </CardHeader>
+        {triggerError && <Alert className="mb-4">{triggerError}</Alert>}
 
-        {statsLoading ? (
-          <LoadingState compact />
-        ) : !stats || stats.length === 0 ? (
-          <EmptyState className="py-0 text-left text-paper-600" title="No repositories found." />
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr>
-                <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                  Repository
-                </th>
-                <th className="pb-2 text-center font-mono text-[10px] uppercase tracking-wider text-paper-500">
+        <QueryBoundary
+          error={statsError}
+          isError={statsIsError}
+          isLoading={statsLoading}
+          label="lesson stats"
+        >
+          {!stats || stats.length === 0 ? (
+            <EmptyState title="No repositories found." />
+          ) : (
+            <Table>
+              <THead>
+                <Th className="py-2 pl-0 pr-4">Repository</Th>
+                <Th align="center" className="py-2 pl-0 pr-4">
                   Active
-                </th>
-                <th className="pb-2 text-center font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                </Th>
+                <Th align="center" className="py-2 pl-0 pr-4">
                   Consolidated
-                </th>
-                <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                  Last run
-                </th>
-                <th className="pb-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {stats.map((repo) => (
-                <RepoStatsRow key={repo.id} onTrigger={handleTriggerRepo} repo={repo} />
-              ))}
-            </tbody>
-          </table>
-        )}
+                </Th>
+                <Th className="py-2 pl-0 pr-4">Last run</Th>
+                <Th className="py-2 px-0" />
+              </THead>
+              <tbody>
+                {stats.map((repo) => (
+                  <RepoStatsRow key={repo.id} onTrigger={handleTriggerRepo} repo={repo} />
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </QueryBoundary>
       </Card>
 
       {/* Recent active lessons */}
@@ -204,44 +203,50 @@ export default function GovernLessonsPage() {
           <CardTitle eyebrow="Recent">Active lessons</CardTitle>
         </CardHeader>
 
-        {lessonsLoading ? (
-          <LoadingState compact />
-        ) : !lessons || lessons.length === 0 ? (
-          <EmptyState className="py-0 text-left text-paper-600" title="No active lessons." />
-        ) : (
-          <div className="divide-y divide-ink-700">
-            {lessons.slice(0, 20).map((lesson) => (
-              <div className="flex items-start gap-4 py-3" key={lesson.id}>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[10px] text-paper-600">
-                      {lesson.repository.organizationName}/{lesson.repository.repoName}
-                    </span>
-                    {lesson.failureType && (
-                      <span className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-paper-500">
-                        {lesson.failureType}
+        <QueryBoundary
+          error={lessonsError}
+          isError={lessonsIsError}
+          isLoading={lessonsLoading}
+          label="lessons"
+        >
+          {!lessons || lessons.length === 0 ? (
+            <EmptyState title="No active lessons." />
+          ) : (
+            <div className="divide-y divide-ink-600">
+              {lessons.slice(0, 20).map((lesson) => (
+                <div className="flex items-start gap-4 py-3" key={lesson.id}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[10px] text-paper-600">
+                        {lesson.repository.organizationName}/{lesson.repository.repoName}
                       </span>
+                      {lesson.failureType && (
+                        <Badge className="text-[9px]" tone="muted" uppercase>
+                          {lesson.failureType}
+                        </Badge>
+                      )}
+                      <span className="ml-auto font-mono text-[10px] text-paper-600">
+                        {formatDate(lesson.createdAt)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-paper-200">{lesson.lessonSummary}</p>
+                    {lesson.rationale && (
+                      <p className="mt-0.5 text-xs text-paper-500">{lesson.rationale}</p>
                     )}
-                    <span className="ml-auto font-mono text-[10px] text-paper-700">
-                      {formatDate(lesson.createdAt)}
-                    </span>
                   </div>
-                  <p className="mt-1 text-sm text-paper-200">{lesson.lessonSummary}</p>
-                  {lesson.rationale && (
-                    <p className="mt-0.5 text-xs text-paper-500">{lesson.rationale}</p>
-                  )}
+                  <Button
+                    className="shrink-0"
+                    onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
+                    size="sm"
+                    variant="danger"
+                  >
+                    Delete
+                  </Button>
                 </div>
-                <button
-                  className="shrink-0 font-mono text-[10px] text-paper-700 hover:text-brick-400"
-                  onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
-                  type="button"
-                >
-                  delete
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </QueryBoundary>
       </Card>
 
       <ConfirmModal
@@ -249,9 +254,9 @@ export default function GovernLessonsPage() {
         dangerous
         message={`Delete "${deleting?.summary}"? This cannot be undone.`}
         onClose={() => setDeleting(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (deleting) {
-            deleteLesson.mutate(deleting.id);
+            await deleteLesson.mutateAsync(deleting.id);
           }
         }}
         open={deleting !== null}

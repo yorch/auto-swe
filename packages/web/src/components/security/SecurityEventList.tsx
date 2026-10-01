@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
 import type { SecurityEvent, SecurityEventType } from '@/hooks/useAdmin';
 import { formatRelativeTime } from '@/lib/utils';
 
@@ -20,7 +21,7 @@ const EVENT_STYLE: Record<SecurityEventType, { tone: BadgeTone; dot: string; lab
     tone: 'dust',
   },
   CONTENT_SECURITY_BLOCK: {
-    dot: 'bg-brick-500',
+    dot: 'bg-brick-400',
     label: 'Content Block',
     tone: 'brick',
   },
@@ -29,14 +30,14 @@ const EVENT_STYLE: Record<SecurityEventType, { tone: BadgeTone; dot: string; lab
     label: 'Content Warn',
     tone: 'amber',
   },
-  FILE_BLOCK: { dot: 'bg-brick-500', label: 'File Block', tone: 'brick' },
+  FILE_BLOCK: { dot: 'bg-brick-400', label: 'File Block', tone: 'brick' },
   LLM_SUSPICIOUS: {
     dot: 'bg-violet-400',
     label: 'LLM Suspicious',
     tone: 'violet',
   },
   SHELL_BLOCK: {
-    dot: 'bg-brick-500',
+    dot: 'bg-brick-400',
     label: 'Shell Block',
     tone: 'brick',
   },
@@ -142,7 +143,7 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
     return (
       <ul className="mt-1.5 space-y-0.5">
         {warnings.map((w) => (
-          <li className="font-mono text-[10px] text-violet-300" key={w}>
+          <li className="font-mono text-[10px] text-violet-400" key={w}>
             {w}
           </li>
         ))}
@@ -176,7 +177,7 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
       return null;
     }
     return (
-      <pre className="mt-1.5 font-mono text-[10px] text-paper-300 bg-ink-800 px-2 py-1 rounded overflow-x-auto whitespace-pre-wrap break-all">
+      <pre className="mt-1.5 font-mono text-[10px] text-paper-300 bg-ink-900 px-2 py-1 rounded overflow-x-auto whitespace-pre-wrap break-all">
         {cmd}
       </pre>
     );
@@ -189,18 +190,21 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
 
 function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRunLink: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const detailId = useId();
   const { primary, secondary } = extractDetail(event);
   const { dot } = EVENT_STYLE[event.eventType];
 
   return (
     <li>
       <button
+        aria-controls={detailId}
+        aria-expanded={expanded}
         className="w-full text-left rounded hover:bg-ink-800 px-2 py-1.5 transition-colors"
         onClick={() => setExpanded((e) => !e)}
         type="button"
       >
         <div className="flex items-center gap-2 text-xs">
-          <span className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dot}`} />
+          <span aria-hidden className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dot}`} />
           <SecurityEventBadge type={event.eventType} />
           <span className="font-mono text-paper-200 truncate">{primary}</span>
           {secondary && (
@@ -230,11 +234,11 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
           <span className="text-paper-500">{event.nodeId}</span>
         </div>
       )}
-      {expanded && (
-        <div className="px-2 pl-6">
-          <ExpandedDetail event={event} />
-        </div>
-      )}
+      {/* A sibling of the toggle, not inside it: content in a <button> is not
+          selectable, and block content there is invalid. */}
+      <div className="px-2 pl-6" hidden={!expanded} id={detailId}>
+        {expanded && <ExpandedDetail event={event} />}
+      </div>
     </li>
   );
 }
@@ -251,7 +255,7 @@ export function SecurityEventList({
   showRunLink?: boolean;
 }) {
   if (events.length === 0) {
-    return <p className="text-xs text-paper-400 py-1">{emptyMessage}</p>;
+    return <EmptyState title={emptyMessage} />;
   }
   return (
     <ul className="space-y-0.5">

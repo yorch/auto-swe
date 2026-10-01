@@ -6,9 +6,19 @@ type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
   label?: string;
   hint?: string;
   error?: string;
+  /** Drops the 9rem minimum so `rows` sets the height, with tighter padding. */
+  compact?: boolean;
 };
 
-export function Textarea({ label, hint, error, className, id, ...props }: TextareaProps) {
+export function Textarea({
+  label,
+  hint,
+  error,
+  className,
+  compact = false,
+  id,
+  ...props
+}: TextareaProps) {
   const inputId = id ?? props.name ?? label?.toLowerCase().replace(/\s+/g, '-');
   return (
     <FieldWrapper error={error} hint={hint} id={inputId} label={label}>
@@ -16,7 +26,8 @@ export function Textarea({ label, hint, error, className, id, ...props }: Textar
         aria-describedby={fieldDescribedBy(inputId, hint, error)}
         aria-invalid={error ? true : undefined}
         className={cn(
-          'min-h-[9rem] w-full rounded-[9px] border border-ink-400 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none transition-colors',
+          'w-full rounded-[9px] border border-ink-400 bg-ink-900/60 font-mono text-xs text-paper-100 outline-none transition-colors',
+          compact ? 'px-2 py-1.5' : 'min-h-[9rem] px-3 py-2',
           'focus:border-ember-400 focus:bg-ink-900/80',
           'placeholder:text-paper-600',
           error && 'border-brick-400 focus:border-brick-400',

@@ -6,19 +6,23 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { SparkleIcon } from '@/components/ui/icons';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
+import { VersionTags } from '@/components/workflow/VersionTags';
 import {
   useCreateWorkflowTemplate,
   useStartWorkflowGenerationJob,
@@ -113,22 +117,18 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
           rows={3}
           value={description}
         />
-        <div className="flex justify-end gap-2 pt-2">
-          <Button
-            onClick={() => {
-              onClose();
-              setName('');
-              setDescription('');
-              setError(null);
-            }}
-            variant="secondary"
-          >
-            Cancel
-          </Button>
-          <Button disabled={createTemplate.isPending} onClick={handleCreate} variant="primary">
-            {createTemplate.isPending ? 'Creating…' : 'Create blank template'}
-          </Button>
-        </div>
+        <ModalFooter
+          isPending={createTemplate.isPending}
+          onCancel={() => {
+            onClose();
+            setName('');
+            setDescription('');
+            setError(null);
+          }}
+          onSubmit={handleCreate}
+          pendingLabel="Creating…"
+          submitLabel="Create blank template"
+        />
       </div>
     </Modal>
   );
@@ -259,22 +259,15 @@ function NewTemplateModal({
     >
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
-        <div className="flex gap-2">
-          <Button
-            onClick={() => setMode('describe')}
-            size="sm"
-            variant={mode === 'describe' ? 'primary' : 'ghost'}
-          >
-            Describe
-          </Button>
-          <Button
-            onClick={() => setMode('wizard')}
-            size="sm"
-            variant={mode === 'wizard' ? 'primary' : 'ghost'}
-          >
-            Answer questions
-          </Button>
-        </div>
+        <SegmentedControl
+          ariaLabel="How to describe the workflow"
+          onChange={setMode}
+          options={[
+            { label: 'Describe', value: 'describe' },
+            { label: 'Answer questions', value: 'wizard' },
+          ]}
+          value={mode}
+        />
         {mode === 'describe' ? (
           <p className="text-sm leading-relaxed text-paper-400">
             Describe what you want the workflow to do in plain language. An AI agent assembles a
@@ -345,25 +338,18 @@ function NewTemplateModal({
           placeholder="my-workflow"
           value={name}
         />
-        {phaseLabel && (
-          <div className="font-mono text-xs uppercase tracking-[0.18em] text-paper-500">
-            {phaseLabel}
-          </div>
-        )}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button
-            onClick={() => {
-              onClose();
-              reset();
-            }}
-            variant="secondary"
-          >
-            Cancel
-          </Button>
-          <Button disabled={busy} onClick={() => handleGenerate()} variant="primary">
-            {busy ? 'Generating…' : 'Generate draft →'}
-          </Button>
-        </div>
+        <ModalFooter
+          isPending={busy}
+          onCancel={() => {
+            onClose();
+            reset();
+          }}
+          onSubmit={() => handleGenerate()}
+          pendingLabel="Generating…"
+          submitLabel="Generate draft"
+        >
+          {phaseLabel && <span className="label-mono">{phaseLabel}</span>}
+        </ModalFooter>
         <div className="flex justify-end pt-1">
           <Button
             disabled={busy}
@@ -423,7 +409,7 @@ export default function TemplatesPage() {
   };
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-8">
       <CreateTemplateModal onClose={() => setCreateOpen(false)} open={createOpen} />
 
       <NewTemplateModal
@@ -441,39 +427,35 @@ export default function TemplatesPage() {
         <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
       )}
 
-      <div className="fade-up">
-        <PageHeader
-          actions={
-            <Button onClick={() => setGenerateOpen(true)} size="sm" variant="primary">
-              <SparkleIcon />
-              New workflow
-            </Button>
-          }
-          chapter="§ Workflows"
-          subtitle="Agentic workflow library. Pick a template, run it with your inputs, watch it execute."
-          title="Workflow library."
-        />
-      </div>
+      <PageHeader
+        actions={
+          <Button onClick={() => setGenerateOpen(true)} size="sm" variant="primary">
+            <SparkleIcon />
+            New workflow
+          </Button>
+        }
+        chapter="§ Workflows"
+        subtitle="Agentic workflow library. Pick a template, run it with your inputs, watch it execute."
+        title="Workflow library"
+      />
 
       {/* Starter gallery */}
-      <section className="fade-up stagger-1">
+      <section>
         <SectionHeader hint="fork to edit" number="01" title="Start from a template" />
         {forkError && <Alert className="mb-4">{forkError}</Alert>}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {STARTER_TEMPLATES.map((s) => {
             const isForking = forkingId === s.id;
             return (
-              <article
+              <Card
                 className={cn(
-                  'group relative flex flex-col rounded-xl border border-ink-600 bg-ink-800 p-5 transition-colors hover:border-ember-400',
+                  'group flex flex-col p-5 hover:border-ember-400',
                   'border-l-[3px]',
                   TONE_CLASS[s.tone]
                 )}
                 key={s.id}
               >
-                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-                  {s.tagline}
-                </div>
+                <div className="label-mono mb-2">{s.tagline}</div>
                 <h3 className="mb-2 font-display text-xl font-medium text-paper-100">{s.name}</h3>
                 <p className="mb-5 flex-1 text-sm leading-relaxed text-paper-400">
                   {s.description}
@@ -485,16 +467,16 @@ export default function TemplatesPage() {
                   size="sm"
                   variant="primary"
                 >
-                  {isForking ? 'Forking…' : 'Fork starter →'}
+                  {isForking ? 'Forking…' : 'Fork starter'}
                 </Button>
-              </article>
+              </Card>
             );
           })}
         </div>
       </section>
 
       {/* Existing templates table */}
-      <section className="fade-up stagger-2">
+      <section>
         <SectionHeader
           hint={`${(templates ?? []).length} total`}
           number="02"
@@ -515,7 +497,7 @@ export default function TemplatesPage() {
                 </THead>
                 <tbody>
                   {(templates ?? []).map((t) => (
-                    <TRow className="transition-colors hover:bg-ink-700/40" key={t.id}>
+                    <TRow className="hover:bg-ink-700/40" hover key={t.id}>
                       <Td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Link
@@ -524,18 +506,16 @@ export default function TemplatesPage() {
                           >
                             {t.name}
                           </Link>
-                          {t.isDefault && (
-                            <span className="rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
-                              default
-                            </span>
-                          )}
+                          <VersionTags isDefault={t.isDefault} />
                           {t.webhookConfigured && (
-                            <span
-                              className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-violet-400"
+                            <Badge
                               title="Webhook trigger active"
+                              tone="violet"
+                              uppercase
+                              variant="outline"
                             >
                               webhook
-                            </span>
+                            </Badge>
                           )}
                         </div>
                         {t.description && (
@@ -592,13 +572,13 @@ export default function TemplatesPage() {
                               </Button>
                             </span>
                           )}
-                          <Button
-                            onClick={() => router.push(`/workflows/library/${t.id}`)}
+                          <ButtonLink
+                            href={`/workflows/library/${t.id}`}
                             size="sm"
                             variant="secondary"
                           >
                             Edit
-                          </Button>
+                          </ButtonLink>
                           {t.status !== 'ARCHIVED' && (
                             <Button
                               onClick={() => setArchiveTarget({ id: t.id, name: t.name })}
@@ -613,14 +593,12 @@ export default function TemplatesPage() {
                     </TRow>
                   ))}
                   {(templates ?? []).length === 0 && (
-                    <TRow>
-                      <Td
-                        className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
-                        colSpan={7}
-                      >
-                        no templates yet — fork a starter above or create a blank template
-                      </Td>
-                    </TRow>
+                    <TableStatusRow colSpan={7}>
+                      <EmptyState
+                        hint="Fork a starter above or create a blank template."
+                        title="No templates yet."
+                      />
+                    </TableStatusRow>
                   )}
                 </tbody>
               </Table>
@@ -645,18 +623,19 @@ function ArchiveConfirmModal({
     if (!target) {
       return;
     }
+    // ConfirmModal closes itself once this resolves.
     await updateTemplate.mutateAsync({ status: 'ARCHIVED' });
-    onClose();
   };
 
   return (
     <ConfirmModal
       confirmLabel="Archive"
+      dangerous
       message={`Archive "${target?.name ?? ''}"? It will no longer be available for new runs. You can restore it by changing its status back to Active.`}
       onClose={onClose}
       onConfirm={handleArchive}
       open={target !== null}
-      title="Archive template"
+      title="Archive template?"
     />
   );
 }

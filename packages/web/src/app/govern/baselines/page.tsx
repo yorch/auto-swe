@@ -1,15 +1,15 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
@@ -19,7 +19,7 @@ import {
   useUserOrgs,
 } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatPercent } from '@/lib/utils';
 
 type BaselineForm = {
   domain: string;
@@ -41,10 +41,14 @@ function CreateBaselineModal({
   const [form, setForm] = useState<BaselineForm>({
     domain: '',
     errorCount: '',
-    orgId: orgs[0]?.id ?? '',
+    orgId: '',
     outcomeType: '',
     sampleSize: '',
   });
+  // Falls back to the first org until one is picked. Derived, not seeded into
+  // state: the modal mounts before `orgs` loads, so a seeded value stayed ''
+  // and the request went out without an org.
+  const orgId = form.orgId || (orgs[0]?.id ?? '');
   const [error, setError] = useState<string | null>(null);
   const create = useCreateHumanErrorBaseline();
 
@@ -69,7 +73,7 @@ function CreateBaselineModal({
       await create.mutateAsync({
         domain: form.domain.trim(),
         errorCount,
-        orgId: form.orgId,
+        orgId,
         outcomeType: form.outcomeType.trim() || null,
         sampleSize,
       });
@@ -77,7 +81,7 @@ function CreateBaselineModal({
       setForm({
         domain: '',
         errorCount: '',
-        orgId: orgs[0]?.id ?? '',
+        orgId: '',
         outcomeType: '',
         sampleSize: '',
       });
@@ -91,64 +95,63 @@ function CreateBaselineModal({
       eyebrow="Admin / Baselines"
       onClose={onClose}
       open={open}
-      title="New Human Error Baseline"
+      title="New human error baseline"
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <FieldWrapper label="Organization">
-          <Select
-            onChange={(e) => setForm((f) => ({ ...f, orgId: e.target.value }))}
-            value={form.orgId}
-          >
-            {orgs.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </Select>
-        </FieldWrapper>
-        <FieldWrapper label="Domain">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))}
-            placeholder="e.g. git_repo"
-            required
-            value={form.domain}
-          />
-        </FieldWrapper>
-        <FieldWrapper hint="Optional narrower bucket" label="Outcome type">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, outcomeType: e.target.value }))}
-            value={form.outcomeType}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Sample size">
-          <Input
-            min={1}
-            onChange={(e) => setForm((f) => ({ ...f, sampleSize: e.target.value }))}
-            required
-            step={1}
-            type="number"
-            value={form.sampleSize}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Errors found">
-          <Input
-            min={0}
-            onChange={(e) => setForm((f) => ({ ...f, errorCount: e.target.value }))}
-            required
-            step={1}
-            type="number"
-            value={form.errorCount}
-          />
-        </FieldWrapper>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={create.isPending} type="submit" variant="primary">
-            {create.isPending ? 'Creating…' : 'Create Baseline'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <Select
+          id="baseline-org"
+          label="Organization"
+          onChange={(e) => setForm((f) => ({ ...f, orgId: e.target.value }))}
+          value={orgId}
+        >
+          {orgs.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+        </Select>
+        <Input
+          id="baseline-domain"
+          label="Domain"
+          onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))}
+          placeholder="e.g. git_repo"
+          required
+          value={form.domain}
+        />
+        <Input
+          hint="Optional narrower bucket"
+          id="baseline-outcome-type"
+          label="Outcome type"
+          onChange={(e) => setForm((f) => ({ ...f, outcomeType: e.target.value }))}
+          value={form.outcomeType}
+        />
+        <Input
+          id="baseline-sample-size"
+          label="Sample size"
+          min={1}
+          onChange={(e) => setForm((f) => ({ ...f, sampleSize: e.target.value }))}
+          required
+          step={1}
+          type="number"
+          value={form.sampleSize}
+        />
+        <Input
+          id="baseline-error-count"
+          label="Errors found"
+          min={0}
+          onChange={(e) => setForm((f) => ({ ...f, errorCount: e.target.value }))}
+          required
+          step={1}
+          type="number"
+          value={form.errorCount}
+        />
+        <ModalFooter
+          isPending={create.isPending}
+          onCancel={onClose}
+          pendingLabel="Creating…"
+          submitLabel="Create baseline"
+        />
       </form>
     </Modal>
   );
@@ -159,10 +162,18 @@ export default function GovernBaselinesPage() {
   const [selectedOrgId, setSelectedOrgId] = useState<string>('all');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; domain: string } | null>(null);
   const deleteBaseline = useDeleteHumanErrorBaseline();
-  const { data: orgs, isLoading: orgsLoading } = useUserOrgs();
-  const { data: baselines, isLoading: baselinesLoading } = useHumanErrorBaselines(
-    selectedOrgId === 'all' ? undefined : selectedOrgId
-  );
+  const {
+    data: orgs,
+    isLoading: orgsLoading,
+    isError: orgsIsError,
+    error: orgsError,
+  } = useUserOrgs();
+  const {
+    data: baselines,
+    isLoading: baselinesLoading,
+    isError: baselinesIsError,
+    error: baselinesError,
+  } = useHumanErrorBaselines(selectedOrgId === 'all' ? undefined : selectedOrgId);
 
   const orgOptions = useMemo(
     () => [{ id: 'all', name: 'All my organizations' }, ...(orgs ?? [])],
@@ -170,24 +181,23 @@ export default function GovernBaselinesPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
-            + New Baseline
+            New baseline
           </Button>
         }
+        chapter="§ Govern"
         subtitle="Manually-recorded human error rates used to compute errorRateVsHuman on the analytics dashboard. Baselines are scoped to an organization and domain."
-        title="Human Error Baselines"
+        title="Human error baselines"
       />
 
-      <div className="flex items-center gap-4">
-        <label className="text-sm text-paper-400" htmlFor="org-filter">
-          Organization
-        </label>
+      <div className="max-w-xs">
         <Select
           disabled={orgsLoading}
           id="org-filter"
+          label="Organization"
           onChange={(e) => setSelectedOrgId(e.target.value)}
           value={selectedOrgId}
         >
@@ -199,15 +209,18 @@ export default function GovernBaselinesPage() {
         </Select>
       </div>
 
-      {orgsLoading || baselinesLoading ? (
-        <LoadingState />
-      ) : (
+      <QueryBoundary
+        error={orgsIsError ? orgsError : baselinesError}
+        isError={orgsIsError || baselinesIsError}
+        isLoading={orgsLoading || baselinesLoading}
+        label="baselines"
+      >
         <Card>
           <CardHeader>
             <CardTitle>Recorded baselines</CardTitle>
           </CardHeader>
           {baselines?.length === 0 ? (
-            <EmptyState className="px-4 pt-0 pb-4 text-left" title="No baselines recorded yet." />
+            <EmptyState title="No baselines recorded yet." />
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -236,7 +249,7 @@ export default function GovernBaselinesPage() {
                       <Td className="px-4 py-2 text-right tabular-nums">{b.sampleSize}</Td>
                       <Td className="px-4 py-2 text-right tabular-nums">{b.errorCount}</Td>
                       <Td className="px-4 py-2 text-right tabular-nums">
-                        {(b.errorRate * 100).toFixed(1)}%
+                        {formatPercent(b.errorRate)}
                       </Td>
                       <Td className="px-4 py-2 text-right tabular-nums">
                         {formatDate(b.recordedAt)}
@@ -253,7 +266,7 @@ export default function GovernBaselinesPage() {
             </div>
           )}
         </Card>
-      )}
+      </QueryBoundary>
 
       <CreateBaselineModal
         onClose={() => setNewOpen(false)}
