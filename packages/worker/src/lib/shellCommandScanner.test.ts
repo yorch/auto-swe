@@ -349,15 +349,14 @@ describe('scanShellCommand — a scan that cannot complete fails CLOSED', () => 
   });
 });
 
-describe('scanShellCommand — the regex execution budget is the operator-tunable setting', () => {
+describe('scanShellCommand — the regex execution budget comes from SCANNER_REGEX_BUDGET_MS', () => {
   afterEach(() => {
     resetRegexExecutor();
+    delete process.env.SCANNER_REGEX_BUDGET_MS;
   });
 
-  it('threads the resolved workspace.regexScanBudgetMs value into runRegexBatch', async () => {
-    configFindMany.mockResolvedValue([
-      { key: 'workspace.regexScanBudgetMs', scope: 'GLOBAL', value: 5_000 },
-    ] as never);
+  it('threads the configured budget into runRegexBatch', async () => {
+    process.env.SCANNER_REGEX_BUDGET_MS = '5000';
     await scanShellCommand('ls');
     expect(runRegexBatchSpy).toHaveBeenCalledWith(
       expect.anything(),
@@ -366,8 +365,7 @@ describe('scanShellCommand — the regex execution budget is the operator-tunabl
     );
   });
 
-  it('falls back to the default budget, without throwing, when the setting cannot be resolved', async () => {
-    configFindMany.mockRejectedValue(new Error('database is unreachable'));
+  it('uses the default budget when the variable is unset', async () => {
     await expect(scanShellCommand('ls')).resolves.toBeNull();
     expect(runRegexBatchSpy).toHaveBeenCalledWith(
       expect.anything(),

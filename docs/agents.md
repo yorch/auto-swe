@@ -637,7 +637,7 @@ Writes cut a new immutable `version`.
   now on both the `writeFile` and `bash` paths — and CRITICAL pre-write findings hard-block.
 - **A catastrophic scanner pattern is bounded, then dropped for a while.** Scanner regexes execute
   in a pooled worker thread under a wall-clock budget (`shared/lib/regexExec.ts`) resolved from the
-  `workspace.regexScanBudgetMs` setting (default 250 ms; ADMIN-only, platform-wide) and applied per
+  `SCANNER_REGEX_BUDGET_MS` environment variable (default 250 ms; deployment-wide) and applied per
   scanned window, so a pattern that backtracks catastrophically is terminated instead of wedging
   the process. The scan it overran fails closed for a blocking scanner and degrades for an advisory
   one. An overrun is confirmed by re-running the isolated pattern alone on a fresh thread — one

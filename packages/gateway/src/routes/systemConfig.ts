@@ -1,4 +1,3 @@
-import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
   resolveCanaryConfig,
   resolveConsolidationConfig,
@@ -6,7 +5,6 @@ import {
   resolveRevalidationConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
-import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -15,12 +13,9 @@ import {
   detectJiraFields,
   getFigmaConfig,
   getGitHubConfig,
-  getGoogleOAuthConfig,
   getIssueTrackerConfig,
   getKnowledgeBaseConfig,
-  getOktaOAuthConfig,
   getSlackConfig,
-  getStorageConfig,
   listConfigAuditEntries,
   testDecryptSecrets,
   testFigmaConnection,
@@ -28,19 +23,15 @@ import {
   testIssueTrackerConnection,
   testKnowledgeBaseConnection,
   testSlackConnection,
-  testStorageConnection,
   updateCanaryConfig,
   updateConsolidationConfig,
   updateEvalScheduleConfig,
   updateFigmaConfig,
   updateGitHubConfig,
-  updateGoogleOAuthConfig,
   updateIssueTrackerConfig,
   updateKnowledgeBaseConfig,
-  updateOktaOAuthConfig,
   updateRevalidationScheduleConfig,
   updateSlackConfig,
-  updateStorageConfig,
   updateWorkflowDefaults,
 } from '../lib/systemConfigService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -48,17 +39,13 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 /// Admin CRUD routes for the singleton system-config tables:
 ///   GET/PUT /api/v1/platform/config/github
 ///   GET/PUT /api/v1/platform/config/slack
-///   GET/PUT /api/v1/platform/config/storage
 ///   GET/PUT /api/v1/platform/config/workflow-defaults
-///   GET/PUT /api/v1/platform/config/oauth/google
-///   GET/PUT /api/v1/platform/config/oauth/okta
 ///   GET/PUT /api/v1/platform/config/issue-tracker
 ///   GET/PUT /api/v1/platform/config/knowledge-base
 ///
 /// Also:
 ///   POST /api/v1/platform/config/github/test          — live connection test
 ///   POST /api/v1/platform/config/slack/test           — live connection test
-///   POST /api/v1/platform/config/storage/test         — connectivity test
 ///   POST /api/v1/platform/config/issue-tracker/test   — fetch a sample ticket
 ///   POST /api/v1/platform/config/knowledge-base/test  — knowledge base connectivity test
 ///   GET  /api/v1/platform/config/audit-log            — config change history
@@ -79,8 +66,6 @@ const GitHubPutBody = z.object({
   appPrivateKey: z.string().min(1).max(10_000).optional(),
   authMode: z.enum(['auto', 'pat', 'app']).nullable().optional(),
   baseUrl: z.string().url().max(500).nullable().optional(),
-  oauthClientId: z.string().max(200).nullable().optional(),
-  oauthClientSecret: z.string().min(1).max(500).optional(),
   token: z.string().min(1).max(500).optional(),
   webhookSecret: z.string().min(1).max(500).optional(),
 });
@@ -91,21 +76,6 @@ const SlackPutBody = z.object({
   clientSecret: z.string().min(1).max(500).optional(),
   signingSecret: z.string().min(1).max(500).optional(),
 });
-
-const StoragePutBody = z
-  .object({
-    awsAccessKeyId: z.string().max(200).nullable().optional(),
-    awsSecretAccessKey: z.string().min(1).max(500).optional(),
-    backend: z.enum(['inline', 's3']).optional(),
-    s3Bucket: z.string().min(1).max(200).nullable().optional(),
-    s3Endpoint: z.string().url().max(500).nullable().optional(),
-    s3ForcePathStyle: z.boolean().optional(),
-    s3Prefix: z.string().max(200).nullable().optional(),
-    s3Region: z.string().max(50).nullable().optional(),
-  })
-  .refine((v) => v.backend !== 's3' || (v.s3Bucket !== undefined && v.s3Bucket !== null), {
-    message: 'backend=s3 requires s3Bucket',
-  });
 
 /** Longest CI poll interval that fits the poll activity's 2-minute heartbeat. */
 const CI_POLL_INTERVAL_MAX_SEC = 60;
@@ -163,20 +133,6 @@ const WorkflowDefaultsPutBody = z.object({
   maxTddIterations: z.number().int().min(1).optional(),
   prBodyTemplate: z.string().max(10_000).optional(),
   prTitleTemplate: z.string().min(1).max(500).optional(),
-  workspaceCpus: z.number().positive().optional(),
-  // Format-validate the two operational strings at write time so a bad value
-  // fails fast here (a 400) instead of breaking every future workspace creation
-  // deep in the worker. `workspaceImage` must satisfy the same ref regex
-  // `createWorkspace` enforces; `workspaceMemory` must be a docker memory value
-  // (digits + optional b/k/m/g unit) — this also removes any shell metacharacter.
-  workspaceImage: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE).optional(),
-  workspaceMemory: z
-    .string()
-    .min(1)
-    .max(32)
-    .regex(/^\d+[bkmg]?$/i, 'must be a docker memory value, e.g. 512m or 4g')
-    .optional(),
-  workspacePidsLimit: z.number().int().min(1).optional(),
 });
 
 const ConsolidationPutBody = z.object({
@@ -237,17 +193,6 @@ const CanaryPutBody = z.object({
   candidateVersion: z.number().int().min(1).nullable().optional(),
   enabled: z.boolean().optional(),
   percent: z.number().min(0).max(1).optional(),
-});
-
-const GoogleOAuthPutBody = z.object({
-  clientId: z.string().max(200).nullable().optional(),
-  clientSecret: z.string().min(1).max(500).optional(),
-});
-
-const OktaOAuthPutBody = z.object({
-  clientId: z.string().max(200).nullable().optional(),
-  clientSecret: z.string().min(1).max(500).optional(),
-  issuer: z.string().url().max(500).nullable().optional(),
 });
 
 const IssueTrackerPutBody = z.object({
@@ -342,26 +287,6 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     reply.send(await testSlackConnection())
   );
 
-  // ── Storage ─────────────────────────────────────────────────────────────────
-
-  f.get('/config/storage', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getStorageConfig(fastify.prisma))
-  );
-
-  f.put(
-    '/config/storage',
-    { schema: { body: StoragePutBody, response: { 200: z.any() } } },
-    async (req, reply) => {
-      const result = await updateStorageConfig(fastify.prisma, req.body);
-      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
-      return reply.send({ data: result.data });
-    }
-  );
-
-  f.post('/config/storage/test', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await testStorageConnection())
-  );
-
   // ── Workflow defaults ────────────────────────────────────────────────────────
 
   f.get(
@@ -378,59 +303,6 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       // result.data is the shared resolver's shape so GET and PUT match,
       // including env-var fallbacks for fields not yet set in DB.
-      return reply.send({ data: result.data });
-    }
-  );
-
-  // ── Google OAuth ─────────────────────────────────────────────────────────────
-
-  f.get('/config/oauth/google', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getGoogleOAuthConfig(fastify.prisma))
-  );
-
-  f.put(
-    '/config/oauth/google',
-    { schema: { body: GoogleOAuthPutBody, response: { 200: z.any() } } },
-    async (req, reply) => {
-      const result = await updateGoogleOAuthConfig(fastify.prisma, req.body);
-      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
-      return reply.send({ data: result.data });
-    }
-  );
-
-  // ── Okta (enterprise SSO) ────────────────────────────────────────────────────
-
-  f.get('/config/oauth/okta', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getOktaOAuthConfig(fastify.prisma))
-  );
-
-  f.put(
-    '/config/oauth/okta',
-    // 400 is declared alongside 200 because this is the one config route that
-    // rejects its body after Zod parsing — the SSRF guard below.
-    { schema: { body: OktaOAuthPutBody, response: { 200: z.any(), 400: z.any() } } },
-    async (req, reply) => {
-      // The issuer is fetched server-side at gateway boot (the OIDC discovery
-      // document), so an admin-supplied value is an SSRF vector exactly like an
-      // `apiBase` probe — run it through the same guard. Okta issuers are always
-      // public HTTPS, so unlike the tracker/KB connectors there is no
-      // private-network opt-in to honour here.
-      const { issuer } = req.body;
-      if (issuer) {
-        const safety = isSafeProbeUrl(issuer);
-        if (!safety.ok) {
-          return reply
-            .status(400)
-            .send({ error: { code: 'UNSAFE_URL', message: `issuer rejected: ${safety.reason}` } });
-        }
-        if (safety.url.protocol !== 'https:') {
-          return reply.status(400).send({
-            error: { code: 'UNSAFE_URL', message: 'issuer rejected: must use https' },
-          });
-        }
-      }
-      const result = await updateOktaOAuthConfig(fastify.prisma, req.body);
-      await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
     }
   );

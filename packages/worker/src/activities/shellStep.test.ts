@@ -10,14 +10,12 @@ const CLONE_URL = `https://x-access-token:${TOKEN}@github.com/acme/widgets.git`;
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    // Read by the setting registry when it resolves `workspace.gitHelperImage`;
-    // no rows means every setting falls back to its registered default.
-    configSetting: { findMany: vi.fn().mockResolvedValue([]) },
     connection: { findUniqueOrThrow: vi.fn() },
   },
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn().mockResolvedValue({ branchPrefix: 'auto' }),
+  resolveWorkspaceInfra: vi.fn(() => ({ gitHelperImage: 'alpine/git:latest' })),
 }));
 vi.mock('@auto-swe/shared/workflow', async () => {
   const actual = await vi.importActual<typeof import('@auto-swe/shared/workflow')>(
@@ -29,11 +27,6 @@ vi.mock('@auto-swe/shared/workflow', async () => {
   };
 });
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
-// Resolving `workspace.gitHelperImage` scopes the read to the calling run, which
-// otherwise reaches Temporal's activity context and the database.
-vi.mock('../lib/config/contextLookup.js', () => ({
-  currentRequestContext: vi.fn().mockResolvedValue({}),
-}));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue('wf-1'),
   currentWorkflowRunId: vi.fn().mockResolvedValue('run-1'),

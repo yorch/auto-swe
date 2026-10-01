@@ -58,7 +58,7 @@ async function scanSensitiveFilePaths(filePaths: string[]): Promise<SensitiveFil
     }
   });
 
-  const budgetMs = await resolveRegexBudgetMs();
+  const budgetMs = resolveRegexBudgetMs();
   const {
     hits,
     incomplete: batchIncomplete,

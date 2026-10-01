@@ -71,16 +71,15 @@
  */
 
 import { Worker } from 'node:worker_threads';
-import { resolveSetting } from '../config/resolveSetting.js';
+import { resolveWorkspaceInfra } from './systemConfig.js';
 
 /**
- * Default per-target wall-clock budget — the value the `workspace.regexScanBudgetMs`
- * setting falls back to when nothing overrides it, so it stays the effective
- * budget for an unconfigured deployment and is what {@link runRegexBatch} uses
- * when a caller omits `opts.budgetMs` (as the tests in this file do, to exercise
- * a fixed bound). The four scanner entry points must not rely on that implicit
- * default, though: they call {@link resolveRegexBudgetMs} to get the *live*
- * value and pass it explicitly, so an operator's override actually takes effect.
+ * Default per-target wall-clock budget — the value `SCANNER_REGEX_BUDGET_MS` falls
+ * back to when unset, and what {@link runRegexBatch} uses when a caller omits
+ * `opts.budgetMs` (as the tests in this file do, to exercise a fixed bound).
+ * The scanner entry points must not rely on that implicit default, though:
+ * they call {@link resolveRegexBudgetMs} and pass the result explicitly, so an
+ * operator's override actually takes effect.
  */
 export const DEFAULT_REGEX_BUDGET_MS = 250;
 
@@ -93,32 +92,16 @@ export const DEFAULT_REGEX_BUDGET_MS = 250;
 export const REGEX_QUARANTINE_TTL_MS = 10 * 60_000;
 
 /**
- * Resolves the operator-tunable `workspace.regexScanBudgetMs` setting for one
- * scan invocation. This is the ONLY runtime way callers should learn the
- * effective budget — per AGENTS.md's setting-registry convention, nothing
- * downstream of this module should hold its own module-scope budget constant.
+ * The scanner wall-clock budget from the `SCANNER_REGEX_BUDGET_MS` environment
+ * variable (default 250 ms, clamped to 10 ms – 60 s). This is the ONLY way
+ * callers should learn the effective budget — nothing downstream of this
+ * module should hold its own budget constant.
  *
- * Callers are the scanner entry points (`skillScanner.ts`,
- * `shellCommandScanner.ts`, `sensitiveFileScanner.ts`, `codeSecurityScanner.ts`),
- * each resolving once per scan and threading the result through
- * `runRegexBatch`'s `opts.budgetMs` — not a DB round trip per pattern, since
- * `resolveSetting` sits behind the shared ~30s config cache.
- *
- * A scan must never throw into its calling activity, so this never rejects:
- * any resolution failure (DB down, cache miss racing a pool hiccup, whatever)
- * falls back to {@link DEFAULT_REGEX_BUDGET_MS} rather than propagating.
+ * It is deployment-wide and read from the environment, not the database, so it
+ * cannot fail: a scan must never throw into its calling activity.
  */
-export async function resolveRegexBudgetMs(): Promise<number> {
-  try {
-    return await resolveSetting('workspace.regexScanBudgetMs');
-  } catch (err) {
-    console.error(
-      '[regexExec] could not resolve workspace.regexScanBudgetMs; falling back to the default ' +
-        `of ${DEFAULT_REGEX_BUDGET_MS}ms:`,
-      err
-    );
-    return DEFAULT_REGEX_BUDGET_MS;
-  }
+export function resolveRegexBudgetMs(): number {
+  return resolveWorkspaceInfra().regexScanBudgetMs;
 }
 
 /** A pattern to run. `key` is only used to report results; identity is source+flags. */

@@ -26,7 +26,6 @@ beforeEach(() => {
   _resetConfigCacheForTests();
   findMany.mockReset();
   findMany.mockResolvedValue([]);
-  delete process.env.WORKER_MAX_CONCURRENT_ACTIVITIES;
 });
 
 describe('resolveSetting', () => {
@@ -73,45 +72,22 @@ describe('resolveSetting', () => {
     );
     await expect(resolveSetting('channel.historyMessageLimit', TEAM_CTX)).resolves.toBe(7);
   });
-
-  it('reads an env var when no override exists, and lets a DB row beat it', async () => {
-    process.env.WORKER_MAX_CONCURRENT_ACTIVITIES = '25';
-    await expect(resolveSetting('workspace.maxConcurrentActivities')).resolves.toBe(25);
-
-    _resetConfigCacheForTests();
-    rows({ key: 'workspace.maxConcurrentActivities', scope: 'GLOBAL', value: 40 });
-    await expect(resolveSetting('workspace.maxConcurrentActivities')).resolves.toBe(40);
-  });
-
-  it('ignores an unparseable env var', async () => {
-    process.env.WORKER_MAX_CONCURRENT_ACTIVITIES = 'lots';
-    await expect(resolveSetting('workspace.maxConcurrentActivities')).resolves.toBe(10);
-  });
-
-  it('honours WORKSPACE_BLOCK_METADATA only-false semantics', async () => {
-    process.env.WORKSPACE_BLOCK_METADATA = 'false';
-    await expect(resolveSetting('workspace.blockMetadata')).resolves.toBe(false);
-    _resetConfigCacheForTests();
-    process.env.WORKSPACE_BLOCK_METADATA = 'anything-else';
-    await expect(resolveSetting('workspace.blockMetadata')).resolves.toBe(true);
-    delete process.env.WORKSPACE_BLOCK_METADATA;
-  });
 });
 
 describe('overridableAt is enforced on read, not only on write', () => {
   it('ignores a scoped row for a setting the definition says is platform-wide', async () => {
-    // workspace.blockMetadata declares `overridableAt: []` because no team
-    // should be able to switch off metadata blocking for its own runs. The
+    // github.userCredentialsEnabled declares `overridableAt: []` because no
+    // team should be able to switch on per-user tokens for its own runs. The
     // write path refuses such a row, but a row can exist without passing
     // through it — direct SQL, or a definition narrowed after the fact. A
-    // security control a stray row can disable is not a control.
-    rows({ key: 'workspace.blockMetadata', scope: 'TEAM', value: false });
-    await expect(resolveSetting('workspace.blockMetadata', TEAM_CTX)).resolves.toBe(true);
+    // security control a stray row can enable is not a control.
+    rows({ key: 'github.userCredentialsEnabled', scope: 'TEAM', value: true });
+    await expect(resolveSetting('github.userCredentialsEnabled', TEAM_CTX)).resolves.toBe(false);
   });
 
   it('still honours the GLOBAL row for a platform-wide setting', async () => {
-    rows({ key: 'workspace.blockMetadata', scope: 'GLOBAL', value: false });
-    await expect(resolveSetting('workspace.blockMetadata', TEAM_CTX)).resolves.toBe(false);
+    rows({ key: 'github.userCredentialsEnabled', scope: 'GLOBAL', value: true });
+    await expect(resolveSetting('github.userCredentialsEnabled', TEAM_CTX)).resolves.toBe(true);
   });
 
   it('skips a disallowed scope and falls through to an allowed broader one', async () => {
@@ -228,17 +204,12 @@ describe('batching and caching', () => {
 
 describe('resolveEffectiveSettings', () => {
   it('reports the scope each value came from', async () => {
-    process.env.WORKER_MAX_CONCURRENT_ACTIVITIES = '25';
     rows({ key: 'channel.historyMessageLimit', scope: 'TEAM', value: 21 });
     const { settings } = await resolveEffectiveSettings(TEAM_CTX);
     const byKey = new Map(settings.map((entry) => [entry.key, entry]));
 
     expect(byKey.get('channel.historyMessageLimit')).toMatchObject({ source: 'TEAM', value: 21 });
     expect(byKey.get('channel.memoryContextItems')).toMatchObject({ source: 'DEFAULT', value: 5 });
-    expect(byKey.get('workspace.maxConcurrentActivities')).toMatchObject({
-      source: 'ENV',
-      value: 25,
-    });
   });
 
   it('exposes the row stored at one exact scope from the same batch', async () => {

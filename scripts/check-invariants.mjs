@@ -45,10 +45,10 @@ function walk(dir, test, acc = []) {
 // ---------------------------------------------------------------------------
 // INVARIANT 1 — a workspace image is inherited, never written inline.
 //
-// `createWorkspace` resolves `image ?? cfg.workspaceImage`. A string literal in
+// `createWorkspace` resolves `image ?? infra.image`. A string literal in
 // that argument position is therefore not a default, it is a value: it wins the
 // `??` and the operator's configured image is never read. Every call site had
-// one, so /admin/workflow's workspace image did nothing on any path, while the
+// one, so the configured workspace image did nothing on any path, while the
 // docs and the function's own JSDoc said otherwise. Nothing failed — a wrong
 // image is a working image.
 //
@@ -114,7 +114,7 @@ function checkWorkspaceImageLiterals() {
           src.slice(0, open).split('\n').length,
           'workspace-image-inherited',
           `createWorkspace(…) image argument is the literal ${literal[0].trim()}`,
-          'A literal wins the `image ?? cfg.workspaceImage` inside createWorkspace, so the ' +
+          'A literal wins the `image ?? infra.image` inside createWorkspace, so the ' +
             "operator's configured image is never read. Pass `repo.executorImage ?? undefined`, " +
             'or a named constant if the pin is deliberate (see EVAL_WORKSPACE_IMAGE).'
         );

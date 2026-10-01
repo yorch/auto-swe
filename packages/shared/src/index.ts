@@ -81,6 +81,7 @@ export type {
   ResolvedSlackConfig,
   ResolvedStorageConfig,
   ResolvedWorkflowDefaults,
+  WorkspaceInfraConfig,
 } from './lib/systemConfig.js';
 export {
   resolveGitHubConfig,
@@ -91,6 +92,7 @@ export {
   resolveSlackConfig,
   resolveStorageConfig,
   resolveWorkflowDefaults,
+  resolveWorkspaceInfra,
 } from './lib/systemConfig.js';
 export { generateBranchName, generateWorkflowId } from './lib/workflowId.js';
 export {

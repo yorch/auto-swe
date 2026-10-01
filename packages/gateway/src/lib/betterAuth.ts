@@ -160,20 +160,19 @@ function renderMagicLinkHtml({
 type AuthInstance = ReturnType<typeof buildAuth>;
 let _auth: AuthInstance | null = null;
 
-/// Called once at gateway startup. Reads OAuth credentials from DB (with env
-/// fallback) then initialises the BetterAuth singleton. Subsequent calls are
-/// no-ops (the singleton is already built). A restart is required to pick up
-/// changes to OAuth credentials after the server is running.
+/// Called once at gateway startup. Reads the sign-in credentials from the
+/// environment (GitHub's endpoints still come from the GitHub config row), then
+/// initialises the BetterAuth singleton. Subsequent calls are no-ops (the
+/// singleton is already built). A restart is required to pick up changes to
+/// OAuth credentials after the server is running.
 export async function initAuth(): Promise<void> {
   if (_auth) {
     return;
   }
 
-  const [ghConfig, googleConfig, oktaConfig] = await Promise.all([
-    resolveGitHubConfig(),
-    resolveGoogleOAuthConfig(),
-    resolveOktaOAuthConfig(),
-  ]);
+  const ghConfig = await resolveGitHubConfig();
+  const googleConfig = resolveGoogleOAuthConfig();
+  const oktaConfig = resolveOktaOAuthConfig();
 
   _githubSignIn = resolveGithubSignIn({
     apiUrl: ghConfig.apiUrl,

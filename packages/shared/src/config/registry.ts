@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { MAX_FANOUT_CONCURRENCY } from '../workflow/spec.js';
 import type { SettingDefinition } from './types.js';
 
@@ -35,24 +34,6 @@ export const hostEntry = z
   .max(253);
 const hostList = z.array(hostEntry).max(50);
 const ratio = z.number().min(0).max(1);
-
-/// Parses a positive-integer env var, clamping to `max` rather than rejecting.
-/// A deployment that has always run `WORKER_MAX_CONCURRENT_ACTIVITIES=2000`
-/// must not silently drop to the built-in 10 on upgrade because the schema caps
-/// lower — that is a 200x throughput cut with no error. Clamp and say so.
-function positiveIntEnv(max: number) {
-  return (raw: string): number | undefined => {
-    const parsed = Number(raw);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      return undefined;
-    }
-    if (parsed > max) {
-      console.warn(`[config] clamping env value ${parsed} to the maximum ${max}.`);
-      return max;
-    }
-    return parsed;
-  };
-}
 
 export const SETTING_DEFINITIONS = {
   // ── Channel assistant ──────────────────────────────────────────────────────
@@ -360,49 +341,6 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.min(5).max(500),
     unit: 'steps',
   }),
-  'workspace.blockMetadata': defineSetting({
-    defaultValue: true,
-    description:
-      'Blackhole the cloud metadata IPs (AWS/GCP/Azure IMDS, ECS task metadata) inside every agent workspace. Leave this on unless it misbehaves on your Docker runtime — turning it off exposes instance credentials to agent-run code.',
-    envVar: 'WORKSPACE_BLOCK_METADATA',
-    group: 'workspace',
-    label: 'Block cloud metadata endpoints',
-    // A security control, so it is deliberately platform-wide and ADMIN-only:
-    // no team should be able to switch off metadata blocking for its own runs.
-    overridableAt: [],
-    parseEnv: (raw) => raw !== 'false',
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: z.boolean(),
-  }),
-  'workspace.gitHelperImage': defineSetting({
-    defaultValue: 'alpine/git:latest',
-    description:
-      'Image used for the short-lived container that performs git operations for a shell step. Pin a digest here to stop tracking the upstream tag.',
-    group: 'workspace',
-    label: 'Git helper image',
-    overridableAt: ['TEAM', 'ORGANIZATION'],
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
-  }),
-  'workspace.maxConcurrentActivities': defineSetting({
-    defaultValue: 10,
-    description:
-      'Cap on Temporal activity tasks one worker runs at once. Most activities hold a Docker workspace, so raise it only if the Docker host can serve more in parallel. Takes effect when the worker restarts.',
-    envVar: 'WORKER_MAX_CONCURRENT_ACTIVITIES',
-    group: 'workspace',
-    label: 'Worker activity concurrency',
-    overridableAt: [],
-    parseEnv: positiveIntEnv(1000),
-    requiredRole: 'ADMIN',
-    restartRequired: true,
-    runPinned: false,
-    schema: positiveInt.max(1000),
-    unit: 'activities',
-  }),
 
   // ── Agent workspace ────────────────────────────────────────────────────────
   // Tunes the implementer's tool behaviour rather than the container itself,
@@ -421,36 +359,6 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.min(1_000).max(200_000),
     unit: 'characters',
-  }),
-  'workspace.metadataBlockImage': defineSetting({
-    defaultValue: 'alpine:3.20',
-    description:
-      'Image used for the privileged sidecar that installs the metadata blackhole routes. It needs `ip` from busybox and nothing else.',
-    group: 'workspace',
-    label: 'Metadata blocker image',
-    overridableAt: [],
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
-  }),
-  'workspace.regexScanBudgetMs': defineSetting({
-    defaultValue: 250,
-    description:
-      'Wall-clock budget, in milliseconds, a scanner pattern gets before its pooled worker thread is killed and the pattern quarantined for this process. Every admin- or bundle-supplied scanner pattern runs against agent text under this bound — every `bash` command, every `writeFile` path, every skill save, every TDD iteration. Too low and an ordinary pattern trips it on a loaded host: a blocking scanner (shell command, sensitive file) spuriously blocks the agent, and a pattern that was never actually pathological gets quarantined and silently stops being enforced. Too high and one genuinely catastrophic pattern stalls that scan — and everything waiting behind it in the shared executor queue — for longer before the executor gives up and kills it.',
-    envVar: 'SCANNER_REGEX_BUDGET_MS',
-    group: 'workspace',
-    label: 'Scanner regex execution budget',
-    // A security control, so it is deliberately platform-wide and ADMIN-only:
-    // no team should be able to loosen the bound that keeps a bad admin- or
-    // bundle-supplied pattern from wedging the shared scanner executor.
-    overridableAt: [],
-    parseEnv: positiveIntEnv(60_000),
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: positiveInt.min(10).max(60_000),
-    unit: 'ms',
   }),
 } as const satisfies Record<string, SettingDefinition<unknown>>;
 

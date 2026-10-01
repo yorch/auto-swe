@@ -63,10 +63,10 @@ describe('checkSettingWrite', () => {
   });
 
   it('rejects a scope the definition does not permit', () => {
-    // workspace.blockMetadata is a security control: GLOBAL only, by design.
+    // github.userCredentialsEnabled is a security control: GLOBAL only, by design.
     const result = checkSettingWrite(
       admin,
-      { key: 'workspace.blockMetadata', scope: 'TEAM', targetTeamId: TEAM },
+      { key: 'github.userCredentialsEnabled', scope: 'TEAM', targetTeamId: TEAM },
       []
     );
     expect(result).toMatchObject({ allowed: false, code: 'SCOPE_NOT_ALLOWED' });
@@ -82,10 +82,10 @@ describe('checkSettingWrite', () => {
     const grant = teamGrant({ keyPattern: '*', role: 'ENGINEER' });
     const result = checkSettingWrite(
       engineer,
-      { key: 'workspace.gitHelperImage', scope: 'TEAM', targetOrgId: ORG, targetTeamId: TEAM },
+      { key: 'channel.historyMessageLimit', scope: 'TEAM', targetOrgId: ORG, targetTeamId: TEAM },
       [grant]
     );
-    // gitHelperImage requires ADMIN — no grant can lower that.
+    // historyMessageLimit requires LEAD — no grant can lower that.
     expect(result).toMatchObject({ allowed: false, code: 'ROLE_TOO_LOW' });
   });
 

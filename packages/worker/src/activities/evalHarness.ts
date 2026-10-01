@@ -41,7 +41,7 @@ import { createWorkspace, type Workspace } from './workspace.js';
  * That is the same frozen-fixture reasoning as `EvalCase.baselineSha`: a
  * benchmark score is comparable against its own history only if the environment
  * it ran in did not move. So this workspace deliberately ignores the
- * connection's `executorImage` and the `workspaceImage` Tier-2 default, both of
+ * connection's `executorImage` and the `WORKSPACE_IMAGE` default, both of
  * which an operator can change at any time.
  *
  * Changing this constant silently rebases every stored eval score onto a

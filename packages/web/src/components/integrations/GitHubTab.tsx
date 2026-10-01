@@ -31,8 +31,6 @@ export function GitHubTab() {
 
   const [token, setToken] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
-  const [oauthClientId, setOauthClientId] = usePrefilledField(data?.oauthClientId);
-  const [oauthClientSecret, setOauthClientSecret] = useState('');
   const [baseUrl, setBaseUrl] = usePrefilledField(data?.baseUrl);
   const [apiUrl, setApiUrl] = usePrefilledField(data?.apiUrl);
   const [appId, setAppId] = usePrefilledField(data?.appId);
@@ -47,8 +45,6 @@ export function GitHubTab() {
 
   const webhookUrl = `${API_BASE}/api/v1/webhooks/git`;
   const ciWebhookUrl = `${API_BASE}/api/v1/webhooks/ci`;
-  // better-auth's social-provider callback convention: {basePath}/callback/{providerId}
-  const githubOauthCallback = `${API_BASE}/api/auth/callback/github`;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,10 +57,6 @@ export function GitHubTab() {
       body.webhookSecret = webhookSecret;
     }
     // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
-    body.oauthClientId = clearableField(oauthClientId, data?.oauthClientId);
-    if (oauthClientSecret) {
-      body.oauthClientSecret = oauthClientSecret;
-    }
     body.baseUrl = clearableField(baseUrl, data?.baseUrl);
     body.apiUrl = clearableField(apiUrl, data?.apiUrl);
     body.appId = clearableField(appId, data?.appId);
@@ -85,7 +77,6 @@ export function GitHubTab() {
       () => {
         setToken('');
         setWebhookSecret('');
-        setOauthClientSecret('');
         setAppPrivateKey('');
         setAppClientSecret('');
       }
@@ -289,52 +280,6 @@ export function GitHubTab() {
                 value={apiUrl}
               />
             </ConfigField>
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle eyebrow="GitHub OAuth">OAuth application</CardTitle>
-          </CardHeader>
-          <p className="mb-4 text-xs text-paper-500">
-            Used for &quot;Sign in with GitHub&quot;. Changes here require a gateway restart to take
-            effect.
-          </p>
-          <div className="space-y-4">
-            <ConfigField
-              current={data?.oauthClientId || undefined}
-              id="gh-oauth-client-id"
-              label="Client ID"
-              source={sources.oauthClientId}
-            >
-              <Input
-                compact
-                id="gh-oauth-client-id"
-                onChange={(e) => setOauthClientId(e.target.value)}
-                placeholder="Iv1.abc..."
-                value={oauthClientId}
-              />
-            </ConfigField>
-            <SecretInput
-              current={data?.oauthClientSecret ?? null}
-              id="gh-oauth-client-secret"
-              label="Client secret"
-              onChange={setOauthClientSecret}
-              source={sources.oauthClientSecret}
-              value={oauthClientSecret}
-            />
-
-            <UrlRow
-              help={
-                <>
-                  Add this as the Authorization callback URL in your GitHub OAuth App settings. The
-                  host must match the gateway&apos;s BETTER_AUTH_URL — better-auth builds its
-                  redirect_uri from that value.
-                </>
-              }
-              label="OAuth callback URL"
-              url={githubOauthCallback}
-            />
           </div>
         </Card>
 

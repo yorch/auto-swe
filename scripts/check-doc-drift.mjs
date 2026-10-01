@@ -316,10 +316,10 @@ const nodeMajor = read('.node-version').trim();
  */
 const workspaceImageMajor = (() => {
   const src = read('packages/shared/src/lib/systemConfig.ts');
-  const m = src.match(/workspaceImage:\s*row\?\.workspaceImage\s*\?\?\s*'node:(\d+)-alpine'/);
+  const m = src.match(/'WORKSPACE_IMAGE',\s*'node:(\d+)-alpine'/);
   if (!m) {
     throw new Error(
-      'could not find the workspaceImage default in packages/shared/src/lib/systemConfig.ts — ' +
+      'could not find the WORKSPACE_IMAGE default in packages/shared/src/lib/systemConfig.ts — ' +
         'update this matcher if the resolver changed shape'
     );
   }

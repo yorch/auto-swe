@@ -23,8 +23,8 @@ vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
     secret: 'a-test-secret-that-is-at-least-32-characters-long',
   }),
   resolveGitHubConfig: async () => state.gh,
-  resolveGoogleOAuthConfig: async () => ({ clientId: null, clientSecret: null }),
-  resolveOktaOAuthConfig: async () => state.okta,
+  resolveGoogleOAuthConfig: () => ({ clientId: null, clientSecret: null }),
+  resolveOktaOAuthConfig: () => state.okta,
 }));
 
 interface GenericPlugin {

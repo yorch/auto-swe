@@ -36,7 +36,7 @@ export async function scanSkillContent(promptText: string): Promise<SkillScanRes
     ...toRegexSpecs(injection, 'injection:'),
     ...toRegexSpecs(exfiltration, 'exfiltration:'),
   ];
-  const budgetMs = await resolveRegexBudgetMs();
+  const budgetMs = resolveRegexBudgetMs();
   const { hits, incomplete } = await runRegexBatch(specs, [{ key: 'text', text }], {
     budgetMs,
     label: 'skillScanner',
