@@ -3,7 +3,10 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
 import {
   type IssueTrackerConfigInput,
   type IssueTrackerProvider,
@@ -15,6 +18,7 @@ import {
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { errMsg } from '@/lib/errors';
 import { ConfigField } from './ConfigField';
+import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
 
 const PROVIDER_HINTS: Record<
@@ -153,8 +157,8 @@ export function IssueTrackerTab() {
             label="Provider"
             source={sources.provider}
           >
-            <select
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs focus:border-ember-400 focus:outline-none"
+            <Select
+              compact
               id="tracker-provider"
               onChange={(e) => {
                 const v = e.target.value;
@@ -175,9 +179,9 @@ export function IssueTrackerTab() {
               <option value="jira">Jira</option>
               <option value="linear">Linear</option>
               <option value="github">GitHub Issues</option>
-            </select>
+            </Select>
             {hints && (
-              <p className="mt-1 text-[11px] text-paper-600">Ticket ID format: {hints.ticket}</p>
+              <p className="text-[11px] text-paper-600">Ticket ID format: {hints.ticket}</p>
             )}
           </ConfigField>
           <ConfigField
@@ -186,41 +190,36 @@ export function IssueTrackerTab() {
             label="Base URL"
             source={sources.baseUrl}
           >
-            <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+            <Input
+              compact
               id="tracker-base-url"
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
               value={baseUrl}
             />
           </ConfigField>
-          <div>
-            <div className="flex items-center gap-3">
-              <input
-                checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
-                className="h-4 w-4 accent-ember-400"
-                id="tracker-allow-private-network"
-                onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
-                type="checkbox"
-              />
-              <label className="text-sm text-paper-300" htmlFor="tracker-allow-private-network">
-                Allow private/internal network base URL
-              </label>
-            </div>
-            <p className="mt-1 text-[11px] text-paper-600">
-              Bypasses the SSRF guard that otherwise rejects internal/<code>.local</code>/private-IP
-              base URLs. Only enable this for a trusted self-hosted instance you control — it
-              reopens the server to requests against your internal network for this connector.
-            </p>
-          </div>
+          <Checkbox
+            checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
+            hint={
+              <>
+                Bypasses the SSRF guard that otherwise rejects internal/<code>.local</code>
+                /private-IP base URLs. Only enable this for a trusted self-hosted instance you
+                control — it reopens the server to requests against your internal network for this
+                connector.
+              </>
+            }
+            id="tracker-allow-private-network"
+            label="Allow private/internal network base URL"
+            onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
+          />
           <ConfigField
             current={data?.email || undefined}
             id="tracker-email"
             label="Email (Jira only)"
             source={sources.email}
           >
-            <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+            <Input
+              compact
               id="tracker-email"
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com (Jira basic-auth user)"
@@ -256,13 +255,15 @@ export function IssueTrackerTab() {
               source={sources.storyPointsFieldId}
             >
               <div className="flex items-center gap-2">
-                <input
-                  className="flex-1 rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
-                  id="tracker-story-points"
-                  onChange={(e) => setStoryPointsFieldId(e.target.value)}
-                  placeholder="story_points"
-                  value={storyPointsFieldId}
-                />
+                <div className="flex-1">
+                  <Input
+                    compact
+                    id="tracker-story-points"
+                    onChange={(e) => setStoryPointsFieldId(e.target.value)}
+                    placeholder="story_points"
+                    value={storyPointsFieldId}
+                  />
+                </div>
                 <Button
                   disabled={detectFields.isPending}
                   onClick={async () => {
@@ -286,7 +287,7 @@ export function IssueTrackerTab() {
                   {detectFields.isPending ? 'Detecting…' : 'Auto-detect'}
                 </Button>
               </div>
-              {detectResult && <p className="mt-1 text-[11px] text-paper-400">{detectResult}</p>}
+              {detectResult && <p className="text-[11px] text-paper-400">{detectResult}</p>}
             </ConfigField>
             <ConfigField
               current={data?.epicIssueType || undefined}
@@ -294,8 +295,8 @@ export function IssueTrackerTab() {
               label="Epic Issue Type"
               source={sources.epicIssueType}
             >
-              <input
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              <Input
+                compact
                 id="tracker-epic-issue-type"
                 onChange={(e) => setEpicIssueType(e.target.value)}
                 placeholder="Epic"
@@ -308,8 +309,8 @@ export function IssueTrackerTab() {
               label="Story Issue Type"
               source={sources.storyIssueType}
             >
-              <input
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              <Input
+                compact
                 id="tracker-story-issue-type"
                 onChange={(e) => setStoryIssueType(e.target.value)}
                 placeholder="Story"
@@ -322,8 +323,8 @@ export function IssueTrackerTab() {
               label="Default Project Key"
               source={sources.defaultProjectKey}
             >
-              <input
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              <Input
+                compact
                 id="tracker-default-project-key"
                 onChange={(e) => setDefaultProjectKey(e.target.value)}
                 placeholder="PROJ"
@@ -360,8 +361,8 @@ export function IssueTrackerTab() {
               label="Trigger status"
               source={sources.webhookTriggerStatus}
             >
-              <input
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              <Input
+                compact
                 id="tracker-webhook-trigger-status"
                 onChange={(e) => setWebhookTriggerStatus(e.target.value)}
                 placeholder="Ready for Dev"
@@ -381,15 +382,10 @@ export function IssueTrackerTab() {
         </p>
         <div className="flex items-end gap-3">
           <div className="flex-1">
-            <label
-              className="mb-1 block text-xs uppercase text-paper-500"
-              htmlFor="tracker-test-ticket"
-            >
-              Ticket ID
-            </label>
-            <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+            <Input
+              compact
               id="tracker-test-ticket"
+              label="Ticket ID"
               onChange={(e) => setTestTicketId(e.target.value)}
               placeholder={hints?.ticket ?? 'PROJ-123'}
               value={testTicketId}
@@ -405,21 +401,10 @@ export function IssueTrackerTab() {
             {testing ? 'Testing…' : 'Test connection'}
           </Button>
         </div>
-        {testResult && (
-          <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
-            {testResult.ok ? '✓' : '✗'} {testResult.detail}
-          </p>
-        )}
+        <TestResultAlert result={testResult} />
       </Card>
 
-      {saved && <p className="text-sm text-moss-400">Settings saved.</p>}
-      {error && <p className="text-sm text-brick-400">{error}</p>}
-
-      <div className="flex justify-end">
-        <Button disabled={update.isPending} type="submit" variant="primary">
-          {update.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
     </form>
   );
 }

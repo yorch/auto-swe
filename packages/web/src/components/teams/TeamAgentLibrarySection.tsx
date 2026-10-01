@@ -1,22 +1,20 @@
 'use client';
 
 import { useState } from 'react';
+import { cleanAgentPayload } from '@/components/agents/AgentEditorFields';
 import {
-  cleanAgentPayload,
-  SkillRefEditor,
-  ToolKeysEditor,
-} from '@/components/agents/AgentEditorFields';
+  type AgentFormCopy,
+  AgentFormFields,
+  type AgentFormValue,
+} from '@/components/agents/AgentFormFields';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
-import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Select } from '@/components/ui/Select';
-import { Textarea } from '@/components/ui/Textarea';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type AgentRow,
   type AgentSkillRef,
@@ -41,6 +39,18 @@ const EMPTY: CreateTeamAgentBody = {
   skillRefs: [],
   systemPrompt: '',
   toolKeys: null,
+};
+
+const CREATE_COPY: AgentFormCopy = {
+  inheritsModelFrom: { hint: 'Parent agent key to inherit the model from' },
+  key: { hint: 'GLOBAL key to override (e.g. reviewer) or a new custom key' },
+  mcpConnection: { hint: "Bind this MCP server's tools at run time" },
+  modelSpec: { hint: '<provider>/<model>, or blank to inherit' },
+  systemPrompt: { hint: 'Leave blank to inherit the GLOBAL prompt' },
+};
+
+const EDIT_COPY: AgentFormCopy = {
+  systemPrompt: { hint: 'Leave blank to inherit the GLOBAL prompt' },
 };
 
 function modelLabel(a: AgentRow): string {
@@ -127,6 +137,18 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
     setEditing({ ...editing, skillRefs: asAgentRefs });
   }
 
+  function patchEditing(patch: Partial<AgentFormValue>) {
+    if (!editing) {
+      return;
+    }
+    const { skillRefs, ...rest } = patch;
+    if (skillRefs !== undefined) {
+      setEditSkillRefs(skillRefs ?? []);
+      return;
+    }
+    setEditing({ ...editing, ...rest });
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -139,7 +161,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
           size="sm"
           variant="primary"
         >
-          + New
+          New override
         </Button>
       </CardHeader>
       <p className="mb-3 text-xs text-paper-400">
@@ -149,30 +171,36 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
 
       <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="team agents">
         {(agents ?? []).length === 0 ? (
-          <EmptyState className="py-3 text-xs text-paper-500" title="No team overrides yet." />
+          <EmptyState className="py-3" title="No team overrides yet." />
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ink-600 text-left text-xs text-paper-500">
-                <th className="py-2 pr-3">Key</th>
-                <th className="py-2 pr-3">Model</th>
-                <th className="py-2 pr-3">Skills</th>
-                <th className="py-2 pr-3">Ver</th>
-                <th className="py-2" />
-              </tr>
-            </thead>
+          <Table>
+            <THead>
+              <Th className="pr-3" variant="compact">
+                Key
+              </Th>
+              <Th className="pr-3" variant="compact">
+                Model
+              </Th>
+              <Th className="pr-3" variant="compact">
+                Skills
+              </Th>
+              <Th className="pr-3" variant="compact">
+                Ver
+              </Th>
+              <Th variant="compact" />
+            </THead>
             <tbody>
               {(agents ?? []).map((a) => (
-                <tr className="border-b border-ink-600 last:border-0" key={a.id}>
-                  <td className="py-2 pr-3 font-mono text-[11px] text-paper-200">{a.key}</td>
-                  <td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
+                <TRow key={a.id}>
+                  <Td className="py-2 pr-3 font-mono text-[11px] text-paper-200">{a.key}</Td>
+                  <Td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
                     {modelLabel(a)}
-                  </td>
-                  <td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
+                  </Td>
+                  <Td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
                     {a.skillRefs.length > 0 ? a.skillRefs.length : '—'}
-                  </td>
-                  <td className="py-2 pr-3 tabular-nums text-paper-400">v{a.version}</td>
-                  <td className="py-2 text-right">
+                  </Td>
+                  <Td className="py-2 pr-3 tabular-nums text-paper-400">v{a.version}</Td>
+                  <Td className="py-2">
                     <div className="flex items-center justify-end gap-1">
                       <Button
                         onClick={() => {
@@ -184,15 +212,15 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
                       >
                         Edit
                       </Button>
-                      <Button onClick={() => setDeleteConfirm(a)} size="sm" variant="ghost">
-                        <span className="text-brick-400">Delete</span>
+                      <Button onClick={() => setDeleteConfirm(a)} size="sm" variant="danger">
+                        Delete
                       </Button>
                     </div>
-                  </td>
-                </tr>
+                  </Td>
+                </TRow>
               ))}
             </tbody>
-          </table>
+          </Table>
         )}
       </QueryBoundary>
 
@@ -203,84 +231,23 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
         size="lg"
         title="New team agent"
       >
-        <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              hint="GLOBAL key to override (e.g. reviewer) or a new custom key"
-              label="Key"
-              onChange={(e) => setForm({ ...form, key: e.target.value })}
-              value={form.key}
-            />
-            <Input
-              label="Name"
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              value={form.name}
-            />
-          </div>
-          <Input
-            label="Description (optional)"
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-            value={form.description ?? ''}
-          />
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              hint="<provider>/<model>, or blank to inherit"
-              label="Model spec (optional)"
-              onChange={(e) => setForm({ ...form, modelSpec: e.target.value })}
-              value={form.modelSpec ?? ''}
-            />
-            <Input
-              hint="Parent agent key to inherit the model from"
-              label="Inherits model from (optional)"
-              onChange={(e) => setForm({ ...form, inheritsModelFrom: e.target.value })}
-              value={form.inheritsModelFrom ?? ''}
-            />
-          </div>
-          <Textarea
-            hint="Leave blank to inherit the GLOBAL prompt"
-            label="System prompt (optional)"
-            onChange={(e) => setForm({ ...form, systemPrompt: e.target.value })}
-            rows={8}
-            value={form.systemPrompt ?? ''}
-          />
-          <ToolKeysEditor
-            onChange={(v) => setForm({ ...form, toolKeys: v })}
-            value={form.toolKeys ?? null}
-          />
-          <FieldWrapper label="Skills">
-            <SkillRefEditor
-              onChange={(refs) => setForm({ ...form, skillRefs: refs })}
-              refs={form.skillRefs ?? []}
-              skills={skills ?? []}
-            />
-          </FieldWrapper>
-          <Select
-            hint="Bind this MCP server's tools at run time"
-            label="MCP connection (optional)"
-            onChange={(e) => setForm({ ...form, mcpConnectionId: e.target.value || null })}
-            value={form.mcpConnectionId ?? ''}
-          >
-            <option value="">None</option>
-            {mcpConnections?.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} — {c.config?.url}
-              </option>
-            ))}
-          </Select>
-        </div>
+        <AgentFormFields
+          copy={CREATE_COPY}
+          mcpConnections={mcpConnections ?? []}
+          mode="create"
+          onChange={(patch) => setForm({ ...form, ...patch })}
+          skills={skills ?? []}
+          value={form}
+        />
         {createError && <Alert variant="error">{createError}</Alert>}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={() => setCreateOpen(false)} variant="secondary">
-            Cancel
-          </Button>
-          <Button
-            disabled={!form.key || !form.name || createAgent.isPending}
-            onClick={submitCreate}
-            variant="primary"
-          >
-            Create
-          </Button>
-        </div>
+        <ModalFooter
+          disabled={!form.key || !form.name}
+          isPending={createAgent.isPending}
+          onCancel={() => setCreateOpen(false)}
+          onSubmit={submitCreate}
+          pendingLabel="Creating…"
+          submitLabel="Create agent"
+        />
       </Modal>
 
       {/* Edit */}
@@ -293,76 +260,28 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       >
         {editing ? (
           <>
-            <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
-              <div className="grid grid-cols-2 gap-4">
-                <Input
-                  label="Name"
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                  value={editing.name}
-                />
-                <Input
-                  label="Description"
-                  onChange={(e) => setEditing({ ...editing, description: e.target.value })}
-                  value={editing.description ?? ''}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <Input
-                  label="Model spec"
-                  onChange={(e) => setEditing({ ...editing, modelSpec: e.target.value })}
-                  value={editing.modelSpec ?? ''}
-                />
-                <Input
-                  label="Inherits model from"
-                  onChange={(e) => setEditing({ ...editing, inheritsModelFrom: e.target.value })}
-                  value={editing.inheritsModelFrom ?? ''}
-                />
-              </div>
-              <Textarea
-                hint="Leave blank to inherit the GLOBAL prompt"
-                label="System prompt"
-                onChange={(e) => setEditing({ ...editing, systemPrompt: e.target.value })}
-                rows={8}
-                value={editing.systemPrompt ?? ''}
-              />
-              <ToolKeysEditor
-                onChange={(v) => setEditing({ ...editing, toolKeys: v })}
-                value={editing.toolKeys}
-              />
-              <FieldWrapper label="Skills">
-                <SkillRefEditor
-                  onChange={(refs) => setEditSkillRefs(refs)}
-                  refs={(editing.skillRefs ?? []).map((r) => ({
-                    skillId: r.skillId,
-                    sortOrder: r.sortOrder,
-                  }))}
-                  skills={skills ?? []}
-                />
-              </FieldWrapper>
-              <Select
-                label="MCP connection"
-                onChange={(e) =>
-                  setEditing({ ...editing, mcpConnectionId: e.target.value || null })
-                }
-                value={editing.mcpConnectionId ?? ''}
-              >
-                <option value="">None</option>
-                {mcpConnections?.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} — {c.config?.url}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            <AgentFormFields
+              copy={EDIT_COPY}
+              mcpConnections={mcpConnections ?? []}
+              mode="edit"
+              onChange={patchEditing}
+              skills={skills ?? []}
+              value={{
+                ...editing,
+                skillRefs: (editing.skillRefs ?? []).map((r) => ({
+                  skillId: r.skillId,
+                  sortOrder: r.sortOrder,
+                })),
+              }}
+            />
             {editError && <Alert variant="error">{editError}</Alert>}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button onClick={() => setEditing(null)} variant="secondary">
-                Cancel
-              </Button>
-              <Button disabled={updateAgent.isPending} onClick={submitEdit} variant="primary">
-                Save new version
-              </Button>
-            </div>
+            <ModalFooter
+              isPending={updateAgent.isPending}
+              onCancel={() => setEditing(null)}
+              onSubmit={submitEdit}
+              pendingLabel="Saving…"
+              submitLabel="Save new version"
+            />
           </>
         ) : null}
       </Modal>

@@ -4,12 +4,15 @@ import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAllWorkflowRuns } from '@/hooks/useRuns';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { formatCost, formatDuration, formatRelativeTime } from '@/lib/utils';
@@ -36,8 +39,12 @@ export default function WorkflowRunsPage() {
   const hasNext = offset + PAGE_SIZE < total;
 
   return (
-    <div className="space-y-6">
-      <PageHeader chapter={`§ Runs · ${total} total`} title="Workflow runs" />
+    <div className="space-y-8">
+      <PageHeader
+        chapter="§ Workflows"
+        subtitle={`Every workflow run, filterable by status and template — ${total} total.`}
+        title="Workflow runs"
+      />
 
       <Card variant="inset">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -74,18 +81,15 @@ export default function WorkflowRunsPage() {
             ))}
           </Select>
         </div>
-        <label className="mt-3 flex items-center gap-2 text-sm text-paper-400">
-          <input
-            checked={includeChannel}
-            className="accent-ember-500"
-            onChange={(e) => {
-              setIncludeChannel(e.target.checked);
-              setOffset(0);
-            }}
-            type="checkbox"
-          />
-          Show channel runs
-        </label>
+        <Checkbox
+          checked={includeChannel}
+          className="mt-3"
+          label="Show channel runs"
+          onChange={(e) => {
+            setIncludeChannel(e.target.checked);
+            setOffset(0);
+          }}
+        />
       </Card>
 
       {/* The table keeps its own in-row loading state; the boundary only swaps in
@@ -104,18 +108,14 @@ export default function WorkflowRunsPage() {
             </THead>
             <tbody>
               {isLoading && (
-                <TRow>
-                  <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={7}>
-                    Loading…
-                  </Td>
-                </TRow>
+                <TableStatusRow colSpan={7}>
+                  <LoadingState />
+                </TableStatusRow>
               )}
               {!isLoading && runs.length === 0 && (
-                <TRow>
-                  <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={7}>
-                    No runs match these filters.
-                  </Td>
-                </TRow>
+                <TableStatusRow colSpan={7}>
+                  <EmptyState title="No runs match these filters." />
+                </TableStatusRow>
               )}
               {runs.map((r) => (
                 <TRow hover key={r.id}>

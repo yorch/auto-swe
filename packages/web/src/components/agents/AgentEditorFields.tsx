@@ -1,5 +1,6 @@
 'use client';
 
+import { Checkbox } from '@/components/ui/Checkbox';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Select } from '@/components/ui/Select';
 import type { SkillRefInput } from '@/hooks/useAgentLibrary';
@@ -150,30 +151,20 @@ export function ToolKeysEditor({
   return (
     <FieldWrapper hint={isCustom ? undefined : inheritHint} label="Tools">
       <div className="space-y-2">
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-paper-300">
-          <input
-            checked={isCustom}
-            className="accent-ember-400"
-            onChange={(e) => onChange(e.target.checked ? [] : null)}
-            type="checkbox"
-          />
-          Custom tool selection
-        </label>
+        <Checkbox
+          checked={isCustom}
+          label="Custom tool selection"
+          onChange={(e) => onChange(e.target.checked ? [] : null)}
+        />
         {isCustom && (
           <div className="grid grid-cols-3 gap-x-4 gap-y-1 pl-1">
             {ALL_TOOL_KEYS.map((key) => (
-              <label
-                className="flex cursor-pointer items-center gap-2 text-sm text-paper-300"
+              <Checkbox
+                checked={value?.includes(key) ?? false}
                 key={key}
-              >
-                <input
-                  checked={value?.includes(key) ?? false}
-                  className="accent-ember-400"
-                  onChange={(e) => toggleKey(key, e.target.checked)}
-                  type="checkbox"
-                />
-                <span className="font-mono text-xs">{key}</span>
-              </label>
+                label={<span className="font-mono text-xs">{key}</span>}
+                onChange={(e) => toggleKey(key, e.target.checked)}
+              />
             ))}
           </div>
         )}

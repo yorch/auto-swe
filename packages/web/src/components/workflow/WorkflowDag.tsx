@@ -18,10 +18,6 @@
 
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import {
-  Background,
-  BackgroundVariant,
-  Controls,
-  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   type Node as RFNode,
@@ -36,9 +32,9 @@ import {
   useMemo,
   useRef,
 } from 'react';
-import { TOKEN } from '@/lib/palette';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
+import { FlowChrome } from './flowChrome';
 import { FIT_VIEW_OPTIONS, specToFlow } from './specToFlow';
 
 export type { DiffKind } from '@/lib/workflowLayout';
@@ -182,19 +178,7 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
         proOptions={{ hideAttribution: true }}
         zoomOnDoubleClick={false}
       >
-        <Background color={TOKEN.ink600} gap={24} size={1.2} variant={BackgroundVariant.Dots} />
-        <MiniMap
-          maskColor="rgba(10, 12, 18, 0.85)"
-          nodeColor={() => TOKEN.ink700}
-          nodeStrokeColor={TOKEN.ink500}
-          pannable
-          style={{
-            background: TOKEN.ink900,
-            border: `1px solid ${TOKEN.ink600}`,
-          }}
-          zoomable
-        />
-        <Controls fitViewOptions={FIT_VIEW_OPTIONS} showInteractive={false} />
+        <FlowChrome />
       </ReactFlow>
     </div>
   );

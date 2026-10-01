@@ -2,10 +2,12 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/Button';
+import { Alert } from '@/components/ui/Alert';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useCreateRepository, useUpdateRepository } from '@/hooks/useRepositories';
 import { useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
@@ -322,32 +324,21 @@ export function ConnectionFormModal({
                 </option>
               ))}
             </Select>
-            <div className="space-y-1">
-              <label
-                className="block text-xs font-medium uppercase tracking-wider text-paper-400"
-                htmlFor="conn-config-json"
-              >
-                Config (JSON)
-                <span className="ml-1 font-normal normal-case text-paper-500">
-                  {connType === 'api_endpoint'
-                    ? '— e.g. {"baseUrl":"https://api.example.com","authType":"bearer"}'
-                    : '— arbitrary key/value pairs for workflow use'}
-                </span>
-              </label>
-              <textarea
-                className={`w-full rounded border bg-ink-800 p-2 font-mono text-xs text-paper-200 focus:outline-none ${configJsonError ? 'border-brick-400 focus:border-brick-400' : 'border-ink-600 focus:border-ember-400'}`}
-                id="conn-config-json"
-                onChange={(e) => setConfigJson(e.target.value)}
-                placeholder="{}"
-                rows={5}
-                value={configJson}
-              />
-              {configJsonError && (
-                <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">
-                  {configJsonError}
-                </p>
-              )}
-            </div>
+            <Textarea
+              compact
+              error={configJsonError ?? undefined}
+              hint={
+                connType === 'api_endpoint'
+                  ? 'e.g. {"baseUrl":"https://api.example.com","authType":"bearer"}'
+                  : 'Arbitrary key/value pairs for workflow use'
+              }
+              id="conn-config-json"
+              label="Config (JSON)"
+              onChange={(e) => setConfigJson(e.target.value)}
+              placeholder="{}"
+              rows={5}
+              value={configJson}
+            />
           </>
         )}
 
@@ -360,38 +351,29 @@ export function ConnectionFormModal({
 
         {isEdit && (
           <div className="space-y-2">
-            <label className="flex items-center gap-2 text-xs text-paper-300">
-              <input
-                checked={isActive}
-                onChange={(e) => setIsActive(e.target.checked)}
-                type="checkbox"
-              />
-              <span>Active — accept new work requests</span>
-            </label>
+            <ToggleSwitch
+              checked={isActive}
+              label="Active — accept new work requests"
+              onChange={() => setIsActive((v) => !v)}
+            />
             {isGit && (
-              <label className="flex items-center gap-2 text-xs text-paper-300">
-                <input
-                  checked={consolidationEnabled}
-                  onChange={(e) => setConsolidationEnabled(e.target.checked)}
-                  type="checkbox"
-                />
-                <span>Include in scheduled lesson consolidation</span>
-              </label>
+              <ToggleSwitch
+                checked={consolidationEnabled}
+                label="Include in scheduled lesson consolidation"
+                onChange={() => setConsolidationEnabled((v) => !v)}
+              />
             )}
           </div>
         )}
 
-        {error && (
-          <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">{error}</p>
-        )}
-        <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={busy || !teamId || !!configJsonError} type="submit" variant="primary">
-            {busy ? 'Saving…' : isEdit ? 'Save changes' : 'Add connection'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          disabled={!teamId || !!configJsonError}
+          isPending={busy}
+          onCancel={onClose}
+          pendingLabel="Saving…"
+          submitLabel={isEdit ? 'Save changes' : 'Create connection'}
+        />
       </form>
     </Modal>
   );

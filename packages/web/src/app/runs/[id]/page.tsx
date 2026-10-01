@@ -15,9 +15,12 @@ import { FailureCard } from '@/components/runs/FailureCard';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
@@ -40,43 +43,12 @@ function getFailedStep(steps: WorkflowStepRecord[]): WorkflowStepRecord | null {
   return steps.find((s) => s.status === 'FAILED') ?? null;
 }
 
-// ── Segmented console toggle (◧ Split / ≡ Stream) ─────────────────────────────
+// ── Console mode (◧ Split / ≡ Stream) ──────────────────────────────────────────
 
-function ConsoleModeToggle({
-  value,
-  onChange,
-}: {
-  value: 'split' | 'stream';
-  onChange: (v: 'split' | 'stream') => void;
-}) {
-  return (
-    <div className="flex items-center border border-ink-400" style={{ borderRadius: '8px' }}>
-      {(
-        [
-          { id: 'split' as const, label: '◧ Split' },
-          { id: 'stream' as const, label: '≡ Stream' },
-        ] as const
-      ).map((opt, i) => (
-        <button
-          className="px-2.5 py-1 transition-colors"
-          key={opt.id}
-          onClick={() => onChange(opt.id)}
-          style={{
-            background: value === opt.id ? 'rgba(124, 108, 255, 0.14)' : 'transparent',
-            borderLeft: i > 0 ? '1px solid var(--color-ink-400)' : 'none',
-            color: value === opt.id ? 'var(--color-ember-400)' : 'var(--color-paper-500)',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '10px',
-            letterSpacing: '0.12em',
-          }}
-          type="button"
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+const CONSOLE_MODE_OPTIONS: SegmentedOption<'split' | 'stream'>[] = [
+  { label: '◧ Split', value: 'split' },
+  { label: '≡ Stream', value: 'stream' },
+];
 
 // ── Direction A — Split Console ────────────────────────────────────────────────
 
@@ -118,17 +90,11 @@ function LayoutA({
       {/* Main content: 1fr */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Execution graph panel */}
-        <div
-          className="border-b border-ink-600/40 flex flex-col"
-          style={{ height: '46%', maxHeight: '380px', minHeight: '200px' }}
-        >
+        <div className="flex h-[46%] max-h-[380px] min-h-[200px] flex-col border-b border-ink-600/40">
           <div className="flex items-center justify-between px-5 py-3 border-b border-ink-600/30">
             <div className="flex items-center gap-3">
               <span className="kicker">Execution graph</span>
-              <span
-                className="text-paper-600"
-                style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-              >
+              <span className="font-mono text-[10px] text-paper-600">
                 {Object.keys(spec.nodes ?? {}).length} nodes · pan + zoom
               </span>
             </div>
@@ -149,44 +115,25 @@ function LayoutA({
         <div className="flex-1 flex flex-col overflow-hidden" ref={traceAnchorRef}>
           <div className="flex items-center justify-between px-5 py-2.5 border-b border-ink-600/30 shrink-0">
             <div className="flex items-center gap-3">
-              <h3
-                className="text-paper-100"
-                style={{
-                  fontFamily: 'var(--font-display)',
-                  fontSize: '15px',
-                  fontWeight: 500,
-                  letterSpacing: '-0.01em',
-                }}
-              >
+              <h3 className="font-display text-[15px] font-medium tracking-[-0.01em] text-paper-100">
                 Console
               </h3>
               {selectedNodeId && (
-                <span
-                  className="text-ember-400"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
-                >
-                  · {selectedNodeId}
-                </span>
+                <span className="font-mono text-[11px] text-ember-400">· {selectedNodeId}</span>
               )}
             </div>
             <div className="flex items-center gap-3">
               {pendingSteps.length > 0 && (
-                <span
-                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-400/15 border border-amber-400/30 text-amber-400"
-                  style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '11px',
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  <span
-                    aria-hidden
-                    className="pulse-dot w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"
-                  />
+                <Badge className="rounded-full px-2" dot="pulse" tone="amber" variant="outline">
                   {pendingSteps.length} pending
-                </span>
+                </Badge>
               )}
-              <ConsoleModeToggle onChange={setConsoleMode} value={consoleMode} />
+              <SegmentedControl
+                ariaLabel="Console mode"
+                onChange={setConsoleMode}
+                options={CONSOLE_MODE_OPTIONS}
+                value={consoleMode}
+              />
             </div>
           </div>
 
@@ -246,42 +193,38 @@ function StepSpine({
     <div className="flex flex-col gap-0">
       {steps.map((s, i) => {
         const isSelected = selectedId === s.nodeId;
-        const statusColor =
+        const statusDot =
           s.status === 'PASSED'
-            ? 'var(--color-moss-400)'
+            ? 'bg-moss-400'
             : s.status === 'FAILED'
-              ? 'var(--color-brick-400)'
+              ? 'bg-brick-400'
               : s.status === 'RUNNING'
-                ? 'var(--color-dust-400)'
+                ? 'bg-dust-400'
                 : s.status === 'SKIPPED'
-                  ? 'var(--color-ink-400)'
-                  : 'var(--color-paper-600)';
+                  ? 'bg-ink-400'
+                  : 'bg-paper-600';
 
         return (
           <button
-            className="relative flex items-start gap-3 px-4 py-3 text-left w-full transition-colors hover:bg-ink-600/20"
+            className={cn(
+              'relative flex w-full items-start gap-3 border-l-2 px-4 py-3 text-left transition-colors hover:bg-ink-600/20',
+              isSelected ? 'border-ember-400 bg-ink-600' : 'border-transparent'
+            )}
             key={s.id}
             onClick={() => onSelect(s.nodeId)}
-            style={{
-              background: isSelected ? 'var(--color-ink-600)' : undefined,
-              borderLeft: isSelected ? '2px solid var(--color-ember-400)' : '2px solid transparent',
-            }}
             type="button"
           >
             {/* Connected dot */}
             <div className="flex flex-col items-center shrink-0 mt-0.5">
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: statusColor }} />
-              {i < steps.length - 1 && (
-                <span
-                  className="w-px flex-1 mt-1"
-                  style={{ background: 'var(--color-ink-500)', minHeight: '20px' }}
-                />
-              )}
+              <span className={cn('h-2 w-2 shrink-0 rounded-full', statusDot)} />
+              {i < steps.length - 1 && <span className="mt-1 min-h-5 w-px flex-1 bg-ink-500" />}
             </div>
             <div className="min-w-0">
               <div
-                className={isSelected ? 'text-ember-300' : 'text-paper-400'}
-                style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500 }}
+                className={cn(
+                  'font-mono text-[11px] font-medium',
+                  isSelected ? 'text-ember-300' : 'text-paper-400'
+                )}
               >
                 {s.nodeId}
               </div>
@@ -320,10 +263,7 @@ function LayoutB({
   return (
     <div className="flex flex-1 overflow-hidden">
       {/* Step spine: 212px */}
-      <aside
-        className="shrink-0 overflow-y-auto border-r border-ink-600/40"
-        style={{ background: 'var(--color-ink-900)', width: '212px' }}
-      >
+      <aside className="w-[212px] shrink-0 overflow-y-auto border-r border-ink-600/40 bg-ink-900">
         <div className="px-4 py-3 kicker border-b border-ink-600/30">Steps</div>
         <StepSpine onSelect={handleSpineSelect} selectedId={selectedId} steps={run.steps} />
       </aside>
@@ -333,15 +273,7 @@ function LayoutB({
         {/* Editorial intro */}
         <div className="mb-10 max-w-2xl">
           <div className="kicker mb-2">Run narrative</div>
-          <h2
-            className="text-paper-100 mb-3"
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: '24px',
-              fontWeight: 500,
-              letterSpacing: '-0.015em',
-            }}
-          >
+          <h2 className="mb-3 font-display text-2xl font-medium tracking-[-0.015em] text-paper-100">
             {run.templateName}
           </h2>
           <p className="text-paper-400 text-sm leading-relaxed">
@@ -365,42 +297,22 @@ function LayoutB({
               }}
             >
               {/* Sticky step header */}
-              <div
-                className="sticky top-0 flex items-center gap-3 py-3 mb-3 border-b border-ink-600/30 z-10"
-                style={{ background: 'var(--color-ink-800)' }}
-              >
-                <span
-                  className="text-paper-600 tabular"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}
-                >
+              <div className="sticky top-0 z-10 mb-3 flex items-center gap-3 border-b border-ink-600/30 bg-ink-800 py-3">
+                <span className="tabular font-mono text-xs text-paper-600">
                   {String(i + 1).padStart(2, '0')}
                 </span>
-                <h3
-                  className="text-paper-100"
-                  style={{
-                    fontFamily: 'var(--font-display)',
-                    fontSize: '18px',
-                    fontWeight: 500,
-                    letterSpacing: '-0.01em',
-                  }}
-                >
+                <h3 className="font-display text-lg font-medium tracking-[-0.01em] text-paper-100">
                   {step.nodeId}
                 </h3>
                 <StatusBadge status={step.status} />
                 {step.startedAt && step.endedAt && (
-                  <span
-                    className="text-paper-600 ml-auto"
-                    style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-                  >
+                  <span className="ml-auto font-mono text-[10px] text-paper-600">
                     {formatDuration(
                       new Date(step.endedAt).getTime() - new Date(step.startedAt).getTime()
                     )}
                   </span>
                 )}
-                <span
-                  className="text-paper-600"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-                >
+                <span className="font-mono text-[10px] text-paper-600">
                   {stepTraces.length} event{stepTraces.length !== 1 ? 's' : ''}
                 </span>
               </div>
@@ -432,10 +344,7 @@ function LayoutB({
 
               {/* Trace events panel */}
               {stepTraces.length > 0 && (
-                <div
-                  className="border border-ink-600/40"
-                  style={{ background: 'var(--color-ink-700)', borderRadius: '4px' }}
-                >
+                <div className="rounded border border-ink-600/40 bg-ink-700">
                   <TracesTab
                     activityToNodeId={activityToNodeId}
                     compact
@@ -463,6 +372,13 @@ function LayoutB({
 
 /** Wall-clock seconds a 1× replay takes to scrub the whole run. */
 const PLAY_DURATION_S = 11;
+
+type SpeedValue = '1' | '4' | '16';
+const SPEED_OPTIONS: SegmentedOption<SpeedValue>[] = [
+  { label: '1×', value: '1' },
+  { label: '4×', value: '4' },
+  { label: '16×', value: '16' },
+];
 
 // ── Direction C — Flight Recorder ──────────────────────────────────────────────
 
@@ -494,30 +410,16 @@ function WaterfallBar({
 
   return (
     <div className="flex items-center gap-3 py-1.5">
-      <span
-        className="text-paper-500 truncate shrink-0"
-        style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', width: '120px' }}
-      >
+      <span className="w-[120px] shrink-0 truncate font-mono text-[10px] text-paper-500">
         {step.nodeId}
       </span>
-      <div
-        className="flex-1 relative h-4"
-        style={{ background: 'var(--color-ink-600)', borderRadius: '4px' }}
-      >
+      <div className="relative h-4 flex-1 rounded bg-ink-600">
         <div
-          className={cn(isFailed ? 'hatch-fail' : isSkipped ? 'opacity-30' : '')}
-          style={{
-            background: isFailed
-              ? undefined
-              : isSkipped
-                ? 'var(--color-paper-600)'
-                : 'var(--color-dust-400)',
-            borderRadius: '4px',
-            height: '100%',
-            left: `${leftPct}%`,
-            position: 'absolute',
-            width: `${Math.min(widthPct, 100 - leftPct)}%`,
-          }}
+          className={cn(
+            'absolute h-full rounded',
+            isFailed ? 'hatch-fail' : isSkipped ? 'bg-paper-600 opacity-30' : 'bg-dust-400'
+          )}
+          style={{ left: `${leftPct}%`, width: `${Math.min(widthPct, 100 - leftPct)}%` }}
         />
         {/* Playhead indicator */}
         {currentMs > 0 && (
@@ -527,10 +429,7 @@ function WaterfallBar({
           />
         )}
       </div>
-      <span
-        className="text-paper-600 num shrink-0"
-        style={{ fontSize: '10px', textAlign: 'right', width: '40px' }}
-      >
+      <span className="num w-10 shrink-0 text-right text-[10px] text-paper-600">
         {formatDuration(stepDurationMs)}
       </span>
     </div>
@@ -631,25 +530,17 @@ function LayoutC({
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* Scrubber panel */}
-      <div
-        className="border-b border-ink-600/40 px-6 py-4 shrink-0"
-        style={{ background: 'var(--color-ink-900)' }}
-      >
+      <div className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-6 py-4">
         <div className="flex items-center gap-5 mb-3">
           {/* Play/Pause */}
           <button
             aria-label={playing ? 'Pause replay' : 'Play replay'}
-            className="flex items-center justify-center w-9 h-9 rounded-full border-2 transition-colors"
+            className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-ember-400 bg-ember-400 text-ink-950 transition-colors"
             onClick={() => {
               if (playhead >= 1) {
                 setPlayhead(0);
               }
               setPlaying((p) => !p);
-            }}
-            style={{
-              background: 'var(--color-ember-400)',
-              borderColor: 'var(--color-ember-400)',
-              color: 'var(--color-ink-950)',
             }}
             type="button"
           >
@@ -659,60 +550,29 @@ function LayoutC({
           <div className="flex flex-col">
             <span className="kicker">replay</span>
             <div className="flex items-baseline gap-2">
-              <span
-                className="text-paper-100 num"
-                style={{ fontFamily: 'var(--font-mono)', fontSize: '20px' }}
-              >
-                {formatClock(currentMs)}
-              </span>
-              <span
-                className="text-paper-600"
-                style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}
-              >
-                / {formatClock(totalMs)}
-              </span>
+              <span className="num font-mono text-xl text-paper-100">{formatClock(currentMs)}</span>
+              <span className="font-mono text-xs text-paper-600">/ {formatClock(totalMs)}</span>
               {currentStepName && (
-                <span
-                  className="text-ember-400"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
-                >
-                  · {currentStepName}
-                </span>
+                <span className="font-mono text-[11px] text-ember-400">· {currentStepName}</span>
               )}
             </div>
           </div>
 
           {/* Speed control */}
-          <div
-            className="flex items-center border border-ink-400 ml-auto"
-            style={{ borderRadius: '8px' }}
-          >
-            {([1, 4, 16] as const).map((s, i) => (
-              <button
-                className="px-2.5 py-1 transition-colors"
-                key={s}
-                onClick={() => setSpeed(s)}
-                style={{
-                  background: speed === s ? 'rgba(124, 108, 255, 0.14)' : 'transparent',
-                  borderLeft: i > 0 ? '1px solid var(--color-ink-400)' : 'none',
-                  color: speed === s ? 'var(--color-ember-400)' : 'var(--color-paper-500)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '10.5px',
-                  letterSpacing: '0.1em',
-                }}
-                type="button"
-              >
-                {s}×
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            ariaLabel="Replay speed"
+            className="ml-auto"
+            onChange={(v) => setSpeed(Number(v) as 1 | 4 | 16)}
+            options={SPEED_OPTIONS}
+            value={String(speed) as SpeedValue}
+          />
         </div>
 
         {/* Timeline track */}
         <div className="relative">
           <input
             aria-label="Replay position"
-            className="w-full appearance-none h-6 cursor-pointer"
+            className="h-1.5 w-full cursor-pointer appearance-none rounded-[3px] accent-ember-400 outline-none"
             max={1000}
             min={0}
             onChange={(e) => {
@@ -720,21 +580,14 @@ function LayoutC({
               setPlayhead(Number(e.target.value) / 1000);
             }}
             style={{
-              accentColor: 'var(--color-ember-400)',
               background: `linear-gradient(to right, var(--color-ember-400) ${playhead * 100}%, var(--color-ink-500) ${playhead * 100}%)`,
-              borderRadius: '3px',
-              height: '6px',
-              outline: 'none',
             }}
             type="range"
             value={Math.round(playhead * 1000)}
           />
           {/* Step bands underneath */}
           {totalMs > 0 && run.startedAt && (
-            <div
-              className="absolute top-0 left-0 right-0 h-1.5 flex pointer-events-none"
-              style={{ marginTop: '0px' }}
-            >
+            <div className="pointer-events-none absolute top-0 right-0 left-0 flex h-1.5">
               {run.steps.map((s: WorkflowStepRecord) => {
                 if (!s.startedAt) {
                   return null;
@@ -750,14 +603,14 @@ function LayoutC({
 
                 return (
                   <div
+                    className={cn(
+                      'absolute top-[1.5px] h-[3px]',
+                      isFailed ? 'bg-brick-400' : 'bg-dust-400'
+                    )}
                     key={s.id}
                     style={{
-                      background: isFailed ? 'var(--color-brick-400)' : 'var(--color-dust-400)',
-                      height: '3px',
                       left: `${leftPct}%`,
                       opacity: playhead * 100 >= leftPct ? 1 : 0.3,
-                      position: 'absolute',
-                      top: '1.5px',
                       width: `${widthPct}%`,
                     }}
                   />
@@ -795,10 +648,7 @@ function LayoutC({
               {playing && (
                 <span className="recording-pulse inline-block w-1.5 h-1.5 rounded-full bg-moss-400" />
               )}
-              <span
-                className="text-paper-600 ml-auto"
-                style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-              >
+              <span className="ml-auto font-mono text-[10px] text-paper-600">
                 {visibleTraces.length} / {traces.length} events
               </span>
             </div>
@@ -814,8 +664,8 @@ function LayoutC({
         </div>
 
         {/* Right: Mini topology + failure card */}
-        <div className="flex flex-col overflow-y-auto shrink-0" style={{ width: '280px' }}>
-          <div className="shrink-0" style={{ height: '240px' }}>
+        <div className="flex w-[280px] shrink-0 flex-col overflow-y-auto">
+          <div className="h-[240px] shrink-0">
             <WorkflowDag
               height="100%"
               onSelect={() => {}}
@@ -952,25 +802,27 @@ export default function RunDetailPage({ params }: PageProps) {
     }
   }, [run?.workRequest, retryRun]);
 
+  const notFound = (
+    <EmptyState action={<ButtonLink href="/runs">Back to runs</ButtonLink>} title="Run not found" />
+  );
+
   if (!id) {
-    return (
-      <div className="p-8">
-        <Alert>Run not found</Alert>
-      </div>
-    );
+    return notFound;
   }
 
   if (isLoading) {
     return <LoadingState />;
   }
-  // Missing/forbidden run or a run without a spec snapshot: render a real
-  // error state instead of spinning forever.
-  if (isError || !run || !spec) {
-    return (
-      <div className="p-8">
-        <Alert>{errMsg(error, 'Run not found')}</Alert>
-      </div>
-    );
+  // A failed load, a missing run, or a run without a spec snapshot: render a
+  // real state instead of spinning forever.
+  if (isError) {
+    return <Alert>{errMsg(error, 'Could not load run')}</Alert>;
+  }
+  if (!run) {
+    return notFound;
+  }
+  if (!spec) {
+    return <Alert>This run has no readable workflow spec snapshot.</Alert>;
   }
 
   const traces = run.traces ?? [];
@@ -978,23 +830,12 @@ export default function RunDetailPage({ params }: PageProps) {
   const tracesTrimmed = traces.some((t) => t.trimmed);
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'var(--color-ink-800)' }}>
+    <div className="flex h-full flex-col bg-ink-800">
       {/* ── Page header band ──────────────────────────────────────────────── */}
-      <div
-        className="shrink-0 border-b border-ink-600/40 px-6 py-4 flex items-center gap-4"
-        style={{ background: 'var(--color-ink-900)' }}
-      >
+      <div className="flex shrink-0 items-center gap-4 border-b border-ink-600/40 bg-ink-900 px-6 py-4">
         {/* Breadcrumb */}
-        <div
-          className="flex items-center gap-2 text-paper-600"
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '10.5px',
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-          }}
-        >
-          <Link className="hover:text-paper-400 transition-colors" href="/runs">
+        <div className="label-mono flex items-center gap-2">
+          <Link className="transition-colors hover:text-paper-200" href="/runs">
             ← Runs
           </Link>
           <span>/</span>
@@ -1004,41 +845,22 @@ export default function RunDetailPage({ params }: PageProps) {
         <span className="h-4 w-px bg-ink-500" />
 
         {/* Title */}
-        <h1
-          className="text-paper-100 shrink-0"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: '22px',
-            fontWeight: 500,
-            letterSpacing: '-0.01em',
-          }}
-        >
+        <h1 className="shrink-0 font-display text-[22px] font-medium tracking-[-0.01em] text-paper-100">
           Run · {run.templateName}
         </h1>
 
         <StatusBadge status={run.status} />
 
-        <span
-          className="text-paper-600"
-          style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px' }}
-        >
+        <span className="font-mono text-[10.5px] text-paper-600">
           v{run.templateVersion} · {formatRelativeTime(run.startedAt)}
         </span>
 
         {/* Right side: actions + layout switcher */}
         <div className="flex items-center gap-3 ml-auto">
           {securityEvents.length > 0 && (
-            <span
-              className="text-amber-400"
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10px',
-                letterSpacing: '0.12em',
-                textTransform: 'uppercase',
-              }}
-            >
+            <Badge tone="amber" uppercase>
               {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
-            </span>
+            </Badge>
           )}
           {(tracesTrimmed || fullTraces) && (
             <Button
@@ -1087,33 +909,21 @@ export default function RunDetailPage({ params }: PageProps) {
             </Button>
           )}
           {retryRun.isSuccess && (
-            <span
-              className="text-paper-500"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-            >
+            <Alert className="px-2 py-1 text-xs" variant="success">
               New run started —{' '}
-              <Link className="text-ember-400 hover:underline" href="/runs">
+              <Link className="underline hover:text-moss-600" href="/runs">
                 view runs
               </Link>
-            </span>
+            </Alert>
           )}
           {retryRun.isError && (
-            <span
-              className="text-brick-400"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-            >
+            <Alert className="px-2 py-1 text-xs">
               Re-run failed: {errMsg(retryRun.error, 'unknown error')}
-            </span>
+            </Alert>
           )}
           <Link
-            className="text-paper-500 hover:text-ember-400 transition-colors"
+            className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400"
             href={`/workflows/library/${run.templateId}`}
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: '10.5px',
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase',
-            }}
           >
             View template →
           </Link>

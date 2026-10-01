@@ -2,8 +2,10 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useTemporalUiUrl } from '@/hooks/useTemporalUi';
@@ -34,14 +36,12 @@ export function DashboardOnboarding({
   }'`;
 
   return (
-    <div className="space-y-12">
-      <div className="fade-up">
-        <PageHeader
-          chapter="§ Welcome"
-          subtitle="No runs yet. Here's the shortest path to your first validated outcome."
-          title="Let's get the workshop running."
-        />
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        chapter="§ Start"
+        subtitle="No runs yet. Here's the shortest path to your first validated outcome."
+        title="Let's get the workshop running"
+      />
 
       {role === 'ADMIN' && (
         <section className="fade-up stagger-1">
@@ -88,7 +88,7 @@ export function DashboardOnboarding({
                 </p>
                 {onNewRequest && (
                   <Button onClick={onNewRequest} size="sm" type="button" variant="primary">
-                    + New request
+                    New request
                   </Button>
                 )}
               </div>
@@ -99,7 +99,7 @@ export function DashboardOnboarding({
           <OnboardingStep
             body={
               connectionsLoading ? (
-                <p>Loading connections…</p>
+                <LoadingState compact message="loading connections…" />
               ) : hasConnections ? (
                 <p>
                   <span className="text-moss-400">{repos.length}</span>{' '}
@@ -139,7 +139,7 @@ export function DashboardOnboarding({
               <p>
                 Live runs land in{' '}
                 <Link className="text-ember-400 hover:underline" href="/workflows">
-                  Active runs
+                  Request queue
                 </Link>{' '}
                 and on this dashboard.{' '}
                 {temporalUiUrl ? (
@@ -216,13 +216,11 @@ function OnboardingStep({
   return (
     <Card className={disabled ? 'opacity-50' : undefined}>
       <div className="mb-3 flex items-baseline justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-          Step 0{index}
-        </span>
+        <span className="label-mono">Step 0{index}</span>
         {done && (
-          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-moss-400">
+          <Badge tone="moss" uppercase variant="text">
             ✓ done
-          </span>
+          </Badge>
         )}
       </div>
       <h3 className="mb-3 font-display text-lg text-paper-100">{title}</h3>
@@ -246,7 +244,7 @@ function ApiCurlDetails({ curlExample }: { curlExample: string }) {
       {open && (
         <div className="mt-4 space-y-3">
           <pre
-            className="overflow-x-auto font-mono text-[12px] leading-relaxed text-paper-200"
+            className="overflow-x-auto rounded-[9px] bg-ink-900 p-4 font-mono text-[12px] leading-relaxed text-paper-200"
             suppressHydrationWarning
           >
             <code>{curlExample}</code>
@@ -254,7 +252,7 @@ function ApiCurlDetails({ curlExample }: { curlExample: string }) {
           <p className="text-xs text-paper-500">
             Get <span className="text-paper-300">&lt;your-token&gt;</span> from{' '}
             <Link className="text-ember-400 hover:underline" href="/settings">
-              Settings → Personal access tokens
+              Settings → API tokens
             </Link>
             . The CLI (<code className="text-paper-300">yarn workspace @auto-swe/cli build</code>)
             reads <code className="text-paper-300">AUTO_SWE_TOKEN</code> from your environment for
@@ -279,16 +277,16 @@ function ResourceLink({
 }) {
   return (
     <Link
-      className="group block border border-ink-600 bg-ink-800/40 p-5 transition-colors hover:border-ember-400/60"
+      className="group block rounded-[14px] focus:outline-none focus-visible:ring-2 focus-visible:ring-ember-400"
       href={href}
     >
-      <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-        {eyebrow}
-      </div>
-      <div className="mb-2 font-display text-base text-paper-100 group-hover:text-ember-400">
-        {title} →
-      </div>
-      <p className="text-xs leading-relaxed text-paper-500">{body}</p>
+      <Card className="h-full p-5 group-hover:border-ember-400/60" variant="inset">
+        <div className="label-mono mb-1">{eyebrow}</div>
+        <h3 className="mb-2 text-base font-semibold text-paper-100 group-hover:text-ember-400">
+          {title} →
+        </h3>
+        <p className="text-xs leading-relaxed text-paper-500">{body}</p>
+      </Card>
     </Link>
   );
 }

@@ -2,6 +2,8 @@
 
 import type { InputSchema, InputSchemaProperty } from '@auto-swe/shared/lib/inputSchema';
 import Link from 'next/link';
+import { Alert } from '@/components/ui/Alert';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useRepositories } from '@/hooks/useRepositories';
@@ -32,16 +34,16 @@ function ConnectionPicker({
   if (visible.length === 0) {
     return (
       <div className="space-y-1.5">
-        <span className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+        <span className="label-mono block">
           {label}
           {required ? ' *' : ''}
         </span>
-        <p className="text-xs text-brick-400">
+        <Alert className="text-xs">
           No {connectionType ? `${connectionType.replace(/_/g, ' ')} ` : ''}connections configured.{' '}
           <Link className="text-ember-400 hover:underline" href="/connections">
             Add one in Connections.
           </Link>
-        </p>
+        </Alert>
       </div>
     );
   }
@@ -101,25 +103,21 @@ export function SchemaFieldInput({
 
   if (prop.type === 'boolean') {
     return (
-      <label className="flex cursor-pointer items-center gap-3">
-        <input
+      <div className="space-y-1.5">
+        <Checkbox
           aria-errormessage={error ? `${name}-error` : undefined}
           aria-invalid={error ? true : undefined}
           checked={Boolean(value)}
-          className="h-4 w-4 accent-ember-400"
+          hint={hint}
+          label={label}
           onChange={(e) => onChange(e.target.checked)}
-          type="checkbox"
         />
-        <span className="text-sm text-paper-200">
-          {label}
-          {hint && <span className="ml-1 text-paper-500">— {hint}</span>}
-        </span>
         {error && (
-          <span className="text-xs text-brick-400" id={`${name}-error`}>
-            {error}
-          </span>
+          <div id={`${name}-error`}>
+            <Alert className="text-xs">{error}</Alert>
+          </div>
         )}
-      </label>
+      </div>
     );
   }
 

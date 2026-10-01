@@ -1,15 +1,19 @@
 'use client';
 
+import Link from 'next/link';
 import { use, useEffect, useState } from 'react';
 import { EligibleUserSelect } from '@/components/EligibleUserSelect';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Stat } from '@/components/ui/Stat';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type OrgRole,
   useInviteOrgMember,
@@ -25,6 +29,7 @@ import {
 import { useEligibleUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
+import { formatCents, formatPercent, formatTokens } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
 const ORG_ROLES: readonly OrgRole[] = ['ORG_MEMBER', 'ORG_ADMIN'];
@@ -87,7 +92,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       : (eligibleUsers[0]?.id ?? '');
 
   if (!orgId) {
-    return <div className="text-center py-12 text-paper-400">Organization not found</div>;
+    return (
+      <EmptyState
+        action={<ButtonLink href="/govern/organizations">Back to organizations</ButtonLink>}
+        title="Organization not found"
+      />
+    );
   }
 
   async function handleAddMember() {
@@ -110,15 +120,6 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       await patchMember.mutateAsync({ role, userId });
     } catch (e) {
       setError(errMsg(e, 'Failed to update role'));
-    }
-  }
-
-  async function handleRemove(userId: string) {
-    setError(null);
-    try {
-      await removeMember.mutateAsync(userId);
-    } catch (e) {
-      setError(errMsg(e, 'Failed to remove member'));
     }
   }
 
@@ -184,11 +185,20 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <PageHeader className="mb-3" title="Organization Settings" />
-        <p className="font-mono text-xs text-paper-500">{orgId}</p>
-      </div>
+    <div className="space-y-8">
+      <Link className="label-mono hover:text-paper-200" href="/govern/organizations">
+        ← Organizations
+      </Link>
+      <PageHeader
+        chapter="§ Govern"
+        subtitle={
+          <>
+            Members, profile, and monthly budget for organization{' '}
+            <span className="font-mono text-xs">{orgId}</span>.
+          </>
+        }
+        title="Organization settings"
+      />
 
       {error ? <Alert variant="error">{error}</Alert> : null}
 
@@ -203,27 +213,31 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
           isLoading={membersQuery.isLoading}
           label="members"
         >
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ink-600 text-left text-xs text-paper-500">
-                <th className="py-2 pr-3">Email</th>
-                <th className="py-2 pr-3">Platform role</th>
-                <th className="py-2 pr-3">Org role</th>
-                <th className="py-2" />
-              </tr>
-            </thead>
+          <Table>
+            <THead>
+              <Th className="pr-3" variant="compact">
+                Email
+              </Th>
+              <Th className="pr-3" variant="compact">
+                Platform role
+              </Th>
+              <Th className="pr-3" variant="compact">
+                Org role
+              </Th>
+              <Th variant="compact" />
+            </THead>
             <tbody>
               {(members ?? []).map((m) => {
                 const isMe = m.userId === authUserId;
                 return (
-                  <tr className="border-b border-ink-600 last:border-0" key={m.id}>
-                    <td className="py-3 pr-3 text-paper-100">
+                  <TRow key={m.id}>
+                    <Td className="py-3 pr-3 text-paper-100">
                       {m.user.email} {isMe ? <span className="text-paper-500">(you)</span> : null}
-                    </td>
-                    <td className="py-3 pr-3 font-mono text-[11px] text-paper-400">
+                    </Td>
+                    <Td className="py-3 pr-3 font-mono text-[11px] text-paper-400">
                       {m.user.role}
-                    </td>
-                    <td className="py-3 pr-3">
+                    </Td>
+                    <Td className="py-3 pr-3">
                       <Select
                         disabled={isMe}
                         onChange={(e) => {
@@ -237,22 +251,22 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                         <option value="ORG_ADMIN">ORG_ADMIN</option>
                         <option value="ORG_MEMBER">ORG_MEMBER</option>
                       </Select>
-                    </td>
-                    <td className="py-3 text-right">
+                    </Td>
+                    <Td className="py-3 text-right">
                       <Button
                         disabled={isMe}
                         onClick={() => setPendingRemoval({ email: m.user.email, userId: m.userId })}
                         size="sm"
-                        variant="ghost"
+                        variant="danger"
                       >
                         Remove
                       </Button>
-                    </td>
-                  </tr>
+                    </Td>
+                  </TRow>
                 );
               })}
             </tbody>
-          </table>
+          </Table>
           <div className="mt-4 flex items-end gap-3 border-t border-ink-600 pt-4">
             <EligibleUserSelect
               eligible={eligibleUsers}
@@ -327,7 +341,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
           isLoading={orgQuery.isLoading}
           label="organization"
         >
-          <div className="space-y-4 p-4 pt-0">
+          <div className="space-y-4">
             {orgError ? <Alert variant="error">{orgError}</Alert> : null}
             <div className="grid grid-cols-2 gap-3">
               <Input label="Name" onChange={(e) => setOrgName(e.target.value)} value={orgName} />
@@ -340,7 +354,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
             </div>
             <div className="flex justify-end">
               <Button disabled={patchOrg.isPending} onClick={handleSaveOrg} variant="primary">
-                {patchOrg.isPending ? 'Saving…' : 'Save Profile'}
+                {patchOrg.isPending ? 'Saving…' : 'Save changes'}
               </Button>
             </div>
           </div>
@@ -350,7 +364,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       {/* ── Budget ── */}
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Billing">Monthly Budget Cap</CardTitle>
+          <CardTitle eyebrow="Billing">Monthly budget cap</CardTitle>
         </CardHeader>
         <QueryBoundary
           error={budgetQuery.error}
@@ -368,49 +382,45 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 cap != null && cap > 0 && threshold != null && (spent * 10000) / cap >= threshold;
               return alert ? (
                 <Alert variant="warning">
-                  Monthly spend is ${spent.toFixed(2)} ({((spent * 100) / (cap / 100)).toFixed(1)}%
-                  of ${(cap / 100).toFixed(2)} cap) — above the {threshold}% alert threshold.
+                  Monthly spend is {formatCents(spent * 100)} ({formatPercent((spent * 100) / cap)}{' '}
+                  of {formatCents(cap)} cap) — above the {formatPercent(threshold / 100)} alert
+                  threshold.
                 </Alert>
               ) : null;
             })()}
-            <div className="grid grid-cols-3 gap-6 text-sm">
+            <div className="grid grid-cols-3 gap-6">
+              <Stat
+                label="Current cap"
+                value={
+                  budget?.monthlyBudgetUsdCents != null
+                    ? formatCents(budget.monthlyBudgetUsdCents)
+                    : 'No cap'
+                }
+              />
               <div>
-                <p className="text-paper-500">Current cap</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {budget?.monthlyBudgetUsdCents != null
-                    ? `$${(budget.monthlyBudgetUsdCents / 100).toFixed(2)}`
-                    : 'No cap'}
-                </p>
-              </div>
-              <div>
-                <p className="text-paper-500">
-                  Spent this month ({budget?.currentMonthUsage?.yearMonth ?? '—'})
-                </p>
-                <p className="mt-1 text-lg font-semibold">
-                  {budget?.currentMonthUsage
-                    ? `$${budget.currentMonthUsage.costUsdAccrued.toFixed(4)}`
-                    : '$0.00'}
-                </p>
+                <Stat
+                  label={`Spent this month (${budget?.currentMonthUsage?.yearMonth ?? '—'})`}
+                  value={formatCents((budget?.currentMonthUsage?.costUsdAccrued ?? 0) * 100)}
+                />
                 {budget?.currentMonthUsage && (
-                  <p className="mt-0.5 text-[11px] text-paper-500">
+                  <p className="mt-1 pl-5 text-[11px] text-paper-500">
                     {budget.currentMonthUsage.runsCompleted} runs ·{' '}
-                    {(
-                      (Number(budget.currentMonthUsage.tokensInput) +
-                        Number(budget.currentMonthUsage.tokensOutput)) /
-                      1_000_000
-                    ).toFixed(2)}
-                    M tokens
+                    {formatTokens(
+                      Number(budget.currentMonthUsage.tokensInput) +
+                        Number(budget.currentMonthUsage.tokensOutput)
+                    )}{' '}
+                    tokens
                   </p>
                 )}
               </div>
-              <div>
-                <p className="text-paper-500">Alert threshold</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {budget?.budgetAlertThresholdPercent != null
-                    ? `${budget.budgetAlertThresholdPercent}%`
-                    : 'Not set'}
-                </p>
-              </div>
+              <Stat
+                label="Alert threshold"
+                value={
+                  budget?.budgetAlertThresholdPercent != null
+                    ? formatPercent(budget.budgetAlertThresholdPercent / 100)
+                    : 'Not set'
+                }
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Input
@@ -432,7 +442,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
             </div>
             <div className="flex justify-end">
               <Button disabled={patchBudget.isPending} onClick={handleSaveBudget} variant="primary">
-                Save
+                {patchBudget.isPending ? 'Saving…' : 'Save changes'}
               </Button>
             </div>
           </div>
@@ -444,9 +454,9 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         dangerous
         message={`Remove ${pendingRemoval?.email ?? 'this member'} from the organization? They will lose access to all teams nested under it.`}
         onClose={() => setPendingRemoval(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (pendingRemoval) {
-            handleRemove(pendingRemoval.userId);
+            await removeMember.mutateAsync(pendingRemoval.userId);
           }
         }}
         open={pendingRemoval !== null}

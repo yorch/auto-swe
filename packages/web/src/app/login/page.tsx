@@ -2,9 +2,12 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
+import { AuthHeading, AuthLayout } from '@/components/layout/AuthLayout';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
@@ -45,6 +48,17 @@ function looksLikeProviderResponse(data: unknown): data is ProviderProbe {
 }
 
 type Tab = 'magic' | 'password';
+
+const TAB_OPTIONS: { label: string; value: Tab }[] = [
+  { label: 'Magic link', value: 'magic' },
+  { label: 'Password', value: 'password' },
+];
+
+const SOCIAL_BUTTONS: { glyph: string; id: SocialProviderId; label: string }[] = [
+  { glyph: '◐', id: 'github', label: 'Continue with GitHub' },
+  { glyph: '◑', id: 'google', label: 'Continue with Google' },
+  { glyph: '◒', id: 'okta', label: 'Continue with Okta' },
+];
 
 export default function LoginPage() {
   // useSearchParams() requires a Suspense boundary above it when the page
@@ -250,36 +264,33 @@ function LoginPageInner() {
   // in the app works yet.
   if (pendingEmail) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-ink-800 px-6 py-12">
-        <div className="w-full max-w-sm">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.24em] text-amber-400">
-            ¶ § auth/pending
-          </div>
-          <h1 className="mb-3 font-display text-4xl font-light tracking-tight text-paper-50">
-            Awaiting approval.
-          </h1>
+      <AuthLayout>
+        <AuthHeading kicker="¶ § auth/pending" kickerTone="amber" title="Awaiting approval.">
           <p className="mb-6 text-sm leading-relaxed text-paper-400">
             We received your sign-in for{' '}
             <span className="font-mono text-paper-100">{pendingEmail}</span>. An admin needs to
             approve your account before you can use the workshop. Ping an admin once you're approved
             — sign in again and you'll be in.
           </p>
-          <div className="rounded-[9px] border border-ink-600 bg-ink-800/40 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper-500">
-            status: pending
-          </div>
-          <Button
-            className="mt-6"
-            onClick={() => {
-              setPendingEmail(null);
-              router.replace('/login');
-            }}
-            size="sm"
-            variant="secondary"
-          >
-            ← Back to sign in
-          </Button>
-        </div>
-      </div>
+        </AuthHeading>
+        <Card
+          className="px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper-500"
+          variant="inset"
+        >
+          status: pending
+        </Card>
+        <Button
+          className="mt-6"
+          onClick={() => {
+            setPendingEmail(null);
+            router.replace('/login');
+          }}
+          size="sm"
+          variant="secondary"
+        >
+          ← Back to sign in
+        </Button>
+      </AuthLayout>
     );
   }
 
@@ -287,15 +298,10 @@ function LoginPageInner() {
     <div className="relative grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
       {/* LEFT — editorial panel (unchanged from prior design) */}
       <aside className="relative hidden flex-col justify-between overflow-hidden border-r border-ink-600 bg-ink-950 p-12 lg:flex">
-        <div
-          aria-hidden
-          className="absolute inset-0 opacity-60"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle at 30% 20%, rgba(226,107,60,0.18), transparent 55%),' +
-              'radial-gradient(circle at 80% 80%, rgba(133,166,197,0.10), transparent 55%)',
-          }}
-        />
+        <div aria-hidden className="absolute inset-0 opacity-60">
+          <div className="absolute inset-0 bg-radial-[circle_at_30%_20%] from-ember-400/18 to-transparent to-55%" />
+          <div className="absolute inset-0 bg-radial-[circle_at_80%_80%] from-dust-400/10 to-transparent to-55%" />
+        </div>
         <div
           aria-hidden
           className="absolute inset-0 opacity-[0.07]"
@@ -343,203 +349,140 @@ function LoginPageInner() {
       </aside>
 
       {/* RIGHT — sign-in panel */}
-      <section className="relative flex items-center justify-center bg-ink-800 px-6 py-12 lg:px-16">
-        <div className="w-full max-w-sm">
-          <div className="mb-10 flex items-baseline gap-1.5 lg:hidden">
-            <span className="font-display text-2xl font-medium leading-none tracking-tight text-paper-50">
-              auto
-            </span>
-            <span className="display-italic text-2xl leading-none text-ember-400">·swe</span>
-          </div>
-
-          <h1 className="mb-8 font-display text-4xl font-light tracking-tight text-paper-50">
-            Sign in.
-          </h1>
-
-          {gatewayDown && (
-            <div className="mb-6 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-4 py-3 text-xs text-paper-300">
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em] text-brick-400">
-                ! Service unavailable
-              </div>
-              <p className="leading-relaxed">
-                {IS_DEV ? (
-                  <>
-                    Can't reach the gateway at{' '}
-                    <code className="text-paper-100" suppressHydrationWarning>
-                      {API_BASE}
-                    </code>
-                    . Check that it's running and that CORS_ORIGIN includes{' '}
-                    <code className="text-paper-100">
-                      {typeof window !== 'undefined' ? window.location.origin : ''}
-                    </code>
-                    .
-                  </>
-                ) : (
-                  'Sign-in is temporarily unavailable. Try again in a moment.'
-                )}
-              </p>
-            </div>
-          )}
-
-          {/* Social providers — only shown when configured in the backend */}
-          {hasSocial && (
-            <div className="mb-6 space-y-2">
-              {providers.github && (
-                <button
-                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400 disabled:pointer-events-none disabled:opacity-50"
-                  disabled={loading}
-                  onClick={() => handleSocialSignIn('github')}
-                  type="button"
-                >
-                  <span aria-hidden>◐</span>
-                  <span>continue with github</span>
-                </button>
-              )}
-              {providers.google && (
-                <button
-                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400 disabled:pointer-events-none disabled:opacity-50"
-                  disabled={loading}
-                  onClick={() => handleSocialSignIn('google')}
-                  type="button"
-                >
-                  <span aria-hidden>◑</span>
-                  <span>continue with google</span>
-                </button>
-              )}
-              {providers.okta && (
-                <button
-                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400 disabled:pointer-events-none disabled:opacity-50"
-                  disabled={loading}
-                  onClick={() => handleSocialSignIn('okta')}
-                  type="button"
-                >
-                  <span aria-hidden>◒</span>
-                  <span>continue with okta</span>
-                </button>
-              )}
-              <div className="my-6 flex items-center gap-4">
-                <span className="h-px flex-1 bg-ink-600" />
-                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-                  or
-                </span>
-                <span className="h-px flex-1 bg-ink-600" />
-              </div>
-            </div>
-          )}
-
-          {/* Tab switcher: magic link vs password */}
-          <div className="mb-5 flex gap-px overflow-hidden rounded-lg border border-ink-600 bg-ink-600/40">
-            <button
-              className={`flex-1 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors ${
-                tab === 'magic'
-                  ? 'bg-ink-800 text-ember-400'
-                  : 'bg-ink-900/60 text-paper-400 hover:bg-ink-800/60'
-              }`}
-              onClick={() => {
-                setTab('magic');
-                setError('');
-                setInfo('');
-              }}
-              type="button"
-            >
-              Magic link
-            </button>
-            <button
-              className={`flex-1 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors ${
-                tab === 'password'
-                  ? 'bg-ink-800 text-ember-400'
-                  : 'bg-ink-900/60 text-paper-400 hover:bg-ink-800/60'
-              }`}
-              onClick={() => {
-                setTab('password');
-                setError('');
-                setInfo('');
-              }}
-              type="button"
-            >
-              Password
-            </button>
-          </div>
-
-          {error && <Alert className="mb-4">{error}</Alert>}
-          {info && (
-            <Alert className="mb-4" variant="success">
-              {info}
-            </Alert>
-          )}
-
-          {tab === 'magic' ? (
-            <form className="space-y-5" onSubmit={handleMagicLinkSubmit}>
-              <Input
-                autoComplete="email"
-                label="Email"
-                name="email"
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-                type="email"
-                value={email}
-              />
-              <Button
-                className="w-full"
-                disabled={loading}
-                size="lg"
-                type="submit"
-                variant="primary"
-              >
-                {loading ? 'Sending…' : 'Email me a sign-in link →'}
-              </Button>
-              {IS_DEV && (
-                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
-                  In dev, the magic link prints to the gateway stdout.
-                </p>
-              )}
-            </form>
-          ) : (
-            <form className="space-y-5" onSubmit={handlePasswordSubmit}>
-              <Input
-                autoComplete="email"
-                label="Email"
-                name="email"
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-                type="email"
-                value={email}
-              />
-              <Input
-                autoComplete="current-password"
-                label="Password"
-                name="password"
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••••"
-                required
-                type="password"
-                value={password}
-              />
-              <Button
-                className="w-full"
-                disabled={loading}
-                size="lg"
-                type="submit"
-                variant="primary"
-              >
-                {loading ? 'Authenticating…' : 'Enter →'}
-              </Button>
-              <div className="flex items-center justify-end">
-                <button
-                  className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
-                  disabled={loading}
-                  onClick={handleForgotPassword}
-                  type="button"
-                >
-                  Forgot password?
-                </button>
-              </div>
-            </form>
-          )}
+      <AuthLayout className="relative lg:px-16">
+        <div className="mb-10 flex items-baseline gap-1.5 lg:hidden">
+          <span className="font-display text-2xl font-medium leading-none tracking-tight text-paper-50">
+            auto
+          </span>
+          <span className="display-italic text-2xl leading-none text-ember-400">·swe</span>
         </div>
-      </section>
+
+        <AuthHeading title="Sign in." />
+
+        {gatewayDown && (
+          <Alert className="mb-6" title="Service unavailable" variant="error">
+            {IS_DEV ? (
+              <>
+                Can't reach the gateway at{' '}
+                <code className="text-paper-100" suppressHydrationWarning>
+                  {API_BASE}
+                </code>
+                . Check that it's running and that CORS_ORIGIN includes{' '}
+                <code className="text-paper-100">
+                  {typeof window !== 'undefined' ? window.location.origin : ''}
+                </code>
+                .
+              </>
+            ) : (
+              'Sign-in is temporarily unavailable. Try again in a moment.'
+            )}
+          </Alert>
+        )}
+
+        {/* Social providers — only shown when configured in the backend */}
+        {hasSocial && (
+          <div className="mb-6 space-y-2">
+            {SOCIAL_BUTTONS.filter((b) => providers[b.id]).map((b) => (
+              <Button
+                className="w-full"
+                disabled={loading}
+                key={b.id}
+                onClick={() => handleSocialSignIn(b.id)}
+                variant="secondary"
+              >
+                <span aria-hidden>{b.glyph}</span>
+                <span>{b.label}</span>
+              </Button>
+            ))}
+            <div className="my-6 flex items-center gap-4">
+              <span className="h-px flex-1 bg-ink-600" />
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+                or
+              </span>
+              <span className="h-px flex-1 bg-ink-600" />
+            </div>
+          </div>
+        )}
+
+        {/* Tab switcher: magic link vs password */}
+        <SegmentedControl
+          ariaLabel="Sign-in method"
+          className="mb-5"
+          onChange={(next) => {
+            setTab(next);
+            setError('');
+            setInfo('');
+          }}
+          options={TAB_OPTIONS}
+          value={tab}
+        />
+
+        {error && <Alert className="mb-4">{error}</Alert>}
+        {info && (
+          <Alert className="mb-4" variant="success">
+            {info}
+          </Alert>
+        )}
+
+        {tab === 'magic' ? (
+          <form className="space-y-5" onSubmit={handleMagicLinkSubmit}>
+            <Input
+              autoComplete="email"
+              label="Email"
+              name="email"
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              required
+              type="email"
+              value={email}
+            />
+            <Button className="w-full" disabled={loading} size="lg" type="submit" variant="primary">
+              {loading ? 'Sending…' : 'Email me a sign-in link →'}
+            </Button>
+            {IS_DEV && (
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
+                In dev, the magic link prints to the gateway stdout.
+              </p>
+            )}
+          </form>
+        ) : (
+          <form className="space-y-5" onSubmit={handlePasswordSubmit}>
+            <Input
+              autoComplete="email"
+              label="Email"
+              name="email"
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              required
+              type="email"
+              value={email}
+            />
+            <Input
+              autoComplete="current-password"
+              label="Password"
+              name="password"
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••••"
+              required
+              type="password"
+              value={password}
+            />
+            <Button className="w-full" disabled={loading} size="lg" type="submit" variant="primary">
+              {loading ? 'Authenticating…' : 'Enter →'}
+            </Button>
+            <div className="flex items-center justify-end">
+              <button
+                className="label-mono transition-colors hover:text-ember-400"
+                disabled={loading}
+                onClick={handleForgotPassword}
+                type="button"
+              >
+                Forgot password?
+              </button>
+            </div>
+          </form>
+        )}
+      </AuthLayout>
     </div>
   );
 }

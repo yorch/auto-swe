@@ -31,13 +31,12 @@ export default async function DocPage({ params }: { params: Promise<Params> }) {
   const served = await servedDocSlugs();
 
   return (
-    <div className="space-y-4 max-w-4xl">
-      <nav className="text-xs text-paper-400">
-        <Link className="hover:text-paper-100" href="/docs">
-          Docs
+    <div className="max-w-4xl space-y-8">
+      <nav className="flex items-baseline justify-between gap-4">
+        <Link className="label-mono hover:text-paper-200" href="/docs">
+          ← Docs
         </Link>
-        <span className="mx-2">/</span>
-        <span className="font-mono">{doc.slug}.md</span>
+        <span className="font-mono text-xs text-paper-500">docs/{doc.slug}.md</span>
       </nav>
       <Card className="p-8">
         <Markdown servedSlugs={served}>{doc.content}</Markdown>

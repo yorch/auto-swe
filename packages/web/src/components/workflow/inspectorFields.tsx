@@ -8,7 +8,12 @@
  */
 
 import type { OnFailMode, StepFieldDef } from '@auto-swe/shared/workflow';
+import { Button } from '@/components/ui/Button';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 
 export type OnFailValue = OnFailMode;
 export type Binding = { from: string } | string | number | boolean | null;
@@ -24,7 +29,7 @@ export function SchemaAwareForm({
 }) {
   return (
     <div className="space-y-3 border-t border-ink-600 pt-4">
-      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">Config</div>
+      <div className="label-mono">Config</div>
       {fields.map((f) => {
         const current = values[f.key];
         return (
@@ -45,92 +50,96 @@ function SchemaField({
   onChange: (v: unknown) => void;
 }) {
   const id = `cfg-${field.key}`;
-  const baseInput =
-    'h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400';
+  const label = `${field.key}${field.required ? ' *' : ''} — ${field.label}`;
+  const hint = field.description;
 
-  return (
-    <div className="space-y-1">
-      <label
-        className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-        htmlFor={id}
+  if (field.type === 'boolean') {
+    return (
+      <Checkbox
+        checked={Boolean(value)}
+        className="text-xs"
+        hint={hint}
+        id={id}
+        label={label}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+    );
+  }
+  if (field.type === 'number') {
+    return (
+      <Input
+        compact
+        hint={hint}
+        id={id}
+        label={label}
+        onChange={(e) => {
+          const v = e.target.value;
+          onChange(v === '' ? undefined : Number(v));
+        }}
+        type="number"
+        value={typeof value === 'number' ? value : ''}
+      />
+    );
+  }
+  if (field.type === 'enum') {
+    return (
+      <Select
+        compact
+        hint={hint}
+        id={id}
+        label={label}
+        onChange={(e) => onChange(e.target.value || undefined)}
+        value={typeof value === 'string' ? value : ''}
       >
-        <span className="text-paper-200">{field.key}</span>
-        {field.required && <span className="text-brick-400"> *</span>}
-        <span className="ml-2 text-paper-500">— {field.label}</span>
-      </label>
-      {field.type === 'boolean' ? (
-        <label className="inline-flex items-center gap-2 text-xs text-paper-200" htmlFor={id}>
-          <input
-            checked={Boolean(value)}
-            className="h-4 w-4 accent-ember-400"
-            id={id}
-            onChange={(e) => onChange(e.target.checked)}
-            type="checkbox"
-          />
-          enabled
-        </label>
-      ) : field.type === 'number' ? (
-        <input
-          className={baseInput}
-          id={id}
-          onChange={(e) => {
-            const v = e.target.value;
-            onChange(v === '' ? undefined : Number(v));
-          }}
-          type="number"
-          value={typeof value === 'number' ? value : ''}
-        />
-      ) : field.type === 'enum' ? (
-        <Select
-          className={baseInput}
-          id={id}
-          onChange={(e) => onChange(e.target.value || undefined)}
-          value={typeof value === 'string' ? value : ''}
-        >
-          <option value="">— none —</option>
-          {(field.enumValues ?? []).map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </Select>
-      ) : field.type === 'json' ? (
-        <textarea
-          className="h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 py-1 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400"
-          id={id}
-          onChange={(e) => {
-            const t = e.target.value;
-            if (t === '') {
-              return onChange(undefined);
-            }
-            try {
-              onChange(JSON.parse(t));
-            } catch {
-              onChange(t);
-            }
-          }}
-          spellCheck={false}
-          value={
-            value === undefined || value === null
-              ? ''
-              : typeof value === 'string'
-                ? value
-                : JSON.stringify(value, null, 2)
+        <option value="">— none —</option>
+        {(field.enumValues ?? []).map((v) => (
+          <option key={v} value={v}>
+            {v}
+          </option>
+        ))}
+      </Select>
+    );
+  }
+  if (field.type === 'json') {
+    return (
+      <Textarea
+        className="h-20"
+        compact
+        hint={hint}
+        id={id}
+        label={label}
+        onChange={(e) => {
+          const t = e.target.value;
+          if (t === '') {
+            return onChange(undefined);
           }
-        />
-      ) : (
-        <input
-          className={baseInput}
-          id={id}
-          onChange={(e) => onChange(e.target.value || undefined)}
-          type="text"
-          value={typeof value === 'string' ? value : ''}
-        />
-      )}
-      {field.description && (
-        <p className="text-[10px] leading-snug text-paper-500">{field.description}</p>
-      )}
-    </div>
+          try {
+            onChange(JSON.parse(t));
+          } catch {
+            onChange(t);
+          }
+        }}
+        spellCheck={false}
+        value={
+          value === undefined || value === null
+            ? ''
+            : typeof value === 'string'
+              ? value
+              : JSON.stringify(value, null, 2)
+        }
+      />
+    );
+  }
+  return (
+    <Input
+      compact
+      hint={hint}
+      id={id}
+      label={label}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      type="text"
+      value={typeof value === 'string' ? value : ''}
+    />
   );
 }
 
@@ -149,15 +158,10 @@ export function OnFailSection({
 
   return (
     <div className="mt-4 space-y-2 border-t border-ink-600 pt-4">
-      <label
-        className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-        htmlFor="onfail-mode"
-      >
-        On fail
-      </label>
       <Select
-        className="h-9 px-2 font-mono text-xs"
+        compact
         id="onfail-mode"
+        label="On fail"
         onChange={(e) => {
           const v = e.target.value;
           if (v === 'block') {
@@ -175,23 +179,16 @@ export function OnFailSection({
         <option value="retry">Retry</option>
       </Select>
       {mode === 'retry' && (
-        <div className="space-y-1">
-          <label
-            className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-            htmlFor="onfail-retry-count"
-          >
-            Retry attempts (max 10)
-          </label>
-          <input
-            className="h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
-            id="onfail-retry-count"
-            max={10}
-            min={1}
-            onChange={(e) => onChange({ retry: Math.max(1, Math.min(10, Number(e.target.value))) })}
-            type="number"
-            value={retryCount}
-          />
-        </div>
+        <Input
+          compact
+          id="onfail-retry-count"
+          label="Retry attempts (max 10)"
+          max={10}
+          min={1}
+          onChange={(e) => onChange({ retry: Math.max(1, Math.min(10, Number(e.target.value))) })}
+          type="number"
+          value={retryCount}
+        />
       )}
     </div>
   );
@@ -227,19 +224,13 @@ export function InputsBindingsSection({
   return (
     <div className="mt-4 space-y-3 border-t border-ink-600 pt-4">
       <div className="flex items-center justify-between">
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-          Input bindings
-        </div>
-        <button
-          className="font-mono text-[10px] uppercase tracking-wider text-ember-400 hover:text-ember-300"
-          onClick={addEntry}
-          type="button"
-        >
-          + add
-        </button>
+        <div className="label-mono">Input bindings</div>
+        <Button onClick={addEntry} size="sm" variant="ghost">
+          Add binding
+        </Button>
       </div>
       {entries.length === 0 && (
-        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-600">— none —</p>
+        <EmptyState className="py-0 text-left text-xs" title="No input bindings." />
       )}
       {entries.map(([key, val]) => {
         const isFrom = typeof val === 'object' && val !== null && 'from' in val;
@@ -248,25 +239,28 @@ export function InputsBindingsSection({
         return (
           <div className="space-y-1" key={key}>
             <div className="flex items-center gap-1">
-              <input
-                aria-label="Binding key"
-                className="h-7 min-w-0 flex-1 rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400"
-                defaultValue={key}
-                onBlur={(e) => {
-                  const newKey = e.target.value.trim();
-                  if (!newKey || newKey === key) {
-                    return;
-                  }
-                  const next = { ...(inputs ?? {}) };
-                  delete next[key];
-                  next[newKey] = val;
-                  onChange(next);
-                }}
-                placeholder="key"
-              />
+              <div className="min-w-0 flex-1">
+                <Input
+                  aria-label="Binding key"
+                  compact
+                  defaultValue={key}
+                  onBlur={(e) => {
+                    const newKey = e.target.value.trim();
+                    if (!newKey || newKey === key) {
+                      return;
+                    }
+                    const next = { ...(inputs ?? {}) };
+                    delete next[key];
+                    next[newKey] = val;
+                    onChange(next);
+                  }}
+                  placeholder="key"
+                />
+              </div>
               <Select
                 aria-label="Binding type"
-                className="h-7 w-auto px-1 font-mono text-[10px]"
+                className="w-auto"
+                compact
                 onChange={(e) => {
                   if (e.target.value === 'from') {
                     setEntry(key, { from: displayVal });
@@ -279,18 +273,19 @@ export function InputsBindingsSection({
                 <option value="from">path</option>
                 <option value="literal">literal</option>
               </Select>
-              <button
+              <Button
                 aria-label="Remove binding"
-                className="font-mono text-[10px] text-brick-400 hover:text-brick-600"
+                className="px-2"
                 onClick={() => removeEntry(key)}
-                type="button"
+                size="sm"
+                variant="danger"
               >
                 ×
-              </button>
+              </Button>
             </div>
-            <input
+            <Input
               aria-label="Binding value"
-              className="h-7 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400"
+              compact
               onChange={(e) => {
                 const v = e.target.value;
                 setEntry(key, isFrom ? { from: v } : v);

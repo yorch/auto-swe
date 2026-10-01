@@ -3,9 +3,13 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAutonomyDecisions } from '@/hooks/useAutonomyPolicies';
 import { formatDate } from '@/lib/utils';
 
@@ -45,8 +49,15 @@ export default function AutonomyDecisionsPage() {
   const hasMore = offset + (data?.data.length ?? 0) < total;
 
   return (
-    <div className="space-y-6">
-      <PageHeader chapter="§ Govern" title="Autonomy Decisions" />
+    <div className="space-y-8">
+      <Link className="label-mono hover:text-paper-200" href="/govern/policies">
+        ← Autonomy policies
+      </Link>
+      <PageHeader
+        chapter="§ Govern"
+        subtitle="Every auto-run or approval-required decision the autonomy policies made, newest first."
+        title="Autonomy decisions"
+      />
 
       <form
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"
@@ -99,29 +110,27 @@ export default function AutonomyDecisionsPage() {
         label="autonomy decisions"
         loadingMessage="loading decisions…"
       >
-        <div className="border border-ink-600 rounded-lg overflow-hidden">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-ink-700 text-paper-400">
-              <tr>
-                <th className="px-4 py-2 font-medium">Created</th>
-                <th className="px-4 py-2 font-medium">Event</th>
-                <th className="px-4 py-2 font-medium">Policy</th>
-                <th className="px-4 py-2 font-medium">Risk class</th>
-                <th className="px-4 py-2 font-medium">Actor</th>
-                <th className="px-4 py-2 font-medium">Run</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-ink-600">
+        <Card className="overflow-hidden p-0" variant="inset">
+          <Table className="text-left">
+            <THead className="text-paper-400">
+              <Th variant="dense">Created</Th>
+              <Th variant="dense">Event</Th>
+              <Th variant="dense">Policy</Th>
+              <Th variant="dense">Risk class</Th>
+              <Th variant="dense">Actor</Th>
+              <Th variant="dense">Run</Th>
+            </THead>
+            <tbody>
               {data?.data.map((row) => (
-                <tr className="hover:bg-ink-700/30" key={row.id}>
-                  <td className="px-4 py-2 text-paper-300">{formatDate(row.createdAt)}</td>
-                  <td className="px-4 py-2 text-paper-300">{row.event}</td>
-                  <td className="px-4 py-2 text-paper-400">{row.policyName ?? '—'}</td>
-                  <td className="px-4 py-2 text-paper-400">{row.riskClass ?? '—'}</td>
-                  <td className="px-4 py-2 font-mono text-xs text-paper-500">
+                <TRow hover key={row.id}>
+                  <Td className="px-4 py-2 text-paper-300">{formatDate(row.createdAt)}</Td>
+                  <Td className="px-4 py-2 text-paper-300">{row.event}</Td>
+                  <Td className="px-4 py-2 text-paper-400">{row.policyName ?? '—'}</Td>
+                  <Td className="px-4 py-2 text-paper-400">{row.riskClass ?? '—'}</Td>
+                  <Td className="px-4 py-2 font-mono text-xs text-paper-500">
                     {row.actorId ?? 'system'}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs">
+                  </Td>
+                  <Td className="px-4 py-2 font-mono text-xs">
                     <Link
                       className="text-ember-400 hover:underline"
                       href={`/runs/${row.runId}`}
@@ -129,46 +138,30 @@ export default function AutonomyDecisionsPage() {
                     >
                       {row.runId.slice(0, 8)}
                     </Link>
-                  </td>
-                </tr>
+                  </Td>
+                </TRow>
               ))}
               {(!data || data.data.length === 0) && (
-                <tr>
-                  <td className="px-4 py-8 text-center text-paper-400" colSpan={6}>
-                    No autonomy decisions found.
-                  </td>
-                </tr>
+                <TableStatusRow colSpan={6}>
+                  <EmptyState title="No autonomy decisions found." />
+                </TableStatusRow>
               )}
             </tbody>
-          </table>
-        </div>
+          </Table>
+        </Card>
       </QueryBoundary>
 
-      <div className="flex items-center justify-between text-xs text-paper-400">
-        <span>
-          {total === 0
-            ? 'No results'
-            : `${offset + 1}–${Math.min(offset + LIMIT, total)} of ${total}`}
-        </span>
-        <div className="flex gap-2">
-          <Button
-            disabled={offset === 0}
-            onClick={() => setOffset((o) => Math.max(0, o - LIMIT))}
-            size="sm"
-            variant="ghost"
-          >
-            Previous
-          </Button>
-          <Button
-            disabled={!hasMore}
-            onClick={() => setOffset((o) => o + LIMIT)}
-            size="sm"
-            variant="ghost"
-          >
-            Next
-          </Button>
-        </div>
-      </div>
+      {total > 0 && (
+        <Pagination
+          hasNext={hasMore}
+          hasPrev={offset > 0}
+          onNext={() => setOffset((o) => o + LIMIT)}
+          onPrev={() => setOffset((o) => Math.max(0, o - LIMIT))}
+          rangeEnd={Math.min(offset + LIMIT, total)}
+          rangeStart={offset + 1}
+          total={total}
+        />
+      )}
     </div>
   );
 }

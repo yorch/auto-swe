@@ -15,6 +15,7 @@ import {
   useSetConfigSetting,
 } from '@/hooks/useConfigSettings';
 import { useTeams } from '@/hooks/useTeams';
+import { errMsg } from '@/lib/errors';
 
 /**
  * Every configurable knob, rendered from the registry definitions rather than
@@ -77,15 +78,12 @@ export default function GovernSettingsPage() {
   const busy = setSetting.isPending || clearSetting.isPending;
   const awaitingTeam = scope === 'TEAM' && !teamId;
 
-  function messageFrom(err: unknown): string {
-    return err instanceof Error ? err.message : 'The change could not be saved.';
-  }
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
+        chapter="§ Govern"
         subtitle="Operator policy that used to be compiled into the worker. Values shown are what this scope resolves to; each row says where its value came from."
-        title="Admin — Settings"
+        title="Platform settings"
       />
 
       <Card>
@@ -148,14 +146,14 @@ export default function GovernSettingsPage() {
               onClear={() => {
                 setError(null);
                 clearSetting.mutate(setting.key, {
-                  onError: (err) => setError(messageFrom(err)),
+                  onError: (err) => setError(errMsg(err, 'The change could not be saved.')),
                 });
               }}
               onSave={(value) => {
                 setError(null);
                 setSetting.mutate(
                   { key: setting.key, value },
-                  { onError: (err) => setError(messageFrom(err)) }
+                  { onError: (err) => setError(errMsg(err, 'The change could not be saved.')) }
                 );
               }}
               scope={selection.scope}

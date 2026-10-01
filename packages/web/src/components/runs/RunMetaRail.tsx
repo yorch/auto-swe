@@ -3,10 +3,11 @@
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
-import { formatCost, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
+import { cn, formatCost, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
 import { AutonomyDecisionsPanel } from './AutonomyDecisionsPanel';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
 import { FailureCard } from './FailureCard';
+import { RailRow, RailSection } from './Rail';
 import { RunOutcomeCard } from './RunOutcomeCard';
 
 interface RunMetaRailProps {
@@ -18,19 +19,16 @@ interface RunMetaRailProps {
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-ink-600/40 last:border-0">
+    <RailRow className="items-start">
       <dt className="kicker shrink-0 pt-0.5">{label}</dt>
       <dd className="text-right min-w-0">{children}</dd>
-    </div>
+    </RailRow>
   );
 }
 
 function MonoValue({ children, accent }: { children: React.ReactNode; accent?: boolean }) {
   return (
-    <span
-      className={accent ? 'text-ember-400' : 'text-paper-300'}
-      style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
-    >
+    <span className={cn('font-mono text-[11px]', accent ? 'text-ember-400' : 'text-paper-300')}>
       {children}
     </span>
   );
@@ -50,13 +48,9 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
   const totalTokens = run.tokensInputTotal + run.tokensOutputTotal;
 
   return (
-    <aside
-      className="flex flex-col overflow-y-auto border-l border-ink-600/60 shrink-0"
-      style={{ background: 'var(--color-ink-900)', width: '270px' }}
-    >
+    <aside className="flex w-[270px] shrink-0 flex-col overflow-y-auto border-l border-ink-600/60 bg-ink-900">
       {/* Run details */}
-      <div className="px-5 pt-5 pb-4">
-        <div className="kicker mb-3">Run details</div>
+      <RailSection className="pt-5" divider={false} title="Run details">
         <dl>
           <MetaRow label="Started">
             <MonoValue>{formatDate(run.startedAt)}</MonoValue>
@@ -113,7 +107,7 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
           <MetaRow label="Template">
             <MonoValue>
               <Link
-                className="text-ember-400 hover:text-ember-300 transition-colors"
+                className="text-ember-400 transition-colors hover:text-ember-600"
                 href={`/workflows/library/${run.templateId}`}
               >
                 {run.templateName}
@@ -121,27 +115,18 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
             </MonoValue>
           </MetaRow>
         </dl>
-      </div>
+      </RailSection>
 
       {/* Request block */}
       {run.workRequest && (
-        <>
-          <div className="h-px mx-5 bg-ink-500/40" />
-          <div className="px-5 py-4">
-            <div className="kicker mb-2" style={{ color: 'var(--color-paper-600)' }}>
-              Request
-            </div>
-            <div
-              className="text-ember-400 mb-1"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.06em' }}
-            >
-              {run.workRequest.externalTicketId}
-            </div>
-            <p className="text-paper-400 text-[12px] leading-relaxed">
-              {run.workRequest.description}
-            </p>
+        <RailSection title="Request">
+          <div className="mb-1 font-mono text-xs tracking-[0.06em] text-ember-400">
+            {run.workRequest.externalTicketId}
           </div>
-        </>
+          <p className="text-paper-400 text-[12px] leading-relaxed">
+            {run.workRequest.description}
+          </p>
+        </RailSection>
       )}
 
       {/* Eval signals (P0) */}
@@ -160,28 +145,22 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
           return null;
         }
         return (
-          <>
-            <div className="h-px mx-5 bg-ink-500/40" />
-            <div className="px-5 py-4">
-              <RunOutcomeCard result={run.result} templateName={run.templateName} />
-            </div>
-          </>
+          <RailSection>
+            <RunOutcomeCard result={run.result} templateName={run.templateName} />
+          </RailSection>
         );
       })()}
 
       {/* Failure card */}
       {failedStep && (
-        <>
-          <div className="h-px mx-5 bg-ink-500/40" />
-          <div className="px-5 py-4">
-            <FailureCard
-              onJumpToFailure={onJumpToFailure}
-              onReRun={onReRun}
-              size="full"
-              step={failedStep}
-            />
-          </div>
-        </>
+        <RailSection>
+          <FailureCard
+            onJumpToFailure={onJumpToFailure}
+            onReRun={onReRun}
+            size="full"
+            step={failedStep}
+          />
+        </RailSection>
       )}
     </aside>
   );

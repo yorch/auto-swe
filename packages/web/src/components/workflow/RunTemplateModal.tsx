@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { useRunTemplate } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 import { buildInitialPayload, SchemaFieldInput, validatePayload } from './schemaForm';
@@ -79,11 +79,11 @@ export function RunTemplateModal({
         open={open}
         title="Workflow started"
       >
-        <div className="space-y-6 py-2 text-center">
-          <div className="text-3xl text-moss-400">✓</div>
-          <p className="text-sm text-paper-300">Your workflow is running.</p>
-          <div className="flex justify-center gap-3 pt-2">
-            <Button onClick={handleClose} variant="secondary">
+        <div className="space-y-6">
+          <Alert variant="success">Your workflow is running.</Alert>
+          {/* ModalFooter's action is a button; this one navigates, so it is a link. */}
+          <div className="flex justify-end gap-3 border-t border-ink-600 pt-4">
+            <Button onClick={handleClose} variant="ghost">
               Close
             </Button>
             <ButtonLink href={`/workflows/${launchedId}`} onClick={handleClose} variant="primary">
@@ -129,18 +129,14 @@ export function RunTemplateModal({
             />
           ))}
 
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={handleClose} variant="secondary">
-            Cancel
-          </Button>
-          <Button
-            disabled={!isValid || runTemplate.isPending}
-            onClick={handleRun}
-            variant="primary"
-          >
-            {runTemplate.isPending ? 'Starting…' : 'Run →'}
-          </Button>
-        </div>
+        <ModalFooter
+          disabled={!isValid}
+          isPending={runTemplate.isPending}
+          onCancel={handleClose}
+          onSubmit={handleRun}
+          pendingLabel="Starting…"
+          submitLabel="Run →"
+        />
       </div>
     </Modal>
   );

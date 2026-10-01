@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -156,7 +158,7 @@ function PolicyModal({
     setForm(editing ? policyToForm(editing) : emptyForm());
   }, [editing]);
 
-  const title = editing ? 'Edit Autonomy Policy' : 'New Autonomy Policy';
+  const title = editing ? 'Edit autonomy policy' : 'New autonomy policy';
   const eyebrow = 'Govern / Autonomy Policies';
 
   async function handleSubmit(e: React.FormEvent) {
@@ -225,8 +227,8 @@ function PolicyModal({
   }
 
   return (
-    <Modal eyebrow={eyebrow} onClose={onClose} open={open} title={title}>
-      <form className="space-y-4 min-w-[560px] max-w-2xl" onSubmit={handleSubmit}>
+    <Modal eyebrow={eyebrow} onClose={onClose} open={open} size="lg" title={title}>
+      <form className="space-y-4" onSubmit={handleSubmit}>
         <Input
           label="Name"
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
@@ -324,7 +326,7 @@ function PolicyModal({
                   aria-label={`Remove rule ${i + 1}`}
                   onClick={() => removeRule(i)}
                   type="button"
-                  variant="ghost"
+                  variant="danger"
                 >
                   ×
                 </Button>
@@ -335,19 +337,13 @@ function PolicyModal({
             </Button>
           </div>
         </Card>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={create.isPending || update.isPending} type="submit" variant="primary">
-            {create.isPending || update.isPending
-              ? 'Saving…'
-              : editing
-                ? 'Save Policy'
-                : 'Create Policy'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          isPending={create.isPending || update.isPending}
+          onCancel={onClose}
+          pendingLabel={editing ? 'Saving…' : 'Creating…'}
+          submitLabel={editing ? 'Save changes' : 'Create policy'}
+        />
       </form>
     </Modal>
   );
@@ -378,20 +374,21 @@ export default function AutonomyPoliciesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
-          <div className="flex gap-2">
+          <>
             <ButtonLink href="/govern/policies/decisions" variant="secondary">
               Audit decisions
             </ButtonLink>
             <Button onClick={startCreate} variant="primary">
-              New Policy
+              New policy
             </Button>
-          </div>
+          </>
         }
         chapter="§ Govern"
-        title="Autonomy Policies"
+        subtitle="Which risk classes an agent may act on automatically and which need human approval — globally, per team, or per workflow template."
+        title="Autonomy policies"
       />
 
       <QueryBoundary
@@ -401,7 +398,7 @@ export default function AutonomyPoliciesPage() {
         label="policies"
         loadingMessage="loading policies…"
       >
-        <Card variant="inset">
+        <Card className="p-0" variant="inset">
           <div className="divide-y divide-ink-600">
             {sorted.map((p) => (
               <div className="flex items-start justify-between p-4" key={p.id}>
@@ -416,12 +413,13 @@ export default function AutonomyPoliciesPage() {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Button onClick={() => startEdit(p)} variant="secondary">
+                  <Button onClick={() => startEdit(p)} size="sm" variant="secondary">
                     Edit
                   </Button>
                   <Button
                     disabled={deletePolicy.isPending}
                     onClick={() => setDeleteTarget(p)}
+                    size="sm"
                     variant="danger"
                   >
                     Delete
@@ -429,9 +427,7 @@ export default function AutonomyPoliciesPage() {
                 </div>
               </div>
             ))}
-            {sorted.length === 0 && (
-              <p className="text-center text-paper-400 py-12">No autonomy policies yet.</p>
-            )}
+            {sorted.length === 0 && <EmptyState title="No autonomy policies yet." />}
           </div>
         </Card>
       </QueryBoundary>

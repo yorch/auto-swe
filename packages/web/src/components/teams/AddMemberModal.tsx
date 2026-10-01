@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { EligibleUserSelect } from '@/components/EligibleUserSelect';
-import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
+import { Alert } from '@/components/ui/Alert';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useAddTeamMember } from '@/hooks/useTeams';
 import { useEligibleUsers } from '@/hooks/useUsers';
@@ -65,7 +65,6 @@ export function AddMemberModal({
 
   return (
     <Modal
-      eyebrow="§ Add team member"
       onClose={onClose}
       open={open}
       subtitle="Pick a user and choose their role within this team."
@@ -83,17 +82,14 @@ export function AddMemberModal({
           <option value="LEAD">LEAD</option>
           <option value="ADMIN">ADMIN</option>
         </Select>
-        {error && (
-          <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">{error}</p>
-        )}
-        <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={add.isPending || eligible.length === 0} type="submit" variant="primary">
-            {add.isPending ? 'Adding…' : 'Add member'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          disabled={eligible.length === 0}
+          isPending={add.isPending}
+          onCancel={onClose}
+          pendingLabel="Adding…"
+          submitLabel="Add member"
+        />
       </form>
     </Modal>
   );

@@ -30,13 +30,18 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: Size;
 };
 
-const BUTTON_STYLE = {
+export const BUTTON_STYLE = {
   borderRadius: '10px',
   fontSize: '13.5px',
   letterSpacing: '0.01em',
 } as const;
 
-function buttonClassName(variant: Variant, size: Size, className?: string) {
+/**
+ * The button look as a class string, for an element that must stay a plain
+ * `<a>` — a full-page navigation such as an OAuth redirect, which `ButtonLink`
+ * (client-side routing) is wrong for. Pair it with `style={BUTTON_STYLE}`.
+ */
+export function buttonClassName(variant: Variant, size: Size, className?: string) {
   return cn(
     // `whitespace-nowrap`: a label is one action, so it never wraps — in a
     // tight table cell "Run →" otherwise broke its arrow onto a second line.

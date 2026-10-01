@@ -3,11 +3,13 @@
 import { EDGE_KINDS } from '@auto-swe/shared/lib/repoDependency';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import {
   type DepEdgeView,
@@ -16,16 +18,13 @@ import {
   useRepoDependencies,
   useSetRepoDependencyStatus,
 } from '@/hooks/useRepoDependencies';
-import { connectionLabel } from '@/lib/connectionDisplay';
+import { connectionLabel, repoRefLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
+import { formatPercent } from '@/lib/utils';
 
 function neighborLabel(edge: DepEdgeView): string {
   if (edge.repo) {
-    const { organizationName, repoName, name } = edge.repo;
-    if (organizationName && repoName) {
-      return `${organizationName}/${repoName}`;
-    }
-    return name ?? edge.repo.id;
+    return repoRefLabel(edge.repo);
   }
   return edge.toRef ?? '(unknown)';
 }
@@ -38,9 +37,7 @@ function ConfidenceNote({ edge }: { edge: DepEdgeView }) {
     return null;
   }
   return (
-    <span className="ml-2 text-paper-400 text-xs">
-      {Math.round(edge.confidence * 100)}% confidence
-    </span>
+    <span className="ml-2 text-paper-400 text-xs">{formatPercent(edge.confidence)} confidence</span>
   );
 }
 
@@ -103,7 +100,7 @@ function EdgeRow({
           </>
         )}
         {canManage && (
-          <Button onClick={onRemove} size="sm" variant="ghost">
+          <Button onClick={onRemove} size="sm" variant="danger">
             Remove
           </Button>
         )}
@@ -156,7 +153,7 @@ function DepSection({
           ))}
         </ul>
       ) : (
-        <p className="text-paper-400 text-sm">{emptyText}</p>
+        <EmptyState className="py-2 text-left" title={emptyText} />
       )}
     </section>
   );
@@ -198,6 +195,7 @@ export function RepoDependenciesModal({
   return (
     <>
       <Modal
+        eyebrow="§ Connection"
         onClose={onClose}
         open={open}
         size="lg"
@@ -207,18 +205,18 @@ export function RepoDependenciesModal({
         {isLoading ? (
           <LoadingState message="Loading dependencies…" />
         ) : isError ? (
-          <p className="py-6 text-center text-brick-400 text-sm">
+          <Alert>
             {errMsg(
               error,
               'Could not load dependencies — you may not have access to this repository.'
             )}
-          </p>
+          </Alert>
         ) : (
           <div className="space-y-6">
             {mutationError && (
-              <p className="rounded border border-brick-400/30 bg-brick-400/10 px-3 py-2 text-brick-400 text-xs">
+              <Alert>
                 {errMsg(mutationError, 'That action didn’t go through — reopen and try again.')}
-              </p>
+              </Alert>
             )}
             <DepSection
               canManage={canManage}
@@ -277,17 +275,18 @@ export function RepoDependenciesModal({
                   </Button>
                 </div>
                 {create.isError && (
-                  <p className="mt-1 text-brick-400 text-xs">
+                  <Alert className="mt-2">
                     {errMsg(
                       create.error,
                       'Could not add — it may already exist, cross an org boundary, or you may lack LEAD on both teams.'
                     )}
-                  </p>
+                  </Alert>
                 )}
               </section>
             )}
           </div>
         )}
+        <ModalFooter cancelLabel="Close" onCancel={onClose} />
       </Modal>
 
       {pendingRemove && (

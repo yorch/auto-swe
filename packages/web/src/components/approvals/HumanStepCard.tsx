@@ -6,8 +6,12 @@ import { useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 import { useRespondToApproval } from '@/hooks/useApprovals';
 import { formatDuration, formatRelativeTime } from '@/lib/utils';
 import { DiffRenderer } from './DiffRenderer';
@@ -64,6 +68,11 @@ const KIND_TONE: Record<string, BadgeTone> = {
   DECISION: 'dust',
   INPUT: 'moss',
   REVIEW: 'violet',
+};
+
+const STATUS_TONE: Record<string, BadgeTone> = {
+  RESOLVED: 'moss',
+  TIMED_OUT: 'muted',
 };
 
 function contextToString(context: unknown): string {
@@ -172,7 +181,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   const hasContext = contextStr.length > 0;
 
   return (
-    <div className="border border-ink-600 rounded-lg p-4 space-y-3">
+    <Card className="space-y-3 p-4" variant="inset">
       <div className="flex items-start gap-3">
         <Badge
           className="shrink-0 px-2 font-sans text-xs font-medium"
@@ -230,23 +239,21 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           </Button>
         )}
         {step.status !== 'PENDING' && (
-          <span
-            className={`text-[10px] font-mono uppercase tracking-wider shrink-0 ${
-              step.status === 'RESOLVED'
-                ? 'text-moss-400'
-                : step.status === 'TIMED_OUT'
-                  ? 'text-paper-500'
-                  : 'text-brick-400'
-            }`}
+          <Badge
+            className="shrink-0"
+            tone={STATUS_TONE[step.status] ?? 'brick'}
+            uppercase
+            variant="text"
           >
             {step.status.replace(/_/g, ' ').toLowerCase()}
-          </span>
+          </Badge>
         )}
       </div>
 
       {expanded && step.status === 'PENDING' && (
         <div className="border-t border-ink-600 pt-3 space-y-3">
-          {respond.isError && (
+          {/* A failed reject is already shown inside its ConfirmModal. */}
+          {respond.isError && respond.variables?.action !== 'reject' && (
             <Alert variant="error">
               {respond.error?.message ?? 'Submission failed. Please try again.'}
             </Alert>
@@ -263,7 +270,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 {showContext ? 'Hide context' : 'Show context'}
               </button>
               {showContext && (
-                <div className="mt-2 bg-ink-700 rounded p-3 overflow-auto max-h-64">
+                <div className="mt-2 max-h-64 overflow-auto rounded bg-ink-900 p-3">
                   <DiffRenderer content={contextStr} />
                 </div>
               )}
@@ -314,55 +321,56 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                   {inputError}
                 </Alert>
               )}
-              {step.fields.map((field) => (
-                // biome-ignore lint/a11y/noLabelWithoutControl: label wraps a conditional input/select/checkbox — biome can't statically trace through the ternary
-                <label className="block space-y-0.5" key={field.key}>
-                  <span className="text-xs font-medium block">
-                    {field.label}
-                    {field.required && <span className="text-brick-400 ml-0.5">*</span>}
-                  </span>
-                  {field.type === 'boolean' ? (
-                    <input
-                      checked={Boolean(inputValues[field.key])}
-                      onChange={(e) =>
-                        setInputValues((p) => ({ ...p, [field.key]: e.target.checked }))
-                      }
-                      type="checkbox"
-                    />
-                  ) : field.type === 'select' ? (
-                    <Select
-                      onChange={(e) =>
-                        setInputValues((p) => ({ ...p, [field.key]: e.target.value }))
-                      }
-                      value={String(inputValues[field.key] ?? '')}
-                    >
-                      <option value="">—</option>
-                      {field.options?.map((o) => (
-                        <option key={o} value={o}>
-                          {o}
-                        </option>
-                      ))}
-                    </Select>
-                  ) : (
-                    <input
-                      className="w-full text-sm border border-ink-600 rounded px-2 py-1 font-mono"
-                      onChange={(e) =>
-                        setInputValues((p) => ({
-                          ...p,
-                          [field.key]:
-                            field.type === 'number'
-                              ? e.target.value === ''
-                                ? ''
-                                : Number(e.target.value)
-                              : e.target.value,
-                        }))
-                      }
-                      type={field.type === 'number' ? 'number' : 'text'}
-                      value={String(inputValues[field.key] ?? '')}
-                    />
-                  )}
-                </label>
-              ))}
+              {step.fields.map((field) => {
+                const fieldId = `human-step-${step.id}-${field.key}`;
+                const fieldLabel = field.required ? `${field.label} *` : field.label;
+                return field.type === 'boolean' ? (
+                  <Checkbox
+                    checked={Boolean(inputValues[field.key])}
+                    key={field.key}
+                    label={fieldLabel}
+                    onChange={(e) =>
+                      setInputValues((p) => ({ ...p, [field.key]: e.target.checked }))
+                    }
+                  />
+                ) : field.type === 'select' ? (
+                  <Select
+                    compact
+                    id={fieldId}
+                    key={field.key}
+                    label={fieldLabel}
+                    onChange={(e) => setInputValues((p) => ({ ...p, [field.key]: e.target.value }))}
+                    value={String(inputValues[field.key] ?? '')}
+                  >
+                    <option value="">—</option>
+                    {field.options?.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <Input
+                    compact
+                    id={fieldId}
+                    key={field.key}
+                    label={fieldLabel}
+                    onChange={(e) =>
+                      setInputValues((p) => ({
+                        ...p,
+                        [field.key]:
+                          field.type === 'number'
+                            ? e.target.value === ''
+                              ? ''
+                              : Number(e.target.value)
+                            : e.target.value,
+                      }))
+                    }
+                    type={field.type === 'number' ? 'number' : 'text'}
+                    value={String(inputValues[field.key] ?? '')}
+                  />
+                );
+              })}
               <Button
                 disabled={respond.isPending}
                 onClick={() => {
@@ -403,23 +411,18 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             <div className={hasContext ? 'flex gap-4 min-h-0' : 'space-y-2'}>
               {hasContext && (
                 <div className="flex-[3] min-w-0 flex flex-col gap-1">
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-paper-500">
-                    Context
-                  </span>
-                  <div className="overflow-auto max-h-72 bg-ink-700 rounded p-3 flex-1">
+                  <span className="label-mono">Context</span>
+                  <div className="max-h-72 flex-1 overflow-auto rounded bg-ink-900 p-3">
                     <DiffRenderer content={contextStr} />
                   </div>
                 </div>
               )}
               <div className={hasContext ? 'flex-[2] flex flex-col gap-2' : 'space-y-2'}>
-                {hasContext && (
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-paper-500">
-                    Your notes
-                  </span>
-                )}
-                <textarea
+                <Textarea
                   aria-label="Review notes"
-                  className="w-full text-sm border border-ink-600 rounded px-2 py-1 font-mono resize-y"
+                  compact
+                  id={`human-step-${step.id}-notes`}
+                  label={hasContext ? 'Your notes' : undefined}
                   onChange={(e) => setReviewText(e.target.value)}
                   placeholder="Add your review notes…"
                   rows={hasContext ? 10 : 8}
@@ -449,6 +452,6 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         pendingLabel="Rejecting…"
         title={`Reject ${step.title}?`}
       />
-    </div>
+    </Card>
   );
 }

@@ -7,6 +7,9 @@ import type {
 } from '@auto-swe/shared/lib/inputSchema';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 
@@ -149,12 +152,13 @@ export function InputSchemaBuilder({
   return (
     <div className="space-y-3">
       {fields.length === 0 && (
-        <p className="rounded border border-dashed border-ink-600 py-4 text-center text-xs text-paper-500">
-          No fields yet — add one to require structured input at run time
-        </p>
+        <EmptyState
+          className="rounded border border-dashed border-ink-600 py-4 text-xs"
+          title="No fields yet — add one to require structured input at run time."
+        />
       )}
       {fields.map((f, i) => (
-        <div className="space-y-3 rounded border border-ink-600 bg-ink-900 p-3" key={f.id}>
+        <Card className="space-y-3 p-3" key={f.id} variant="inset">
           <div className="grid grid-cols-[1fr_auto_auto] items-end gap-2">
             <Input
               hint={
@@ -186,14 +190,12 @@ export function InputSchemaBuilder({
                 </option>
               ))}
             </Select>
-            <label className="flex flex-col items-center gap-1 pb-1 text-[10px] uppercase tracking-wider text-paper-500">
-              Req.
-              <input
-                checked={f.required}
-                onChange={(e) => updateField(i, { required: e.target.checked })}
-                type="checkbox"
-              />
-            </label>
+            <Checkbox
+              checked={f.required}
+              className="pb-2.5"
+              label="Required"
+              onChange={(e) => updateField(i, { required: e.target.checked })}
+            />
           </div>
           <Input
             hint="Shown to users in the run form"
@@ -259,14 +261,14 @@ export function InputSchemaBuilder({
             </Select>
           )}
           <div className="flex justify-end">
-            <Button onClick={() => removeField(i)} size="sm" variant="ghost">
+            <Button onClick={() => removeField(i)} size="sm" variant="danger">
               Remove
             </Button>
           </div>
-        </div>
+        </Card>
       ))}
       <Button onClick={addField} size="sm" variant="secondary">
-        + Add field
+        Add field
       </Button>
     </div>
   );

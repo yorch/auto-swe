@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/Button';
 import { SparkleIcon } from '@/components/ui/icons';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRefineWorkflowTemplate } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
@@ -159,18 +158,15 @@ export function RefineChatPanel({
           value={input}
         />
 
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="secondary">
-            Done
-          </Button>
-          <Button
-            disabled={!input.trim() || refine.isPending}
-            onClick={handleSend}
-            variant="primary"
-          >
-            {refine.isPending ? 'Refining…' : 'Send'}
-          </Button>
-        </div>
+        <ModalFooter
+          cancelLabel="Close"
+          disabled={!input.trim()}
+          isPending={refine.isPending}
+          onCancel={onClose}
+          onSubmit={handleSend}
+          pendingLabel="Refining…"
+          submitLabel="Send"
+        />
       </div>
     </Modal>
   );

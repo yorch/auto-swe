@@ -80,8 +80,8 @@ export function Badge({
 }: {
   children: ReactNode;
   className?: string;
-  /** Leading status dot in the badge's own colour (`pulse-dot` via `className` on a live state). */
-  dot?: boolean;
+  /** Leading status dot in the badge's own colour; `'pulse'` animates the dot alone, for a live state. */
+  dot?: boolean | 'pulse';
   title?: string;
   tone: BadgeTone;
   uppercase?: boolean;
@@ -99,7 +99,15 @@ export function Badge({
       )}
       title={title}
     >
-      {dot && <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />}
+      {dot && (
+        <span
+          aria-hidden
+          className={cn(
+            'h-1.5 w-1.5 shrink-0 rounded-full bg-current',
+            dot === 'pulse' && 'pulse-dot'
+          )}
+        />
+      )}
       {children}
     </span>
   );

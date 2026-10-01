@@ -1,9 +1,11 @@
 'use client';
 
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { Textarea } from '@/components/ui/Textarea';
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
 
@@ -72,8 +74,9 @@ export function AllowlistEditor({
         <LoadingState compact />
       ) : (
         <>
-          <textarea
-            className="min-h-[120px] w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none transition-colors focus:border-ember-400"
+          <Textarea
+            aria-label={title}
+            className="min-h-[120px]"
             onChange={(e) => {
               isDirtyRef.current = true;
               setText(e.target.value);
@@ -81,15 +84,11 @@ export function AllowlistEditor({
             placeholder={placeholder}
             value={text}
           />
-          <div className="mt-3 flex items-center justify-between">
+          <div className="mt-3 flex items-center justify-between gap-3">
             {error ? (
-              <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">
-                {error}
-              </p>
+              <Alert>{error}</Alert>
             ) : saved ? (
-              <p className="font-mono text-[10px] uppercase tracking-wider text-moss-400">
-                ✓ saved
-              </p>
+              <Alert variant="success">Saved</Alert>
             ) : (
               <span />
             )}

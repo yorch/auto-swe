@@ -1,11 +1,12 @@
 'use client';
 
 import type { RunDetailLayout } from '@auto-swe/shared/types/api';
+import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 
-const OPTIONS: { id: RunDetailLayout; label: string; title: string }[] = [
-  { id: 'A', label: 'A', title: 'Split Console' },
-  { id: 'B', label: 'B', title: 'Transcript' },
-  { id: 'C', label: 'C', title: 'Flight Recorder' },
+const OPTIONS: SegmentedOption<RunDetailLayout>[] = [
+  { label: 'A', title: 'Split Console', value: 'A' },
+  { label: 'B', title: 'Transcript', value: 'B' },
+  { label: 'C', title: 'Flight Recorder', value: 'C' },
 ];
 
 interface LayoutToggleProps {
@@ -15,27 +16,6 @@ interface LayoutToggleProps {
 
 export function LayoutToggle({ value, onChange }: LayoutToggleProps) {
   return (
-    <div className="flex items-center border border-ink-400" style={{ borderRadius: '2px' }}>
-      {OPTIONS.map((opt, i) => (
-        <button
-          aria-label={opt.title}
-          className="relative px-3 py-1 transition-colors"
-          key={opt.id}
-          onClick={() => onChange(opt.id)}
-          style={{
-            background: value === opt.id ? 'oklch(0.70 0.145 28 / 0.14)' : 'transparent',
-            borderLeft: i > 0 ? '1px solid var(--color-ink-400)' : 'none',
-            color: value === opt.id ? 'var(--color-ember-400)' : 'var(--color-paper-500)',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '10.5px',
-            letterSpacing: '0.14em',
-          }}
-          title={opt.title}
-          type="button"
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
+    <SegmentedControl ariaLabel="Run layout" onChange={onChange} options={OPTIONS} value={value} />
   );
 }

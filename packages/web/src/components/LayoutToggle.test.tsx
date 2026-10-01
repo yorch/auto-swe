@@ -6,14 +6,14 @@ import { LayoutToggle } from './LayoutToggle';
 describe('LayoutToggle', () => {
   it('marks A button as active when value is A', () => {
     render(<LayoutToggle onChange={vi.fn()} value="A" />);
-    const btn = screen.getByTitle('Split Console');
-    expect(btn.style.color).toBeTruthy();
+    expect(screen.getByTitle('Split Console').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTitle('Transcript').getAttribute('aria-pressed')).toBe('false');
   });
 
   it('marks B button as active when value is B', () => {
     render(<LayoutToggle onChange={vi.fn()} value="B" />);
-    const btn = screen.getByTitle('Transcript');
-    expect(btn.style.color).toBeTruthy();
+    expect(screen.getByTitle('Transcript').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTitle('Split Console').getAttribute('aria-pressed')).toBe('false');
   });
 
   it('calls onChange with "B" when B button is clicked', () => {

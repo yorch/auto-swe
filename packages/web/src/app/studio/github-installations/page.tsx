@@ -1,10 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -59,19 +63,14 @@ function CreateInstallationModal({ onClose, open }: { onClose: () => void; open:
           placeholder="acme"
           value={accountLogin}
         />
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} type="button" variant="secondary">
-            Cancel
-          </Button>
-          <Button
-            disabled={!installationId.trim() || !accountLogin.trim() || create.isPending}
-            type="submit"
-            variant="primary"
-          >
-            {create.isPending ? 'Adding…' : 'Add'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          disabled={!installationId.trim() || !accountLogin.trim()}
+          isPending={create.isPending}
+          onCancel={onClose}
+          pendingLabel="Adding…"
+          submitLabel="Add installation"
+        />
       </form>
     </Modal>
   );
@@ -129,64 +128,14 @@ function EditInstallationModal({
           <option value="true">In use</option>
           <option value="false">Retired</option>
         </Select>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} type="button" variant="secondary">
-            Cancel
-          </Button>
-          <Button disabled={update.isPending} type="submit" variant="primary">
-            {update.isPending ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          isPending={update.isPending}
+          onCancel={onClose}
+          pendingLabel="Saving…"
+          submitLabel="Save changes"
+        />
       </form>
-    </Modal>
-  );
-}
-
-function DeleteInstallationModal({
-  installation,
-  onClose,
-}: {
-  installation: GithubInstallationRow | null;
-  onClose: () => void;
-}) {
-  const [error, setError] = useState<string | null>(null);
-  const remove = useDeleteGithubInstallation();
-
-  if (!installation) {
-    return null;
-  }
-  const target = installation;
-
-  async function submit() {
-    setError(null);
-    try {
-      await remove.mutateAsync(target.id);
-      onClose();
-    } catch (err) {
-      // The API refuses while repositories still point at it and names them,
-      // which is more useful than a foreign-key error.
-      setError(errMsg(err));
-    }
-  }
-
-  return (
-    <Modal onClose={onClose} open title={`Delete installation ${installation.installationId}?`}>
-      <div className="space-y-4">
-        <p className="text-sm text-paper-300">
-          Repositories pointing at this installation must be repointed first. Deleting does not
-          uninstall the app on GitHub.
-        </p>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="secondary">
-            Cancel
-          </Button>
-          <Button disabled={remove.isPending} onClick={submit} variant="danger">
-            {remove.isPending ? 'Deleting…' : 'Delete'}
-          </Button>
-        </div>
-      </div>
     </Modal>
   );
 }
@@ -196,15 +145,17 @@ export default function StudioGithubInstallationsPage() {
   const [editTarget, setEditTarget] = useState<GithubInstallationRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GithubInstallationRow | null>(null);
   const { data: installations, isLoading, isError, error: loadError } = useGithubInstallations();
+  const remove = useDeleteGithubInstallation();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
-            + Add Installation
+            Add installation
           </Button>
         }
+        chapter="§ Studio"
         subtitle={
           <>
             Where the GitHub App is installed. The app&apos;s own credentials are instance-wide and
@@ -212,7 +163,7 @@ export default function StudioGithubInstallationsPage() {
             deployment reaches. A repository with no installation uses the one configured there.
           </>
         }
-        title="GitHub Installations"
+        title="GitHub installations"
       />
 
       <QueryBoundary
@@ -226,10 +177,11 @@ export default function StudioGithubInstallationsPage() {
             <CardTitle>Installations</CardTitle>
           </CardHeader>
           {!installations || installations.length === 0 ? (
-            <div className="py-4 text-center text-sm text-paper-400">
-              No installations recorded. A single-organization deployment does not need one — add
-              these only to reach repositories in more than one GitHub organization.
-            </div>
+            <EmptyState
+              className="py-4"
+              hint="A single-organization deployment does not need one — add these only to reach repositories in more than one GitHub organization."
+              title="No installations recorded."
+            />
           ) : (
             <Table>
               <THead>
@@ -249,8 +201,10 @@ export default function StudioGithubInstallationsPage() {
                     <Td className="py-2 pr-4 text-xs text-paper-300">
                       {i._count?.connections ?? 0}
                     </Td>
-                    <Td className="py-2 pr-4 text-xs text-paper-300">
-                      {i.isActive ? 'In use' : 'Retired'}
+                    <Td className="py-2 pr-4">
+                      <Badge dot tone={i.isActive ? 'moss' : 'muted'} variant="text">
+                        {i.isActive ? 'In use' : 'Retired'}
+                      </Badge>
                     </Td>
                     <Td className="py-2 text-right">
                       <div className="flex justify-end gap-2">
@@ -271,11 +225,9 @@ export default function StudioGithubInstallationsPage() {
       </QueryBoundary>
 
       {/*
-        Every modal is keyed. Returning null does not unmount a component, so
-        without a key its `error` state survives: read the 409 naming the
-        repositories that still use one installation, cancel, open Delete on a
-        different one, and the old error is still sitting under the new title.
-        The create modal keeps its error across close and reopen the same way.
+        The form modals are keyed. Returning null does not unmount a component,
+        so without a key its `error` state survives a close and reopen, or a
+        switch to a different row. ConfirmModal clears its own error on close.
       */}
       <CreateInstallationModal
         key={newOpen ? 'create-open' : 'create-closed'}
@@ -287,10 +239,21 @@ export default function StudioGithubInstallationsPage() {
         key={editTarget?.id}
         onClose={() => setEditTarget(null)}
       />
-      <DeleteInstallationModal
-        installation={deleteTarget}
-        key={deleteTarget?.id}
+      {/* The API refuses while repositories still point at an installation and
+          names them; ConfirmModal shows that rejection inline. */}
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message="Repositories pointing at this installation must be repointed first. Deleting does not uninstall the app on GitHub."
         onClose={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (deleteTarget) {
+            await remove.mutateAsync(deleteTarget.id);
+          }
+        }}
+        open={deleteTarget !== null}
+        pendingLabel="Deleting…"
+        title={`Delete installation ${deleteTarget?.installationId ?? ''}?`}
       />
     </div>
   );

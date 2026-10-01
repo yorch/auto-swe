@@ -1,10 +1,11 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { BUTTON_STYLE, Button, buttonClassName } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -56,6 +57,33 @@ const SOCIAL_PROVIDERS: Provider[] = [
     tone: 'ember',
   },
 ];
+
+/** One sign-in method in the linked-accounts list: status dot, name, detail line, action. */
+function LinkedAccountRow({
+  action,
+  detail,
+  dotClass,
+  label,
+}: {
+  action: ReactNode;
+  detail: ReactNode;
+  /** Background class for the status dot; `bg-ink-500` when not linked. */
+  dotClass: string;
+  label: string;
+}) {
+  return (
+    <li className="flex items-center justify-between py-4">
+      <div className="flex items-center gap-3">
+        <span aria-hidden className={cn('inline-block h-2 w-2 rounded-full', dotClass)} />
+        <div>
+          <div className="text-sm text-paper-100">{label}</div>
+          <div className="font-mono text-[11px] text-paper-500">{detail}</div>
+        </div>
+      </div>
+      {action}
+    </li>
+  );
+}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -145,34 +173,26 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="space-y-10">
-      <div className="fade-up">
-        <PageHeader
-          chapter="§ Settings"
-          subtitle="Profile, sign-in methods, and integrations. Changes apply to your account only."
-          title="Account settings."
-        />
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        chapter="§ Account"
+        subtitle="Profile, sign-in methods, and integrations. Changes apply to your account only."
+        title="Account settings"
+      />
 
-      <section className="fade-up stagger-1">
+      <section>
         <SectionHeader hint="who you are" number="01" title="Profile" />
         <Card variant="inset">
           <dl className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-4 text-sm">
-            <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-              User ID
-            </dt>
+            <dt className="label-mono">User ID</dt>
             <dd className="tabular font-mono text-xs text-paper-200">{user?.sub ?? '—'}</dd>
-            <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-              Email
-            </dt>
+            <dt className="label-mono">Email</dt>
             <dd className="font-mono text-xs text-paper-200">{user?.email ?? '—'}</dd>
-            <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-              Role
-            </dt>
-            <dd className="font-mono text-xs">
-              <span className="rounded border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 uppercase tracking-wider text-ember-400">
+            <dt className="label-mono">Role</dt>
+            <dd>
+              <Badge tone="ember" uppercase variant="outline">
                 {user?.role ?? 'guest'}
-              </span>
+              </Badge>
             </dd>
           </dl>
           <div className="mt-6 border-t border-ink-600 pt-4">
@@ -183,7 +203,7 @@ export default function SettingsPage() {
         </Card>
       </section>
 
-      <section className="fade-up stagger-2">
+      <section>
         <SectionHeader hint="link / unlink sign-in providers" number="02" title="Linked accounts" />
 
         {error && (
@@ -204,90 +224,80 @@ export default function SettingsPage() {
               const configured = providers[p.id];
               const account = linked.find((a) => a.providerId === p.id);
               return (
-                <li className="flex items-center justify-between py-4" key={p.id}>
-                  <div className="flex items-center gap-3">
-                    <span
-                      aria-hidden
-                      className={cn(
-                        'inline-block h-2 w-2 rounded-full',
-                        isLinked
-                          ? p.tone === 'ember'
-                            ? 'bg-ember-400'
-                            : 'bg-dust-400'
-                          : 'bg-ink-500'
-                      )}
-                    />
-                    <div>
-                      <div className="text-sm text-paper-100">{p.label}</div>
-                      <div className="font-mono text-[11px] text-paper-500">
-                        {isLinked
-                          ? `linked${account?.accountId ? ` · ${account.accountId.slice(0, 12)}…` : ''}`
-                          : configured
-                            ? p.description
-                            : 'not configured server-side'}
-                      </div>
-                    </div>
-                  </div>
-                  {isLinked && account ? (
-                    <Button
-                      onClick={() =>
-                        setUnlinkTarget({ accountId: account.id, label: p.label, providerId: p.id })
-                      }
-                      size="sm"
-                      variant="ghost"
-                    >
-                      Unlink
-                    </Button>
-                  ) : configured ? (
-                    <Button
-                      disabled={busy === p.id}
-                      onClick={() => handleLink(p.id)}
-                      size="sm"
-                      variant="secondary"
-                    >
-                      {busy === p.id ? 'Linking…' : 'Link'}
-                    </Button>
-                  ) : (
-                    <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                      —
-                    </span>
-                  )}
-                </li>
+                <LinkedAccountRow
+                  action={
+                    isLinked && account ? (
+                      <Button
+                        onClick={() =>
+                          setUnlinkTarget({
+                            accountId: account.id,
+                            label: p.label,
+                            providerId: p.id,
+                          })
+                        }
+                        size="sm"
+                        variant="danger"
+                      >
+                        Unlink
+                      </Button>
+                    ) : configured ? (
+                      <Button
+                        disabled={busy === p.id}
+                        onClick={() => handleLink(p.id)}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        {busy === p.id ? 'Linking…' : 'Link'}
+                      </Button>
+                    ) : (
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                        —
+                      </span>
+                    )
+                  }
+                  detail={
+                    isLinked
+                      ? `linked${account?.accountId ? ` · ${account.accountId.slice(0, 12)}…` : ''}`
+                      : configured
+                        ? p.description
+                        : 'not configured server-side'
+                  }
+                  dotClass={
+                    isLinked ? (p.tone === 'ember' ? 'bg-ember-400' : 'bg-dust-400') : 'bg-ink-500'
+                  }
+                  key={p.id}
+                  label={p.label}
+                />
               );
             })}
 
             {/* Slack lives outside better-auth — keep its custom OAuth flow. */}
-            <li className="flex items-center justify-between py-4">
-              <div className="flex items-center gap-3">
-                <span
-                  aria-hidden
-                  className={cn(
-                    'inline-block h-2 w-2 rounded-full',
-                    user?.slackId ? 'bg-moss-400' : 'bg-ink-500'
-                  )}
-                />
-                <div>
-                  <div className="text-sm text-paper-100">Slack</div>
-                  <div className="font-mono text-[11px] text-paper-500">
-                    {user?.slackId
-                      ? `linked · ${user.slackId}`
-                      : 'Required for the `/auto-swe` slash command and per-step failure DMs.'}
-                  </div>
-                </div>
-              </div>
-              {user?.slackId ? (
-                <span className="font-mono text-[10px] uppercase tracking-wider text-moss-400">
-                  Connected
-                </span>
-              ) : (
-                <a
-                  className="inline-flex h-7 items-center justify-center gap-2 rounded-lg border border-ink-500 bg-transparent px-4 font-mono text-[11px] uppercase tracking-[0.12em] text-paper-100 transition-colors hover:border-ember-400 hover:text-ember-400"
-                  href={`${API_BASE}/api/v1/auth/slack/connect`}
-                >
-                  Connect
-                </a>
-              )}
-            </li>
+            <LinkedAccountRow
+              action={
+                user?.slackId ? (
+                  <Badge tone="moss" uppercase variant="text">
+                    Connected
+                  </Badge>
+                ) : (
+                  // A full-page navigation to the gateway's OAuth start, not an
+                  // app route, so it stays a plain anchor rather than a ButtonLink.
+                  <a
+                    className={buttonClassName('secondary', 'sm')}
+                    href={`${API_BASE}/api/v1/auth/slack/connect`}
+                    style={BUTTON_STYLE}
+                  >
+                    Connect
+                  </a>
+                )
+              }
+              detail={
+                user?.slackId
+                  ? `linked · ${user.slackId}`
+                  : 'Required for the `/auto-swe` slash command and per-step failure DMs.'
+              }
+              dotClass={user?.slackId ? 'bg-moss-400' : 'bg-ink-500'}
+              label="Slack"
+            />
           </ul>
           <p className="mt-4 border-t border-ink-600 pt-3 font-mono text-[10px] uppercase tracking-wider text-paper-500">
             Unlinking is blocked if it would leave you without a sign-in method.
@@ -295,7 +305,7 @@ export default function SettingsPage() {
         </Card>
       </section>
 
-      <section className="fade-up stagger-3">
+      <section>
         <SectionHeader hint="email + password / magic link" number="03" title="Credentials" />
         <Card variant="inset">
           <p className="text-xs text-paper-400">
@@ -306,9 +316,8 @@ export default function SettingsPage() {
         </Card>
       </section>
 
-      <section className="fade-up stagger-4">
-        <SectionHeader hint="for the auto-swe CLI" number="04" title="API tokens" />
-        <AccessTokensSection />
+      <section>
+        <AccessTokensSection number="04" />
       </section>
 
       <ConfirmModal

@@ -58,8 +58,9 @@ function StudioIntegrationsPageInner() {
   const installedSlackTeamId = searchParams.get('slack_installed');
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
+        chapter="§ Studio"
         subtitle={
           <>
             Configure GitHub, Slack, storage backend, issue tracker, and OAuth provider credentials.
@@ -68,7 +69,7 @@ function StudioIntegrationsPageInner() {
             variable.
           </>
         }
-        title="Admin — Integrations"
+        title="Integrations"
       />
       <TabBar active={active} onChange={setActive} tabs={TABS} />
       {active === 'github' && <GitHubTab />}

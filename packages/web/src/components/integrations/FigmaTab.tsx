@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
 import {
   type FigmaConfigInput,
   testFigmaConnection,
@@ -12,6 +14,7 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { ConfigField } from './ConfigField';
+import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
 
 export function FigmaTab() {
@@ -83,8 +86,8 @@ export function FigmaTab() {
             id="figma-enabled"
             label="Enabled"
           >
-            <select
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs focus:border-ember-400 focus:outline-none"
+            <Select
+              compact
               id="figma-enabled"
               onChange={(e) => {
                 const v = e.target.value;
@@ -95,7 +98,7 @@ export function FigmaTab() {
               <option value="">(keep current)</option>
               <option value="true">Yes</option>
               <option value="false">No</option>
-            </select>
+            </Select>
           </ConfigField>
           <SecretInput
             current={data?.apiToken ?? null}
@@ -107,15 +110,15 @@ export function FigmaTab() {
             value={apiToken}
           />
           <ConfigField current={data?.maxNodes ?? undefined} id="figma-max-nodes" label="Max nodes">
-            <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+            <Input
+              compact
               id="figma-max-nodes"
               inputMode="numeric"
               onChange={(e) => setMaxNodes(e.target.value)}
               placeholder="12"
               value={maxNodes}
             />
-            <p className="mt-1 text-[10px] text-paper-600">
+            <p className="text-[11px] text-paper-600">
               Caps how many design nodes are summarized per request — bounds context size and cost.
             </p>
           </ConfigField>
@@ -138,21 +141,10 @@ export function FigmaTab() {
         >
           {testing ? 'Testing…' : 'Test connection'}
         </Button>
-        {testResult && (
-          <p className={`mt-2 text-sm ${testResult.ok ? 'text-moss-400' : 'text-brick-400'}`}>
-            {testResult.ok ? '✓' : '✗'} {testResult.detail}
-          </p>
-        )}
+        <TestResultAlert result={testResult} />
       </Card>
 
-      {saved && <p className="text-sm text-moss-400">Settings saved.</p>}
-      {error && <p className="text-sm text-brick-400">{error}</p>}
-
-      <div className="flex justify-end">
-        <Button disabled={update.isPending} type="submit" variant="primary">
-          {update.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
     </form>
   );
 }

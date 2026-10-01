@@ -1,7 +1,10 @@
 'use client';
 
 import { useMemo } from 'react';
+import { Alert } from '@/components/ui/Alert';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { repoRefLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 
 /** The repo side of an unresolved-edge row — enough to label and link it. */
@@ -34,13 +37,6 @@ interface SuggestionGroup {
   repos: SuggestionSourceRepo[];
   kinds: string[];
   sources: string[];
-}
-
-function repoLabel(repo: SuggestionSourceRepo): string {
-  if (repo.organizationName && repo.repoName) {
-    return `${repo.organizationName}/${repo.repoName}`;
-  }
-  return repo.name ?? repo.id;
 }
 
 /** Group unresolved edges by `toRef`, collapsing repeats of the same referencing repo. */
@@ -83,7 +79,7 @@ function SuggestionRow({ group }: { group: SuggestionGroup }) {
         </span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-paper-400 text-xs">
-        <span>{group.repos.map(repoLabel).join(', ')}</span>
+        <span>{group.repos.map(repoRefLabel).join(', ')}</span>
         <span className="text-paper-500">
           {group.kinds.join(', ')} · {group.sources.join(', ')}
         </span>
@@ -112,20 +108,15 @@ export function RepoDependencySuggestions({
   }
 
   if (isError) {
-    return (
-      <p className="py-6 text-center text-brick-400 text-sm">
-        {errMsg(error, 'Could not load onboarding suggestions.')}
-      </p>
-    );
+    return <Alert>{errMsg(error, 'Could not load onboarding suggestions.')}</Alert>;
   }
 
   if (groups.length === 0) {
-    return <p className="text-paper-400 text-sm">{emptyText}</p>;
+    return <EmptyState title={emptyText} />;
   }
 
   return (
     <section>
-      <h4 className="mb-1 font-semibold text-sm">Onboarding suggestions</h4>
       <p className="mb-2 text-paper-500 text-xs">
         Dependencies detected in manifests or git signals that don't resolve to an onboarded
         repository yet, grouped by the unresolved reference and ranked by how many repos declare it.

@@ -1,9 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { CopyButton } from '@/components/ui/CopyButton';
+import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type GoogleOAuthConfigInput,
@@ -16,8 +15,9 @@ import {
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { API_BASE } from '@/lib/config';
 import { ConfigField } from './ConfigField';
-import { RestartWarning } from './RestartWarning';
+import { IntegrationFormFooter } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
+import { UrlRow } from './UrlRow';
 
 /**
  * Identity-provider credentials. Google and Okta are independent providers
@@ -29,25 +29,6 @@ export function OAuthTab() {
     <div className="space-y-10">
       <GoogleOAuthForm />
       <OktaOAuthForm />
-    </div>
-  );
-}
-
-const INPUT_CLASS =
-  'w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none';
-
-/** Read-only display of a provider callback URL, with a copy button. */
-function CallbackUrl({ help, url }: { help: React.ReactNode; url: string }) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs uppercase text-paper-500">OAuth callback URL</div>
-      <div className="flex items-center gap-2">
-        <code className="flex-1 rounded-sm border border-ink-700 bg-ink-900 px-3 py-1.5 font-mono text-xs text-paper-300">
-          {url}
-        </code>
-        <CopyButton value={url} />
-      </div>
-      <p className="text-[11px] text-paper-600">{help}</p>
     </div>
   );
 }
@@ -108,8 +89,8 @@ function GoogleOAuthForm() {
             label="Client ID"
             source={sources.clientId}
           >
-            <input
-              className={INPUT_CLASS}
+            <Input
+              compact
               id="google-client-id"
               onChange={(e) => setClientId(e.target.value)}
               placeholder="123456789012-abcdefgh.apps.googleusercontent.com"
@@ -125,7 +106,7 @@ function GoogleOAuthForm() {
             value={clientSecret}
           />
 
-          <CallbackUrl
+          <UrlRow
             help={
               <>
                 Add this as an Authorized redirect URI in your Google Cloud OAuth 2.0 Client
@@ -133,20 +114,18 @@ function GoogleOAuthForm() {
                 builds its redirect_uri from that value.
               </>
             }
+            label="OAuth callback URL"
             url={googleOauthCallback}
           />
         </div>
       </Card>
 
-      {requiresRestart && <RestartWarning />}
-      {saved && !requiresRestart && <p className="text-sm text-moss-400">Settings saved.</p>}
-      {error && <p className="text-sm text-brick-400">{error}</p>}
-
-      <div className="flex justify-end">
-        <Button disabled={update.isPending} type="submit" variant="primary">
-          {update.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      <IntegrationFormFooter
+        error={error}
+        isPending={update.isPending}
+        requiresRestart={requiresRestart}
+        saved={saved}
+      />
     </form>
   );
 }
@@ -222,15 +201,15 @@ function OktaOAuthForm() {
               label="Issuer URL"
               source={sources.issuer}
             >
-              <input
-                className={INPUT_CLASS}
+              <Input
+                compact
                 id="okta-issuer"
                 onChange={(e) => setIssuer(e.target.value)}
                 placeholder="https://dev-12345.okta.com/oauth2/default"
                 value={issuer}
               />
             </ConfigField>
-            <p className="mt-1 text-[11px] text-paper-600">
+            <p className="mt-1.5 text-[11px] text-paper-600">
               The authorization server, not the org URL — copy it from Okta&apos;s{' '}
               <span className="font-mono">Security → API → Authorization Servers</span> table. Must
               be a public HTTPS URL: the gateway fetches its discovery document server-side, so
@@ -243,8 +222,8 @@ function OktaOAuthForm() {
             label="Client ID"
             source={sources.clientId}
           >
-            <input
-              className={INPUT_CLASS}
+            <Input
+              compact
               id="okta-client-id"
               onChange={(e) => setClientId(e.target.value)}
               placeholder="0oa1a2b3c4D5e6F7g8h9"
@@ -260,7 +239,7 @@ function OktaOAuthForm() {
             value={clientSecret}
           />
 
-          <CallbackUrl
+          <UrlRow
             help={
               <>
                 Add this as a Sign-in redirect URI on the Okta application. The host must match the
@@ -268,33 +247,26 @@ function OktaOAuthForm() {
                 value.
               </>
             }
+            label="OAuth callback URL"
             url={oktaCallback}
           />
 
           {discoveryUrl && (
-            <div className="space-y-1">
-              <div className="text-xs uppercase text-paper-500">Discovery URL</div>
-              <code className="block rounded-sm border border-ink-700 bg-ink-900 px-3 py-1.5 font-mono text-xs text-paper-300">
-                {discoveryUrl}
-              </code>
-              <p className="text-[11px] text-paper-600">
-                Fetched by the gateway at startup. Open it in a browser to confirm it returns JSON
-                before restarting.
-              </p>
-            </div>
+            <UrlRow
+              help="Fetched by the gateway at startup. Open it in a browser to confirm it returns JSON before restarting."
+              label="Discovery URL"
+              url={discoveryUrl}
+            />
           )}
         </div>
       </Card>
 
-      {requiresRestart && <RestartWarning />}
-      {saved && !requiresRestart && <p className="text-sm text-moss-400">Settings saved.</p>}
-      {error && <p className="text-sm text-brick-400">{error}</p>}
-
-      <div className="flex justify-end">
-        <Button disabled={update.isPending} type="submit" variant="primary">
-          {update.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      <IntegrationFormFooter
+        error={error}
+        isPending={update.isPending}
+        requiresRestart={requiresRestart}
+        saved={saved}
+      />
     </form>
   );
 }

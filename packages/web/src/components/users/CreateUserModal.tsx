@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
+import { CopyButton } from '@/components/ui/CopyButton';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { type CreatedUser, useCreateUser } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 
@@ -19,7 +20,6 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
   const [slackId, setSlackId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<CreatedUser | null>(null);
-  const [copied, markCopied, resetCopied] = useTransientFlag();
 
   function reset() {
     setEmail('');
@@ -52,28 +52,14 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
     }
   }
 
-  async function handleCopy() {
-    if (!revealed?.temporaryPassword) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(revealed.temporaryPassword);
-      markCopied();
-    } catch {
-      // clipboard unavailable — user can select manually
-    }
-  }
-
   function handleRevealClose() {
     setRevealed(null);
-    resetCopied();
     onClose();
   }
 
   return (
     <>
       <Modal
-        eyebrow="§ Create user"
         onClose={onClose}
         open={open && revealed === null}
         subtitle="Skips the invite/magic-link dance — useful for service accounts or when SMTP/Resend isn't configured. Pre-active, pre-membered to the default team."
@@ -114,17 +100,13 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
             placeholder="U01ABCDEFGH"
             value={slackId}
           />
-          {error && (
-            <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">{error}</p>
-          )}
-          <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
-            <Button onClick={onClose} type="button" variant="ghost">
-              Cancel
-            </Button>
-            <Button disabled={create.isPending} type="submit" variant="primary">
-              {create.isPending ? 'Creating…' : 'Create user'}
-            </Button>
-          </div>
+          {error && <Alert>{error}</Alert>}
+          <ModalFooter
+            isPending={create.isPending}
+            onCancel={onClose}
+            pendingLabel="Creating…"
+            submitLabel="Create user"
+          />
         </form>
       </Modal>
 
@@ -142,9 +124,7 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
                 {revealed.temporaryPassword}
               </code>
             </div>
-            <Button onClick={handleCopy} size="sm" variant="secondary">
-              {copied ? '✓ Copied' : 'Copy to clipboard'}
-            </Button>
+            <CopyButton value={revealed.temporaryPassword} />
             <div className="flex items-center justify-end border-t border-ink-600 pt-4">
               <Button onClick={handleRevealClose} type="button" variant="ghost">
                 I have it

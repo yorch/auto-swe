@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
 import type { SecurityEvent, SecurityEventType } from '@/hooks/useAdmin';
 import { formatRelativeTime } from '@/lib/utils';
 
@@ -176,7 +177,7 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
       return null;
     }
     return (
-      <pre className="mt-1.5 font-mono text-[10px] text-paper-300 bg-ink-800 px-2 py-1 rounded overflow-x-auto whitespace-pre-wrap break-all">
+      <pre className="mt-1.5 font-mono text-[10px] text-paper-300 bg-ink-900 px-2 py-1 rounded overflow-x-auto whitespace-pre-wrap break-all">
         {cmd}
       </pre>
     );
@@ -189,12 +190,14 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
 
 function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRunLink: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const detailId = useId();
   const { primary, secondary } = extractDetail(event);
   const { dot } = EVENT_STYLE[event.eventType];
 
   return (
     <li>
       <button
+        aria-controls={detailId}
         aria-expanded={expanded}
         className="w-full text-left rounded hover:bg-ink-800 px-2 py-1.5 transition-colors"
         onClick={() => setExpanded((e) => !e)}
@@ -231,11 +234,11 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
           <span className="text-paper-500">{event.nodeId}</span>
         </div>
       )}
-      {expanded && (
-        <div className="px-2 pl-6">
-          <ExpandedDetail event={event} />
-        </div>
-      )}
+      {/* A sibling of the toggle, not inside it: content in a <button> is not
+          selectable, and block content there is invalid. */}
+      <div className="px-2 pl-6" hidden={!expanded} id={detailId}>
+        {expanded && <ExpandedDetail event={event} />}
+      </div>
     </li>
   );
 }
@@ -252,7 +255,7 @@ export function SecurityEventList({
   showRunLink?: boolean;
 }) {
   if (events.length === 0) {
-    return <p className="text-xs text-paper-400 py-1">{emptyMessage}</p>;
+    return <EmptyState title={emptyMessage} />;
   }
   return (
     <ul className="space-y-0.5">

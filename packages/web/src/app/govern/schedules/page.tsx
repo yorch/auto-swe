@@ -3,15 +3,17 @@
 import type { ScheduledWorkRequestSummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRepositories } from '@/hooks/useRepositories';
 import {
@@ -77,7 +79,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
   }
 
   return (
-    <Modal eyebrow="Admin / Schedules" onClose={onClose} open={open} title="New Schedule">
+    <Modal onClose={onClose} open={open} title="New schedule">
       <form className="space-y-4" onSubmit={handleSubmit}>
         <Input
           id="schedule-name"
@@ -116,7 +118,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
           />
           <Input
             id="schedule-ticket-prefix"
-            label="Ticket Prefix"
+            label="Ticket prefix"
             onChange={(e) => setForm((f) => ({ ...f, externalTicketPrefix: e.target.value }))}
             placeholder="DEPS"
             required
@@ -139,7 +141,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
           </Select>
           <Select
             id="schedule-budget-tier"
-            label="Budget Tier"
+            label="Budget tier"
             onChange={(e) =>
               setForm((f) => ({
                 ...f,
@@ -163,62 +165,13 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
           value={form.description}
         />
         {error && <Alert variant="error">{error}</Alert>}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={create.isPending} type="submit" variant="primary">
-            {create.isPending ? 'Creating…' : 'Create Schedule'}
-          </Button>
-        </div>
+        <ModalFooter
+          isPending={create.isPending}
+          onCancel={onClose}
+          pendingLabel="Creating…"
+          submitLabel="Create schedule"
+        />
       </form>
-    </Modal>
-  );
-}
-
-function DeleteConfirmModal({
-  schedule,
-  onClose,
-}: {
-  schedule: ScheduledWorkRequestSummary | null;
-  onClose: () => void;
-}) {
-  const deleteSchedule = useDeleteSchedule();
-  const [error, setError] = useState<string | null>(null);
-
-  if (!schedule) {
-    return null;
-  }
-
-  async function handleDelete() {
-    if (!schedule) {
-      return;
-    }
-    setError(null);
-    try {
-      await deleteSchedule.mutateAsync(schedule.id);
-      onClose();
-    } catch (err) {
-      setError(errMsg(err, 'Failed to delete schedule'));
-    }
-  }
-
-  return (
-    <Modal onClose={onClose} open={!!schedule} title={`Delete "${schedule.name}"?`}>
-      <div className="space-y-4">
-        <p className="text-sm text-paper-400">
-          This removes the schedule and its Temporal Schedule. Past runs and their history are kept.
-        </p>
-        {error && <Alert variant="error">{error}</Alert>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={deleteSchedule.isPending} onClick={handleDelete} variant="danger">
-            {deleteSchedule.isPending ? 'Deleting…' : 'Delete'}
-          </Button>
-        </div>
-      </div>
     </Modal>
   );
 }
@@ -265,17 +218,13 @@ function ScheduleRow({
             : 'team default'}
         </Td>
         <Td className="py-2 pr-4">
-          <span
-            className={`font-mono text-[10px] uppercase tracking-wider ${
-              schedule.isActive ? 'text-ember-400' : 'text-paper-500'
-            }`}
-          >
+          <Badge tone={schedule.isActive ? 'ember' : 'muted'} uppercase variant="text">
             {schedule.isActive ? 'active' : 'paused'}
-          </span>
+          </Badge>
           {!schedule.schedule.exists && (
-            <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-brick-400">
+            <Badge className="ml-2" tone="brick" uppercase variant="text">
               missing in temporal
-            </span>
+            </Badge>
           )}
         </Td>
         <Td className="py-2 pr-4 text-xs text-paper-400">{fmtTime(schedule.schedule.nextRunAt)}</Td>
@@ -309,11 +258,9 @@ function ScheduleRow({
         </Td>
       </TRow>
       {error && (
-        <TRow>
-          <Td className="pb-2 text-xs text-brick-400" colSpan={8}>
-            {error}
-          </Td>
-        </TRow>
+        <TableStatusRow colSpan={8}>
+          <Alert>{error}</Alert>
+        </TableStatusRow>
       )}
     </>
   );
@@ -322,23 +269,25 @@ function ScheduleRow({
 export default function GovernSchedulesPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ScheduledWorkRequestSummary | null>(null);
+  const deleteSchedule = useDeleteSchedule();
   const { data: schedules, isLoading, isError, error: loadError } = useSchedules();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
-            + New Schedule
+            Create schedule
           </Button>
         }
+        chapter="§ Govern"
         subtitle="Standing automation: each schedule fires the workflow engine on a cron cadence against one repository (e.g. a weekly dependency update). Fires reuse the same synthetic ticket and branch; runs appear in Run History attributed to the schedule's standing work request. Templates are snapshotted when the schedule is saved."
-        title="Scheduled Work Requests"
+        title="Scheduled work requests"
       />
 
       <Card>
         <CardHeader>
-          <CardTitle>All Schedules</CardTitle>
+          <CardTitle>All schedules</CardTitle>
         </CardHeader>
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="schedules">
           {!schedules?.length ? (
@@ -366,11 +315,19 @@ export default function GovernSchedulesPage() {
       </Card>
 
       <ScheduleFormModal onClose={() => setNewOpen(false)} open={newOpen} />
-      {/* Keyed by row so a failed delete's error does not carry over to the next schedule. */}
-      <DeleteConfirmModal
-        key={deleteTarget?.id}
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message="This removes the schedule and its Temporal Schedule. Past runs and their history are kept."
         onClose={() => setDeleteTarget(null)}
-        schedule={deleteTarget}
+        onConfirm={async () => {
+          if (deleteTarget) {
+            await deleteSchedule.mutateAsync(deleteTarget.id);
+          }
+        }}
+        open={deleteTarget !== null}
+        pendingLabel="Deleting…"
+        title={`Delete "${deleteTarget?.name ?? ''}"?`}
       />
     </div>
   );

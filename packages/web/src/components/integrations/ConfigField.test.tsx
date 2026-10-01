@@ -2,6 +2,7 @@
 
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { Input } from '@/components/ui/Input';
 import { ConfigField } from './ConfigField';
 
 /**
@@ -37,7 +38,7 @@ describe('ConfigField', () => {
   it('ties the label to the control it wraps', () => {
     render(
       <ConfigField id="s3-bucket" label="Bucket">
-        <input id="s3-bucket" readOnly value="my-bucket" />
+        <Input compact id="s3-bucket" readOnly value="my-bucket" />
       </ConfigField>
     );
 

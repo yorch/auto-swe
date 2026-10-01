@@ -1,6 +1,7 @@
 'use client';
 
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
+import type { ReactNode } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -23,6 +24,16 @@ function summarizeByScorer(results: EvalResultDto[]) {
     .sort((a, b) => a.scorer.localeCompare(b.scorer));
 }
 
+/** One label / value line in a divided list. */
+function KeyValueRow({ label, value }: { label: ReactNode; value: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-ink-600 py-1.5 last:border-0">
+      {label}
+      {value}
+    </div>
+  );
+}
+
 export default function GovernEvalsPage() {
   const datasetsQuery = useEvalDatasets();
   const resultsQuery = useEvalResults({ limit: 200 });
@@ -32,76 +43,74 @@ export default function GovernEvalsPage() {
   const summary = summarizeByScorer(results?.data ?? []);
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Evals" />
+    <div className="space-y-8">
+      <PageHeader
+        chapter="§ Govern"
+        subtitle="Per-scorer quality signals from recent eval runs, and the datasets they score against."
+        title="Evals"
+      />
 
       <Card>
         <CardHeader>
           <CardTitle>Scorer trends (last {results?.meta.total ?? 0} signals)</CardTitle>
         </CardHeader>
-        <div className="px-4 pb-4">
-          <QueryBoundary
-            error={resultsQuery.error}
-            isError={resultsQuery.isError}
-            isLoading={resultsQuery.isLoading}
-            label="eval results"
-          >
-            {summary.length === 0 ? (
-              <EmptyState className="py-0 text-left" title="No eval signals captured yet." />
-            ) : (
-              <div className="space-y-1">
-                {summary.map((s) => (
-                  <div
-                    className="flex items-center justify-between gap-3 py-1.5 border-b border-ink-600/40 last:border-0"
-                    key={s.scorer}
-                  >
-                    <span className="font-mono text-xs text-paper-400">{s.scorer}</span>
+        <QueryBoundary
+          error={resultsQuery.error}
+          isError={resultsQuery.isError}
+          isLoading={resultsQuery.isLoading}
+          label="eval results"
+        >
+          {summary.length === 0 ? (
+            <EmptyState title="No eval signals captured yet." />
+          ) : (
+            <div className="space-y-1">
+              {summary.map((s) => (
+                <KeyValueRow
+                  key={s.scorer}
+                  label={<span className="font-mono text-xs text-paper-400">{s.scorer}</span>}
+                  value={
                     <span className="flex items-center gap-3">
                       <span className="text-xs text-paper-600">n={s.n}</span>
                       <span className="font-mono text-xs num" style={{ color: scoreColor(s.mean) }}>
                         {s.mean.toFixed(2)}
                       </span>
                     </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </QueryBoundary>
-        </div>
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </QueryBoundary>
       </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>Datasets ({datasets?.length ?? 0})</CardTitle>
         </CardHeader>
-        <div className="px-4 pb-4">
-          <QueryBoundary
-            error={datasetsQuery.error}
-            isError={datasetsQuery.isError}
-            isLoading={datasetsQuery.isLoading}
-            label="eval datasets"
-          >
-            {datasets && datasets.length > 0 ? (
-              <div className="space-y-1">
-                {datasets.map((d) => (
-                  <div
-                    className="flex items-center justify-between gap-3 py-1.5 border-b border-ink-600/40 last:border-0"
-                    key={d.id}
-                  >
+        <QueryBoundary
+          error={datasetsQuery.error}
+          isError={datasetsQuery.isError}
+          isLoading={datasetsQuery.isLoading}
+          label="eval datasets"
+        >
+          {datasets && datasets.length > 0 ? (
+            <div className="space-y-1">
+              {datasets.map((d) => (
+                <KeyValueRow
+                  key={d.id}
+                  label={
                     <span className="font-mono text-xs text-paper-300">
                       {d.slug} <span className="text-paper-600">[{d.scope}]</span>
                     </span>
-                    <span className="text-xs text-paper-600">{d.caseCount} cases</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-paper-400">
-                No datasets. Create one via the admin API or CLI.
-              </p>
-            )}
-          </QueryBoundary>
-        </div>
+                  }
+                  value={<span className="text-xs text-paper-600">{d.caseCount} cases</span>}
+                />
+              ))}
+            </div>
+          ) : (
+            <EmptyState hint="Create one via the admin API or CLI." title="No datasets." />
+          )}
+        </QueryBoundary>
       </Card>
     </div>
   );

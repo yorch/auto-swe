@@ -2,7 +2,10 @@
 
 import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
-import { formatDuration, formatTokens } from '@/lib/utils';
+import { Alert } from '@/components/ui/Alert';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { cn, formatCount, formatDuration, formatTokens } from '@/lib/utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -14,14 +17,10 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 // Type glyph — colored chip labelling the trace event kind
-const TYPE_GLYPH: Record<string, { label: string; color: string; bg: string }> = {
-  activity_event: {
-    bg: 'oklch(0.78 0.11 80 / 0.14)',
-    color: 'var(--color-amber-400)',
-    label: 'event',
-  },
-  llm_response: { bg: 'oklch(0.66 0.11 235 / 0.14)', color: 'var(--color-dust-400)', label: 'llm' },
-  tool_call: { bg: 'oklch(0.66 0 0 / 0.12)', color: 'var(--color-paper-500)', label: 'tool' },
+const TYPE_GLYPH: Record<string, { label: string; tone: BadgeTone }> = {
+  activity_event: { label: 'event', tone: 'amber' },
+  llm_response: { label: 'llm', tone: 'dust' },
+  tool_call: { label: 'tool', tone: 'muted' },
 };
 
 /** Strip provider prefix from a model spec: `anthropic/claude-opus-5-5` → `claude-opus-5-5` */
@@ -92,16 +91,15 @@ function CollapsibleSection({
     <div>
       <button
         aria-expanded={open}
-        className="flex items-center gap-1 text-paper-500 hover:text-paper-300 transition-colors mb-1"
+        className="mb-1 flex items-center gap-1 font-mono text-[9px] tracking-[0.08em] text-paper-500 transition-colors hover:text-paper-300"
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
         onKeyDown={(e) => e.stopPropagation()}
-        style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.08em' }}
         type="button"
       >
-        <span style={{ fontSize: '7px' }}>{open ? '▼' : '▶'}</span>
+        <span className="text-[7px]">{open ? '▼' : '▶'}</span>
         {label.toUpperCase()}
       </button>
       {open && children}
@@ -113,27 +111,10 @@ function CollapsibleSection({
 
 const BODY_LIMIT = 3000;
 
-/**
- * The mono block every trace body renders into.
- *
- * `radius` is a prop only because the call sites disagree: four round to 2px
- * and the tool_call fallback branch to 6px. That divergence predates this
- * component; collapsing it changes what the page renders, so it is a design
- * call rather than part of extracting the duplicate markup.
- */
-function TracePre({ children, radius }: { children: ReactNode; radius: '2px' | '6px' }) {
+/** The mono block every trace body renders into. */
+function TracePre({ children }: { children: ReactNode }) {
   return (
-    <pre
-      className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
-      style={{
-        background: 'var(--color-ink-900)',
-        border: '1px solid var(--color-ink-500)',
-        borderRadius: radius,
-        fontFamily: 'var(--font-mono)',
-        fontSize: '10px',
-        lineHeight: 1.5,
-      }}
-    >
+    <pre className="max-h-48 overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-ink-500 bg-ink-900 p-2.5 font-mono text-[10px] leading-normal text-paper-400">
       {children}
     </pre>
   );
@@ -162,55 +143,28 @@ function capped(text: string): string {
  * keeps a long page responsive; it should not be the reason a payload the
  * browser already holds cannot be read.
  */
-function CappedPre({ text, radius }: { text: string; radius: '2px' | '6px' }) {
+function CappedPre({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const isCapped = text.length > BODY_LIMIT;
   return (
     <>
-      <TracePre radius={radius}>{expanded ? text : capped(text)}</TracePre>
+      <TracePre>{expanded ? text : capped(text)}</TracePre>
       {isCapped && (
         <button
-          className="text-dust-400 hover:text-dust-300 transition-colors mt-0.5"
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded((v) => !v);
-          }}
-          onKeyDown={(e) => e.stopPropagation()}
-          style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
+          className="mt-0.5 font-mono text-[9px] text-dust-400 transition-colors hover:text-dust-600"
+          onClick={() => setExpanded((v) => !v)}
           type="button"
         >
-          {expanded ? 'show less' : `show all (${text.length.toLocaleString()} chars)`}
+          {expanded ? 'show less' : `show all (${formatCount(text.length)} chars)`}
         </button>
       )}
     </>
   );
 }
 
-/**
- * The red banner carrying `trace.error`.
- *
- * `tone` mirrors the same pre-existing divergence as `TracePre`'s `radius`:
- * the activity_event branch tints with oklch at 2px, the fallback branch with
- * an rgba brick-400 at 6px, and the two reds are not the same red.
- */
-function TraceErrorBanner({ children, tone }: { children: ReactNode; tone: 'oklch' | 'brick' }) {
-  const oklch = tone === 'oklch';
-  return (
-    <div
-      className="text-brick-400 px-2 py-1.5"
-      style={{
-        background: oklch ? 'oklch(0.64 0.17 28 / 0.09)' : 'rgba(255, 122, 122, 0.09)',
-        border: oklch
-          ? '1px solid oklch(0.64 0.17 28 / 0.3)'
-          : '1px solid rgba(255, 122, 122, 0.3)',
-        borderRadius: oklch ? '2px' : '6px',
-        fontFamily: 'var(--font-mono)',
-        fontSize: '10px',
-      }}
-    >
-      {children}
-    </div>
-  );
+/** The red banner carrying `trace.error`. */
+function TraceErrorBanner({ children }: { children: ReactNode }) {
+  return <Alert className="px-2 py-1.5 font-mono text-[10px]">{children}</Alert>;
 }
 
 // ── TruncatedText ─────────────────────────────────────────────────────────────
@@ -224,19 +178,18 @@ function TruncatedText({ text }: { text: string }) {
 
   return (
     <>
-      <TracePre radius="2px">
+      <TracePre>
         {displayed}
         {isTruncated && !expanded ? '…' : ''}
       </TracePre>
       {isTruncated && (
         <button
-          className="text-dust-400 hover:text-dust-600 transition-colors mt-0.5"
+          className="mt-0.5 font-mono text-[9px] text-dust-400 transition-colors hover:text-dust-600"
           onClick={(e) => {
             e.stopPropagation();
             setExpanded((v) => !v);
           }}
           onKeyDown={(e) => e.stopPropagation()}
-          style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
           type="button"
         >
           {expanded ? 'show less' : `show more (${text.length - TRUNCATE_LIMIT} more chars)`}
@@ -277,29 +230,19 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
 
     return (
       <div className="mt-2 space-y-2">
-        {trace.error && <TraceErrorBanner tone="oklch">{trace.error}</TraceErrorBanner>}
+        {trace.error && <TraceErrorBanner>{trace.error}</TraceErrorBanner>}
         {hasRequest && (
           <CollapsibleSection defaultOpen={false} label="Request">
             <div className="space-y-1.5">
               {systemPrompt !== null && (
                 <div>
-                  <div
-                    className="text-paper-600 mb-0.5"
-                    style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
-                  >
-                    system
-                  </div>
+                  <div className="mb-0.5 font-mono text-[9px] text-paper-600">system</div>
                   <TruncatedText text={systemPrompt} />
                 </div>
               )}
               {userMessage !== null && (
                 <div>
-                  <div
-                    className="text-paper-600 mb-0.5"
-                    style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
-                  >
-                    user
-                  </div>
+                  <div className="mb-0.5 font-mono text-[9px] text-paper-600">user</div>
                   <TruncatedText text={userMessage} />
                 </div>
               )}
@@ -308,7 +251,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
         )}
         {outputText && (
           <CollapsibleSection defaultOpen={true} label="Response">
-            <CappedPre radius="2px" text={outputText} />
+            <CappedPre text={outputText} />
           </CollapsibleSection>
         )}
       </div>
@@ -331,19 +274,14 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
 
     return (
       <div className="mt-2 space-y-1.5">
-        {trace.error && <TraceErrorBanner tone="oklch">{trace.error}</TraceErrorBanner>}
+        {trace.error && <TraceErrorBanner>{trace.error}</TraceErrorBanner>}
         {inputText && (
           <div>
-            <div
-              className="text-paper-600 mb-0.5"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
-            >
-              INPUT
-            </div>
-            <CappedPre radius="2px" text={inputText} />
+            <div className="mb-0.5 font-mono text-[9px] text-paper-600">INPUT</div>
+            <CappedPre text={inputText} />
           </div>
         )}
-        {outputText && <CappedPre radius="2px" text={outputText} />}
+        {outputText && <CappedPre text={outputText} />}
       </div>
     );
   }
@@ -364,19 +302,14 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
 
   return (
     <div className="mt-2 space-y-1.5">
-      {trace.error && <TraceErrorBanner tone="brick">{trace.error}</TraceErrorBanner>}
+      {trace.error && <TraceErrorBanner>{trace.error}</TraceErrorBanner>}
       {toolInputText && (
         <div>
-          <div
-            className="text-paper-600 mb-0.5"
-            style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
-          >
-            INPUT
-          </div>
-          <CappedPre radius="6px" text={toolInputText} />
+          <div className="mb-0.5 font-mono text-[9px] text-paper-600">INPUT</div>
+          <CappedPre text={toolInputText} />
         </div>
       )}
-      {text && <CappedPre radius="6px" text={text} />}
+      {text && <CappedPre text={text} />}
     </div>
   );
 }
@@ -401,10 +334,7 @@ function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
     : null;
 
   return (
-    <span
-      className="text-paper-500 shrink-0"
-      style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-    >
+    <span className="shrink-0 font-mono text-[10px] text-paper-500">
       {tokenLabel}
       {tokenLabel && costLabel ? ' ' : ''}
       {costLabel}
@@ -430,23 +360,22 @@ function OtelLink({ trace }: { trace: AgentTraceRecord }) {
     ? `${GRAFANA_URL}/explore?left=${encodeURIComponent(JSON.stringify({ queries: [{ datasource: { type: 'tempo' }, query: trace.otelTraceId, queryType: 'traceId', refId: 'A' }] }))}`
     : null;
 
-  const innerStyle = { fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.04em' };
+  const inner = 'shrink-0 font-mono text-[9px] tracking-[0.04em] text-paper-600';
 
   return href ? (
     <a
-      className="text-paper-600 hover:text-dust-400 shrink-0 transition-colors"
+      className={`${inner} transition-colors hover:text-dust-400`}
       href={href}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
       rel="noopener noreferrer"
-      style={innerStyle}
       target="_blank"
       title={titleText}
     >
       {shortId}…
     </a>
   ) : (
-    <span className="text-paper-600 shrink-0" style={innerStyle} title={titleText}>
+    <span className={inner} title={titleText}>
       {shortId}…
     </span>
   );
@@ -482,45 +411,32 @@ function EventRow({
             type="button"
           >
             {/* Disclosure caret */}
-            <span
-              className="shrink-0 text-paper-600 w-3 text-center"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '8px' }}
-            >
+            <span className="w-3 shrink-0 text-center font-mono text-[8px] text-paper-600">
               {isExpanded ? '▼' : '▶'}
             </span>
 
             {/* Type glyph — .tg */}
-            <span
-              className="shrink-0 px-1 py-px"
-              style={{
-                background: glyph.bg,
-                borderRadius: '4px',
-                color: glyph.color,
-                fontFamily: 'var(--font-mono)',
-                fontSize: '8.5px',
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-              }}
+            <Badge
+              className="shrink-0 px-1 py-px text-[8.5px] tracking-[0.08em]"
+              tone={glyph.tone}
+              uppercase
             >
               {glyph.label}
-            </span>
+            </Badge>
 
             {/* Event name */}
             <span
-              className={hasError ? 'text-brick-400' : 'text-paper-200'}
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500 }}
+              className={cn(
+                'font-mono text-[11px] font-medium',
+                hasError ? 'text-brick-400' : 'text-paper-200'
+              )}
             >
               {label}
             </span>
 
             {/* Detail / model */}
             {detail && (
-              <span
-                className="text-paper-500 truncate flex-1"
-                style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-              >
-                {detail}
-              </span>
+              <span className="flex-1 truncate font-mono text-[10px] text-paper-500">{detail}</span>
             )}
           </button>
 
@@ -529,17 +445,12 @@ function EventRow({
             <TokenCostChip trace={trace} />
             <OtelLink trace={trace} />
             {durationLabel && (
-              <span className="text-paper-600 num" style={{ fontSize: '10px' }}>
-                {durationLabel}
-              </span>
+              <span className="num text-[10px] text-paper-600">{durationLabel}</span>
             )}
             {hasError && (
-              <span
-                className="text-brick-400"
-                style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.1em' }}
-              >
+              <Badge className="text-[9px] tracking-[0.1em]" tone="brick" variant="text">
                 ERR
-              </span>
+              </Badge>
             )}
           </div>
         </div>
@@ -629,36 +540,21 @@ export function TracesTab({
   }, [filtered, activityToNodeId]);
 
   if (traces.length === 0) {
-    return (
-      <div className="py-12 text-center text-paper-500 text-sm">
-        No trace events recorded for this run.
-      </div>
-    );
+    return <EmptyState className="py-12" title="No trace events recorded for this run." />;
   }
 
   return (
     <div>
       {!compact && filterNodeId && (
-        <div
-          className="flex items-center gap-2 px-4 py-2 border-b border-ink-600/50 sticky top-0 z-10"
-          style={{ background: 'var(--color-ink-900)' }}
-        >
+        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-ink-600/50 bg-ink-900 px-4 py-2">
           <span className="text-paper-500 text-[11px]">
             Filtered to{' '}
-            <span
-              className="text-paper-300 px-1.5 py-0.5"
-              style={{
-                background: 'var(--color-ink-600)',
-                borderRadius: '5px',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10px',
-              }}
-            >
+            <span className="rounded-[5px] bg-ink-600 px-1.5 py-0.5 font-mono text-[10px] text-paper-300">
               {filterNodeId}
             </span>
           </span>
           <button
-            className="text-ember-400 hover:text-ember-300 text-[11px] transition-colors"
+            className="text-ember-400 hover:text-ember-600 text-[11px] transition-colors"
             onClick={onClearFilter}
             type="button"
           >
@@ -668,53 +564,44 @@ export function TracesTab({
       )}
 
       {filtered.length === 0 ? (
-        <div className="py-12 text-center text-paper-500 text-sm">
-          No trace events for this node.{' '}
-          {!compact && (
-            <button
-              className="text-ember-400 hover:text-ember-300 transition-colors"
-              onClick={onClearFilter}
-              type="button"
-            >
-              Show all traces
-            </button>
-          )}
-        </div>
+        <EmptyState
+          action={
+            compact ? undefined : (
+              <button
+                className="text-ember-400 transition-colors hover:text-ember-600"
+                onClick={onClearFilter}
+                type="button"
+              >
+                Show all traces
+              </button>
+            )
+          }
+          className="py-12"
+          title="No trace events for this node."
+        />
       ) : (
         <div className="divide-y divide-ink-600/30">
           {groups.map((group) => (
             <div key={`${group.activityName}-${group.attempt}`}>
               {/* Group header */}
               <div
-                className={`flex items-center gap-2 px-4 py-2 sticky ${
+                className={cn(
+                  'sticky z-[5] flex items-center gap-2 bg-ink-800 px-4 py-2',
                   !compact && filterNodeId ? 'top-[33px]' : 'top-0'
-                } z-[5]`}
-                style={{ background: 'var(--color-ink-800)' }}
+                )}
               >
-                <span
-                  className="text-paper-200"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500 }}
-                >
+                <span className="font-mono text-[11px] font-medium text-paper-200">
                   {group.dagNodeId ?? group.activityName}
                 </span>
                 {group.dagNodeId && group.dagNodeId !== group.activityName && (
-                  <span
-                    className="text-paper-600"
-                    style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-                  >
+                  <span className="font-mono text-[10px] text-paper-600">
                     ({group.activityName})
                   </span>
                 )}
-                <span
-                  className="text-paper-600"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-                >
+                <span className="font-mono text-[10px] text-paper-600">
                   attempt {group.attempt}
                 </span>
-                <span
-                  className="text-paper-600 ml-auto"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-                >
+                <span className="ml-auto font-mono text-[10px] text-paper-600">
                   {group.traces.length} event{group.traces.length !== 1 ? 's' : ''}
                 </span>
               </div>

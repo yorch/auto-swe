@@ -55,7 +55,7 @@ export default function GovernSecurityPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           <div className="w-52 shrink-0">
@@ -72,8 +72,9 @@ export default function GovernSecurityPage() {
             </Select>
           </div>
         }
+        chapter="§ Govern"
         subtitle="Recent scanner findings across all runs — shell command blocks, file blocks, content security violations, static code analysis findings, and suspicious LLM output. Click any event to expand details. Events refresh every 30 s."
-        title="Security Events"
+        title="Security events"
       />
 
       <QueryBoundary

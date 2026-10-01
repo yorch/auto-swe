@@ -2,10 +2,13 @@
 
 import Link from 'next/link';
 import { use } from 'react';
+import { ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { KeyValueRow } from '@/components/workflow/KeyValueRow';
 import { useRunsForWorkRequest, useWorkflow } from '@/hooks/useRuns';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -16,17 +19,29 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   const id = validateRouteParam(rawId);
   const { data: workflow, error, isError, isLoading } = useWorkflow(id ?? '');
   const temporalUrl = useTemporalWorkflowUrl(workflow?.temporalWorkflowId ?? '');
-  const { data: runs } = useRunsForWorkRequest(workflow?.workRequest?.id);
+  const {
+    data: runs,
+    error: runsError,
+    isError: isRunsError,
+    isLoading: isRunsLoading,
+  } = useRunsForWorkRequest(workflow?.workRequest?.id);
+
+  const notFound = (
+    <EmptyState
+      action={<ButtonLink href="/workflows">Back to request queue</ButtonLink>}
+      title="Workflow not found"
+    />
+  );
 
   if (!id) {
-    return <div className="text-center py-12 text-paper-400">Workflow not found</div>;
+    return notFound;
   }
   // Before the not-found branch, so a 403 or 500 is not reported as "not found".
   if (isLoading || isError) {
     return <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="workflow" />;
   }
   if (!workflow) {
-    return <div className="text-center py-12 text-paper-400">Workflow not found</div>;
+    return notFound;
   }
 
   // githubUrl is the host base (e.g. https://github.com or a GHE URL).
@@ -37,17 +52,14 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
       : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      <Link className="label-mono hover:text-paper-200" href="/workflows">
+        ← Request queue
+      </Link>
       <PageHeader
-        actions={
-          <>
-            <StatusBadge status={workflow.currentStatus} />
-            <Link className="text-ember-400 hover:underline text-sm" href="/workflows">
-              &larr; Workflows
-            </Link>
-          </>
-        }
-        chapter="§ Workflows"
+        actions={<StatusBadge status={workflow.currentStatus} />}
+        chapter="§ Requests"
+        subtitle="Branch, pull requests, cost and runs for one workflow."
         title={workflow.repository?.repoName ?? 'Workflow'}
       />
 
@@ -56,39 +68,27 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
           <CardHeader>
             <CardTitle>Details</CardTitle>
           </CardHeader>
-          <dl className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-paper-400">Workflow ID</dt>
-              <dd className="font-mono text-xs">
-                {temporalUrl ? (
-                  <a
-                    className="text-ember-400 hover:underline"
-                    href={temporalUrl}
-                    rel="noreferrer"
-                    target="_blank"
-                    title="Open in Temporal"
-                  >
-                    {workflow.temporalWorkflowId}
-                  </a>
-                ) : (
-                  workflow.temporalWorkflowId
-                )}
-              </dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-paper-400">Branch</dt>
-              <dd>{workflow.assignedBranch}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-paper-400">Status</dt>
-              <dd>
-                <StatusBadge status={workflow.currentStatus} />
-              </dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-paper-400">Updated</dt>
-              <dd>{formatDate(workflow.updatedAt)}</dd>
-            </div>
+          <dl className="space-y-2">
+            <KeyValueRow label="Workflow ID">
+              {temporalUrl ? (
+                <a
+                  className="text-ember-400 hover:underline"
+                  href={temporalUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                  title="Open in Temporal"
+                >
+                  {workflow.temporalWorkflowId}
+                </a>
+              ) : (
+                workflow.temporalWorkflowId
+              )}
+            </KeyValueRow>
+            <KeyValueRow label="Branch">{workflow.assignedBranch}</KeyValueRow>
+            <KeyValueRow label="Status">
+              <StatusBadge status={workflow.currentStatus} />
+            </KeyValueRow>
+            <KeyValueRow label="Updated">{formatDate(workflow.updatedAt)}</KeyValueRow>
           </dl>
         </Card>
 
@@ -97,7 +97,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
             <CardTitle>Pull Requests</CardTitle>
           </CardHeader>
           {(workflow.pullRequests ?? []).length === 0 ? (
-            <p className="text-sm text-paper-400">No PRs yet</p>
+            <EmptyState className="py-4 text-left" title="No PRs yet" />
           ) : (
             <div className="space-y-2">
               {workflow.pullRequests.map((pr) => {
@@ -132,23 +132,11 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
         <CardHeader>
           <CardTitle>Cost &amp; Token Usage</CardTitle>
         </CardHeader>
-        <dl className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-paper-400">Budget Tier</dt>
-            <dd className="font-medium">{workflow.budgetTier}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-paper-400">Cost Accrued</dt>
-            <dd className="font-medium">{formatCost(workflow.costUsdAccrued)}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-paper-400">Input Tokens</dt>
-            <dd>{formatTokens(workflow.tokensInputUsed)}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-paper-400">Output Tokens</dt>
-            <dd>{formatTokens(workflow.tokensOutputUsed)}</dd>
-          </div>
+        <dl className="space-y-2">
+          <KeyValueRow label="Budget Tier">{workflow.budgetTier}</KeyValueRow>
+          <KeyValueRow label="Cost Accrued">{formatCost(workflow.costUsdAccrued)}</KeyValueRow>
+          <KeyValueRow label="Input Tokens">{formatTokens(workflow.tokensInputUsed)}</KeyValueRow>
+          <KeyValueRow label="Output Tokens">{formatTokens(workflow.tokensOutputUsed)}</KeyValueRow>
         </dl>
       </Card>
 
@@ -163,26 +151,35 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
-      {(runs ?? []).length > 0 && (
+      {/* A failed runs query used to hide the card as if there were no runs. */}
+      {(isRunsError || (runs ?? []).length > 0) && (
         <Card>
           <CardHeader>
             <CardTitle>Runs</CardTitle>
           </CardHeader>
-          <div className="space-y-2">
-            {(runs ?? []).map((run) => (
-              <div className="flex items-center justify-between text-sm" key={run.id}>
-                <Link className="text-ember-400 hover:underline" href={`/runs/${run.id}`}>
-                  Run {run.id.slice(0, 8)} (v{run.templateVersion})
-                </Link>
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={run.status} />
-                  <span className="text-xs text-paper-400">
-                    {formatRelativeTime(run.startedAt)}
-                  </span>
+          <QueryBoundary
+            compact
+            error={runsError}
+            isError={isRunsError}
+            isLoading={isRunsLoading}
+            label="runs"
+          >
+            <div className="space-y-2">
+              {(runs ?? []).map((run) => (
+                <div className="flex items-center justify-between text-sm" key={run.id}>
+                  <Link className="text-ember-400 hover:underline" href={`/runs/${run.id}`}>
+                    Run {run.id.slice(0, 8)} (v{run.templateVersion})
+                  </Link>
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={run.status} />
+                    <span className="text-xs text-paper-400">
+                      {formatRelativeTime(run.startedAt)}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </QueryBoundary>
         </Card>
       )}
     </div>

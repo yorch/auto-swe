@@ -8,10 +8,11 @@ import { WorkflowDefaultsForm } from '@/components/workflow/WorkflowDefaultsForm
 
 export default function GovernWorkflowPage() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
+        chapter="§ Govern"
         subtitle="System-wide defaults applied to every new work request. These are platform-wide — for the knobs a team or channel can override, see Settings."
-        title="Admin — Workflow defaults"
+        title="Workflow defaults"
       />
       <WorkflowDefaultsForm />
       <ConsolidationForm />

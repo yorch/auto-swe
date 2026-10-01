@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { Button } from '@/components/ui/Button';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -38,14 +40,14 @@ export default function GovernApprovalsPage() {
   const count = steps?.length ?? 0;
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="max-w-3xl space-y-8">
       <PageHeader
         actions={
           <Button disabled={isFetching} onClick={() => refetch()} size="sm" variant="ghost">
             {isFetching ? 'Refreshing…' : 'Refresh'}
           </Button>
         }
-        chapter="§ Inbox"
+        chapter="§ Govern"
         subtitle={
           isLoading || isError
             ? undefined
@@ -62,6 +64,7 @@ export default function GovernApprovalsPage() {
 
       <div className="flex flex-wrap items-center gap-3">
         <Select
+          aria-label="Sort"
           className="w-40"
           onChange={(e) => setSort(e.target.value as ApprovalSort)}
           value={sort}
@@ -73,15 +76,11 @@ export default function GovernApprovalsPage() {
           ))}
         </Select>
 
-        <label className="flex items-center gap-2 text-sm text-paper-300">
-          <input
-            checked={overdueOnly}
-            className="rounded border-ink-500 bg-ink-700 text-ember-400 focus:ring-ember-400"
-            onChange={(e) => setOverdueOnly(e.target.checked)}
-            type="checkbox"
-          />
-          Overdue only
-        </label>
+        <Checkbox
+          checked={overdueOnly}
+          label="Overdue only"
+          onChange={(e) => setOverdueOnly(e.target.checked)}
+        />
       </div>
 
       <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="inbox">
@@ -94,9 +93,7 @@ export default function GovernApprovalsPage() {
         )}
 
         {count === 0 && (
-          <p className="text-sm text-paper-400">
-            {filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'}
-          </p>
+          <EmptyState title={filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'} />
         )}
       </QueryBoundary>
     </div>

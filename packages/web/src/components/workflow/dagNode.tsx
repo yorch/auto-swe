@@ -15,6 +15,7 @@ import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { Handle, type NodeProps, Position } from '@xyflow/react';
 import { cn } from '@/lib/utils';
 import { type DiffKind, type EdgeKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
+import { NODE_TYPE_TONE } from './nodeTypeTone';
 
 /** The source-handle ids a node exposes are exactly the edge kinds the layout
  *  emits for it — one name, so the two cannot disagree. */
@@ -32,24 +33,6 @@ export interface DagNodeData {
   editable?: boolean;
   [key: string]: unknown;
 }
-
-const CATEGORY_RING: Record<SpecNode['type'], string> = {
-  agent: 'border-l-ember-300',
-  cond: 'border-l-violet-400',
-  containerStep: 'border-l-brick-400',
-  eval: 'border-l-moss-400',
-  fanOut: 'border-l-moss-400',
-  humanApproval: 'border-l-amber-600',
-  humanDecision: 'border-l-amber-600',
-  humanInput: 'border-l-amber-600',
-  humanReview: 'border-l-amber-600',
-  mcp: 'border-l-dust-400',
-  set: 'border-l-amber-400',
-  shell: 'border-l-brick-400',
-  signal: 'border-l-dust-400',
-  step: 'border-l-ember-400',
-  terminate: 'border-l-paper-500',
-};
 
 const CATEGORY_LABEL: Record<SpecNode['type'], string> = {
   agent: 'agent',
@@ -191,7 +174,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
       className={cn(
         'group relative flex flex-col rounded-sm border bg-ink-800 transition-colors',
         'border-l-[3px]',
-        CATEGORY_RING[d.node.type],
+        NODE_TYPE_TONE[d.node.type].border,
         selected
           ? 'border-ember-400 shadow-[0_0_0_1px_var(--color-ember-400)]'
           : diffBorder

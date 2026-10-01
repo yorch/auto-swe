@@ -1,5 +1,6 @@
+import { Input } from '@/components/ui/Input';
 import type { ConfigSource, MaskedField } from '@/hooks/useAdminConfig';
-import { SourceBadge } from './SourceBadge';
+import { ConfigField } from './ConfigField';
 
 interface SecretInputProps {
   id: string;
@@ -29,25 +30,21 @@ export function SecretInput({
   const setPlaceholder = current ? `••••${current.lastFour}` : (placeholder ?? 'Enter value…');
 
   return (
-    <div>
-      <label className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500" htmlFor={id}>
-        {label}
-        <SourceBadge source={source} />
-        {current && (
-          <span className="font-mono text-[10px] normal-case tracking-normal text-paper-600">
-            (leave blank to keep existing)
-          </span>
-        )}
-      </label>
-      <input
+    <ConfigField
+      id={id}
+      label={label}
+      note={current ? '(leave blank to keep existing)' : undefined}
+      source={source}
+    >
+      <Input
         autoComplete="off"
-        className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+        compact
         id={id}
         onChange={(e) => onChange(e.target.value)}
         placeholder={setPlaceholder}
         type="password"
         value={value}
       />
-    </div>
+    </ConfigField>
   );
 }

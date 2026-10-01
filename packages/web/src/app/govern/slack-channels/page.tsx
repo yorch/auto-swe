@@ -1,17 +1,23 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   type ChannelAuditKind,
   type ChannelOpenItemDto,
@@ -33,16 +39,17 @@ import {
 import { useTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
-import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { formatCents, formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Spend is a computed model cost in USD; the cap is stored in cents. */
 function fmtBudget(
   currentCostUsd: number | undefined,
   budgetCents: number | null | undefined
 ): string {
-  const spent = currentCostUsd !== undefined ? `$${currentCostUsd.toFixed(4)}` : '—';
-  const cap = budgetCents != null ? `$${(budgetCents / 100).toFixed(2)}` : 'no cap';
+  const spent = currentCostUsd !== undefined ? formatCost(currentCostUsd) : '—';
+  const cap = budgetCents != null ? formatCents(budgetCents) : 'no cap';
   return `${spent} / ${cap}`;
 }
 
@@ -63,34 +70,6 @@ function centsToDisplayDollars(cents: number | null | undefined): string {
     return '';
   }
   return (cents / 100).toFixed(2);
-}
-
-/** A labelled checkbox row, shared by the create + edit channel forms. */
-function CheckboxField({
-  checked,
-  id,
-  label,
-  onChange,
-}: {
-  checked: boolean;
-  id: string;
-  label: string;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <input
-        checked={checked}
-        className="h-4 w-4 accent-ember-400"
-        id={id}
-        onChange={(e) => onChange(e.target.checked)}
-        type="checkbox"
-      />
-      <label className="text-sm text-paper-300" htmlFor={id}>
-        {label}
-      </label>
-    </div>
-  );
 }
 
 // ── Create modal ─────────────────────────────────────────────────────────────
@@ -178,7 +157,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
   }
 
   return (
-    <Modal eyebrow="Admin / Slack" onClose={onClose} open={open} title="Register Slack Channel">
+    <Modal onClose={onClose} open={open} title="Register Slack channel">
       <form className="space-y-4" onSubmit={handleSubmit}>
         <div className="grid grid-cols-2 gap-3">
           <Input
@@ -224,18 +203,11 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
           placeholder="implementer"
           value={form.agentKey}
         />
-        <div className="flex items-center gap-3">
-          <input
-            checked={form.ambientEnabled}
-            className="h-4 w-4 accent-ember-400"
-            id="create-ambient"
-            onChange={(e) => set('ambientEnabled', e.target.checked)}
-            type="checkbox"
-          />
-          <label className="text-sm text-paper-300" htmlFor="create-ambient">
-            Ambient mode enabled
-          </label>
-        </div>
+        <Checkbox
+          checked={form.ambientEnabled}
+          label="Ambient mode enabled"
+          onChange={(e) => set('ambientEnabled', e.target.checked)}
+        />
         {form.ambientEnabled && (
           <Input
             hint="Cron expression for ambient digests (e.g. 0 9 * * 1-5)"
@@ -245,18 +217,11 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             value={form.ambientCron}
           />
         )}
-        <div className="flex items-center gap-3">
-          <input
-            checked={form.reactiveEnabled}
-            className="h-4 w-4 accent-ember-400"
-            id="create-reactive"
-            onChange={(e) => set('reactiveEnabled', e.target.checked)}
-            type="checkbox"
-          />
-          <label className="text-sm text-paper-300" htmlFor="create-reactive">
-            Reactive interjection enabled
-          </label>
-        </div>
+        <Checkbox
+          checked={form.reactiveEnabled}
+          label="Reactive interjection enabled"
+          onChange={(e) => set('reactiveEnabled', e.target.checked)}
+        />
         {form.reactiveEnabled && (
           <Input
             hint="Cron poll cadence for reactive interjection (e.g. */5 * * * *)"
@@ -266,41 +231,30 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             value={form.reactiveCron}
           />
         )}
-        <div className="flex items-center gap-3">
-          <input
-            checked={form.passiveIngestEnabled}
-            className="h-4 w-4 accent-ember-400"
-            id="create-passive-ingest"
-            onChange={(e) => set('passiveIngestEnabled', e.target.checked)}
-            type="checkbox"
-          />
-          <label className="text-sm text-paper-300" htmlFor="create-passive-ingest">
-            Passive memory ingestion (silent fact extraction on ambient fire)
-          </label>
-        </div>
-        <CheckboxField
+        <Checkbox
+          checked={form.passiveIngestEnabled}
+          label="Passive memory ingestion (silent fact extraction on ambient fire)"
+          onChange={(e) => set('passiveIngestEnabled', e.target.checked)}
+        />
+        <Checkbox
           checked={form.isPrivate}
-          id="create-is-private"
           label="Private channel (never surface its memory in other channels)"
-          onChange={(v) => set('isPrivate', v)}
+          onChange={(e) => set('isPrivate', e.target.checked)}
         />
-        <CheckboxField
+        <Checkbox
           checked={form.orgFlaggingEnabled}
-          id="create-org-flagging"
           label="Org-wide flagging (surface signals from other channels here)"
-          onChange={(v) => set('orgFlaggingEnabled', v)}
+          onChange={(e) => set('orgFlaggingEnabled', e.target.checked)}
         />
-        <CheckboxField
+        <Checkbox
           checked={form.followupSessionEnabled}
-          id="create-followup-session"
           label="Follow-up sessions (continue a thread without re-@mention for ~30 min)"
-          onChange={(v) => set('followupSessionEnabled', v)}
+          onChange={(e) => set('followupSessionEnabled', e.target.checked)}
         />
-        <CheckboxField
+        <Checkbox
           checked={form.consolidationEnabled}
-          id="create-consolidation"
           label="Memory consolidation (compact channel memory on each ambient fire)"
-          onChange={(v) => set('consolidationEnabled', v)}
+          onChange={(e) => set('consolidationEnabled', e.target.checked)}
         />
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
@@ -319,15 +273,13 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
           placeholder="You are Aria, the platform team's expert. Be concise and technical."
           value={form.personaPrompt}
         />
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={create.isPending} type="submit" variant="primary">
-            {create.isPending ? 'Creating…' : 'Register Channel'}
-          </Button>
-        </div>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          isPending={create.isPending}
+          onCancel={onClose}
+          pendingLabel="Registering…"
+          submitLabel="Register channel"
+        />
       </form>
     </Modal>
   );
@@ -485,18 +437,11 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         placeholder="implementer"
         value={form.agentKey}
       />
-      <div className="flex items-center gap-3">
-        <input
-          checked={form.ambientEnabled}
-          className="h-4 w-4 accent-ember-400"
-          id="edit-ambient"
-          onChange={(e) => set('ambientEnabled', e.target.checked)}
-          type="checkbox"
-        />
-        <label className="text-sm text-paper-300" htmlFor="edit-ambient">
-          Ambient mode enabled
-        </label>
-      </div>
+      <Checkbox
+        checked={form.ambientEnabled}
+        label="Ambient mode enabled"
+        onChange={(e) => set('ambientEnabled', e.target.checked)}
+      />
       {form.ambientEnabled && (
         <Input
           hint="Cron expression for ambient digests (e.g. 0 9 * * 1-5)"
@@ -506,18 +451,11 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
           value={form.ambientCron}
         />
       )}
-      <div className="flex items-center gap-3">
-        <input
-          checked={form.reactiveEnabled}
-          className="h-4 w-4 accent-ember-400"
-          id="edit-reactive"
-          onChange={(e) => set('reactiveEnabled', e.target.checked)}
-          type="checkbox"
-        />
-        <label className="text-sm text-paper-300" htmlFor="edit-reactive">
-          Reactive interjection enabled
-        </label>
-      </div>
+      <Checkbox
+        checked={form.reactiveEnabled}
+        label="Reactive interjection enabled"
+        onChange={(e) => set('reactiveEnabled', e.target.checked)}
+      />
       {form.reactiveEnabled && (
         <Input
           hint="Cron poll cadence for reactive interjection (e.g. */5 * * * *)"
@@ -527,46 +465,33 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
           value={form.reactiveCron}
         />
       )}
-      <div className="flex items-center gap-3">
-        <input
-          checked={form.passiveIngestEnabled}
-          className="h-4 w-4 accent-ember-400"
-          id="edit-passive-ingest"
-          onChange={(e) => set('passiveIngestEnabled', e.target.checked)}
-          type="checkbox"
-        />
-        <label className="text-sm text-paper-300" htmlFor="edit-passive-ingest">
-          Passive memory ingestion (silent fact extraction on ambient fire)
-        </label>
-      </div>
-      <CheckboxField
+      <Checkbox
+        checked={form.passiveIngestEnabled}
+        label="Passive memory ingestion (silent fact extraction on ambient fire)"
+        onChange={(e) => set('passiveIngestEnabled', e.target.checked)}
+      />
+      <Checkbox
         checked={form.isPrivate}
-        id="edit-is-private"
         label="Private channel (never surface its memory in other channels)"
-        onChange={(v) => set('isPrivate', v)}
+        onChange={(e) => set('isPrivate', e.target.checked)}
       />
-      <CheckboxField
+      <Checkbox
         checked={form.orgFlaggingEnabled}
-        id="edit-org-flagging"
         label="Org-wide flagging (surface signals from other channels here)"
-        onChange={(v) => set('orgFlaggingEnabled', v)}
+        onChange={(e) => set('orgFlaggingEnabled', e.target.checked)}
       />
-      <CheckboxField
+      <Checkbox
         checked={form.followupSessionEnabled}
-        id="edit-followup-session"
         label="Follow-up sessions (continue a thread without re-@mention for ~30 min)"
-        onChange={(v) => set('followupSessionEnabled', v)}
+        onChange={(e) => set('followupSessionEnabled', e.target.checked)}
       />
-      <CheckboxField
+      <Checkbox
         checked={form.consolidationEnabled}
-        id="edit-consolidation"
         label="Memory consolidation (compact channel memory on each ambient fire)"
-        onChange={(v) => set('consolidationEnabled', v)}
+        onChange={(e) => set('consolidationEnabled', e.target.checked)}
       />
-      <div className="space-y-3 rounded border border-ink-600 p-3">
-        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-          Proactivity cooldowns
-        </p>
+      <Card className="space-y-3 p-3" variant="inset">
+        <p className="label-mono">Proactivity cooldowns</p>
         <div className="grid grid-cols-2 gap-3">
           <Input
             hint="Minutes between reactive interjections (default 10)"
@@ -622,7 +547,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         <p className="text-[10px] text-paper-600">
           Leave any field blank to use the built-in default shown as its placeholder.
         </p>
-      </div>
+      </Card>
       <Input
         hint="Monthly spend cap in USD (e.g. 50.00). Leave blank to remove the cap."
         label="Monthly budget ($)"
@@ -640,15 +565,13 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         placeholder="You are Aria, the platform team's expert. Be concise and technical."
         value={form.personaPrompt}
       />
-      {error && <p className="text-xs text-brick-400">{error}</p>}
-      <div className="flex justify-end gap-2">
-        <Button onClick={onClose} type="button" variant="ghost">
-          Cancel
-        </Button>
-        <Button disabled={update.isPending} type="submit" variant="primary">
-          {update.isPending ? 'Saving…' : 'Save Changes'}
-        </Button>
-      </div>
+      {error && <Alert>{error}</Alert>}
+      <ModalFooter
+        isPending={update.isPending}
+        onCancel={onClose}
+        pendingLabel="Saving…"
+        submitLabel="Save changes"
+      />
     </form>
   );
 }
@@ -662,7 +585,6 @@ function EditChannelModal({
 }) {
   return (
     <Modal
-      eyebrow="Admin / Slack"
       onClose={onClose}
       open={!!channel}
       subtitle={
@@ -672,7 +594,7 @@ function EditChannelModal({
           </span>
         ) : undefined
       }
-      title={channel ? `Edit ${channel.name ?? channel.slackChannelId}` : 'Edit Channel'}
+      title={channel ? `Edit ${channel.name ?? channel.slackChannelId}` : 'Edit channel'}
     >
       {channel && <EditChannelForm channel={channel} key={channel.id} onClose={onClose} />}
     </Modal>
@@ -734,48 +656,32 @@ function MemoryItemEditForm({
 
   return (
     <form className="mt-2 space-y-2" onSubmit={handleSubmit}>
-      <div className="space-y-1">
-        <label
-          className="block font-mono text-[10px] uppercase tracking-wider text-paper-500"
-          htmlFor="mem-edit-lesson"
-        >
-          Lesson summary
-        </label>
-        <textarea
-          className="w-full rounded border border-ink-500 bg-ink-800 px-2 py-1.5 text-sm text-paper-100 placeholder-paper-600 focus:outline-none focus:ring-1 focus:ring-ember-400"
-          id="mem-edit-lesson"
-          onChange={(e) => set('lessonSummary', e.target.value)}
-          rows={3}
-          value={form.lessonSummary}
-        />
-      </div>
-      <div className="space-y-1">
-        <label
-          className="block font-mono text-[10px] uppercase tracking-wider text-paper-500"
-          htmlFor="mem-edit-rationale"
-        >
-          Rationale
-        </label>
-        <textarea
-          className="w-full rounded border border-ink-500 bg-ink-800 px-2 py-1.5 text-sm text-paper-100 placeholder-paper-600 focus:outline-none focus:ring-1 focus:ring-ember-400"
-          id="mem-edit-rationale"
-          onChange={(e) => set('rationale', e.target.value)}
-          rows={2}
-          value={form.rationale}
-        />
-      </div>
+      <Textarea
+        compact
+        id="mem-edit-lesson"
+        label="Lesson summary"
+        onChange={(e) => set('lessonSummary', e.target.value)}
+        rows={3}
+        value={form.lessonSummary}
+      />
+      <Textarea
+        compact
+        id="mem-edit-rationale"
+        label="Rationale"
+        onChange={(e) => set('rationale', e.target.value)}
+        rows={2}
+        value={form.rationale}
+      />
       <p className="text-[10px] text-paper-600">
         Re-embedding happens in the background after saving.
       </p>
-      {error && <p className="text-xs text-brick-400">{error}</p>}
-      <div className="flex justify-end gap-2">
-        <Button onClick={onCancel} size="sm" type="button" variant="ghost">
-          Cancel
-        </Button>
-        <Button disabled={updateMemory.isPending} size="sm" type="submit" variant="primary">
-          {updateMemory.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      {error && <Alert>{error}</Alert>}
+      <ModalFooter
+        isPending={updateMemory.isPending}
+        onCancel={onCancel}
+        pendingLabel="Saving…"
+        submitLabel="Save"
+      />
     </form>
   );
 }
@@ -805,7 +711,6 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
   return (
     <>
       <Modal
-        eyebrow="Admin / Slack"
         onClose={onClose}
         open={!!channel}
         size="lg"
@@ -816,20 +721,14 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
             </span>
           ) : undefined
         }
-        title={channel ? `Memory — ${channel.name ?? channel.slackChannelId}` : 'Channel Memory'}
+        title={channel ? `Memory — ${channel.name ?? channel.slackChannelId}` : 'Channel memory'}
       >
-        <div className="mb-3 flex items-center gap-2">
-          <input
-            checked={showConsolidated}
-            className="h-4 w-4 accent-ember-400"
-            id="show-consolidated"
-            onChange={(e) => setShowConsolidated(e.target.checked)}
-            type="checkbox"
-          />
-          <label className="text-xs text-paper-400 cursor-pointer" htmlFor="show-consolidated">
-            Show consolidated (archived) items
-          </label>
-        </div>
+        <Checkbox
+          checked={showConsolidated}
+          className="mb-3"
+          label="Show consolidated (archived) items"
+          onChange={(e) => setShowConsolidated(e.target.checked)}
+        />
         <QueryBoundary
           error={loadError}
           isError={isError}
@@ -861,9 +760,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
                           <p className="text-xs text-paper-500 leading-snug">{item.rationale}</p>
                           <div className="flex items-center gap-3">
                             {consolidatedAt && (
-                              <span className="rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-paper-500">
-                                consolidated {formatDate(consolidatedAt)}
-                              </span>
+                              <Badge tone="muted">consolidated {formatDate(consolidatedAt)}</Badge>
                             )}
                             {item.agentKey && (
                               <span className="font-mono text-[10px] text-paper-600">
@@ -964,44 +861,33 @@ function OpenItemsModal({
 
   return (
     <Modal
-      eyebrow="Admin / Slack"
       onClose={onClose}
       open={channel !== null}
-      title={channel ? `Open Items — ${channel.name ?? channel.slackChannelId}` : 'Open Items'}
+      title={channel ? `Open items — ${channel.name ?? channel.slackChannelId}` : 'Open items'}
     >
       <div className="space-y-4">
-        <div className="flex gap-2">
-          {(['OPEN', 'RESOLVED', 'DISMISSED', 'all'] as const).map((s) => (
-            <button
-              className={`rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
-                statusFilter === s
-                  ? 'bg-ink-600 text-paper-100'
-                  : 'text-paper-500 hover:text-paper-300'
-              }`}
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              type="button"
-            >
-              {s === 'all' ? 'all' : STATUS_LABELS[s]}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="Filter open items by status"
+          onChange={setStatusFilter}
+          options={(['OPEN', 'RESOLVED', 'DISMISSED', 'all'] as const).map((s) => ({
+            label: s === 'all' ? 'all' : STATUS_LABELS[s],
+            value: s,
+          }))}
+          value={statusFilter}
+        />
 
-        {actionError && (
-          <div className="rounded bg-brick-400/15 px-3 py-2 font-mono text-xs text-brick-400">
-            {actionError}
-          </div>
-        )}
+        {actionError && <Alert>{actionError}</Alert>}
 
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="open items">
           {!items || items.length === 0 ? (
-            <p className="py-4 text-center text-sm text-paper-500">
-              No {statusFilter !== 'all' ? statusFilter.toLowerCase() : ''} items for this channel.
-            </p>
+            <EmptyState
+              className="py-4"
+              title={`No ${statusFilter !== 'all' ? statusFilter.toLowerCase() : ''} items for this channel.`}
+            />
           ) : (
             <div className="space-y-2">
               {items.map((item) => (
-                <div className="rounded border border-ink-600 bg-ink-800 p-3 text-sm" key={item.id}>
+                <Card className="p-3 text-sm" key={item.id} variant="inset">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
                       <p className="text-paper-100">{item.description}</p>
@@ -1046,7 +932,7 @@ function OpenItemsModal({
                       </div>
                     )}
                   </div>
-                </div>
+                </Card>
               ))}
             </div>
           )}
@@ -1075,7 +961,6 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
 
   return (
     <Modal
-      eyebrow="Admin / Slack"
       onClose={onClose}
       open={channel !== null}
       title={channel ? `Audit — ${channel.name ?? channel.slackChannelId}` : 'Audit'}
@@ -1085,22 +970,15 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
           Who triggered the assistant in this channel, what they asked, and what it touched. Each
           entry links to the full run trace.
         </p>
-        <div className="flex gap-2">
-          {(['all', 'mention', 'ambient', 'reactive'] as const).map((k) => (
-            <button
-              className={`rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
-                kindFilter === k
-                  ? 'bg-ink-600 text-paper-100'
-                  : 'text-paper-500 hover:text-paper-300'
-              }`}
-              key={k}
-              onClick={() => setKindFilter(k)}
-              type="button"
-            >
-              {k}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="Filter audit entries by trigger"
+          onChange={setKindFilter}
+          options={(['all', 'mention', 'ambient', 'reactive'] as const).map((k) => ({
+            label: k,
+            value: k,
+          }))}
+          value={kindFilter}
+        />
 
         {isLoading || isError ? (
           <QueryBoundary
@@ -1110,13 +988,14 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
             label="audit entries"
           />
         ) : !entries || entries.length === 0 ? (
-          <p className="py-4 text-center text-sm text-paper-500">
-            No {kindFilter !== 'all' ? kindFilter : ''} activity recorded for this channel yet.
-          </p>
+          <EmptyState
+            className="py-4"
+            title={`No ${kindFilter !== 'all' ? kindFilter : ''} activity recorded for this channel yet.`}
+          />
         ) : (
           <div className="space-y-2">
             {entries.map((e) => (
-              <div className="rounded border border-ink-600 bg-ink-800 p-3 text-sm" key={e.runId}>
+              <Card className="p-3 text-sm" key={e.runId} variant="inset">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
                     <p className="text-paper-100">
@@ -1137,25 +1016,23 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
                       <span>·</span>
                       <span>{e.status}</span>
                       <span>·</span>
-                      <span>
-                        {typeof e.costUsd === 'number' ? `$${e.costUsd.toFixed(4)}` : '—'}
-                      </span>
+                      <span>{formatCost(typeof e.costUsd === 'number' ? e.costUsd : null)}</span>
                       <span>·</span>
                       <span>
-                        {e.tokensInput}/{e.tokensOutput} tok
+                        {formatTokens(e.tokensInput)}/{formatTokens(e.tokensOutput)} tok
                       </span>
                     </div>
                   </div>
-                  <a
+                  <Link
                     className="shrink-0 font-mono text-[10px] text-ember-400 hover:underline"
                     href={`/runs/${e.runId}`}
                     rel="noreferrer"
                     target="_blank"
                   >
                     trace →
-                  </a>
+                  </Link>
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         )}
@@ -1173,6 +1050,7 @@ function ChannelRow({
   onEdit,
   onMemory,
   onOpenItems,
+  teamName,
 }: {
   channel: SlackChannel;
   onAudit: (ch: SlackChannel) => void;
@@ -1180,6 +1058,7 @@ function ChannelRow({
   onEdit: (ch: SlackChannel) => void;
   onMemory: (ch: SlackChannel) => void;
   onOpenItems: (ch: SlackChannel) => void;
+  teamName: string | undefined;
 }) {
   const update = useUpdateSlackChannel();
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
@@ -1204,67 +1083,68 @@ function ChannelRow({
   const budget = channel.monthlyBudgetUsdCents;
 
   return (
-    <tr className="border-b border-ink-600 last:border-0">
-      <td className="py-3 pr-4">
+    <TRow>
+      <Td className="px-4 py-3">
         <div className="font-mono text-xs text-paper-100">{channel.name ?? '—'}</div>
         <div className="mt-0.5 font-mono text-[11px] text-paper-500">{channel.slackChannelId}</div>
-      </td>
-      <td className="py-3 pr-4 font-mono text-[11px] text-paper-400">
+      </Td>
+      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
         {channel.workspace.slackTeamId}
-      </td>
-      <td className="py-3 pr-4 text-xs text-paper-300">
-        {/* team name isn't in the shape but workspace org + teamId are */}
-        <span className="font-mono text-[11px]">{channel.teamId.slice(0, 8)}…</span>
-      </td>
-      <td className="py-3 pr-4 font-mono text-[11px] text-paper-300">{channel.agentKey}</td>
-      <td className="py-3 pr-4 text-center">
+      </Td>
+      <Td className="px-4 py-3 text-xs text-paper-300">
+        {teamName ?? (
+          <span className="font-mono text-[11px]" title={channel.teamId}>
+            {channel.teamId.slice(0, 8)}…
+          </span>
+        )}
+      </Td>
+      <Td className="px-4 py-3 font-mono text-[11px] text-paper-300">{channel.agentKey}</Td>
+      <Td align="center" className="px-4 py-3">
         <div className="flex flex-col items-center gap-0.5">
           {channel.ambientEnabled ? (
-            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-moss-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-moss-400" />
+            <Badge dot tone="moss" variant="text">
               ambient
               {channel.ambientCron && (
                 <span className="text-paper-600"> · {channel.ambientCron}</span>
               )}
-            </span>
+            </Badge>
           ) : (
-            <span className="font-mono text-[10px] text-paper-600">ambient off</span>
+            <Badge tone="muted" variant="text">
+              ambient off
+            </Badge>
           )}
           {channel.reactiveEnabled ? (
-            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-dust-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-dust-400" />
+            <Badge dot tone="dust" variant="text">
               reactive
               {channel.reactiveCron && (
                 <span className="text-paper-600"> · {channel.reactiveCron}</span>
               )}
-            </span>
+            </Badge>
           ) : (
-            <span className="font-mono text-[10px] text-paper-600">reactive off</span>
+            <Badge tone="muted" variant="text">
+              reactive off
+            </Badge>
           )}
           {channel.isPrivate && (
-            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-amber-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+            <Badge dot tone="amber" variant="text">
               private
-            </span>
+            </Badge>
           )}
         </div>
-      </td>
-      <td className="py-3 pr-4 font-mono text-[11px] text-paper-400">{fmtBudget(spent, budget)}</td>
-      <td className="py-3 pr-4 text-center">
-        <button
-          aria-pressed={channel.isActive}
-          className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
-            channel.isActive
-              ? 'bg-moss-400/10 text-moss-400 hover:bg-moss-400/20'
-              : 'bg-ink-700 text-paper-600 hover:bg-ink-600'
-          }`}
-          disabled={update.isPending}
-          onClick={handleToggleActive}
-          type="button"
-        >
-          {channel.isActive ? 'active' : 'inactive'}
-        </button>
-        {toggleError && <p className="mt-1 text-[10px] text-brick-400">{toggleError}</p>}
+      </Td>
+      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">{fmtBudget(spent, budget)}</Td>
+      <Td align="center" className="px-4 py-3">
+        <div className="flex justify-center">
+          <ToggleSwitch
+            checked={channel.isActive}
+            disabled={update.isPending}
+            onChange={handleToggleActive}
+            title={
+              channel.isActive ? 'Active — click to deactivate' : 'Inactive — click to activate'
+            }
+          />
+        </div>
+        {toggleError && <Alert className="mt-1 text-left text-xs">{toggleError}</Alert>}
         <ConfirmModal
           confirmLabel="Deactivate"
           dangerous
@@ -1276,11 +1156,11 @@ function ChannelRow({
           open={confirmDeactivate}
           title="Deactivate channel?"
         />
-      </td>
-      <td className="py-3 text-right">
+      </Td>
+      <Td align="right" className="px-4 py-3">
         <div className="flex items-center justify-end gap-2">
           <Button onClick={() => onOpenItems(channel)} size="sm" variant="secondary">
-            Open Items
+            Open items
           </Button>
           <Button onClick={() => onAudit(channel)} size="sm" variant="secondary">
             Audit
@@ -1295,8 +1175,8 @@ function ChannelRow({
             Delete
           </Button>
         </div>
-      </td>
-    </tr>
+      </Td>
+    </TRow>
   );
 }
 
@@ -1304,6 +1184,7 @@ function ChannelRow({
 
 export default function GovernSlackChannelsPage() {
   const { data: channels, error: loadError, isError, isLoading } = useSlackChannels();
+  const { data: teams } = useTeams();
   const deleteChannel = useDeleteSlackChannel();
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -1312,6 +1193,8 @@ export default function GovernSlackChannelsPage() {
   const [openItemsTarget, setOpenItemsTarget] = useState<SlackChannel | null>(null);
   const [auditTarget, setAuditTarget] = useState<SlackChannel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SlackChannel | null>(null);
+
+  const teamNames = new Map(teams?.map((t) => [t.id, t.name]));
 
   // Rejections surface inside the ConfirmModal, under its message.
   async function handleDelete() {
@@ -1322,15 +1205,16 @@ export default function GovernSlackChannelsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
           <Button onClick={() => setCreateOpen(true)} variant="primary">
-            + Register Channel
+            Register channel
           </Button>
         }
+        chapter="§ Govern"
         subtitle="Registered Slack channels that channel-assistant workflows respond in. Each channel is scoped to a team and can override agent key, ambient scheduling, and monthly spend caps."
-        title="Slack Channels"
+        title="Slack channels"
       />
 
       <QueryBoundary
@@ -1343,40 +1227,27 @@ export default function GovernSlackChannelsPage() {
           <CardHeader>
             <CardTitle eyebrow="Channels">Registered channels</CardTitle>
           </CardHeader>
-          {!channels || channels.length === 0 ? (
-            <div className="py-6 text-center text-sm text-paper-400">
-              No Slack channels registered yet. Click &ldquo;+ Register Channel&rdquo; to add one.
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
-                  <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                    Channel
-                  </th>
-                  <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                    Workspace
-                  </th>
-                  <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                    Team
-                  </th>
-                  <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                    Agent
-                  </th>
-                  <th className="pb-2 text-center font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                    Ambient
-                  </th>
-                  <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                    Spend / Cap
-                  </th>
-                  <th className="pb-2 text-center font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                    Status
-                  </th>
-                  <th className="pb-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {channels.map((ch) => (
+          <Table>
+            <THead>
+              <Th>Channel</Th>
+              <Th>Workspace</Th>
+              <Th>Team</Th>
+              <Th>Agent</Th>
+              <Th align="center">Ambient</Th>
+              <Th>Spend / Cap</Th>
+              <Th align="center">Status</Th>
+              <Th />
+            </THead>
+            <tbody>
+              {!channels || channels.length === 0 ? (
+                <TableStatusRow colSpan={8}>
+                  <EmptyState
+                    hint="Click “Register channel” to add one."
+                    title="No Slack channels registered yet."
+                  />
+                </TableStatusRow>
+              ) : (
+                channels.map((ch) => (
                   <ChannelRow
                     channel={ch}
                     key={ch.id}
@@ -1385,11 +1256,12 @@ export default function GovernSlackChannelsPage() {
                     onEdit={setEditTarget}
                     onMemory={setMemoryTarget}
                     onOpenItems={setOpenItemsTarget}
+                    teamName={teamNames.get(ch.teamId)}
                   />
-                ))}
-              </tbody>
-            </table>
-          )}
+                ))
+              )}
+            </tbody>
+          </Table>
         </Card>
       </QueryBoundary>
 

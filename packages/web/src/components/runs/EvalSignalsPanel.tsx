@@ -5,25 +5,15 @@ import { Alert } from '@/components/ui/Alert';
 import { useEvalResultsForRun } from '@/hooks/useRuns';
 import { errMsg } from '@/lib/errors';
 import { scoreColor } from '@/lib/utils';
+import { RailRow, RailSection } from './Rail';
 
 function SignalRow({ row }: { row: EvalResultDto }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-1.5 border-b border-ink-600/40 last:border-0">
-      <span
-        className="text-paper-400 truncate"
-        style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
-        title={row.scorer}
-      >
+    <RailRow>
+      <span className="truncate font-mono text-[11px] text-paper-400" title={row.scorer}>
         {row.scorer}
       </span>
-      <span
-        className="num shrink-0"
-        style={{
-          color: scoreColor(row.value),
-          fontFamily: 'var(--font-mono)',
-          fontSize: '11px',
-        }}
-      >
+      <span className="num shrink-0 text-[11px]" style={{ color: scoreColor(row.value) }}>
         {row.scoreType === 'BOOLEAN' && typeof row.value === 'number'
           ? row.value >= 1
             ? 'pass'
@@ -32,7 +22,7 @@ function SignalRow({ row }: { row: EvalResultDto }) {
             ? row.value.toFixed(2)
             : String(row.value ?? '—')}
       </span>
-    </div>
+    </RailRow>
   );
 }
 
@@ -46,15 +36,11 @@ export function EvalSignalsPanel({ runId }: { runId: string }) {
 
   if (isError) {
     return (
-      <>
-        <div className="h-px mx-5 bg-ink-500/40" />
-        <div className="px-5 py-4">
-          <div className="kicker mb-2">Eval signals</div>
-          <Alert className="text-xs" variant="error">
-            Could not load eval signals: {errMsg(error, 'request failed')}
-          </Alert>
-        </div>
-      </>
+      <RailSection title="Eval signals">
+        <Alert className="text-xs" variant="error">
+          Could not load eval signals: {errMsg(error, 'request failed')}
+        </Alert>
+      </RailSection>
     );
   }
 
@@ -63,16 +49,10 @@ export function EvalSignalsPanel({ runId }: { runId: string }) {
   }
 
   return (
-    <>
-      <div className="h-px mx-5 bg-ink-500/40" />
-      <div className="px-5 py-4">
-        <div className="kicker mb-2">Eval signals</div>
-        <div>
-          {data.map((row) => (
-            <SignalRow key={row.id} row={row} />
-          ))}
-        </div>
-      </div>
-    </>
+    <RailSection title="Eval signals">
+      {data.map((row) => (
+        <SignalRow key={row.id} row={row} />
+      ))}
+    </RailSection>
   );
 }

@@ -1,12 +1,17 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-import { Modal } from '@/components/ui/Modal';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   type ProviderCredentialRow,
@@ -16,6 +21,7 @@ import {
   useAdminTestCredential,
   useAdminUpdateCredential,
 } from '@/hooks/useModelConfig';
+import { useTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 
 type ProbeResult = { ok: boolean; status?: number; error?: string };
@@ -43,6 +49,8 @@ export function CredentialsTab() {
   const update = useAdminUpdateCredential();
   const del = useAdminDeleteCredential();
   const test = useAdminTestCredential();
+  const { data: teams } = useTeams();
+  const teamName = (id: string) => teams?.find((t) => t.id === id)?.name ?? `${id.slice(0, 8)}…`;
 
   const handleTest = async (id: string) => {
     setProbePending((s) => ({ ...s, [id]: true }));
@@ -73,32 +81,32 @@ export function CredentialsTab() {
       <CardHeader>
         <CardTitle eyebrow="Provider credentials">API keys</CardTitle>
         <Button onClick={() => setCreating(true)} size="sm">
-          + New credential
+          New credential
         </Button>
       </CardHeader>
       <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="credentials">
-        <table className="w-full text-sm">
-          <thead className="text-left text-[11px] uppercase tracking-wide text-paper-500">
-            <tr>
-              <th className="pb-2">Provider</th>
-              <th className="pb-2">Scope</th>
-              <th className="pb-2">API base</th>
-              <th className="pb-2">Key</th>
-              <th className="pb-2">Test</th>
-              <th className="pb-2 text-right">Actions</th>
-            </tr>
-          </thead>
+        <Table>
+          <THead>
+            <Th variant="compact">Provider</Th>
+            <Th variant="compact">Scope</Th>
+            <Th variant="compact">API base</Th>
+            <Th variant="compact">Key</Th>
+            <Th variant="compact">Test</Th>
+            <Th align="right" variant="compact">
+              Actions
+            </Th>
+          </THead>
           <tbody>
             {(credentials ?? []).map((c) => (
-              <tr className="border-t border-ink-700" key={c.id}>
-                <td className="py-2 font-mono text-xs">{c.provider}</td>
-                <td className="py-2 text-xs">
+              <TRow key={c.id}>
+                <Td className="py-2 font-mono text-xs">{c.provider}</Td>
+                <Td className="py-2 text-xs">
                   {c.scope}
-                  {c.teamId && ` (${c.teamId.slice(0, 8)}…)`}
-                </td>
-                <td className="py-2 font-mono text-[11px] text-paper-400">{c.apiBase ?? '—'}</td>
-                <td className="py-2 font-mono text-xs">{c.maskedKey}</td>
-                <td className="py-2 text-xs">
+                  {c.teamId && ` (${teamName(c.teamId)})`}
+                </Td>
+                <Td className="py-2 font-mono text-[11px] text-paper-400">{c.apiBase ?? '—'}</Td>
+                <Td className="py-2 font-mono text-xs">{c.maskedKey}</Td>
+                <Td className="py-2 text-xs">
                   <Button
                     disabled={!!probePending[c.id]}
                     onClick={() => handleTest(c.id)}
@@ -108,16 +116,18 @@ export function CredentialsTab() {
                     {probePending[c.id] ? '…' : 'Test'}
                   </Button>
                   {probeResults[c.id] && (
-                    <span
-                      className={`ml-2 text-[10px] ${probeResults[c.id].ok ? 'text-moss-400' : 'text-brick-400'}`}
+                    <Badge
+                      className="ml-2"
+                      tone={probeResults[c.id].ok ? 'moss' : 'brick'}
+                      variant="text"
                     >
                       {probeResults[c.id].ok
                         ? `OK (${probeResults[c.id].status})`
                         : (probeResults[c.id].error ?? `HTTP ${probeResults[c.id].status}`)}
-                    </span>
+                    </Badge>
                   )}
-                </td>
-                <td className="py-2 text-right">
+                </Td>
+                <Td className="py-2 text-right">
                   <Button
                     onClick={() => {
                       clearProbeForRow(c.id);
@@ -131,11 +141,19 @@ export function CredentialsTab() {
                   <Button onClick={() => setDeleting(c)} size="sm" variant="danger">
                     Delete
                   </Button>
-                </td>
-              </tr>
+                </Td>
+              </TRow>
             ))}
+            {(credentials ?? []).length === 0 && (
+              <TableStatusRow colSpan={6}>
+                <EmptyState
+                  hint="Add one before any agent can call a model."
+                  title="No provider credentials yet"
+                />
+              </TableStatusRow>
+            )}
           </tbody>
-        </table>
+        </Table>
       </QueryBoundary>
       {(creating || editing) && (
         <CredentialModal
@@ -197,6 +215,7 @@ function CredentialModal({
   const [apiBase, setApiBase] = useState(existing?.apiBase ?? '');
   const [apiKey, setApiKey] = useState('');
   const { error, saving, submit } = useIntegrationConfigForm();
+  const { data: teams } = useTeams();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,7 +242,6 @@ function CredentialModal({
 
   return (
     <Modal
-      eyebrow="Credential"
       onClose={onClose}
       open
       title={existing ? `Edit ${existing.provider}` : 'New provider credential'}
@@ -232,12 +250,17 @@ function CredentialModal({
         {!existing && (
           <>
             <div>
-              <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="provider">
-                Provider name
-              </label>
-              <input
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
+              <Input
+                className="font-mono text-xs"
+                hint={
+                  BUILTIN_PROVIDERS.includes(provider as BuiltinProvider)
+                    ? BUILTIN_PROVIDER_HINTS[provider as BuiltinProvider]
+                    : provider
+                      ? 'Custom provider — treated as OpenAI-compatible. An API base URL is required.'
+                      : 'Built-in: anthropic, openai, google (no API base needed). Anything else is OpenAI-compatible and requires an API base URL.'
+                }
                 id="provider"
+                label="Provider name"
                 list="provider-suggestions"
                 onChange={(e) => setProvider(e.target.value)}
                 placeholder="anthropic / openai / google / openrouter / ..."
@@ -248,16 +271,8 @@ function CredentialModal({
                   <option key={p} value={p} />
                 ))}
               </datalist>
-              <p className="mt-1 text-[11px] text-paper-500">
-                {BUILTIN_PROVIDERS.includes(provider as BuiltinProvider)
-                  ? BUILTIN_PROVIDER_HINTS[provider as BuiltinProvider]
-                  : provider
-                    ? 'Custom provider — treated as OpenAI-compatible. An API base URL is required.'
-                    : 'Built-in: anthropic, openai, google (no API base needed). Anything else is OpenAI-compatible and requires an API base URL.'}
-              </p>
             </div>
             <Select
-              className="border-ink-600 bg-ink-900"
               id="scope"
               label="Scope"
               onChange={(e) => {
@@ -272,58 +287,50 @@ function CredentialModal({
               <option value="TEAM">Team</option>
             </Select>
             {scope === 'TEAM' && (
-              <div>
-                <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="teamId">
-                  Team ID
-                </label>
-                <input
-                  className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
-                  id="teamId"
-                  onChange={(e) => setTeamId(e.target.value)}
-                  value={teamId}
-                />
-              </div>
+              <Select
+                id="teamId"
+                label="Team"
+                onChange={(e) => setTeamId(e.target.value)}
+                value={teamId}
+              >
+                <option value="">Choose a team…</option>
+                {(teams ?? []).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
             )}
           </>
         )}
-        <div>
-          <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="apiBase">
-            API base URL (optional)
-          </label>
-          <input
-            className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
-            id="apiBase"
-            onChange={(e) => setApiBase(e.target.value)}
-            placeholder="https://opencode.ai/zen/go/v1"
-            value={apiBase}
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="apiKey">
-            API key {existing && '(leave blank to keep existing)'}
-          </label>
-          <input
-            className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
-            id="apiKey"
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={existing ? `····${existing.lastFour}` : 'sk-...'}
-            type="password"
-            value={apiKey}
-          />
-          <p className="mt-1 text-[11px] text-amber-400">
-            Stored encrypted at rest. You won't see this value again — copy it from your password
-            manager before saving.
-          </p>
-        </div>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={saving} type="submit" variant="primary">
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
+        <Input
+          className="font-mono text-xs"
+          id="apiBase"
+          label="API base URL (optional)"
+          onChange={(e) => setApiBase(e.target.value)}
+          placeholder="https://opencode.ai/zen/go/v1"
+          value={apiBase}
+        />
+        <Input
+          className="font-mono text-xs"
+          id="apiKey"
+          label={existing ? 'API key (leave blank to keep existing)' : 'API key'}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder={existing ? `····${existing.lastFour}` : 'sk-...'}
+          type="password"
+          value={apiKey}
+        />
+        <Alert variant="warning">
+          Stored encrypted at rest. You won't see this value again — copy it from your password
+          manager before saving.
+        </Alert>
+        {error && <Alert>{error}</Alert>}
+        <ModalFooter
+          isPending={saving}
+          onCancel={onClose}
+          pendingLabel="Saving…"
+          submitLabel={existing ? 'Save changes' : 'Create credential'}
+        />
       </form>
     </Modal>
   );

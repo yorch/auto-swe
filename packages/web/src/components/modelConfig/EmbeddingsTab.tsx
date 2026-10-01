@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
@@ -69,12 +71,10 @@ export function EmbeddingsTab() {
       </p>
       <form className="space-y-4" onSubmit={handleSubmit}>
         <div>
-          <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="embedSpec">
-            Model spec
-          </label>
-          <input
-            className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
+          <Input
+            className="font-mono text-xs"
             id="embedSpec"
+            label="Model spec"
             list="embed-suggestions"
             onChange={(e) => {
               setModelSpec(e.target.value);
@@ -95,7 +95,6 @@ export function EmbeddingsTab() {
           </datalist>
         </div>
         <Select
-          className="border-ink-600 bg-ink-900"
           id="embedCred"
           label="Pinned credential (optional)"
           onChange={(e) => {
@@ -111,10 +110,10 @@ export function EmbeddingsTab() {
             </option>
           ))}
         </Select>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
+        {error && <Alert>{error}</Alert>}
         <div className="flex justify-end pt-2">
           <Button disabled={!dirty || update.isPending} type="submit" variant="primary">
-            {update.isPending ? 'Saving…' : 'Save'}
+            {update.isPending ? 'Saving…' : 'Save changes'}
           </Button>
         </div>
       </form>

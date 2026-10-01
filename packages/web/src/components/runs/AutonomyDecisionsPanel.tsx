@@ -5,25 +5,22 @@ import { Alert } from '@/components/ui/Alert';
 import { useAutonomyDecisionsForRun } from '@/hooks/useRuns';
 import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
+import { RailRow, RailSection } from './Rail';
 
 function DecisionRow({ row }: { row: AutonomyDecisionDto }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-1.5 border-b border-ink-600/40 last:border-0">
+    <RailRow>
       <span
-        className="text-paper-400 truncate"
-        style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
+        className="truncate font-mono text-[11px] text-paper-400"
         title={`${row.event}${row.riskClass ? ` — ${row.riskClass}` : ''}`}
       >
         {row.event}
         {row.riskClass ? ` · ${row.riskClass}` : null}
       </span>
-      <span
-        className="text-paper-500 shrink-0"
-        style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
-      >
+      <span className="shrink-0 font-mono text-[11px] text-paper-500">
         {formatDate(row.createdAt)}
       </span>
-    </div>
+    </RailRow>
   );
 }
 
@@ -37,15 +34,11 @@ export function AutonomyDecisionsPanel({ runId }: { runId: string }) {
 
   if (isError) {
     return (
-      <>
-        <div className="h-px mx-5 bg-ink-500/40" />
-        <div className="px-5 py-4">
-          <div className="kicker mb-2">Autonomy decisions</div>
-          <Alert className="text-xs" variant="error">
-            Could not load autonomy decisions: {errMsg(error, 'request failed')}
-          </Alert>
-        </div>
-      </>
+      <RailSection title="Autonomy decisions">
+        <Alert className="text-xs" variant="error">
+          Could not load autonomy decisions: {errMsg(error, 'request failed')}
+        </Alert>
+      </RailSection>
     );
   }
 
@@ -54,16 +47,10 @@ export function AutonomyDecisionsPanel({ runId }: { runId: string }) {
   }
 
   return (
-    <>
-      <div className="h-px mx-5 bg-ink-500/40" />
-      <div className="px-5 py-4">
-        <div className="kicker mb-2">Autonomy decisions</div>
-        <div>
-          {data.map((row) => (
-            <DecisionRow key={row.id} row={row} />
-          ))}
-        </div>
-      </div>
-    </>
+    <RailSection title="Autonomy decisions">
+      {data.map((row) => (
+        <DecisionRow key={row.id} row={row} />
+      ))}
+    </RailSection>
   );
 }
