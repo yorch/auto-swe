@@ -25,6 +25,12 @@ vi.mock('@auto-swe/shared/lib/connectionCredential', async (importOriginal) => (
   repositoryHostsAllowed: (...a: unknown[]) => repositoryHostsAllowed(...a),
 }));
 
+const listGitHubRepos = vi.fn();
+vi.mock('../lib/github.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/github.js')>()),
+  listGitHubRepos: (...a: unknown[]) => listGitHubRepos(...a),
+}));
+
 const { repositoryRoutes } = await import('./repositories.js');
 
 const TEAM = '22222222-2222-4222-8222-222222222222';
@@ -44,6 +50,7 @@ async function buildApp() {
     connection: {
       create: vi.fn(),
       findFirst: vi.fn(),
+      findMany: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
     },
@@ -101,6 +108,47 @@ describe('repository URL overrides', () => {
     expect(ctx.prisma.connection.findFirst.mock.calls[0][0].where).toMatchObject({
       githubUrl: 'https://ghe.corp',
     });
+  });
+
+  it('checks for a duplicate owner and name case-insensitively', async () => {
+    const res = await ctx.app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { organizationName: 'Acme', repoName: 'API', teamId: TEAM },
+      url: '/api/v1/repositories',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(ctx.prisma.connection.findFirst.mock.calls[0][0].where).toMatchObject({
+      organizationName: { equals: 'Acme', mode: 'insensitive' },
+      repoName: { equals: 'API', mode: 'insensitive' },
+    });
+  });
+
+  it('refuses a repository that differs from an onboarded one only by case (409)', async () => {
+    ctx.prisma.connection.findFirst.mockResolvedValue({ id: REPO });
+    const res = await onboard({});
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('REPO_EXISTS');
+    expect(ctx.prisma.connection.create).not.toHaveBeenCalled();
+  });
+
+  it('marks a GitHub repo already imported whatever the stored casing', async () => {
+    listGitHubRepos.mockResolvedValue([
+      { name: 'api', org: 'acme' },
+      { name: 'web', org: 'acme' },
+    ]);
+    ctx.prisma.connection.findMany.mockResolvedValue([
+      { organizationName: 'Acme', repoName: 'API' },
+    ]);
+    const res = await ctx.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/repositories/github/available',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(
+      JSON.parse(res.payload).data.map((r: { alreadyImported: boolean }) => r.alreadyImported)
+    ).toEqual([true, false]);
   });
 
   it('stores an override equal to the instance host as no override', async () => {

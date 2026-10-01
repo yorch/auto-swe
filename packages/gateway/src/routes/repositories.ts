@@ -262,12 +262,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             where: { ...onInstanceHost, type: 'git_repo' },
           })
       );
-      const importedSet = new Set(existing.map((c) => `${c.organizationName}/${c.repoName}`));
+      const importedSet = new Set(
+        existing.map((c) => `${c.organizationName}/${c.repoName}`.toLowerCase())
+      );
 
       return {
         data: repos.map((r) => ({
           ...r,
-          alreadyImported: importedSet.has(`${r.org}/${r.name}`),
+          alreadyImported: importedSet.has(`${r.org}/${r.name}`.toLowerCase()),
         })),
       };
     }
@@ -397,8 +399,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         const existing = await fastify.prisma.connection.findFirst({
           where: {
             ...(await sameHostWhere(urls.githubUrl ?? null)),
-            organizationName,
-            repoName,
+            // GitHub treats owner and name case-insensitively.
+            organizationName: { equals: organizationName, mode: 'insensitive' },
+            repoName: { equals: repoName, mode: 'insensitive' },
             type: 'git_repo',
           },
         });

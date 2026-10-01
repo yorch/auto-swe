@@ -24,7 +24,10 @@ describe('webhookRepositoryWhere', () => {
     findMany.mockResolvedValue([{ id: 'only' }]);
     await expect(
       webhookRepositoryWhere(prisma, 'acme', 'api', 'https://github.internal/acme/api')
-    ).resolves.toEqual({ organizationName: 'acme', repoName: 'api' });
+    ).resolves.toEqual({
+      organizationName: { equals: 'acme', mode: 'insensitive' },
+      repoName: { equals: 'api', mode: 'insensitive' },
+    });
   });
 
   it('adds the host only when the owner/name is onboarded on more than one', async () => {
@@ -33,9 +36,26 @@ describe('webhookRepositoryWhere', () => {
       webhookRepositoryWhere(prisma, 'acme', 'api', 'https://ghe.corp/acme/api')
     ).resolves.toEqual({
       githubUrl: 'https://ghe.corp',
-      organizationName: 'acme',
-      repoName: 'api',
+      organizationName: { equals: 'acme', mode: 'insensitive' },
+      repoName: { equals: 'api', mode: 'insensitive' },
     });
+  });
+
+  it('matches owner and name case-insensitively, whatever casing the payload uses', async () => {
+    findMany.mockResolvedValue([]);
+    await expect(
+      webhookRepositoryWhere(prisma, 'ACME', 'Api', 'https://github.com/ACME/Api')
+    ).resolves.toEqual({
+      organizationName: { equals: 'ACME', mode: 'insensitive' },
+      repoName: { equals: 'Api', mode: 'insensitive' },
+    });
+    expect(findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationName: { equals: 'ACME', mode: 'insensitive' },
+        }),
+      })
+    );
   });
 });
 

@@ -7,22 +7,24 @@ which hosts its URLs may point at, and which teams may use it.
 
 ## 1. Identity
 
-A repository is identified by **(host, owner, name)**. `acme/api` on github.com and `acme/api` on a
+A repository is identified by **(host, owner, name)**, with owner and name compared
+case-insensitively as GitHub does: `Acme/API` and `acme/api` on one host are the same repository.
+`acme/api` on github.com and `acme/api` on a
 GitHub Enterprise server are different repositories, and both can be onboarded.
 
 The host is the repository's web base override, `githubUrl`. Null means the instance's own GitHub
 host — the web URL configured on the GitHub integration — which is what nearly every repository
 uses. The identity is enforced by a partial, expression-based unique index,
-`connections_git_repo_host_org_repo_uidx` on `(COALESCE(github_url, ''), organization_name,
-repo_name) WHERE type = 'git_repo'`, in a hand-written migration because Prisma cannot express it.
+`connections_git_repo_host_org_repo_ci_uidx` on `(COALESCE(github_url, ''),
+lower(organization_name), lower(repo_name)) WHERE type = 'git_repo'`, in a hand-written migration because Prisma cannot express it.
 
 Everything that names a repository by owner and name takes the host into account:
 
 | Where | How |
 |---|---|
-| Onboarding (`POST /repositories`) | the duplicate check and the unique index include the host |
+| Onboarding (`POST /repositories`) | the duplicate check and the unique index include the host and compare owner and name case-insensitively |
 | Import from GitHub | the list comes from the instance host, so only repositories with no override count as already imported |
-| PR and CI webhooks, the access webhook | when the owner/name is onboarded on more than one host, the payload's `repository.html_url` picks which; otherwise the match is by name, as before |
+| PR and CI webhooks, the access webhook | when the owner/name is onboarded on more than one host, the payload's `repository.html_url` picks which; otherwise the match is by name, as before. Owner and name match case-insensitively, whatever casing the payload uses |
 | Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. A run still in flight under the id without a host blocks a new one, as one under the new id does |
 | Dependency detection | a dependency URL that names a host matches only a repository on that host |
 | Dependency checkouts | two neighbours with the same owner/name get distinct directories |
@@ -120,8 +122,15 @@ longer fit.
   webhook secret, and matched by host only when it carries `repository.html_url`.
 - **App installations are not host-scoped.** A GitHub App installation id is unique across the
   deployment, so two hosts cannot use the same numeric installation id.
-- **Owner and name are case-sensitive in the unique index.** GitHub treats them case-insensitively;
-  onboarding `Acme/API` and `acme/api` on the same host creates two repositories.
+- **Existing case-only duplicates keep the case-sensitive index.** The migration that makes the
+  unique index case-insensitive does not fail on a deployment that already holds two repositories
+  differing only by case; it logs a warning naming each duplicate group and leaves the previous,
+  case-sensitive index in place. Onboarding still refuses new case-variants through its
+  case-insensitive duplicate check, but two onboarding requests racing each other are not stopped by
+  the database until the duplicates are merged or deleted and the case-insensitive index is created
+  by hand.
+- **Workflow ids keep the stored casing.** The id embeds owner and name as stored, so the same
+  repository onboarded under two casings (possible only through the case above) gets different ids.
 - **An override spelling out the instance host is only cleared when the GitHub integration stores
   that host.** On a deployment configuring its host through the environment such an override is
   kept; it works, and onboarding treats it as the same repository as one with no override, but the
