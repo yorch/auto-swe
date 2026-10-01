@@ -472,6 +472,20 @@ register({
   name: 'runAgentNode',
 });
 
+// The Agent Run system template's one step. Internal: the workspace, the gate and
+// the push live in this activity, so it must not be placeable in an authored
+// template (the gateway refuses it everywhere but the system template, and the
+// worker refuses to run it for any other template).
+register({
+  category: 'agent',
+  configFields: [],
+  description:
+    'Run a library agent against a repository in a throwaway workspace and optionally publish what it wrote. System template only.',
+  internal: true,
+  label: 'Agent run (system)',
+  name: 'runAgentTask',
+});
+
 // ── Executors behind the declarative eval / mcp / containerStep nodes ────────
 //
 // The interpreter packs each node's own fields into `config` and dispatches
@@ -631,7 +645,13 @@ export function getStepMetadata(name: string): StepMetadata {
   return meta;
 }
 
+/** The steps an author may use. Internal steps are registered but not listed. */
 export function listSteps(): StepMetadata[] {
+  return Array.from(REGISTRY.values()).filter((s) => !s.internal);
+}
+
+/** Every registered step, internal ones included. */
+export function listAllSteps(): StepMetadata[] {
   return Array.from(REGISTRY.values());
 }
 

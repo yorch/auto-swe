@@ -62,6 +62,8 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | null> = {
   planDecomposition: ['decomposer', 'planner'],
   resolveMergeConflict: ['mergeConflictResolver', 'implementer', 'securityReview'],
   runAgentNode: null,
+  // The agent comes from the launch payload, but the post-diff gate is fixed.
+  runAgentTask: ['securityReview'],
   runChannelSubtasks: ['channelAssistant'],
   runEvalNode: ['evalJudge'],
   runReviewNetwork: ['securityReviewer', 'domainLogicReviewer', 'performanceReviewer', 'reviewer'],

@@ -187,6 +187,8 @@ export type {
 export { resolveWorkspace } from './resolveWorkspace.js';
 export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';
 export { runAgentNode } from './runAgentNode.js';
+export type { RunAgentTaskInput, RunAgentTaskResult } from './runAgentTask.js';
+export { runAgentTask } from './runAgentTask.js';
 export type { RunEvalNodeInput, RunEvalNodeResult } from './runEvalNode.js';
 export { runEvalNode } from './runEvalNode.js';
 export { runReviewNetwork } from './runReviewNetwork.js';

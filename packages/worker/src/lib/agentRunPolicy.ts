@@ -82,6 +82,16 @@ export function parseRawDiffZ(out: string): RawChange[] {
   return changes;
 }
 
+function hasControlChar(s: string): boolean {
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export interface PolicyInputs {
   changes: RawChange[];
   /** `sha -> size in bytes` for every added/modified regular blob. */
@@ -111,11 +121,7 @@ export async function evaluatePushPolicy(input: PolicyInputs): Promise<PolicyVio
 
   for (const c of input.changes) {
     // A path git would quote or that could split a line in anything downstream.
-    if (
-      /[\u0000-\u001f\u007f]/.test(c.path) ||
-      c.path.startsWith('/') ||
-      /(^|\/)\.\.(\/|$)/.test(c.path)
-    ) {
+    if (hasControlChar(c.path) || c.path.startsWith('/') || /(^|\/)\.\.(\/|$)/.test(c.path)) {
       add('unclassifiable_path', JSON.stringify(c.path), 'control characters or path traversal');
       continue;
     }

@@ -108,6 +108,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/billing.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/agentRunAdmission',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentRunAdmission.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/agentRun',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentRun.ts'),
       },

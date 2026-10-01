@@ -108,6 +108,7 @@ export {
   assertBuiltinStepsRegistered,
   getStepMetadata,
   hasStep,
+  listAllSteps,
   listSteps,
   MCP_TOOL_KEY,
 } from './stepRegistry.js';

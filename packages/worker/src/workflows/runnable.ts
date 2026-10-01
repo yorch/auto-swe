@@ -185,6 +185,18 @@ const agentNodeActivities = proxyActivities<
   startToCloseTimeout: T_10M,
 });
 
+// The Agent Run system template's step: a workspace container, an agent loop of
+// up to the platform's wall-clock ceiling (max 4 h), then a trusted-container
+// gate and push. Single attempt, because a retry would re-spend and could
+// re-publish; `startToCloseTimeout` is only a backstop (the real bound is the
+// per-run deadline inside the activity) and must exceed the ceiling plus the
+// clone, export, scan and push around it.
+const agentTaskActivities = proxyActivities<Pick<typeof activitiesType, 'runAgentTask'>>({
+  heartbeatTimeout: T_5M,
+  retry: RETRY_SINGLE_ATTEMPT,
+  startToCloseTimeout: '5h',
+});
+
 // Evals P2: declarative `eval` node. Runs scorers (assert/trajectory + judge
 // LLM call), so it gets the longer agent-style timeout.
 const evalNodeActivities = proxyActivities<Pick<typeof activitiesType, 'runEvalNode'>>({
@@ -573,6 +585,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         systemPrompt: config.systemPrompt as string | undefined,
         userMessage: config.userMessage as string | undefined,
       }),
+  ],
+  [
+    // Internal step of the Agent Run system template. The activity re-checks that
+    // it is running for that template; nothing here is trusted to have been checked.
+    'runAgentTask',
+    ({ request }) => agentTaskActivities.runAgentTask({ request }),
   ],
   [
     // Evals P2 declarative eval node: score a target value with a list of scorers.
