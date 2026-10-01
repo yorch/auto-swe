@@ -148,6 +148,10 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
       const childRequest: RepoWorkRequest = {
         description: request.description,
         externalTicketId: request.externalTicketId,
+        // The epic's launcher launched every child. Spread only when present,
+        // so a child of an epic started before this field existed gets exactly
+        // the input it always did.
+        ...(request.launchedById ? { launchedById: request.launchedById } : {}),
         parentWorkflowId: request.epicWorkflowId,
         repoId: repo.repoId,
         requestPayload: request.requestPayload,

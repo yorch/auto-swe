@@ -9,6 +9,7 @@
  */
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
+import { resolveUserCredentialPolicy } from '@auto-swe/shared/lib/connectionCredential';
 import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
 import {
   resolveIssueTrackerConfig,
@@ -26,6 +27,7 @@ import { z } from 'zod';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
+import { currentRunLauncherId } from '../lib/runLauncher.js';
 import { getTemporalClient } from '../lib/temporalClient.js';
 import { runAgent } from './runAgent.js';
 import { resolveTemplateForRepo } from './templates.js';
@@ -311,6 +313,14 @@ export async function submitPrdWorkRequests(
     return { workRequestIds: [] };
   }
 
+  // Whoever launched this PRD run launched every story it turns into, so each
+  // story may use the GitHub token that person saved — and nobody else's. Read
+  // from this execution's own run row, not the PRD's stored request — and only
+  // when the feature is on, so a deployment that never enabled it gains no new
+  // database read here, or a new way for this activity to fail.
+  const credentialsOn = (await resolveUserCredentialPolicy().catch(() => null))?.enabled ?? false;
+  const launchedById = credentialsOn ? await currentRunLauncherId() : null;
+
   const repoById = new Map(repos.map((r) => [r.id, r]));
 
   /** Pick the best repo for a story based on repoHint (contains search). */
@@ -415,6 +425,7 @@ export async function submitPrdWorkRequests(
         budgetTier: undefined,
         description,
         externalTicketId,
+        ...(launchedById ? { launchedById } : {}),
         repoId: repo.id,
         requestPayload,
         workRequestId,

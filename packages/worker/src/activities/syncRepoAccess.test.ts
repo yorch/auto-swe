@@ -48,10 +48,21 @@ vi.mock('../lib/scm/index.js', () => ({
   }),
 }));
 
+const credentialPolicy = vi.fn();
+vi.mock('@auto-swe/shared/lib/connectionCredential', () => ({
+  resolveUserCredentialPolicy: () => credentialPolicy(),
+}));
+
+const lookupPermissionViaUserCredential = vi.fn();
+vi.mock('@auto-swe/shared/lib/repoPermission', () => ({
+  lookupPermissionViaUserCredential: (...a: unknown[]) => lookupPermissionViaUserCredential(...a),
+}));
+
 const { syncRepoAccess } = await import('./syncRepoAccess.js');
 
 function repo(members: { id: string; githubLogin: string | null }[], over = {}) {
   return {
+    credentials: [] as { userId: string }[],
     githubApiUrl: null,
     githubUrl: null,
     id: 'conn-1',
@@ -67,6 +78,73 @@ beforeEach(() => {
   vi.clearAllMocks();
   upsert.mockResolvedValue({});
   verifyGithubLoginOwnership.mockResolvedValue({ status: 'ok' });
+  lookupPermissionViaUserCredential.mockResolvedValue(null);
+  credentialPolicy.mockResolvedValue({ enabled: true, hosts: ['github.com'] });
+});
+
+describe('syncRepoAccess with saved user credentials', () => {
+  it("asks with a holder's own token, even one with no GitHub login", async () => {
+    findMany.mockResolvedValue([
+      repo(
+        [
+          { githubLogin: null, id: 'user-1' },
+          { githubLogin: 'hubot', id: 'user-2' },
+        ],
+        { credentials: [{ userId: 'user-1' }] }
+      ),
+    ]);
+    lookupPermissionViaUserCredential.mockResolvedValue({ ok: true, permission: 'write' });
+    repoPermission.mockResolvedValue({ ok: true, permission: 'read' });
+
+    const result = await syncRepoAccess();
+
+    expect(lookupPermissionViaUserCredential).toHaveBeenCalledTimes(1);
+    expect(lookupPermissionViaUserCredential.mock.calls[0][2]).toBe('user-1');
+    // Only the member without a credential is asked about by login.
+    expect(repoPermission).toHaveBeenCalledTimes(1);
+    expect(repoPermission.mock.calls[0][1]).toBe('hubot');
+    expect(result.refreshed).toBe(2);
+    expect(result.unresolvedUsers).toBe(0);
+  });
+
+  it('falls back to the login when the credential is not usable', async () => {
+    findMany.mockResolvedValue([
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], { credentials: [{ userId: 'user-1' }] }),
+    ]);
+    repoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+
+    await syncRepoAccess();
+
+    expect(repoPermission.mock.calls[0][1]).toBe('octocat');
+  });
+
+  it('ignores saved credentials entirely while the feature is off', async () => {
+    credentialPolicy.mockResolvedValue({ enabled: false, hosts: [] });
+    findMany.mockResolvedValue([
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], { credentials: [{ userId: 'user-1' }] }),
+    ]);
+    repoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+
+    await syncRepoAccess();
+
+    expect(lookupPermissionViaUserCredential).not.toHaveBeenCalled();
+    expect(repoPermission.mock.calls[0][1]).toBe('octocat');
+  });
+
+  it('writes nothing for a credential lookup that failed', async () => {
+    findMany.mockResolvedValue([
+      repo([{ githubLogin: null, id: 'user-1' }], { credentials: [{ userId: 'user-1' }] }),
+    ]);
+    lookupPermissionViaUserCredential.mockResolvedValue({
+      failure: 'credential-rejected',
+      ok: false,
+    });
+
+    const result = await syncRepoAccess();
+
+    expect(upsert).not.toHaveBeenCalled();
+    expect(result.failed).toBe(1);
+  });
 });
 
 describe('syncRepoAccess', () => {
