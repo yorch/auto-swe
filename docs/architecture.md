@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 67 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 64 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Generated `init` baseline, a hand-written constraints/indexes migration, and appended migrations for later changes |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -433,7 +433,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 67 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 64 models.
 
 ```mermaid
 erDiagram
@@ -491,7 +491,7 @@ erDiagram
 | Memory | `MemoryItem` | pgvector semantic memory, 1536-dim with an HNSW index; `scope` partitions domains and `entityType`/`entityId` support generic entity scoping beyond repos and channels |
 | Agent config | `Agent`, `AgentSkillRef`, `Skill` | Versioned agents scoped GLOBAL / ORGANIZATION / TEAM / CHANNEL / WORKFLOW_TEMPLATE, joined to skills via `AgentSkillRef` |
 | Model config | `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | Encrypted keys, embedding singleton, config audit trail |
-| System config | `GitHubConfig`, `SlackConfig`, `StorageConfig`, `WorkflowDefaults`, `GoogleOAuthConfig`, `OktaOAuthConfig`, `IssueTrackerConfig`, `KnowledgeBaseConfig`, `FigmaConfig` | Singletons (`id='default'`) with encrypted secrets and env-var fallback |
+| System config | `GitHubConfig`, `SlackConfig`, `WorkflowDefaults`, `IssueTrackerConfig`, `KnowledgeBaseConfig`, `FigmaConfig` | Singletons (`id='default'`) with encrypted secrets and env-var fallback. Sign-in credentials (Google, Okta, GitHub OAuth), artifact storage, and workspace sizing are environment-only — see [configuration.md](./configuration.md) |
 | Per-host webhook secrets | `GitHubHostWebhookSecret` | One GitHub Enterprise host's encrypted webhook secret, keyed by lowercase `host[:port]` and used only for deliveries naming that host in `X-GitHub-Enterprise-Host`. Platform infrastructure, not tenant-scoped. See [repositories.md](./repositories.md) |
 | Billing | `OrgMonthlyUsage`, `ChannelMonthlyUsage`, `ChannelBudgetHold` | Monthly cost/run/token aggregates keyed by `(scope, yearMonth)`; a hold row is one turn's outstanding claim on a channel's remaining budget |
 | Channel assistant | `SlackWorkspace`, `SlackChannel`, `ChannelThreadSession`, `ChannelOpenItem` | See [channel-assistant.md](./channel-assistant.md) |
@@ -622,7 +622,7 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 | Control | Detail |
 |---|---|
 | Capabilities | `--cap-drop=ALL`, `--security-opt=no-new-privileges` |
-| Resources | Memory, CPU, and PID caps from the Tier-2 defaults |
+| Resources | Memory, CPU, and PID caps from `WORKSPACE_MEMORY` / `WORKSPACE_CPUS` / `WORKSPACE_PIDS_LIMIT` |
 | Network | Kept — git and package installs need it. Egress is **not** IP-filtered |
 | Clone credential | Scrubbed from `.git/config` immediately after clone, then re-injected per-call by `gitAuthed` via `http.extraheader` for push and fetch only, so it never sits at rest in the workspace |
 | Authenticated git calls | Each one (`authedGitScript`) first rewrites `.git/config` from an allow-list — repository format, `origin` pinned to the scrubbed URL, plain `origin` fetch refspecs — so a planted `url.*.insteadOf`, `http.<url>.proxy`, `include.path`, `credential.helper` or rewritten remote cannot redirect the header; refuses a `.git` that is a gitfile or symlink; pins `GIT_DIR` / `GIT_WORK_TREE` to the repository and refuses unless `git rev-parse --absolute-git-dir` names exactly that `.git`, so a `.git` broken on purpose is an error rather than a fallback to a parent `/workspace/.git` or `/.git` whose config was never rewritten; in the agent workspace, first SIGKILLs every process except PID 1, the container's keeper and the call's own process tree, so nothing the agent left running can read the header from `/proc/<pid>/cmdline` or rewrite the config between the rewrite and the call; runs with hooks off (`core.hooksPath=/dev/null`), system and global config ignored, `core.fsmonitor`/`ext::`/submodule recursion disabled; and pushes to the scrubbed URL explicitly with `--no-verify`. A built-in `SENSITIVE_FILE` pattern also hard-blocks `writeFile` and shell redirects into `.git/` |
@@ -752,7 +752,7 @@ Current constraints of the system as built. Deliberate product boundaries are in
   processes with independent 60 s caches, so a pattern change can take up to a minute to reach the
   worker and the two can briefly disagree.
 - **Scanner regex execution is bounded, not proven safe.** Patterns run in a pooled worker thread
-  killed at the `workspace.regexScanBudgetMs` setting (default 250 ms) per scanned window, so a
+  killed at the `SCANNER_REGEX_BUDGET_MS` budget (default 250 ms) per scanned window, so a
   catastrophic one cannot wedge the process — but once it has overrun twice in isolation it is
   quarantined per process for 10 min: the blocking scanners then block on it outright until an
   admin fixes the row, the advisory ones run without it. See

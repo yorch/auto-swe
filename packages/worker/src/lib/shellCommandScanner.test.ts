@@ -2,9 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    configSetting: {
-      findMany: vi.fn(),
-    },
     scannerPattern: {
       findMany: vi.fn(),
     },
@@ -19,7 +16,6 @@ vi.mock('@auto-swe/shared/lib/regexExec', async (importOriginal) => {
   return { ...actual, runRegexBatch: vi.fn(actual.runRegexBatch) };
 });
 
-import { invalidateSettingsCache } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import {
   DEFAULT_REGEX_BUDGET_MS,
@@ -36,7 +32,6 @@ import {
 } from './shellCommandScanner.js';
 
 const findMany = vi.mocked(prisma.scannerPattern.findMany);
-const configFindMany = vi.mocked(prisma.configSetting.findMany);
 const runRegexBatchSpy = vi.mocked(runRegexBatch);
 
 // Verbatim copy of the built-in SHELL_COMMAND patterns from
@@ -196,9 +191,6 @@ beforeEach(() => {
   findMany.mockReset();
   mockPatternRows(BUILTIN_SHELL_PATTERNS);
   runRegexBatchSpy.mockClear();
-  configFindMany.mockReset();
-  configFindMany.mockResolvedValue([]);
-  invalidateSettingsCache();
 });
 
 describe('scanShellCommand — commands that must be blocked', () => {
@@ -349,15 +341,14 @@ describe('scanShellCommand — a scan that cannot complete fails CLOSED', () => 
   });
 });
 
-describe('scanShellCommand — the regex execution budget is the operator-tunable setting', () => {
+describe('scanShellCommand — the regex execution budget comes from SCANNER_REGEX_BUDGET_MS', () => {
   afterEach(() => {
     resetRegexExecutor();
+    delete process.env.SCANNER_REGEX_BUDGET_MS;
   });
 
-  it('threads the resolved workspace.regexScanBudgetMs value into runRegexBatch', async () => {
-    configFindMany.mockResolvedValue([
-      { key: 'workspace.regexScanBudgetMs', scope: 'GLOBAL', value: 5_000 },
-    ] as never);
+  it('threads the configured budget into runRegexBatch', async () => {
+    process.env.SCANNER_REGEX_BUDGET_MS = '5000';
     await scanShellCommand('ls');
     expect(runRegexBatchSpy).toHaveBeenCalledWith(
       expect.anything(),
@@ -366,8 +357,7 @@ describe('scanShellCommand — the regex execution budget is the operator-tunabl
     );
   });
 
-  it('falls back to the default budget, without throwing, when the setting cannot be resolved', async () => {
-    configFindMany.mockRejectedValue(new Error('database is unreachable'));
+  it('uses the default budget when the variable is unset', async () => {
     await expect(scanShellCommand('ls')).resolves.toBeNull();
     expect(runRegexBatchSpy).toHaveBeenCalledWith(
       expect.anything(),

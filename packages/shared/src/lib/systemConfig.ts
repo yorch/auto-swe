@@ -1,3 +1,4 @@
+import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { decryptSecret } from './crypto.js';
 
 // Lazy DB access — defers prisma module load until first resolver call so that
@@ -103,16 +104,6 @@ export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<Resolved
     process.env.GITHUB_WEBHOOK_SECRET ??
     null;
 
-  const oauthClientSecret =
-    decryptOptional({
-      authTag: row?.oauthClientSecretAuthTag ?? null,
-      ciphertext: row?.oauthClientSecretCiphertext ?? null,
-      keyVersion: row?.oauthClientSecretKeyVersion ?? null,
-      nonce: row?.oauthClientSecretNonce ?? null,
-    }) ??
-    process.env.GITHUB_CLIENT_SECRET ??
-    null;
-
   const appClientSecret =
     decryptOptional({
       authTag: row?.appClientSecretAuthTag ?? null,
@@ -142,8 +133,9 @@ export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<Resolved
     appPrivateKey,
     authMode: row?.authMode ?? process.env.GITHUB_AUTH_MODE ?? null,
     baseUrl: row?.baseUrl ?? process.env.GITHUB_URL ?? 'https://github.com',
-    oauthClientId: row?.oauthClientId ?? process.env.GITHUB_CLIENT_ID ?? null,
-    oauthClientSecret,
+    // Sign-in credentials are environment-only: better-auth reads them once at boot.
+    oauthClientId: process.env.GITHUB_CLIENT_ID ?? null,
+    oauthClientSecret: process.env.GITHUB_CLIENT_SECRET ?? null,
     token,
     webhookSecret,
   };
@@ -290,35 +282,18 @@ export interface ResolvedStorageConfig {
   awsSecretAccessKey: string | null;
 }
 
-export async function resolveStorageConfig(_opts?: ResolveOpts): Promise<ResolvedStorageConfig> {
-  const row = await (await db()).storageConfig.findUnique({ where: { id: 'default' } });
-
-  const awsSecretAccessKey =
-    decryptOptional({
-      authTag: row?.awsSecretAccessKeyAuthTag ?? null,
-      ciphertext: row?.awsSecretAccessKeyCiphertext ?? null,
-      keyVersion: row?.awsSecretAccessKeyKeyVersion ?? null,
-      nonce: row?.awsSecretAccessKeyNonce ?? null,
-    }) ??
-    process.env.AWS_SECRET_ACCESS_KEY ??
-    null;
-
-  // Trust any explicit DB value when a row exists. The PUT endpoint auto-sets
-  // backend='s3' when s3Bucket is provided without an explicit backend, so a
-  // partial PUT can never silently land backend='inline' in the DB anymore.
-  // Fall back to the env var only when there is no DB row at all.
-  const envBackend = process.env.ARTIFACT_S3_BUCKET ? 's3' : 'inline';
-  const backend = (row?.backend ?? envBackend) as 'inline' | 's3';
-
+/// Environment-only: storage is infrastructure, picked at deploy time. With no
+/// bucket configured the backend is `inline` (Postgres).
+export function resolveStorageConfig(_opts?: ResolveOpts): ResolvedStorageConfig {
   return {
-    awsAccessKeyId: row?.awsAccessKeyId ?? process.env.AWS_ACCESS_KEY_ID ?? null,
-    awsSecretAccessKey,
-    backend,
-    s3Bucket: row?.s3Bucket ?? process.env.ARTIFACT_S3_BUCKET ?? null,
-    s3Endpoint: row?.s3Endpoint ?? process.env.ARTIFACT_S3_ENDPOINT ?? null,
-    s3ForcePathStyle: row?.s3ForcePathStyle ?? process.env.ARTIFACT_S3_FORCE_PATH_STYLE === 'true',
-    s3Prefix: row?.s3Prefix ?? process.env.ARTIFACT_S3_PREFIX ?? null,
-    s3Region: row?.s3Region ?? process.env.ARTIFACT_S3_REGION ?? null,
+    awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID ?? null,
+    awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? null,
+    backend: process.env.ARTIFACT_S3_BUCKET ? 's3' : 'inline',
+    s3Bucket: process.env.ARTIFACT_S3_BUCKET ?? null,
+    s3Endpoint: process.env.ARTIFACT_S3_ENDPOINT ?? null,
+    s3ForcePathStyle: process.env.ARTIFACT_S3_FORCE_PATH_STYLE === 'true',
+    s3Prefix: process.env.ARTIFACT_S3_PREFIX ?? null,
+    s3Region: process.env.ARTIFACT_S3_REGION ?? null,
   };
 }
 
@@ -352,11 +327,6 @@ export interface ResolvedWorkflowDefaults {
   maxTddIterations: number;
   /// Eval-harness attempt cap.
   maxEvalIterations: number;
-  /// Ephemeral workspace container caps + default base image.
-  workspaceMemory: string;
-  workspaceCpus: number;
-  workspacePidsLimit: number;
-  workspaceImage: string;
   /// Lesson-retrieval relevance knobs.
   lessonRetrievalLimit: number;
   lessonRetrievalThreshold: number;
@@ -427,10 +397,6 @@ export async function resolveWorkflowDefaults(
     prBodyTemplate: row?.prBodyTemplate ?? process.env.PR_BODY_TEMPLATE ?? '',
     prTitleTemplate:
       row?.prTitleTemplate ?? process.env.PR_TITLE_TEMPLATE ?? '[auto-swe] {{ticketId}}',
-    workspaceCpus: row?.workspaceCpus ?? 2,
-    workspaceImage: row?.workspaceImage ?? 'node:24-alpine',
-    workspaceMemory: row?.workspaceMemory ?? '4g',
-    workspacePidsLimit: row?.workspacePidsLimit ?? 512,
   };
 }
 
@@ -657,24 +623,12 @@ export interface ResolvedGoogleOAuthConfig {
   clientSecret: string | null;
 }
 
-export async function resolveGoogleOAuthConfig(
-  _opts?: ResolveOpts
-): Promise<ResolvedGoogleOAuthConfig> {
-  const row = await (await db()).googleOAuthConfig.findUnique({ where: { id: 'default' } });
-
-  const clientSecret =
-    decryptOptional({
-      authTag: row?.clientSecretAuthTag ?? null,
-      ciphertext: row?.clientSecretCiphertext ?? null,
-      keyVersion: row?.clientSecretKeyVersion ?? null,
-      nonce: row?.clientSecretNonce ?? null,
-    }) ??
-    process.env.GOOGLE_CLIENT_SECRET ??
-    null;
-
+/// Environment-only: better-auth reads these once at gateway boot, so an
+/// editable copy in the database could never take effect without a restart.
+export function resolveGoogleOAuthConfig(_opts?: ResolveOpts): ResolvedGoogleOAuthConfig {
   return {
-    clientId: row?.clientId ?? process.env.GOOGLE_CLIENT_ID ?? null,
-    clientSecret,
+    clientId: process.env.GOOGLE_CLIENT_ID ?? null,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? null,
   };
 }
 
@@ -694,29 +648,15 @@ export interface ResolvedOktaOAuthConfig {
  * discovery fetch at gateway boot would fail without an issuer and the token
  * exchange would fail without a secret.
  */
-export async function resolveOktaOAuthConfig(
-  _opts?: ResolveOpts
-): Promise<ResolvedOktaOAuthConfig> {
-  const row = await (await db()).oktaOAuthConfig.findUnique({ where: { id: 'default' } });
-
-  const clientSecret =
-    decryptOptional({
-      authTag: row?.clientSecretAuthTag ?? null,
-      ciphertext: row?.clientSecretCiphertext ?? null,
-      keyVersion: row?.clientSecretKeyVersion ?? null,
-      nonce: row?.clientSecretNonce ?? null,
-    }) ??
-    process.env.OKTA_CLIENT_SECRET ??
-    null;
-
-  const rawIssuer = row?.issuer ?? process.env.OKTA_ISSUER ?? null;
+export function resolveOktaOAuthConfig(_opts?: ResolveOpts): ResolvedOktaOAuthConfig {
+  const rawIssuer = process.env.OKTA_ISSUER ?? null;
 
   return {
-    clientId: row?.clientId ?? process.env.OKTA_CLIENT_ID ?? null,
-    clientSecret,
+    clientId: process.env.OKTA_CLIENT_ID ?? null,
+    clientSecret: process.env.OKTA_CLIENT_SECRET ?? null,
     // better-auth's `okta()` helper appends `/.well-known/openid-configuration`
-    // to whatever it is handed; normalise here so a trailing slash saved in the
-    // admin form cannot produce a double slash in the discovery URL.
+    // to whatever it is handed; normalise here so a trailing slash in the
+    // environment cannot produce a double slash in the discovery URL.
     issuer: rawIssuer ? rawIssuer.replace(/\/+$/, '') : null,
   };
 }
@@ -780,4 +720,151 @@ export function resolveBetterAuthConfig(): BetterAuthBootstrapConfig {
     clientOrigin: process.env.CORS_ORIGIN?.split(',')[0]?.trim() ?? 'http://localhost:3000',
     secret: process.env.BETTER_AUTH_SECRET ?? '',
   };
+}
+
+// ─── Workspace / worker infrastructure (environment-only) ─────────────────────
+
+export interface WorkspaceInfraConfig {
+  /// Container caps for every agent workspace.
+  memory: string;
+  cpus: number;
+  pidsLimit: number;
+  /// Default base image; an explicit `image` argument to `createWorkspace` wins.
+  image: string;
+  /// Privileged sidecar that installs the cloud-metadata blackhole routes.
+  metadataBlockImage: string;
+  /// Blackhole cloud metadata IPs inside every workspace. Only the literal
+  /// string `false` turns it off, so a typo cannot disable a security control.
+  blockMetadata: boolean;
+  /// Cap on Temporal activity tasks one worker runs at once (read at boot).
+  maxConcurrentActivities: number;
+  /// Per-target wall-clock budget for a scanner pattern, in milliseconds.
+  regexScanBudgetMs: number;
+}
+
+/// Parses a positive integer from the environment, clamped to `[min, max]`.
+/// Clamping rather than rejecting: a deployment that has always run
+/// `WORKER_MAX_CONCURRENT_ACTIVITIES=2000` must not silently fall to the
+/// built-in default because a ceiling was added.
+function boundedEnvInt(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  if (parsed > max) {
+    console.warn(`[config] clamping ${name}=${parsed} to the maximum ${max}.`);
+    return max;
+  }
+  return Math.max(parsed, min);
+}
+
+const warnedInvalidEnv = new Set<string>();
+
+/// Reads a string variable that ends up inside a `docker run` command, falling
+/// back to `fallback` when it is unset or fails `pattern`. These values used to
+/// be validated when an admin saved them; now that nobody saves them, the check
+/// moves to the read. An invalid value falls back rather than throwing, because
+/// callers include scans that must never abort their activity — and says so
+/// once, so a typo in the deploy config does not pass unnoticed.
+function validatedEnv(name: string, fallback: string, pattern: RegExp, hint: string): string {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+  if (pattern.test(raw)) {
+    return raw;
+  }
+  if (!warnedInvalidEnv.has(name)) {
+    warnedInvalidEnv.add(name);
+    console.error(`[config] ignoring ${name}: not ${hint}. Using the default '${fallback}'.`);
+  }
+  return fallback;
+}
+
+const IMAGE_HINT = 'a valid Docker image reference';
+const DOCKER_MEMORY_RE = /^\d+[bkmg]?$/i;
+
+/// Deploy-time sizing and sidecar images for agent workspaces, plus the worker
+/// and scanner bounds. These were admin-editable; they are infrastructure
+/// decisions, so they now follow the host the worker runs on.
+///
+/// Lenient by design: this is read on the scan path, which must never throw, so
+/// a bad value falls back to its default. `assertWorkspaceInfraEnv()` is the
+/// strict counterpart and runs at worker boot, so a bad value is a failed
+/// deploy rather than a silently different one.
+export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
+  const cpus = Number(process.env.WORKSPACE_CPUS);
+  return {
+    blockMetadata: process.env.WORKSPACE_BLOCK_METADATA !== 'false',
+    cpus: Number.isFinite(cpus) && cpus > 0 ? cpus : 2,
+    image: validatedEnv('WORKSPACE_IMAGE', 'node:24-alpine', DOCKER_IMAGE_REF_RE, IMAGE_HINT),
+    maxConcurrentActivities: boundedEnvInt('WORKER_MAX_CONCURRENT_ACTIVITIES', 10, 1, 1000),
+    memory: validatedEnv(
+      'WORKSPACE_MEMORY',
+      '4g',
+      DOCKER_MEMORY_RE,
+      'a docker memory value such as 512m or 4g'
+    ),
+    metadataBlockImage: validatedEnv(
+      'WORKSPACE_METADATA_BLOCK_IMAGE',
+      'alpine:3.20',
+      DOCKER_IMAGE_REF_RE,
+      IMAGE_HINT
+    ),
+    pidsLimit: boundedEnvInt('WORKSPACE_PIDS_LIMIT', 512, 1, Number.MAX_SAFE_INTEGER),
+    regexScanBudgetMs: boundedEnvInt('SCANNER_REGEX_BUDGET_MS', 250, 10, 60_000),
+  };
+}
+
+/// Everything wrong with the workspace/worker environment, one message each.
+/// Empty means the environment is valid. Unset or empty variables are fine —
+/// they take their defaults; only a value that is *set and unusable* is a
+/// problem, because that is the one the lenient resolver would otherwise
+/// replace with a default without anyone noticing.
+///
+/// Oversized numbers are not problems: the resolver clamps them and says so.
+export function validateWorkspaceInfraEnv(): string[] {
+  const problems: string[] = [];
+  const check = (name: string, ok: (raw: string) => boolean, expected: string) => {
+    const raw = process.env[name];
+    if (raw !== undefined && raw !== '' && !ok(raw)) {
+      problems.push(`${name}=${JSON.stringify(raw)} is not ${expected}`);
+    }
+  };
+  const positiveInt = (raw: string) => Number.isInteger(Number(raw)) && Number(raw) > 0;
+
+  check(
+    'WORKSPACE_MEMORY',
+    (raw) => DOCKER_MEMORY_RE.test(raw),
+    'a docker memory value such as 512m or 4g'
+  );
+  check(
+    'WORKSPACE_CPUS',
+    (raw) => Number.isFinite(Number(raw)) && Number(raw) > 0,
+    'a positive number of cores'
+  );
+  check('WORKSPACE_PIDS_LIMIT', positiveInt, 'a positive integer');
+  check('WORKSPACE_IMAGE', (raw) => DOCKER_IMAGE_REF_RE.test(raw), IMAGE_HINT);
+  check('WORKSPACE_METADATA_BLOCK_IMAGE', (raw) => DOCKER_IMAGE_REF_RE.test(raw), IMAGE_HINT);
+  // `0` or `no` would read as "off" to an operator but leave blocking on, so
+  // only the two literal spellings are accepted for a security control.
+  check(
+    'WORKSPACE_BLOCK_METADATA',
+    (raw) => raw === 'true' || raw === 'false',
+    "'true' or 'false'"
+  );
+  check('WORKER_MAX_CONCURRENT_ACTIVITIES', positiveInt, 'a positive integer');
+  check('SCANNER_REGEX_BUDGET_MS', positiveInt, 'a positive integer (milliseconds)');
+  return problems;
+}
+
+/// Throws when `validateWorkspaceInfraEnv()` finds anything, naming every
+/// problem at once so one failed boot is enough to fix the whole file.
+export function assertWorkspaceInfraEnv(): void {
+  const problems = validateWorkspaceInfraEnv();
+  if (problems.length > 0) {
+    throw new Error(
+      `Invalid workspace configuration in the environment:\n  - ${problems.join('\n  - ')}`
+    );
+  }
 }

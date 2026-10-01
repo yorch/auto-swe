@@ -6,8 +6,8 @@ const otel = initTelemetry('auto-swe-worker');
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveSetting } from '@auto-swe/shared/config';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
+import { assertWorkspaceInfraEnv, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertBuiltinStepsRegistered } from '@auto-swe/shared/workflow';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
@@ -45,6 +45,11 @@ async function run() {
   // rotation until config is complete.
   await assertConfigReady();
 
+  // The resolvers fall back to defaults on a bad value (they run on paths that
+  // must not throw), so a typo in the deploy environment would otherwise run
+  // with different limits than the operator wrote. Fail the boot instead.
+  assertWorkspaceInfraEnv();
+
   // MODEL_PRICE_* once overrode a model's price; the model catalog replaced it.
   // Name any still set, so a deployment that relied on one learns it is no
   // longer read instead of silently pricing at the catalog's rate.
@@ -63,17 +68,13 @@ async function run() {
   // discovered on the first template save.
   assertBuiltinStepsRegistered();
 
-  // Boot-time only: Temporal reads the concurrency cap when the worker is
-  // created, so a change to it needs a restart — which is what the setting's
-  // `restartRequired` flag tells an operator in the dashboard. Resolved
-  // alongside the connection rather than before it; only `Worker.create` needs
-  // both.
-  const [maxConcurrentActivities, connection] = await Promise.all([
-    resolveSetting('workspace.maxConcurrentActivities'),
-    NativeConnection.connect({
-      address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
-    }),
-  ]);
+  // Temporal reads the concurrency cap when the worker is created, so it is an
+  // environment variable (`WORKER_MAX_CONCURRENT_ACTIVITIES`): changing it means
+  // a restart either way.
+  const { maxConcurrentActivities } = resolveWorkspaceInfra();
+  const connection = await NativeConnection.connect({
+    address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
+  });
   await initTemporalClient();
 
   // Resolve workflow path relative to this file (ESM-compatible). Prefer
@@ -92,9 +93,6 @@ async function run() {
     // Most activities hold a Docker workspace (clone + container) — an
     // explicit cap keeps a burst of workflows from exhausting the Docker
     // host. The Temporal default (100) is far past what one host can serve.
-    // Read once at boot from the config registry (`workspace.maxConcurrentActivities`,
-    // which still falls back to WORKER_MAX_CONCURRENT_ACTIVITIES), so the value
-    // is visible in the dashboard rather than only in the process environment.
     maxConcurrentActivityTaskExecutions: maxConcurrentActivities,
     namespace: 'default',
     taskQueue: 'engineering-workflow',

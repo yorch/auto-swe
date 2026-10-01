@@ -17,7 +17,6 @@ import type { SettingScope, SettingSource, SettingView } from '@/hooks/useConfig
 const SOURCE_LABELS: Record<SettingSource, string> = {
   CHANNEL: 'Channel override',
   DEFAULT: 'Built-in default',
-  ENV: 'Environment variable',
   GLOBAL: 'Platform-wide',
   ORGANIZATION: 'Organisation override',
   PINNED: 'Frozen by the run',
@@ -30,7 +29,6 @@ const SOURCE_LABELS: Record<SettingSource, string> = {
 const SOURCE_TONE: Record<SettingSource, string> = {
   CHANNEL: 'text-ember-400',
   DEFAULT: 'text-paper-500',
-  ENV: 'text-amber-400',
   GLOBAL: 'text-paper-400',
   ORGANIZATION: 'text-ember-400',
   PINNED: 'text-amber-400',

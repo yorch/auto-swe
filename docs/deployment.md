@@ -19,7 +19,7 @@ Six long-running processes plus one Docker daemon, and two more that are optiona
 | `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.33.1`                         | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
 | object store (optional)    | `dxflrs/garage` (bundled) / AWS S3 / Cloudflare R2 / Backblaze B2 | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
 
-The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `workspaceImage` Tier-2 default at `/govern/workflow-defaults`; an explicit `image` on a node still wins. Leave a connection's executor image **blank** to inherit that default — the column has no database default, so blank means "inherit" rather than a pinned value, and a connection that names an image keeps it. Clearing the field in the connection's settings is how you opt one back in (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
+The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `WORKSPACE_IMAGE` environment variable (default `node:24-alpine`); an explicit `image` on a node still wins. Leave a connection's executor image **blank** to inherit that default — the column has no database default, so blank means "inherit" rather than a pinned value, and a connection that names an image keeps it. Clearing the field in the connection's settings is how you opt one back in (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
 
 The workspace image tracks its own major, not the services'. It stays on `node:24-alpine` while the gateway, worker and web images run Node 26, because that image puts `yarn`, `pnpm` and `corepack` on `PATH` and the Node 26 image puts none of them there — Corepack is no longer bundled with the Node distribution.
 
@@ -42,9 +42,9 @@ Before touching infrastructure, gather these:
 - **GitHub webhook secret** — any strong random string; you'll add it to GitHub repo webhooks pointing at `https://api.example.com/api/v1/webhooks/git`.
 - **LLM provider key(s)** — configured via the admin UI (`/studio/models`) after first boot. There is no env-var fallback for LLM credentials: model + credential config is fully DB-driven (see [`model-configuration.md`](./model-configuration.md)).
 - **Email transport** — pick one of SMTP (`SMTP_HOST/PORT/USER/PASS` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Required for magic-link sign-in and password reset outside development — without one those requests fail, and the gateway logs an error that never contains the link. Only with `NODE_ENV=development` or `test` does it print the link to stdout instead.
-- **OAuth credentials** (optional but recommended) — register a GitHub OAuth app, a Google OAuth client, and/or an Okta OIDC app, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google,okta}`. Credentials are configured via `/studio/integrations` after first boot (GitHub tab for GitHub, OAuth tab for Google and Okta). See [`oauth-setup.md`](./oauth-setup.md).
+- **OAuth credentials** (optional but recommended) — register a GitHub OAuth app, a Google OAuth client, and/or an Okta OIDC app, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google,okta}`. Credentials are environment variables (`GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `OKTA_ISSUER` + `OKTA_CLIENT_ID/SECRET`). See [`oauth-setup.md`](./oauth-setup.md).
 - **Slack credentials** (optional) — configured via `/studio/integrations` (Slack tab) after first boot.
-- **S3-compatible artifact store** (optional but recommended in prod) — configured via `/studio/integrations` (Storage tab) after first boot. Without it, large step outputs are stored inline in Postgres.
+- **S3-compatible artifact store** (optional but recommended in prod) — configured with the `ARTIFACT_S3_*` environment variables. Without a bucket, large step outputs are stored inline in Postgres.
 
 Generate strong secrets:
 
@@ -122,15 +122,19 @@ AUTH_FROM_EMAIL=auth@example.com
 # RESEND_API_KEY=re_...
 # AUTH_FROM_EMAIL=auth@example.com
 
-# OAuth providers, Slack, and artifact storage are configured via the admin UI
-# (/studio/integrations) after first boot. The env vars below are accepted as
-# bootstrap fallbacks but are NOT required if you use the UI.
+# OAuth sign-in and artifact storage are environment-only — they are read at
+# process start, so they have no admin-UI form. Slack is configured via the
+# admin UI (/studio/integrations) after first boot; its env vars below are only
+# bootstrap fallbacks.
 #
-# OAuth (env fallback — prefer /studio/integrations → OAuth tab)
+# OAuth sign-in (gateway restart required to change)
 # GITHUB_CLIENT_ID=...
 # GITHUB_CLIENT_SECRET=...
 # GOOGLE_CLIENT_ID=...
 # GOOGLE_CLIENT_SECRET=...
+# OKTA_ISSUER=https://dev-12345.okta.com/oauth2/default
+# OKTA_CLIENT_ID=...
+# OKTA_CLIENT_SECRET=...
 #
 # Slack (env fallback — prefer /studio/integrations → Slack tab)
 # SLACK_CLIENT_ID=...
@@ -138,7 +142,7 @@ AUTH_FROM_EMAIL=auth@example.com
 # SLACK_SIGNING_SECRET=...
 # SLACK_BOT_TOKEN=xoxb-...
 #
-# Artifact store (env fallback — prefer /studio/integrations → Storage tab)
+# Artifact store
 # ARTIFACT_S3_ACCESS_KEY=...        # compose maps this to AWS_ACCESS_KEY_ID
 # ARTIFACT_S3_SECRET_KEY=...        # compose maps this to AWS_SECRET_ACCESS_KEY
 # ARTIFACT_S3_BUCKET=auto-swe-artifacts
@@ -157,6 +161,15 @@ WEB_URL=https://app.example.com      # base URL for the "Open inbox" link in Sla
                                      # set it or Slack links point at localhost)
 # WORKER_MAX_CONCURRENT_ACTIVITIES=10  # cap on concurrent activity executions per worker
                                        # (each typically holds a Docker workspace)
+# Agent workspace sizing and sidecar images (all optional; defaults shown; the
+# worker refuses to start on a value it cannot use)
+# WORKSPACE_MEMORY=4g
+# WORKSPACE_CPUS=2
+# WORKSPACE_PIDS_LIMIT=512
+# WORKSPACE_IMAGE=node:24-alpine
+# WORKSPACE_METADATA_BLOCK_IMAGE=alpine:3.20
+# WORKSPACE_BLOCK_METADATA=true        # only the literal `false` disables the metadata blackhole
+# SCANNER_REGEX_BUDGET_MS=250          # per-pattern scanner wall-clock budget
 ```
 
 > **Magic-link transport gotcha.** `nodemailer.sendMail()` resolves on SMTP `2xx` (relay accepted) — *not* delivery. Always test end-to-end against a real inbox after configuring SMTP/Resend, and check the audit log for `accepted` vs `rejected` arrays.
@@ -165,15 +178,15 @@ WEB_URL=https://app.example.com      # base URL for the "Open inbox" link in Sla
 
 ## 2b. Admin UI configuration (post-boot)
 
-Several categories of credentials that were previously env-only are now stored encrypted in the DB and managed via the admin UI. The env vars remain accepted as fallbacks, so existing deployments don't need an immediate flag day — but new deployments should configure via the UI and omit the env vars entirely.
+Integration credentials that an operator rotates during normal use are stored encrypted in the DB and managed via the admin UI; their env vars remain accepted as fallbacks. What a process needs at start-up — sign-in provider credentials, artifact storage, and workspace sizing — is environment-only (see [`configuration.md`](./configuration.md)).
+
+> **Upgrading from a release that kept these in the UI.** The migration that removes those forms refuses to run while the database still holds a value for any of them, and its error names the environment variable that replaces each one and the statement that clears the row. Set the variables, clear the rows, and re-run the migration — nothing is dropped silently.
 
 | Admin page | What it configures | Restart required? |
 |---|---|---|
 | `/studio/models` | LLM provider credentials and per-role model selection | No — resolved fresh per activity call |
-| `/studio/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs | No for token/webhook; **Yes** for OAuth app creds |
+| `/studio/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs, GitHub App credentials | No |
 | `/studio/integrations → Slack` | Slack client ID/secret, signing secret, bot token | **Yes** for client ID/secret; No for bot token/signing secret |
-| `/studio/integrations → Storage` | S3-compatible bucket, region, endpoint, credentials | No — resolved fresh per artifact write |
-| `/studio/integrations → OAuth` | Google OAuth client ID/secret; Okta issuer + client ID/secret | **Yes** — BetterAuth reads these at startup, and discovers Okta's OIDC endpoints once at boot |
 | `/govern/workflow-defaults` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
 
 **Bootstrap order** (first deployment):
@@ -181,11 +194,11 @@ Several categories of credentials that were previously env-only are now stored e
 2. Sign in as admin.
 3. `/studio/models` → Credentials → add a provider credential (the seed already created the agents + embedding config).
 4. `/studio/integrations` → GitHub tab → enter your PAT and webhook secret → Save.
-5. `/studio/integrations` → any other tabs you need (Slack, Storage, OAuth).
+5. `/studio/integrations` → any other tabs you need (Slack, Issue Tracker, Knowledge Base, Figma).
 6. Start the worker (`… up -d worker`, or `yarn dev:worker` locally). The worker reads all config from the DB.
 7. Optionally clear the `GITHUB_TOKEN` and `GITHUB_WEBHOOK_SECRET` env vars — the DB config is now the source of truth.
 
-> **"Restart required" changes.** Changes to OAuth credentials (GitHub/Google social sign-in) and Slack OAuth credentials take effect only after restarting the gateway. The UI shows a yellow banner reminding you. All other config changes (GitHub token, webhook secret, Slack bot token/signing secret, storage, workflow defaults) take effect on the next activity call — no restart needed.
+> **"Restart required" changes.** Slack OAuth credentials take effect only after restarting the gateway; the UI shows a yellow banner reminding you. Everything set through environment variables — sign-in credentials, storage, workspace sizing — is read at process start, so changing one means restarting the service that reads it. All other admin-UI changes (GitHub token, webhook secret, Slack bot token/signing secret, workflow defaults) take effect on the next activity call.
 
 ---
 

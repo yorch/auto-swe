@@ -51,24 +51,18 @@ vi.mock('../lib/systemConfigService.js', () => ({
     storyPointsFieldId: 'customfield_10016',
   })),
   getGitHubConfig: vi.fn(async () => ({ data: {}, sources: {} })),
-  getGoogleOAuthConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getIssueTrackerConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getKnowledgeBaseConfig: vi.fn(async () => ({ data: {}, sources: {} })),
-  getOktaOAuthConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getSlackConfig: vi.fn(async () => ({ data: {}, sources: {} })),
-  getStorageConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   listConfigAuditEntries: vi.fn(async () => []),
   SYSTEM_CONFIG_IDS: {
     canary: '00000000-0000-0000-0001-000000000012',
     consolidation: '00000000-0000-0000-0001-000000000009',
     evalSchedule: '00000000-0000-0000-0001-000000000010',
     github: '00000000-0000-0000-0001-000000000001',
-    googleOAuth: '00000000-0000-0000-0001-000000000005',
     knowledgeBase: '00000000-0000-0000-0001-000000000007',
-    oktaOAuth: '00000000-0000-0000-0001-000000000013',
     revalidation: '00000000-0000-0000-0001-000000000011',
     slack: '00000000-0000-0000-0001-000000000002',
-    storage: '00000000-0000-0000-0001-000000000003',
     tracker: '00000000-0000-0000-0001-000000000006',
     workflowDefaults: '00000000-0000-0000-0001-000000000004',
   },
@@ -77,7 +71,6 @@ vi.mock('../lib/systemConfigService.js', () => ({
   testIssueTrackerConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testKnowledgeBaseConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testSlackConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
-  testStorageConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   updateCanaryConfig: vi.fn(async () => ({
     auditAfterJson: { changedFields: ['enabled'] },
     auditBeforeJson: { enabled: false },
@@ -112,13 +105,6 @@ vi.mock('../lib/systemConfigService.js', () => ({
     data: {},
     existed: true,
   })),
-  updateGoogleOAuthConfig: vi.fn(async () => ({
-    auditBeforeJson: null,
-    auditTarget: { entityId: 'e', entityType: 'X' },
-    changedFields: [],
-    data: {},
-    existed: true,
-  })),
   updateIssueTrackerConfig: vi.fn(async () => ({
     auditBeforeJson: null,
     auditTarget: { entityId: 'e', entityType: 'X' },
@@ -133,16 +119,6 @@ vi.mock('../lib/systemConfigService.js', () => ({
     data: {},
     existed: true,
   })),
-  updateOktaOAuthConfig: vi.fn(async () => ({
-    auditBeforeJson: null,
-    auditTarget: {
-      entityId: '00000000-0000-0000-0001-000000000013',
-      entityType: 'OktaOAuthConfig',
-    },
-    changedFields: [],
-    data: {},
-    existed: true,
-  })),
   updateRevalidationScheduleConfig: vi.fn(async () => ({
     auditAfterJson: { changedFields: ['enabled'] },
     auditBeforeJson: { enabled: false },
@@ -151,13 +127,6 @@ vi.mock('../lib/systemConfigService.js', () => ({
     existed: true,
   })),
   updateSlackConfig: vi.fn(async () => ({
-    auditBeforeJson: null,
-    auditTarget: { entityId: 'e', entityType: 'X' },
-    changedFields: [],
-    data: {},
-    existed: true,
-  })),
-  updateStorageConfig: vi.fn(async () => ({
     auditBeforeJson: null,
     auditTarget: { entityId: 'e', entityType: 'X' },
     changedFields: [],
@@ -181,7 +150,6 @@ import {
   detectJiraFields,
   updateCanaryConfig,
   updateConsolidationConfig,
-  updateOktaOAuthConfig,
   updateWorkflowDefaults,
 } from '../lib/systemConfigService.js';
 import { systemConfigRoutes } from './systemConfig.js';
@@ -193,7 +161,6 @@ const updateCanaryConfigMock = vi.mocked(updateCanaryConfig);
 const updateWorkflowDefaultsMock = vi.mocked(updateWorkflowDefaults);
 const updateConsolidationConfigMock = vi.mocked(updateConsolidationConfig);
 const auditConfigWriteMock = vi.mocked(auditConfigWrite);
-const updateOktaOAuthConfigMock = vi.mocked(updateOktaOAuthConfig);
 
 const AUTH_HEADER = { authorization: 'Bearer fake-admin-token' };
 
@@ -341,7 +308,6 @@ describe('PUT /config/workflow-defaults', () => {
         budgetStandardInputTokens: 3_000_000,
         evalJudgeThreshold: 0.6,
         maxTddIterations: 7,
-        workspaceMemory: '8g',
       },
       headers: AUTH_HEADER,
       method: 'PUT',
@@ -369,29 +335,17 @@ describe('PUT /config/workflow-defaults', () => {
     await app.close();
   });
 
-  it('rejects a workspaceMemory that is not a docker memory value (shell-injection guard)', async () => {
+  it('no longer carries workspace sizing: those are environment-only now', async () => {
     const app = await buildApp();
     const res = await app.inject({
-      body: { workspaceMemory: '4g --privileged' },
+      body: { maxTddIterations: 7, workspaceImage: 'my image:latest', workspaceMemory: '8g' },
       headers: AUTH_HEADER,
       method: 'PUT',
       url: '/api/v1/platform/config/workflow-defaults',
     });
-    expect(res.statusCode).toBe(400);
-    expect(updateWorkflowDefaultsMock).not.toHaveBeenCalled();
-    await app.close();
-  });
-
-  it('rejects a workspaceImage that fails the Docker ref regex', async () => {
-    const app = await buildApp();
-    const res = await app.inject({
-      body: { workspaceImage: 'my image:latest' },
-      headers: AUTH_HEADER,
-      method: 'PUT',
-      url: '/api/v1/platform/config/workflow-defaults',
-    });
-    expect(res.statusCode).toBe(400);
-    expect(updateWorkflowDefaultsMock).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+    const sent = updateWorkflowDefaultsMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(sent).toEqual({ maxTddIterations: 7 });
     await app.close();
   });
 });
@@ -489,64 +443,6 @@ describe('PUT /config/canary', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(updateCanaryConfigMock).toHaveBeenCalledTimes(1);
-    await app.close();
-  });
-});
-
-describe('PUT /config/oauth/okta', () => {
-  // The issuer is fetched server-side by better-auth's discovery step at
-  // gateway boot, so an admin-supplied value reaches the network. These cases
-  // pin the guard that stops it being pointed at the internal network.
-  it('rejects an issuer on a private address without touching the service', async () => {
-    const app = await buildApp();
-    const res = await app.inject({
-      body: { issuer: 'https://169.254.169.254/oauth2/default' },
-      headers: AUTH_HEADER,
-      method: 'PUT',
-      url: '/api/v1/platform/config/oauth/okta',
-    });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe('UNSAFE_URL');
-    expect(updateOktaOAuthConfigMock).not.toHaveBeenCalled();
-    await app.close();
-  });
-
-  it('rejects a plaintext http issuer', async () => {
-    const app = await buildApp();
-    const res = await app.inject({
-      body: { issuer: 'http://okta.example.com/oauth2/default' },
-      headers: AUTH_HEADER,
-      method: 'PUT',
-      url: '/api/v1/platform/config/oauth/okta',
-    });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe('UNSAFE_URL');
-    expect(updateOktaOAuthConfigMock).not.toHaveBeenCalled();
-    await app.close();
-  });
-
-  it('accepts a public https issuer and audits the write', async () => {
-    const app = await buildApp();
-    const res = await app.inject({
-      body: {
-        clientId: '0oaokta123',
-        clientSecret: 'okta-secret',
-        issuer: 'https://dev-12345.okta.com/oauth2/default',
-      },
-      headers: AUTH_HEADER,
-      method: 'PUT',
-      url: '/api/v1/platform/config/oauth/okta',
-    });
-    expect(res.statusCode).toBe(200);
-    expect(updateOktaOAuthConfigMock).toHaveBeenCalledTimes(1);
-    expect(auditConfigWriteMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      'admin-1',
-      expect.objectContaining({
-        auditTarget: expect.objectContaining({ entityType: 'OktaOAuthConfig' }),
-      })
-    );
     await app.close();
   });
 });

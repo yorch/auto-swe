@@ -76,13 +76,6 @@ export interface SettingDefinition<T = unknown> {
   /// True when a process must restart before the new value takes effect.
   /// Surfaced in the UI; the resolver does not enforce it.
   restartRequired: boolean;
-  /// Environment variable consulted between the cascade and the default, so a
-  /// deployment already driving this value from the environment keeps working
-  /// until an admin saves an override.
-  envVar?: string;
-  /// Parses the env var's raw string. Returning undefined means "unset or
-  /// unparseable" and falls through to `defaultValue`.
-  parseEnv?: (raw: string) => T | undefined;
   /// Rendered next to the input (`minutes`, `MB`, `0–1`).
   unit?: string;
 }
@@ -102,7 +95,7 @@ export interface SettingResolveCtx {
 
 /// Where a resolved value actually came from. Returned by the effective-config
 /// view so an operator can see which scope is winning without reading source.
-export type SettingSource = SettingScope | 'PINNED' | 'ENV' | 'DEFAULT';
+export type SettingSource = SettingScope | 'PINNED' | 'DEFAULT';
 
 export interface ResolvedSetting<T = unknown> {
   key: string;

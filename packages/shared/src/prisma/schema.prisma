@@ -1854,8 +1854,8 @@ model ModelCatalogEntry {
 /// Singleton GitHub integration config. One row (id = "default").
 /// Encrypted fields follow the same AES-256-GCM envelope used by
 /// ProviderCredential (ciphertext + nonce + authTag per secret).
-/// oauthClientId / oauthClientSecret enable GitHub social sign-in via
-/// BetterAuth; changes require a gateway restart to take effect.
+/// GitHub social sign-in credentials (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET)
+/// are environment-only: they are read once at gateway boot.
 model GitHubConfig {
   id String @id @default("default")
 
@@ -1872,15 +1872,6 @@ model GitHubConfig {
   webhookSecretAuthTag    Bytes?  @map("webhook_secret_auth_tag")
   webhookSecretKeyVersion Int?    @map("webhook_secret_key_version")
   webhookSecretLastFour   String? @map("webhook_secret_last_four")
-
-  /// GitHub OAuth app credentials for browser social sign-in (BetterAuth)
-  oauthClientId String? @map("oauth_client_id")
-
-  oauthClientSecretCiphertext Bytes?  @map("oauth_client_secret_ciphertext")
-  oauthClientSecretNonce      Bytes?  @map("oauth_client_secret_nonce")
-  oauthClientSecretAuthTag    Bytes?  @map("oauth_client_secret_auth_tag")
-  oauthClientSecretKeyVersion Int?    @map("oauth_client_secret_key_version")
-  oauthClientSecretLastFour   String? @map("oauth_client_secret_last_four")
 
   /// GitHub App numeric ID (e.g. "12345678")
   appId String? @map("app_id")
@@ -1950,34 +1941,6 @@ model SlackConfig {
   @@map("slack_config")
 }
 
-/// Singleton artifact storage config. One row (id = "default").
-/// backend="inline" stores blobs in Postgres; backend="s3" uses any
-/// S3-compatible endpoint (the bundled Garage container, AWS S3, R2, B2).
-/// Changes take effect on the
-/// next worker activity call — no restart required.
-model StorageConfig {
-  id      String @id @default("default")
-  backend String @default("inline") // "inline" | "s3"
-
-  s3Bucket         String? @map("s3_bucket")
-  s3Region         String? @map("s3_region")
-  s3Endpoint       String? @map("s3_endpoint")
-  s3Prefix         String? @map("s3_prefix")
-  s3ForcePathStyle Boolean @default(false) @map("s3_force_path_style")
-
-  awsAccessKeyId String? @map("aws_access_key_id")
-
-  awsSecretAccessKeyCiphertext Bytes?  @map("aws_secret_access_key_ciphertext")
-  awsSecretAccessKeyNonce      Bytes?  @map("aws_secret_access_key_nonce")
-  awsSecretAccessKeyAuthTag    Bytes?  @map("aws_secret_access_key_auth_tag")
-  awsSecretAccessKeyKeyVersion Int?    @map("aws_secret_access_key_key_version")
-  awsSecretAccessKeyLastFour   String? @map("aws_secret_access_key_last_four")
-
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  @@map("storage_config")
-}
-
 /// Singleton workflow behaviour defaults. One row (id = "default").
 /// All fields have fallback values so the row is optional — the worker
 /// falls back to the baked-in defaults when no row exists.
@@ -2036,12 +1999,6 @@ model WorkflowDefaults {
   maxTddIterations  Int @default(5) @map("max_tdd_iterations")
   maxEvalIterations Int @default(3) @map("max_eval_iterations")
 
-  // Ephemeral workspace container sizing + default base image.
-  workspaceMemory     String @default("4g") @map("workspace_memory")
-  workspaceCpus       Float  @default(2) @map("workspace_cpus")
-  workspacePidsLimit  Int    @default(512) @map("workspace_pids_limit")
-  workspaceImage      String @default("node:24-alpine") @map("workspace_image")
-
   // Lesson (semantic-memory) retrieval relevance knobs.
   lessonRetrievalLimit     Int   @default(5) @map("lesson_retrieval_limit")
   lessonRetrievalThreshold Float @default(0.7) @map("lesson_retrieval_threshold")
@@ -2063,48 +2020,6 @@ model WorkflowDefaults {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("workflow_defaults")
-}
-
-/// Singleton Google OAuth config for BetterAuth social sign-in.
-/// Changes require a gateway restart to take effect.
-model GoogleOAuthConfig {
-  id       String  @id @default("default")
-  clientId String? @map("client_id")
-
-  clientSecretCiphertext Bytes?  @map("client_secret_ciphertext")
-  clientSecretNonce      Bytes?  @map("client_secret_nonce")
-  clientSecretAuthTag    Bytes?  @map("client_secret_auth_tag")
-  clientSecretKeyVersion Int?    @map("client_secret_key_version")
-  clientSecretLastFour   String? @map("client_secret_last_four")
-
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  @@map("google_oauth_config")
-}
-
-/// Singleton Okta OIDC config for BetterAuth enterprise SSO sign-in.
-/// Wired through better-auth's generic-OAuth plugin, which registers Okta as
-/// an ordinary social provider — so the sign-in, callback, and account-link
-/// routes are the same `/api/auth/**` paths GitHub and Google use.
-/// Changes require a gateway restart to take effect.
-model OktaOAuthConfig {
-  id String @id @default("default")
-
-  /// Authorization-server issuer, e.g. https://dev-12345.okta.com/oauth2/default.
-  /// The OIDC discovery document is fetched from `{issuer}/.well-known/openid-configuration`
-  /// at gateway startup, so this must be reachable from the gateway.
-  issuer   String?
-  clientId String? @map("client_id")
-
-  clientSecretCiphertext Bytes?  @map("client_secret_ciphertext")
-  clientSecretNonce      Bytes?  @map("client_secret_nonce")
-  clientSecretAuthTag    Bytes?  @map("client_secret_auth_tag")
-  clientSecretKeyVersion Int?    @map("client_secret_key_version")
-  clientSecretLastFour   String? @map("client_secret_last_four")
-
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  @@map("okta_oauth_config")
 }
 
 /// Singleton issue-tracker connector config. One row (id = "default").

@@ -183,8 +183,8 @@ describe('executeImplementation cross-repo context', () => {
 
   it('leaves the image undefined when the connection pins none, so the config default applies', async () => {
     // The 4th argument must be `undefined`, not a literal. `createWorkspace`
-    // resolves `image ?? cfg.workspaceImage`, so ANY string here wins the `??`
-    // and the operator's /govern/workflow-defaults setting is never read — which is
+    // resolves `image ?? infra.image`, so ANY string here wins the `??`
+    // and the operator's WORKSPACE_IMAGE is never read — which is
     // exactly how it was silently unreachable on every workspace path.
     await executeImplementation(REQUEST);
     expect(vi.mocked(createWorkspace)).toHaveBeenCalled();

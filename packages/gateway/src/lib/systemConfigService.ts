@@ -8,15 +8,14 @@ import {
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
   resolveSlackConfig,
-  resolveStorageConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import { WebClient } from '@slack/web-api';
 import type { FastifyBaseLogger } from 'fastify';
 
 /**
- * Service for the singleton system-config tables (GitHub, Slack, Storage,
- * WorkflowDefaults, GoogleOAuth, Tracker). Each section follows the same
+ * Service for the singleton system-config tables (GitHub, Slack,
+ * WorkflowDefaults, Tracker, KnowledgeBase, Figma). Each section follows the same
  * pattern: a masked read view (`get*Config`), a partial update that seals
  * secrets into AES-GCM envelope columns (`update*Config`), and — where
  * meaningful — a live connection test. Secret fields are write-only:
@@ -35,12 +34,9 @@ export const SYSTEM_CONFIG_IDS = {
   evalSchedule: '00000000-0000-0000-0001-000000000010',
   figma: '00000000-0000-0000-0001-000000000008',
   github: '00000000-0000-0000-0001-000000000001',
-  googleOAuth: '00000000-0000-0000-0001-000000000005',
   knowledgeBase: '00000000-0000-0000-0001-000000000007',
-  oktaOAuth: '00000000-0000-0000-0001-000000000013',
   revalidation: '00000000-0000-0000-0001-000000000011',
   slack: '00000000-0000-0000-0001-000000000002',
-  storage: '00000000-0000-0000-0001-000000000003',
   tracker: '00000000-0000-0000-0001-000000000006',
   workflowDefaults: '00000000-0000-0000-0001-000000000004',
 } as const;
@@ -206,8 +202,6 @@ export type GitHubConfigInput = {
   appPrivateKey?: string;
   authMode?: 'auto' | 'pat' | 'app' | null;
   baseUrl?: string | null;
-  oauthClientId?: string | null;
-  oauthClientSecret?: string;
   token?: string;
   webhookSecret?: string;
 };
@@ -223,8 +217,6 @@ const GITHUB_AUDIT_FIELDS = [
   'appPrivateKeyLastFour',
   'authMode',
   'baseUrl',
-  'oauthClientId',
-  'oauthClientSecretLastFour',
   'tokenLastFour',
   'webhookSecretLastFour',
 ] as const;
@@ -239,8 +231,6 @@ function githubData(row: GitHubConfigRow | null) {
     appPrivateKey: maskedSecret(row?.appPrivateKeyLastFour),
     authMode: row?.authMode ?? null,
     baseUrl: row?.baseUrl ?? null,
-    oauthClientId: row?.oauthClientId ?? null,
-    oauthClientSecret: maskedSecret(row?.oauthClientSecretLastFour),
     token: maskedSecret(row?.tokenLastFour),
     webhookSecret: maskedSecret(row?.webhookSecretLastFour),
   };
@@ -259,8 +249,6 @@ export async function getGitHubConfig(prisma: PrismaClient) {
       appPrivateKey: src(!!row?.appPrivateKeyCiphertext, 'GITHUB_APP_PRIVATE_KEY'),
       authMode: src(!!row?.authMode, 'GITHUB_AUTH_MODE'),
       baseUrl: src(!!row?.baseUrl, 'GITHUB_URL'),
-      oauthClientId: src(!!row?.oauthClientId, 'GITHUB_CLIENT_ID'),
-      oauthClientSecret: src(!!row?.oauthClientSecretCiphertext, 'GITHUB_CLIENT_SECRET'),
       token: src(!!row?.tokenCiphertext, 'GITHUB_TOKEN'),
       webhookSecret: src(!!row?.webhookSecretCiphertext, 'GITHUB_WEBHOOK_SECRET'),
     },
@@ -274,8 +262,6 @@ export async function updateGitHubConfig(
   const {
     token,
     webhookSecret,
-    oauthClientSecret,
-    oauthClientId,
     apiUrl,
     baseUrl,
     appId,
@@ -295,9 +281,6 @@ export async function updateGitHubConfig(
   if (baseUrl !== undefined) {
     data.baseUrl = baseUrl;
   }
-  if (oauthClientId !== undefined) {
-    data.oauthClientId = oauthClientId;
-  }
   if (appId !== undefined) {
     data.appId = appId;
   }
@@ -313,7 +296,6 @@ export async function updateGitHubConfig(
 
   sealInto(data, 'token', token);
   sealInto(data, 'webhookSecret', webhookSecret);
-  sealInto(data, 'oauthClientSecret', oauthClientSecret);
   sealInto(data, 'appClientSecret', appClientSecret);
   sealInto(data, 'appPrivateKey', appPrivateKey);
 
@@ -326,8 +308,6 @@ export async function updateGitHubConfig(
   const changedFields = changedKeys([
     ['token', token],
     ['webhookSecret', webhookSecret],
-    ['oauthClientId', oauthClientId],
-    ['oauthClientSecret', oauthClientSecret],
     ['apiUrl', apiUrl],
     ['baseUrl', baseUrl],
     ['appId', appId],
@@ -343,10 +323,7 @@ export async function updateGitHubConfig(
     auditBeforeJson: pickAudit(existing, GITHUB_AUDIT_FIELDS),
     auditTarget: { entityId: SYSTEM_CONFIG_IDS.github, entityType: 'GitHubConfig' },
     changedFields,
-    data: {
-      ...githubData(row),
-      requiresRestart: !!(oauthClientId !== undefined || oauthClientSecret),
-    },
+    data: githubData(row),
     existed: !!existing,
   };
 }
@@ -499,333 +476,6 @@ export async function testSlackConnection(): Promise<{ detail: string; ok: boole
       ok: false,
     };
   }
-}
-
-// ─── Storage ──────────────────────────────────────────────────────────────────
-
-type StorageConfigRow = NonNullable<
-  Awaited<ReturnType<PrismaClient['storageConfig']['findUnique']>>
->;
-
-export type StorageConfigInput = {
-  awsAccessKeyId?: string | null;
-  awsSecretAccessKey?: string;
-  backend?: 'inline' | 's3';
-  s3Bucket?: string | null;
-  s3Endpoint?: string | null;
-  s3ForcePathStyle?: boolean;
-  s3Prefix?: string | null;
-  s3Region?: string | null;
-};
-
-const STORAGE_AUDIT_FIELDS = [
-  'awsAccessKeyId',
-  'awsSecretAccessKeyLastFour',
-  'backend',
-  's3Bucket',
-  's3Endpoint',
-  's3ForcePathStyle',
-  's3Prefix',
-  's3Region',
-] as const;
-
-function storageData(row: StorageConfigRow | null) {
-  return {
-    awsAccessKeyId: row?.awsAccessKeyId ?? null,
-    awsSecretAccessKey: maskedSecret(row?.awsSecretAccessKeyLastFour),
-    backend: row?.backend ?? 'inline',
-    s3Bucket: row?.s3Bucket ?? null,
-    s3Endpoint: row?.s3Endpoint ?? null,
-    s3ForcePathStyle: row?.s3ForcePathStyle ?? false,
-    s3Prefix: row?.s3Prefix ?? null,
-    s3Region: row?.s3Region ?? null,
-  };
-}
-
-export async function getStorageConfig(prisma: PrismaClient) {
-  const row = await prisma.storageConfig.findUnique({ where: { id: 'default' } });
-  return {
-    data: storageData(row),
-    sources: {
-      awsAccessKeyId: src(!!row?.awsAccessKeyId, 'AWS_ACCESS_KEY_ID'),
-      awsSecretAccessKey: src(!!row?.awsSecretAccessKeyCiphertext, 'AWS_SECRET_ACCESS_KEY'),
-      backend: src(!!row?.backend, 'ARTIFACT_S3_BUCKET'),
-      s3Bucket: src(!!row?.s3Bucket, 'ARTIFACT_S3_BUCKET'),
-      s3Endpoint: src(!!row?.s3Endpoint, 'ARTIFACT_S3_ENDPOINT'),
-      s3ForcePathStyle: src(
-        row?.s3ForcePathStyle !== null && row?.s3ForcePathStyle !== undefined,
-        'ARTIFACT_S3_FORCE_PATH_STYLE'
-      ),
-      s3Prefix: src(!!row?.s3Prefix, 'ARTIFACT_S3_PREFIX'),
-      s3Region: src(!!row?.s3Region, 'ARTIFACT_S3_REGION'),
-    },
-  };
-}
-
-export async function updateStorageConfig(
-  prisma: PrismaClient,
-  body: StorageConfigInput
-): Promise<ConfigUpdateResult> {
-  const {
-    backend,
-    s3Bucket,
-    s3Region,
-    s3Endpoint,
-    s3Prefix,
-    s3ForcePathStyle,
-    awsAccessKeyId,
-    awsSecretAccessKey,
-  } = body;
-
-  const existing = await prisma.storageConfig.findUnique({ where: { id: 'default' } });
-
-  const data: Record<string, unknown> = {};
-  if (backend !== undefined) {
-    data.backend = backend;
-  }
-  // Providing s3Bucket without an explicit backend implies S3 mode. This
-  // prevents a partial PUT from writing the Prisma default 'inline' to the
-  // DB, which would make it impossible to distinguish "admin chose inline"
-  // from "admin never set backend" in the resolver.
-  else if (s3Bucket !== undefined && s3Bucket !== null) {
-    data.backend = 's3';
-  }
-  if (s3Bucket !== undefined) {
-    data.s3Bucket = s3Bucket;
-  }
-  if (s3Region !== undefined) {
-    data.s3Region = s3Region;
-  }
-  if (s3Endpoint !== undefined) {
-    data.s3Endpoint = s3Endpoint;
-  }
-  if (s3Prefix !== undefined) {
-    data.s3Prefix = s3Prefix;
-  }
-  if (s3ForcePathStyle !== undefined) {
-    data.s3ForcePathStyle = s3ForcePathStyle;
-  }
-  if (awsAccessKeyId !== undefined) {
-    data.awsAccessKeyId = awsAccessKeyId;
-  }
-
-  sealInto(data, 'awsSecretAccessKey', awsSecretAccessKey);
-
-  const row = await prisma.storageConfig.upsert({
-    create: { id: 'default', ...data },
-    update: data,
-    where: { id: 'default' },
-  });
-
-  const changedFields = changedKeys([
-    ['backend', backend],
-    ['s3Bucket', s3Bucket],
-    ['s3Region', s3Region],
-    ['s3Endpoint', s3Endpoint],
-    ['s3Prefix', s3Prefix],
-    ['s3ForcePathStyle', s3ForcePathStyle],
-    ['awsAccessKeyId', awsAccessKeyId],
-    ['awsSecretAccessKey', awsSecretAccessKey],
-  ]);
-
-  return {
-    auditAfterJson: { ...pickAudit(row, STORAGE_AUDIT_FIELDS), changedFields },
-    auditBeforeJson: pickAudit(existing, STORAGE_AUDIT_FIELDS),
-    auditTarget: { entityId: SYSTEM_CONFIG_IDS.storage, entityType: 'StorageConfig' },
-    changedFields,
-    data: storageData(row),
-    existed: !!existing,
-  };
-}
-
-export async function testStorageConnection(): Promise<{ detail: string; ok: boolean }> {
-  const config = await resolveStorageConfig();
-  if (config.backend === 'inline') {
-    return {
-      detail: 'Inline (Postgres) storage — no external connection needed.',
-      ok: true,
-    };
-  }
-  if (!config.s3Bucket) {
-    return { detail: 'S3 backend selected but no bucket configured.', ok: false };
-  }
-
-  const endpoint = config.s3Endpoint;
-  const region = config.s3Region ?? 'us-east-1';
-  const url = endpoint
-    ? `${endpoint}/${config.s3Bucket}`
-    : `https://${config.s3Bucket}.s3.${region}.amazonaws.com/`;
-
-  try {
-    // Use GET rather than HEAD — some S3-compatible services (MinIO, R2) return
-    // 405 for HEAD on bucket paths, masking real reachability.
-    const res = await fetch(url, {
-      method: 'GET',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(8_000),
-    });
-    // 403 / 400 → endpoint reachable, auth error (expected without signed request)
-    // 200 / 301 → bucket accessible
-    // 404 → endpoint reachable but bucket missing
-    if (res.status === 404) {
-      return {
-        detail: `Endpoint reachable but bucket '${config.s3Bucket}' not found (404).`,
-        ok: false,
-      };
-    }
-    return {
-      detail: `Endpoint reachable (HTTP ${res.status}). Note: credential verification requires a signed request.`,
-      ok: true,
-    };
-  } catch (err) {
-    return {
-      detail: `Cannot reach S3 endpoint: ${err instanceof Error ? err.message : String(err)}`,
-      ok: false,
-    };
-  }
-}
-
-// ─── Google OAuth ─────────────────────────────────────────────────────────────
-
-type GoogleOAuthConfigRow = NonNullable<
-  Awaited<ReturnType<PrismaClient['googleOAuthConfig']['findUnique']>>
->;
-
-export type GoogleOAuthConfigInput = {
-  clientId?: string | null;
-  clientSecret?: string;
-};
-
-const GOOGLE_OAUTH_AUDIT_FIELDS = ['clientId', 'clientSecretLastFour'] as const;
-
-function googleOAuthData(row: GoogleOAuthConfigRow | null) {
-  return {
-    clientId: row?.clientId ?? null,
-    clientSecret: maskedSecret(row?.clientSecretLastFour),
-  };
-}
-
-export async function getGoogleOAuthConfig(prisma: PrismaClient) {
-  const row = await prisma.googleOAuthConfig.findUnique({ where: { id: 'default' } });
-  return {
-    data: googleOAuthData(row),
-    sources: {
-      clientId: src(!!row?.clientId, 'GOOGLE_CLIENT_ID'),
-      clientSecret: src(!!row?.clientSecretCiphertext, 'GOOGLE_CLIENT_SECRET'),
-    },
-  };
-}
-
-export async function updateGoogleOAuthConfig(
-  prisma: PrismaClient,
-  body: GoogleOAuthConfigInput
-): Promise<ConfigUpdateResult> {
-  const { clientId, clientSecret } = body;
-
-  const existing = await prisma.googleOAuthConfig.findUnique({ where: { id: 'default' } });
-
-  const data: Record<string, unknown> = {};
-  if (clientId !== undefined) {
-    data.clientId = clientId;
-  }
-
-  sealInto(data, 'clientSecret', clientSecret);
-
-  const row = await prisma.googleOAuthConfig.upsert({
-    create: { id: 'default', ...data },
-    update: data,
-    where: { id: 'default' },
-  });
-
-  const changedFields = changedKeys([
-    ['clientId', clientId],
-    ['clientSecret', clientSecret],
-  ]);
-
-  return {
-    auditAfterJson: { ...pickAudit(row, GOOGLE_OAUTH_AUDIT_FIELDS), changedFields },
-    auditBeforeJson: pickAudit(existing, GOOGLE_OAUTH_AUDIT_FIELDS),
-    auditTarget: { entityId: SYSTEM_CONFIG_IDS.googleOAuth, entityType: 'GoogleOAuthConfig' },
-    changedFields,
-    data: { ...googleOAuthData(row), requiresRestart: true },
-    existed: !!existing,
-  };
-}
-
-// ─── Okta (enterprise SSO) ────────────────────────────────────────────────────
-
-type OktaOAuthConfigRow = NonNullable<
-  Awaited<ReturnType<PrismaClient['oktaOAuthConfig']['findUnique']>>
->;
-
-export type OktaOAuthConfigInput = {
-  clientId?: string | null;
-  clientSecret?: string;
-  issuer?: string | null;
-};
-
-const OKTA_OAUTH_AUDIT_FIELDS = ['issuer', 'clientId', 'clientSecretLastFour'] as const;
-
-function oktaOAuthData(row: OktaOAuthConfigRow | null) {
-  return {
-    clientId: row?.clientId ?? null,
-    clientSecret: maskedSecret(row?.clientSecretLastFour),
-    issuer: row?.issuer ?? null,
-  };
-}
-
-export async function getOktaOAuthConfig(prisma: PrismaClient) {
-  const row = await prisma.oktaOAuthConfig.findUnique({ where: { id: 'default' } });
-  return {
-    data: oktaOAuthData(row),
-    sources: {
-      clientId: src(!!row?.clientId, 'OKTA_CLIENT_ID'),
-      clientSecret: src(!!row?.clientSecretCiphertext, 'OKTA_CLIENT_SECRET'),
-      issuer: src(!!row?.issuer, 'OKTA_ISSUER'),
-    },
-  };
-}
-
-export async function updateOktaOAuthConfig(
-  prisma: PrismaClient,
-  body: OktaOAuthConfigInput
-): Promise<ConfigUpdateResult> {
-  const { clientId, clientSecret, issuer } = body;
-
-  const existing = await prisma.oktaOAuthConfig.findUnique({ where: { id: 'default' } });
-
-  const data: Record<string, unknown> = {};
-  if (clientId !== undefined) {
-    data.clientId = clientId;
-  }
-  if (issuer !== undefined) {
-    // Strip a trailing slash so `{issuer}/.well-known/openid-configuration`
-    // never becomes a double slash — Okta 404s that URL.
-    data.issuer = issuer ? issuer.replace(/\/+$/, '') : issuer;
-  }
-
-  sealInto(data, 'clientSecret', clientSecret);
-
-  const row = await prisma.oktaOAuthConfig.upsert({
-    create: { id: 'default', ...data },
-    update: data,
-    where: { id: 'default' },
-  });
-
-  const changedFields = changedKeys([
-    ['clientId', clientId],
-    ['clientSecret', clientSecret],
-    ['issuer', issuer],
-  ]);
-
-  return {
-    auditAfterJson: { ...pickAudit(row, OKTA_OAUTH_AUDIT_FIELDS), changedFields },
-    auditBeforeJson: pickAudit(existing, OKTA_OAUTH_AUDIT_FIELDS),
-    auditTarget: { entityId: SYSTEM_CONFIG_IDS.oktaOAuth, entityType: 'OktaOAuthConfig' },
-    changedFields,
-    data: { ...oktaOAuthData(row), requiresRestart: true },
-    existed: !!existing,
-  };
 }
 
 // ─── Issue tracker ────────────────────────────────────────────────────────────
@@ -1282,10 +932,6 @@ export type WorkflowDefaultsInput = {
   maxTddIterations?: number;
   prBodyTemplate?: string;
   prTitleTemplate?: string;
-  workspaceCpus?: number;
-  workspaceImage?: string;
-  workspaceMemory?: string;
-  workspacePidsLimit?: number;
 };
 
 /// A column name on the WorkflowDefaults singleton. Both the general editor and
@@ -1318,10 +964,6 @@ const WORKFLOW_DEFAULTS_KEYS = [
   'maxTddIterations',
   'prBodyTemplate',
   'prTitleTemplate',
-  'workspaceCpus',
-  'workspaceImage',
-  'workspaceMemory',
-  'workspacePidsLimit',
 ] as const satisfies readonly (keyof WorkflowDefaultsInput & WorkflowDefaultsKey)[];
 
 /// Writes the general (non-secret) fields onto the WorkflowDefaults singleton.

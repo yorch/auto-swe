@@ -7,11 +7,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock } from '@/test/rtl-helpers';
 import {
   testIssueTrackerConnection,
-  testStorageConnection,
+  testSlackConnection,
   triggerConsolidationNow,
   useCanaryConfig,
   useGitHubConfig,
-  useGoogleOAuthConfig,
   useUpdateGitHubConfig,
 } from './useAdminConfig';
 
@@ -50,18 +49,6 @@ describe('sourcedConfigQuery', () => {
       data: { token: { lastFour: 'abcd' } },
       sources: { token: 'db' },
     });
-  });
-
-  it('flattens a nested slug into the cache key', async () => {
-    setupFetchMock({
-      'GET /api/v1/platform/config/oauth/google': () => ({ data: { clientId: 'x' }, sources: {} }),
-    });
-    const qc = client();
-
-    const { result } = renderHook(() => useGoogleOAuthConfig(), { wrapper: wrapper(qc) });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(qc.getQueryData(['admin-config-oauth-google'])).toBeTruthy();
   });
 });
 
@@ -103,10 +90,10 @@ describe('configMutation', () => {
 describe('postConfigTest / postConfigTrigger', () => {
   it('POSTs an empty body when the connector needs no probe input', async () => {
     const spy = setupFetchMock({
-      'POST /api/v1/platform/config/storage/test': () => ({ detail: 'ok', ok: true }),
+      'POST /api/v1/platform/config/slack/test': () => ({ detail: 'ok', ok: true }),
     });
 
-    await expect(testStorageConnection()).resolves.toEqual({ detail: 'ok', ok: true });
+    await expect(testSlackConnection()).resolves.toEqual({ detail: 'ok', ok: true });
     expect(JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string)).toEqual({});
   });
 

@@ -44,7 +44,6 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveIssueTrackerConfig: vi.fn(),
   resolveKnowledgeBaseConfig: vi.fn(),
   resolveSlackConfig: vi.fn(),
-  resolveStorageConfig: vi.fn(),
   resolveWorkflowDefaults: vi.fn(),
 }));
 
@@ -54,19 +53,15 @@ import {
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
   resolveSlackConfig,
-  resolveStorageConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import {
   detectJiraFields,
   getFigmaConfig,
   getGitHubConfig,
-  getGoogleOAuthConfig,
   getIssueTrackerConfig,
   getKnowledgeBaseConfig,
-  getOktaOAuthConfig,
   getSlackConfig,
-  getStorageConfig,
   listConfigAuditEntries,
   testDecryptSecrets,
   testFigmaConnection,
@@ -74,26 +69,21 @@ import {
   testIssueTrackerConnection,
   testKnowledgeBaseConnection,
   testSlackConnection,
-  testStorageConnection,
   updateCanaryConfig,
   updateConsolidationConfig,
   updateEvalScheduleConfig,
   updateFigmaConfig,
   updateGitHubConfig,
-  updateGoogleOAuthConfig,
   updateIssueTrackerConfig,
   updateKnowledgeBaseConfig,
-  updateOktaOAuthConfig,
   updateRevalidationScheduleConfig,
   updateSlackConfig,
-  updateStorageConfig,
   updateWorkflowDefaults,
   writeSystemConfigAudit,
 } from './systemConfigService.js';
 
 const resolveGitHubConfigMock = vi.mocked(resolveGitHubConfig);
 const resolveSlackConfigMock = vi.mocked(resolveSlackConfig);
-const resolveStorageConfigMock = vi.mocked(resolveStorageConfig);
 const resolveFigmaConfigMock = vi.mocked(resolveFigmaConfig);
 const resolveKnowledgeBaseConfigMock = vi.mocked(resolveKnowledgeBaseConfig);
 const resolveIssueTrackerConfigMock = vi.mocked(resolveIssueTrackerConfig);
@@ -146,10 +136,6 @@ function makeMockPrisma() {
       findUnique: vi.fn(),
       upsert: echoUpsert(),
     },
-    googleOAuthConfig: {
-      findUnique: vi.fn(),
-      upsert: echoUpsert(),
-    },
     issueTrackerConfig: {
       findUnique: vi.fn(),
       upsert: echoUpsert(),
@@ -158,15 +144,7 @@ function makeMockPrisma() {
       findUnique: vi.fn(),
       upsert: echoUpsert(),
     },
-    oktaOAuthConfig: {
-      findUnique: vi.fn(),
-      upsert: echoUpsert(),
-    },
     slackConfig: {
-      findUnique: vi.fn(),
-      upsert: echoUpsert(),
-    },
-    storageConfig: {
       findUnique: vi.fn(),
       upsert: echoUpsert(),
     },
@@ -344,16 +322,6 @@ describe('systemConfigService', () => {
       expect(result.changedFields).not.toContain('token');
     });
 
-    it('requiresRestart is true only when the OAuth client id/secret changes', async () => {
-      mockPrisma.gitHubConfig.findUnique.mockResolvedValueOnce(null);
-      const noOauthChange = await updateGitHubConfig(prisma, { baseUrl: 'https://x' });
-      expect(noOauthChange.data.requiresRestart).toBe(false);
-
-      mockPrisma.gitHubConfig.findUnique.mockResolvedValueOnce(null);
-      const oauthChange = await updateGitHubConfig(prisma, { oauthClientId: 'client-123' });
-      expect(oauthChange.data.requiresRestart).toBe(true);
-    });
-
     it('reports existed:false on first create and existed:true on subsequent update', async () => {
       mockPrisma.gitHubConfig.findUnique.mockResolvedValueOnce(null);
       const created = await updateGitHubConfig(prisma, { baseUrl: 'https://x' });
@@ -441,150 +409,6 @@ describe('systemConfigService', () => {
       mockPrisma.slackConfig.findUnique.mockResolvedValueOnce(null);
       const withChange = await updateSlackConfig(prisma, { clientSecret: 'secret' });
       expect(withChange.data.requiresRestart).toBe(true);
-    });
-  });
-
-  // ─── Storage config ─────────────────────────────────────────────────────
-
-  describe('Storage config', () => {
-    it('encrypts the AWS secret key on write and redacts on read', async () => {
-      mockPrisma.storageConfig.findUnique.mockResolvedValueOnce(null);
-      const result = await updateStorageConfig(prisma, {
-        awsSecretAccessKey: 'wJalrXUtnFEMI/K7MDENG',
-        backend: 's3',
-        s3Bucket: 'my-bucket',
-      });
-      const sentData = mockPrisma.storageConfig.upsert.mock.calls[0][0].update as Record<
-        string,
-        unknown
-      >;
-      expect(sentData.awsSecretAccessKeyCiphertext).toBeInstanceOf(Uint8Array);
-      expect(result.data.awsSecretAccessKey).toEqual({ lastFour: 'DENG' });
-      expect(JSON.stringify(result)).not.toContain('wJalrXUtnFEMI/K7MDENG');
-    });
-
-    it('providing s3Bucket without an explicit backend implies backend=s3', async () => {
-      mockPrisma.storageConfig.findUnique.mockResolvedValueOnce(null);
-      await updateStorageConfig(prisma, { s3Bucket: 'implicit-bucket' });
-      const sentData = mockPrisma.storageConfig.upsert.mock.calls[0][0].update as Record<
-        string,
-        unknown
-      >;
-      expect(sentData.backend).toBe('s3');
-    });
-
-    it('clearing s3Bucket with null does not force backend=s3', async () => {
-      mockPrisma.storageConfig.findUnique.mockResolvedValueOnce(null);
-      await updateStorageConfig(prisma, { s3Bucket: null });
-      const sentData = mockPrisma.storageConfig.upsert.mock.calls[0][0].update as Record<
-        string,
-        unknown
-      >;
-      expect(sentData).not.toHaveProperty('backend');
-      expect(sentData.s3Bucket).toBeNull();
-    });
-
-    it('an explicit backend is never overridden by the s3Bucket-implies-s3 rule', async () => {
-      mockPrisma.storageConfig.findUnique.mockResolvedValueOnce(null);
-      await updateStorageConfig(prisma, { backend: 'inline', s3Bucket: 'ignored-for-backend' });
-      const sentData = mockPrisma.storageConfig.upsert.mock.calls[0][0].update as Record<
-        string,
-        unknown
-      >;
-      expect(sentData.backend).toBe('inline');
-    });
-
-    it('defaults backend to "inline" when no row and no data exist', async () => {
-      mockPrisma.storageConfig.findUnique.mockResolvedValueOnce(null);
-      const result = await getStorageConfig(prisma);
-      expect(result.data.backend).toBe('inline');
-      expect(result.data.s3ForcePathStyle).toBe(false);
-    });
-
-    it('s3ForcePathStyle source distinguishes explicit false from unset', async () => {
-      mockPrisma.storageConfig.findUnique.mockResolvedValueOnce({ s3ForcePathStyle: false });
-      const explicitFalse = await getStorageConfig(prisma);
-      expect(explicitFalse.sources.s3ForcePathStyle).toBe('db');
-
-      mockPrisma.storageConfig.findUnique.mockResolvedValueOnce(null);
-      const unset = await getStorageConfig(prisma);
-      expect(unset.sources.s3ForcePathStyle).toBeNull();
-    });
-  });
-
-  // ─── Google OAuth config ────────────────────────────────────────────────
-
-  describe('Google OAuth config', () => {
-    it('encrypts on write, redacts on read, and always flags requiresRestart', async () => {
-      mockPrisma.googleOAuthConfig.findUnique.mockResolvedValueOnce(null);
-      const result = await updateGoogleOAuthConfig(prisma, {
-        clientId: 'google-client-id',
-        clientSecret: 'GOCSPX-supersecret',
-      });
-      const sentData = mockPrisma.googleOAuthConfig.upsert.mock.calls[0][0].update as Record<
-        string,
-        unknown
-      >;
-      expect(sentData.clientSecretCiphertext).toBeInstanceOf(Uint8Array);
-      expect(result.data.clientSecret).toEqual({ lastFour: 'cret' });
-      expect(result.data.requiresRestart).toBe(true);
-    });
-
-    it('getGoogleOAuthConfig redacts the secret and passes through clientId', async () => {
-      mockPrisma.googleOAuthConfig.findUnique.mockResolvedValueOnce({
-        clientId: 'g-client',
-        ...sealedColumns('clientSecret', 'GOCSPX-readable'),
-      });
-      const result = await getGoogleOAuthConfig(prisma);
-      expect(result.data.clientSecret).toEqual({ lastFour: 'able' });
-      expect(result.data.clientId).toBe('g-client');
-    });
-  });
-
-  // ─── Okta OAuth config ──────────────────────────────────────────────────
-
-  describe('Okta OAuth config', () => {
-    it('encrypts on write, redacts on read, and always flags requiresRestart', async () => {
-      mockPrisma.oktaOAuthConfig.findUnique.mockResolvedValueOnce(null);
-      const result = await updateOktaOAuthConfig(prisma, {
-        clientId: '0oaokta123',
-        clientSecret: 'okta-super-secret',
-        issuer: 'https://dev-12345.okta.com/oauth2/default',
-      });
-      const sentData = mockPrisma.oktaOAuthConfig.upsert.mock.calls[0][0].update as Record<
-        string,
-        unknown
-      >;
-      expect(sentData.clientSecretCiphertext).toBeInstanceOf(Uint8Array);
-      expect(result.data.clientSecret).toEqual({ lastFour: 'cret' });
-      expect(result.data.issuer).toBe('https://dev-12345.okta.com/oauth2/default');
-      expect(result.data.requiresRestart).toBe(true);
-    });
-
-    // `{issuer}//.well-known/openid-configuration` 404s on Okta, and the failure
-    // surfaces only as a boot-time discovery log — so normalise at the boundary.
-    it('strips a trailing slash from the issuer before storing it', async () => {
-      mockPrisma.oktaOAuthConfig.findUnique.mockResolvedValueOnce(null);
-      const result = await updateOktaOAuthConfig(prisma, {
-        issuer: 'https://dev-12345.okta.com/oauth2/default//',
-      });
-      expect(result.data.issuer).toBe('https://dev-12345.okta.com/oauth2/default');
-    });
-
-    it('getOktaOAuthConfig redacts the secret and reports the value source', async () => {
-      mockPrisma.oktaOAuthConfig.findUnique.mockResolvedValueOnce({
-        clientId: 'okta-client',
-        issuer: 'https://dev-12345.okta.com/oauth2/default',
-        ...sealedColumns('clientSecret', 'okta-readable-secret'),
-      });
-      const result = await getOktaOAuthConfig(prisma);
-      expect(result.data.clientSecret).toEqual({ lastFour: 'cret' });
-      expect(result.data.clientId).toBe('okta-client');
-      expect(result.data.issuer).toBe('https://dev-12345.okta.com/oauth2/default');
-      // Every field is DB-backed here, so none report as env-sourced.
-      expect(result.sources.issuer).toBe('db');
-      expect(result.sources.clientId).toBe('db');
-      expect(result.sources.clientSecret).toBe('db');
     });
   });
 
@@ -832,16 +656,16 @@ describe('systemConfigService', () => {
           STANDARD: { inputTokens: 3_000_000, outputTokens: 500_000 },
         },
         evalJudgeThreshold: 0.6,
+        lessonRetrievalLimit: 9,
         maxTddIterations: 7,
-        workspaceMemory: '8g',
       } as never);
 
       const result = await updateWorkflowDefaults(prisma, {
         branchPrefix: 'auto',
         budgetStandardInputTokens: 3_000_000,
         evalJudgeThreshold: 0.6,
+        lessonRetrievalLimit: 9,
         maxTddIterations: 7,
-        workspaceMemory: '8g',
       });
 
       // Written to prisma verbatim (plain passthrough, no encryption).
@@ -851,7 +675,7 @@ describe('systemConfigService', () => {
       >;
       expect(sentData.budgetStandardInputTokens).toBe(3_000_000);
       expect(sentData.maxTddIterations).toBe(7);
-      expect(sentData.workspaceMemory).toBe('8g');
+      expect(sentData.lessonRetrievalLimit).toBe(9);
       expect(sentData.evalJudgeThreshold).toBe(0.6);
 
       // In changedFields + audit list.
@@ -860,8 +684,8 @@ describe('systemConfigService', () => {
           'branchPrefix',
           'budgetStandardInputTokens',
           'evalJudgeThreshold',
+          'lessonRetrievalLimit',
           'maxTddIterations',
-          'workspaceMemory',
         ])
       );
       expect(result.auditAfterJson.changedFields).toEqual(result.changedFields);
@@ -1195,61 +1019,6 @@ describe('systemConfigService', () => {
       const result = await testSlackConnection();
       expect(result.ok).toBe(false);
       expect(result.detail).toBe('Connection failed: network down');
-    });
-  });
-
-  describe('testStorageConnection', () => {
-    it('reports inline storage as always ok', async () => {
-      resolveStorageConfigMock.mockResolvedValueOnce({ backend: 'inline' } as never);
-      const result = await testStorageConnection();
-      expect(result.ok).toBe(true);
-      expect(result.detail).toContain('Inline');
-    });
-
-    it('reports not-configured when s3 backend has no bucket', async () => {
-      resolveStorageConfigMock.mockResolvedValueOnce({ backend: 's3', s3Bucket: null } as never);
-      const result = await testStorageConnection();
-      expect(result.ok).toBe(false);
-      expect(result.detail).toContain('no bucket configured');
-    });
-
-    it('reports bucket-not-found on a 404', async () => {
-      resolveStorageConfigMock.mockResolvedValueOnce({
-        backend: 's3',
-        s3Bucket: 'missing-bucket',
-        s3Endpoint: null,
-        s3Region: 'us-east-1',
-      } as never);
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ status: 404 }));
-      const result = await testStorageConnection();
-      expect(result.ok).toBe(false);
-      expect(result.detail).toContain("bucket 'missing-bucket' not found");
-    });
-
-    it('reports reachable when the endpoint responds with any other status', async () => {
-      resolveStorageConfigMock.mockResolvedValueOnce({
-        backend: 's3',
-        s3Bucket: 'my-bucket',
-        s3Endpoint: 'https://minio.internal',
-        s3Region: null,
-      } as never);
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ status: 403 }));
-      const result = await testStorageConnection();
-      expect(result.ok).toBe(true);
-      expect(result.detail).toContain('403');
-    });
-
-    it('reports a connection failure when fetch throws', async () => {
-      resolveStorageConfigMock.mockResolvedValueOnce({
-        backend: 's3',
-        s3Bucket: 'my-bucket',
-        s3Endpoint: null,
-        s3Region: 'us-east-1',
-      } as never);
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('DNS failure')));
-      const result = await testStorageConnection();
-      expect(result.ok).toBe(false);
-      expect(result.detail).toBe('Cannot reach S3 endpoint: DNS failure');
     });
   });
 

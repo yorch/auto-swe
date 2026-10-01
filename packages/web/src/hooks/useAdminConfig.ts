@@ -36,8 +36,7 @@ export type ConfigResponse<T> = { data: T; sources: ConfigSources<keyof T & stri
  */
 const configPath = (slug: string) => `/api/v1/platform/config/${slug}`;
 
-/** `oauth/google` → `admin-config-oauth-google`; every other slug is flat. */
-const configKey = (slug: string) => [`admin-config-${slug.replaceAll('/', '-')}`];
+const configKey = (slug: string) => [`admin-config-${slug}`];
 
 /** GET returning `{ data, sources }` verbatim. */
 function sourcedConfigQuery<TConfig>(slug: string) {
@@ -83,8 +82,6 @@ function postConfigTrigger(slug: string) {
 export interface GitHubConfig {
   token: MaskedField | null;
   webhookSecret: MaskedField | null;
-  oauthClientId: string | null;
-  oauthClientSecret: MaskedField | null;
   baseUrl: string | null;
   apiUrl: string | null;
   appId: string | null;
@@ -99,8 +96,6 @@ export interface GitHubConfig {
 export interface GitHubConfigInput {
   token?: string;
   webhookSecret?: string;
-  oauthClientId?: string | null;
-  oauthClientSecret?: string;
   baseUrl?: string | null;
   apiUrl?: string | null;
   appId?: string | null;
@@ -140,38 +135,6 @@ export const useUpdateSlackConfig = configMutation<SlackConfig, SlackConfigInput
 
 export const testSlackConnection = () => postConfigTest('slack');
 
-// ── Storage config ──
-
-export type StorageBackend = 'inline' | 's3';
-
-export interface StorageConfig {
-  backend: StorageBackend;
-  s3Bucket: string | null;
-  s3Region: string | null;
-  s3Endpoint: string | null;
-  s3Prefix: string | null;
-  s3ForcePathStyle: boolean | null;
-  awsAccessKeyId: string | null;
-  awsSecretAccessKey: MaskedField | null;
-}
-
-export interface StorageConfigInput {
-  backend?: StorageBackend;
-  s3Bucket?: string | null;
-  s3Region?: string | null;
-  s3Endpoint?: string | null;
-  s3Prefix?: string | null;
-  s3ForcePathStyle?: boolean;
-  awsAccessKeyId?: string | null;
-  awsSecretAccessKey?: string;
-}
-
-export const useStorageConfig = sourcedConfigQuery<StorageConfig>('storage');
-
-export const useUpdateStorageConfig = configMutation<StorageConfig, StorageConfigInput>('storage');
-
-export const testStorageConnection = () => postConfigTest('storage');
-
 // ── Workflow defaults ──
 
 export interface WorkflowBudgetTier {
@@ -189,10 +152,6 @@ export interface WorkflowDefaultsConfig {
   budgetTiers?: Record<'STANDARD' | 'LARGE' | 'EPIC', WorkflowBudgetTier>;
   maxTddIterations?: number;
   maxEvalIterations?: number;
-  workspaceMemory?: string;
-  workspaceCpus?: number;
-  workspacePidsLimit?: number;
-  workspaceImage?: string;
   lessonRetrievalLimit?: number;
   lessonRetrievalThreshold?: number;
   evalHealthMaxFlakeRate?: number;
@@ -219,10 +178,6 @@ export interface WorkflowDefaultsInput {
   budgetEpicOutputTokens?: number;
   maxTddIterations?: number;
   maxEvalIterations?: number;
-  workspaceMemory?: string;
-  workspaceCpus?: number;
-  workspacePidsLimit?: number;
-  workspaceImage?: string;
   lessonRetrievalLimit?: number;
   lessonRetrievalThreshold?: number;
   evalHealthMaxFlakeRate?: number;
@@ -242,46 +197,6 @@ export const useUpdateWorkflowDefaultsConfig = configMutation<
   WorkflowDefaultsConfig,
   WorkflowDefaultsInput
 >('workflow-defaults');
-
-// ── Google OAuth config ──
-
-export interface GoogleOAuthConfig {
-  clientId: string | null;
-  clientSecret: MaskedField | null;
-  requiresRestart?: boolean;
-}
-
-export interface GoogleOAuthConfigInput {
-  clientId?: string | null;
-  clientSecret?: string;
-}
-
-export const useGoogleOAuthConfig = sourcedConfigQuery<GoogleOAuthConfig>('oauth/google');
-
-export const useUpdateGoogleOAuthConfig = configMutation<GoogleOAuthConfig, GoogleOAuthConfigInput>(
-  'oauth/google'
-);
-
-// ── Okta (enterprise SSO) config ──
-
-export interface OktaOAuthConfig {
-  issuer: string | null;
-  clientId: string | null;
-  clientSecret: MaskedField | null;
-  requiresRestart?: boolean;
-}
-
-export interface OktaOAuthConfigInput {
-  issuer?: string | null;
-  clientId?: string | null;
-  clientSecret?: string;
-}
-
-export const useOktaOAuthConfig = sourcedConfigQuery<OktaOAuthConfig>('oauth/okta');
-
-export const useUpdateOktaOAuthConfig = configMutation<OktaOAuthConfig, OktaOAuthConfigInput>(
-  'oauth/okta'
-);
 
 // ── Issue tracker config ──
 

@@ -178,7 +178,7 @@ export async function scanShellCommand(command: string): Promise<string | null> 
     );
   }
 
-  const budgetMs = await resolveRegexBudgetMs();
+  const budgetMs = resolveRegexBudgetMs();
   const { hits, incomplete, quarantinedPatternKeys } = await runRegexBatch(
     toRegexSpecs(patterns),
     shellScanTargets(command).map((text, i) => ({ key: String(i), text })),

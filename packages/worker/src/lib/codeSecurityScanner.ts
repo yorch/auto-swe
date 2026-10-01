@@ -73,7 +73,7 @@ export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityF
     return [];
   }
 
-  const budgetMs = await resolveRegexBudgetMs();
+  const budgetMs = resolveRegexBudgetMs();
   const { hits, incomplete } = await runRegexBatch(
     toRegexSpecs(patterns),
     addedLines.map((l, i) => ({ key: String(i), text: capScanText(l.content) })),
