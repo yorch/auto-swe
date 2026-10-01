@@ -2,11 +2,11 @@
 
 import type { UserSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Select } from '@/components/ui/Select';
 
 /**
- * Renders a user picker for an "add member" flow: a <Select> of eligible users,
+ * Renders a user picker for an "add member" flow: a searchable list of eligible users,
  * or a guidance message when none are left. The caller computes `eligible`
  * (typically via useEligibleUsers) so it can also drive defaulting and the
  * submit-disabled state. Shared by the teams AddMemberModal and the org page.
@@ -42,12 +42,15 @@ export function EligibleUserSelect({
     );
   }
   return (
-    <Select id={id} label={label} onChange={(e) => onChange(e.target.value)} required value={value}>
-      {eligible.map((u) => (
-        <option key={u.id} value={u.id}>
-          {u.email} · {u.role}
-        </option>
-      ))}
-    </Select>
+    <Combobox
+      emptyMessage="No user matches"
+      id={id}
+      label={label}
+      onChange={onChange}
+      options={eligible.map((u) => ({ label: `${u.email} · ${u.role}`, value: u.id }))}
+      placeholder="Search by email…"
+      required
+      value={value}
+    />
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { UNSAFE_PortalProvider } from 'react-aria';
 import { createPortal } from 'react-dom';
 import { Button, ButtonLink } from './Button';
 
@@ -177,7 +178,13 @@ export function Modal({
             ×
           </button>
         </header>
-        {children}
+        {/* A shown <dialog> sits in the browser's top layer, above everything
+            portalled to <body> — so a dropdown opened in here would render
+            behind it. Overlays from React Aria (Select, Combobox) portal into
+            the dialog instead. */}
+        <UNSAFE_PortalProvider getContainer={() => dialogRef.current}>
+          {children}
+        </UNSAFE_PortalProvider>
       </div>
     </dialog>,
     document.body

@@ -122,12 +122,13 @@ function EditInstallationModal({
           hint="Retiring stops NEW runs against the repositories pointing here. Work already in flight keeps cloning, pushing and reading CI through it, and nothing is disconnected on GitHub."
           id="gh-install-edit-status"
           label="Status"
-          onChange={(e) => setIsActive(e.target.value)}
+          onChange={(v) => setIsActive(v)}
+          options={[
+            { label: 'In use', value: 'true' },
+            { label: 'Retired', value: 'false' },
+          ]}
           value={isActive}
-        >
-          <option value="true">In use</option>
-          <option value="false">Retired</option>
-        </Select>
+        />
         {error && <Alert>{error}</Alert>}
         <ModalFooter
           isPending={update.isPending}

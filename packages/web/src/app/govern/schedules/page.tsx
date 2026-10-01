@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -111,37 +112,28 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
           required
           value={form.name}
         />
-        <Select
+        <Combobox
           id="schedule-repo"
           label="Repository"
-          onChange={(e) => setForm((f) => ({ ...f, repoId: e.target.value }))}
+          onChange={(v) => setForm((f) => ({ ...f, repoId: v }))}
+          options={(repos ?? [])
+            .filter((r) => r.isActive)
+            .map((r) => ({
+              label: `${r.organizationName}/${r.repoName}`,
+              value: r.id,
+            }))}
+          placeholder="Select a repository…"
           required
           value={form.repoId}
-        >
-          <option disabled value="">
-            Select a repository…
-          </option>
-          {(repos ?? [])
-            .filter((r) => r.isActive)
-            .map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.organizationName}/{r.repoName}
-              </option>
-            ))}
-        </Select>
+        />
         {showTeamPicker && (
-          <Select
+          <Combobox
             id="schedule-team"
             label="Owning team"
-            onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
+            onChange={(v) => setForm((f) => ({ ...f, teamId: v }))}
+            options={eligibleTeams.map((t) => ({ label: t.name, value: t.id }))}
             value={teamId}
-          >
-            {eligibleTeams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
+          />
         )}
         <div className="grid grid-cols-2 gap-4">
           <Input
@@ -162,34 +154,32 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
           />
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Select
+          <Combobox
             id="schedule-template"
             label="Template (blank → team default)"
-            onChange={(e) => setForm((f) => ({ ...f, templateId: e.target.value }))}
+            onChange={(v) => setForm((f) => ({ ...f, templateId: v }))}
+            options={[
+              { label: 'Team default (resolved on save)', value: '' },
+              ...(templates ?? []).map((t) => ({ label: t.name, value: t.id })),
+            ]}
             value={form.templateId}
-          >
-            <option value="">Team default (resolved on save)</option>
-            {(templates ?? []).map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
+          />
           <Select
             id="schedule-budget-tier"
             label="Budget tier"
-            onChange={(e) =>
+            onChange={(v) =>
               setForm((f) => ({
                 ...f,
-                budgetTier: e.target.value as ScheduleForm['budgetTier'],
+                budgetTier: v as ScheduleForm['budgetTier'],
               }))
             }
+            options={[
+              { label: 'STANDARD', value: 'STANDARD' },
+              { label: 'LARGE', value: 'LARGE' },
+              { label: 'EPIC', value: 'EPIC' },
+            ]}
             value={form.budgetTier}
-          >
-            <option value="STANDARD">STANDARD</option>
-            <option value="LARGE">LARGE</option>
-            <option value="EPIC">EPIC</option>
-          </Select>
+          />
         </div>
         <Textarea
           id="schedule-description"

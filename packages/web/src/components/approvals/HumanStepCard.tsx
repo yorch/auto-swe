@@ -339,17 +339,14 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                     id={fieldId}
                     key={field.key}
                     label={field.label}
-                    onChange={(e) => setInputValues((p) => ({ ...p, [field.key]: e.target.value }))}
+                    onChange={(v) => setInputValues((p) => ({ ...p, [field.key]: v }))}
+                    options={[
+                      { label: '—', value: '' },
+                      ...(field.options ?? []).map((o) => ({ label: o, value: o })),
+                    ]}
                     required={field.required}
                     value={String(inputValues[field.key] ?? '')}
-                  >
-                    <option value="">—</option>
-                    {field.options?.map((o) => (
-                      <option key={o} value={o}>
-                        {o}
-                      </option>
-                    ))}
-                  </Select>
+                  />
                 ) : (
                   <Input
                     compact

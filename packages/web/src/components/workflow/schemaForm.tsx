@@ -4,6 +4,7 @@ import type { InputSchema, InputSchemaProperty } from '@auto-swe/shared/lib/inpu
 import Link from 'next/link';
 import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { Combobox } from '@/components/ui/Combobox';
 import { RequiredMark } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -50,21 +51,17 @@ function ConnectionPicker({
   }
 
   return (
-    <Select
+    <Combobox
+      emptyMessage="No connections match"
       error={error}
       hint={hint}
       label={label}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={onChange}
+      options={visible.map((c) => ({ label: connectionLabel(c), value: c.id }))}
+      placeholder="— select connection —"
       required={required}
       value={value}
-    >
-      <option value="">— select connection —</option>
-      {visible.map((c) => (
-        <option key={c.id} value={c.id}>
-          {connectionLabel(c)}
-        </option>
-      ))}
-    </Select>
+    />
   );
 }
 
@@ -128,17 +125,14 @@ export function SchemaFieldInput({
         error={error}
         hint={hint}
         label={base}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={onChange}
+        options={[
+          { label: '— select —', value: '' },
+          ...prop.enum.map((opt) => ({ label: String(opt), value: String(opt) })),
+        ]}
         required={required}
         value={typeof value === 'string' ? value : ''}
-      >
-        <option value="">— select —</option>
-        {prop.enum.map((opt) => (
-          <option key={String(opt)} value={String(opt)}>
-            {String(opt)}
-          </option>
-        ))}
-      </Select>
+      />
     );
   }
 

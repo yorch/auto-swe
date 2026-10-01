@@ -322,16 +322,13 @@ function ExperimentCard({
         <Select
           compact
           label="Experiment version"
-          onChange={(e) => setExpVer(e.target.value ? Number(e.target.value) : null)}
-          value={expVer ?? ''}
-        >
-          <option value="">— none —</option>
-          {nonActive.map((v) => (
-            <option key={v.id} value={v.version}>
-              v{v.version}
-            </option>
-          ))}
-        </Select>
+          onChange={(v) => setExpVer(v ? Number(v) : null)}
+          options={[
+            { label: '— none —', value: '' },
+            ...nonActive.map((v) => ({ label: `v${v.version}`, value: String(v.version) })),
+          ]}
+          value={expVer == null ? '' : String(expVer)}
+        />
         {expVer && (
           <div className="space-y-1">
             <Slider

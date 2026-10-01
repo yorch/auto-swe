@@ -1,9 +1,9 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { Combobox } from '@/components/ui/Combobox';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import type { SkillRefInput } from '@/hooks/useAgentLibrary';
 import type { McpConnectionRow } from '@/hooks/useMcpConnections';
@@ -66,7 +66,7 @@ export function AgentFormFields({
   onChange: (patch: Partial<AgentFormValue>) => void;
   /** Create only: scope pickers rendered under the key / name row. */
   scopeFields?: ReactNode;
-  /** Label on the add-skill Select while no skill is attached. */
+  /** Label on the add-skill Combobox while no skill is attached. */
   skillEditorLabel?: string;
   skillEmptyHint?: string;
   skills: SkillOption[];
@@ -155,33 +155,33 @@ export function AgentFormFields({
           skills={skills}
         />
       </FieldWrapper>
-      <Select
+      <Combobox
         hint={copy.mcpConnection?.hint}
         label={optional('MCP connection')}
-        onChange={(e) => onChange({ mcpConnectionId: e.target.value || null })}
+        onChange={(v) => onChange({ mcpConnectionId: v || null })}
+        options={[
+          { label: 'None', value: '' },
+          ...mcpConnections.map((c) => ({
+            label: `${c.name} — ${c.config?.url}`,
+            value: c.id,
+          })),
+        ]}
         value={value.mcpConnectionId ?? ''}
-      >
-        <option value="">None</option>
-        {mcpConnections.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name} — {c.config?.url}
-          </option>
-        ))}
-      </Select>
+      />
       {credentials && (
-        <Select
+        <Combobox
           hint={copy.credential?.hint}
           label={optional('Credential override')}
-          onChange={(e) => onChange({ credentialId: e.target.value || null })}
+          onChange={(v) => onChange({ credentialId: v || null })}
+          options={[
+            { label: 'None (system default)', value: '' },
+            ...credentials.map((c) => ({
+              label: `${c.provider} ···${c.lastFour}`,
+              value: c.id,
+            })),
+          ]}
           value={value.credentialId ?? ''}
-        >
-          <option value="">None (system default)</option>
-          {credentials.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.provider} ···{c.lastFour}
-            </option>
-          ))}
-        </Select>
+        />
       )}
     </div>
   );

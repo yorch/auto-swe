@@ -94,37 +94,29 @@ export default function TemplateRunsPage({ params }: PageProps) {
           compact
           id="run-status-filter"
           label="Status"
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
+          onChange={(v) => {
+            setStatusFilter(v);
             setOffset(0);
           }}
+          options={RUN_STATUSES.map((s) => ({ label: s.label, value: s.value }))}
           value={statusFilter}
-        >
-          {RUN_STATUSES.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </Select>
+        />
         {versions.length > 1 && (
           <Select
             className="w-auto"
             compact
             id="run-version-filter"
             label="Template version"
-            onChange={(e) => {
-              setVersionFilter(e.target.value);
+            onChange={(v) => {
+              setVersionFilter(v);
               setOffset(0);
             }}
+            options={[
+              { label: 'All versions', value: '' },
+              ...versions.map((v) => ({ label: `v${v}`, value: String(v) })),
+            ]}
             value={versionFilter}
-          >
-            <option value="">All versions</option>
-            {versions.map((v) => (
-              <option key={v} value={v}>
-                v{v}
-              </option>
-            ))}
-          </Select>
+          />
         )}
         {(statusFilter || versionFilter) && (
           <Button

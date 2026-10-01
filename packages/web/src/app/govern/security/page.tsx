@@ -61,15 +61,10 @@ export default function GovernSecurityPage() {
           <div className="w-52 shrink-0">
             <Select
               aria-label="Filter by event type"
-              onChange={(e) => setTypeFilter(e.target.value as SecurityEventType | '')}
+              onChange={(v) => setTypeFilter(v as SecurityEventType | '')}
+              options={TYPE_OPTIONS}
               value={typeFilter}
-            >
-              {TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+            />
           </div>
         }
         chapter="§ Govern"

@@ -247,18 +247,19 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     </Td>
                     <Td className="py-3 pr-3">
                       <Select
+                        aria-label={`Org role for ${m.user.email}`}
                         disabled={isMe || !canAdmin}
-                        onChange={(e) => {
-                          const role = e.target.value;
+                        onChange={(role) => {
                           if (isOrgRole(role)) {
                             handleRoleChange(m.userId, role);
                           }
                         }}
+                        options={[
+                          { label: 'ORG_ADMIN', value: 'ORG_ADMIN' },
+                          { label: 'ORG_MEMBER', value: 'ORG_MEMBER' },
+                        ]}
                         value={m.role}
-                      >
-                        <option value="ORG_ADMIN">ORG_ADMIN</option>
-                        <option value="ORG_MEMBER">ORG_MEMBER</option>
-                      </Select>
+                      />
                     </Td>
                     <Td className="py-3 text-right">
                       {canAdmin && (
@@ -292,17 +293,17 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                   <>
                     <Select
                       label="Role"
-                      onChange={(e) => {
-                        const role = e.target.value;
+                      onChange={(role) => {
                         if (isOrgRole(role)) {
                           setAddRole(role);
                         }
                       }}
+                      options={[
+                        { label: 'ORG_MEMBER', value: 'ORG_MEMBER' },
+                        { label: 'ORG_ADMIN', value: 'ORG_ADMIN' },
+                      ]}
                       value={addRole}
-                    >
-                      <option value="ORG_MEMBER">ORG_MEMBER</option>
-                      <option value="ORG_ADMIN">ORG_ADMIN</option>
-                    </Select>
+                    />
                     <Button
                       disabled={upsertMember.isPending}
                       onClick={handleAddMember}
@@ -325,17 +326,17 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                   />
                   <Select
                     label="Role"
-                    onChange={(e) => {
-                      const role = e.target.value;
+                    onChange={(role) => {
                       if (isOrgRole(role)) {
                         setInviteRole(role);
                       }
                     }}
+                    options={[
+                      { label: 'ORG_MEMBER', value: 'ORG_MEMBER' },
+                      { label: 'ORG_ADMIN', value: 'ORG_ADMIN' },
+                    ]}
                     value={inviteRole}
-                  >
-                    <option value="ORG_MEMBER">ORG_MEMBER</option>
-                    <option value="ORG_ADMIN">ORG_ADMIN</option>
-                  </Select>
+                  />
                   <Button
                     disabled={inviteMember.isPending}
                     onClick={handleInvite}

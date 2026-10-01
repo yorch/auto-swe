@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProviderCredentialRow } from '@/hooks/useModelConfig';
 import { AgentFormFields } from './AgentFormFields';
@@ -54,7 +54,7 @@ describe('AgentFormFields', () => {
         value={VALUE}
       />
     );
-    expect(screen.queryByLabelText('Credential override')).toBeNull();
+    expect(screen.queryByRole('combobox', { name: /credential override/i })).toBeNull();
     unmount();
 
     render(
@@ -67,7 +67,7 @@ describe('AgentFormFields', () => {
         value={VALUE}
       />
     );
-    expect(screen.getByLabelText('Credential override')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: /credential override/i })).toBeTruthy();
   });
 
   it('emits a single-field patch, mapping an empty select to null', () => {
@@ -86,7 +86,10 @@ describe('AgentFormFields', () => {
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Critic' } });
     expect(onChange).toHaveBeenLastCalledWith({ name: 'Critic' });
 
-    fireEvent.change(screen.getByLabelText('Credential override'), { target: { value: '' } });
+    const credential = screen.getByRole('combobox', { name: /credential override/i });
+    act(() => credential.focus());
+    fireEvent.change(credential, { target: { value: 'None' } });
+    fireEvent.click(screen.getByRole('option', { name: 'None (system default)' }));
     expect(onChange).toHaveBeenLastCalledWith({ credentialId: null });
   });
 });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
@@ -40,21 +40,23 @@ describe('AddMemberModal', () => {
       )
     );
 
-    await waitFor(() => {
-      const select = screen.getByRole('combobox', { name: /user/i }) as HTMLSelectElement;
-      // Filter excludes the existing member u2 AND the inactive u3
-      const values = Array.from(select.options).map((o) => o.value);
-      expect(values).toEqual(['u1']);
-      // Pre-select runs against `eligible`, not the raw user list
-      expect(select.value).toBe('u1');
-    });
+    const userInput = (await screen.findByRole('combobox', { name: /user/i })) as HTMLInputElement;
+    // Pre-select runs against `eligible`, not the raw user list
+    await waitFor(() => expect(userInput.value).toContain('eligible@example.com'));
+    // Filter excludes the existing member u2 AND the inactive u3
+    act(() => userInput.focus());
+    fireEvent.change(userInput, { target: { value: '@example.com' } });
+    const values = screen.getAllByRole('option').map((o) => o.textContent);
+    expect(values).toHaveLength(1);
+    expect(values[0]).toContain('eligible@example.com');
+    // Picking it closes the list (an open popover makes the rest of the dialog inert).
+    fireEvent.click(screen.getByRole('option'));
 
     // Bump role to LEAD before submitting. The select has id="role" so the
     // accessible name resolves to "Team role" — match exactly to avoid the
     // /role/i regex also catching the "Role" column in any other render.
-    fireEvent.change(screen.getByRole('combobox', { name: 'Team role' }), {
-      target: { value: 'LEAD' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: /team role/i }));
+    fireEvent.click(screen.getByRole('option', { name: 'LEAD' }));
     fireEvent.click(screen.getByRole('button', { name: /add member/i }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
