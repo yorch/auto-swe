@@ -1,7 +1,8 @@
 /**
  * Matching an incoming GitHub payload to a repository by host as well as name.
  *
- * A repository's identity is (host, owner, name): `acme/api` on github.com and
+ * A repository's identity is (host, owner, name), owner and name compared
+ * case-insensitively: `acme/api` on github.com and
  * on a GitHub Enterprise server are different repositories. A webhook names a
  * repository by `full_name`, which carries no host, so on its own it would
  * match both. The payload's `repository.html_url` does carry it.
@@ -40,7 +41,7 @@ export async function repositoryHostWhere(
  * The `Connection` predicate a webhook naming `org/repo` should match.
  *
  * The host is consulted only when the name alone is ambiguous — the same
- * owner/name onboarded on more than one host. A deployment reaching one host
+ * owner/name (compared case-insensitively) onboarded on more than one host. A deployment reaching one host
  * matches by name exactly as it always did, so a configured web URL that spells
  * the host differently from what GitHub puts in `html_url` (an internal name, a
  * proxy) cannot make its webhooks stop matching.
@@ -51,7 +52,12 @@ export async function webhookRepositoryWhere(
   repoName: string,
   htmlUrl: string | undefined
 ): Promise<Prisma.ConnectionWhereInput> {
-  const byName = { organizationName: org, repoName };
+  // GitHub owner and repository names are case-insensitive, and a payload's
+  // casing need not match what was stored at onboarding.
+  const byName: Prisma.ConnectionWhereInput = {
+    organizationName: { equals: org, mode: 'insensitive' },
+    repoName: { equals: repoName, mode: 'insensitive' },
+  };
   if (!htmlUrl) {
     return byName;
   }

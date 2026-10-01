@@ -348,8 +348,8 @@ describe('repositoryRoutes', () => {
       expect(ctx.mockPrisma.connection.findFirst).toHaveBeenCalledWith({
         where: {
           OR: [{ githubUrl: null }, { githubUrl: 'https://github.com' }],
-          organizationName: 'acme',
-          repoName: 'widgets',
+          organizationName: { equals: 'acme', mode: 'insensitive' },
+          repoName: { equals: 'widgets', mode: 'insensitive' },
           type: 'git_repo',
         },
       });
