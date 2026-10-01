@@ -26,23 +26,23 @@ library at `/studio/agents/library`.
 
 | Key | Used by | Default model |
 |---|---|---|
-| `implementer` | `executeImplementation` | `anthropic/claude-opus-4-8` |
-| `reviewer` | `runReviewNetwork` (all three sub-agents) | `anthropic/claude-opus-4-8` |
-| `planner` | `planDecomposition`, epic planning | `anthropic/claude-sonnet-4-6` |
-| `securityReview` | `scanDiffForSecurityIssues` — the post-diff gate on `executeImplementation` + the three fix paths | `anthropic/claude-sonnet-4-6` |
-| `validateContext` | `validateContext` | `anthropic/claude-sonnet-4-6` |
-| `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-4-8` |
-| `channelAssistant` | Channel turns, ambient and reactive modes, `planChannelTask` / `runChannelSubtasks` | `anthropic/claude-opus-4-8` |
+| `implementer` | `executeImplementation` | `anthropic/claude-opus-5-5` |
+| `reviewer` | `runReviewNetwork` (all three sub-agents) | `anthropic/claude-opus-5-5` |
+| `planner` | `planDecomposition`, epic planning | `anthropic/claude-sonnet-5-5` |
+| `securityReview` | `scanDiffForSecurityIssues` — the post-diff gate on `executeImplementation` + the three fix paths | `anthropic/claude-sonnet-5-5` |
+| `validateContext` | `validateContext` | `anthropic/claude-sonnet-5-5` |
+| `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-5-5` |
+| `channelAssistant` | Channel turns, ambient and reactive modes, `planChannelTask` / `runChannelSubtasks` | `anthropic/claude-opus-5-5` |
 | `evalJudge` | `runEvalNode` judge scorer | `anthropic/claude-haiku-4-5-20251001` |
-| `workflowAuthor` | NL workflow generation | `anthropic/claude-opus-4-8` |
-| `workflowExplainer` | NL workflow explanation | `anthropic/claude-sonnet-4-6` |
+| `workflowAuthor` | NL workflow generation | `anthropic/claude-opus-5-5` |
+| `workflowExplainer` | NL workflow explanation | `anthropic/claude-sonnet-5-5` |
 | `repoDependencyInferrer` | `inferRepoDependencies` — proposes repo dependency edges for human confirmation | `anthropic/claude-haiku-4-5-20251001` |
-| `contentWriter` | Generic document-workflow drafting (e.g. Notion) | `anthropic/claude-sonnet-4-6` |
-| `brandReviewer` | Content/Comms pack — brand-voice and clarity review | `anthropic/claude-sonnet-4-6` |
-| `supportResponder` | Support/Ops ticket replies | `anthropic/claude-sonnet-4-6` |
-| `productAnalyst` | Product pack — problem analysis | `anthropic/claude-sonnet-4-6` |
-| `prdWriter` | Product pack — PRD drafting | `anthropic/claude-sonnet-4-6` |
-| `issueDrafter` | Product pack — drafts issue descriptions from a brief | `anthropic/claude-sonnet-4-6` |
+| `contentWriter` | Generic document-workflow drafting (e.g. Notion) | `anthropic/claude-sonnet-5-5` |
+| `brandReviewer` | Content/Comms pack — brand-voice and clarity review | `anthropic/claude-sonnet-5-5` |
+| `supportResponder` | Support/Ops ticket replies | `anthropic/claude-sonnet-5-5` |
+| `productAnalyst` | Product pack — problem analysis | `anthropic/claude-sonnet-5-5` |
+| `prdWriter` | Product pack — PRD drafting | `anthropic/claude-sonnet-5-5` |
+| `issueDrafter` | Product pack — drafts issue descriptions from a brief | `anthropic/claude-sonnet-5-5` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`

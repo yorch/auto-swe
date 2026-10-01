@@ -580,21 +580,29 @@ Seeded model defaults (applied to the GLOBAL Agents by `syncBuiltins`):
 
 | Agent | Default |
 | ----- | ------- |
-| `implementer`, `reviewer`, `commitToMemory`, `channelAssistant`, `workflowAuthor` | `anthropic/claude-opus-4-8` |
-| `planner`, `securityReview`, `validateContext`, `workflowExplainer` | `anthropic/claude-sonnet-4-6` |
+| `implementer`, `reviewer`, `commitToMemory`, `channelAssistant`, `workflowAuthor` | `anthropic/claude-opus-5-5` |
+| `planner`, `securityReview`, `validateContext`, `workflowExplainer` | `anthropic/claude-sonnet-5-5` |
 | `evalJudge` | `anthropic/claude-haiku-4-5-20251001` |
 | (embedding) | `openai/text-embedding-3-large` |
+
+When a default changes, `syncAgents` moves a GLOBAL built-in Agent forward **only** if its latest
+version still carries the previous default (`PREVIOUS_DEFAULT_MODEL_SPECS`), and it does so by
+cutting a new version — never by editing the old one, which a run may have pinned via
+`WorkflowRun.agentVersions`. Any admin-chosen value is left alone. Add the outgoing default to that
+map whenever you change a `modelSpec` in `SWE_AGENTS`.
 
 Current model IDs — override defaults from the dashboard; pricing for these lives in `MODEL_PRICES`:
 
 | Provider  | Reasoning / heavy            | Balanced                    | Fast / cheap                            |
 | --------- | ---------------------------- | --------------------------- | --------------------------------------- |
-| Anthropic | `claude-opus-4-8`            | `claude-sonnet-4-6`         | `claude-haiku-4-5-20251001`             |
-| OpenAI    | `gpt-5-5-pro`                | `gpt-5-5`                   | `gpt-5`                                 |
-| Google    | `gemini-2.5-pro`             | `gemini-2.5-flash`          | `gemini-3.1-flash-lite-preview` / `gemini-2.5-flash-lite` |
+| Anthropic | `claude-fable-5-1` / `claude-opus-5-5` | `claude-sonnet-5-5` | `claude-haiku-4-5-20251001`             |
+| OpenAI    | `gpt-6-astra`                | `gpt-6.1-sol`               | `gpt-6-luna`                            |
+| Google    | `gemini-3.1-pro-preview`     | `gemini-3.8-flash`          | `gemini-3.5-flash-lite`                 |
 
-> **Deprecation:** `claude-sonnet-4-20250514` retires **2026-06-15**. Any custom override still
-> pinned to that ID must migrate to `claude-sonnet-4-6`.
+`claude-fable-5-1` sits above the Opus tier and is selectable, not a seeded default.
+
+> **Deprecation:** `claude-sonnet-4-20250514` retired on **2026-06-15**. Any custom override still
+> pinned to that ID must migrate to `claude-sonnet-5-5`.
 
 Bootstrap for a fresh deployment is in [`docs/model-configuration.md`](./docs/model-configuration.md)
 and §8 below.

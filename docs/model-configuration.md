@@ -75,14 +75,22 @@ Per-role baked-in defaults seeded onto the GLOBAL Agents (also recorded in `AGEN
 
 | Role / Slot | Default |
 | ----------- | ------- |
-| `implementer` / `reviewer` / `commitToMemory` / `channelAssistant` / `workflowAuthor` | `anthropic/claude-opus-4-8` |
-| `planner` / `securityReview` / `validateContext` / `workflowExplainer` | `anthropic/claude-sonnet-4-6` |
+| `implementer` / `reviewer` / `commitToMemory` / `channelAssistant` / `workflowAuthor` | `anthropic/claude-opus-5-5` |
+| `planner` / `securityReview` / `validateContext` / `workflowExplainer` | `anthropic/claude-sonnet-5-5` |
 | `evalJudge` | `anthropic/claude-haiku-4-5-20251001` (distinct model to avoid self-preference bias) |
 | Embeddings | `openai/text-embedding-3-large` |
 
 The 11 sub-role personas carry no `modelSpec` — each binds its parent's model via
 `inheritsModelFrom`. `contentWriter`, `brandReviewer`, `supportResponder`, `productAnalyst`,
 `prdWriter`, and `issueDrafter` are model-backed agents added for the non-SWE workflow packs. Full roster in [`agents.md` §1](./agents.md#1-agents).
+
+When a seeded default changes, the startup sync moves an existing deployment forward only where
+nobody chose otherwise. A built-in GLOBAL Agent whose latest version still carries the default it
+was seeded with (`PREVIOUS_DEFAULT_MODEL_SPECS` in `shared/src/lib/syncBuiltins.ts`) gets a new
+version on the current default, copying every other field and its skill refs — the same new-version
+cut the Agent library makes for an admin's edit. The old version is never rewritten, so a run
+already pinned to it keeps the model it started with; new runs pick up the new version. Any other
+value — a different model, a scoped override, a deactivated lineage — is left alone.
 
 ---
 
@@ -104,7 +112,7 @@ If the provider speaks a different API (e.g. Anthropic-style `/v1/messages`), yo
 ### Overriding a model for one team
 
 1. **Teams → \<team-slug\> → Team overrides**.
-2. Pick the role row → **Override** → enter a model spec (e.g. `openai/gpt-5-5`).
+2. Pick the role row → **Override** → enter a model spec (e.g. `openai/gpt-6.1-sol`).
 3. Optionally pin a specific credential (the picker shows GLOBAL + this team's TEAM-scope creds).
 
 Removes via the **Reset** button. Resetting causes the next activity call for that role to fall back to GLOBAL.
@@ -201,7 +209,7 @@ curl -X POST http://localhost:8080/api/v1/platform/agent-library \
     "name": "Implementer (payments override)",
     "scope": "TEAM",
     "teamId": "<team-uuid>",
-    "modelSpec": "anthropic/claude-opus-4-8"
+    "modelSpec": "anthropic/claude-opus-5-5"
   }'
 
 # Rotate a credential (admin scope). Provider + scope are immutable; only
