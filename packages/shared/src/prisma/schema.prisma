@@ -1187,8 +1187,9 @@ model ScheduledWorkRequest {
   workRequestId        String?           @map("work_request_id") @db.Uuid
   workRequest          RunInput?         @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
   /// The team that owns the schedule: the repository's owning team or a team it
-  /// is shared with. Null (a schedule from before this existed, or its team
-  /// deleted) means the repository's owning team.
+  /// is shared with. Null means the team was deleted (the migration backfilled
+  /// every earlier row): managed only by ADMIN or the owning team's lead, and
+  /// deactivated when the repository moves or a share is removed.
   teamId               String?           @map("team_id") @db.Uuid
   team                 Team?             @relation("ScheduleTeam", fields: [teamId], references: [id], onDelete: SetNull)
   /// Best-effort bookkeeping — authoritative fire history lives in Temporal.

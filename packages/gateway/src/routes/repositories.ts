@@ -2,7 +2,7 @@ import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma, Role } from '@
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -17,6 +17,24 @@ import { insensitiveName } from '../lib/repositoryHost.js';
 import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
+
+/**
+ * Deactivate the schedules that lost their claim on a repository, after the
+ * change that took it away has committed. Never throws: the per-row work is
+ * already tolerant, and the lookup around it must not turn a committed change
+ * into a failed request.
+ */
+async function deactivateSchedulesOutsideTeamsQuietly(
+  fastify: FastifyInstance,
+  repoId: string,
+  log: FastifyRequest['log']
+): Promise<void> {
+  try {
+    await deactivateSchedulesOutsideTeams(fastify, repoId, log);
+  } catch (err) {
+    log.error({ err, repoId }, 'could not deactivate the schedules that lost their claim');
+  }
+}
 
 /**
  * `defaultBranch` is interpolated into git commands inside the workspace
@@ -648,7 +666,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // A move drops the shares that no longer apply and changes who owns the
       // repository, so schedules owned by a team with no remaining claim stop.
       if (moving) {
-        await deactivateSchedulesOutsideTeams(fastify, repo.id, request.log);
+        await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log);
       }
 
       return { data: redactConnection(updated) };
@@ -765,8 +783,6 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             }),
           ])
       );
-      // A team that lost its share keeps no schedule on the repository.
-      await deactivateSchedulesOutsideTeams(fastify, repo.id, request.log);
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
@@ -775,6 +791,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: repo.id,
         entityType: 'Connection',
       });
+      // A team that lost its share keeps no schedule on the repository. After the
+      // audit, because the change is committed: a failure here must not leave it
+      // unrecorded, nor turn it into a 500.
+      await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log);
 
       const shares = await fastify.prisma.connection.findUnique({
         select: { shares: { select: { team: { select: { id: true, name: true, slug: true } } } } },

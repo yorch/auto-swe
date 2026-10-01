@@ -46,6 +46,8 @@ export type ScheduledFireRefusalReason =
   | 'schedule-missing'
   | 'acting-user-missing'
   | 'repository-inactive'
+  | 'schedule-inactive'
+  | 'launcher-out-of-sync'
   | 'gate-unreadable'
   | 'not-an-org-member'
   | 'org-budget-exceeded'
@@ -79,7 +81,7 @@ const ADVISORY_LOG: AccessLog = {
  */
 export async function scheduledFireRefusal(
   db: PrismaClient,
-  input: { workflowId: string; workRequestId?: string }
+  input: { workflowId: string; workRequestId?: string; launchedById?: string | null }
 ): Promise<ScheduledFireRefusal | null> {
   if (!input.workRequestId || !input.workflowId.startsWith('sched-')) {
     return null;
@@ -90,6 +92,9 @@ export async function scheduledFireRefusal(
       actsAsUser: { select: { id: true, isActive: true, role: true } },
       createdBy: { select: { id: true, isActive: true, role: true } },
       id: true,
+      // Deactivation (an unshared team, a moved repository) pauses the Temporal
+      // schedule best-effort; the row is what the worker can still trust.
+      isActive: true,
       repoId: true,
     },
     where: { workRequestId: input.workRequestId },
@@ -119,6 +124,16 @@ export async function scheduledFireRefusal(
     scheduleId: schedule.id,
   });
 
+  // A deactivated schedule must not fire, whatever Temporal still says. The
+  // gateway pauses the Temporal schedule when it deactivates a row, but that
+  // call can fail; this is the backstop that makes the row authoritative.
+  if (!schedule.isActive) {
+    return refuse(
+      'schedule-inactive',
+      'the schedule is inactive; re-activate it (or delete its Temporal schedule) to resume'
+    );
+  }
+
   // Every fire acts for someone. A schedule runs as the user who last defined
   // what it does (`actsAsUserId`); one from before that was recorded has no such
   // user and runs on the platform credential, so its creator is the person whose
@@ -132,6 +147,19 @@ export async function scheduledFireRefusal(
     return refuse(
       'acting-user-missing',
       'the schedule has no active user to run as; an admin or team lead must re-activate it to take it over'
+    );
+  }
+  // The identity this execution launched as comes from the Temporal schedule's
+  // stored arguments; the authorization below judges the row's. They are written
+  // together, but a failed sync (a takeover whose rollback could not reach
+  // Temporal, a PATCH whose restore failed) leaves them naming different people,
+  // and then a run would use one person's token on the strength of another's
+  // access. Refuse until the schedule is saved again, which re-syncs both.
+  const launcher = input.launchedById ?? null;
+  if (launcher !== (actsAs?.id ?? null)) {
+    return refuse(
+      'launcher-out-of-sync',
+      "the schedule's stored identity is out of sync with its Temporal schedule; re-save the schedule (edit it or resume it) to repair it"
     );
   }
   const actor = { role: owner.role as Role, sub: owner.id };
@@ -275,6 +303,7 @@ export async function recordScheduledFireRefusal(
 export async function assertScheduledFireAuthorized(input: {
   workflowId: string;
   workRequestId?: string;
+  launchedById?: string | null;
 }): Promise<void> {
   const refusal = await scheduledFireRefusal(prisma, input);
   if (!refusal) {

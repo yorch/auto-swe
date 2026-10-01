@@ -53,9 +53,19 @@ runs as. The launcher is stored in the Temporal schedule's own arguments, so a c
 by hand launch as the same person. Pressing **fire** follows the same rule as editing: whoever
 causes a run is who it runs as. A firer who is not the current author is judged by the access gate
 as themselves, becomes the author (recorded in the audit log), and the Temporal schedule is
-re-synced to carry them before it is triggered; if the sync or the trigger fails, the author and
-the Temporal arguments are put back. The author firing their own schedule changes nothing, and is
-judged as themselves too. Schedules created before authors were recorded have none and run as
+re-synced to carry them before it is triggered. If the trigger fails, the Temporal schedule is put
+back to the author and the row is reverted (both recorded in the audit log); if it cannot be put
+back, Temporal already holds the firer, so the row keeps the firer too and that is recorded. The
+row writes are conditional on the state read, so a fire that overlaps an edit or a deactivation is
+a `409 SCHEDULE_CONFLICT`. The author firing their own schedule changes nothing, and is judged as
+themselves too. The schedules page asks for confirmation before a fire that would change the
+author.
+
+Each scheduled fire checks the Temporal arguments against the row before anything else: the
+launcher in the arguments must be the row's author, and the row must be active. A mismatch (a
+takeover or edit whose Temporal restore failed) is refused with a non-retryable
+`launcher-out-of-sync` reason until the schedule is saved again, so a run never uses one person's
+token on the strength of another's access. Schedules created before authors were recorded have none and run as
 nobody until someone fires or edits them.
 
 **Slack launches run as the linked platform user.** The request is signature-verified and the
@@ -184,6 +194,10 @@ verification answer in `repo_access` like any other lookup.
   deactivated stops the token being used (the run falls back to the platform credential), but the
   schedule keeps that author recorded until someone edits what it does. Schedules created before
   authors were recorded run as nobody until then.
+- **Overlapping changes to a schedule resolve by retry.** The loser of an edit, a fire by hand and
+  a deactivation that overlap gets `409 SCHEDULE_CONFLICT` and repeats it; Temporal is re-synced
+  from the row on a best-effort basis, and the out-of-sync refusal above is what stops a fire if
+  that re-sync also fails.
 - **A Slack launch is only as trustworthy as the account link.** Whoever controls the linked Slack
   account launches as the platform user it is linked to, including with their saved token.
 - **Other people can steer a run that acts as you.** A human step, a review comment fed to the

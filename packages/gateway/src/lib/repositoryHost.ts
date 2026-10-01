@@ -47,6 +47,25 @@ function hostOfUrl(url: string): string | null {
 }
 
 /**
+ * Whether `host` (`host[:port]`) is github.com or its API host. github.com
+ * never sends `X-GitHub-Enterprise-Host`, so its deliveries always verify with
+ * the instance secret; a per-host secret row for it could never be selected.
+ */
+export function isGitHubDotComHost(host: string): boolean {
+  const hostname = host.toLowerCase().split(':')[0];
+  return hostname === 'github.com' || hostname === 'api.github.com';
+}
+
+/**
+ * The hosts whose deliveries must be signed with their own secret. A row for
+ * github.com (legacy data) is not one: that host cannot sign with it.
+ */
+async function ownSecretHostsOf(prisma: PrismaClient): Promise<Set<string>> {
+  const rows = await prisma.gitHubHostWebhookSecret.findMany({ select: { host: true } });
+  return new Set(rows.map((r) => r.host.toLowerCase()).filter((h) => !isGitHubDotComHost(h)));
+}
+
+/**
  * Whether the repository a delivery names is on the host its secret proved.
  *
  * A per-host secret proves the delivery came from that host, so a payload it
@@ -66,6 +85,25 @@ export function deliveryHostMatches(
 }
 
 /**
+ * An instance-secret delivery whose `html_url` names a host that has a webhook
+ * secret of its own is not to be acted on: that host must sign with its own.
+ * Symmetric with `deliveryHostMatches`, which binds a per-host secret to its
+ * host. A delivery with a verified host, no `html_url`, or an unparseable one
+ * claims nothing here.
+ */
+export async function claimsHostWithOwnSecret(
+  prisma: PrismaClient,
+  verifiedHost: string | null,
+  htmlUrl: string | undefined
+): Promise<boolean> {
+  if (verifiedHost !== null || !htmlUrl) {
+    return false;
+  }
+  const host = hostOfUrl(htmlUrl);
+  return host !== null && (await ownSecretHostsOf(prisma)).has(host);
+}
+
+/**
  * The `Connection` predicate binding a delivery to the host its secret proves.
  *
  * A connection's host is its web base override (`githubUrl`), or the instance's
@@ -73,7 +111,9 @@ export function deliveryHostMatches(
  *
  * - A per-host secret (`verifiedHost`) reaches only connections on that host.
  * - The instance secret (`verifiedHost` null) reaches none on a host that has
- *   a webhook secret of its own: those hosts are verified with it alone.
+ *   a webhook secret of its own: those hosts are verified with it alone. The
+ *   exception is github.com, which sends no host header and so can only ever
+ *   use the instance secret: a row for it (legacy data) excludes nothing.
  */
 export async function webhookHostScope(
   prisma: PrismaClient,
@@ -81,11 +121,10 @@ export async function webhookHostScope(
 ): Promise<Prisma.ConnectionWhereInput> {
   let ownSecretHosts: Set<string> | null = null;
   if (verifiedHost === null) {
-    const rows = await prisma.gitHubHostWebhookSecret.findMany({ select: { host: true } });
-    if (rows.length === 0) {
+    ownSecretHosts = await ownSecretHostsOf(prisma);
+    if (ownSecretHosts.size === 0) {
       return {};
     }
-    ownSecretHosts = new Set(rows.map((r) => r.host.toLowerCase()));
   }
   const instanceHost = hostOfUrl((await resolveGitHubConfig()).baseUrl);
   const connections = await runUnscoped(

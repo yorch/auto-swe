@@ -39,7 +39,11 @@ const JiraWebhookSchema = z
   })
   .passthrough();
 
-import { deliveryHostMatches, webhookRepositoryWhere } from '../lib/repositoryHost.js';
+import {
+  claimsHostWithOwnSecret,
+  deliveryHostMatches,
+  webhookRepositoryWhere,
+} from '../lib/repositoryHost.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { postSlackMessage } from '../lib/slack.js';
 // The webhook handlers below undo their DB write and answer non-2xx when a
@@ -228,6 +232,15 @@ async function verifyWebhookOrReject(
  * minted for them — when the only credential is the instance's and the
  * repository is on another host, or when no credential can be resolved.
  */
+/** Lowercased `host[:port]` of a URL, or null when it does not parse. */
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 async function checkRunTarget(
   repo:
     | {
@@ -248,6 +261,19 @@ async function checkRunTarget(
     });
     if (!hosts.ok) {
       log.warn({ url: hosts.url }, 'repository host is not approved; no credential sent');
+      return null;
+    }
+    // A web host of its own with no API override resolves to the instance API,
+    // which would be asked about a same-named repository on the instance.
+    if (
+      repo.githubUrl &&
+      !repo.githubApiUrl &&
+      hostOf(repo.githubUrl) !== hostOf(ghConfig.baseUrl)
+    ) {
+      log.warn(
+        { githubUrl: repo.githubUrl },
+        'repository has a web host of its own but no API URL; not asking the instance about it'
+      );
       return null;
     }
   }
@@ -397,7 +423,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       if (event.type === 'ignored') {
         return { data: { ignored: true } };
       }
-      if (!deliveryHostMatches(verified.host, event.repoHtmlUrl)) {
+      if (
+        !deliveryHostMatches(verified.host, event.repoHtmlUrl) ||
+        (await claimsHostWithOwnSecret(fastify.prisma, verified.host, event.repoHtmlUrl))
+      ) {
         return HOST_MISMATCH;
       }
 
@@ -553,8 +582,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Best-effort tracker sync on PR merge.
       if (wr?.externalTicketId) {
         const trackerConfig = await resolveIssueTrackerConfig();
-        const { baseUrl: ghBaseUrl } = await resolveGitHubConfig();
-        const prUrl = `${ghBaseUrl}/${org}/${repoName}/pull/${prNumber}`;
+        // The repository's own web base, not the instance's: it may be on
+        // another host.
+        const webBase =
+          pullRequest.workflow.repository?.githubUrl ?? (await resolveGitHubConfig()).baseUrl;
+        const prUrl = `${webBase}/${org}/${repoName}/pull/${prNumber}`;
         await syncTrackerOnEvent(
           {
             issueId: wr.externalTicketId,
@@ -603,7 +635,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (
         invalidation.kind !== 'user' &&
-        !deliveryHostMatches(verified.host, invalidation.htmlUrl)
+        (!deliveryHostMatches(verified.host, invalidation.htmlUrl) ||
+          (await claimsHostWithOwnSecret(fastify.prisma, verified.host, invalidation.htmlUrl)))
       ) {
         return HOST_MISMATCH;
       }
@@ -646,7 +679,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       if (event.type === 'ignored') {
         return { data: { ignored: true } };
       }
-      if (!deliveryHostMatches(verified.host, event.repoHtmlUrl)) {
+      if (
+        !deliveryHostMatches(verified.host, event.repoHtmlUrl) ||
+        (await claimsHostWithOwnSecret(fastify.prisma, verified.host, event.repoHtmlUrl))
+      ) {
         return HOST_MISMATCH;
       }
 

@@ -61,7 +61,11 @@ async function buildApp() {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     runInput: { findUnique: vi.fn() },
-    scheduledWorkRequest: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
+    scheduledWorkRequest: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     team: { findMany: vi.fn(), findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
   };
@@ -283,6 +287,7 @@ describe('repository sharing', () => {
     });
     ctx.prisma.team.findMany.mockResolvedValue([{ id: OTHER_TEAM }]);
     ctx.prisma.scheduledWorkRequest.findMany.mockResolvedValue([]);
+    ctx.prisma.scheduledWorkRequest.updateMany.mockResolvedValue({ count: 1 });
   });
 
   function share(teamIds: string[]) {
@@ -327,20 +332,29 @@ describe('repository sharing', () => {
       workRequestId: 'wr-1',
     };
 
+    beforeEach(() => {
+      // The row as it stands after the conditional write: inactive.
+      ctx.prisma.scheduledWorkRequest.findUnique.mockResolvedValue({
+        ...stranded,
+        isActive: false,
+      });
+    });
+
     it('pauses them in the database and in Temporal', async () => {
       // The repo, after the replacement, no longer lists OTHER_TEAM.
       ctx.prisma.scheduledWorkRequest.findMany.mockResolvedValue([stranded]);
       ctx.prisma.runInput.findUnique.mockResolvedValue({ templateId: 'tpl-1', templateVersion: 3 });
       ctx.prisma.team.findMany.mockResolvedValue([]);
       expect((await share([])).statusCode).toBe(200);
+      // A schedule whose team was deleted (null) has no claim either.
       expect(ctx.prisma.scheduledWorkRequest.findMany.mock.calls[0][0].where).toEqual({
         isActive: true,
+        OR: [{ teamId: null }, { teamId: { notIn: [TEAM] } }],
         repoId: REPO,
-        teamId: { not: null, notIn: [TEAM] },
       });
-      expect(ctx.prisma.scheduledWorkRequest.update).toHaveBeenCalledWith({
+      expect(ctx.prisma.scheduledWorkRequest.updateMany).toHaveBeenCalledWith({
         data: { isActive: false },
-        where: { id: SCHEDULE },
+        where: { id: SCHEDULE, isActive: true, teamId: OTHER_TEAM },
       });
       expect(ctx.temporal.syncWorkRequestSchedule).toHaveBeenCalledWith(
         expect.objectContaining({ paused: true, scheduleRowId: SCHEDULE })
@@ -353,7 +367,40 @@ describe('repository sharing', () => {
       ctx.temporal.syncWorkRequestSchedule.mockRejectedValueOnce(new Error('down'));
       ctx.prisma.team.findMany.mockResolvedValue([]);
       expect((await share([])).statusCode).toBe(200);
-      expect(ctx.prisma.scheduledWorkRequest.update).toHaveBeenCalled();
+      expect(ctx.prisma.scheduledWorkRequest.updateMany).toHaveBeenCalled();
+    });
+
+    it('keeps going past a row it cannot deactivate, and still audits the share change', async () => {
+      const second = { ...stranded, id: '77777777-7777-4777-8777-777777777777' };
+      ctx.prisma.scheduledWorkRequest.findMany.mockResolvedValue([stranded, second]);
+      ctx.prisma.runInput.findUnique.mockResolvedValue({ templateId: 'tpl-1', templateVersion: 3 });
+      ctx.prisma.scheduledWorkRequest.updateMany.mockRejectedValueOnce(new Error('db down'));
+      ctx.prisma.team.findMany.mockResolvedValue([]);
+      expect((await share([])).statusCode).toBe(200);
+      expect(ctx.prisma.scheduledWorkRequest.updateMany).toHaveBeenCalledTimes(2);
+      expect(ctx.prisma.configAuditLog.create).toHaveBeenCalled();
+    });
+
+    it('does not fail the request when looking for stranded schedules fails', async () => {
+      ctx.prisma.scheduledWorkRequest.findMany.mockRejectedValue(new Error('db down'));
+      ctx.prisma.team.findMany.mockResolvedValue([]);
+      expect((await share([])).statusCode).toBe(200);
+      expect(ctx.prisma.configAuditLog.create).toHaveBeenCalled();
+    });
+
+    it('records the audit row before deactivating', async () => {
+      const order: string[] = [];
+      ctx.prisma.configAuditLog.create.mockImplementationOnce(async () => {
+        order.push('audit');
+        return {};
+      });
+      ctx.prisma.scheduledWorkRequest.findMany.mockImplementationOnce(async () => {
+        order.push('deactivate');
+        return [];
+      });
+      ctx.prisma.team.findMany.mockResolvedValue([]);
+      expect((await share([])).statusCode).toBe(200);
+      expect(order).toEqual(['audit', 'deactivate']);
     });
 
     it('pauses the old owner team schedules when the repository moves', async () => {
@@ -371,9 +418,9 @@ describe('repository sharing', () => {
         url: `/api/v1/repositories/${REPO}`,
       });
       expect(res.statusCode).toBe(200);
-      expect(ctx.prisma.scheduledWorkRequest.update).toHaveBeenCalledWith({
+      expect(ctx.prisma.scheduledWorkRequest.updateMany).toHaveBeenCalledWith({
         data: { isActive: false },
-        where: { id: SCHEDULE },
+        where: { id: SCHEDULE, isActive: true, teamId: TEAM },
       });
       expect(ctx.temporal.syncWorkRequestSchedule).toHaveBeenCalledWith(
         expect.objectContaining({ paused: true })
@@ -382,7 +429,7 @@ describe('repository sharing', () => {
 
     it('leaves nothing to pause when no schedule is stranded', async () => {
       expect((await share([OTHER_TEAM])).statusCode).toBe(200);
-      expect(ctx.prisma.scheduledWorkRequest.update).not.toHaveBeenCalled();
+      expect(ctx.prisma.scheduledWorkRequest.updateMany).not.toHaveBeenCalled();
       expect(ctx.temporal.syncWorkRequestSchedule).not.toHaveBeenCalled();
     });
   });

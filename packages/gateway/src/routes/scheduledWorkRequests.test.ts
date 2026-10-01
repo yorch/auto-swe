@@ -59,6 +59,12 @@ describe('/api/v1/scheduled-work-requests', () => {
   const callerTeamIds = ['team-1'];
   let failScheduleUpdate = false;
   let triggerShouldFail = false;
+  /** When true the conditional row write finds the row moved (count 0). */
+  let rowMovedUnderneath = false;
+  /** Fail the Nth (1-based) Temporal sync of a test; null = never. */
+  let failSyncAtCall: number | null = null;
+  let syncCallCount = 0;
+  const updateManyWheres: Array<Record<string, unknown>> = [];
   /** Teams the repo is shared with, and the caller's role in each (null = not a member). */
   let sharedTeams: Array<{ teamId: string; role: string | null }> = [];
 
@@ -70,6 +76,7 @@ describe('/api/v1/scheduled-work-requests', () => {
   const deletedRowIds: string[] = [];
   const deletedWorkRequestIds: string[] = [];
   const scheduleUpdates: Array<Record<string, unknown>> = [];
+  let lastUpdateData: Record<string, unknown> = {};
   const scheduleCreates: Array<Record<string, unknown>> = [];
   const auditRows: Array<Record<string, unknown>> = [];
 
@@ -100,9 +107,12 @@ describe('/api/v1/scheduled-work-requests', () => {
       },
     } as unknown as never);
 
-    app.decorate('prisma', {
-      // Batch form only: the route hands over already-issued fake promises.
-      $transaction: async (ops: unknown) => Promise.all(ops as Promise<unknown>[]),
+    const prismaMock: Record<string, unknown> = {
+      // Batch form (already-issued fake promises) or the interactive form.
+      $transaction: async (ops: unknown) =>
+        typeof ops === 'function'
+          ? (ops as (tx: unknown) => Promise<unknown>)(prismaMock)
+          : Promise.all(ops as Promise<unknown>[]),
       activeWorkflow: {
         create: async (args: { data: Record<string, unknown> }) => {
           createdActiveWorkflows.push(args.data);
@@ -167,12 +177,28 @@ describe('/api/v1/scheduled-work-requests', () => {
         findMany: async () => (scheduleRow ? [rowWithInclude(scheduleRow)] : []),
         findUnique: async (args: { where: { id: string } }) =>
           scheduleRow && args.where.id === SCHEDULE_ID ? { ...scheduleRow } : null,
+        findUniqueOrThrow: async () => rowWithInclude({ ...scheduleRow, ...lastUpdateData }),
         update: async (args: { data: Record<string, unknown> }) => {
           if (failScheduleUpdate && !('lastFiredAt' in args.data)) {
             throw new Error('db down');
           }
           scheduleUpdates.push(args.data);
           return rowWithInclude({ ...scheduleRow, ...args.data });
+        },
+        updateMany: async (args: {
+          data: Record<string, unknown>;
+          where: Record<string, unknown>;
+        }) => {
+          if (failScheduleUpdate) {
+            throw new Error('db down');
+          }
+          updateManyWheres.push(args.where);
+          if (rowMovedUnderneath) {
+            return { count: 0 };
+          }
+          lastUpdateData = args.data;
+          scheduleUpdates.push(args.data);
+          return { count: 1 };
         },
       },
       workflowTemplate: {
@@ -199,7 +225,8 @@ describe('/api/v1/scheduled-work-requests', () => {
       workflowTemplateVersion: {
         findUnique: async () => ({ id: 'tplv-1' }),
       },
-    } as unknown as never);
+    };
+    app.decorate('prisma', prismaMock as unknown as never);
 
     app.decorate('temporal', {
       deleteWorkRequestSchedule: async (id: string) => {
@@ -212,7 +239,8 @@ describe('/api/v1/scheduled-work-requests', () => {
         paused: false,
       }),
       syncWorkRequestSchedule: async (input: WorkRequestScheduleInput) => {
-        if (syncShouldFail) {
+        syncCallCount += 1;
+        if (syncShouldFail || syncCallCount === failSyncAtCall) {
           throw new Error('temporal down');
         }
         syncCalls.push(input);
@@ -240,6 +268,11 @@ describe('/api/v1/scheduled-work-requests', () => {
     overrideTemplateTeamId = null;
     failScheduleUpdate = false;
     triggerShouldFail = false;
+    rowMovedUnderneath = false;
+    failSyncAtCall = null;
+    syncCallCount = 0;
+    updateManyWheres.length = 0;
+    lastUpdateData = {};
     sharedTeams = [];
     syncCalls.length = 0;
     triggeredIds.length = 0;
@@ -589,6 +622,49 @@ describe('/api/v1/scheduled-work-requests', () => {
     expect(syncCalls.map((c) => c.cronExpression)).toEqual(['0 4 * * 1', '0 3 * * 1']);
   });
 
+  describe('concurrent changes to a schedule', () => {
+    const patchCron = () =>
+      inject({
+        method: 'PATCH',
+        payload: { cronExpression: '0 4 * * 1' },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+
+    it('writes the row only if it is still as it was read', async () => {
+      scheduleRow = { ...pausedRow(), isActive: true, teamId: 'team-1', updatedAt: new Date(5) };
+      expect((await patchCron()).statusCode).toBe(200);
+      expect(updateManyWheres.at(-1)).toEqual({
+        actsAsUserId: 'user-1',
+        id: SCHEDULE_ID,
+        isActive: true,
+        teamId: 'team-1',
+        updatedAt: new Date(5),
+      });
+    });
+
+    it('answers 409 and re-syncs Temporal from the row when it moved under a PATCH', async () => {
+      scheduleRow = { ...pausedRow(), isActive: false };
+      rowMovedUnderneath = true;
+      const res = await inject({
+        method: 'PATCH',
+        payload: { cronExpression: '0 4 * * 1', isActive: true },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('SCHEDULE_CONFLICT');
+      expect(scheduleUpdates).toHaveLength(0);
+      expect(auditRows).toHaveLength(0);
+      // The edit's schedule (active, new cron), then the row as it now stands:
+      // paused, old cron. A paused schedule is never left running.
+      expect(syncCalls.map((c) => [c.cronExpression, c.paused])).toEqual([
+        ['0 4 * * 1', false],
+        ['0 3 * * 1', true],
+      ]);
+    });
+  });
+
   describe('whose identity fires launch as', () => {
     const authored = () => ({
       actsAsUserId: 'author-1',
@@ -839,6 +915,39 @@ describe('/api/v1/scheduled-work-requests', () => {
       expect(res.statusCode).toBe(502);
       expect(syncCalls.map((c) => c.request.launchedById)).toEqual(['user-1', 'author-1']);
       expect(scheduleUpdates.map((u) => u.actsAsUserId)).toEqual(['user-1', 'author-1']);
+      expect(auditRows.map((a) => (a.afterJson as { event: string }).event)).toEqual([
+        'acts-as-changed',
+        'acts-as-reverted',
+      ]);
+    });
+
+    it('keeps the takeover in both places when Temporal cannot be restored to the author', async () => {
+      scheduleRow = owned();
+      triggerShouldFail = true;
+      // Sync 1 binds the firer; sync 2 (the restore) fails.
+      failSyncAtCall = 2;
+      const res = await fire();
+      expect(res.statusCode).toBe(502);
+      // Temporal holds the firer, so the row is NOT reverted to the author.
+      expect(scheduleUpdates.map((u) => u.actsAsUserId)).toEqual(['user-1']);
+      expect(auditRows.at(-1)).toMatchObject({
+        actorId: 'user-1',
+        afterJson: { actsAsUserId: 'user-1', event: 'acts-as-takeover-kept' },
+      });
+    });
+
+    it('answers 409 and re-syncs Temporal from the row when the row moved under the takeover', async () => {
+      scheduleRow = owned({ isActive: false });
+      rowMovedUnderneath = true;
+      const res = await fire();
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('SCHEDULE_CONFLICT');
+      expect(triggeredIds).toHaveLength(0);
+      expect(auditRows).toHaveLength(0);
+      // Never paused:false for a row that is not active: the final sync is the
+      // row's own state (paused, its author).
+      expect(syncCalls.at(-1)).toMatchObject({ paused: true });
+      expect(syncCalls.at(-1)?.request.launchedById).toBe('author-1');
     });
 
     it('refuses a takeover of an orphaned schedule', async () => {
@@ -988,6 +1097,15 @@ describe('/api/v1/scheduled-work-requests', () => {
       expect((await patch()).statusCode).toBe(200);
       expect((await fire()).statusCode).toBe(202);
       expect((await del()).statusCode).toBe(200);
+    });
+
+    it("leaves a team-less schedule to ADMIN and the owning team's lead", async () => {
+      // A null team means the team was deleted: whose it was is unknown.
+      scheduleRow = row({ teamId: null });
+      expect((await patch()).statusCode).toBe(200);
+      membershipRole = 'ENGINEER';
+      sharedTeams = [{ role: 'LEAD', teamId: SHARED }];
+      expect((await patch()).statusCode).toBe(403);
     });
 
     it('forbids a lead of a team the repository is no longer shared with', async () => {

@@ -61,6 +61,75 @@ function repoHosts(repo: RepoRef, ghConfig: { baseUrl: string; apiUrl: string })
   return { apiUrl: repo.apiUrl ?? ghConfig.apiUrl, baseUrl: repo.baseUrl ?? ghConfig.baseUrl };
 }
 
+/** `host[:port]` of a URL, lowercased; the string itself when it does not parse. */
+function hostKey(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+type PlatformConfig = { baseUrl: string; apiUrl: string } & Partial<
+  Pick<
+    Awaited<ReturnType<typeof resolveGitHubConfig>>,
+    'authMode' | 'appId' | 'appPrivateKey'
+  >
+>;
+
+/**
+ * Where the platform credential may go for `repo`: 'instance' when both its
+ * hosts are the instance's own, 'own-installation' when it is on another host
+ * but has an installation there (and the App is in use), else 'mismatch'.
+ *
+ * The singleton installation token and the instance PAT are the instance's.
+ * Neither is valid on, nor may be sent to, a host that is not the instance's —
+ * only a repository's own installation reaches its own host. Mirrors the
+ * gateway's rule in `checkRunTarget`.
+ */
+function platformCredentialScope(
+  repo: RepoRef,
+  ghConfig: PlatformConfig
+): 'instance' | 'own-installation' | 'mismatch' {
+  const onInstance =
+    (!repo.apiUrl || hostKey(repo.apiUrl) === hostKey(ghConfig.apiUrl)) &&
+    (!repo.baseUrl || hostKey(repo.baseUrl) === hostKey(ghConfig.baseUrl));
+  if (onInstance) {
+    return 'instance';
+  }
+  const mode = ghConfig.authMode ?? 'auto';
+  const appMode =
+    mode === 'app' || (mode === 'auto' && Boolean(ghConfig.appId && ghConfig.appPrivateKey));
+  return repo.installationId && appMode ? 'own-installation' : 'mismatch';
+}
+
+/** The failure for a platform credential that has nowhere valid to go. */
+function credentialHostMismatch(repo: RepoRef, ghConfig: PlatformConfig) {
+  const host = hostKey(repo.baseUrl ?? repo.apiUrl ?? ghConfig.baseUrl);
+  return ApplicationFailure.nonRetryable(
+    `The repository is on ${host}, which needs its own GitHub App installation (Studio → GitHub installations) or a user's own token. The platform's credential is valid only on the instance's own GitHub host and is not sent elsewhere.`,
+    'REPO_CREDENTIAL_HOST_MISMATCH'
+  );
+}
+
+/**
+ * A repository with a web host of its own and no API URL would have its API
+ * calls sent to the instance's API, which would be asked about a same-named
+ * repository there — a mirror could decide the answer.
+ */
+function hasMisconfiguredHost(repo: RepoRef, ghConfig: { baseUrl: string }): boolean {
+  return (
+    Boolean(repo.baseUrl) && !repo.apiUrl && hostKey(repo.baseUrl as string) !== hostKey(ghConfig.baseUrl)
+  );
+}
+
+function hostMisconfigured(repo: RepoRef) {
+  return ApplicationFailure.nonRetryable(
+    `The repository's web URL ${repo.baseUrl} is not the instance's GitHub host and no API URL is set for it, so API calls would go to the instance's API. Set the repository's API URL.`,
+    'REPO_HOST_MISCONFIGURED'
+  );
+}
+
 /**
  * The token the current execution's launcher saved for `repo`, when they have
  * a usable one.
@@ -139,10 +208,14 @@ async function runToken(
       'REPO_HOST_NOT_ALLOWED'
     );
   }
-  return (
-    (await launcherToken(repo, ghConfig)) ??
-    (await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig)))
-  );
+  const own = await launcherToken(repo, ghConfig);
+  if (own) {
+    return own;
+  }
+  if (platformCredentialScope(repo, ghConfig) === 'mismatch') {
+    throw credentialHostMismatch(repo, ghConfig);
+  }
+  return requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
 }
 
 /**
@@ -156,6 +229,9 @@ async function runToken(
 async function octokitFor(repo: RepoRef) {
   const { Octokit } = await import('@octokit/rest');
   const ghConfig = await resolveGitHubConfig();
+  if (hasMisconfiguredHost(repo, ghConfig)) {
+    throw hostMisconfigured(repo);
+  }
   const token = await runToken(repo, ghConfig);
   const apiUrl =
     repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
@@ -309,7 +385,24 @@ export class GitHubScmProvider implements ScmProvider {
         githubToken = userToken;
       }
     }
-    if (!githubToken && target.trusted) {
+    // The platform credential goes only where it is valid: the instance's
+    // origins for the instance's credential, the repository's own origins for
+    // its own installation's, and nowhere for a repository on another host
+    // with neither.
+    const scope = repo ? platformCredentialScope(repo, ghConfig) : 'instance';
+    const platformTrusted =
+      scope === 'instance'
+        ? target.trusted
+        : scope === 'own-installation' && repo
+          ? (() => {
+              const own = resolveCiLogsTarget(
+                logsUrl,
+                trustedGitHubOrigins(repoHosts(repo, ghConfig))
+              );
+              return own.ok && own.trusted;
+            })()
+          : false;
+    if (!githubToken && platformTrusted) {
       // The platform credential — an App JWT, when minting an installation token
       // — goes to this repository's own API host. Every other route to a token
       // checks the repository's overrides first; this one reaches the minting
@@ -390,6 +483,11 @@ export class GitHubScmProvider implements ScmProvider {
       return { failure: 'credential-rejected', ok: false };
     }
     const ghConfig = await resolveGitHubConfig();
+    // Not the instance's credential, and not the instance's API: either would
+    // answer for a repository on another host.
+    if (platformCredentialScope(repo, ghConfig) === 'mismatch' || hasMisconfiguredHost(repo, ghConfig)) {
+      return { failure: 'credential-rejected', ok: false };
+    }
     const target = installationTarget(repo, ghConfig);
     let token: string;
     try {

@@ -18,6 +18,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
+import { isGitHubDotComHost } from '../lib/repositoryHost.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -84,6 +85,18 @@ export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => 
     async (request, reply) => {
       const user = requireUser(request);
       const { host, secret } = request.body;
+      // github.com sends no X-GitHub-Enterprise-Host header, so its deliveries
+      // always verify with the instance secret. A row for it would never be
+      // selected, and used to exclude every github.com repository from the
+      // instance secret's reach.
+      if (isGitHubDotComHost(host)) {
+        return sendError(
+          reply,
+          400,
+          'HOST_SENDS_NO_HEADER',
+          `${host} does not send X-GitHub-Enterprise-Host, so it always signs with the instance webhook secret. Only GitHub Enterprise Server hosts can have a secret of their own.`
+        );
+      }
       // A secret for a host the platform never talks to could only ever be
       // matched by a delivery from somewhere nobody approved.
       if (!(await approvedRepositoryHosts()).includes(host)) {

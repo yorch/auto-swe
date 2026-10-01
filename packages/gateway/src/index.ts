@@ -21,7 +21,10 @@ import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
-import { warnIfRepoIdentityIndexMissing } from './lib/repoIdentityIndexCheck.js';
+import {
+  warnIfGitHubDotComWebhookSecret,
+  warnIfRepoIdentityIndexMissing,
+} from './lib/repoIdentityIndexCheck.js';
 import { parseTrustProxy } from './lib/trustProxy.js';
 import authPlugin, {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -153,6 +156,7 @@ async function start() {
   // index when case-only duplicates exist, and `migrate deploy` hides the
   // warning it raises. Say so here, where an operator reads the logs.
   await warnIfRepoIdentityIndexMissing(app.prisma, app.log);
+  await warnIfGitHubDotComWebhookSecret(app.prisma, app.log);
 
   // Sync the lesson consolidation Temporal Schedule with whatever config is in
   // the DB. Best-effort — a Temporal connectivity failure at startup shouldn't

@@ -11,6 +11,7 @@
  */
 import type { PrismaClient } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isGitHubDotComHost } from './repositoryHost.js';
 
 export const REPO_IDENTITY_INDEX = 'connections_git_repo_host_org_repo_ci_uidx';
 
@@ -70,6 +71,34 @@ export async function warnIfRepoIdentityIndexMissing(
     return true;
   } catch (err) {
     log.warn({ err }, 'could not check for the repository identity index');
+    return false;
+  }
+}
+
+/**
+ * Warns when a webhook-secret row exists for github.com or api.github.com.
+ * github.com never sends `X-GitHub-Enterprise-Host`, so such a row is never
+ * selected; the admin API refuses to create one, so this is legacy data. It is
+ * ignored when scoping deliveries, but the operator should delete it. Returns
+ * whether it warned; never throws.
+ */
+export async function warnIfGitHubDotComWebhookSecret(
+  prisma: PrismaClient,
+  log: Logger
+): Promise<boolean> {
+  try {
+    const rows = await prisma.gitHubHostWebhookSecret.findMany({ select: { host: true } });
+    const hosts = rows.map((r) => r.host).filter(isGitHubDotComHost);
+    if (hosts.length === 0) {
+      return false;
+    }
+    log.warn(
+      { hosts },
+      'a GitHub webhook secret is stored for github.com; github.com sends no X-GitHub-Enterprise-Host header and always signs with the instance secret, so the row is never used. Delete it.'
+    );
+    return true;
+  } catch (err) {
+    log.warn({ err }, 'could not check for a github.com webhook secret row');
     return false;
   }
 }
