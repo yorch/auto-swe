@@ -244,15 +244,6 @@ longer fit.
   `repository.html_url` and the owner/name is onboarded on more than one host.
 - **App installations are not host-scoped.** A GitHub App installation id is unique across the
   deployment, so two hosts cannot use the same numeric installation id.
-- **Existing case-only duplicates keep the case-sensitive index.** The migration that makes the
-  unique index case-insensitive does not fail on a deployment that already holds two repositories
-  differing only by case; it raises a `WARNING` that `prisma migrate deploy` does not show, and
-  leaves the previous, case-sensitive index in place. The gateway checks for the new index at
-  startup and, when it is missing, logs a warning that names each duplicate group and gives the SQL
-  to create the index once they are resolved. Onboarding still refuses new case-variants through its
-  case-insensitive duplicate check, but two onboarding requests racing each other are not stopped by
-  the database until the duplicates are merged or deleted and the case-insensitive index is created
-  by hand.
 - **Workflow ids keep the stored casing.** The id embeds owner and name as stored, so the same
   repository onboarded under two casings (possible only through the case above) gets different ids.
 - **An override spelling out the instance host is only cleared when the GitHub integration stores

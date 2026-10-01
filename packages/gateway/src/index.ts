@@ -23,7 +23,6 @@ import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import {
   warnIfGitHubDotComWebhookSecret,
-  warnIfRepoIdentityIndexMissing,
   warnIfReposOnUnusableHosts,
 } from './lib/repoIdentityIndexCheck.js';
 import { parseTrustProxy } from './lib/trustProxy.js';
@@ -153,10 +152,6 @@ async function start() {
   // config) so every deploy automatically picks up new or updated built-ins.
   await syncBuiltins(app.prisma);
 
-  // The migration that makes repository identity case-insensitive skips its
-  // index when case-only duplicates exist, and `migrate deploy` hides the
-  // warning it raises. Say so here, where an operator reads the logs.
-  await warnIfRepoIdentityIndexMissing(app.prisma, app.log);
   await warnIfGitHubDotComWebhookSecret(app.prisma, app.log);
   await warnIfReposOnUnusableHosts(app.prisma, app.log);
 
