@@ -80,10 +80,25 @@ the same organization (`ConnectionTeamShare`).
 | Be a channel-assistant code task's repository by default (no name given) | if it is the team's only repository | never |
 | Edit, deactivate or move the repository | lead | no |
 | Change who it is shared with | lead | no |
-| Create, edit or fire schedules | lead | no |
+| Create a schedule | lead | lead |
+| Edit, fire or delete a schedule | any schedule on the repository (lead) | the team's own schedules only (lead) |
 | Add or confirm dependency edges | lead | no |
 
 Runs keep the owning team's budget, default template and settings, whoever launches them.
+
+**Schedules.** A `ScheduledWorkRequest` belongs to a team (`teamId`): the repository's owning team or
+a team it is shared with. A lead of either may create one; the body's optional `teamId` must be the
+owning team or a shared team the caller leads. Omitted, it is the owning team if the caller leads
+it, else the one shared team they lead (several, and none named, is a `400`). A schedule with no
+team, from before the column existed, belongs to the owning team. Editing, firing or deleting one
+takes a platform admin, a lead of the schedule's team, or a lead of the repository's owning team,
+which keeps authority over every schedule on its repository; a shared team's lead cannot touch
+another team's schedules. Budgets, the default template and settings stay the owning team's.
+
+When a team stops having a claim on the repository (its share is removed, or the repository moves
+to another team), its schedules on it are deactivated in the same request: the row is marked
+inactive and the Temporal schedule is paused. They stay listed, and a lead of the owning team may
+delete them or re-activate them, which makes the re-activating lead the author.
 
 A team never asks to receive a share, so a shared repository never changes what that team's own
 repositories resolve to: a code task names it to reach it, and a name the team also owns resolves to
@@ -129,7 +144,5 @@ longer fit.
 - **Some runs can only be controlled by a platform admin.** A run on a global template, against no
   repository, that nobody launched (a webhook start, or one from before launchers were recorded) is
   visible to everyone but can be cancelled, or its human steps answered, only by an admin.
-- **Shared teams cannot schedule.** Schedules are management, so a shared team's members start runs
-  on demand only.
 - **The team page lists owned repositories only.** Repositories shared with a team appear in its
   members' Connections page and listings, not on the team's own page.

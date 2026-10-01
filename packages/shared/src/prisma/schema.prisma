@@ -602,6 +602,8 @@ model Team {
   repositories        Connection[]
   /// Repositories other teams have shared with this one (see `ConnectionTeamShare`).
   sharedRepositories  ConnectionTeamShare[]
+  /// Schedules this team owns (see `ScheduledWorkRequest.teamId`).
+  scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleTeam")
   workflowTemplates   WorkflowTemplate[]
   shellAudits         WorkflowShellAudit[]
   providerCredentials ProviderCredential[]
@@ -1159,6 +1161,11 @@ model ScheduledWorkRequest {
   /// Standing WorkRequest that all scheduled fires attach their WorkflowRuns to.
   workRequestId        String?           @map("work_request_id") @db.Uuid
   workRequest          RunInput?         @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
+  /// The team that owns the schedule: the repository's owning team or a team it
+  /// is shared with. Null (a schedule from before this existed, or its team
+  /// deleted) means the repository's owning team.
+  teamId               String?           @map("team_id") @db.Uuid
+  team                 Team?             @relation("ScheduleTeam", fields: [teamId], references: [id], onDelete: SetNull)
   /// Best-effort bookkeeping — authoritative fire history lives in Temporal.
   lastFiredAt          DateTime?         @map("last_fired_at") @db.Timestamptz
   nextFireAt           DateTime?         @map("next_fire_at") @db.Timestamptz
@@ -1170,6 +1177,7 @@ model ScheduledWorkRequest {
   @@index([createdById])
   @@index([actsAsUserId])
   @@index([workRequestId])
+  @@index([teamId])
   @@map("scheduled_work_requests")
 }
 

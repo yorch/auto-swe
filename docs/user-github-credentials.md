@@ -50,9 +50,13 @@ launch decision about the editor, taken by the repository access gate before any
 exactly as creating a schedule is. So a lead editing, reviving or speeding up another person's
 schedule takes it over rather than borrowing their token, and the schedules page shows who each one
 runs as. The launcher is stored in the Temporal schedule's own arguments, so a cron fire and a fire
-by hand launch as the same person; the person pressing **fire** is checked against the repository
-by their GitHub login, as before. Schedules created before this existed have no author recorded and
-run as nobody until one of those changes is next made.
+by hand launch as the same person. Pressing **fire** follows the same rule as editing: whoever
+causes a run is who it runs as. A firer who is not the current author is judged by the access gate
+as themselves, becomes the author (recorded in the audit log), and the Temporal schedule is
+re-synced to carry them before it is triggered; if the sync or the trigger fails, the author and
+the Temporal arguments are put back. The author firing their own schedule changes nothing, and is
+judged as themselves too. Schedules created before authors were recorded have none and run as
+nobody until someone fires or edits them.
 
 **Slack launches run as the linked platform user.** The request is signature-verified and the
 account link names the platform user — the same identity the repository access gate judges on those
@@ -158,11 +162,10 @@ account, and it works on a GitHub Enterprise host whose usernames the github.com
 name.
 
 Creating a schedule, the Slack run modal and a channel-assistant code task all launch as the
-caller, so they are judged the same way. Two decisions are not: firing a schedule by hand launches
-as the schedule's author rather than the person firing it, and a Slack thread steer acts on a run
-someone else launched — so the person firing or steering is judged by their login, whatever they
-saved. Judging them by their own token would refuse for a token the run never touches, or admit
-someone on an identity the run does not act as.
+caller, and so does firing a schedule by hand, which first makes the firer its author. One decision
+is not: a Slack thread steer acts on a run someone else launched — so the person steering is judged
+by their login, whatever they saved. Judging them by their own token would refuse for a token the
+run never touches, or admit someone on an identity the run does not act as.
 
 The scheduled sweep and the webhook refresh prefer the token where one is usable, and fall back to
 the login-based lookup where it is not. A token GitHub rejects, or that
@@ -183,9 +186,6 @@ verification answer in `repo_access` like any other lookup.
   authors were recorded run as nobody until then.
 - **A Slack launch is only as trustworthy as the account link.** Whoever controls the linked Slack
   account launches as the platform user it is linked to, including with their saved token.
-- **A schedule can be fired by hand as its author.** A lead of the owning team can press **fire** on
-  someone else's schedule; the run is the one the author defined, at a time they did not choose, and
-  acts as them. Firing changes when, not what, so it does not take the schedule over.
 - **Other people can steer a run that acts as you.** A human step, a review comment fed to the
   review fixer, or a Slack thread steer can be answered by anyone the existing rules allow, and the
   run keeps acting with its launcher's token. This is the same exposure the platform credential
