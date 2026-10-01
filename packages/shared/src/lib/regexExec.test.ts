@@ -20,6 +20,23 @@ import {
 const EVIL = { flags: '', key: 'evil', source: '(a+)+$' };
 const EVIL_INPUT = `${'a'.repeat(40)}!`;
 
+/**
+ * The fastest of `runs` wall-clock timings of `fn`, in ms. Noise only ever adds
+ * time — a GC pause, a CPU-starved thread under a parallel test run, and V8
+ * compiling a regex on its first exec (~7x a warm run) — so the minimum is the
+ * estimate of what `fn` intrinsically costs. A real cost regression is paid on
+ * every run, so it still shows.
+ */
+function minWallMs(fn: () => void, runs: number): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < runs; i++) {
+    const started = performance.now();
+    fn();
+    best = Math.min(best, performance.now() - started);
+  }
+  return best;
+}
+
 afterEach(() => {
   resetRegexExecutor();
   vi.useRealTimers();
@@ -237,20 +254,28 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
     expect(isRegexQuarantined(EVIL.source, EVIL.flags)).toBe(true);
   });
 
-  it('gives every target its own budget rather than one budget for the whole batch', async () => {
-    // Calibrate a linear-in-targets, quadratic-in-length pattern so one target
-    // costs a fraction of the budget while the batch as a whole costs several
-    // budgets. Measured, not assumed, so the test is not hostage to CI speed.
-    // Keep one target far below the budget (10x headroom) so a CPU-starved
-    // worker thread under a parallel test run cannot push a single target over
-    // it; the batch still costs several budgets in total.
+  it('gives every target its own budget rather than one budget for the whole batch', {
+    timeout: 30_000,
+  }, async () => {
+    // Calibrate a linear-in-targets, superlinear-in-length pattern so one
+    // target costs a fraction of the budget while the batch as a whole costs
+    // several budgets. Measured, not assumed, so the test is not hostage to CI
+    // speed. Keep one target far below the budget (10x headroom) so a
+    // CPU-starved worker thread under a parallel test run cannot push a single
+    // target over it; the batch still costs several budgets in total.
+    //
+    // The per-target cost is the WARM one. A single cold probe reads ~7x high,
+    // which both failed the headroom check under load and sized the batch so
+    // small that its real cost fit inside one budget — so an executor sharing
+    // one budget across the batch passed too.
     const budgetMs = 500;
     const text = `${'a'.repeat(200)}!`;
-    const startedProbe = performance.now();
-    /a+a+$/.exec(text);
-    const perTargetMs = Math.max(performance.now() - startedProbe, 0.5);
+    const perTargetMs = Math.max(
+      minWallMs(() => /a+a+$/.exec(text), 5),
+      0.5
+    );
     expect(perTargetMs).toBeLessThan(budgetMs / 10);
-    const count = Math.min(100, Math.ceil((3 * budgetMs) / perTargetMs));
+    const count = Math.min(2_000, Math.ceil((3 * budgetMs) / perTargetMs));
     // Sanity: the batch as a whole really does cost more than one budget.
     expect(count * perTargetMs).toBeGreaterThan(budgetMs);
     const targets = Array.from({ length: count }, (_, i) => ({ key: String(i), text }));
@@ -306,13 +331,12 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
     // In-thread, per window: the sum over all 62 patterns must be a small
     // fraction of the budget, or a modestly loaded host will overrun it.
     for (const text of windows) {
-      const started = performance.now();
-      for (const spec of specs) {
-        new RegExp(spec.source, spec.flags).exec(text);
-      }
-      expect(performance.now() - started, text.slice(0, 12)).toBeLessThan(
-        DEFAULT_REGEX_BUDGET_MS / 5
-      );
+      const ms = minWallMs(() => {
+        for (const spec of specs) {
+          new RegExp(spec.source, spec.flags).exec(text);
+        }
+      }, 3);
+      expect(ms, text.slice(0, 12)).toBeLessThan(DEFAULT_REGEX_BUDGET_MS / 5);
     }
 
     // And through the executor, under the default budget, nothing times out.
