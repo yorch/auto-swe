@@ -692,6 +692,8 @@ export interface ScheduledWorkRequestSummary {
    * credential only.
    */
   actsAs: { id: string; email: string; name: string | null } | null;
+  /** The team that owns the schedule; null means the repository's owning team. */
+  team: TeamRef | null;
   lastFiredAt: string | null;
   schedule: ScheduledWorkRequestScheduleStatus;
   createdAt: string;

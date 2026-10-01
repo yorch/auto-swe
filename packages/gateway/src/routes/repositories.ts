@@ -16,6 +16,7 @@ import { booleanQueryParam } from '../lib/queryParams.js';
 import { insensitiveName } from '../lib/repositoryHost.js';
 import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
+import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
 
 /**
  * `defaultBranch` is interpolated into git commands inside the workspace
@@ -644,6 +645,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         throw err;
       }
 
+      // A move drops the shares that no longer apply and changes who owns the
+      // repository, so schedules owned by a team with no remaining claim stop.
+      if (moving) {
+        await deactivateSchedulesOutsideTeams(fastify, repo.id, request.log);
+      }
+
       return { data: redactConnection(updated) };
     }
   );
@@ -758,6 +765,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             }),
           ])
       );
+      // A team that lost its share keeps no schedule on the repository.
+      await deactivateSchedulesOutsideTeams(fastify, repo.id, request.log);
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,

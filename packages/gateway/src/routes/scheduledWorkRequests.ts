@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { RunIdentity } from '@auto-swe/shared/lib/repoAccessGate';
-import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -59,6 +59,8 @@ const CreateScheduleSchema = z.object({
   isActive: z.boolean().optional().default(true),
   name: z.string().min(1).max(200),
   repoId: z.string().uuid(),
+  /** The owning team: the repository's team or one it is shared with. See `resolveCreateTeam`. */
+  teamId: z.string().uuid().optional(),
   /** Explicit template override; omitted → repo team default at save time. */
   templateId: z.string().uuid().optional(),
   /** Pin a version; omitted with templateId → that template's activeVersion. */
@@ -109,9 +111,17 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
   return prisma.connection.findFirst({
     include: {
       installation: { select: { installationId: true, isActive: true } },
-      // Shared-team membership satisfies the launch decision; `canManage`
-      // reads the owning team's role only, so schedules stay the owner's.
-      shares: repoMembersSelect({ userId: true }, { userId }).shares,
+      // Shared-team membership satisfies the launch decision, and a LEAD of a
+      // shared team may schedule on the repository (see `canCreate`). The share's
+      // `teamId` is what a schedule's own `teamId` is matched against.
+      shares: {
+        select: {
+          team: {
+            select: { memberships: { select: { role: true, userId: true }, where: { userId } } },
+          },
+          teamId: true,
+        },
+      },
       team: {
         select: {
           memberships: { select: { role: true, userId: true }, where: { userId } },
@@ -165,13 +175,89 @@ async function passesLaunchAuthorization(
   return false;
 }
 
-/** ADMIN platform role, or LEAD/ADMIN membership on the repo's team. */
-function canManage(user: { role: string }, repo: RepoWithMembership): boolean {
-  if (user.role === 'ADMIN') {
+const isLead = (m: { role: string } | undefined): boolean =>
+  !!m && (m.role === 'LEAD' || m.role === 'ADMIN');
+
+/** Whether the caller leads the repository's owning team. */
+function leadsOwner(repo: RepoWithMembership): boolean {
+  return isLead(repo.team.memberships[0]);
+}
+
+/**
+ * The teams the caller leads that may own a schedule on this repository: its
+ * owning team and the teams it is shared with. Platform ADMIN's own membership
+ * is irrelevant here; callers check the role first.
+ */
+function ledScheduleTeamIds(repo: RepoWithMembership): string[] {
+  return [
+    ...(leadsOwner(repo) ? [repo.teamId] : []),
+    ...repo.shares.filter((s) => isLead(s.team.memberships[0])).map((s) => s.teamId),
+  ];
+}
+
+/** Who may create a schedule: ADMIN, or a LEAD of the owning team or of a shared team. */
+function canCreate(user: { role: string }, repo: RepoWithMembership): boolean {
+  return user.role === 'ADMIN' || ledScheduleTeamIds(repo).length > 0;
+}
+
+/**
+ * Who may edit, fire or delete a schedule: ADMIN; a LEAD of the schedule's own
+ * team (null means the owning team); or a LEAD of the repository's owning team,
+ * which keeps authority over every schedule on its repository. A shared team's
+ * lead cannot touch another team's schedule, and a team no longer shared has no
+ * standing at all: it is no longer in `repo.shares`.
+ */
+function canManage(
+  user: { role: string },
+  repo: RepoWithMembership,
+  schedule: { teamId: string | null }
+): boolean {
+  if (user.role === 'ADMIN' || leadsOwner(repo)) {
     return true;
   }
-  const membership = repo.team.memberships[0];
-  return !!membership && (membership.role === 'LEAD' || membership.role === 'ADMIN');
+  return !!schedule.teamId && ledScheduleTeamIds(repo).includes(schedule.teamId);
+}
+
+const FORBIDDEN_MESSAGE =
+  "Requires ADMIN role, or LEAD membership on the schedule's team or the repository's owning team";
+
+/**
+ * The team a new schedule belongs to. An explicit `teamId` must be the owning
+ * team or a shared team the caller leads (ADMIN: any of those). Without one:
+ * the owning team if the caller leads it (or is ADMIN), else the single shared
+ * team they lead.
+ */
+function resolveCreateTeam(
+  user: { role: string },
+  repo: RepoWithMembership,
+  requested: string | undefined
+): { teamId: string } | { status: 400 | 403; code: string; message: string } {
+  const admin = user.role === 'ADMIN';
+  const led = ledScheduleTeamIds(repo);
+  if (requested) {
+    const eligible = requested === repo.teamId || repo.shares.some((s) => s.teamId === requested);
+    if (!eligible) {
+      return {
+        code: 'INVALID_SCHEDULE_TEAM',
+        message: 'teamId must be the repository owning team or a team it is shared with',
+        status: 400,
+      };
+    }
+    return admin || led.includes(requested)
+      ? { teamId: requested }
+      : { code: 'FORBIDDEN', message: 'Requires LEAD membership on that team', status: 403 };
+  }
+  if (admin || led.includes(repo.teamId)) {
+    return { teamId: repo.teamId };
+  }
+  if (led.length === 1) {
+    return { teamId: led[0] as string };
+  }
+  return {
+    code: 'TEAM_REQUIRED',
+    message: 'You lead several teams on this repository; pass teamId to choose which owns it',
+    status: 400,
+  };
 }
 
 /**
@@ -280,6 +366,7 @@ const scheduleInclude = {
   actsAsUser: { select: { email: true, id: true, name: true } },
   createdBy: { select: { email: true, id: true, name: true } },
   repository: { select: { id: true, organizationName: true, repoName: true } },
+  team: { select: { id: true, name: true, slug: true } },
   template: { select: { id: true, name: true } },
 } as const;
 
@@ -301,11 +388,80 @@ function serializeSchedule(row: any, schedule: unknown) {
     name: row.name,
     repository: row.repository,
     schedule,
+    /** Owning team; null means the repository's owning team. */
+    team: row.team ?? null,
     template: row.template,
     templateVersion: row.templateVersion,
     updatedAt: row.updatedAt,
     workRequestId: row.workRequestId,
   };
+}
+
+/**
+ * Pause the schedules on `repoId` whose owning team no longer has a claim on it
+ * (neither the repository's owning team nor a team it is shared with), after a
+ * share was removed or the repository moved. Null-team schedules belong to
+ * whoever owns the repository and are untouched.
+ *
+ * The row is deactivated first (a schedule must not stay "active" in the
+ * dashboard), then the Temporal schedule is paused. A failed pause is logged and
+ * does not fail the caller: the share change has already committed, the list
+ * view shows the live Temporal state, and the worker re-checks the author's
+ * access on every fire.
+ */
+export async function deactivateSchedulesOutsideTeams(
+  fastify: FastifyInstance,
+  repoId: string,
+  log: FastifyRequest['log']
+): Promise<number> {
+  const repo = await fastify.prisma.connection.findUnique({
+    select: { shares: { select: { teamId: true } }, teamId: true },
+    where: { id: repoId },
+  });
+  if (!repo) {
+    return 0;
+  }
+  const allowed = [repo.teamId, ...repo.shares.map((s) => s.teamId)];
+  // Every team but the ones named: a cross-tenant predicate by construction,
+  // bounded to one repository.
+  const stranded = await runUnscoped(
+    "schedules of the teams that no longer have a claim on one repository, by definition not the owner's or a sharer's",
+    ['ScheduledWorkRequest'],
+    () =>
+      fastify.prisma.scheduledWorkRequest.findMany({
+        where: { isActive: true, repoId, teamId: { not: null, notIn: allowed } },
+      })
+  );
+  for (const row of stranded) {
+    await fastify.prisma.scheduledWorkRequest.update({
+      data: { isActive: false },
+      where: { id: row.id },
+    });
+    try {
+      const synced = row.workRequestId
+        ? await fastify.prisma.runInput.findUnique({
+            select: { templateId: true, templateVersion: true },
+            where: { id: row.workRequestId },
+          })
+        : null;
+      if (!(row.workRequestId && synced?.templateId && synced.templateVersion)) {
+        continue;
+      }
+      await fastify.temporal.syncWorkRequestSchedule(
+        buildScheduleInput(
+          { ...row, isActive: false },
+          { templateId: synced.templateId, templateVersion: synced.templateVersion },
+          row.workRequestId
+        )
+      );
+    } catch (err) {
+      log.error(
+        { err, scheduleId: row.id },
+        'could not pause the Temporal schedule of an unshared team'
+      );
+    }
+  }
+  return stranded.length;
 }
 
 export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) => {
@@ -316,14 +472,22 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
   // Temporal Schedule (best-effort — DB columns are only bookkeeping).
   app.get('/', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
     const user = requireUser(request);
-    const rows = await fastify.prisma.scheduledWorkRequest.findMany({
-      include: scheduleInclude,
-      orderBy: { createdAt: 'desc' },
-      where:
-        user.role === 'ADMIN'
-          ? {}
-          : { repository: reachableConnections(user, request.repoAccessGate) },
-    });
+    // A schedule is visible through the repository it runs on (owner or shared
+    // team), not through its own team: the owner sees every team's schedules on
+    // its repository, so the scope is the repository relation.
+    const rows = await runUnscoped(
+      'schedules are scoped through the repository the caller can reach; an admin sees all',
+      ['ScheduledWorkRequest'],
+      () =>
+        fastify.prisma.scheduledWorkRequest.findMany({
+          include: scheduleInclude,
+          orderBy: { createdAt: 'desc' },
+          where:
+            user.role === 'ADMIN'
+              ? {}
+              : { repository: reachableConnections(user, request.repoAccessGate) },
+        })
+    );
     const statuses = await Promise.all(
       rows.map(async (row) => {
         try {
@@ -355,13 +519,20 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           },
         });
       }
-      if (!canManage(user, repo)) {
+      if (!canCreate(user, repo)) {
         return reply.status(403).send({
           error: {
             code: 'FORBIDDEN',
-            message: 'Requires ADMIN role or LEAD membership on the repository team',
+            message:
+              'Requires ADMIN role, or LEAD membership on the repository team or a team it is shared with',
           },
         });
+      }
+      const owner = resolveCreateTeam(user, repo, body.teamId);
+      if ('status' in owner) {
+        return reply
+          .status(owner.status)
+          .send({ error: { code: owner.code, message: owner.message } });
       }
       if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'caller'))) {
         return;
@@ -438,6 +609,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           isActive: body.isActive,
           name: body.name,
           repoId: repo.id,
+          teamId: owner.teamId,
           templateId: body.templateId ?? null,
           templateVersion: body.templateId ? template.templateVersion : null,
           workRequestId,
@@ -503,12 +675,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
         });
       }
-      if (!canManage(user, repo)) {
+      if (!canManage(user, repo, existing)) {
         return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Requires ADMIN role or LEAD membership on the repository team',
-          },
+          error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
         });
       }
 
@@ -726,26 +895,112 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         });
       }
       const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
-      if (!repo || !canManage(user, repo)) {
+      if (!repo || !canManage(user, repo, existing)) {
         return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Requires ADMIN role or LEAD membership on the repository team',
-          },
+          error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
         });
       }
-      // The fire launches as the schedule's author (`actsAsUserId`), not as
-      // the person pressing the button, so the firer is judged by their login
-      // — their own saved token is not what the run will use. (The author's
-      // access is re-checked in the worker on every fire.)
-      if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'platform'))) {
+      // Whoever causes a fire is who it runs as, the same rule as editing. The
+      // firer is judged as themselves ('caller') whether they are the author or
+      // about to become it, since either way their own saved token is what the
+      // run uses.
+      const takesOver = user.sub !== existing.actsAsUserId;
+      if (takesOver && !repo.isActive) {
+        return reply.status(409).send({
+          error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
+        });
+      }
+      if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'caller'))) {
         return;
+      }
+
+      // Taking the schedule over: Temporal's stored arguments carry the
+      // launcher, so they are re-synced to the firer before anything fires.
+      // Same order as PATCH: Temporal, then the row; whichever step fails puts
+      // the earlier ones back, so the row and Temporal never name different
+      // launchers.
+      let restoreAuthor: (() => Promise<void>) | null = null;
+      if (takesOver) {
+        const workRequestId = existing.workRequestId;
+        const synced = workRequestId
+          ? await fastify.prisma.runInput.findUnique({
+              select: { templateId: true, templateVersion: true },
+              where: { id: workRequestId },
+            })
+          : null;
+        if (!(workRequestId && synced?.templateId && synced.templateVersion)) {
+          return reply.status(409).send({
+            error: {
+              code: 'SCHEDULE_ORPHANED',
+              message: 'Standing work request is missing; delete and recreate this schedule',
+            },
+          });
+        }
+        const template = { templateId: synced.templateId, templateVersion: synced.templateVersion };
+        try {
+          await fastify.temporal.syncWorkRequestSchedule(
+            buildScheduleInput({ ...existing, actsAsUserId: user.sub }, template, workRequestId)
+          );
+        } catch (err) {
+          request.log.error({ err }, 'failed to re-bind Temporal schedule before fire');
+          return reply.status(502).send({
+            error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
+          });
+        }
+        restoreAuthor = async () => {
+          await fastify.temporal
+            .syncWorkRequestSchedule(buildScheduleInput(existing, template, workRequestId))
+            .catch((restoreErr: unknown) => {
+              request.log.error(
+                { err: restoreErr, scheduleId: existing.id },
+                'fire failed and the Temporal schedule could not be restored to its author'
+              );
+            });
+        };
+        try {
+          await fastify.prisma.$transaction([
+            fastify.prisma.scheduledWorkRequest.update({
+              data: { actsAsUserId: user.sub },
+              where: { id: existing.id },
+            }),
+            // A takeover is recorded, never silent.
+            fastify.prisma.configAuditLog.create({
+              data: {
+                action: 'UPDATE',
+                actorId: user.sub,
+                afterJson: { actsAsUserId: user.sub, event: 'acts-as-changed' },
+                beforeJson: { actsAsUserId: existing.actsAsUserId },
+                entityId: existing.id,
+                entityType: 'ScheduledWorkRequest',
+              },
+            }),
+          ]);
+        } catch (err) {
+          await restoreAuthor();
+          throw err;
+        }
       }
 
       try {
         await fastify.temporal.triggerWorkRequestSchedule(existing.id);
       } catch (err) {
         request.log.error({ err }, 'failed to trigger schedule');
+        // Nothing ran, so the author keeps the schedule: a takeover that did not
+        // fire anything is undone in both places.
+        if (restoreAuthor) {
+          await restoreAuthor();
+          await fastify.prisma.scheduledWorkRequest
+            .update({
+              data: { actsAsUserId: existing.actsAsUserId },
+              where: { id: existing.id },
+            })
+            .catch((revertErr: unknown) => {
+              request.log.error(
+                { err: revertErr, scheduleId: existing.id },
+                'fire failed and the schedule row could not be restored to its author'
+              );
+            });
+        }
         return reply.status(502).send({
           error: {
             code: 'SCHEDULE_TRIGGER_FAILED',
@@ -780,12 +1035,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         });
       }
       const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
-      if (!repo || !canManage(user, repo)) {
+      if (!repo || !canManage(user, repo, existing)) {
         return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Requires ADMIN role or LEAD membership on the repository team',
-          },
+          error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
         });
       }
 

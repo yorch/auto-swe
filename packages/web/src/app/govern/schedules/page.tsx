@@ -15,6 +15,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import {
   useCreateSchedule,
@@ -23,6 +24,7 @@ import {
   useSchedules,
   useUpdateSchedule,
 } from '@/hooks/useSchedules';
+import { useLedTeamIds } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
@@ -35,6 +37,7 @@ type ScheduleForm = {
   name: string;
   cronExpression: string;
   repoId: string;
+  teamId: string;
   description: string;
   externalTicketPrefix: string;
   budgetTier: 'STANDARD' | 'LARGE' | 'EPIC';
@@ -48,6 +51,7 @@ const EMPTY_FORM: ScheduleForm = {
   externalTicketPrefix: '',
   name: '',
   repoId: '',
+  teamId: '',
   templateId: '',
 };
 
@@ -57,6 +61,22 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
   const create = useCreateSchedule();
   const { data: repos } = useRepositories();
   const { data: templates } = useWorkflowTemplates();
+  const isAdmin = useHasRole('ADMIN');
+  const ledTeamIds = useLedTeamIds();
+
+  // The teams that may own a schedule on the chosen repository (its owner and
+  // the teams it is shared with) that the caller leads. With one, the server's
+  // default is right and no picker is shown.
+  const repo = (repos ?? []).find((r) => r.id === form.repoId);
+  const eligibleTeams = repo
+    ? [repo.team, ...(repo.shares ?? []).map((s) => s.team)].filter(
+        (t) => isAdmin || ledTeamIds?.has(t.id)
+      )
+    : [];
+  const showTeamPicker = eligibleTeams.length > 1;
+  const teamId = eligibleTeams.some((t) => t.id === form.teamId)
+    ? form.teamId
+    : (eligibleTeams[0]?.id ?? '');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -69,6 +89,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
         externalTicketPrefix: form.externalTicketPrefix,
         name: form.name,
         repoId: form.repoId,
+        ...(showTeamPicker ? { teamId } : {}),
         ...(form.templateId ? { templateId: form.templateId } : {}),
       });
       onClose();
@@ -107,6 +128,20 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
               </option>
             ))}
         </Select>
+        {showTeamPicker && (
+          <Select
+            id="schedule-team"
+            label="Owning team"
+            onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
+            value={teamId}
+          >
+            {eligibleTeams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        )}
         <div className="grid grid-cols-2 gap-4">
           <Input
             id="schedule-cron"
@@ -210,6 +245,9 @@ function ScheduleRow({
         </Td>
         <Td className="py-2 pr-4 text-paper-400">
           {schedule.repository.organizationName}/{schedule.repository.repoName}
+          <div className="text-[11px] text-paper-500">
+            Team: {schedule.team?.name ?? 'repository owner'}
+          </div>
         </Td>
         <Td className="py-2 pr-4 font-mono text-xs text-paper-300">{schedule.cronExpression}</Td>
         <Td className="py-2 pr-4 text-paper-400">
