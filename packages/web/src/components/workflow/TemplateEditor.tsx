@@ -40,7 +40,7 @@ import { makeDefaultNodeFor } from './makeDefaultNode';
 import { NodeInspector } from './NodeInspector';
 import { NodePalette, PALETTE_MIME, type PaletteDragKind, PaletteDragSchema } from './NodePalette';
 import { deleteNodeFromSpec, renameNodeInSpec, setSpecEdge } from './specEdits';
-import { specToFlow } from './specToFlow';
+import { FIT_VIEW_OPTIONS, specToFlow } from './specToFlow';
 
 const NODE_TYPES = { dag: DagNode };
 
@@ -388,7 +388,7 @@ function EditorInner({
             deleteKeyCode="Delete"
             edges={edges}
             fitView
-            fitViewOptions={{ maxZoom: 1.2, minZoom: 0.55, padding: 0.18 }}
+            fitViewOptions={FIT_VIEW_OPTIONS}
             maxZoom={2.5}
             minZoom={0.15}
             nodes={nodesWithSelection}
@@ -412,7 +412,7 @@ function EditorInner({
               style={{ background: TOKEN.ink900, border: `1px solid ${TOKEN.ink600}` }}
               zoomable
             />
-            <Controls showInteractive={false} />
+            <Controls fitViewOptions={FIT_VIEW_OPTIONS} showInteractive={false} />
           </ReactFlow>
         </div>
 
