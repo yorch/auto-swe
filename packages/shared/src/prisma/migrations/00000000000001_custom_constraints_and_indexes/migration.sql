@@ -13,7 +13,7 @@
 -- Routine application is `yarn db:migrate` (deploy); `prisma migrate dev`
 -- cannot see HNSW indexes and will try to re-drop this one on the next
 -- unrelated schema change — see the project skill
--- `prisma-7-pgvector-hnsw-migrate-dev-drift` for the workflow.
+-- `prisma-pgvector-hnsw` for the workflow.
 CREATE INDEX IF NOT EXISTS "idx_memory_items_embedding" ON "memory_items"
     USING hnsw ("embedding" vector_cosine_ops)
     WITH (m = 16, ef_construction = 200);
@@ -147,14 +147,6 @@ DO $$ BEGIN
     ADD CONSTRAINT "slack_config_singleton" CHECK ("id" = 'default');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
-  ALTER TABLE "storage_config"
-    ADD CONSTRAINT "storage_config_singleton" CHECK ("id" = 'default');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  ALTER TABLE "storage_config"
-    ADD CONSTRAINT "storage_config_backend_check" CHECK ("backend" IN ('inline', 's3'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
   ALTER TABLE "workflow_defaults"
     ADD CONSTRAINT "workflow_defaults_singleton" CHECK ("id" = 'default');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -175,14 +167,6 @@ DO $$ BEGIN
         AND ("ci_poll_grace_sec"    IS NULL OR "ci_poll_grace_sec"    > 0)
         AND ("ci_poll_deadline_sec" IS NULL OR "ci_poll_deadline_sec" > 0)
     );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  ALTER TABLE "google_oauth_config"
-    ADD CONSTRAINT "google_oauth_config_singleton" CHECK ("id" = 'default');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  ALTER TABLE "okta_oauth_config"
-    ADD CONSTRAINT "okta_oauth_config_singleton" CHECK ("id" = 'default');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE "embedding_configs"

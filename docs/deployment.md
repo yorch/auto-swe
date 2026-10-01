@@ -180,8 +180,6 @@ WEB_URL=https://app.example.com      # base URL for the "Open inbox" link in Sla
 
 Integration credentials that an operator rotates during normal use are stored encrypted in the DB and managed via the admin UI; their env vars remain accepted as fallbacks. What a process needs at start-up — sign-in provider credentials, artifact storage, and workspace sizing — is environment-only (see [`configuration.md`](./configuration.md)).
 
-> **Upgrading from a release that kept these in the UI.** The migration that removes those forms refuses to run while the database still holds a value for any of them, and its error names the environment variable that replaces each one and the statement that clears the row. Set the variables, clear the rows, and re-run the migration — nothing is dropped silently.
-
 | Admin page | What it configures | Restart required? |
 |---|---|---|
 | `/studio/models` | LLM provider credentials and per-role model selection | No — resolved fresh per activity call |
