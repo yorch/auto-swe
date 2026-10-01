@@ -184,7 +184,12 @@ body {
  * Header
  * ======================================================================== */
 
-.header {
+/*
+ * `header.header`, not `.header`: Starlight's inner header component also
+ * carries the class `header`, and the bare selector drew a second rule along
+ * its bottom edge — the same pixel row as the bottom of the search box.
+ */
+header.header {
   background: var(--paper);
   border-bottom: 1px solid var(--rule);
   box-shadow: none;
