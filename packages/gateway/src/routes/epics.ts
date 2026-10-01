@@ -150,7 +150,10 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
           user,
           r,
           request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-          request.log
+          request.log,
+          'start-new-work',
+          // Every child run is launched as the caller (`launchedById`).
+          'caller'
         );
         if (!decision.allowed) {
           refusals.push({
@@ -215,6 +218,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
             description,
             epicWorkflowId,
             externalTicketId,
+            launchedById: user.sub,
             repoIds,
             repos: [], // Empty — Planner Agent will decompose
             requestPayload: JSON.stringify(request.body),

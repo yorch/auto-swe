@@ -97,7 +97,11 @@ export async function validateRunConnection(
         user,
         connection,
         gate ?? { mode: 'off', staleAfterHours: 0 },
-        log
+        log,
+        'start-new-work',
+        // An authenticated template run is launched as its caller
+        // (`launchedById`); a public or webhook caller never reaches here.
+        'caller'
       );
       if (!decision.allowed) {
         reply.status(403).send(repoAccessErrorBody(decision.reason));

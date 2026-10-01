@@ -105,7 +105,10 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
           user,
           r,
           request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-          request.log
+          request.log,
+          'start-new-work',
+          // Every story run is launched as the caller (`launchedById`).
+          'caller'
         );
         if (!decision.allowed) {
           refusals.push({
@@ -170,6 +173,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
         request: {
           description: prdTitle,
           externalTicketId: `PRD-${workRequestId.slice(0, 8).toUpperCase()}`,
+          launchedById: user.sub,
           repoId: primaryRepoId,
           requestPayload,
           workRequestId,

@@ -69,6 +69,8 @@ const githubPermission = vi.fn<() => Promise<{ ok: boolean; permission?: string 
 }));
 vi.mock('@auto-swe/shared/lib/repoPermission', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoPermission')>()),
+  // No saved per-user credential: these tests are about the login-based path.
+  lookupPermissionViaUserCredential: async () => null,
   lookupRepoPermission: () => githubPermission(),
   verifiedGithubLoginFor: () => githubLogin(),
 }));
