@@ -17,6 +17,7 @@ authoring a workflow around it.
 |---|---|
 | API | `POST /api/v1/agent-runs` |
 | Re-run | `POST /api/v1/agent-runs/:workRequestId/rerun` |
+| Dashboard | **Run an agent** (`/agent-runs`), under Requests in the sidebar (section 9) |
 | CLI | `auto-swe agent run <key[@version]> "<prompt>" --repo <org/name> [--deliver none\|branch\|draft_pr] [--max-steps N] [--timeout S] [--wait]` |
 
 Request body:
@@ -247,7 +248,57 @@ same run. The run viewer shows them under the run found by `workRequestId`.
 
 ---
 
+## 9. The dashboard
+
+**Run an agent** (`/agent-runs`, ENGINEER and above) is a form over the same `POST /api/v1/agent-runs`.
+Choosing a repository first scopes everything else to it, because the repository decides which agents
+exist (its organization's overrides) and which ceilings apply (they cascade to team and organization).
+Two read endpoints, both ENGINEER, serve the form:
+
+| Call | Answers |
+|---|---|
+| `GET /api/v1/agent-runs/agents[?repoId=…]` | The launchable agents, resolved exactly as a launch resolves them: GLOBAL, plus the repository's ORGANIZATION when `repoId` is given, never TEAM. Per key it returns the effective name, description, scope and latest version, and `pinnableVersions` (the GLOBAL versions a `key@version` pin can select; empty while an organization override shadows the key). The non-launchable list (section 5) is excluded in the query |
+| `GET /api/v1/agent-runs/limits[?repoId=…]` | The step and wall-clock ceilings with their hard bounds, the concurrency settings, and `enabled` (false when the global switch, or with a `repoId` the owning team's, is `0`). Numbers only |
+
+A `repoId` the caller cannot reach (not a member of the owning team or a team it is shared with, or
+refused by the repository access gate; a platform ADMIN reaches every active git repository) answers
+`404 CONNECTION_NOT_FOUND`, the same as a repository that does not exist.
+
+The form validates the caps against the reported ceilings before sending, but the gateway and the
+worker stay authoritative; a ceiling that moved since the form loaded still surfaces as
+`CAP_EXCEEDS_CEILING`. A launch carries an `Idempotency-Key`, reused only when the submitted values are
+identical, so a retry after a dropped connection answers `RUN_CONFLICT` ("already started") instead of
+starting a second run. Launch errors are explained by code: `AGENT_RUN_CONCURRENCY_EXCEEDED` (429),
+`AGENT_RUNS_DISABLED` (403), `CAP_EXCEEDS_CEILING`, `AGENT_PIN_SHADOWED`, `AGENT_NOT_LAUNCHABLE`,
+`AGENT_NOT_FOUND`, `REPO_HOST_NOT_ALLOWED`, and `RUN_CONFLICT`.
+
+### The run viewer
+
+A run of the "Agent Run" template shows an **outcome card** in the run's side rail: the agent's text
+(rendered as text), the files changed with line counts, the branch and, for `draft_pr`, the pull request
+link (only an `https` URL is linked), the gate verdict (`passed`, `no_changes`, or not published), a
+`diff verified` or `diff unverified` badge (section 4), and whether the run stopped at its step or time
+cap. The diff is behind a disclosure and says when it was cut at 100,000 characters.
+
+A failed run names its refusal above the generic failure card: the security gate, the gate being
+unavailable, the push policy, a diff or working tree too large, an unsupported draft PR (the branch
+stays pushed), a budget stop, or the concurrency limit. **Re-run** calls
+`POST /api/v1/agent-runs/:workRequestId/rerun` and is offered for any finished agent run. The hidden
+template's own link is not shown.
+
+---
+
 ## Limitations
+
+- **The failure explanation is recognised from the step's error text.** The step row carries the
+  worker's message and not reliably its error type, so the viewer matches the type token when it is
+  there and the worker's known message wording otherwise. A reworded message degrades to the generic
+  failure card, which still shows it.
+- **The repository picker lists up to 500 repositories.** It reads the first page of the repository
+  listing (the listing's maximum page size); a caller who can reach more cannot pick the rest in the
+  form, and uses the CLI or the API.
+- **The form does not offer a budget tier,** so a dashboard launch is `STANDARD`; a re-run takes
+  `STANDARD` as well.
 
 - **A pushed branch runs the repository's existing `on: push` CI, with repository secrets, on
   agent-edited code.** Blocking changes under `.github/workflows` and `.github/actions` stops an agent
