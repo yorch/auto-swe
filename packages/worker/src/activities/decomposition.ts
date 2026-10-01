@@ -30,6 +30,8 @@ import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput } from '../lib/errors.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
+import { getModelSpec } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
@@ -463,6 +465,7 @@ async function mergeOneWithResolver(
       // No row when the model was never called (payload read or budget gate).
       if (calledModel) {
         opts.tracer.addLlmResponse({
+          ...failedCallAttribution(e, await getModelSpec('implementer').catch(() => undefined)),
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt, userMessage },

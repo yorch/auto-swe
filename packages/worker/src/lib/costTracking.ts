@@ -497,7 +497,15 @@ export async function recordLlmUsage(
           throw ApplicationFailure.nonRetryable(
             `Budget exceeded for tier ${tier}: ${newInput}/${limits.inputTokens} input tokens, ${newOutput}/${limits.outputTokens} output tokens used ($${newCost.toFixed(4)})`,
             'BUDGET_EXCEEDED',
-            { newCost, newInput, newOutput, tier }
+            {
+              // The call was made and the ledger debited; carry its attribution
+              // so the caller's trace row is priced (see failedCallAttribution).
+              attribution: { costUsd: callCost, inputTokens, modelSpec, outputTokens },
+              newCost,
+              newInput,
+              newOutput,
+              tier,
+            }
           );
         }
 

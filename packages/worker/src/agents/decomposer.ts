@@ -27,7 +27,8 @@ import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
-import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { DECOMPOSER_AGENT_PROMPT } from './prompts.js';
 
@@ -61,8 +62,10 @@ export async function planDecomposition(
       const start = Date.now();
       let systemPrompt = '';
       let llmUserMessage = '';
+      let modelSpec: string | undefined;
+      let recorded: LlmAttribution | undefined;
       try {
-        const modelSpec = await getModelSpec('planner');
+        modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
         span.setAttribute('llm.model', modelSpec);
         const basePrompt = await resolveSystemPrompt(
@@ -90,7 +93,7 @@ export async function planDecomposition(
 
         let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
         if (result.usage) {
-          attribution = await recordLlmUsage(
+          attribution = recorded = await recordLlmUsage(
             currentWorkflowId(),
             'planner',
             result.usage,
@@ -102,6 +105,8 @@ export async function planDecomposition(
           // Fall back to a single-subtask plan rather than failing the run.
           const fallback = singletonFallback(request, 'decomposer returned no structured output');
           tracer?.addLlmResponse({
+            // The call was made and paid for even though its output was unusable.
+            ...failedCallAttribution(undefined, modelSpec, recorded),
             durationMs: Date.now() - start,
             error: 'no structured output — used singleton fallback',
             inputJson: { systemPrompt, userMessage: llmUserMessage },
@@ -137,6 +142,7 @@ export async function planDecomposition(
         return decompositionResult;
       } catch (e) {
         tracer?.addLlmResponse({
+          ...failedCallAttribution(e, modelSpec, recorded),
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt, userMessage: llmUserMessage },

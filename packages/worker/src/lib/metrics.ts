@@ -88,11 +88,19 @@ function instruments() {
 }
 
 /**
- * Create the instruments at boot, after `initTelemetry()`, so their seeded
- * zeros reach an export before the first real event does.
+ * Create the instruments at boot, after `initTelemetry()`, and export once
+ * straight away, so the seeded zeros reach Prometheus before the first real
+ * event — not in the same periodic export as it, which would make that event
+ * the series' first sample again.
+ *
+ * Not awaited: an unreachable collector must not hold up worker boot.
  */
 export function initMetrics(): void {
   instruments();
+  const provider = metrics.getMeterProvider() as { forceFlush?: () => Promise<void> };
+  provider.forceFlush?.().catch(() => {
+    // Exporting is best-effort; the periodic reader retries on its own interval.
+  });
 }
 
 /** For tests — rebind to the current MeterProvider. */

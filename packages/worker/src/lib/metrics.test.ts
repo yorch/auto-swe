@@ -1,6 +1,6 @@
 import { metrics } from '@opentelemetry/api';
 import { MeterProvider, MetricReader } from '@opentelemetry/sdk-metrics';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _resetMetricsForTests,
   initMetrics,
@@ -42,6 +42,17 @@ describe('worker metrics', () => {
 
     const points = (await collected()).get('workflow.runs.finalized')?.dataPoints ?? [];
     expect(points.find((d) => d.attributes.status === 'SUCCESS')?.value).toBe(1);
+  });
+
+  it('exports once at boot so the seeded zeros precede the first real event', async () => {
+    const provider = new MeterProvider({ readers: [new TestReader()] });
+    const flush = vi.spyOn(provider, 'forceFlush');
+    metrics.disable();
+    metrics.setGlobalMeterProvider(provider);
+
+    initMetrics();
+
+    expect(flush).toHaveBeenCalledOnce();
   });
 
   it('seeds every status and tier at zero, so increase() sees the first real event', async () => {

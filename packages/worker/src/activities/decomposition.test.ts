@@ -33,7 +33,9 @@ vi.mock('../lib/activityContext.js', () => ({
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('@temporalio/activity', () => ({
+vi.mock('@temporalio/activity', async (importOriginal) => ({
+  // Partial: the failure classes (ApplicationFailure) stay real.
+  ...(await importOriginal<typeof import('@temporalio/activity')>()),
   activityInfo: () => {
     throw new Error('activity context is not available');
   },
@@ -103,6 +105,7 @@ vi.mock('../lib/config/agentSkills.js', () => ({
 
 vi.mock('../lib/models.js', () => ({
   getModel: vi.fn(),
+  getModelSpec: vi.fn().mockResolvedValue('anthropic/claude-opus-4-8'),
   resolveSystemPrompt: vi.fn().mockResolvedValue(''),
 }));
 
@@ -558,8 +561,13 @@ describe('resolveMergeConflict', () => {
       })
     ).rejects.toThrow('provider 529');
 
+    // The failure is blamed on the configured model, not left unattributed.
     expect(addLlmResponse).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'provider 529', role: 'implementer' })
+      expect.objectContaining({
+        error: 'provider 529',
+        model: 'anthropic/claude-opus-4-8',
+        role: 'implementer',
+      })
     );
     expect(closeMcpMock).toHaveBeenCalled();
   });

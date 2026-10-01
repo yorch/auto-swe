@@ -71,4 +71,17 @@ describe('UsagePage', () => {
 
     expect(usePlatformUsage).toHaveBeenLastCalledWith(7);
   });
+
+  it('shows the error when the report fails to load, not a spinner', () => {
+    usePlatformUsage.mockReturnValue({
+      data: undefined,
+      error: new Error('forbidden'),
+      isError: true,
+      isLoading: false,
+    });
+
+    render(<UsagePage />);
+
+    expect(screen.getByText(/Could not load LLM usage/)).toBeTruthy();
+  });
 });
