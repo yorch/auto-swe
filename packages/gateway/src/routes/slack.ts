@@ -31,7 +31,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastif
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import { buildWorkflowRunControlFilter } from '../lib/runVisibility.js';
 import {
   fetchSlackChannelIsPrivate,
   openSlackView,
@@ -133,9 +133,11 @@ interface SlackInteractivePayload {
 /**
  * A Slack button carries the target workflow id in its `value`, which any
  * client can forge (or read from a forwarded message). Gate every signal on
- * the same run-visibility predicate the dashboard uses.
+ * the same run-control predicate the dashboard's cancel and human-step routes
+ * use — control, not visibility: seeing a run does not entitle anyone to
+ * approve its merge or drive its CI fixes.
  */
-async function canSeeRun(
+async function canControlRun(
   fastify: FastifyInstance,
   user: { id: string; role: Role },
   workflowId: string
@@ -149,7 +151,7 @@ async function canSeeRun(
     select: { id: true },
     where: {
       workflowId,
-      ...buildWorkflowRunVisibilityFilter({ role: user.role, sub: user.id }, gate),
+      ...buildWorkflowRunControlFilter({ role: user.role, sub: user.id }, gate),
     },
   });
   return run !== null;
@@ -566,7 +568,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
             error: { code: 'INVALID_PAYLOAD', message: 'Missing workflow id in action value' },
           });
         }
-        if (!(await canSeeRun(fastify, user, workflowId))) {
+        if (!(await canControlRun(fastify, user, workflowId))) {
           return reply
             .status(404)
             .send({ error: { code: 'RUN_NOT_FOUND', message: 'Run not found' } });
@@ -582,7 +584,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
             error: { code: 'INVALID_PAYLOAD', message: 'Missing workflow id in action value' },
           });
         }
-        if (!(await canSeeRun(fastify, user, workflowId))) {
+        if (!(await canControlRun(fastify, user, workflowId))) {
           return reply
             .status(404)
             .send({ error: { code: 'RUN_NOT_FOUND', message: 'Run not found' } });
@@ -1996,6 +1998,28 @@ async function handleRunModalSubmission(
     repo.repoName,
     repo.githubUrl
   );
+  // A repository with a host override had a host-less id before ids carried
+  // the host. A run still in flight under it is this same ticket on this same
+  // repository; starting another would push the same branch twice.
+  if (repo.githubUrl) {
+    const legacyId = generateWorkflowId(ticket, repo.organizationName, repo.repoName);
+    const inFlight = await fastify.prisma.activeWorkflow.findFirst({
+      select: { temporalWorkflowId: true },
+      where: {
+        currentStatus: { notIn: ['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'] },
+        OR: [
+          { temporalWorkflowId: legacyId },
+          { temporalWorkflowId: { startsWith: `${legacyId}-r` } },
+        ],
+      },
+    });
+    if (inFlight) {
+      return {
+        errors: { ticket_block: `Workflow already running for ${ticket}` },
+        response_action: 'errors',
+      };
+    }
+  }
   const { branchPrefix: slackBranchPrefix } = await resolveWorkflowDefaults();
   const branch = generateBranchName(ticket, slackBranchPrefix);
   const workRequestId = crypto.randomUUID();

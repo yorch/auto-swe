@@ -46,6 +46,11 @@ describe('/api/v1/scheduled-work-requests', () => {
   let membershipRole = 'LEAD';
   let scheduleRow: Record<string, unknown> | null = null;
   let syncShouldFail = false;
+  // The team default (tpl-1 v3) unless a test says the schedule last ran another.
+  let lastSyncedTemplate: { templateId: string; templateVersion: number } = {
+    templateId: 'tpl-1',
+    templateVersion: 3,
+  };
 
   const syncCalls: WorkRequestScheduleInput[] = [];
   const triggeredIds: string[] = [];
@@ -117,6 +122,8 @@ describe('/api/v1/scheduled-work-requests', () => {
           deletedWorkRequestIds.push(args.where.id);
           return {};
         },
+        // The template last synced to Temporal for the schedule.
+        findUnique: async () => lastSyncedTemplate,
         update: async (args: { data: Record<string, unknown> }) => ({ ...args.data }),
       },
       scheduledWorkRequest: {
@@ -423,6 +430,23 @@ describe('/api/v1/scheduled-work-requests', () => {
         url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
       });
       expect(scheduleUpdates[0].actsAsUserId).toBe('user-1');
+    });
+
+    it('moves to the editor when an edit picks up a new team-default template', async () => {
+      // The schedule stores no template of its own; it last ran tpl-1 v2, and
+      // the team default is now v3. Any edit re-syncs it with v3 — new content
+      // the author never saw — so the editor becomes who it runs as.
+      lastSyncedTemplate = { templateId: 'tpl-1', templateVersion: 2 };
+      scheduleRow = authored();
+      await inject({
+        method: 'PATCH',
+        payload: { name: 'Renamed' },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+      lastSyncedTemplate = { templateId: 'tpl-1', templateVersion: 3 };
+      expect(scheduleUpdates[0].actsAsUserId).toBe('user-1');
+      expect(syncCalls[0].request.launchedById).toBe('user-1');
     });
 
     it('launches as nobody when no author is recorded', async () => {

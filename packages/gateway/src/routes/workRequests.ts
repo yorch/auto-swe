@@ -292,8 +292,9 @@ const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLE
  * their host (only a repository with a host override has one). An execution
  * still in flight under it is the same ticket on the same repository, and must
  * block a second one exactly as an in-flight execution under `baseId` does —
- * otherwise the upgrade, or repointing a repository, would let two runs push
- * the same branch.
+ * otherwise the upgrade, or giving a repository a host override, would let two
+ * runs push the same branch. Repointing from one override host to another
+ * while a run is in flight is not covered.
  */
 async function allocateWorkflowId(
   prisma: FastifyInstance['prisma'],

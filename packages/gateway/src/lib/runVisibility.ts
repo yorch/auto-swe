@@ -57,9 +57,12 @@ export function buildWorkflowRunControlFilter(
   if (actor.role === 'ADMIN') {
     return {};
   }
+  // No "global template" branch, unlike visibility: every engineering run uses
+  // a built-in global template, so that branch would hand control of every
+  // run to every signed-in user. Control comes from owning the repository, the
+  // team-owned template, or having launched the run.
   return {
     OR: [
-      { template: { teamId: null } },
       { template: { team: memberTeams(actor) } },
       { launchedById: actor.sub },
       {

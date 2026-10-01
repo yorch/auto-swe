@@ -18,6 +18,9 @@ describe('run visibility versus run control', () => {
     const control = buildWorkflowRunControlFilter(engineer, undefined);
     expect(JSON.stringify(control)).not.toContain('shares');
     expect(control.OR).toContainEqual({ launchedById: 'user-1' });
+    // Every engineering run uses a global built-in template; that alone must
+    // not hand control of the run to every signed-in user.
+    expect(control.OR).not.toContainEqual({ template: { teamId: null } });
   });
 
   it('leaves a platform admin unrestricted', () => {

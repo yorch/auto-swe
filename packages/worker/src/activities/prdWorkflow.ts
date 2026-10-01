@@ -376,6 +376,30 @@ export async function submitPrdWorkRequests(
         repoInfo.repoName ?? '',
         repoInfo.githubUrl
       );
+      // Before ids carried the host, a repository with a host override had a
+      // host-less one. A run still in flight under it is this same ticket on
+      // this same repository — starting another would push the same branch
+      // twice — so the story is skipped, as a duplicate start already is.
+      if (repoInfo.githubUrl) {
+        const legacyId = generateWorkflowId(
+          externalTicketId,
+          repoInfo.organizationName ?? '',
+          repoInfo.repoName ?? ''
+        );
+        const inFlight = await prisma.activeWorkflow.findFirst({
+          select: { id: true },
+          where: {
+            currentStatus: { notIn: ['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'] },
+            OR: [
+              { temporalWorkflowId: legacyId },
+              { temporalWorkflowId: { startsWith: `${legacyId}-r` } },
+            ],
+          },
+        });
+        if (inFlight) {
+          continue;
+        }
+      }
 
       // Build the description with acceptance criteria appended.
       const description = [

@@ -563,7 +563,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
                   await tx.connectionTeamShare.deleteMany({
                     where: {
                       connectionId: repo.id,
-                      OR: [{ teamId: newTeamId }, { team: { orgId: { not: owner?.orgId } } }],
+                      // "Not in the new owner's organization" as a NOT over
+                      // equality, rather than `orgId: { not: … }`, which SQL's
+                      // `<>` would let a NULL slip past.
+                      OR: [{ teamId: newTeamId }, { NOT: { team: { orgId: owner?.orgId } } }],
                     },
                   });
                   return row;

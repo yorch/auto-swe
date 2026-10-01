@@ -528,10 +528,20 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       // a lead could rewrite — or revive, or speed up — another person's
       // schedule and have it run with that person's own GitHub token. Pausing
       // and renaming do not rebind: they cannot cause anything to run.
+      // What actually ran last time is the template synced to Temporal, which
+      // the standing run input records. A schedule on the team default stores no
+      // template of its own, so comparing stored columns would miss a new team
+      // default — or a new active version of it — being picked up by this edit.
+      const lastSynced = await fastify.prisma.runInput.findUnique({
+        select: { templateId: true, templateVersion: true },
+        where: { id: existing.workRequestId },
+      });
       const rebinds =
         (body.description !== undefined && body.description !== existing.description) ||
         nextTemplateId !== existing.templateId ||
         nextTemplateVersion !== existing.templateVersion ||
+        template.templateId !== lastSynced?.templateId ||
+        template.templateVersion !== lastSynced?.templateVersion ||
         (body.cronExpression !== undefined && body.cronExpression !== existing.cronExpression) ||
         (body.budgetTier !== undefined && body.budgetTier !== existing.budgetTier) ||
         (body.isActive === true && !existing.isActive);

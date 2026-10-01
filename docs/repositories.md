@@ -92,9 +92,11 @@ the team's own.
 Every membership test — listings (`reachableConnections`), the launch decision
 (`decideRepoAccess`), the personal-token resolver, the permission sweep and the webhook refresh —
 accepts a member of the owning team or of any shared team. The definition lives in one place,
-`@auto-swe/shared/lib/repoMembership`. Controlling a run is narrower: cancelling one and answering
-its human steps go through `buildWorkflowRunControlFilter`, which reaches repositories through the
-owning team only, plus the runs the caller launched.
+`@auto-swe/shared/lib/repoMembership`. Controlling a run is narrower: cancelling one, answering its
+human steps, and the Slack **approve merge** and **retry CI** buttons go through
+`buildWorkflowRunControlFilter`, which reaches repositories through the owning team only, plus runs
+on a template the caller's team owns and runs the caller launched. Unlike visibility, running on a
+global built-in template grants no control.
 
 Sharing is managed from the repository card on the **Connections** page, or over the API:
 
@@ -124,6 +126,9 @@ longer fit.
   that host.** On a deployment configuring its host through the environment such an override is
   kept; it works, and onboarding treats it as the same repository as one with no override, but the
   database's unique index does not, so two onboarding requests racing each other could create both.
+- **Some runs can only be controlled by a platform admin.** A run on a global template, against no
+  repository, that nobody launched (a webhook start, or one from before launchers were recorded) is
+  visible to everyone but can be cancelled, or its human steps answered, only by an admin.
 - **Shared teams cannot schedule.** Schedules are management, so a shared team's members start runs
   on demand only.
 - **The team page lists owned repositories only.** Repositories shared with a team appear in its
