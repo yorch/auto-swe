@@ -13,6 +13,7 @@ function repo(over: {
 }): LaunchRepo {
   return {
     githubApiUrl: null,
+    githubUrl: null,
     id: over.id ?? 'repo-1',
     installation: over.retired ? { installationId: 'inst-1', isActive: false } : null,
     organizationName: 'acme',

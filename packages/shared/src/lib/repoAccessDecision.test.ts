@@ -21,6 +21,7 @@ const OFF = { mode: 'off' as const, staleAfterHours: 72 };
 function repo(over: Record<string, unknown> = {}) {
   return {
     githubApiUrl: null,
+    githubUrl: null,
     id: 'conn-1',
     installation: null,
     organizationName: 'acme',

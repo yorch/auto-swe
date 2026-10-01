@@ -25,6 +25,7 @@ const { decideRepoLaunch } = await import('./repoAccessGate.js');
 const prisma = {} as PrismaClient;
 const REPO = {
   githubApiUrl: null,
+  githubUrl: null,
   id: 'conn-1',
   installation: null,
   organizationName: 'acme',

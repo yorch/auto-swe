@@ -102,7 +102,7 @@ describe('githubWebhookSecretRoutes', () => {
     expect(engineer.prisma.gitHubHostWebhookSecret.create).not.toHaveBeenCalled();
   });
 
-  it.each(['github.com', 'api.github.com'])(
+  it.each(['github.com', 'api.github.com', 'acme.ghe.com', 'api.acme.ghe.com'])(
     'refuses a secret for %s, which sends no enterprise-host header',
     async (host) => {
       const res = await admin.app.inject({

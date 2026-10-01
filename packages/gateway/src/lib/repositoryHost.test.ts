@@ -203,6 +203,16 @@ describe('isGitHubDotComHost', () => {
       expect(isGitHubDotComHost(host)).toBe(false);
     }
   });
+
+  it('also covers GitHub Enterprise Cloud with data residency and its API host', () => {
+    // <tenant>.ghe.com uses dotcom delivery headers: no X-GitHub-Enterprise-Host.
+    for (const host of ['acme.ghe.com', 'API.acme.ghe.com', 'acme.ghe.com:443']) {
+      expect(isGitHubDotComHost(host)).toBe(true);
+    }
+    for (const host of ['ghe.com', 'acme.ghe.com.evil.example', 'a.b.ghe.com']) {
+      expect(isGitHubDotComHost(host)).toBe(false);
+    }
+  });
 });
 
 describe('claimsHostWithOwnSecret', () => {
@@ -211,7 +221,17 @@ describe('claimsHostWithOwnSecret', () => {
 
   beforeEach(() => {
     secretRows.mockReset();
-    secretRows.mockResolvedValue([{ host: 'ghe.corp' }, { host: 'github.com' }]);
+    secretRows.mockResolvedValue([
+      { host: 'ghe.corp' },
+      { host: 'github.com' },
+      { host: 'acme.ghe.com' },
+    ]);
+  });
+
+  it('ignores a legacy row for a *.ghe.com host, which can never sign with it', async () => {
+    await expect(
+      claimsHostWithOwnSecret(prisma, null, 'https://acme.ghe.com/acme/api')
+    ).resolves.toBe(false);
   });
 
   it('is true for an instance-secret delivery naming a host with its own secret', async () => {

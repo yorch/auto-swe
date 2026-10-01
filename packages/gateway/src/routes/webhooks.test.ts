@@ -1811,6 +1811,24 @@ describe('webhook routes', () => {
       expect(signalCalls).toHaveLength(1);
     });
 
+    it('does not send an installation token minted at an API override to the instance web host', async () => {
+      // The reverse half override: the check-run lookup would go to the foreign
+      // API, which is not the web host this repository is cloned from.
+      state.github = { ...state.github, ...APP_MODE };
+      trackRepo({
+        githubApiUrl: 'https://ghe.corp/api/v3',
+        githubUrl: null,
+        installation: { installationId: '777' },
+      });
+
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(res.statusCode).toBe(200);
+      expect(resolveGitHubToken).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(signalCalls).toHaveLength(1);
+    });
+
     it('still queries the instance for a repository whose web override is the instance host', async () => {
       state.github = { ...state.github, ...APP_MODE };
       trackRepo({ githubApiUrl: null, githubUrl: 'https://github.com', installation: null });

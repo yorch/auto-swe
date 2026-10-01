@@ -12,7 +12,12 @@ import {
   resolveUserCredential,
   resolveUserCredentialPolicy,
 } from './connectionCredential.js';
-import { GITHUB_ACCOUNT_API_URL, verifyGithubLoginOwnership } from './githubIdentityCheck.js';
+import { installationTargetFor, platformCredentialScope } from './githubHostScope.js';
+import {
+  accountApiToken,
+  GITHUB_ACCOUNT_API_URL,
+  verifyGithubLoginOwnership,
+} from './githubIdentityCheck.js';
 import { resolveGitHubToken } from './githubInstallation.js';
 import {
   fetchOwnRepoPermission,
@@ -25,13 +30,20 @@ import { resolveGitHubConfig } from './systemConfig.js';
 export interface PermissionRepo {
   organizationName: string | null;
   repoName: string | null;
-  githubApiUrl?: string | null;
+  /**
+   * Both URL overrides are required, not optional: omitting one is silent —
+   * the lookup would treat the repository as being on the instance's own host
+   * and could not see a half override.
+   */
+  githubApiUrl: string | null;
+  githubUrl: string | null;
   installation: { installationId: string } | null;
 }
 
 /** Select exactly the columns `lookupRepoPermission` reads. */
 export const PERMISSION_REPO_SELECT = {
   githubApiUrl: true,
+  githubUrl: true,
   installation: { select: { installationId: true } },
   organizationName: true,
   repoName: true,
@@ -60,18 +72,27 @@ export async function lookupRepoPermission(
     return { failure: 'credential-rejected', ok: false };
   }
   const ghConfig = await resolveGitHubConfig();
-  const apiUrl = repo.githubApiUrl ?? ghConfig.apiUrl;
+  // The platform credential goes only where it is valid (`githubHostScope`):
+  // the instance's own host, or a host the repository has its own installation
+  // on. Anything else is "could not ask" — and no App JWT is posted anywhere.
+  const scoped = {
+    apiUrl: repo.githubApiUrl,
+    baseUrl: repo.githubUrl,
+    installationId: repo.installation?.installationId ?? null,
+  };
+  const scope = platformCredentialScope(scoped, ghConfig);
+  if (scope === 'mismatch' || scope === 'misconfigured') {
+    return { failure: 'credential-rejected', ok: false };
+  }
+  const target = installationTargetFor(scoped, ghConfig);
   let token: string;
   try {
-    token = await resolveGitHubToken(ghConfig, {
-      apiUrl,
-      installationId: repo.installation?.installationId ?? null,
-    });
+    token = await resolveGitHubToken(ghConfig, target);
   } catch {
     return { failure: 'credential-rejected', ok: false };
   }
   return fetchRepoPermission({
-    apiUrl,
+    apiUrl: target.apiUrl,
     organizationName: repo.organizationName,
     repoName: repo.repoName,
     token,
@@ -176,7 +197,7 @@ export async function verifiedGithubLoginFor(
     return null;
   }
   const ghConfig = await resolveGitHubConfig();
-  const token = await resolveGitHubToken(ghConfig).catch(() => null);
+  const token = await accountApiToken(ghConfig);
   const ownership = await verifyGithubLoginOwnership(prisma, {
     // A fixed github.com base: the stored account id comes from better-auth's
     // built-in `github` provider, which always talks to github.com, while the

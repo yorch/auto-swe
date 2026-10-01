@@ -172,6 +172,7 @@ export async function scheduledFireRefusal(
   const repo = await db.connection.findUnique({
     select: {
       githubApiUrl: true,
+      githubUrl: true,
       id: true,
       installation: { select: { installationId: true, isActive: true } },
       isActive: true,

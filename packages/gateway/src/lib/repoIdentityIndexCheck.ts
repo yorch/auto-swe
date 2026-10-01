@@ -10,6 +10,8 @@
  * way; what the index adds is protection against two concurrent onboardings.
  */
 import type { PrismaClient } from '@auto-swe/shared';
+import { hostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isGitHubDotComHost } from './repositoryHost.js';
 
@@ -76,11 +78,12 @@ export async function warnIfRepoIdentityIndexMissing(
 }
 
 /**
- * Warns when a webhook-secret row exists for github.com or api.github.com.
- * github.com never sends `X-GitHub-Enterprise-Host`, so such a row is never
- * selected; the admin API refuses to create one, so this is legacy data. It is
- * ignored when scoping deliveries, but the operator should delete it. Returns
- * whether it warned; never throws.
+ * Warns when a webhook-secret row exists for a host that sends no
+ * `X-GitHub-Enterprise-Host` header: github.com, GitHub Enterprise Cloud with
+ * data residency (`<tenant>.ghe.com`), or the API host of either. Such a row is
+ * never selected; the admin API refuses to create one, so this is legacy data.
+ * It is ignored when scoping deliveries, but the operator should delete it.
+ * Returns whether it warned; never throws.
  */
 export async function warnIfGitHubDotComWebhookSecret(
   prisma: PrismaClient,
@@ -94,11 +97,53 @@ export async function warnIfGitHubDotComWebhookSecret(
     }
     log.warn(
       { hosts },
-      'a GitHub webhook secret is stored for github.com; github.com sends no X-GitHub-Enterprise-Host header and always signs with the instance secret, so the row is never used. Delete it.'
+      'a GitHub webhook secret is stored for github.com or a *.ghe.com host; those hosts send no X-GitHub-Enterprise-Host header and always sign with the instance secret, so the row is never used. Delete it.'
     );
     return true;
   } catch (err) {
     log.warn({ err }, 'could not check for a github.com webhook secret row');
+    return false;
+  }
+}
+
+/**
+ * Warns when two or more active repositories all override onto one and the
+ * same foreign host. That shape usually means the instance's own GitHub host
+ * (Studio -> GitHub integration web and API URLs) is wrong, not that every
+ * repository is an exception: the platform credential is held to the instance's
+ * host, so each of these repositories is refused it. Returns whether it
+ * warned; never throws.
+ */
+export async function warnIfAllReposOnOneForeignHost(
+  prisma: PrismaClient,
+  log: Logger
+): Promise<boolean> {
+  try {
+    const repos = await runUnscoped('a startup check spans every team', ['Connection'], () =>
+      prisma.connection.findMany({
+        select: { githubUrl: true },
+        where: { isActive: true, type: 'git_repo' },
+      })
+    );
+    if (repos.length < 2 || repos.some((r) => !r.githubUrl)) {
+      return false;
+    }
+    const hosts = new Set(repos.map((r) => hostFamily(r.githubUrl as string)));
+    if (hosts.size !== 1) {
+      return false;
+    }
+    const ghConfig = await resolveGitHubConfig();
+    const [host] = [...hosts];
+    if (host === hostFamily(ghConfig.baseUrl)) {
+      return false;
+    }
+    log.warn(
+      { host, instanceHost: hostFamily(ghConfig.baseUrl), repositories: repos.length },
+      `every active repository overrides onto ${host}, which is not the instance's GitHub host. The platform's credential is sent only to the instance's own host, so if its credential belongs to ${host}, set the GitHub integration's web and API URLs to ${host} (Studio -> Integrations -> GitHub).`
+    );
+    return true;
+  } catch (err) {
+    log.warn({ err }, 'could not check repository hosts against the instance host');
     return false;
   }
 }

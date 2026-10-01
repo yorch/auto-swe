@@ -67,6 +67,7 @@
     "./workflow/testHelpers": "./dist/workflow/testHelpers.js",
     "./lib/tenantGuard": "./dist/lib/tenantGuard.js",
     "./lib/githubInstallation": "./dist/lib/githubInstallation.js",
+    "./lib/githubHostScope": "./dist/lib/githubHostScope.js",
     "./lib/connectionCredential": "./dist/lib/connectionCredential.js",
     "./lib/githubPermission": "./dist/lib/githubPermission.js",
     "./lib/githubIdentityCheck": "./dist/lib/githubIdentityCheck.js",

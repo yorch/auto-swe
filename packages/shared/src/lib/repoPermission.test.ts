@@ -1,24 +1,36 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { generateKeyPairSync } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../index.js';
 
 const resolveUserCredentialPolicy = vi.fn();
 const resolveUserCredential = vi.fn();
+const repositoryHostsAllowed = vi.fn();
 vi.mock('./connectionCredential.js', () => ({
+  repositoryHostsAllowed: (...a: unknown[]) => repositoryHostsAllowed(...a),
   resolveUserCredential: (...a: unknown[]) => resolveUserCredential(...a),
   resolveUserCredentialPolicy: () => resolveUserCredentialPolicy(),
 }));
 
 const fetchOwnRepoPermission = vi.fn();
+const fetchRepoPermission = vi.fn();
 vi.mock('./githubPermission.js', () => ({
   fetchOwnRepoPermission: (...a: unknown[]) => fetchOwnRepoPermission(...a),
-  fetchRepoPermission: vi.fn(),
+  fetchRepoPermission: (...a: unknown[]) => fetchRepoPermission(...a),
 }));
 
-const { lookupPermissionViaUserCredential } = await import('./repoPermission.js');
+const resolveGitHubConfig = vi.fn();
+vi.mock('./systemConfig.js', () => ({
+  resolveGitHubConfig: () => resolveGitHubConfig(),
+}));
+
+const { lookupPermissionViaUserCredential, lookupRepoPermission, verifiedGithubLoginFor } =
+  await import('./repoPermission.js');
+const { clearInstallationTokenCache } = await import('./githubInstallation.js');
 
 const prisma = {} as PrismaClient;
 const REPO = {
   githubApiUrl: 'https://ghe.corp/api/v3',
+  githubUrl: 'https://ghe.corp',
   id: 'conn-1',
   installation: null,
   organizationName: 'acme',
@@ -27,6 +39,9 @@ const REPO = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearInstallationTokenCache();
+  repositoryHostsAllowed.mockResolvedValue({ ok: true });
+  fetchRepoPermission.mockResolvedValue({ ok: true, permission: 'read' });
   resolveUserCredentialPolicy.mockResolvedValue({ enabled: true, hosts: ['ghe.corp'] });
   resolveUserCredential.mockResolvedValue({
     apiUrl: 'https://ghe.corp/api/v3',
@@ -80,5 +95,137 @@ describe('lookupPermissionViaUserCredential', () => {
       failure: 'unavailable',
       ok: false,
     });
+  });
+});
+
+describe('lookupRepoPermission and the platform credential', () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const PEM = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+  const instance = (over: object = {}) => ({
+    apiUrl: 'https://api.github.com',
+    appId: '1',
+    appInstallationId: '900001',
+    appPrivateKey: PEM,
+    authMode: 'app',
+    baseUrl: 'https://github.com',
+    token: 'instance-pat',
+    ...over,
+  });
+  const repo = (over: object = {}) => ({
+    githubApiUrl: null,
+    githubUrl: null,
+    installation: null,
+    organizationName: 'acme',
+    repoName: 'payments',
+    ...over,
+  });
+  const GHE = { githubApiUrl: 'https://ghe.corp/api/v3', githubUrl: 'https://ghe.corp' };
+  const COULD_NOT_ASK = { failure: 'credential-rejected', ok: false };
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    resolveGitHubConfig.mockResolvedValue(instance());
+    fetchSpy = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+            token: 'minted',
+          }),
+          { status: 201 }
+        )
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('posts no App JWT to a foreign host with no installation of its own (App mode)', async () => {
+    await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(COULD_NOT_ASK);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchRepoPermission).not.toHaveBeenCalled();
+  });
+
+  it('sends no instance PAT to a foreign host (PAT mode)', async () => {
+    resolveGitHubConfig.mockResolvedValue(instance({ authMode: 'pat' }));
+    await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(COULD_NOT_ASK);
+    await expect(
+      lookupRepoPermission(repo({ ...GHE, installation: { installationId: '7' } }), 'octocat')
+    ).resolves.toEqual(COULD_NOT_ASK);
+    expect(fetchRepoPermission).not.toHaveBeenCalled();
+  });
+
+  it('refuses a half override, whichever side, even with an installation', async () => {
+    for (const half of [{ githubApiUrl: GHE.githubApiUrl }, { githubUrl: GHE.githubUrl }]) {
+      await expect(
+        lookupRepoPermission(repo({ ...half, installation: { installationId: '7' } }), 'octocat')
+      ).resolves.toEqual(COULD_NOT_ASK);
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchRepoPermission).not.toHaveBeenCalled();
+  });
+
+  it("asks a foreign host with the repository's own installation, in App mode", async () => {
+    await lookupRepoPermission(repo({ ...GHE, installation: { installationId: '7' } }), 'octocat');
+    expect(fetchSpy.mock.calls[0][0]).toBe(
+      'https://ghe.corp/api/v3/app/installations/7/access_tokens'
+    );
+    expect(fetchRepoPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ apiUrl: 'https://ghe.corp/api/v3', token: 'minted' })
+    );
+  });
+
+  it('asks the instance host with the instance credential', async () => {
+    resolveGitHubConfig.mockResolvedValue(instance({ authMode: 'pat' }));
+    await lookupRepoPermission(repo(), 'octocat');
+    expect(fetchRepoPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ apiUrl: 'https://api.github.com', token: 'instance-pat' })
+    );
+  });
+});
+
+describe('verifiedGithubLoginFor and the platform credential', () => {
+  const prismaStub = {
+    account: { findFirst: vi.fn(async () => ({ accountId: '4242' })) },
+    user: { findUnique: vi.fn(async () => ({ githubLogin: 'octocat' })), update: vi.fn() },
+  } as never;
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.fn(async () => new Response(JSON.stringify({ id: 4242 }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends the instance's credential to github.com only when the instance is on github.com", async () => {
+    resolveGitHubConfig.mockResolvedValue({
+      apiUrl: 'https://api.github.com',
+      authMode: 'pat',
+      baseUrl: 'https://github.com',
+      token: 'dotcom-pat',
+    });
+    await expect(verifiedGithubLoginFor(prismaStub, 'u1')).resolves.toBe('octocat');
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('https://api.github.com/users/octocat');
+    expect(JSON.stringify(init.headers)).toContain('dotcom-pat');
+  });
+
+  it('calls github.com unauthenticated on a GitHub Enterprise instance, and still answers', async () => {
+    resolveGitHubConfig.mockResolvedValue({
+      apiUrl: 'https://ghe.corp/api/v3',
+      authMode: 'pat',
+      baseUrl: 'https://ghe.corp',
+      token: 'ghe-pat',
+    });
+    await expect(verifiedGithubLoginFor(prismaStub, 'u1')).resolves.toBe('octocat');
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('https://api.github.com/users/octocat');
+    expect(JSON.stringify(init.headers ?? {})).not.toContain('ghe-pat');
+    expect(JSON.stringify(init.headers ?? {})).not.toContain('Authorization');
   });
 });

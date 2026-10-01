@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearInstallationTokenCache,
   GitHubTokenMissingError,
+  PlatformCredentialHostError,
   resolveGitHubToken,
 } from './githubInstallation.js';
 import type { ResolvedGitHubConfig } from './systemConfig.js';
@@ -190,5 +191,49 @@ describe('installation token resolution', () => {
     await expect(resolveGitHubToken(config(), { installationId: '900009' })).rejects.toThrow(
       /installation token request failed: 401/
     );
+  });
+});
+
+describe('the platform credential and a foreign API host', () => {
+  const FOREIGN = 'https://ghe.corp/api/v3';
+
+  it('posts no App JWT to another host without an installation of its own', async () => {
+    const { spy } = mintingFetch();
+    await expect(resolveGitHubToken(config(), { apiUrl: FOREIGN })).rejects.toBeInstanceOf(
+      PlatformCredentialHostError
+    );
+    await expect(
+      resolveGitHubToken(config(), { apiUrl: FOREIGN, installationId: null })
+    ).rejects.toBeInstanceOf(PlatformCredentialHostError);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('returns no PAT for another host, even with an installation id', async () => {
+    const { spy } = mintingFetch();
+    const pat = config({ authMode: 'pat', token: 'pat-secret' });
+    await expect(
+      resolveGitHubToken(pat, { apiUrl: FOREIGN, installationId: '7' })
+    ).rejects.toBeInstanceOf(PlatformCredentialHostError);
+    await expect(resolveGitHubToken(pat, { apiUrl: FOREIGN })).rejects.toBeInstanceOf(
+      PlatformCredentialHostError
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("mints on another host through the repository's own installation, in App mode", async () => {
+    const { calls } = mintingFetch();
+    await expect(
+      resolveGitHubToken(config(), { apiUrl: FOREIGN, installationId: '7' })
+    ).resolves.toBe('tok-7');
+    expect(calls[0]).toBe(`${FOREIGN}/app/installations/7/access_tokens`);
+  });
+
+  it('treats a spelling of the instance API host as the instance', async () => {
+    mintingFetch();
+    await expect(
+      resolveGitHubToken(config({ authMode: 'pat', token: 'pat' }), {
+        apiUrl: 'https://API.github.com/',
+      })
+    ).resolves.toBe('pat');
   });
 });

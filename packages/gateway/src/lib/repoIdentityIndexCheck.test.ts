@@ -2,9 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   REPO_IDENTITY_INDEX,
   REPO_IDENTITY_INDEX_SQL,
+  warnIfAllReposOnOneForeignHost,
   warnIfGitHubDotComWebhookSecret,
   warnIfRepoIdentityIndexMissing,
 } from './repoIdentityIndexCheck.js';
+
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubConfig: async () => ({
+    apiUrl: 'https://api.github.com',
+    baseUrl: 'https://github.com',
+  }),
+}));
 
 vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
   runUnscoped: (_reason: string, _models: string[], fn: () => unknown) => fn(),
@@ -89,6 +97,13 @@ describe('warnIfGitHubDotComWebhookSecret', () => {
     expect(warn.mock.calls[0][1]).toContain('X-GitHub-Enterprise-Host');
   });
 
+  it('warns for a *.ghe.com row too, which also sends no enterprise-host header', async () => {
+    const { prisma, warn } = setupRows([{ host: 'acme.ghe.com' }, { host: 'api.acme.ghe.com' }]);
+    await expect(warnIfGitHubDotComWebhookSecret(prisma, { warn })).resolves.toBe(true);
+    expect(warn.mock.calls[0][0]).toEqual({ hosts: ['acme.ghe.com', 'api.acme.ghe.com'] });
+    expect(warn.mock.calls[0][1]).toContain('*.ghe.com');
+  });
+
   it('is silent when only enterprise hosts have rows', async () => {
     const { prisma, warn } = setupRows([{ host: 'ghe.corp' }]);
     await expect(warnIfGitHubDotComWebhookSecret(prisma, { warn })).resolves.toBe(false);
@@ -99,5 +114,52 @@ describe('warnIfGitHubDotComWebhookSecret', () => {
     const { prisma, warn } = setupRows(new Error('db down'));
     await expect(warnIfGitHubDotComWebhookSecret(prisma, { warn })).resolves.toBe(false);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('warnIfAllReposOnOneForeignHost', () => {
+  const run = async (repos: Array<{ githubUrl: string | null }>) => {
+    const { prisma, warn, findMany } = setup({ indexed: true, repos });
+    const warned = await warnIfAllReposOnOneForeignHost(prisma, { warn });
+    return { findMany, warn, warned };
+  };
+
+  it('warns, naming the host and the remedy, when every active repository is on one foreign host', async () => {
+    const { warn, warned, findMany } = await run([
+      { githubUrl: 'https://ghe.corp' },
+      { githubUrl: 'https://GHE.corp' },
+    ]);
+    expect(warned).toBe(true);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { isActive: true, type: 'git_repo' } })
+    );
+    expect(warn.mock.calls[0][0]).toMatchObject({ host: 'ghe.corp', repositories: 2 });
+    expect(warn.mock.calls[0][1]).toContain(
+      "set the GitHub integration's web and API URLs to ghe.corp"
+    );
+  });
+
+  it('is silent when any repository is on the instance host, or hosts differ, or there is only one', async () => {
+    expect((await run([{ githubUrl: 'https://ghe.corp' }, { githubUrl: null }])).warned).toBe(
+      false
+    );
+    expect(
+      (await run([{ githubUrl: 'https://a.corp' }, { githubUrl: 'https://b.corp' }])).warned
+    ).toBe(false);
+    expect((await run([{ githubUrl: 'https://ghe.corp' }])).warned).toBe(false);
+    expect((await run([])).warned).toBe(false);
+  });
+
+  it('never throws', async () => {
+    const warn = vi.fn();
+    const prisma = {
+      connection: {
+        findMany: async () => {
+          throw new Error('db down');
+        },
+      },
+    } as never;
+    await expect(warnIfAllReposOnOneForeignHost(prisma, { warn })).resolves.toBe(false);
+    expect(warn).toHaveBeenCalled();
   });
 });

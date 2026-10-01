@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
+import {
+  installationTargetFor,
+  platformCredentialScope,
+} from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import {
@@ -221,10 +225,11 @@ async function verifyWebhookOrReject(
  *
  * The repository's own API host, and a token minted for its own installation:
  * the instance credential is for the instance's host, and a repository on
- * another GitHub Enterprise server must not be sent it. Mirrors the worker's
- * `installationTarget` — a repository with no installation of its own takes
- * the singleton's installation, which lives on the singleton's host, so on
- * another host it gets no token; the PAT is held to the same rule. Never a
+ * another GitHub Enterprise server must not be sent it. Applies the same
+ * shared rule as the worker (`platformCredentialScope`) — a repository with no
+ * installation of its own takes the singleton's installation, which lives on
+ * the singleton's host, so on another host it gets no token; the PAT is held to
+ * the same rule, and so is a repository whose web and API hosts differ. Never a
  * user's token: a webhook has no launcher.
  *
  * Null (aggregation unavailable, so the caller signals per run) when the
@@ -232,15 +237,6 @@ async function verifyWebhookOrReject(
  * minted for them — when the only credential is the instance's and the
  * repository is on another host, or when no credential can be resolved.
  */
-/** Lowercased `host[:port]` of a URL, or null when it does not parse. */
-function hostOf(url: string): string | null {
-  try {
-    return new URL(url).host.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
 async function checkRunTarget(
   repo:
     | {
@@ -263,41 +259,26 @@ async function checkRunTarget(
       log.warn({ url: hosts.url }, 'repository host is not approved; no credential sent');
       return null;
     }
-    // A web host of its own with no API override resolves to the instance API,
-    // which would be asked about a same-named repository on the instance.
-    if (
-      repo.githubUrl &&
-      !repo.githubApiUrl &&
-      hostOf(repo.githubUrl) !== hostOf(ghConfig.baseUrl)
-    ) {
-      log.warn(
-        { githubUrl: repo.githubUrl },
-        'repository has a web host of its own but no API URL; not asking the instance about it'
-      );
-      return null;
-    }
   }
-  const installationId = repo?.installation?.installationId ?? null;
-  // The instance credential never leaves the instance's own API host. A
-  // repository with no installation of its own takes the singleton's, which
-  // lives on the singleton's host; and in PAT mode `resolveGitHubToken` returns
-  // the instance PAT whatever host it is asked about. Either way there is no
-  // credential that is valid for another host, so none is sent.
-  const apiBase = (url: string) => url.replace(/\/+$/, '').toLowerCase();
-  if (apiBase(apiUrl) !== apiBase(ghConfig.apiUrl)) {
-    const mode = ghConfig.authMode ?? 'auto';
-    const appMode =
-      mode === 'app' || (mode === 'auto' && Boolean(ghConfig.appId && ghConfig.appPrivateKey));
-    if (!installationId || !appMode) {
-      log.warn({ apiUrl }, "no credential of the instance's is valid on this repository's host");
-      return null;
-    }
+  // The shared rule (`githubHostScope`), the same one the worker applies: the
+  // instance credential never leaves the instance's own host, a repository's
+  // web and API hosts must agree, and another host is reached only through the
+  // repository's own installation in App mode.
+  const scoped = {
+    apiUrl: repo?.githubApiUrl,
+    baseUrl: repo?.githubUrl,
+    installationId: repo?.installation?.installationId ?? null,
+  };
+  const scope = platformCredentialScope(scoped, ghConfig);
+  if (scope === 'mismatch' || scope === 'misconfigured') {
+    log.warn(
+      { apiUrl, githubUrl: repo?.githubUrl, scope },
+      "no credential of the instance's is valid on this repository's host"
+    );
+    return null;
   }
   try {
-    const token = await resolveGitHubToken(ghConfig, {
-      apiUrl: installationId ? apiUrl : ghConfig.apiUrl,
-      installationId,
-    });
+    const token = await resolveGitHubToken(ghConfig, installationTargetFor(scoped, ghConfig));
     return { apiUrl, token };
   } catch (err) {
     log.warn({ err }, 'no GitHub credential for the check-run lookup');

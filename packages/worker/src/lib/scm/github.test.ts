@@ -207,7 +207,11 @@ describe("GitHubScmProvider and the run launcher's own credential", () => {
     // Nor does it fall back to the platform's credential: that is valid only on
     // the instance's host, and the repository is not on it.
     await expect(
-      provider.cloneCredentials({ ...REPO, baseUrl: 'https://ghe.corp' })
+      provider.cloneCredentials({
+        ...REPO,
+        apiUrl: 'https://ghe.corp/api/v3',
+        baseUrl: 'https://ghe.corp',
+      })
     ).rejects.toMatchObject({ nonRetryable: true, type: 'REPO_CREDENTIAL_HOST_MISMATCH' });
     expect(requireGitHubToken).not.toHaveBeenCalled();
   });
@@ -251,6 +255,7 @@ describe("GitHubScmProvider and the run launcher's own credential", () => {
     const out = await provider.fetchCiLogs('https://github.com/acme/api/actions/runs/1', {
       ...REPO,
       apiUrl: 'https://collector.example/api/v3',
+      baseUrl: 'https://collector.example',
     });
     expect(out).toContain('not on an allowed GitHub host');
     expect(resolveGitHubToken).not.toHaveBeenCalled();
@@ -306,6 +311,7 @@ describe('the platform credential and the repository host', () => {
 
   beforeEach(() => {
     vi.mocked(requireGitHubToken).mockClear();
+    vi.mocked(resolveUserCredential).mockReset().mockResolvedValue(null);
     vi.mocked(currentRunLauncherId).mockReset().mockResolvedValue(null);
     vi.mocked(resolveUserCredentialPolicy)
       .mockReset()
@@ -386,6 +392,109 @@ describe('the platform credential and the repository host', () => {
       )
     ).resolves.toEqual({ failure: 'credential-rejected', ok: false });
     expect(resolveGitHubToken).not.toHaveBeenCalled();
+  });
+
+  describe('a half override (web and API on different hosts)', () => {
+    const WEB_ONLY = { baseUrl: 'https://ghe.corp', organizationName: 'acme', repoName: 'api' };
+    const API_ONLY = {
+      apiUrl: 'https://ghe.corp/api/v3',
+      organizationName: 'acme',
+      repoName: 'api',
+    };
+
+    it.each([
+      ['web only', WEB_ONLY],
+      ['API only', API_ONLY],
+      ['web only with an installation', { ...WEB_ONLY, installationId: '777' }],
+      ['API only with an installation', { ...API_ONLY, installationId: '777' }],
+    ])('fails clone, API and permission calls: %s', async (_n, repo) => {
+      vi.mocked(resolveGitHubConfig).mockResolvedValue(instance(APP) as never);
+      try {
+        await expect(provider.cloneCredentials(repo as never)).rejects.toMatchObject({
+          nonRetryable: true,
+          type: 'REPO_HOST_MISCONFIGURED',
+        });
+        await expect(
+          provider.fetchFileContent(repo as never, 'package.json')
+        ).rejects.toMatchObject({ type: 'REPO_HOST_MISCONFIGURED' });
+        await expect(provider.repoPermission(repo as never, 'octocat')).resolves.toEqual({
+          failure: 'credential-rejected',
+          ok: false,
+        });
+      } finally {
+        vi.mocked(resolveGitHubConfig)
+          .mockReset()
+          .mockResolvedValue(instance() as never);
+      }
+      expect(requireGitHubToken).not.toHaveBeenCalled();
+      expect(resolveGitHubToken).not.toHaveBeenCalled();
+    });
+
+    it('attaches no token, and mints none, when fetching CI logs', async () => {
+      vi.mocked(resolveGitHubConfig).mockResolvedValue(instance(APP) as never);
+      try {
+        for (const repo of [WEB_ONLY, API_ONLY]) {
+          // The instance's own origin and the repository's own origin alike.
+          for (const url of [
+            'https://github.com/acme/api/runs/1',
+            'https://ghe.corp/acme/api/runs/1',
+          ]) {
+            fetchMock.mockClear();
+            const out = await provider.fetchCiLogs(url, {
+              ...repo,
+              installationId: '777',
+            } as never);
+            expect(out).toContain('different hosts');
+            expect(fetchMock).not.toHaveBeenCalled();
+          }
+        }
+      } finally {
+        vi.mocked(resolveGitHubConfig)
+          .mockReset()
+          .mockResolvedValue(instance() as never);
+      }
+      expect(resolveGitHubToken).not.toHaveBeenCalled();
+    });
+
+    it("refuses even a launcher's own token", async () => {
+      vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
+      vi.mocked(resolveUserCredential).mockResolvedValue({
+        apiUrl: 'https://api.github.com',
+        baseUrl: 'https://ghe.corp',
+        token: 'ghp_user',
+      });
+      await expect(
+        provider.cloneCredentials({ ...WEB_ONLY, connectionId: 'conn-1' } as never)
+      ).rejects.toMatchObject({ type: 'REPO_HOST_MISCONFIGURED' });
+    });
+
+    it('treats the github.com web/API pair as one host', async () => {
+      const creds = await provider.cloneCredentials({
+        apiUrl: 'https://api.github.com',
+        baseUrl: 'https://github.com',
+        organizationName: 'acme',
+        repoName: 'api',
+      });
+      expect(creds.token).toBe('ghp_tok');
+    });
+
+    it('treats a <tenant>.ghe.com pair as one host, reached by its own installation', async () => {
+      vi.mocked(resolveGitHubConfig).mockResolvedValueOnce(instance(APP) as never);
+      const creds = await provider.cloneCredentials({
+        apiUrl: 'https://api.acme.ghe.com',
+        baseUrl: 'https://acme.ghe.com',
+        installationId: '777',
+        organizationName: 'acme',
+        repoName: 'api',
+      });
+      expect(creds.token).toBe('ghp_tok');
+    });
+  });
+
+  it('adds the likely fix to the host-mismatch message', async () => {
+    await expect(provider.cloneCredentials(GHE as never)).rejects.toMatchObject({
+      message: expect.stringContaining("set the GitHub integration's web and API URLs to ghe.corp"),
+    });
   });
 
   it("sends its own installation's token only to the repository's own origins for CI logs", async () => {

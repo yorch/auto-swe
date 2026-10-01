@@ -85,7 +85,7 @@ export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => 
     async (request, reply) => {
       const user = requireUser(request);
       const { host, secret } = request.body;
-      // github.com sends no X-GitHub-Enterprise-Host header, so its deliveries
+      // github.com (and `<tenant>.ghe.com`) sends no X-GitHub-Enterprise-Host header, so its deliveries
       // always verify with the instance secret. A row for it would never be
       // selected, and used to exclude every github.com repository from the
       // instance secret's reach.
@@ -94,7 +94,7 @@ export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => 
           reply,
           400,
           'HOST_SENDS_NO_HEADER',
-          `${host} does not send X-GitHub-Enterprise-Host, so it always signs with the instance webhook secret. Only GitHub Enterprise Server hosts can have a secret of their own.`
+          `${host} does not send X-GitHub-Enterprise-Host, so it always signs with the instance webhook secret. Only GitHub Enterprise Server hosts can have a secret of their own (github.com and *.ghe.com cannot).`
         );
       }
       // A secret for a host the platform never talks to could only ever be

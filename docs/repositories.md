@@ -38,13 +38,28 @@ the API is `<githubApiUrl>/repos/<owner>/<name>`. They exist for a repository on
 host than the instance's.
 
 A credential is sent to a repository's own bases, but only the one that is valid there. A user's own
-token is bound to the origins it was verified on. The platform's credential — the singleton App
-installation or the instance PAT — is the instance's and goes only to the instance's own hosts: for
-a repository on any other host it is refused with a non-retryable `REPO_CREDENTIAL_HOST_MISMATCH`
-(the repository is on that host, which needs its own GitHub App installation under Studio → GitHub
-installations, or a user's own token), unless the repository has an installation of its own and the
-App is in use. A repository with a web base of its own but no API base would send its API calls to
-the instance's API, so those fail with `REPO_HOST_MISCONFIGURED` until the API URL is set. A team
+token is bound to the origins it was verified on. A **platform credential** — the instance PAT, the
+singleton App installation token, or an App JWT (which can mint a token for every installation of
+the App) — is the instance's and goes only to the instance's own host. It is never sent to another
+host unless the repository has its own GitHub App installation on that host *and* the instance is in
+App mode. One rule (`@auto-swe/shared/lib/githubHostScope`) decides this for the worker, the
+gateway's check-run lookup and the shared permission lookup, and `resolveGitHubToken` enforces its
+API-host half as a last line, so even a caller that forgot to ask cannot send a platform credential,
+or post an App JWT, to a foreign host. A repository on a host the rule does not cover is refused with
+a non-retryable `REPO_CREDENTIAL_HOST_MISMATCH` (it needs its own GitHub App installation under
+Studio → GitHub installations, or a user's own token; and if the platform's own credential belongs to
+that host, set the GitHub integration's web and API URLs to it). A permission lookup reports that it
+could not ask.
+
+**The web base and the API base must be on the same host.** github.com with api.github.com, and
+`<tenant>.ghe.com` with `api.<tenant>.ghe.com`, are each one host; a GitHub Enterprise Server keeps
+both on one hostname. A web base on one host with an API base on another (a "half override", or one
+override set and the other left to the instance) would have a token minted for one host sent to the
+other — embedded in a clone URL, or sent as a bearer — so the repository API refuses it with
+`REPO_HOST_MISMATCH` (a PATCH is judged against the stored value of the field it does not set), and at
+run time such a repository fails with `REPO_HOST_MISCONFIGURED` on every path that would use a
+credential, a user's own token included. An existing half-override repository therefore stops
+working until both URLs are set to the same host. A team
 lead can set the overrides, so an unchecked one would let a lead point a repository at a host they
 control and collect a token on the next run. Overrides are therefore restricted:
 
@@ -65,13 +80,19 @@ in two places:
 
 A repository with no overrides is never checked, so the common case costs nothing.
 
+At startup the gateway warns when two or more active repositories all override onto one and the same
+foreign host. That usually means the instance's own GitHub host (Studio → Integrations → GitHub web
+and API URLs) is wrong, not that every repository is an exception, because the platform credential
+is sent only to the instance's own host.
+
 ### Webhook secrets per host
 
 The GitHub integration holds one webhook secret. Each GitHub Enterprise Server host configures its
 own webhooks, so each can have its own secret (`GitHubHostWebhookSecret`, managed by platform admins
 at `/studio/integrations → GitHub` or under `/api/v1/platform/github-webhook-secrets`). The host
 must be the integration's own host or listed in `github.repositoryHosts`; a secret for any other
-host is refused. So is one for `github.com` or `api.github.com` (`HOST_SENDS_NO_HEADER`): they send
+host is refused. So is one for `github.com`, `api.github.com`, or a GitHub Enterprise Cloud
+data-residency host (`<tenant>.ghe.com`, `api.<tenant>.ghe.com`) (`HOST_SENDS_NO_HEADER`): they send
 no header, so such a row could never be selected. A legacy row for them is ignored when scoping
 deliveries and the gateway warns about it at startup.
 
@@ -116,8 +137,8 @@ host: a repository with no installation of its own would take the instance's ins
 lives on the instance's host, so on another host it is sent no token; the instance PAT is likewise
 never sent to another host. A user's token is never used, since no user launched a webhook. A
 repository whose overrides fail the approved-host check, that has no credential valid on its host,
-or that has a web base of its own but no API base (the lookup would reach the instance's API), is
-sent none, and its run is signalled per check run instead.
+or whose web and API bases are on different hosts, is sent none, and its run is signalled per check
+run instead.
 
 The same commit can be tracked on repositories on different hosts (a mirror, or the same name on
 two hosts). Matched pull requests are grouped by repository and each group is aggregated on its own

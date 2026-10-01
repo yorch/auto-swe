@@ -12,6 +12,7 @@
  */
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { originOf } from '@auto-swe/shared/lib/connectionCredential';
+import { isDotcomStyleHost } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
@@ -47,13 +48,13 @@ function hostOfUrl(url: string): string | null {
 }
 
 /**
- * Whether `host` (`host[:port]`) is github.com or its API host. github.com
- * never sends `X-GitHub-Enterprise-Host`, so its deliveries always verify with
- * the instance secret; a per-host secret row for it could never be selected.
+ * Whether `host` (`host[:port]`) is github.com, GitHub Enterprise Cloud with
+ * data residency (`<tenant>.ghe.com`), or the API host of either. None of them
+ * sends `X-GitHub-Enterprise-Host`, so their deliveries always verify with the
+ * instance secret; a per-host secret row for one could never be selected.
  */
 export function isGitHubDotComHost(host: string): boolean {
-  const hostname = host.toLowerCase().split(':')[0];
-  return hostname === 'github.com' || hostname === 'api.github.com';
+  return isDotcomStyleHost(host);
 }
 
 /**

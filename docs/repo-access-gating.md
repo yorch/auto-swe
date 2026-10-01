@@ -124,6 +124,10 @@ projection would then record that person's access as this user's. The numeric ac
 change, which is what makes the check possible; a plain rename still resolves to the same id and is
 left alone.
 
+The ownership lookup always asks github.com, so the platform's credential is attached only when the
+instance's own API host is github.com. On a GitHub Enterprise instance the call is unauthenticated
+(rate-limited, so answers read as unverifiable and nothing is cleared) and is logged once.
+
 The sweep's candidate set is each repository's owning-team and shared-team members, each once, not
 every user times every repository, so its cost tracks real reachability rather than deployment size.
 The webhook refresh walks the same set.

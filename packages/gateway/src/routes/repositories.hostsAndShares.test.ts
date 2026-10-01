@@ -120,6 +120,28 @@ describe('repository URL overrides', () => {
     });
   });
 
+  it('refuses a web base without an API base, and the reverse (400)', async () => {
+    const cases: Array<Record<string, string>> = [
+      { githubUrl: 'https://ghe.corp' },
+      { githubApiUrl: 'https://ghe.corp/api/v3' },
+      { githubApiUrl: 'https://ghe.corp/api/v3', githubUrl: 'https://other.corp' },
+    ];
+    for (const urls of cases) {
+      const res = await onboard(urls);
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('REPO_HOST_MISMATCH');
+    }
+    expect(ctx.prisma.connection.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a GitHub Enterprise Cloud pair as one host (acme.ghe.com with api.acme.ghe.com)', async () => {
+    const res = await onboard({
+      githubApiUrl: 'https://api.acme.ghe.com',
+      githubUrl: 'https://acme.ghe.com',
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
   it('checks for a duplicate owner and name case-insensitively', async () => {
     const res = await ctx.app.inject({
       headers: AUTH,
@@ -178,7 +200,10 @@ describe('repository URL overrides', () => {
 
     it('refuses a host where the same owner/name exists, ignoring case (409)', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue({ id: 'other' });
-      const res = await patch({ githubUrl: 'https://ghe.corp' });
+      const res = await patch({
+        githubApiUrl: 'https://ghe.corp/api/v3',
+        githubUrl: 'https://ghe.corp',
+      });
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).error.code).toBe('REPO_EXISTS');
       expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
@@ -192,9 +217,41 @@ describe('repository URL overrides', () => {
     });
 
     it('allows a host where the repository is not onboarded', async () => {
-      const res = await patch({ githubUrl: 'https://ghe.corp' });
+      const res = await patch({
+        githubApiUrl: 'https://ghe.corp/api/v3',
+        githubUrl: 'https://ghe.corp',
+      });
       expect(res.statusCode).toBe(200);
       expect(ctx.prisma.connection.update).toHaveBeenCalled();
+    });
+
+    it('refuses a web base alone: the API base would stay the instance’s', async () => {
+      const res = await patch({ githubUrl: 'https://ghe.corp' });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('REPO_HOST_MISMATCH');
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('judges a field this request does not set against the stored one', async () => {
+      ctx.prisma.connection.findUnique.mockResolvedValue({
+        githubApiUrl: 'https://ghe.corp/api/v3',
+        githubUrl: 'https://ghe.corp',
+        id: REPO,
+        organizationName: 'Acme',
+        repoName: 'My_API',
+        teamId: TEAM,
+        type: 'git_repo',
+      });
+      // Repoint the web base only: now the pair disagrees.
+      const res = await patch({ githubUrl: 'https://other.corp' });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('REPO_HOST_MISMATCH');
+      // Clearing the web base alone leaves a foreign API base on the instance's web host.
+      const cleared = await patch({ githubUrl: null });
+      expect(cleared.statusCode).toBe(400);
+      // Clearing both is back to the instance's own host.
+      const both = await patch({ githubApiUrl: null, githubUrl: null });
+      expect(both.statusCode).toBe(200);
     });
 
     it('does not look for a duplicate when the host is not being changed', async () => {

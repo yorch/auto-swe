@@ -32,6 +32,7 @@ vi.mock('../lib/githubAuth.js', () => ({
 
 const verifyGithubLoginOwnership = vi.fn();
 vi.mock('@auto-swe/shared/lib/githubIdentityCheck', () => ({
+  accountApiToken: async () => 'platform-token',
   GITHUB_ACCOUNT_API_URL: 'https://api.github.com',
   verifyGithubLoginOwnership: (...a: unknown[]) => verifyGithubLoginOwnership(...a),
 }));
