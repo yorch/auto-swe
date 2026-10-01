@@ -101,6 +101,12 @@ and embedding model-spec fields are pickers over the catalog — chat models for
 models for the embedding config — showing each model's price; a deprecated one is labelled and a
 retired one is not offered.
 
+**Discovering new models.** *New from providers* → **Check providers for new models** lists models
+through each GLOBAL provider credential — the same list-models endpoints, auth and SSRF guard as the
+credential **Test** — and shows the ones nothing prices, each with an **Add** prefilled with its
+id, kind and display name. Discovery only suggests: it writes nothing, so a discovered model is not
+"known" until an admin adds it with a price.
+
 **Setting a price** — for a negotiated rate, a self-hosted model (`0`/`0`), or a model the built-in
 table lacks — is a Catalog tab edit, or a call to the catalog API under
 `/api/v1/platform/model-catalog` (recipes in [Scripted operations](#scripted-operations)). Any signed-in user can read the catalog; every write
@@ -115,6 +121,7 @@ as a `ModelCatalogEntry`.
 | `POST /model-catalog/:id/reset` | Restores a built-in row to the values code ships and clears customized |
 | `DELETE /model-catalog/:id` | Removes a custom row. A built-in row is a `409` — startup would re-create it; set it RETIRED |
 | `GET /model-catalog/unpriced` | Specs in use that nothing prices, each with where it is used and the spec it most likely meant |
+| `POST /model-catalog/discover` | Lists models through each GLOBAL credential and returns, per provider, the ones nothing prices — or why that provider could not be listed. Writes nothing |
 
 **Unpriced models are reported, never refused.** Saving an agent version or the embedding config
 returns `catalogWarnings` beside `scanWarnings` when its model is not priced (with a did-you-mean
@@ -303,6 +310,10 @@ curl -X POST http://localhost:8080/api/v1/platform/model-catalog/<entry-id>/rese
 # Which models in use have no price?
 curl http://localhost:8080/api/v1/platform/model-catalog/unpriced \
   -H "Authorization: Bearer $TOKEN"
+
+# What do the providers offer that the catalog lacks?
+curl -X POST http://localhost:8080/api/v1/platform/model-catalog/discover \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 Team owners use the parallel team-scoped routes — `/api/v1/teams/<teamId>/agent-library` for agent
@@ -356,6 +367,12 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
   unpriced model is still capped there, but every USD-denominated limit — the organization monthly
   budget, channel budgets and the channel hold estimate — reads its spend as $0 and never stops it.
+- **Discovery runs only on demand, through GLOBAL credentials.** Nothing checks providers on a
+  schedule, and a model reachable only through a team or organization credential is not listed.
+  It suggests by name, not by capability: speech, transcription, image, video and moderation models
+  are dropped by a name filter that can miss one or drop one it should not, and outside Google —
+  which says which methods a model serves — whether a model is chat or embedding is read from its
+  id. Up to five pages per provider are followed.
 - **The model pickers suggest; they do not restrict.** A spec the catalog lacks can be typed and
   saved, and is recorded at $0 until it is added — the save's `catalogWarnings` and the unpriced
   panel say so, but nothing blocks it.

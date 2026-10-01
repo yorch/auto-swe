@@ -18,11 +18,13 @@ import {
   type CatalogEntryInput,
   useCreateCatalogEntry,
   useDeleteCatalogEntry,
+  useDiscoverModels,
   useModelCatalog,
   useResetCatalogEntry,
   useUnpricedModels,
   useUpdateCatalogEntry,
 } from '@/hooks/useModelCatalog';
+import { errMsg } from '@/lib/errors';
 import {
   divergesFromBuiltin,
   entrySpec,
@@ -31,6 +33,14 @@ import {
   type ModelKind,
   type ModelStatus,
 } from '@/lib/modelCatalog';
+
+/** What an "Add model" starts from: blank, an unpriced spec, or a discovered model. */
+interface NewEntryDraft {
+  provider: string;
+  modelId: string;
+  kind?: ModelKind;
+  displayName?: string | null;
+}
 
 const STATUS_TONE = { ACTIVE: 'moss', DEPRECATED: 'amber', RETIRED: 'muted' } as const;
 
@@ -48,7 +58,7 @@ export function CatalogTab() {
     includeRetired: showRetired,
   });
   const [editing, setEditing] = useState<ModelCatalogEntry | null>(null);
-  const [creating, setCreating] = useState<{ provider: string; modelId: string } | null>(null);
+  const [creating, setCreating] = useState<NewEntryDraft | null>(null);
   const [deleting, setDeleting] = useState<ModelCatalogEntry | null>(null);
   const reset = useResetCatalogEntry();
   const del = useDeleteCatalogEntry();
@@ -56,6 +66,7 @@ export function CatalogTab() {
   return (
     <div className="space-y-6">
       <UnpricedPanel onAdd={(spec) => setCreating(splitSpec(spec))} />
+      <DiscoveryPanel cataloged={entries ?? []} onAdd={setCreating} />
       <Card>
         <CardHeader>
           <CardTitle eyebrow="Model catalog">Prices per million tokens</CardTitle>
@@ -245,22 +256,101 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
   );
 }
 
+/// On demand: what each configured provider lists that nothing prices. Results
+/// are suggestions — adding one is still an admin entering its price.
+function DiscoveryPanel({
+  cataloged,
+  onAdd,
+}: {
+  cataloged: ModelCatalogEntry[];
+  onAdd: (draft: NewEntryDraft) => void;
+}) {
+  const discover = useDiscoverModels();
+  // Drop a model the moment it is added, without asking the providers again.
+  const known = new Set(cataloged.map(entrySpec));
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle eyebrow="New from providers">Models the catalog lacks</CardTitle>
+        <Button disabled={discover.isPending} onClick={() => discover.mutate()} size="sm">
+          {discover.isPending ? 'Checking…' : 'Check providers for new models'}
+        </Button>
+      </CardHeader>
+      <p className="mb-4 text-xs text-paper-500">
+        Lists models through each global provider credential and shows the ones nothing prices.
+        Nothing is added until you add it — with its price.
+      </p>
+      {discover.error && <Alert>{errMsg(discover.error, 'Could not check providers')}</Alert>}
+      {discover.data?.length === 0 && (
+        <p className="text-xs text-paper-500">No global provider credentials to check.</p>
+      )}
+      {discover.data?.map((p) => {
+        const fresh = p.models.filter((m) => !known.has(m.spec));
+        return (
+          <div className="mb-4" key={p.provider}>
+            <div className="mb-1 font-mono text-xs text-paper-300">{p.provider}</div>
+            {!p.ok ? (
+              <p className="text-xs text-brick-400">Could not list models: {p.error}</p>
+            ) : fresh.length === 0 ? (
+              <p className="text-xs text-paper-500">Nothing new — every listed model is priced.</p>
+            ) : (
+              <Table>
+                <tbody>
+                  {fresh.map((m) => (
+                    <TRow key={m.spec}>
+                      <Td className="py-1.5">
+                        <div className="font-mono text-xs">{m.spec}</div>
+                        {m.displayName && (
+                          <div className="text-[11px] text-paper-500">{m.displayName}</div>
+                        )}
+                      </Td>
+                      <Td className="py-1.5 text-xs">{m.kind.toLowerCase()}</Td>
+                      <Td className="py-1.5 text-right">
+                        <Button
+                          onClick={() =>
+                            onAdd({
+                              displayName: m.displayName,
+                              kind: m.kind,
+                              modelId: m.modelId,
+                              provider: p.provider,
+                            })
+                          }
+                          size="sm"
+                          variant="ghost"
+                        >
+                          Add
+                        </Button>
+                      </Td>
+                    </TRow>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
 function EntryModal({
   existing,
   initial,
   onClose,
 }: {
   existing: ModelCatalogEntry | null;
-  initial: { provider: string; modelId: string } | null;
+  initial: NewEntryDraft | null;
   onClose: () => void;
 }) {
   const [provider, setProvider] = useState(initial?.provider ?? '');
   const [modelId, setModelId] = useState(initial?.modelId ?? '');
-  const [kind, setKind] = useState<ModelKind>(existing?.kind ?? 'CHAT');
+  const [kind, setKind] = useState<ModelKind>(existing?.kind ?? initial?.kind ?? 'CHAT');
   const [status, setStatus] = useState<ModelStatus>(existing?.status ?? 'ACTIVE');
   const [input, setInput] = useState(String(existing?.inputUsdPerMTok ?? ''));
   const [output, setOutput] = useState(String(existing?.outputUsdPerMTok ?? ''));
-  const [displayName, setDisplayName] = useState(existing?.displayName ?? '');
+  const [displayName, setDisplayName] = useState(
+    existing?.displayName ?? initial?.displayName ?? ''
+  );
   const [notes, setNotes] = useState(existing?.notes ?? '');
   const { error, saving, submit } = useIntegrationConfigForm();
   const create = useCreateCatalogEntry();

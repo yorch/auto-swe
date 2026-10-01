@@ -65,6 +65,28 @@ const { ENTRIES, mutation } = vi.hoisted(() => {
 vi.mock('@/hooks/useModelCatalog', () => ({
   useCreateCatalogEntry: mutation,
   useDeleteCatalogEntry: mutation,
+  useDiscoverModels: () => ({
+    data: [
+      { error: 'HTTP 401', models: [], ok: false, provider: 'anthropic' },
+      {
+        models: [
+          // Already in the catalog: added since the check, so it is hidden.
+          { displayName: null, kind: 'CHAT', modelId: 'llama-4', spec: 'ollama/llama-4' },
+          {
+            displayName: 'Nomic Embed',
+            kind: 'EMBEDDING',
+            modelId: 'nomic-embed-2',
+            spec: 'ollama/nomic-embed-2',
+          },
+        ],
+        ok: true,
+        provider: 'ollama',
+      },
+    ],
+    error: null,
+    isPending: false,
+    mutate: vi.fn(),
+  }),
   useModelCatalog: () => ({ data: ENTRIES, error: null, isError: false, isLoading: false }),
   useResetCatalogEntry: mutation,
   useUnpricedModels: () => ({
@@ -129,5 +151,22 @@ describe('CatalogTab', () => {
     fireEvent.click(within(unpriced).getByRole('button', { name: 'Add to catalog' }));
     expect(screen.getByLabelText(/^Provider/)).toHaveProperty('value', 'openai');
     expect(screen.getByLabelText(/^Model id/)).toHaveProperty('value', 'gpt-5-5');
+  });
+
+  it("shows each provider's discovery result, hiding what the catalog already has", () => {
+    render(<CatalogTab />);
+    expect(screen.getByText(/Could not list models: HTTP 401/)).toBeTruthy();
+    expect(screen.getByText('ollama/nomic-embed-2')).toBeTruthy();
+    // ollama/llama-4 appears once — in the catalog table, not again as "new".
+    expect(screen.getAllByText('ollama/llama-4')).toHaveLength(1);
+  });
+
+  it('prefills an add from a discovered model, keeping its kind and display name', () => {
+    render(<CatalogTab />);
+    fireEvent.click(within(rowFor('ollama/nomic-embed-2')).getByRole('button', { name: 'Add' }));
+    expect(screen.getByLabelText(/^Provider/)).toHaveProperty('value', 'ollama');
+    expect(screen.getByLabelText(/^Model id/)).toHaveProperty('value', 'nomic-embed-2');
+    expect(screen.getByLabelText(/^Display name/)).toHaveProperty('value', 'Nomic Embed');
+    expect(screen.getByText('Embedding models bill input only — use 0.')).toBeTruthy();
   });
 });
