@@ -200,9 +200,7 @@ describe('syncAgents — seeded model default upgrade', () => {
 
     await seedSweStarter(prisma);
 
-    expect(lineage(agents, 'implementer').map((r) => r.modelSpec)).toEqual([
-      'openai/gpt-6-astra',
-    ]);
+    expect(lineage(agents, 'implementer').map((r) => r.modelSpec)).toEqual(['openai/gpt-6-astra']);
     expect(lineage(agents, 'planner').map((r) => r.modelSpec)).toEqual([
       'anthropic/claude-opus-4-8',
     ]);
