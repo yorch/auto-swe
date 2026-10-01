@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -107,7 +108,11 @@ export default function AutonomyDecisionsPage() {
                   <td className="px-4 py-2 font-mono text-xs text-paper-500">
                     {row.actorId ?? 'system'}
                   </td>
-                  <td className="px-4 py-2 font-mono text-xs text-paper-500">{row.runId}</td>
+                  <td className="px-4 py-2 font-mono text-xs">
+                    <Link className="text-ember-400 hover:underline" href={`/runs/${row.runId}`}>
+                      {row.runId.slice(0, 8)}
+                    </Link>
+                  </td>
                 </tr>
               ))}
               {(!data || data.data.length === 0) && (

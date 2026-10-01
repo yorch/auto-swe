@@ -476,14 +476,18 @@ interface TraceRecord {
   seq: number;                                      // insertion order within the activity
   type: 'tool_call' | 'llm_response' | 'activity_event';
   toolName?: string;                                // tool ID, agent role, or event name
-  inputJson?: unknown;                              // truncated to 4 000 chars per string value
+  inputJson?: unknown;                              // redacted, then truncated to 32 000 chars per string value
   outputJson?: unknown;
   durationMs: number;
   error?: string;                                   // set for blocked/failed calls
 }
 ```
 
-String values are truncated to 4 000 characters per field. The `writeFile` tool records only the file `path` in `inputJson` (not the full content) to keep trace sizes manageable.
+String values are stored up to 32 000 characters per field. The run page polls, so
+`GET /api/v1/workflow-runs/:id` trims each field to 4 000 characters (head and tail) and marks the
+trace `trimmed`; the page then offers **Load full payloads**, which refetches with
+`?fullTraces=true`. The `writeFile` tool records only the file `path` in `inputJson` (not the full
+content) to keep trace sizes manageable.
 
 ### 8.3 AgentTrace Table
 

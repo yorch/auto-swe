@@ -2,6 +2,7 @@
 
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
 import { formatCost, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
 import { AutonomyDecisionsPanel } from './AutonomyDecisionsPanel';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
@@ -36,6 +37,7 @@ function MonoValue({ children, accent }: { children: React.ReactNode; accent?: b
 }
 
 export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMetaRailProps) {
+  const temporalUrl = useTemporalWorkflowUrl(run.workflowId);
   const durationMs =
     run.startedAt && run.endedAt
       ? new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()
@@ -69,9 +71,21 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
           )}
           <MetaRow label="Workflow">
             <MonoValue>
-              <span className="truncate block max-w-[140px] text-right" title={run.workflowId}>
-                {run.workflowId.slice(0, 22)}…
-              </span>
+              {temporalUrl ? (
+                <a
+                  className="truncate block max-w-[140px] text-right text-ember-400 hover:underline"
+                  href={temporalUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                  title={`${run.workflowId} — open in Temporal`}
+                >
+                  {run.workflowId.slice(0, 22)}…
+                </a>
+              ) : (
+                <span className="truncate block max-w-[140px] text-right" title={run.workflowId}>
+                  {run.workflowId.slice(0, 22)}…
+                </span>
+              )}
             </MonoValue>
           </MetaRow>
           {totalTraces > 0 && (

@@ -7,6 +7,7 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useRunsForWorkRequest, useWorkflow } from '@/hooks/useRuns';
+import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
 
@@ -14,6 +15,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
   const { data: workflow, isLoading } = useWorkflow(id ?? '');
+  const temporalUrl = useTemporalWorkflowUrl(workflow?.temporalWorkflowId ?? '');
   const { data: runs } = useRunsForWorkRequest(workflow?.workRequest?.id);
 
   if (!id) {
@@ -56,7 +58,21 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
               <dt className="text-paper-400">Workflow ID</dt>
-              <dd className="font-mono text-xs">{workflow.temporalWorkflowId}</dd>
+              <dd className="font-mono text-xs">
+                {temporalUrl ? (
+                  <a
+                    className="text-ember-400 hover:underline"
+                    href={temporalUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                    title="Open in Temporal"
+                  >
+                    {workflow.temporalWorkflowId}
+                  </a>
+                ) : (
+                  workflow.temporalWorkflowId
+                )}
+              </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-paper-400">Branch</dt>

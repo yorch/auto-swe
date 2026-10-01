@@ -226,6 +226,8 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     const [trace] = res.json().data.traces;
     expect(trace.inputJson.text.length).toBeLessThan(LONG_STRING.length);
     expect(trace.inputJson.text).toContain('[truncated');
+    // The flag is what the run page offers "load full payloads" on.
+    expect(trace.trimmed).toBe(true);
   });
 
   it('returns untrimmed trace fields when fullTraces=true', async () => {
@@ -240,6 +242,7 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(res.statusCode).toBe(200);
     const [trace] = res.json().data.traces;
     expect(trace.inputJson.text).toBe(LONG_STRING);
+    expect(trace.trimmed).toBe(false);
   });
 });
 

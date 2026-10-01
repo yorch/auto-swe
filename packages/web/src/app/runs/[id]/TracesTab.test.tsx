@@ -23,6 +23,7 @@ const makeTrace = (nodeId: string, id = nodeId): AgentTraceRecord => ({
   outputTokens: null,
   seq: 0,
   toolName: null,
+  trimmed: false,
   type: 'llm_response',
 });
 
@@ -179,6 +180,37 @@ describe('TraceOutput', () => {
     expect(screen.getByText('INPUT')).toBeTruthy();
     const pres = [...document.querySelectorAll('pre')].map((el) => el.textContent);
     expect(pres).toEqual([JSON.stringify({ attempt: 2 }, null, 2), 'done']);
+  });
+
+  it('expands a capped body to its full text on demand', () => {
+    const full = `HEAD${'x'.repeat(3100)}TAIL`;
+    expand({
+      ...makeTrace('implement'),
+      inputJson: { systemPrompt: 'you are an implementer' },
+      outputJson: { text: full },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /show all/ }));
+
+    expect(document.querySelector('pre')?.textContent).toBe(full);
+    // The row stays open: the toggle stops propagation like the other nested controls.
+    fireEvent.click(screen.getByRole('button', { name: /show less/ }));
+    expect(document.querySelector('pre')?.textContent).toMatch(/characters hidden/);
+  });
+
+  it("shows a tool_call's input, not just its output", () => {
+    const command = `grep -rn ${'needle '.repeat(20)}src`;
+    expand({
+      ...makeTrace('implement'),
+      inputJson: { command },
+      outputJson: { output: 'match' },
+      toolName: 'bash',
+      type: 'tool_call',
+    });
+
+    expect(screen.getByText('INPUT')).toBeTruthy();
+    const pres = [...document.querySelectorAll('pre')].map((el) => el.textContent);
+    expect(pres).toEqual([JSON.stringify({ command }, null, 2), 'match']);
   });
 
   it('renders nothing for a trace with no error and no output', () => {

@@ -451,6 +451,8 @@ export interface AgentTraceRecord {
   /** W3C span-id correlating this record to a Grafana/Tempo span. */
   otelSpanId: string | null;
   createdAt: string;
+  /** True when the server cut a payload string; refetch with `?fullTraces=true` for all of it. */
+  trimmed: boolean;
 }
 
 /** Shape returned by GET /api/v1/workflow-runs/:id (detail) */

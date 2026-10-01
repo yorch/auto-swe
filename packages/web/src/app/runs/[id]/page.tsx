@@ -843,7 +843,14 @@ function LayoutC({
 export default function RunDetailPage({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: run, isError, isLoading, error } = useWorkflowRun(id ?? '');
+  const [fullTraces, setFullTraces] = useState(false);
+  const {
+    data: run,
+    isError,
+    isLoading,
+    isPlaceholderData,
+    error,
+  } = useWorkflowRun(id ?? '', true, fullTraces);
   const cancelRun = useCancelWorkflowRun(id ?? '');
   const retryRun = useRetryWorkRequest();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -956,6 +963,7 @@ export default function RunDetailPage({ params }: PageProps) {
 
   const traces = run.traces ?? [];
   const failedStep = getFailedStep(run.steps);
+  const tracesTrimmed = traces.some((t) => t.trimmed);
 
   return (
     <div className="flex flex-col h-full" style={{ background: 'var(--color-ink-800)' }}>
@@ -1019,6 +1027,17 @@ export default function RunDetailPage({ params }: PageProps) {
             >
               {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
             </span>
+          )}
+          {(tracesTrimmed || fullTraces) && (
+            <Button
+              disabled={isPlaceholderData}
+              onClick={() => setFullTraces((v) => !v)}
+              size="sm"
+              title="Trace payloads are trimmed to 4,000 characters per field while the page polls"
+              variant="secondary"
+            >
+              {isPlaceholderData ? 'Loading…' : fullTraces ? 'Trim payloads' : 'Load full payloads'}
+            </Button>
           )}
           {run.status === 'RUNNING' && (
             <Button
