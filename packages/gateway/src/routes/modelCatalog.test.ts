@@ -1,6 +1,17 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../lib/modelDiscovery.js', () => ({
+  discoverProviderModels: vi.fn(async () => [
+    {
+      models: [{ displayName: null, kind: 'CHAT', modelId: 'gpt-6.2', spec: 'openai/gpt-6.2' }],
+      ok: true,
+      provider: 'openai',
+    },
+  ]),
+}));
+
 import { modelCatalogRoutes } from './modelCatalog.js';
 
 const BUILTIN_ID = '00000000-0000-4000-a000-0000000000b1';
@@ -272,5 +283,19 @@ describe('GET /model-catalog/unpriced', () => {
     expect(res.json().data).toEqual([
       { spec: 'openai/gpt-5-5', suggestion: 'openai/gpt-5.5', usedBy: ['recent-calls'] },
     ]);
+  });
+});
+
+describe('POST /model-catalog/discover', () => {
+  it('is ADMIN-only — it calls providers with decrypted keys', async () => {
+    const { call } = await buildApp('ENGINEER');
+    expect((await call('POST', '/model-catalog/discover')).statusCode).toBe(403);
+  });
+
+  it('returns what each provider lists that nothing prices', async () => {
+    const { call } = await buildApp();
+    const res = await call('POST', '/model-catalog/discover');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data[0]).toMatchObject({ ok: true, provider: 'openai' });
   });
 });

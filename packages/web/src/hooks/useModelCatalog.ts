@@ -85,3 +85,20 @@ export function useDeleteCatalogEntry() {
     onSuccess: () => invalidateCatalog(qc),
   });
 }
+
+/** What one provider lists that nothing prices — or why it could not be listed. */
+export interface ProviderDiscovery {
+  provider: string;
+  ok: boolean;
+  error?: string;
+  models: Array<{ spec: string; modelId: string; kind: ModelKind; displayName: string | null }>;
+}
+
+/// On demand: the gateway calls each GLOBAL provider credential's list-models
+/// endpoint. It writes nothing, so there is nothing to invalidate.
+export function useDiscoverModels() {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ data: ProviderDiscovery[] }>(`${BASE}/discover`, {}).then((r) => r.data),
+  });
+}
