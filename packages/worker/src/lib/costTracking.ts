@@ -78,8 +78,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'google/gemini-3.8-flash': { input: 1.5, output: 7.5 },
   // OpenAI — GPT-5 line
   'openai/gpt-5': { input: 1.25, output: 10 },
-  'openai/gpt-5-5': { input: 5, output: 30 },
-  'openai/gpt-5-5-pro': { input: 30, output: 180 },
+  'openai/gpt-5.5': { input: 5, output: 30 },
+  'openai/gpt-5.5-pro': { input: 30, output: 180 },
   // OpenAI — GPT-6 line (verified Sep 2026)
   'openai/gpt-6-astra': { input: 10, output: 50 },
   'openai/gpt-6-luna': { input: 0.1, output: 0.5 },
