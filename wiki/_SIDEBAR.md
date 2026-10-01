@@ -1,6 +1,6 @@
 # auto-swe Wiki
 
-> Commit `b1d8930`
+> Commit `147d054a`; some pages carry an earlier pin, see the overview
 
 - [Overview](./README.md)
 - [Glossary](./glossary.md)
@@ -23,6 +23,7 @@
   - [3.1 HTTP Routes](./3.1-http-routes.md)
   - [3.2 Authentication and RBAC](./3.2-authentication-and-rbac.md)
   - [3.3 GitHub and Webhooks](./3.3-github-and-webhooks.md)
+  - [3.4 Repository Access and Credentials](./3.4-repository-access-and-credentials.md)
 
 ## 4. @auto-swe/worker
 
