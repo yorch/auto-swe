@@ -12,7 +12,7 @@
 import type { ExecSyncOptions, SpawnSyncReturns } from 'node:child_process';
 import { exec, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { heartbeat } from '@temporalio/activity';
+import { Context, heartbeat } from '@temporalio/activity';
 
 export const EXEC_OPTS: ExecSyncOptions = {
   encoding: 'utf-8' as BufferEncoding,
@@ -24,6 +24,52 @@ const execAsyncRaw = promisify(exec);
 
 /** How often to pump a Temporal heartbeat while a child process runs. */
 const HEARTBEAT_INTERVAL_MS = 30_000;
+
+/** The running activity's cancellation signal, or undefined outside an activity (unit tests). */
+function activityCancellationSignal(): AbortSignal | undefined {
+  try {
+    return Context.current().cancellationSignal;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Throw the activity's cancellation reason if it has been cancelled. Heartbeating
+ * only *delivers* a cancellation to the signal; nothing stops the activity body,
+ * so a step that must not run after a cancel (an external call, a result write)
+ * checks this first. A no-op outside an activity.
+ */
+export function throwIfActivityCancelled(): void {
+  activityCancellationSignal()?.throwIfAborted();
+}
+
+/**
+ * Settle with `work`, or reject with the cancellation reason as soon as the
+ * activity is cancelled. The underlying work is not stopped — it is abandoned —
+ * so use it for calls that cannot take an abort signal themselves.
+ */
+export async function raceActivityCancellation<T>(work: Promise<T>): Promise<T> {
+  const signal = activityCancellationSignal();
+  if (!signal) {
+    return work;
+  }
+  signal.throwIfAborted();
+  let onAbort: (() => void) | undefined;
+  const cancelled = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([work, cancelled]);
+  } finally {
+    if (onAbort) {
+      signal.removeEventListener('abort', onAbort);
+    }
+    // `work` may still reject after losing the race; that is not an unhandled error.
+    work.catch(() => undefined);
+  }
+}
 
 /**
  * Pump Temporal heartbeats while awaiting a child process. Long-running

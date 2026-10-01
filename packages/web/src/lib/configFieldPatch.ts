@@ -29,8 +29,10 @@ export function clearableIntField(
   if (next === '') {
     return current == null ? undefined : null;
   }
-  const parsed = Number.parseInt(next, 10);
-  if (Number.isNaN(parsed) || parsed === current) {
+  // `parseInt` accepts a valid prefix ("12abc" → 12, "1.5" → 1); require the
+  // whole draft to be an integer so a typo is left unchanged, not saved truncated.
+  const parsed = /^[+-]?\d+$/.test(next) ? Number(next) : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed === current) {
     return undefined;
   }
   return parsed;

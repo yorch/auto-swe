@@ -22,6 +22,9 @@ describe('clearableIntField', () => {
     expect(clearableIntField('10', 10)).toBeUndefined();
     expect(clearableIntField('', null)).toBeUndefined();
     expect(clearableIntField('abc', 5)).toBeUndefined();
+    expect(clearableIntField('12abc', 5)).toBeUndefined();
+    expect(clearableIntField('1.5', 5)).toBeUndefined();
+    expect(clearableIntField('1e3', 5)).toBeUndefined();
   });
   it('clears and sets', () => {
     expect(clearableIntField('', 10)).toBeNull();
