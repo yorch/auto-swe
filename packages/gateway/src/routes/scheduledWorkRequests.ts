@@ -329,6 +329,20 @@ interface ScheduleRowForSync {
 }
 
 /** Synthetic ticket ID for a schedule (static — schedule args can't vary per fire). */
+/**
+ * A `updatedAt` predicate matching the instant a row was read at.
+ *
+ * Postgres stores microseconds; a JS `Date` holds milliseconds. A row whose
+ * timestamp carries sub-millisecond digits (one written by SQL rather than by
+ * Prisma) would never equal the value read back, and an exact-equality guard
+ * would refuse every edit to it forever. Matching the read millisecond keeps
+ * the guard's meaning — "nobody has written this row since I read it" — for
+ * every row.
+ */
+function sameMillisecond(at: Date): { gte: Date; lt: Date } {
+  return { gte: at, lt: new Date(at.getTime() + 1) };
+}
+
 function scheduleTicketId(prefix: string, scheduleRowId: string): string {
   return `${prefix}-SCHED-${scheduleRowId.slice(0, 8)}`;
 }
@@ -886,7 +900,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
               id: existing.id,
               isActive: existing.isActive,
               teamId: existing.teamId,
-              updatedAt: existing.updatedAt,
+              updatedAt: sameMillisecond(existing.updatedAt),
             },
           });
           if (claimed.count === 0) {
@@ -1041,7 +1055,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
                 id: existing.id,
                 isActive: existing.isActive,
                 teamId: existing.teamId,
-                updatedAt: existing.updatedAt,
+                updatedAt: sameMillisecond(existing.updatedAt),
               },
             });
             if (result.count === 0) {

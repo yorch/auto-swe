@@ -175,8 +175,11 @@ describe('/api/v1/scheduled-work-requests', () => {
           return scheduleRow;
         },
         findMany: async () => (scheduleRow ? [rowWithInclude(scheduleRow)] : []),
+        // Every real row has an updatedAt; fixtures that leave it out get one.
         findUnique: async (args: { where: { id: string } }) =>
-          scheduleRow && args.where.id === SCHEDULE_ID ? { ...scheduleRow } : null,
+          scheduleRow && args.where.id === SCHEDULE_ID
+            ? { updatedAt: new Date(1), ...scheduleRow }
+            : null,
         findUniqueOrThrow: async () => rowWithInclude({ ...scheduleRow, ...lastUpdateData }),
         update: async (args: { data: Record<string, unknown> }) => {
           if (failScheduleUpdate && !('lastFiredAt' in args.data)) {
@@ -639,7 +642,9 @@ describe('/api/v1/scheduled-work-requests', () => {
         id: SCHEDULE_ID,
         isActive: true,
         teamId: 'team-1',
-        updatedAt: new Date(5),
+        // The read millisecond, not exact equality: Postgres stores
+        // microseconds a JS Date cannot hold.
+        updatedAt: { gte: new Date(5), lt: new Date(6) },
       });
     });
 
