@@ -13,14 +13,17 @@ vi.mock('@auto-swe/shared/db', () => ({
 import { prisma } from '@auto-swe/shared/db';
 import { encryptSecret } from './crypto.js';
 import {
+  assertScheduledSweepsEnv,
   assertWorkspaceInfraEnv,
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
   resolveKnowledgeBaseConfig,
   resolveOktaOAuthConfig,
+  resolveScheduledSweeps,
   resolveStorageConfig,
   resolveWorkflowDefaults,
   resolveWorkspaceInfra,
+  validateScheduledSweepsEnv,
   validateWorkspaceInfraEnv,
 } from './systemConfig.js';
 
@@ -497,6 +500,87 @@ describe('systemConfig resolvers', () => {
         vi.stubEnv('WORKSPACE_PIDS_LIMIT', '-1');
         expect(() => assertWorkspaceInfraEnv()).toThrow(
           /Invalid workspace configuration[\s\S]*WORKSPACE_CPUS[\s\S]*WORKSPACE_PIDS_LIMIT/
+        );
+      });
+    });
+  });
+
+  describe('scheduled sweeps (environment-only)', () => {
+    const KEYS = [
+      'REPO_ACCESS_SYNC_ENABLED',
+      'REPO_ACCESS_SYNC_CRON',
+      'REPO_DEPENDENCY_SCAN_ENABLED',
+      'REPO_DEPENDENCY_SCAN_CRON',
+    ];
+    beforeEach(() => {
+      for (const key of KEYS) {
+        delete process.env[key];
+      }
+    });
+
+    it('defaults: the access sync is off, the dependency scan is on', () => {
+      expect(resolveScheduledSweeps()).toEqual({
+        repoAccess: { cronExpression: '23 * * * *', enabled: false },
+        repoDependency: { cronExpression: '0 4 * * *', enabled: true },
+      });
+    });
+
+    it('reads each variable', () => {
+      vi.stubEnv('REPO_ACCESS_SYNC_ENABLED', 'true');
+      vi.stubEnv('REPO_ACCESS_SYNC_CRON', '5 * * * *');
+      vi.stubEnv('REPO_DEPENDENCY_SCAN_ENABLED', 'false');
+      vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', '30 2 * * 1');
+      expect(resolveScheduledSweeps()).toEqual({
+        repoAccess: { cronExpression: '5 * * * *', enabled: true },
+        repoDependency: { cronExpression: '30 2 * * 1', enabled: false },
+      });
+    });
+
+    it('falls back to the default for a value it cannot use', () => {
+      vi.stubEnv('REPO_ACCESS_SYNC_ENABLED', 'yes');
+      vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', 'daily');
+      const sweeps = resolveScheduledSweeps();
+      expect(sweeps.repoAccess.enabled).toBe(false);
+      expect(sweeps.repoDependency.cronExpression).toBe('0 4 * * *');
+    });
+
+    describe('validateScheduledSweepsEnv — the strict check the gateway runs at boot', () => {
+      it('is clean when nothing is set, and when everything is valid', () => {
+        expect(validateScheduledSweepsEnv()).toEqual([]);
+        vi.stubEnv('REPO_ACCESS_SYNC_ENABLED', 'true');
+        vi.stubEnv('REPO_ACCESS_SYNC_CRON', '*/15 * * * *');
+        vi.stubEnv('REPO_DEPENDENCY_SCAN_ENABLED', 'false');
+        vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', '0 4 * * *');
+        expect(validateScheduledSweepsEnv()).toEqual([]);
+      });
+
+      it('rejects a flag that would silently become the opposite default', () => {
+        // `REPO_DEPENDENCY_SCAN_ENABLED=0` reads as "off", but the lenient
+        // resolver would fall back to the default, which is on.
+        for (const raw of ['0', 'no', 'False', 'off']) {
+          vi.stubEnv('REPO_DEPENDENCY_SCAN_ENABLED', raw);
+          expect(validateScheduledSweepsEnv()).toEqual([
+            `REPO_DEPENDENCY_SCAN_ENABLED=${JSON.stringify(raw)} is not 'true' or 'false'`,
+          ]);
+        }
+      });
+
+      it('rejects a cron expression that is not five fields, and reports every problem', () => {
+        vi.stubEnv('REPO_ACCESS_SYNC_CRON', 'hourly');
+        vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', '0 4 * *');
+        vi.stubEnv('REPO_ACCESS_SYNC_ENABLED', 'maybe');
+        const problems = validateScheduledSweepsEnv();
+        expect(problems).toHaveLength(3);
+        expect(problems.join('\n')).toContain('REPO_ACCESS_SYNC_CRON="hourly"');
+        expect(problems.join('\n')).toContain('REPO_DEPENDENCY_SCAN_CRON="0 4 * *"');
+      });
+
+      it('assertScheduledSweepsEnv throws one error listing every problem, and is silent when valid', () => {
+        expect(() => assertScheduledSweepsEnv()).not.toThrow();
+        vi.stubEnv('REPO_ACCESS_SYNC_CRON', 'hourly');
+        vi.stubEnv('REPO_ACCESS_SYNC_ENABLED', 'maybe');
+        expect(() => assertScheduledSweepsEnv()).toThrow(
+          /Invalid scheduled-sweep configuration[\s\S]*REPO_ACCESS_SYNC_ENABLED[\s\S]*REPO_ACCESS_SYNC_CRON/
         );
       });
     });

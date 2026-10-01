@@ -10,7 +10,6 @@ describe('useIntegrationConfigForm', () => {
     expect(result.current.saved).toBe(false);
     expect(result.current.saving).toBe(false);
     expect(result.current.error).toBeNull();
-    expect(result.current.requiresRestart).toBe(false);
     expect(result.current.testing).toBe(false);
     expect(result.current.testResult).toBeNull();
   });
@@ -58,19 +57,6 @@ describe('useIntegrationConfigForm', () => {
     expect(onSuccess).toHaveBeenCalledWith({ data: {} });
     expect(result.current.saved).toBe(true);
     expect(result.current.error).toBeNull();
-    expect(result.current.requiresRestart).toBe(false);
-  });
-
-  it('submit captures requiresRestart from result.data.requiresRestart', async () => {
-    const run = vi.fn().mockResolvedValue({ data: { requiresRestart: true } });
-    const { result } = renderHook(() => useIntegrationConfigForm());
-
-    await act(async () => {
-      await result.current.submit(run);
-    });
-
-    expect(result.current.requiresRestart).toBe(true);
-    expect(result.current.saved).toBe(true);
   });
 
   it('a rejecting submit sets error (via errMsg), leaves saved false, and skips onSuccess', async () => {

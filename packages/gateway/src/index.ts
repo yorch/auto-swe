@@ -4,13 +4,14 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
 const otel = initTelemetry('auto-swe-gateway');
 
-import { resolveSettings } from '@auto-swe/shared/config';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import {
+  assertScheduledSweepsEnv,
   resolveConsolidationConfig,
   resolveEvalScheduleConfig,
   resolveRevalidationConfig,
+  resolveScheduledSweeps,
 } from '@auto-swe/shared/lib/systemConfig';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
@@ -83,6 +84,9 @@ async function start() {
   // a gateway that starts without it serves 500s on exactly the admin pages
   // needed to bootstrap a deployment.
   assertEncryptionKeyConfigured();
+  // The sweep schedules below are environment-only and applied once, here. A
+  // value the resolver would silently replace with a default is a failed boot.
+  assertScheduledSweepsEnv();
 
   // Must run before betterAuth.handler is called — reads OAuth creds from DB.
   await initAuth();
@@ -165,25 +169,16 @@ async function start() {
 
   // Same for the repo-dependency scan Schedule. Without this the schedule never
   // exists, so the on-demand "re-scan" trigger has no handle to fire.
-  resolveSettings(['repoDependency.scanCron', 'repoDependency.scanEnabled'], {})
-    .then((cfg) =>
-      app.temporal.syncRepoDependencyScanSchedule({
-        cronExpression: cfg['repoDependency.scanCron'],
-        enabled: cfg['repoDependency.scanEnabled'],
-      })
-    )
+  const sweeps = resolveScheduledSweeps();
+  app.temporal
+    .syncRepoDependencyScanSchedule(sweeps.repoDependency)
     .catch((err) => app.log.warn({ err }, 'repo dependency scan schedule sync failed at startup'));
 
   // Same for the permission sweep that refreshes cached GitHub answers. Paused
   // unless an admin has enabled it: it spends GitHub quota proportional to team
   // members times repositories, so it must be a deliberate choice.
-  resolveSettings(['repoAccess.syncCron', 'repoAccess.syncEnabled'], {})
-    .then((cfg) =>
-      app.temporal.syncRepoAccessSyncSchedule({
-        cronExpression: cfg['repoAccess.syncCron'],
-        enabled: cfg['repoAccess.syncEnabled'],
-      })
-    )
+  app.temporal
+    .syncRepoAccessSyncSchedule(sweeps.repoAccess)
     .catch((err) => app.log.warn({ err }, 'repo access sync schedule sync failed at startup'));
 
   // Same for the eval-regression Temporal Schedule (the nightly benchmark).

@@ -31,6 +31,7 @@ import {
   type PermissionRepo,
   verifiedGithubLoginFor,
 } from './repoPermission.js';
+import { resolveScheduledSweeps } from './systemConfig.js';
 
 export type RepoAccessMode = 'off' | 'advisory' | 'enforce';
 
@@ -65,12 +66,9 @@ export function resetRepoAccessGateCache(): void {
 }
 
 export async function resolveRepoAccessGate(): Promise<RepoAccessGate> {
-  const cfg = await resolveSettings(
-    ['repoAccess.mode', 'repoAccess.syncEnabled', 'repoAccess.viewStaleAfterHours'],
-    {}
-  );
+  const cfg = await resolveSettings(['repoAccess.mode', 'repoAccess.viewStaleAfterHours'], {});
   const mode = cfg['repoAccess.mode'] as RepoAccessMode;
-  warnIfEnforcingWithoutSync(mode, cfg['repoAccess.syncEnabled']);
+  warnIfEnforcingWithoutSync(mode, resolveScheduledSweeps().repoAccess.enabled);
   lastKnownGate = {
     mode,
     staleAfterHours: cfg['repoAccess.viewStaleAfterHours'],
@@ -85,7 +83,7 @@ let warnedAboutMissingSweep = false;
  * Enforcing with the sweep disabled is a configuration the settings cannot
  * forbid and an operator can reach by accident, because the two knobs default
  * opposite ways: `repoAccess.mode` is the one they came to change, and
- * `repoAccess.syncEnabled` is off.
+ * `REPO_ACCESS_SYNC_ENABLED` is off.
  *
  * In that pairing every listing is filtered against a projection nothing
  * refreshes, and no stored GitHub login is ever re-verified — so a username
@@ -99,7 +97,7 @@ function warnIfEnforcingWithoutSync(mode: RepoAccessMode, syncEnabled: boolean):
   }
   warnedAboutMissingSweep = true;
   console.warn(
-    '[repoAccess] mode is `enforce` but `repoAccess.syncEnabled` is false. Listings are filtered against a projection nothing refreshes, and stored GitHub logins are never re-verified. Enable the sweep.'
+    '[repoAccess] mode is `enforce` but REPO_ACCESS_SYNC_ENABLED is not true. Listings are filtered against a projection nothing refreshes, and stored GitHub logins are never re-verified. Enable the sweep.'
   );
 }
 

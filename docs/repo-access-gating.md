@@ -146,15 +146,25 @@ it ages out through the staleness window instead of being overwritten.
 
 ## 5. Configuration
 
-Four settings, all `ADMIN`-only and deployment-wide. A per-team override would let one team opt out
-of the check that keeps the platform's idea of access aligned with GitHub's.
+Two settings, both `ADMIN`-only and deployment-wide, and two environment variables. A per-team
+override would let one team opt out of the check that keeps the platform's idea of access aligned
+with GitHub's.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `repoAccess.mode` | `off` | `off`, `advisory`, or `enforce` |
-| `repoAccess.syncEnabled` | `false` | whether the scheduled sweep runs |
-| `repoAccess.syncCron` | `23 * * * *` | when it runs |
 | `repoAccess.viewStaleAfterHours` | `72` | how old a cached answer may be and still count for viewing |
+
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `REPO_ACCESS_SYNC_ENABLED` | `false` | whether the scheduled sweep runs (`true` or `false`) |
+| `REPO_ACCESS_SYNC_CRON` | `23 * * * *` | when it runs, five-field cron, UTC |
+
+The sweep is an environment variable because the gateway creates its Temporal Schedule once, at
+startup: a value saved in a form could not take effect without a restart. The gateway refuses to
+start on a value it cannot use. Set it where the gateway runs; the "enforcing without a sweep"
+warning reads the same variable wherever the gate is evaluated, so a deployment should share one
+`.env` between the gateway and the worker.
 
 Multiple GitHub organizations are reached through multiple App installations. `GitHubInstallation`
 rows name them and `connections.installation_id` points a repository at one; null means the
@@ -190,8 +200,9 @@ rather than surfacing a foreign-key error.
 2. Configure the GitHub App or PAT so it can see every configured repository. Add
    `GitHubInstallation` rows if repositories span more than one GitHub organization.
 3. Ask users to link GitHub, then run the backfill script for accounts linked earlier.
-4. Enable `repoAccess.syncEnabled` and let one sweep populate `repo_access`.
-5. Leave `repoAccess.syncEnabled` on. Enforcing with the sweep disabled filters every listing
+4. Set `REPO_ACCESS_SYNC_ENABLED=true`, restart the gateway, and let one sweep populate
+   `repo_access`.
+5. Leave `REPO_ACCESS_SYNC_ENABLED` on. Enforcing with the sweep disabled filters every listing
    against a projection nothing refreshes and never re-verifies a stored GitHub login; the gateway
    warns when it sees that pairing, because the two knobs default opposite ways and it is easy to
    reach by accident.

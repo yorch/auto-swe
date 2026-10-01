@@ -400,16 +400,6 @@ describe('systemConfigService', () => {
       >;
       expect(secondCallData).not.toHaveProperty('botTokenCiphertext');
     });
-
-    it('requiresRestart reflects clientId/clientSecret changes only', async () => {
-      mockPrisma.slackConfig.findUnique.mockResolvedValueOnce(null);
-      const noChange = await updateSlackConfig(prisma, { botToken: 'xoxb-only' });
-      expect(noChange.data.requiresRestart).toBe(false);
-
-      mockPrisma.slackConfig.findUnique.mockResolvedValueOnce(null);
-      const withChange = await updateSlackConfig(prisma, { clientSecret: 'secret' });
-      expect(withChange.data.requiresRestart).toBe(true);
-    });
   });
 
   // ─── Issue tracker config ───────────────────────────────────────────────

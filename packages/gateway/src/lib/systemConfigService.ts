@@ -447,10 +447,7 @@ export async function updateSlackConfig(
     auditBeforeJson: pickAudit(existing, SLACK_AUDIT_FIELDS),
     auditTarget: { entityId: SYSTEM_CONFIG_IDS.slack, entityType: 'SlackConfig' },
     changedFields,
-    data: {
-      ...slackData(row),
-      requiresRestart: !!(clientId !== undefined || clientSecret),
-    },
+    data: slackData(row),
     existed: !!existing,
   };
 }

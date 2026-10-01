@@ -868,3 +868,87 @@ export function assertWorkspaceInfraEnv(): void {
     );
   }
 }
+
+// ─── Scheduled sweeps (environment-only) ──────────────────────────────────────
+
+export interface SweepSchedule {
+  enabled: boolean;
+  /// Five-field cron expression, UTC.
+  cronExpression: string;
+}
+
+export interface ScheduledSweepsConfig {
+  /// Refreshes the cached source-control permission answers.
+  repoAccess: SweepSchedule;
+  /// Refreshes the repo dependency graph from manifests and git signals.
+  repoDependency: SweepSchedule;
+}
+
+const CRON_RE = /^(\S+\s+){4}\S+$/;
+
+function envFlag(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  return raw === 'true' ? true : raw === 'false' ? false : fallback;
+}
+
+function envCron(name: string, fallback: string): string {
+  const raw = process.env[name]?.trim();
+  return raw && CRON_RE.test(raw) ? raw : fallback;
+}
+
+/// The two Temporal Schedules the gateway creates at boot. They are applied
+/// once, at start-up, so they are environment variables: a value saved in a form
+/// could not take effect without a restart, and a control that looks live but
+/// is not is worse than none.
+///
+///   REPO_ACCESS_SYNC_ENABLED      default false — it spends API quota in
+///                                 proportion to team members times repositories
+///   REPO_ACCESS_SYNC_CRON         default `23 * * * *`
+///   REPO_DEPENDENCY_SCAN_ENABLED  default true
+///   REPO_DEPENDENCY_SCAN_CRON     default `0 4 * * *`
+///
+/// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
+/// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
+export function resolveScheduledSweeps(): ScheduledSweepsConfig {
+  return {
+    repoAccess: {
+      cronExpression: envCron('REPO_ACCESS_SYNC_CRON', '23 * * * *'),
+      enabled: envFlag('REPO_ACCESS_SYNC_ENABLED', false),
+    },
+    repoDependency: {
+      cronExpression: envCron('REPO_DEPENDENCY_SCAN_CRON', '0 4 * * *'),
+      enabled: envFlag('REPO_DEPENDENCY_SCAN_ENABLED', true),
+    },
+  };
+}
+
+/// Everything wrong with the sweep environment, one message each. Unset or
+/// empty is fine; only a value that is *set and unusable* is a problem, because
+/// the lenient resolver would otherwise swap it for a default unnoticed — and
+/// for the `ENABLED` flags that default can be the opposite of what was meant.
+export function validateScheduledSweepsEnv(): string[] {
+  const problems: string[] = [];
+  const check = (name: string, ok: (raw: string) => boolean, expected: string) => {
+    const raw = process.env[name];
+    if (raw !== undefined && raw !== '' && !ok(raw)) {
+      problems.push(`${name}=${JSON.stringify(raw)} is not ${expected}`);
+    }
+  };
+  const flag = (raw: string) => raw === 'true' || raw === 'false';
+  const cron = (raw: string) => CRON_RE.test(raw.trim());
+  check('REPO_ACCESS_SYNC_ENABLED', flag, "'true' or 'false'");
+  check('REPO_ACCESS_SYNC_CRON', cron, 'a five-field cron expression such as "23 * * * *"');
+  check('REPO_DEPENDENCY_SCAN_ENABLED', flag, "'true' or 'false'");
+  check('REPO_DEPENDENCY_SCAN_CRON', cron, 'a five-field cron expression such as "0 4 * * *"');
+  return problems;
+}
+
+/// Throws one error naming every problem, so one failed boot fixes the file.
+export function assertScheduledSweepsEnv(): void {
+  const problems = validateScheduledSweepsEnv();
+  if (problems.length > 0) {
+    throw new Error(
+      `Invalid scheduled-sweep configuration in the environment:\n  - ${problems.join('\n  - ')}`
+    );
+  }
+}

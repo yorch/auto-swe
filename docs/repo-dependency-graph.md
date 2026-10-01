@@ -86,8 +86,9 @@ page lists these grouped by ref, so the graph tells you which repo is worth onbo
 waiting on it. When that repo is later onboarded, the next scan resolves the dependency and closes the
 suggestion out.
 
-A Temporal Schedule sweeps every active git repo (`repoDependency.scanCron` /
-`repoDependency.scanEnabled`), and an ADMIN can run the sweep on demand from the Connections page.
+A Temporal Schedule sweeps every active git repo (`REPO_DEPENDENCY_SCAN_CRON`, default `0 4 * * *`,
+and `REPO_DEPENDENCY_SCAN_ENABLED`, default `true` — environment variables the gateway reads at
+startup), and an ADMIN can run the sweep on demand from the Connections page.
 Per-repo failures are contained, so one unreachable repo cannot abort the sweep.
 
 ### Inference

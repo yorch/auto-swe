@@ -6,7 +6,7 @@ everything else is data an operator can change without a deploy.**
 
 | Tier | Lives in | Contents | Changed by |
 |---|---|---|---|
-| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `AWS_*`); workspace sizing and images (`WORKSPACE_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS` | The deploy pipeline |
+| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `AWS_*`); workspace sizing and images (`WORKSPACE_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`) | The deploy pipeline |
 | Integrations | Singleton config tables | GitHub, Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/studio/integrations` and `/govern/workflow-defaults` |
 | Policy | The setting registry | Operator knobs that used to be constants in the worker | Admins and grant holders, at `/govern/platform-settings` |
 
@@ -20,7 +20,10 @@ editable copy needs a restart to apply and would only add a second place to look
 deploy-time infrastructure choice, and workspace sizing and sidecar images describe the host the
 worker runs on. The worker validates those variables at boot and refuses to start on one it cannot
 use — a malformed image reference, a non-numeric limit, or `WORKSPACE_BLOCK_METADATA` set to anything
-but `true` or `false`. Past boot the resolvers fall back to defaults instead of throwing, because they
+but `true` or `false`. The gateway does the same for the sweep variables: a flag that is not `true` or
+`false`, or a cron expression that is not five fields. The two sweeps are environment variables rather
+than settings because the gateway applies them to Temporal once, at startup, so an edit in a form
+would not take effect until a restart. Past boot the resolvers fall back to defaults instead of throwing, because they
 run on paths (the scanners) that must never abort their caller.
 
 One workspace value stays in the registry: `workspace.gitHelperImage`, which cascades to team and

@@ -184,7 +184,7 @@ Integration credentials that an operator rotates during normal use are stored en
 |---|---|---|
 | `/studio/models` | LLM provider credentials and per-role model selection | No — resolved fresh per activity call |
 | `/studio/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs, GitHub App credentials | No |
-| `/studio/integrations → Slack` | Slack client ID/secret, signing secret, bot token | **Yes** for client ID/secret; No for bot token/signing secret |
+| `/studio/integrations → Slack` | Slack client ID/secret, signing secret, bot token | No — read on every request |
 | `/govern/workflow-defaults` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
 
 **Bootstrap order** (first deployment):
@@ -196,7 +196,7 @@ Integration credentials that an operator rotates during normal use are stored en
 6. Start the worker (`… up -d worker`, or `yarn dev:worker` locally). The worker reads all config from the DB.
 7. Optionally clear the `GITHUB_TOKEN` and `GITHUB_WEBHOOK_SECRET` env vars — the DB config is now the source of truth.
 
-> **"Restart required" changes.** Slack OAuth credentials take effect only after restarting the gateway; the UI shows a yellow banner reminding you. Everything set through environment variables — sign-in credentials, storage, workspace sizing — is read at process start, so changing one means restarting the service that reads it. All other admin-UI changes (GitHub token, webhook secret, Slack bot token/signing secret, workflow defaults) take effect on the next activity call.
+> **Restarts.** Everything set through environment variables — sign-in credentials, storage, workspace sizing, the scheduled-sweep settings — is read at process start, so changing one means restarting the service that reads it. Every admin-UI change (GitHub token and webhook secret, Slack credentials, workflow defaults) takes effect on the next request or activity call.
 
 ---
 
@@ -414,8 +414,8 @@ open https://app.example.com
 | Rotating LLM models        | Change model spec at `/studio/models` (takes effect on next activity call). A model with no price is recorded at $0 — price it on its `model_catalog_entries` row (see [model configuration](./model-configuration.md#model-catalog)). |
 | Rotating GitHub PAT        | `/studio/integrations → GitHub` → enter new token → Save. No restart required. |
 | Rotating Slack bot token   | `/studio/integrations → Slack` → enter new bot token → Save. No restart required. |
-| Rotating S3 credentials    | `/studio/integrations → Storage` → enter new key → Save. No restart required. |
-| Rotating OAuth app creds   | `/studio/integrations → GitHub or OAuth` → enter new secret → Save → restart gateway. |
+| Rotating S3 credentials    | Update `ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` (or `AWS_*`) in `.env` → restart the worker. |
+| Rotating OAuth app creds   | Update `GITHUB_CLIENT_SECRET` / `GOOGLE_CLIENT_SECRET` / `OKTA_CLIENT_SECRET` in `.env` → restart the gateway. |
 | Rotating secrets           | `BETTER_AUTH_SECRET` / `JWT_SECRET` invalidate all existing sessions/tokens. Communicate before rotating.        |
 | Sessions admin             | `/govern/sessions` (revoke any session); `/govern/api-tokens` (revoke PATs across all users).                   |
 | Shell-step audit           | `/govern/api-tokens` page exposes the prune control for `workflow_shell_audit` rows older than N days.         |
