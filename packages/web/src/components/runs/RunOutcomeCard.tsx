@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
+import { isAgentRunTemplate } from '@/lib/agentRun';
 import { isRecord } from '@/lib/utils';
+import { AgentRunOutcomeCard } from './AgentRunOutcomeCard';
 
 interface RunOutcomeCardProps {
   result: unknown;
@@ -53,6 +55,10 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
   }
 
   const name = templateName;
+
+  if (isAgentRunTemplate(name)) {
+    return <AgentRunOutcomeCard result={result} />;
+  }
 
   if (
     name === 'notion-content-draft' ||

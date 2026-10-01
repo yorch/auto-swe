@@ -29,6 +29,7 @@ import { SegmentedControl, type SegmentedOption } from '@/components/ui/Segmente
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
+import { useRerunAgentRun } from '@/hooks/useAgentRuns';
 import { useApprovals } from '@/hooks/useApprovals';
 import {
   useCancelWorkflowRun,
@@ -37,6 +38,7 @@ import {
   useRunDetail,
 } from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
+import { isAgentRunTemplate } from '@/lib/agentRun';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -713,7 +715,12 @@ export default function RunDetailPage({ params }: PageProps) {
     toggleFullTraces,
   } = useRunDetail(id ?? '');
   const cancelRun = useCancelWorkflowRun(id ?? '');
-  const retryRun = useRetryWorkRequest();
+  const genericRetry = useRetryWorkRequest();
+  const agentRerun = useRerunAgentRun();
+  // An agent run is re-run through its own endpoint: the generic retry rebuilds
+  // the request without its payload and answers 409 USE_AGENT_RUN_RERUN.
+  const isAgentRun = isAgentRunTemplate(run?.templateName);
+  const retryRun = isAgentRun ? agentRerun : genericRetry;
   const retried = useRetriedRun(
     retryRun.data?.workRequestId ?? null,
     retryRun.data?.temporalWorkflowId ?? null
@@ -891,7 +898,8 @@ export default function RunDetailPage({ params }: PageProps) {
               {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
             </Button>
           )}
-          {WORKFLOW_RUN_FAILURE_STATUSES.has(run.status as WorkflowRunStatus) &&
+          {(WORKFLOW_RUN_FAILURE_STATUSES.has(run.status as WorkflowRunStatus) ||
+            (isAgentRun && isTerminalWorkflowRunStatus(run.status))) &&
             run.workRequest && (
               <Button disabled={reRunLocked} onClick={handleReRun} size="sm" variant="secondary">
                 {retryRun.isPending ? 'Re-running…' : 'Re-run'}
@@ -918,12 +926,15 @@ export default function RunDetailPage({ params }: PageProps) {
               Re-run failed: {errMsg(retryRun.error, 'unknown error')}
             </Alert>
           )}
-          <Link
-            className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400"
-            href={`/workflows/library/${run.templateId}`}
-          >
-            View template →
-          </Link>
+          {/* The Agent Run template is hidden: its detail route answers 404 for everyone. */}
+          {!isAgentRun && (
+            <Link
+              className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400"
+              href={`/workflows/library/${run.templateId}`}
+            >
+              View template →
+            </Link>
+          )}
           <LayoutToggle onChange={setLayout} value={layout} />
         </div>
       </div>

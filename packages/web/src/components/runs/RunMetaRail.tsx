@@ -3,7 +3,9 @@
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
+import { classifyAgentRunFailure, isAgentRunTemplate } from '@/lib/agentRun';
 import { cn, formatCost, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
+import { AgentRunFailureNote } from './AgentRunOutcomeCard';
 import { AutonomyDecisionsPanel } from './AutonomyDecisionsPanel';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
 import { FailureCard } from './FailureCard';
@@ -43,6 +45,8 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
       ? new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()
       : null;
 
+  const isAgentRun = isAgentRunTemplate(run.templateName);
+  const agentFailure = isAgentRun ? classifyAgentRunFailure(failedStep?.error) : null;
   const totalTraces = run.traces?.length ?? 0;
   const cost = run.costUsdAccrued;
   const totalTokens = run.tokensInputTotal + run.tokensOutputTotal;
@@ -106,12 +110,17 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
           )}
           <MetaRow label="Template">
             <MonoValue>
-              <Link
-                className="text-ember-400 transition-colors hover:text-ember-600"
-                href={`/workflows/library/${run.templateId}`}
-              >
-                {run.templateName}
-              </Link>
+              {/* The Agent Run template is hidden; its route answers 404. */}
+              {isAgentRun ? (
+                run.templateName
+              ) : (
+                <Link
+                  className="text-ember-400 transition-colors hover:text-ember-600"
+                  href={`/workflows/library/${run.templateId}`}
+                >
+                  {run.templateName}
+                </Link>
+              )}
             </MonoValue>
           </MetaRow>
         </dl>
@@ -154,6 +163,11 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
       {/* Failure card */}
       {failedStep && (
         <RailSection>
+          {agentFailure && (
+            <div className="mb-2">
+              <AgentRunFailureNote failure={agentFailure} />
+            </div>
+          )}
           <FailureCard
             onJumpToFailure={onJumpToFailure}
             onReRun={onReRun}
