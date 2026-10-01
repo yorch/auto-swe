@@ -5,7 +5,7 @@ import type {
   EvalDatasetSummary,
   EvalResultDto,
 } from '@auto-swe/shared/types/api';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 export interface ScannerPattern {
@@ -230,6 +230,8 @@ export interface PlatformUsage {
     outputTokens: number;
   }[];
   since: string;
+  /** Exclusive end of the window: the end of the current UTC day. */
+  until: string;
   topRuns: {
     costUsd: number;
     externalTicketId: string | null;
@@ -248,13 +250,16 @@ export interface PlatformUsage {
 
 export function usePlatformUsage(windowDays: number) {
   return useQuery({
+    // Keep the previous window on screen while the next one loads.
+    placeholderData: keepPreviousData,
     queryFn: () =>
       api
         .get<{ data: PlatformUsage }>(`/api/v1/platform/usage?window=${windowDays}`)
         .then((r) => r.data),
     queryKey: ['platform-usage', windowDays],
-    // One aggregate per day of the window — not worth polling faster than spend moves.
-    refetchInterval: 60_000,
+    // Not polled: each report costs a full-window scan plus one query per day,
+    // and spend does not move fast enough to need it. Refetched on focus.
+    staleTime: 60_000,
   });
 }
 

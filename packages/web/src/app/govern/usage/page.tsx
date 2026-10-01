@@ -122,13 +122,9 @@ export default function UsagePage() {
         <LoadingState />
       ) : (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
             <Stat label="Spend" tone="ember" value={formatCost(data.totals.costUsd)} />
             <Stat label="LLM calls" value={data.totals.calls.toLocaleString()} />
-            <Stat
-              label="Tokens in / out"
-              value={`${formatTokens(data.totals.inputTokens)} / ${formatTokens(data.totals.outputTokens)}`}
-            />
             <Stat
               label="Error rate"
               tone={data.totals.errors > 0 ? 'brick' : 'default'}
@@ -162,7 +158,7 @@ export default function UsagePage() {
 
           <Card className="p-0 overflow-hidden">
             <CardHeader className="px-4 pt-4">
-              <CardTitle>Costliest runs</CardTitle>
+              <CardTitle>Costliest runs — spend in this window</CardTitle>
             </CardHeader>
             <Table>
               <THead className="bg-ink-800">

@@ -44,6 +44,7 @@ const usage: PlatformUsage = {
   ],
   totals: bucket,
   unattributed: { calls: 2, costUsd: 0.4 },
+  until: '2026-10-01T00:00:00.000Z',
   windowDays: 30,
 };
 

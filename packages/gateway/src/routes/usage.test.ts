@@ -3,8 +3,9 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { usageRoutes } from './usage.js';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 const EMPTY_AGG = {
-  _avg: { durationMs: null },
   _count: { _all: 0 },
   _sum: { costUsd: null, inputTokens: null, outputTokens: null },
 };
@@ -13,7 +14,6 @@ function newMockPrisma() {
   return {
     agentTrace: {
       aggregate: vi.fn().mockResolvedValue(EMPTY_AGG),
-      count: vi.fn().mockResolvedValue(0),
       groupBy: vi.fn().mockResolvedValue([]),
     },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
@@ -36,6 +36,26 @@ async function buildApp(role: 'ADMIN' | 'LEAD' = 'ADMIN') {
 
 const AUTH = { authorization: 'Bearer fake' };
 
+/** One (model, agent, activity) group as Prisma returns it. */
+function group(
+  model: string | null,
+  agentKey: string,
+  nodeId: string,
+  calls: number,
+  costUsd: number,
+  durationMs: number
+) {
+  return {
+    _count: { _all: calls, durationMs: calls },
+    _sum: { costUsd, durationMs, inputTokens: calls * 100, outputTokens: calls * 10 },
+    agentKey,
+    model,
+    nodeId,
+  };
+}
+
+type GroupByArgs = { by: string[]; where: Record<string, unknown> };
+
 beforeEach(() => vi.clearAllMocks());
 
 describe('usageRoutes GET /usage', () => {
@@ -55,7 +75,7 @@ describe('usageRoutes GET /usage', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('returns one daily bucket per UTC day of the window, oldest first', async () => {
+  it('bounds every query by the same whole-UTC-day window the bars cover', async () => {
     const { app, prisma } = await buildApp();
     const res = await app.inject({
       headers: AUTH,
@@ -64,48 +84,85 @@ describe('usageRoutes GET /usage', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    const { daily, since } = res.json().data;
-    expect(daily).toHaveLength(7);
-    expect(daily[0].date).toBe(since.slice(0, 10));
-    expect(daily[6].date).toBe(new Date().toISOString().slice(0, 10));
-    // Only LLM rows are summed — tool calls and activity events carry no cost.
-    for (const [args] of prisma.agentTrace.aggregate.mock.calls) {
+    const { daily, since, until } = res.json().data;
+    const sinceMs = Date.parse(since);
+    const untilMs = Date.parse(until);
+    expect(untilMs - sinceMs).toBe(7 * DAY_MS);
+    expect(sinceMs % DAY_MS).toBe(0);
+    expect(daily.map((d: { date: string }) => d.date)).toEqual(
+      Array.from({ length: 7 }, (_, i) => new Date(sinceMs + i * DAY_MS).toISOString().slice(0, 10))
+    );
+    // Window-wide queries share the bars' upper bound, so totals == sum(bars).
+    for (const [args] of prisma.agentTrace.groupBy.mock.calls) {
+      expect(args.where.createdAt).toEqual({ gte: new Date(sinceMs), lt: new Date(untilMs) });
       expect(args.where.type).toBe('llm_response');
     }
+    const dayBounds = prisma.agentTrace.aggregate.mock.calls
+      .map(([args]) => args.where)
+      .filter((w) => w.runId === undefined)
+      .map((w) => [w.createdAt.gte.getTime(), w.createdAt.lt.getTime()]);
+    expect(dayBounds).toEqual(
+      Array.from({ length: 7 }, (_, i) => [sinceMs + i * DAY_MS, sinceMs + (i + 1) * DAY_MS])
+    );
   });
 
-  it('breaks spend down by model with error counts, and ranks the costliest runs', async () => {
+  it('rolls one grouping up into totals and per-model, per-agent, per-activity breakdowns', async () => {
     const { app, prisma } = await buildApp();
-    prisma.agentTrace.groupBy.mockImplementation(
-      async (args: { by: string[]; where: Record<string, unknown>; take?: number }) => {
-        const failedOnly = 'error' in args.where;
-        if (args.by[0] === 'model') {
-          return failedOnly
-            ? [{ _count: { _all: 2 }, model: 'anthropic/claude-opus-4-8' }]
-            : [
-                {
-                  _avg: { durationMs: 900 },
-                  _count: { _all: 3 },
-                  _sum: { costUsd: 0.5, inputTokens: 100, outputTokens: 10 },
-                  model: 'openai/text-embedding-3-large',
-                },
-                {
-                  _avg: { durationMs: 4000 },
-                  _count: { _all: 10 },
-                  _sum: { costUsd: 4.25, inputTokens: 9000, outputTokens: 800 },
-                  model: 'anthropic/claude-opus-4-8',
-                },
-              ];
-        }
-        if (args.by[0] === 'runId') {
-          return [
-            { _sum: { costUsd: 3, inputTokens: 5, outputTokens: 1 }, runId: 'run-1' },
-            // A run deleted between the two queries is skipped, not rendered empty.
-            { _sum: { costUsd: 1, inputTokens: 1, outputTokens: 1 }, runId: 'run-gone' },
-          ];
-        }
+    prisma.agentTrace.groupBy.mockImplementation(async (args: GroupByArgs) => {
+      if (args.by[0] === 'runId') {
         return [];
       }
+      if ('error' in args.where) {
+        // One of the implementer's calls failed after 30 s.
+        return [
+          {
+            ...group(
+              'anthropic/claude-opus-4-8',
+              'implementer',
+              'executeImplementation',
+              1,
+              0,
+              30_000
+            ),
+          },
+        ];
+      }
+      return [
+        group('anthropic/claude-opus-4-8', 'implementer', 'executeImplementation', 3, 4, 36_000),
+        group('anthropic/claude-opus-4-8', 'reviewer', 'runReviewNetwork', 1, 1, 2_000),
+        group('openai/text-embedding-3-large', 'embedding', 'executeImplementation', 2, 0.5, 100),
+        // Same agent and activity, unresolved model: must not merge with any real model.
+        group(null, 'implementer', 'executeImplementation', 1, 0, 1_000),
+      ];
+    });
+
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/usage' });
+    const { byActivity, byAgent, byModel, totals } = res.json().data;
+
+    expect(totals).toMatchObject({ calls: 7, costUsd: 5.5, errors: 1 });
+    expect(byModel.map((m: { model: string | null }) => m.model)).toEqual([
+      'anthropic/claude-opus-4-8',
+      'openai/text-embedding-3-large',
+      null,
+    ]);
+    // The 30 s failure is excluded from latency: (36 000 - 30 000 + 2 000) / 3 successes.
+    expect(byModel[0]).toMatchObject({ avgDurationMs: 8_000 / 3, calls: 4, errors: 1 });
+    expect(byAgent.find((a: { agentKey: string }) => a.agentKey === 'implementer')).toMatchObject({
+      calls: 4,
+      errors: 1,
+    });
+    expect(byActivity[0]).toMatchObject({ calls: 6, nodeId: 'executeImplementation' });
+  });
+
+  it('ranks the costliest runs and skips one deleted between queries', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agentTrace.groupBy.mockImplementation(async (args: GroupByArgs) =>
+      args.by[0] === 'runId'
+        ? [
+            { _sum: { costUsd: 3, inputTokens: 5, outputTokens: 1 }, runId: 'run-1' },
+            { _sum: { costUsd: 1, inputTokens: 1, outputTokens: 1 }, runId: 'run-gone' },
+          ]
+        : []
     );
     prisma.workflowRun.findMany.mockResolvedValue([
       {
@@ -119,16 +176,15 @@ describe('usageRoutes GET /usage', () => {
 
     const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/usage' });
 
-    const { byModel, topRuns } = res.json().data;
-    expect(byModel.map((m: { model: string }) => m.model)).toEqual([
-      'anthropic/claude-opus-4-8',
-      'openai/text-embedding-3-large',
-    ]);
-    expect(byModel[0]).toMatchObject({ calls: 10, costUsd: 4.25, errors: 2 });
-    expect(byModel[1]).toMatchObject({ errors: 0 });
-    expect(topRuns).toEqual([
+    expect(res.json().data.topRuns).toEqual([
       expect.objectContaining({ costUsd: 3, externalTicketId: 'JIRA-1', runId: 'run-1' }),
     ]);
+    const topCall = prisma.agentTrace.groupBy.mock.calls.find(([a]) => a.by[0] === 'runId')?.[0];
+    expect(topCall).toMatchObject({
+      orderBy: { _sum: { costUsd: 'desc' } },
+      take: 10,
+      where: { costUsd: { gt: 0 }, runId: { not: null } },
+    });
   });
 
   it('reports spend from workflows that keep no run separately', async () => {

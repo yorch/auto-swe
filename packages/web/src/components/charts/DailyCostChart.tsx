@@ -13,6 +13,18 @@ import {
   TOOLTIP_CURSOR_FILL,
 } from './chartChrome';
 
+const usdTick = new Intl.NumberFormat(undefined, {
+  currency: 'USD',
+  maximumSignificantDigits: 2,
+  notation: 'compact',
+  style: 'currency',
+});
+
+/** `$0.0025` and `$1234.5` as `$0.0025` and `$1.2K` — short enough for an axis. */
+function formatUsdTick(v: number): string {
+  return usdTick.format(v);
+}
+
 interface Props {
   /** One row per UTC day, oldest first; `date` is `YYYY-MM-DD`. */
   data: { date: string; costUsd: number; calls: number }[];
@@ -34,7 +46,7 @@ export function DailyCostChart({ data }: Props) {
           tickFormatter={formatDateLabel}
           {...AXIS_COMMON_PROPS}
         />
-        <YAxis tickFormatter={(v: number) => `$${v}`} {...AXIS_COMMON_PROPS} />
+        <YAxis tickFormatter={formatUsdTick} {...AXIS_COMMON_PROPS} />
         <ChartTooltip
           cursor={{ fill: TOOLTIP_CURSOR_FILL }}
           formatter={(value, _name, item) => [

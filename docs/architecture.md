@@ -558,11 +558,12 @@ falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
 mandatory `finally` — is in [AGENTS.md §6](../AGENTS.md#agent-observability-agenttracer).
 
-**Platform usage.** Every LLM and embedding call writes one `llm_response` row carrying its model,
-tokens, and cost — including calls from workflows that keep no `WorkflowRun` — so those rows are the
-one complete record of spend. `GET /api/v1/platform/usage?window=7|30|90` (ADMIN) aggregates them
+**Platform usage.** Every LLM call and every successful embedding call writes one `llm_response`
+row carrying its model, tokens, and cost — including calls from workflows that keep no `WorkflowRun`
+— so those rows are the one complete record of spend. `GET /api/v1/platform/usage?window=7|30|90` (ADMIN) aggregates them
 into totals, a per-UTC-day series, breakdowns by model, agent, and activity (calls, tokens, average
-latency, error rate, cost), the spend from workflows without a run, and the ten costliest runs. The
+latency of the calls that succeeded, error rate, cost), the spend from workflows without a run,
+and the ten runs that spent most inside the window. The
 dashboard renders it at `/govern/usage`. It is ADMIN-only because rows without a run carry no team to
 scope them by.
 
@@ -701,6 +702,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **The usage report is platform-wide only.** It has no per-team, per-org, or per-repository
   breakdown: a trace reaches its team only through run → request → connection, which Prisma cannot
   group by. Its daily series is one aggregate per UTC day, so a 90-day window costs 90 small queries.
+  A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call
+  succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
+  so it counts as a failure.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a
