@@ -25,6 +25,11 @@ function newMockPrisma() {
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: { findUnique: vi.fn() },
+    // Empty: a saved spec is checked against the catalog plus the built-in table.
+    modelCatalogEntry: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     // P5: org-scoped agent creation validates the org exists via this lookup.
     organization: { findUnique: vi.fn() },
     // Channel assistant Phase 1: CHANNEL-scoped agent creation validates the channel exists.
@@ -372,6 +377,7 @@ describe('agentLibraryRoutes — admin', () => {
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
       id: 'v2',
       key: 'reviewer',
+      modelSpec: 'anthropic/claude-opus-4-8', // a built-in model: priced, so no warning
       skillRefs: [],
       version: 2,
     });
@@ -383,9 +389,52 @@ describe('agentLibraryRoutes — admin', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.version).toBe(2);
+    expect(JSON.parse(res.payload)).not.toHaveProperty('catalogWarnings');
     expect(mockPrisma.agent.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ version: 2 }) })
     );
+    await app.close();
+  });
+
+  it('warns, without refusing, when the saved model is not in the catalog', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue({
+      credentialId: null,
+      description: null,
+      id: '33333333-3333-4333-8333-333333333333',
+      inheritsModelFrom: null,
+      isBuiltIn: true,
+      isVerified: true,
+      key: 'reviewer',
+      modelSpec: null,
+      name: 'Reviewer',
+      origin: 'swe-starter',
+      scope: 'GLOBAL',
+      systemPrompt: null,
+      teamId: null,
+      toolKeys: null,
+      version: 1,
+      workflowTemplateId: null,
+    });
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 }); // maxVersion = 1
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', key: 'reviewer', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'v2',
+      key: 'reviewer',
+      modelSpec: 'openai/gpt-5-5',
+      skillRefs: [],
+      version: 2,
+    });
+    const res = await app.inject({
+      body: { modelSpec: 'openai/gpt-5-5' },
+      headers: AUTH,
+      method: 'PUT',
+      url: '/api/v1/platform/agent-library/33333333-3333-4333-8333-333333333333',
+    });
+    expect(res.statusCode).toBe(200);
+    const [warning] = JSON.parse(res.payload).catalogWarnings;
+    expect(warning).toContain('recorded at $0');
+    expect(warning).toContain("Did you mean 'openai/gpt-5.5'?");
     await app.close();
   });
 

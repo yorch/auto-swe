@@ -50,20 +50,20 @@ applies to one file belongs in a skill, not in the context of every session.
 | Runtime               | Node.js                                | >=26.0.0               |
 | Package Manager       | Yarn 4 (Berry, via corepack from npm)  | 4.18.0                 |
 | Language              | TypeScript                             | 7.0.2                  |
-| HTTP Framework        | Fastify                                | 5.12.1                 |
+| HTTP Framework        | Fastify                                | 5.12.5                 |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.2 + admin-tools 1.31 + ui 2.53.3 |
-| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.22.0                 |
-| Agent Framework       | Mastra                                 | 1.60.0                 |
+| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.24.0                 |
+| Agent Framework       | Mastra                                 | 1.73.0                 |
 | LLM SDK               | Vercel AI SDK + provider adapters      | ai 7.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
-| ORM                   | Prisma                                 | 7.9.1                  |
+| ORM                   | Prisma                                 | 7.10.0                  |
 | Database              | PostgreSQL 18 + pgvector               | pgvector/pgvector:pg18 |
-| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.3.1 / 19.2.8 / 4.3.3 |
-| Public docs site      | Astro + Starlight                      | 7.3.2 / 0.42.0        |
-| Server State          | TanStack Query                         | 5.101.4                |
+| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.3.8 / 19.3.0 / 4.3.3 |
+| Public docs site      | Astro + Starlight                      | 7.3.5 / 0.42.5        |
+| Server State          | TanStack Query                         | 5.104.0                |
 | Client State          | Zustand                                | 5.0.15                 |
-| Validation            | Zod                                    | 4.4.3                  |
+| Validation            | Zod                                    | 4.6.5                  |
 | Testing               | Vitest                                 | 4.1.11                  |
-| Lint / Format         | Biome                                  | 2.5.9                 |
+| Lint / Format         | Biome                                  | 2.5.15                 |
 | Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.33.1 |
 
 ---
@@ -652,17 +652,22 @@ and §8 below.
 
 ### Cost Tracking
 
-`packages/worker/src/lib/costTracking.ts` prices each call from `BUILTIN_MODELS` in
-`packages/shared/src/lib/builtinModels.ts` (USD per MTok). Unknown models fall back to zero cost and
-emit `llm.cost_pricing_known=false` on the OTel span — usage is still recorded, so runs are never
-lost to a missing price. Add an entry there as agents are routed to new models —
-`builtinModels.test.ts` fails the build when a seeded agent default, either side of a
-`PREVIOUS_DEFAULT_MODEL_SPECS` pair, or the seeded embedding default has none — or set a per-model
-env override:
+`packages/worker/src/lib/costTracking.ts` prices each call (USD per MTok) from the **model
+catalog** (`model_catalog_entries`), falling back to `BUILTIN_MODELS` in
+`packages/shared/src/lib/builtinModels.ts`; the span's `llm.cost_price_source` says which. Unknown
+models fall back to zero cost and emit `llm.cost_pricing_known=false` — usage is still recorded, so
+runs are never lost to a missing price. The catalog is read once per config-cache window, and
+pricing **never throws**: an unreadable catalog serves the last good read, else the built-in table,
+and is not queried again for one window. Add a model to `BUILTIN_MODELS` as agents are routed to it
+— `builtinModels.test.ts` fails the build when a seeded agent default, either side of a
+`PREVIOUS_DEFAULT_MODEL_SPECS` pair, or the seeded embedding default has none.
 
-```
-MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumerics → _
-```
+`MODEL_PRICE_*` environment overrides are **not read**; the worker names any it finds at startup.
+Admins set prices through `/api/v1/platform/model-catalog` (`routes/modelCatalog.ts`); saving an
+agent version or the embedding config with an unpriced, deprecated, retired or wrong-kind model
+returns `catalogWarnings` — advisory, never a refusal.
+Pricing logs go through `logWarn`/`logError` (`lib/activityLog.ts`), never `log` directly:
+embedding usage is priced outside an activity too, where `log` throws.
 
 Pricing keys off the resolved `provider/model` spec only — it is decoupled from agent identity,
 which is retained purely for attribution and telemetry.

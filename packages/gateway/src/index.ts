@@ -23,7 +23,6 @@ import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import {
   warnIfGitHubDotComWebhookSecret,
-  warnIfRepoIdentityIndexMissing,
   warnIfReposOnUnusableHosts,
 } from './lib/repoIdentityIndexCheck.js';
 import { parseTrustProxy } from './lib/trustProxy.js';
@@ -53,6 +52,7 @@ import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { mcpConnectionRoutes } from './routes/mcpConnections.js';
 import { meRoutes } from './routes/me.js';
+import { modelCatalogRoutes } from './routes/modelCatalog.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
 import { organizationRoutes } from './routes/organizations.js';
 import { orgBudgetRoutes } from './routes/orgBudget.js';
@@ -153,10 +153,6 @@ async function start() {
   // config) so every deploy automatically picks up new or updated built-ins.
   await syncBuiltins(app.prisma);
 
-  // The migration that makes repository identity case-insensitive skips its
-  // index when case-only duplicates exist, and `migrate deploy` hides the
-  // warning it raises. Say so here, where an operator reads the logs.
-  await warnIfRepoIdentityIndexMissing(app.prisma, app.log);
   await warnIfGitHubDotComWebhookSecret(app.prisma, app.log);
   await warnIfReposOnUnusableHosts(app.prisma, app.log);
 
@@ -407,6 +403,7 @@ async function start() {
   await app.register(modelConfigRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(modelCatalogRoutes, { prefix: '/api/v1/platform' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });

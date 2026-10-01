@@ -13,6 +13,7 @@ import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
+import { ignoredPriceOverrideVars } from './lib/costTracking.js';
 import { initMetrics } from './lib/metrics.js';
 import { initTemporalClient } from './lib/temporalClient.js';
 
@@ -48,6 +49,18 @@ async function run() {
   // must not throw), so a typo in the deploy environment would otherwise run
   // with different limits than the operator wrote. Fail the boot instead.
   assertWorkspaceInfraEnv();
+
+  // MODEL_PRICE_* once overrode a model's price; the model catalog replaced it.
+  // Name any still set, so a deployment that relied on one learns it is no
+  // longer read instead of silently pricing at the catalog's rate.
+  const ignoredPriceOverrides = ignoredPriceOverrideVars();
+  if (ignoredPriceOverrides.length > 0) {
+    console.warn(
+      `Ignoring ${ignoredPriceOverrides.join(', ')}: per-model price overrides are no longer read. ` +
+        'Set the price in the model catalog instead: PUT /api/v1/platform/model-catalog/<id> for a ' +
+        'listed model, POST /api/v1/platform/model-catalog for one it lacks.'
+    );
+  }
 
   // Every step the worker promises in BUILTIN_STEPS must have registry
   // metadata, or validateSpec flags a shipped template as UNKNOWN_STEP and the

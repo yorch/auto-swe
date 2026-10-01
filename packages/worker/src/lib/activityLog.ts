@@ -5,3 +5,9 @@ export function logError(message: string, meta?: Record<string, unknown>): void 
     log.error(message, meta ?? {});
   }
 }
+
+export function logWarn(message: string, meta?: Record<string, unknown>): void {
+  if (asyncLocalStorage.getStore()) {
+    log.warn(message, meta ?? {});
+  }
+}

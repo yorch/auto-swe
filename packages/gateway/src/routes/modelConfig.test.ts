@@ -293,3 +293,41 @@ describe('modelConfigRoutes — team-scoped credentials', () => {
     await app.close();
   });
 });
+
+describe('PUT /embedding-config — model catalog warnings', () => {
+  async function saveEmbeddingSpec(modelSpec: string) {
+    const { app, mockPrisma } = await buildAdminApp();
+    Object.assign(mockPrisma, {
+      embeddingConfig: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        upsert: vi.fn(async () => ({ id: 'default', modelSpec })),
+      },
+      modelCatalogEntry: {
+        findMany: vi.fn().mockResolvedValue([]),
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+    });
+    const res = await app.inject({
+      body: { modelSpec },
+      headers: AUTH,
+      method: 'PUT',
+      url: '/api/v1/platform/embedding-config',
+    });
+    await app.close();
+    return res;
+  }
+
+  it('saves a built-in embedding model without warnings', async () => {
+    const res = await saveEmbeddingSpec('openai/text-embedding-3-large');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).not.toHaveProperty('catalogWarnings');
+  });
+
+  it('saves a chat model, but warns it is not an embedding model', async () => {
+    const res = await saveEmbeddingSpec('anthropic/claude-opus-5-5');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().catalogWarnings).toEqual([
+      "'anthropic/claude-opus-5-5' is cataloged as a chat model, but is being used as an embedding model.",
+    ]);
+  });
+});

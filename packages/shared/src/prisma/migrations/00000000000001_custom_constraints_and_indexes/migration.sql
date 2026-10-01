@@ -69,11 +69,15 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── Connections: git_repo identity uniqueness (partial) ─────────────────────
--- org/repo are nullable so non-git connection types (e.g. `mcp`) need not set
--- them; uniqueness applies only to git_repo rows. Prisma can't express a
--- partial `@@unique`, so it lives here.
-CREATE UNIQUE INDEX IF NOT EXISTS "connections_git_repo_org_repo_uidx"
-    ON "connections" ("organization_name", "repo_name")
+-- A git_repo connection is identified by (host, owner, name). org/repo are
+-- nullable so non-git connection types (e.g. `mcp`) need not set them;
+-- uniqueness applies only to git_repo rows. The host is the web base override,
+-- normalised by the application to an origin, with NULL meaning the instance's
+-- own host: `acme/api` on github.com and on a GitHub Enterprise server are
+-- different repositories. GitHub compares owner and name case-insensitively, so
+-- the index does too. Partial and expression-based, so Prisma can't express it.
+CREATE UNIQUE INDEX IF NOT EXISTS "connections_git_repo_host_org_repo_ci_uidx"
+    ON "connections" (COALESCE("github_url", ''), lower("organization_name"), lower("repo_name"))
     WHERE "type" = 'git_repo';
 
 -- ── Agent library: one row per (key, version) at a scope ─────────────────────
