@@ -83,6 +83,13 @@ export function formatCost(usdAmount: number | null): string {
   return usd().format(usdAmount);
 }
 
+/** An exact amount stored in USD cents — budget caps and spend, where `$0.00`
+ *  is a real figure. `formatCost` instead renders zero as "—" ("no cost
+ *  recorded") and is for computed model costs. */
+export function formatCents(cents: number): string {
+  return usd().format(cents / 100);
+}
+
 const compact = lazy(
   () => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1, notation: 'compact' })
 );
