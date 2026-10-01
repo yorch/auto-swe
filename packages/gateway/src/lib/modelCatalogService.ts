@@ -5,6 +5,7 @@ import {
   builtinModelSpec,
 } from '@auto-swe/shared/lib/builtinModels';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
 /**
  * Model-catalog logic shared by the catalog routes and the saves that name a
@@ -157,10 +158,14 @@ export async function findUnpricedSpecs(
 ): Promise<UnpricedSpec[]> {
   const since = new Date(now.getTime() - UNPRICED_TRACE_LOOKBACK_DAYS * 86_400_000);
   const [agents, embedding, traces, priced] = await Promise.all([
-    prisma.agent.findMany({
-      select: { key: true, modelSpec: true },
-      where: { isActive: true, modelSpec: { not: null } },
-    }),
+    // Every scope on purpose: an unpriced model is a platform-wide gap, and this
+    // report is ADMIN-only.
+    runUnscoped('admin reports unpriced models across every agent scope', ['Agent'], () =>
+      prisma.agent.findMany({
+        select: { key: true, modelSpec: true },
+        where: { isActive: true, modelSpec: { not: null } },
+      })
+    ),
     prisma.embeddingConfig.findUnique({ select: { modelSpec: true }, where: { id: 'default' } }),
     prisma.agentTrace.findMany({
       distinct: ['model'],

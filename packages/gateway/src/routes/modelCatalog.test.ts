@@ -54,19 +54,21 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     configAuditLog: { create: audit },
     embeddingConfig: { findUnique: vi.fn().mockResolvedValue(null) },
     modelCatalogEntry: {
-      create: vi.fn(async ({ data }: { data: Omit<Row, 'id'> }) => {
-        if (rows.some((r) => r.provider === data.provider && r.modelId === data.modelId)) {
-          throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      create: vi.fn(
+        async ({ data }: { data: Omit<Row, 'id' | 'kind' | 'status'> & Partial<Row> }) => {
+          if (rows.some((r) => r.provider === data.provider && r.modelId === data.modelId)) {
+            throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+          }
+          const row = {
+            id: '00000000-0000-4000-a000-0000000000d1',
+            kind: 'CHAT',
+            status: 'ACTIVE',
+            ...data,
+          };
+          rows.push(row);
+          return row;
         }
-        const row = {
-          id: '00000000-0000-4000-a000-0000000000d1',
-          kind: 'CHAT',
-          status: 'ACTIVE',
-          ...data,
-        };
-        rows.push(row);
-        return row;
-      }),
+      ),
       delete: vi.fn(async ({ where }: { where: { id: string } }) => {
         rows.splice(
           rows.findIndex((r) => r.id === where.id),
