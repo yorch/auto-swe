@@ -1,5 +1,8 @@
+import { betterAuth } from 'better-auth';
+import { memoryAdapter } from 'better-auth/adapters/memory';
+import { genericOAuth } from 'better-auth/plugins/generic-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchGhesUserInfo } from './githubEnterpriseAuth.js';
+import { fetchGhesUserInfo, resolveGithubSignIn } from './githubEnterpriseAuth.js';
 
 const API = 'https://ghe.example.com/api/v3';
 const HOST = 'ghe.example.com';
@@ -32,6 +35,7 @@ function serve(emails: unknown, user: Record<string, unknown> = profile) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('fetchGhesUserInfo', () => {
@@ -164,12 +168,255 @@ describe('fetchGhesUserInfo', () => {
     expect(line).toContain('ghe.example.com');
     expect(line).toContain('primary');
     expect(line).not.toContain('tok-secret-123');
-    warn.mockRestore();
   });
 
   it('refuses the sign-in instead of throwing when the network fails', async () => {
     mockFetch(() => Promise.reject(new TypeError('fetch failed')));
 
     expect(await fetchGhesUserInfo('tok', API, HOST)).toBeNull();
+  });
+});
+
+const CREDS = { clientId: 'cid', clientSecret: 'sec' };
+const GITHUB_API = 'https://api.github.com';
+
+function gheConfig(input: { baseUrl: string; apiUrl?: string }) {
+  const resolved = resolveGithubSignIn({
+    ...CREDS,
+    apiUrl: input.apiUrl ?? GITHUB_API,
+    baseUrl: input.baseUrl,
+  });
+  if (resolved.mode !== 'ghe') {
+    throw new Error(`expected ghe mode, got ${resolved.mode}`);
+  }
+  return resolved.config;
+}
+
+describe('resolveGithubSignIn', () => {
+  it.each([
+    ['https://github.com'],
+    ['https://github.com/'],
+    ['https://GitHub.com'],
+    ['https://github.com.'],
+  ])('uses the built-in provider for %s', (baseUrl) => {
+    expect(resolveGithubSignIn({ ...CREDS, apiUrl: GITHUB_API, baseUrl })).toEqual({
+      clientId: 'cid',
+      clientSecret: 'sec',
+      mode: 'builtin',
+    });
+  });
+
+  it.each([
+    [null, 'sec'],
+    ['cid', null],
+    [null, null],
+  ])('registers nothing without both credentials (%s, %s)', (clientId, clientSecret) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(
+      resolveGithubSignIn({
+        apiUrl: GITHUB_API,
+        baseUrl: 'https://ghe.example.com',
+        clientId,
+        clientSecret,
+      })
+    ).toEqual({ mode: 'none' });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('points authorize and token at the GHE host under /login/oauth', () => {
+    const config = gheConfig({ baseUrl: 'https://ghe.example.com' });
+
+    expect(config).toMatchObject({
+      authorizationUrl: 'https://ghe.example.com/login/oauth/authorize',
+      clientId: 'cid',
+      clientSecret: 'sec',
+      pkce: false,
+      providerId: 'github',
+      scopes: ['read:user', 'user:email'],
+      tokenUrl: 'https://ghe.example.com/login/oauth/access_token',
+    });
+  });
+
+  it('never produces a double slash from a trailing-slash base URL', () => {
+    const config = gheConfig({ baseUrl: 'https://ghe.example.com/' });
+
+    expect(config.authorizationUrl).toBe('https://ghe.example.com/login/oauth/authorize');
+    expect(config.tokenUrl).toBe('https://ghe.example.com/login/oauth/access_token');
+  });
+
+  it('drops credentials embedded in the base URL', () => {
+    const config = gheConfig({ baseUrl: 'https://user:pw@ghe.example.com' });
+
+    expect(config.authorizationUrl).toBe('https://ghe.example.com/login/oauth/authorize');
+    expect(JSON.stringify(config)).not.toContain('pw@');
+  });
+
+  it('derives {base}/api/v3 for the profile when the API URL is still the github.com default', async () => {
+    const spy = serve([{ email: 'o@example.com', primary: true, verified: true }]);
+    const config = gheConfig({ baseUrl: 'https://ghe.example.com' });
+
+    await config.getUserInfo?.({ accessToken: 'tok' });
+
+    expect(spy.mock.calls.map(([url]) => url)).toEqual(
+      expect.arrayContaining([
+        'https://ghe.example.com/api/v3/user',
+        'https://ghe.example.com/api/v3/user/emails',
+      ])
+    );
+  });
+
+  it('keeps an explicit API URL and strips its trailing slash', async () => {
+    const spy = serve([{ email: 'o@example.com', primary: true, verified: true }]);
+    const config = gheConfig({
+      apiUrl: 'https://api.ghe.example.com/',
+      baseUrl: 'https://ghe.example.com',
+    });
+
+    await config.getUserInfo?.({ accessToken: 'tok' });
+
+    expect(spy.mock.calls.map(([url]) => url)).toEqual(
+      expect.arrayContaining([
+        'https://api.ghe.example.com/user',
+        'https://api.ghe.example.com/user/emails',
+      ])
+    );
+  });
+
+  it('namespaces the account id with the lower-cased host and any non-default port', async () => {
+    serve([{ email: 'o@example.com', primary: true, verified: true }]);
+    const config = gheConfig({ baseUrl: 'https://GHE.Example.com:8443' });
+
+    const info = await config.getUserInfo?.({ accessToken: 'tok' });
+
+    expect(info?.id).toBe('ghe.example.com:8443:42');
+  });
+
+  it('refuses the sign-in when the token response carries no access token', async () => {
+    const spy = serve([]);
+    const config = gheConfig({ baseUrl: 'https://ghe.example.com' });
+
+    expect(await config.getUserInfo?.({})).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it.each([['ftp://ghe.example.com'], ['not a url'], ['']])(
+    'registers nothing and logs why for the invalid base URL %j',
+    (baseUrl) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      expect(resolveGithubSignIn({ ...CREDS, apiUrl: GITHUB_API, baseUrl })).toEqual({
+        mode: 'none',
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('registers nothing and logs why for an invalid API URL', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(
+      resolveGithubSignIn({
+        ...CREDS,
+        apiUrl: 'ftp://api.example.com',
+        baseUrl: 'https://ghe.example.com',
+      })
+    ).toEqual({ mode: 'none' });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('resolveGithubSignIn URL handling', () => {
+  it('keeps a path prefix on the base URL for every endpoint', () => {
+    const config = gheConfig({ baseUrl: 'https://proxy.example.com/ghe' });
+
+    expect(config.authorizationUrl).toBe('https://proxy.example.com/ghe/login/oauth/authorize');
+    expect(config.tokenUrl).toBe('https://proxy.example.com/ghe/login/oauth/access_token');
+  });
+
+  it('drops a query string and fragment from the base URL', () => {
+    const config = gheConfig({ baseUrl: 'https://ghe.example.com/?next=/x#frag' });
+
+    expect(config.authorizationUrl).toBe('https://ghe.example.com/login/oauth/authorize');
+    expect(config.tokenUrl).toBe('https://ghe.example.com/login/oauth/access_token');
+  });
+
+  it('warns, without failing, when a URL is plain http', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const config = gheConfig({ baseUrl: 'http://ghe.example.com' });
+
+    expect(config.authorizationUrl).toBe('http://ghe.example.com/login/oauth/authorize');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('plain http');
+  });
+
+  it('does not warn when both URLs are https', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    gheConfig({ baseUrl: 'https://ghe.example.com' });
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('says in the log that GitHub sign-in is disabled when a URL is invalid', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    resolveGithubSignIn({ ...CREDS, apiUrl: GITHUB_API, baseUrl: 'ftp://ghe.example.com' });
+
+    expect(String(warn.mock.calls[0]?.[0])).toContain('GitHub sign-in disabled');
+  });
+});
+
+describe('GitHub sign-in through better-auth', () => {
+  const GATEWAY = 'https://gw.example.com';
+
+  function authorizeUrl(
+    plugins: ReturnType<typeof genericOAuth>[],
+    social?: Record<string, unknown>
+  ) {
+    const auth = betterAuth({
+      baseURL: GATEWAY,
+      database: memoryAdapter({ account: [], session: [], user: [], verification: [] }),
+      plugins,
+      secret: 'a-test-secret-that-is-at-least-32-characters-long',
+      socialProviders: social,
+      trustedOrigins: ['https://web.example.com'],
+    });
+    return auth.api
+      .signInSocial({ body: { callbackURL: 'https://web.example.com/', provider: 'github' } })
+      .then((res) => new URL(String(res.url)));
+  }
+
+  it('sends the browser to the GHE host, with the callback registered today', async () => {
+    const config = gheConfig({ baseUrl: 'https://ghe.example.com' });
+
+    const url = await authorizeUrl([genericOAuth({ config: [config] })]);
+
+    expect(url.origin).toBe('https://ghe.example.com');
+    expect(url.pathname).toBe('/login/oauth/authorize');
+    expect(url.searchParams.get('client_id')).toBe('cid');
+    expect(url.searchParams.get('redirect_uri')).toBe(`${GATEWAY}/api/auth/callback/github`);
+    expect(url.searchParams.get('scope')?.split(/[ ,]/)).toEqual(
+      expect.arrayContaining(['read:user', 'user:email'])
+    );
+    expect(url.searchParams.get('state')).toBeTruthy();
+  });
+
+  it('still sends the browser to github.com when the base URL is github.com', async () => {
+    const resolved = resolveGithubSignIn({
+      ...CREDS,
+      apiUrl: GITHUB_API,
+      baseUrl: 'https://github.com',
+    });
+    if (resolved.mode !== 'builtin') {
+      throw new Error('expected builtin mode');
+    }
+
+    const url = await authorizeUrl([], {
+      github: { clientId: resolved.clientId, clientSecret: resolved.clientSecret },
+    });
+
+    expect(url.origin).toBe('https://github.com');
+    expect(url.pathname).toBe('/login/oauth/authorize');
   });
 });

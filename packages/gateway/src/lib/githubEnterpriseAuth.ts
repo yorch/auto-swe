@@ -1,12 +1,16 @@
-const PROFILE_FETCH_TIMEOUT_MS = 5_000;
+import type { GenericOAuthConfig } from 'better-auth/plugins/generic-oauth';
 
-export interface GhesUserInfo {
+const PROFILE_FETCH_TIMEOUT_MS = 5_000;
+const GITHUB_COM_HOST = 'github.com';
+const GITHUB_COM_API = 'https://api.github.com';
+
+export type GhesUserInfo = {
   id: string;
   name: string;
   email: string;
   emailVerified: true;
   image?: string;
-}
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -87,4 +91,85 @@ export async function fetchGhesUserInfo(
   } catch (err) {
     return refuse(hostname, err instanceof Error ? err.message : 'request failed');
   }
+}
+
+export type GithubSignIn =
+  | { mode: 'none' }
+  | { mode: 'builtin'; clientId: string; clientSecret: string }
+  | { mode: 'ghe'; config: GenericOAuthConfig };
+
+function parseHttpUrl(raw: string): URL | null {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+// Origin plus path, so any credentials, query or fragment in the admin's value are dropped.
+function rootOf(url: URL): string {
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+}
+
+/**
+ * Decide how "Continue with GitHub" is wired from the saved GitHub config.
+ *
+ * better-auth's built-in `github` provider is fixed to github.com, so a Base URL on
+ * any other host is served by a generic-OAuth provider registered under the same id.
+ * Reusing the id keeps the callback URL, the account rows and every `'github'` check.
+ *
+ * Never throws: a bad URL disables GitHub sign-in with a logged reason, because this
+ * runs at gateway start and must not stop it booting.
+ */
+export function resolveGithubSignIn(input: {
+  clientId: string | null;
+  clientSecret: string | null;
+  baseUrl: string;
+  apiUrl: string;
+}): GithubSignIn {
+  const { clientId, clientSecret } = input;
+  if (!clientId || !clientSecret) {
+    return { mode: 'none' };
+  }
+
+  const base = parseHttpUrl(input.baseUrl);
+  if (!base) {
+    console.warn('[better-auth] GitHub sign-in disabled: the Base URL is not a valid http(s) URL');
+    return { mode: 'none' };
+  }
+  if (base.hostname.replace(/\.$/, '') === GITHUB_COM_HOST) {
+    return { clientId, clientSecret, mode: 'builtin' };
+  }
+
+  const api = parseHttpUrl(input.apiUrl);
+  if (!api) {
+    console.warn('[better-auth] GitHub sign-in disabled: the API URL is not a valid http(s) URL');
+    return { mode: 'none' };
+  }
+
+  if (base.protocol === 'http:' || api.protocol === 'http:') {
+    console.warn(
+      '[better-auth] GitHub Enterprise sign-in is configured over plain http: the client secret, authorization code and access token cross the network unencrypted'
+    );
+  }
+
+  const baseRoot = rootOf(base);
+  // The API URL defaults to api.github.com; an admin who only filled in the Base URL means GHE's /api/v3.
+  const apiRoot = rootOf(api) === GITHUB_COM_API ? `${baseRoot}/api/v3` : rootOf(api);
+
+  return {
+    config: {
+      authorizationUrl: `${baseRoot}/login/oauth/authorize`,
+      clientId,
+      clientSecret,
+      getUserInfo: async (tokens) =>
+        tokens.accessToken ? fetchGhesUserInfo(tokens.accessToken, apiRoot, base.host) : null,
+      pkce: false,
+      providerId: 'github',
+      scopes: ['read:user', 'user:email'],
+      tokenUrl: `${baseRoot}/login/oauth/access_token`,
+    },
+    mode: 'ghe',
+  };
 }
