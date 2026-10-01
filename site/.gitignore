@@ -3,6 +3,9 @@
 src/content/docs/docs/
 src/content/docs/reference/
 src/content/docs/introduction.md
+# Generated from the built-in workflow templates (scripts/useCasePages.mjs).
+src/content/docs/use-cases/
+src/data/
 
 dist/
 .astro/
