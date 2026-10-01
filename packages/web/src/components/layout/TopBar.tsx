@@ -4,12 +4,28 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { RefObject } from 'react';
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Select } from '@/components/ui/Select';
 import { useApprovalsCount } from '@/hooks/useApprovals';
+import { type GatewayStatus, useGatewayStatus } from '@/hooks/useGatewayStatus';
 import { useTeams } from '@/hooks/useTeams';
 import { pageTitle } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
+
+const GATEWAY_TONE: Record<GatewayStatus, BadgeTone> = {
+  offline: 'brick',
+  online: 'moss',
+  pending: 'neutral',
+  unknown: 'neutral',
+};
+
+const GATEWAY_LABEL: Record<GatewayStatus, string> = {
+  offline: 'offline',
+  online: 'online',
+  pending: 'checking',
+  unknown: 'status unknown',
+};
 
 interface TopBarProps {
   navOpen: boolean;
@@ -33,6 +49,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
 
   const teamLabel = teams?.find((t) => t.id === selectedTeamId)?.name ?? 'all teams';
   const inboxCount = useApprovalsCount();
+  const gatewayStatus = useGatewayStatus();
   const title = pageTitle(pathname);
 
   return (
@@ -108,11 +125,16 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
 
       {/* Right side */}
       <div className="flex shrink-0 items-center gap-3">
-        {/* Online dot */}
-        <div className="flex items-center gap-2 max-sm:hidden">
-          <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
-          <span className="label-mono">online</span>
-        </div>
+        {/* Gateway reachability — driven by a /health probe, never assumed */}
+        <Badge
+          className="tracking-[0.18em] max-sm:hidden"
+          dot={gatewayStatus === 'online' ? 'pulse' : true}
+          tone={GATEWAY_TONE[gatewayStatus]}
+          uppercase
+          variant="text"
+        >
+          {GATEWAY_LABEL[gatewayStatus]}
+        </Badge>
 
         <span className="inline-block h-3.5 w-px bg-ink-400 max-sm:hidden" />
 
