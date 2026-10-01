@@ -161,12 +161,12 @@ WEB_URL=https://app.example.com      # base URL for the "Open inbox" link in Sla
                                      # set it or Slack links point at localhost)
 # WORKER_MAX_CONCURRENT_ACTIVITIES=10  # cap on concurrent activity executions per worker
                                        # (each typically holds a Docker workspace)
-# Agent workspace sizing and sidecar images (all optional; defaults shown)
+# Agent workspace sizing and sidecar images (all optional; defaults shown; the
+# worker refuses to start on a value it cannot use)
 # WORKSPACE_MEMORY=4g
 # WORKSPACE_CPUS=2
 # WORKSPACE_PIDS_LIMIT=512
 # WORKSPACE_IMAGE=node:24-alpine
-# WORKSPACE_GIT_HELPER_IMAGE=alpine/git:latest
 # WORKSPACE_METADATA_BLOCK_IMAGE=alpine:3.20
 # WORKSPACE_BLOCK_METADATA=true        # only the literal `false` disables the metadata blackhole
 # SCANNER_REGEX_BUDGET_MS=250          # per-pattern scanner wall-clock budget

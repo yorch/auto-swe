@@ -59,11 +59,11 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM "config_settings"
     WHERE "key" IN (
-      'workspace.gitHelperImage', 'workspace.metadataBlockImage', 'workspace.blockMetadata',
+      'workspace.metadataBlockImage', 'workspace.blockMetadata',
       'workspace.maxConcurrentActivities', 'workspace.regexScanBudgetMs'
     )
   ) THEN
-    found := array_append(found, 'Platform settings (config_settings) -> WORKSPACE_GIT_HELPER_IMAGE, WORKSPACE_METADATA_BLOCK_IMAGE, WORKSPACE_BLOCK_METADATA, WORKER_MAX_CONCURRENT_ACTIVITIES, SCANNER_REGEX_BUDGET_MS; then: DELETE FROM config_settings WHERE key IN (''workspace.gitHelperImage'', ''workspace.metadataBlockImage'', ''workspace.blockMetadata'', ''workspace.maxConcurrentActivities'', ''workspace.regexScanBudgetMs'');'::text);
+    found := array_append(found, 'Platform settings (config_settings) -> WORKSPACE_METADATA_BLOCK_IMAGE, WORKSPACE_BLOCK_METADATA, WORKER_MAX_CONCURRENT_ACTIVITIES, SCANNER_REGEX_BUDGET_MS; then: DELETE FROM config_settings WHERE key IN (''workspace.metadataBlockImage'', ''workspace.blockMetadata'', ''workspace.maxConcurrentActivities'', ''workspace.regexScanBudgetMs'');'::text);
   END IF;
 
   IF array_length(found, 1) IS NOT NULL THEN

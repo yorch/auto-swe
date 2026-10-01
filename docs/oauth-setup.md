@@ -193,7 +193,7 @@ OKTA_CLIENT_SECRET=...
 
 All three are required — the login button stays hidden until every one is present, because a partially configured provider would fail at the callback rather than at startup. A trailing slash on the issuer is stripped.
 
-> **The issuer is deploy configuration.** The gateway fetches its discovery document server-side at boot. It is read from the environment, so only whoever controls the deployment can point it somewhere; there is no request-time SSRF guard because there is no request.
+> **The issuer must be public HTTPS.** The gateway fetches its discovery document server-side at boot, so it goes through the same SSRF guard as every other operator-supplied URL: `http://`, loopback, RFC1918, link-local and cloud-metadata addresses are refused. A refused issuer disables Okta sign-in and logs `Okta sign-in disabled: OKTA_ISSUER rejected (…)`; the gateway still boots and the other sign-in methods are unaffected.
 
 ### 4. Restart the gateway
 

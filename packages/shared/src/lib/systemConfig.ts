@@ -731,8 +731,6 @@ export interface WorkspaceInfraConfig {
   pidsLimit: number;
   /// Default base image; an explicit `image` argument to `createWorkspace` wins.
   image: string;
-  /// Short-lived container that runs the repository helper for a shell step.
-  gitHelperImage: string;
   /// Privileged sidecar that installs the cloud-metadata blackhole routes.
   metadataBlockImage: string;
   /// Blackhole cloud metadata IPs inside every workspace. Only the literal
@@ -789,17 +787,16 @@ const DOCKER_MEMORY_RE = /^\d+[bkmg]?$/i;
 /// Deploy-time sizing and sidecar images for agent workspaces, plus the worker
 /// and scanner bounds. These were admin-editable; they are infrastructure
 /// decisions, so they now follow the host the worker runs on.
+///
+/// Lenient by design: this is read on the scan path, which must never throw, so
+/// a bad value falls back to its default. `assertWorkspaceInfraEnv()` is the
+/// strict counterpart and runs at worker boot, so a bad value is a failed
+/// deploy rather than a silently different one.
 export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
   const cpus = Number(process.env.WORKSPACE_CPUS);
   return {
     blockMetadata: process.env.WORKSPACE_BLOCK_METADATA !== 'false',
     cpus: Number.isFinite(cpus) && cpus > 0 ? cpus : 2,
-    gitHelperImage: validatedEnv(
-      'WORKSPACE_GIT_HELPER_IMAGE',
-      'alpine/git:latest',
-      DOCKER_IMAGE_REF_RE,
-      IMAGE_HINT
-    ),
     image: validatedEnv('WORKSPACE_IMAGE', 'node:24-alpine', DOCKER_IMAGE_REF_RE, IMAGE_HINT),
     maxConcurrentActivities: boundedEnvInt('WORKER_MAX_CONCURRENT_ACTIVITIES', 10, 1, 1000),
     memory: validatedEnv(
@@ -817,4 +814,57 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
     pidsLimit: boundedEnvInt('WORKSPACE_PIDS_LIMIT', 512, 1, Number.MAX_SAFE_INTEGER),
     regexScanBudgetMs: boundedEnvInt('SCANNER_REGEX_BUDGET_MS', 250, 10, 60_000),
   };
+}
+
+/// Everything wrong with the workspace/worker environment, one message each.
+/// Empty means the environment is valid. Unset or empty variables are fine —
+/// they take their defaults; only a value that is *set and unusable* is a
+/// problem, because that is the one the lenient resolver would otherwise
+/// replace with a default without anyone noticing.
+///
+/// Oversized numbers are not problems: the resolver clamps them and says so.
+export function validateWorkspaceInfraEnv(): string[] {
+  const problems: string[] = [];
+  const check = (name: string, ok: (raw: string) => boolean, expected: string) => {
+    const raw = process.env[name];
+    if (raw !== undefined && raw !== '' && !ok(raw)) {
+      problems.push(`${name}=${JSON.stringify(raw)} is not ${expected}`);
+    }
+  };
+  const positiveInt = (raw: string) => Number.isInteger(Number(raw)) && Number(raw) > 0;
+
+  check(
+    'WORKSPACE_MEMORY',
+    (raw) => DOCKER_MEMORY_RE.test(raw),
+    'a docker memory value such as 512m or 4g'
+  );
+  check(
+    'WORKSPACE_CPUS',
+    (raw) => Number.isFinite(Number(raw)) && Number(raw) > 0,
+    'a positive number of cores'
+  );
+  check('WORKSPACE_PIDS_LIMIT', positiveInt, 'a positive integer');
+  check('WORKSPACE_IMAGE', (raw) => DOCKER_IMAGE_REF_RE.test(raw), IMAGE_HINT);
+  check('WORKSPACE_METADATA_BLOCK_IMAGE', (raw) => DOCKER_IMAGE_REF_RE.test(raw), IMAGE_HINT);
+  // `0` or `no` would read as "off" to an operator but leave blocking on, so
+  // only the two literal spellings are accepted for a security control.
+  check(
+    'WORKSPACE_BLOCK_METADATA',
+    (raw) => raw === 'true' || raw === 'false',
+    "'true' or 'false'"
+  );
+  check('WORKER_MAX_CONCURRENT_ACTIVITIES', positiveInt, 'a positive integer');
+  check('SCANNER_REGEX_BUDGET_MS', positiveInt, 'a positive integer (milliseconds)');
+  return problems;
+}
+
+/// Throws when `validateWorkspaceInfraEnv()` finds anything, naming every
+/// problem at once so one failed boot is enough to fix the whole file.
+export function assertWorkspaceInfraEnv(): void {
+  const problems = validateWorkspaceInfraEnv();
+  if (problems.length > 0) {
+    throw new Error(
+      `Invalid workspace configuration in the environment:\n  - ${problems.join('\n  - ')}`
+    );
+  }
 }

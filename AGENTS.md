@@ -363,7 +363,7 @@ form field.**
 - Where the knob also has a nullable column on its own entity (`SlackChannel.reactiveCooldownMinutes`),
   that column wins and the definition must **not** list that scope in `overridableAt` — otherwise the
   effective-config view reports an override the worker never reads.
-- Resolution is `run pin → WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → env var →
+- Resolution is `run pin → WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL →
   default`, behind the same ~30 s cache as the agent resolver. A stored value that fails its schema
   degrades to the next tier rather than throwing.
 - `runPinned: true` freezes the value into `WorkflowRun.pinnedSettings` at run start. Use it for

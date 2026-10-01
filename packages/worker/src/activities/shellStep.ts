@@ -26,13 +26,15 @@
  */
 
 import crypto from 'node:crypto';
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { resolveWorkflowDefaults, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
 import { redactExecError, redactToken } from '../lib/redactToken.js';
@@ -81,15 +83,15 @@ export interface ShellStepResult {
 }
 
 // Tiny (~5MB) helper image with git built-in, used by the prep + finalize
-// phases. Environment-only (`WORKSPACE_GIT_HELPER_IMAGE`) so a deployment can
-// pin a digest instead of tracking the upstream `latest` tag.
+// phases. A registry setting rather than a constant so a deployment can pin a
+// digest instead of tracking the upstream `latest` tag.
 //
 // Resolved ONCE at the top of the step and threaded down, deliberately: the
 // finalize path's errors are swallowed and reported as "command passed but the
 // push failed", so a config-resolution failure in there would surface as a
 // successful step whose changes were silently never committed.
-function gitHelperImage(): string {
-  return resolveWorkspaceInfra().gitHelperImage;
+async function gitHelperImage(): Promise<string> {
+  return resolveSetting('workspace.gitHelperImage', await currentRequestContext());
 }
 
 async function runDocker(args: string[], tokenForRedact?: string | null): Promise<string> {
@@ -370,7 +372,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
 
   const { branchPrefix } = await resolveWorkflowDefaults();
   const branch = input.branch ?? `${branchPrefix}/${input.request.externalTicketId}`;
-  const helperImage = gitHelperImage();
+  const helperImage = await gitHelperImage();
 
   const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
   await runDocker(['volume', 'create', volumeName]);

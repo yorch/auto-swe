@@ -13,6 +13,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 import { prisma } from '@auto-swe/shared/db';
 import { encryptSecret } from './crypto.js';
 import {
+  assertWorkspaceInfraEnv,
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
   resolveKnowledgeBaseConfig,
@@ -20,6 +21,7 @@ import {
   resolveStorageConfig,
   resolveWorkflowDefaults,
   resolveWorkspaceInfra,
+  validateWorkspaceInfraEnv,
 } from './systemConfig.js';
 
 const findGitHub = vi.mocked(prisma.gitHubConfig.findUnique);
@@ -388,7 +390,6 @@ describe('systemConfig resolvers', () => {
       'WORKSPACE_CPUS',
       'WORKSPACE_PIDS_LIMIT',
       'WORKSPACE_IMAGE',
-      'WORKSPACE_GIT_HELPER_IMAGE',
       'WORKSPACE_METADATA_BLOCK_IMAGE',
       'WORKSPACE_BLOCK_METADATA',
       'WORKER_MAX_CONCURRENT_ACTIVITIES',
@@ -404,7 +405,6 @@ describe('systemConfig resolvers', () => {
       expect(resolveWorkspaceInfra()).toEqual({
         blockMetadata: true,
         cpus: 2,
-        gitHelperImage: 'alpine/git:latest',
         image: 'node:24-alpine',
         maxConcurrentActivities: 10,
         memory: '4g',
@@ -419,11 +419,9 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('WORKSPACE_CPUS', '3.5');
       vi.stubEnv('WORKSPACE_PIDS_LIMIT', '1024');
       vi.stubEnv('WORKSPACE_IMAGE', 'node:26-alpine');
-      vi.stubEnv('WORKSPACE_GIT_HELPER_IMAGE', 'alpine/git:2.45');
 
       expect(resolveWorkspaceInfra()).toMatchObject({
         cpus: 3.5,
-        gitHelperImage: 'alpine/git:2.45',
         image: 'node:26-alpine',
         memory: '8g',
         pidsLimit: 1024,
@@ -442,6 +440,65 @@ describe('systemConfig resolvers', () => {
       expect(resolveWorkspaceInfra().maxConcurrentActivities).toBe(1000);
       vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', 'lots');
       expect(resolveWorkspaceInfra().maxConcurrentActivities).toBe(10);
+    });
+
+    it('falls back to the default for an image that is not a valid reference', () => {
+      vi.stubEnv('WORKSPACE_IMAGE', 'my image:latest');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      expect(resolveWorkspaceInfra().image).toBe('node:24-alpine');
+      error.mockRestore();
+    });
+
+    describe('validateWorkspaceInfraEnv — the strict check the worker runs at boot', () => {
+      it('is clean when nothing is set, and when everything is valid', () => {
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+        vi.stubEnv('WORKSPACE_MEMORY', '512m');
+        vi.stubEnv('WORKSPACE_CPUS', '1.5');
+        vi.stubEnv('WORKSPACE_PIDS_LIMIT', '256');
+        vi.stubEnv('WORKSPACE_IMAGE', 'registry.example.com/team/base:1.2');
+        vi.stubEnv('WORKSPACE_BLOCK_METADATA', 'false');
+        vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', '20');
+        vi.stubEnv('SCANNER_REGEX_BUDGET_MS', '500');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
+      it('does not treat an oversized number as a problem — the resolver clamps it', () => {
+        vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', '2000');
+        vi.stubEnv('SCANNER_REGEX_BUDGET_MS', '999999');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
+      it('reports every unusable value at once, naming the variable and what it should be', () => {
+        vi.stubEnv('WORKSPACE_MEMORY', '4g --privileged');
+        vi.stubEnv('WORKSPACE_CPUS', 'two');
+        vi.stubEnv('WORKSPACE_PIDS_LIMIT', '-1');
+        vi.stubEnv('WORKSPACE_IMAGE', 'my image:latest');
+        vi.stubEnv('WORKSPACE_METADATA_BLOCK_IMAGE', 'bad image');
+        vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', 'lots');
+        vi.stubEnv('SCANNER_REGEX_BUDGET_MS', '0');
+        const problems = validateWorkspaceInfraEnv();
+        expect(problems).toHaveLength(7);
+        expect(problems[0]).toContain('WORKSPACE_MEMORY="4g --privileged"');
+        expect(problems.join('\n')).toContain('WORKER_MAX_CONCURRENT_ACTIVITIES="lots"');
+      });
+
+      it('rejects a metadata flag that would read as off but leave blocking on', () => {
+        for (const raw of ['0', 'no', 'False', 'off']) {
+          vi.stubEnv('WORKSPACE_BLOCK_METADATA', raw);
+          expect(validateWorkspaceInfraEnv()).toEqual([
+            `WORKSPACE_BLOCK_METADATA=${JSON.stringify(raw)} is not 'true' or 'false'`,
+          ]);
+        }
+      });
+
+      it('assertWorkspaceInfraEnv throws one error listing every problem, and is silent when valid', () => {
+        expect(() => assertWorkspaceInfraEnv()).not.toThrow();
+        vi.stubEnv('WORKSPACE_CPUS', 'two');
+        vi.stubEnv('WORKSPACE_PIDS_LIMIT', '-1');
+        expect(() => assertWorkspaceInfraEnv()).toThrow(
+          /Invalid workspace configuration[\s\S]*WORKSPACE_CPUS[\s\S]*WORKSPACE_PIDS_LIMIT/
+        );
+      });
     });
   });
 

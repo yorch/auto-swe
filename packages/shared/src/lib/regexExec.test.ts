@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const findMany = vi.fn(async (_args?: unknown) => [] as unknown[]);
-vi.mock('../db.js', () => ({ prisma: { configSetting: { findMany } } }));
-
-import { invalidateSettingsCache } from '../config/resolveSetting.js';
 import { BUILTIN_SCANNER_PATTERNS } from '../scannerPatterns/index.js';
 import {
   __evaluateGroupForTests,
@@ -44,9 +40,6 @@ afterEach(() => {
 });
 
 beforeEach(() => {
-  findMany.mockReset();
-  findMany.mockResolvedValue([]);
-  invalidateSettingsCache();
   delete process.env.SCANNER_REGEX_BUDGET_MS;
 });
 

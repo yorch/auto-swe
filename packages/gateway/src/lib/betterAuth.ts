@@ -15,6 +15,7 @@
 
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
   resolveBetterAuthConfig,
   resolveGitHubConfig,
@@ -182,11 +183,35 @@ export async function initAuth(): Promise<void> {
   });
   _googleClientId = googleConfig.clientId;
   _googleClientSecret = googleConfig.clientSecret;
-  _oktaIssuer = oktaConfig.issuer;
+  const oktaIssuerProblem = oktaConfig.issuer ? checkOktaIssuer(oktaConfig.issuer) : null;
+  if (oktaIssuerProblem) {
+    // Refuse the provider, not the gateway: a bad issuer must not take down
+    // email and the other sign-in methods. Okta stays off until it is fixed.
+    console.error(
+      `[better-auth] Okta sign-in disabled: OKTA_ISSUER rejected (${oktaIssuerProblem}).`
+    );
+  }
+  _oktaIssuer = oktaIssuerProblem ? null : oktaConfig.issuer;
   _oktaClientId = oktaConfig.clientId;
   _oktaClientSecret = oktaConfig.clientSecret;
 
   _auth = buildAuth();
+}
+
+/// The issuer's discovery document is fetched server-side at boot, so it gets
+/// the same SSRF guard as every other operator-supplied URL: public HTTPS only.
+/// The issuer comes from the environment, so only whoever controls the
+/// deployment can set it — this catches a mistake, not an attacker.
+/// Returns why the issuer is unusable, or null when it is fine.
+function checkOktaIssuer(issuer: string): string | null {
+  const safety = isSafeProbeUrl(issuer);
+  if (!safety.ok) {
+    return safety.reason;
+  }
+  if (safety.url.protocol !== 'https:') {
+    return 'must use https';
+  }
+  return null;
 }
 
 /// Returns the initialised BetterAuth instance. Throws if `initAuth()` hasn't

@@ -18,8 +18,13 @@ The bootstrap tier also holds anything an admin edit could never usefully change
 able to. Sign-in credentials and the Okta issuer are read once when the gateway boots, so an
 editable copy needs a restart to apply and would only add a second place to look. Storage is a
 deploy-time infrastructure choice, and workspace sizing and sidecar images describe the host the
-worker runs on. An environment value that is invalid (a malformed image reference or memory limit)
-is ignored with one logged error, and the built-in default is used.
+worker runs on. The worker validates those variables at boot and refuses to start on one it cannot
+use — a malformed image reference, a non-numeric limit, or `WORKSPACE_BLOCK_METADATA` set to anything
+but `true` or `false`. Past boot the resolvers fall back to defaults instead of throwing, because they
+run on paths (the scanners) that must never abort their caller.
+
+One workspace value stays in the registry: `workspace.gitHelperImage`, which cascades to team and
+organization because a team on an isolated network may need its own mirror.
 
 This doc covers the third tier. For integration credentials see
 [model-configuration.md](./model-configuration.md) and the admin pages themselves; for the
@@ -64,7 +69,6 @@ every row and grant that referenced it.
 | `requiredRole` | A floor. No grant can let an actor below it write the key. |
 | `runPinned` | Frozen into a run's snapshot at start; see §4. |
 | `restartRequired` | Surfaced in the UI. The resolver does not enforce it. |
-| `envVar` / `parseEnv` | Consulted between the cascade and the default, so a deployment already driving the value from the environment keeps working until an admin saves. |
 
 ---
 
@@ -73,7 +77,7 @@ every row and grant that referenced it.
 `resolveSetting(key, ctx)` in `packages/shared/src/config/resolveSetting.ts` is the only read path:
 
 ```
-run pin  →  WORKFLOW_TEMPLATE  →  CHANNEL  →  TEAM  →  ORGANIZATION  →  GLOBAL  →  env var  →  default
+run pin  →  WORKFLOW_TEMPLATE  →  CHANNEL  →  TEAM  →  ORGANIZATION  →  GLOBAL  →  default
 ```
 
 The five scope tiers are the same cascade agents and provider credentials resolve through

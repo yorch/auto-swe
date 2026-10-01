@@ -30,9 +30,7 @@ async function db() {
  *
  *   1. the run's pinned snapshot, for `runPinned` keys inside a run
  *   2. WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL overrides
- *   3. the definition's env var, so a deployment already driving the value
- *      from the environment keeps working until an admin saves an override
- *   4. the definition default — the constant the setting replaced
+ *   3. the definition default — the constant the setting replaced
  *
  * Every candidate override for a context is fetched in one query and cached
  * under one key, so resolving twenty settings for a run costs one round trip,
@@ -132,18 +130,6 @@ function accept<T>(key: string, definition: SettingDefinition<T>, raw: unknown):
   return undefined;
 }
 
-function fromEnv<T>(key: string, definition: SettingDefinition<T>): T | undefined {
-  if (!definition.envVar) {
-    return undefined;
-  }
-  const raw = process.env[definition.envVar];
-  if (raw === undefined || raw === '') {
-    return undefined;
-  }
-  const parsed = definition.parseEnv ? definition.parseEnv(raw) : (raw as unknown as T);
-  return parsed === undefined ? undefined : accept(key, definition, parsed);
-}
-
 /// Resolves one key against already-loaded overrides. Split out so the batch
 /// and single-key entry points share exactly one resolution rule.
 function resolveFrom<K extends SettingKey>(
@@ -183,7 +169,7 @@ function resolveFrom<K extends SettingKey>(
       // can exist without passing through it — written by direct SQL, or left
       // behind when a definition later narrows its scopes — and a
       // platform-wide security control that a stray TEAM row can switch off is
-      // not a control. `workspace.blockMetadata` is exactly this case.
+      // not a control. `github.userCredentialsEnabled` is exactly this case.
       if (scope !== 'GLOBAL' && !definition.overridableAt.includes(scope)) {
         continue;
       }
@@ -192,11 +178,6 @@ function resolveFrom<K extends SettingKey>(
         return { key, source: scope, value };
       }
     }
-  }
-
-  const envValue = fromEnv(key, definition);
-  if (envValue !== undefined) {
-    return { key, source: 'ENV', value: envValue };
   }
 
   return { key, source: 'DEFAULT', value: definition.defaultValue };

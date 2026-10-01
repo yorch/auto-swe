@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { MAX_FANOUT_CONCURRENCY } from '../workflow/spec.js';
 import type { SettingDefinition } from './types.js';
 
@@ -340,6 +341,23 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.min(5).max(500),
     unit: 'steps',
+  }),
+
+  // ── Shell-step helper image ────────────────────────────────────────────────
+  // Cascades to TEAM / ORGANIZATION, unlike the rest of the workspace
+  // infrastructure (which is environment-only): a team on an isolated network
+  // may need its own mirror of the image, so this one stays an admin-set value.
+  'workspace.gitHelperImage': defineSetting({
+    defaultValue: 'alpine/git:latest',
+    description:
+      'Image used for the short-lived container that performs git operations for a shell step. Pin a digest here to stop tracking the upstream tag.',
+    group: 'workspace',
+    label: 'Git helper image',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
   }),
 
   // ── Agent workspace ────────────────────────────────────────────────────────

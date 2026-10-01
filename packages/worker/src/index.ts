@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
-import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { assertWorkspaceInfraEnv, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertBuiltinStepsRegistered } from '@auto-swe/shared/workflow';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
@@ -43,6 +43,11 @@ async function run() {
   // (Docker Compose restart policy, K8s, etc.) keeps the worker out of the
   // rotation until config is complete.
   await assertConfigReady();
+
+  // The resolvers fall back to defaults on a bad value (they run on paths that
+  // must not throw), so a typo in the deploy environment would otherwise run
+  // with different limits than the operator wrote. Fail the boot instead.
+  assertWorkspaceInfraEnv();
 
   // Every step the worker promises in BUILTIN_STEPS must have registry
   // metadata, or validateSpec flags a shipped template as UNKNOWN_STEP and the

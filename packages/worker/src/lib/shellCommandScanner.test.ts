@@ -2,9 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    configSetting: {
-      findMany: vi.fn(),
-    },
     scannerPattern: {
       findMany: vi.fn(),
     },
@@ -19,7 +16,6 @@ vi.mock('@auto-swe/shared/lib/regexExec', async (importOriginal) => {
   return { ...actual, runRegexBatch: vi.fn(actual.runRegexBatch) };
 });
 
-import { invalidateSettingsCache } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import {
   DEFAULT_REGEX_BUDGET_MS,
@@ -36,7 +32,6 @@ import {
 } from './shellCommandScanner.js';
 
 const findMany = vi.mocked(prisma.scannerPattern.findMany);
-const configFindMany = vi.mocked(prisma.configSetting.findMany);
 const runRegexBatchSpy = vi.mocked(runRegexBatch);
 
 // Verbatim copy of the built-in SHELL_COMMAND patterns from
@@ -196,9 +191,6 @@ beforeEach(() => {
   findMany.mockReset();
   mockPatternRows(BUILTIN_SHELL_PATTERNS);
   runRegexBatchSpy.mockClear();
-  configFindMany.mockReset();
-  configFindMany.mockResolvedValue([]);
-  invalidateSettingsCache();
 });
 
 describe('scanShellCommand — commands that must be blocked', () => {

@@ -102,6 +102,21 @@ describe('GitHub sign-in wiring', () => {
     expect(built.providers.okta).toBe(true);
   });
 
+  it.each([
+    ['a link-local metadata address', 'https://169.254.169.254/oauth2/default'],
+    ['a private address', 'https://10.0.0.5/oauth2/default'],
+    ['plaintext http', 'http://acme.okta.com/oauth2/default'],
+  ])('refuses to register Okta for %s, without failing the gateway', async (_label, issuer) => {
+    state.okta = { clientId: 'oid', clientSecret: 'osec', issuer };
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const built = await build();
+
+    expect(built.providers.okta).toBe(false);
+    expect(built.genericProviderIds).toEqual([]);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('Okta sign-in disabled'));
+  });
+
   it('keeps Okta alone in its generic plugin for github.com', async () => {
     state.okta = { clientId: 'oid', clientSecret: 'osec', issuer: 'https://acme.okta.com' };
 
