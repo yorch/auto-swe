@@ -15,6 +15,10 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubConfig: async () => ({ baseUrl: 'https://ghe.instance.example' }),
+}));
+
 vi.mock('../connectors/notion.js', () => ({
   readNotionPage: vi.fn(),
 }));
@@ -37,10 +41,27 @@ describe('resolveWorkspace', () => {
     expect(result).toEqual({ provider: 'api_only' });
   });
 
-  it('resolves a git_repo workspace from a connection', async () => {
+  it('falls back to the instance host, not github.com, with no override', async () => {
     (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       defaultBranch: 'main',
-      githubUrl: 'https://ghe.example.com/org/repo.git',
+      githubUrl: null,
+      isActive: true,
+      organizationName: 'org',
+      repoName: 'repo',
+      type: 'git_repo',
+    });
+    const result = await resolveWorkspace({
+      connectionId: 'conn-1',
+      workspaceProvider: 'git_repo',
+    });
+    expect(result).toMatchObject({ cloneUrl: 'https://ghe.instance.example/org/repo.git' });
+  });
+
+  it('resolves a git_repo workspace from a connection', async () => {
+    // `githubUrl` is the web base, as the SCM provider reads it when cloning.
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      defaultBranch: 'main',
+      githubUrl: 'https://ghe.example.com/',
       isActive: true,
       organizationName: 'org',
       repoName: 'repo',

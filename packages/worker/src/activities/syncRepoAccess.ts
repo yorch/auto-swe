@@ -20,6 +20,12 @@ import {
 } from '@auto-swe/shared/lib/githubIdentityCheck';
 import type { PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
+import {
+  allRepoMemberships,
+  type RepoMembers,
+  repoMembersSelect,
+  repoMemberWhere,
+} from '@auto-swe/shared/lib/repoMembership';
 import { lookupPermissionViaUserCredential } from '@auto-swe/shared/lib/repoPermission';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -57,6 +63,24 @@ export interface SyncRepoAccessResult {
    * inflate the takeover number above.
    */
   unlinkedLogins: number;
+}
+
+type SweepMember = { user: { githubLogin: string | null; id: string } };
+
+/**
+ * Everyone who reaches a repository — owning team and shared teams — once
+ * each. A user in two of those teams is one (user, repository) pair, and asking
+ * GitHub twice about it would only spend quota.
+ */
+function repoMembers(repo: RepoMembers<SweepMember>): SweepMember[] {
+  const seen = new Set<string>();
+  return allRepoMemberships(repo).filter((m) => {
+    if (seen.has(m.user.id)) {
+      return false;
+    }
+    seen.add(m.user.id);
+    return true;
+  });
 }
 
 /**
@@ -100,22 +124,21 @@ export async function syncRepoAccess(
             installation: { select: { installationId: true } },
             organizationName: true,
             repoName: true,
-            team: {
-              select: {
-                memberships: {
-                  select: { user: { select: { githubLogin: true, id: true } } },
-                  // A deactivated user cannot sign in, so an answer about them
-                  // would be quota spent on a decision nobody can reach.
-                  where: { user: { isActive: true } },
-                },
-              },
-            },
+            // The owning team's members and those of every team the repository
+            // is shared with: both reach it, so both need answers here, or a
+            // shared-team member would be filtered out of every listing under
+            // enforcement. A deactivated user cannot sign in, so an answer
+            // about them would be quota spent on a decision nobody can reach.
+            ...repoMembersSelect(
+              { user: { select: { githubLogin: true, id: true } } },
+              { user: { isActive: true } }
+            ),
           },
           where: {
             isActive: true,
             type: 'git_repo',
             ...(input.connectionId && { id: input.connectionId }),
-            ...(input.userId && { team: { memberships: { some: { userId: input.userId } } } }),
+            ...(input.userId && repoMemberWhere({ userId: input.userId })),
           },
         })
     );
@@ -146,7 +169,7 @@ export async function syncRepoAccess(
     }
     const verified = new Map<string, boolean>();
     for (const repo of repos) {
-      for (const { user } of repo.team.memberships) {
+      for (const { user } of repoMembers(repo)) {
         if (!user.githubLogin || verified.has(user.id)) {
           continue;
         }
@@ -209,7 +232,7 @@ export async function syncRepoAccess(
       const provider = getScmProvider(repoRef);
       const credentialHolders = new Set(credentialsOn ? repo.credentials.map((c) => c.userId) : []);
 
-      for (const membership of repo.team.memberships) {
+      for (const membership of repoMembers(repo)) {
         const { githubLogin, id: userId } = membership.user;
         if (input.userId && userId !== input.userId) {
           continue;

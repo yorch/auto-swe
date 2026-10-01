@@ -22,6 +22,13 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubConfig: async () => ({
+    apiUrl: 'https://api.github.com',
+    baseUrl: 'https://github.com',
+  }),
+}));
+
 const fetchFileContent = vi.fn();
 vi.mock('../lib/scm/index.js', () => ({
   getScmProvider: () => ({ fetchFileContent: (...args: unknown[]) => fetchFileContent(...args) }),

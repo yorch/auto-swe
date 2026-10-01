@@ -13,12 +13,15 @@
 
 import { prisma } from '@auto-swe/shared/db';
 import {
+  CredentialUnreadableError,
+  repositoryHostsAllowed,
   resolveUserCredential,
   resolveUserCredentialPolicy,
 } from '@auto-swe/shared/lib/connectionCredential';
 import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+import { ApplicationFailure } from '@temporalio/activity';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
 import { currentRunLauncherId } from '../runLauncher.js';
 import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
@@ -87,10 +90,21 @@ async function launcherToken(
   if (!launcherId) {
     return null;
   }
-  const credential = await resolveUserCredential(prisma, {
-    connectionId: repo.connectionId,
-    userId: launcherId,
-  });
+  let credential: Awaited<ReturnType<typeof resolveUserCredential>>;
+  try {
+    credential = await resolveUserCredential(prisma, {
+      connectionId: repo.connectionId,
+      userId: launcherId,
+    });
+  } catch (err) {
+    // Unreadable is a standing condition, not a transient one: fail now with
+    // what the owner has to do, instead of retrying to exhaustion. Any other
+    // error (the database) stays retryable.
+    if (err instanceof CredentialUnreadableError) {
+      throw ApplicationFailure.nonRetryable(err.message, 'CREDENTIAL_UNREADABLE');
+    }
+    throw err;
+  }
   if (!credential) {
     return null;
   }
@@ -111,6 +125,20 @@ async function runToken(
   repo: RepoRef,
   ghConfig: Awaited<ReturnType<typeof resolveGitHubConfig>>
 ): Promise<string> {
+  // Before any credential goes anywhere: the repository's own URL overrides
+  // must be on an approved host, or a team lead could point a repository at a
+  // host they control and collect the token. Standing configuration, so it
+  // fails the activity outright rather than retrying.
+  const hosts = await repositoryHostsAllowed({
+    githubApiUrl: repo.apiUrl,
+    githubUrl: repo.baseUrl,
+  });
+  if (!hosts.ok) {
+    throw ApplicationFailure.nonRetryable(
+      `Repository URL ${hosts.url} is not on an allowed GitHub host. An admin can allow it under the github.repositoryHosts platform setting.`,
+      'REPO_HOST_NOT_ALLOWED'
+    );
+  }
   return (
     (await launcherToken(repo, ghConfig)) ??
     (await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig)))
@@ -343,6 +371,11 @@ export class GitHubScmProvider implements ScmProvider {
   }
 
   async repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup> {
+    // The platform token goes to the repository's API host; an unapproved one
+    // gets no token, which is "could not ask", never a denial.
+    if (!(await repositoryHostsAllowed({ githubApiUrl: repo.apiUrl })).ok) {
+      return { failure: 'credential-rejected', ok: false };
+    }
     const ghConfig = await resolveGitHubConfig();
     const target = installationTarget(repo, ghConfig);
     let token: string;
