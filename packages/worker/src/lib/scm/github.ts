@@ -294,10 +294,9 @@ export class GitHubScmProvider implements ScmProvider {
         ).data[0]
       : undefined;
 
-    let pr = priorOpenPr;
-    if (!pr) {
+    const create = async (): Promise<{ number: number; html_url: string }> => {
       try {
-        pr = (
+        return (
           await octokit.pulls.create({
             base: input.baseBranch,
             body: input.body,
@@ -317,7 +316,8 @@ export class GitHubScmProvider implements ScmProvider {
         }
         throw err;
       }
-    }
+    };
+    const pr = priorOpenPr ?? (await create());
 
     return { prNumber: pr.number, prUrl: pr.html_url };
   }
