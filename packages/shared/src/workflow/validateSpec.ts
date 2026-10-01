@@ -17,6 +17,8 @@
  *     - NODE_CANT_TERMINATE a reachable node has no path to any `terminate`
  *     - UNKNOWN_STEP       a `step` is not a built-in (may be a custom registry)
  *     - MISSING_CONFIG     a required step config field is absent
+ *     - IGNORED_FIELD      a node sets `retry` / `startToCloseTimeout` / `heartbeatTimeout`,
+ *                          which the interpreter never reads (use `onFail: { retry }`)
  *
  * Pure + I/O-free so it runs identically in the worker (pre-run / repair loop),
  * the gateway, and the web canvas (live lint). Wiring differs by caller: the
@@ -104,6 +106,9 @@ function fromPathNamesKnownNode(from: string, nodeIds: Set<string>): boolean {
   return false;
 }
 
+/** Node fields the schema accepts for stored-spec compatibility but the interpreter never reads. */
+const IGNORED_NODE_FIELDS = ['retry', 'startToCloseTimeout', 'heartbeatTimeout'] as const;
+
 export function validateSpec(spec: WorkflowSpec): ValidationReport {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
@@ -111,6 +116,19 @@ export function validateSpec(spec: WorkflowSpec): ValidationReport {
 
   // ── Expression lint + binding provenance ──
   for (const [id, node] of Object.entries(spec.nodes)) {
+    for (const field of IGNORED_NODE_FIELDS) {
+      if ((node as Record<string, unknown>)[field] !== undefined) {
+        warnings.push({
+          code: 'IGNORED_FIELD',
+          field,
+          message:
+            `'${field}' has no effect: activity retry and timeouts come from the worker's fixed ` +
+            'proxy groups. Use `onFail: { retry: N }` for workflow-level retry.',
+          nodeId: id,
+          severity: 'warning',
+        });
+      }
+    }
     if (node.type === 'cond') {
       const e = checkExprSyntax(node.expr);
       if (e) {

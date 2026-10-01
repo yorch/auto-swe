@@ -46,7 +46,8 @@ const SELF_RECORDING_NODE_TYPES: ReadonlySet<string> = new Set([
   'fanOut',
 ]);
 
-function normalizeApproverCount(raw: unknown): number {
+/** Distinct approvers a human gate needs; anything that isn't a positive integer means one. */
+export function normalizeApproverCount(raw: unknown): number {
   const parsed = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1) {
     return 1;

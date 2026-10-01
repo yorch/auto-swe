@@ -8,6 +8,31 @@ function spec(nodes: Record<string, unknown>, entry = 'a') {
   return parseWorkflowSpec({ entry, name: 'test', nodes, schemaVersion: 1 });
 }
 
+describe('validateSpec IGNORED_FIELD', () => {
+  it('warns on retry/timeout fields the interpreter never reads, and still parses them', () => {
+    const report = validateSpec(
+      spec({
+        a: {
+          heartbeatTimeout: '5m',
+          next: 'done',
+          retry: { maximumAttempts: 3 },
+          startToCloseTimeout: '30m',
+          step: 'executeImplementation',
+          type: 'step',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      })
+    );
+    expect(report.errors).toEqual([]);
+    const ignored = report.warnings.filter((w) => w.code === 'IGNORED_FIELD');
+    expect(ignored.map((w) => w.field).sort()).toEqual([
+      'heartbeatTimeout',
+      'retry',
+      'startToCloseTimeout',
+    ]);
+  });
+});
+
 describe('validateSpec', () => {
   it('passes a clean linear spec', () => {
     const r = validateSpec(

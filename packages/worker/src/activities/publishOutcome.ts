@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { normalizeApproverCount } from '@auto-swe/shared/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import { resolveAutonomyPolicy } from '../lib/resolveAutonomyPolicy.js';
 
@@ -16,14 +17,6 @@ export interface PublishOutcomeResult {
   reason: string;
   /** Number of distinct human approvers required when decision is 'require_approval'. */
   approverCount: number;
-}
-
-function normalizeApproverCount(raw: unknown): number {
-  const parsed = typeof raw === 'number' ? raw : Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    return 1;
-  }
-  return parsed;
 }
 
 export async function publishOutcome(input: PublishOutcomeInput): Promise<PublishOutcomeResult> {
