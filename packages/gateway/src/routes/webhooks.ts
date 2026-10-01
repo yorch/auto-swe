@@ -223,9 +223,9 @@ async function verifyWebhookOrReject(
 /**
  * Where, and with which credential, to ask GitHub about a tracked repository.
  *
- * The repository's own API host, and a token minted for its own installation:
- * the instance credential is for the instance's host, and a repository on
- * another GitHub Enterprise server must not be sent it. Applies the same
+ * The instance's API, with a token minted for the repository's installation
+ * (else the singleton's): the platform credential is only valid on the
+ * instance's host, so a repository on another host gets no target. Applies the same
  * shared rule as the worker (`platformCredentialScope`) — no platform credential
  * (PAT, App JWT, installation token) goes to another host, whatever
  * installation the repository records; and a repository whose web and API hosts
@@ -678,8 +678,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Find tracked PRs by commit SHA
       const pullRequests = await fastify.prisma.pullRequest.findMany({
         include: {
-          // What the check-run lookup needs to reach the repository's own host
-          // as its own installation.
+          // What the check-run lookup needs to decide whether the repository is
+          // on the instance's host, and which installation to mint for.
           repository: {
             select: {
               githubApiUrl: true,

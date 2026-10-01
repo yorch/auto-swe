@@ -148,6 +148,13 @@ describe('lookupRepoPermission and the platform credential', () => {
     expect(fetchRepoPermission).not.toHaveBeenCalled();
   });
 
+  it('reports an unapproved host as a standing mismatch, not a transient failure', async () => {
+    // "Try again shortly" can never help: an admin has to approve the host.
+    repositoryHostsAllowed.mockResolvedValue({ ok: false, url: 'https://ghe.corp/api/v3' });
+    await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(HOST_MISMATCH);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('sends no instance PAT to a foreign host (PAT mode)', async () => {
     resolveGitHubConfig.mockResolvedValue(instance({ authMode: 'pat' }));
     await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(HOST_MISMATCH);

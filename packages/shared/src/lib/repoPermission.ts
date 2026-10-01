@@ -66,10 +66,11 @@ export async function lookupRepoPermission(
     // error rather than a denial, so it is not reported as `none`.
     return { failure: 'repo-not-found', ok: false };
   }
-  // The platform token goes to this API host. An unapproved per-repository
-  // override gets no token — "could not ask", never a denial.
+  // An unapproved or non-canonical API override gets no credential — "could
+  // not ask", never a denial, and a standing condition rather than a transient
+  // one, so it must not read as "try again shortly".
   if (!(await repositoryHostsAllowed({ githubApiUrl: repo.githubApiUrl })).ok) {
-    return { failure: 'credential-rejected', ok: false };
+    return { failure: 'host-mismatch', ok: false };
   }
   const ghConfig = await resolveGitHubConfig();
   // The platform credential goes only where it is valid (`githubHostScope`):

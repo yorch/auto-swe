@@ -85,12 +85,6 @@ export interface HostScopedConfig {
   appPrivateKey?: string | null;
 }
 
-/** Whether the instance would use the GitHub App (not the PAT). */
-export function isAppMode(config: HostScopedConfig): boolean {
-  const mode = config.authMode ?? 'auto';
-  return mode === 'app' || (mode === 'auto' && Boolean(config.appId && config.appPrivateKey));
-}
-
 export type PlatformCredentialScope =
   /** Both hosts are the instance's own: its credential applies. */
   | 'instance'

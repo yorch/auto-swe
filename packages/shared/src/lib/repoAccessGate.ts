@@ -206,7 +206,7 @@ export const LAUNCH_REFUSAL_MESSAGE: Record<LaunchRefusal, string> = {
   // Distinct from `lookup-unavailable`: the repository's host is not the
   // instance's, so no platform credential applies and a retry cannot succeed.
   'host-mismatch':
-    "The platform's GitHub credential cannot be used for this repository's host, so your access cannot be checked. An admin can set the GitHub integration's web and API URLs to that host, or you can save your own token for this repository on the Connections page.",
+    "The platform's GitHub credential cannot be used for this repository's host, so your access cannot be checked. An admin can approve the host (github.repositoryHosts) or set the GitHub integration's web and API URLs to it, or you can save your own token for this repository on the Connections page.",
   'insufficient-permission': 'GitHub reports that you do not have write access to this repository.',
   'lookup-unavailable':
     'Your GitHub access to this repository could not be confirmed right now. Try again shortly.',

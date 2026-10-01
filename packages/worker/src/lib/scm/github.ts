@@ -437,10 +437,10 @@ export class GitHubScmProvider implements ScmProvider {
   }
 
   async repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup> {
-    // The platform token goes to the repository's API host; an unapproved one
-    // gets no token, which is "could not ask", never a denial.
+    // An unapproved or non-canonical API override gets no credential: "could
+    // not ask", never a denial — and a standing condition, not a transient one.
     if (!(await repositoryHostsAllowed({ githubApiUrl: repo.apiUrl })).ok) {
-      return { failure: 'credential-rejected', ok: false };
+      return { failure: 'host-mismatch', ok: false };
     }
     const ghConfig = await resolveGitHubConfig();
     // Not the instance's credential, and not the instance's API: either would

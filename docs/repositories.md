@@ -133,8 +133,9 @@ characters), and are re-encrypted by key rotation.
 ### CI status lookups
 
 When a check run succeeds, the gateway asks GitHub for the other check runs on the commit before
-signalling the workflow. That request goes to the tracked repository's API base, with a token
-for the repository's own installation where it has one, else the singleton's. The instance's
+signalling the workflow. That request goes to the instance's API base, with a token for the
+repository's own installation where it has one, else the singleton's; a repository on another host
+gets no aggregation and falls back to signalling per check run. The instance's
 credentials stay on the instance's own API host: an installation lives on the instance's host, so a
 repository on another host is sent no token whatever installation it records, and the instance PAT
 is likewise never sent to another host. A user's token is never used, since no user launched a webhook. A
