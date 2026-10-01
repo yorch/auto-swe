@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { BUILTIN_MODELS, builtinModelSpec } from '../lib/builtinModels.js';
+import { SWE_AGENTS } from '../lib/syncBuiltins.js';
 import { DEFAULT_FANOUT_WIDTH, DEFAULT_ROLE_PRICING, estimateSpecCost } from './costEstimator.js';
 import type { StepMetadata } from './registry-types.js';
 import { makeSpec as spec } from './testHelpers.js';
@@ -30,6 +32,20 @@ const REGISTRY: Record<string, StepMetadata> = {
 };
 const lookup = (name: string): StepMetadata | undefined => REGISTRY[name];
 
+/**
+ * Fixed rates for the walk tests, so they check the estimator's arithmetic
+ * rather than today's model prices — DEFAULT_ROLE_PRICING moves with them.
+ */
+const PRICING = {
+  commitToMemory: { inputUsdPerM: 3, outputUsdPerM: 15 },
+  evalJudge: { inputUsdPerM: 1, outputUsdPerM: 5 },
+  implementer: { inputUsdPerM: 15, outputUsdPerM: 75 },
+  planner: { inputUsdPerM: 3, outputUsdPerM: 15 },
+  reviewer: { inputUsdPerM: 15, outputUsdPerM: 75 },
+  securityReview: { inputUsdPerM: 15, outputUsdPerM: 75 },
+  validateContext: { inputUsdPerM: 3, outputUsdPerM: 15 },
+};
+
 describe('estimateSpecCost', () => {
   it('returns zero for a spec with no step nodes', () => {
     const result = estimateSpecCost(
@@ -37,7 +53,7 @@ describe('estimateSpecCost', () => {
         entry: 't',
         nodes: { t: { status: 'SUCCESS', type: 'terminate' } },
       }),
-      { stepLookup: lookup }
+      { pricing: PRICING, stepLookup: lookup }
     );
     expect(result.totalUsd).toBe(0);
     expect(result.perStep).toEqual([]);
@@ -52,7 +68,7 @@ describe('estimateSpecCost', () => {
           t: { status: 'SUCCESS', type: 'terminate' },
         },
       }),
-      { stepLookup: lookup }
+      { pricing: PRICING, stepLookup: lookup }
     );
     expect(result.totalUsd).toBeCloseTo(90, 6);
     expect(result.perStep).toEqual([{ nodeId: 'i', step: 'implement', usd: 90 }]);
@@ -67,7 +83,7 @@ describe('estimateSpecCost', () => {
           t: { status: 'SUCCESS', type: 'terminate' },
         },
       }),
-      { stepLookup: lookup }
+      { pricing: PRICING, stepLookup: lookup }
     );
     expect(result.totalUsd).toBe(0);
     expect(result.perStep).toEqual([]);
@@ -84,7 +100,7 @@ describe('estimateSpecCost', () => {
           t: { status: 'SUCCESS', type: 'terminate' },
         },
       }),
-      { stepLookup: lookup }
+      { pricing: PRICING, stepLookup: lookup }
     );
     // implementer = $90, planner = 1M*3 + 1M*15 = $18 → max = $90
     expect(result.totalUsd).toBeCloseTo(90, 6);
@@ -108,7 +124,7 @@ describe('estimateSpecCost', () => {
           leaf: { status: 'SUCCESS', type: 'terminate' },
         },
       }),
-      { stepLookup: lookup }
+      { pricing: PRICING, stepLookup: lookup }
     );
     // implementer = $90, fanOut width = 4 → $360
     expect(result.totalUsd).toBeCloseTo(90 * DEFAULT_FANOUT_WIDTH, 6);
@@ -133,7 +149,7 @@ describe('estimateSpecCost', () => {
           leaf: { status: 'SUCCESS', type: 'terminate' },
         },
       }),
-      { fanOutWidth: 10, stepLookup: lookup }
+      { fanOutWidth: 10, pricing: PRICING, stepLookup: lookup }
     );
     expect(result.totalUsd).toBeCloseTo(900, 6);
   });
@@ -153,7 +169,7 @@ describe('estimateSpecCost', () => {
           t: { status: 'SUCCESS', type: 'terminate' },
         },
       }),
-      { stepLookup: lookup }
+      { pricing: PRICING, stepLookup: lookup }
     );
     expect(result.totalUsd).toBeCloseTo(108, 6);
     // Each priced node appears once in the breakdown even though two arms reach it.
@@ -170,7 +186,7 @@ describe('estimateSpecCost', () => {
           i: { next: 'c', step: 'implement', type: 'step' },
         },
       }),
-      { stepLookup: lookup }
+      { pricing: PRICING, stepLookup: lookup }
     );
     // implementer counted once, cycle broken
     expect(result.totalUsd).toBeCloseTo(90, 6);
@@ -181,5 +197,34 @@ describe('estimateSpecCost', () => {
     expect(DEFAULT_ROLE_PRICING.implementer.outputUsdPerM).toBeGreaterThan(
       DEFAULT_ROLE_PRICING.implementer.inputUsdPerM
     );
+  });
+});
+
+describe('DEFAULT_ROLE_PRICING', () => {
+  /** The spec a seeded agent runs, following `inheritsModelFrom` the way the resolver does. */
+  function seededSpec(key: string, seen: Set<string> = new Set()): string | undefined {
+    const agent = SWE_AGENTS.find((a) => a.key === key);
+    if (!agent || seen.has(key)) {
+      return undefined;
+    }
+    seen.add(key);
+    return (
+      agent.modelSpec ??
+      (agent.inheritsModelFrom ? seededSpec(agent.inheritsModelFrom, seen) : undefined)
+    );
+  }
+
+  it('prices each role at the built-in price of the model its seeded agent runs', () => {
+    const builtin = new Map(BUILTIN_MODELS.map((m) => [builtinModelSpec(m), m]));
+    for (const [role, rates] of Object.entries(DEFAULT_ROLE_PRICING)) {
+      const spec = seededSpec(role);
+      expect(spec, `no seeded agent for role ${role}`).toBeDefined();
+      const model = builtin.get(spec as string);
+      expect(model, `${spec} has no built-in price`).toBeDefined();
+      expect(rates, role).toEqual({
+        inputUsdPerM: model?.inputUsdPerMTok,
+        outputUsdPerM: model?.outputUsdPerMTok,
+      });
+    }
   });
 });

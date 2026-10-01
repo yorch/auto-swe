@@ -1,8 +1,9 @@
+import { DEFAULT_ROLE_PRICING } from '@auto-swe/shared/workflow/costEstimator';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
-import { builtinModelFor, findUnpricedSpecs } from '../lib/modelCatalogService.js';
+import { builtinModelFor, findUnpricedSpecs, rolePricing } from '../lib/modelCatalogService.js';
 import { discoverProviderModels } from '../lib/modelDiscovery.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -104,6 +105,13 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
       return { data: rows.map(toDto) };
     }
   );
+
+  // Any signed-in user: the workflow editor shows its estimate to template
+  // authors, who cannot read the agent library itself. Only model specs and
+  // prices leave, not the agents' prompts or tools.
+  app.get('/model-catalog/role-pricing', { onRequest: anyUser }, async () => ({
+    data: await rolePricing(fastify.prisma, Object.keys(DEFAULT_ROLE_PRICING)),
+  }));
 
   app.get('/model-catalog/unpriced', { onRequest: adminOnly }, async () => ({
     data: await findUnpricedSpecs(fastify.prisma),

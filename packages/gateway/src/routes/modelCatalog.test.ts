@@ -299,3 +299,12 @@ describe('POST /model-catalog/discover', () => {
     expect(res.json().data[0]).toMatchObject({ ok: true, provider: 'openai' });
   });
 });
+
+describe('GET /model-catalog/role-pricing', () => {
+  it('is readable by any signed-in user — the editor shows estimates to template authors', async () => {
+    const { call } = await buildApp('ENGINEER');
+    const res = await call('GET', '/model-catalog/role-pricing');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toHaveProperty('data');
+  });
+});

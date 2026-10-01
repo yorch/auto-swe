@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   catalogWarnings,
   findUnpricedSpecs,
+  rolePricing,
   suggestSpec,
   UNPRICED_TRACE_LOOKBACK_DAYS,
 } from './modelCatalogService.js';
@@ -136,5 +137,75 @@ describe('findUnpricedSpecs', () => {
       createdAt: { gte: new Date(now.getTime() - UNPRICED_TRACE_LOOKBACK_DAYS * 86_400_000) },
       type: 'llm_response',
     });
+  });
+});
+
+describe('rolePricing', () => {
+  function pricingPrisma(
+    agents: Array<{ key: string; modelSpec: string | null; inheritsModelFrom?: string | null }>,
+    catalog: Array<{
+      provider: string;
+      modelId: string;
+      inputUsdPerMTok: number;
+      outputUsdPerMTok: number;
+    }> = []
+  ) {
+    return {
+      // Rows arrive latest-version first, as the query orders them.
+      agent: {
+        findMany: vi.fn(async () => agents.map((a) => ({ inheritsModelFrom: null, ...a }))),
+      },
+      modelCatalogEntry: { findMany: vi.fn(async () => catalog) },
+    } as unknown as PrismaClient;
+  }
+
+  it("prices each role from its latest GLOBAL agent's model — catalog first, then built-in", async () => {
+    const prisma = pricingPrisma(
+      [
+        { key: 'implementer', modelSpec: 'anthropic/claude-opus-5-5' }, // latest
+        { key: 'implementer', modelSpec: 'anthropic/claude-opus-4-8' }, // older version
+        { key: 'planner', modelSpec: 'anthropic/claude-sonnet-5-5' },
+      ],
+      [
+        {
+          inputUsdPerMTok: 1.5,
+          modelId: 'claude-sonnet-5-5',
+          outputUsdPerMTok: 7.5,
+          provider: 'anthropic',
+        },
+      ]
+    );
+    expect(await rolePricing(prisma, ['implementer', 'planner'])).toEqual({
+      implementer: {
+        inputUsdPerMTok: 4,
+        modelSpec: 'anthropic/claude-opus-5-5',
+        outputUsdPerMTok: 20,
+      },
+      planner: {
+        inputUsdPerMTok: 1.5,
+        modelSpec: 'anthropic/claude-sonnet-5-5',
+        outputUsdPerMTok: 7.5,
+      },
+    });
+  });
+
+  it('follows inheritsModelFrom, and leaves out a role whose model nothing prices', async () => {
+    const prisma = pricingPrisma([
+      { inheritsModelFrom: 'implementer', key: 'reviewer', modelSpec: null },
+      { key: 'implementer', modelSpec: 'anthropic/claude-opus-5-5' },
+      { key: 'planner', modelSpec: 'acme/unknown-model' },
+    ]);
+    const result = await rolePricing(prisma, ['reviewer', 'planner', 'evalJudge']);
+    expect(result.reviewer?.modelSpec).toBe('anthropic/claude-opus-5-5');
+    expect(result).not.toHaveProperty('planner'); // unpriced: the estimator keeps its default
+    expect(result).not.toHaveProperty('evalJudge'); // no agent at all
+  });
+
+  it('gives up on an inheritance cycle instead of looping', async () => {
+    const prisma = pricingPrisma([
+      { inheritsModelFrom: 'b', key: 'a', modelSpec: null },
+      { inheritsModelFrom: 'a', key: 'b', modelSpec: null },
+    ]);
+    expect(await rolePricing(prisma, ['a'])).toEqual({});
   });
 });
