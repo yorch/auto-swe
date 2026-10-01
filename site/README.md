@@ -126,6 +126,7 @@ mark but not for words).
 | [`src/styles/custom.css`](./src/styles/custom.css) | Spends the tokens: Starlight variable mapping, then chrome and content |
 | [`src/components/Landing.astro`](./src/components/Landing.astro) | The landing page. The only hand-authored page on the site |
 | [`src/components/SignalPanel.astro`](./src/components/SignalPanel.astro) | The hero: the signal panel, its three routes, and the script that runs them |
+| [`src/components/ProductFrames.astro`](./src/components/ProductFrames.astro) | Real dashboard screens from `src/assets/screens/`, captured from a fresh local install. Retake them when those pages change; nothing flags a stale one |
 | [`astro.config.mjs`](./astro.config.mjs) | Starlight and mermaid configuration; builds the sidebar from the manifest |
 
 The link policy is the opposite of the dashboard's, deliberately. `packages/web/src/lib/docLinks.ts`

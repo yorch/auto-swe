@@ -9,6 +9,7 @@
  */
 
 import useCases from '../data/useCases.json';
+import ProductFrames from './ProductFrames.astro';
 import SignalPanel from './SignalPanel.astro';
 import SystemDiagram from './SystemDiagram.astro';
 
@@ -107,6 +108,8 @@ const starting = [
   <SignalPanel />
 
   <div class="landing__body">
+    <ProductFrames />
+
     <section class="band" aria-labelledby="uses-title">
       <h2 id="uses-title" class="band__title">What teams run on it</h2>
       <p class="band__lede">
