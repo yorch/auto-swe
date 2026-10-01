@@ -420,7 +420,10 @@ function capFilesChanged(files: FileChange[]): FileChange[] {
  */
 function fencedFileList(files: FileChange[]): string {
   const lines = files.slice(0, 100).map((f) => {
-    const safe = f.path.slice(0, RESULT_MAX_PATH_CHARS).replace(/[\u0000-\u001f\u007f]/g, '?');
+    const safe = Array.from(f.path.slice(0, RESULT_MAX_PATH_CHARS), (ch) => {
+      const code = ch.charCodeAt(0);
+      return code < 0x20 || code === 0x7f ? '?' : ch;
+    }).join('');
     return `${safe} (${f.operation}, +${f.linesAdded}/-${f.linesRemoved})`;
   });
   const longestRun = Math.max(0, ...(lines.join('\n').match(/`+/g) ?? []).map((r) => r.length));
