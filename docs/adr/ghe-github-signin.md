@@ -20,3 +20,17 @@
 **Decision**: In GHE mode the post-sign-in GitHub login sync uses the API URL that sign-in resolved, not the saved API URL.
 **Reason**: With only a Base URL saved, the stored API URL is still `https://api.github.com`. Sign-in derives `{base}/api/v3`, but the sync hook read the raw value, so it sent the user's GHE access token to api.github.com and never recorded the login.
 **Alternatives considered**: Deriving the URL again inside the hook. Rejected: two copies of the derivation can drift; `resolveGithubSignIn` now exposes the one it used.
+
+## D4 — 2026-10-01 — Design: how GHE sign-in is registered
+
+**Status**: Accepted
+**Decision**: When the saved Base URL's host is not `github.com`, GitHub sign-in is a `genericOAuth` provider with explicit GHE endpoints registered under the same id `github`, instead of better-auth's built-in provider. The mode comes from the Base URL/API URL already on the GitHub tab; there is no new setting. Both live in `resolveGithubSignIn` (`githubEnterpriseAuth.ts`), and GHE and Okta share the one `genericOAuth` plugin.
+**Reason**: The built-in `github` provider hardcodes the authorize, token and user endpoints to github.com and exposes no option to change them. Reusing the id keeps the callback URL (`/api/auth/callback/github`), existing account rows, the post-sign-in username hook, the backfill script, the linking allowlist and the login/settings UI unchanged.
+**Alternatives considered**: A separate `github-enterprise` id, which could coexist with github.com sign-in but needs a new callback URL and changes to the hook, backfill, linking allowlist, button and settings page. An explicit "use GHE for sign-in" toggle, which needs a new column, a migration and a UI field for a distinction no deployment has needed. The cost of the chosen design is that GHE replaces github.com sign-in; they cannot coexist under one id.
+
+## D5 — 2026-10-01 — Design: what a GHE profile must prove
+
+**Status**: Accepted
+**Decision**: Only a `/user/emails` entry that is both `primary` and `verified` is accepted; the public `email` on `/user` is never used; with no such entry the sign-in is refused. Scopes are `read:user` and `user:email`. PKCE is off.
+**Reason**: `github` is a trusted provider for account linking, so an address that is not verified could link a sign-in onto another person's user. The built-in provider does not use PKCE, GHE versions differ in their support for it, and the client is confidential (it holds a secret).
+**Alternatives considered**: Accepting the public profile email, which carries no verification flag. Enabling PKCE, which risks breaking older GHE versions for a protection the client secret already provides at the token endpoint.
