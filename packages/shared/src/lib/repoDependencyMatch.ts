@@ -28,28 +28,40 @@ export interface RepoDependencyCandidate {
   organizationName: string | null;
   repoName: string | null;
   packageNames: string[];
+  /**
+   * The hostname the repository lives on (its web base override, or the
+   * instance's own host), lower-cased and without a port. When both this and
+   * the dependency string name a host they must agree: `acme/api` on another
+   * GitHub host is a different repository. Absent means "do not compare".
+   */
+  host?: string | null;
 }
 
-/** Normalized org/repo pair extracted from a raw dependency string, if any shape matched. */
-function extractOrgRepo(raw: string): { org: string; repo: string } | null {
+/**
+ * Normalized org/repo pair extracted from a raw dependency string, if any shape
+ * matched — with the hostname, for the shapes that carry one.
+ */
+function extractOrgRepo(raw: string): { org: string; repo: string; host?: string } | null {
   const s = raw.trim();
 
   // scp-like syntax: git@host:org/repo(.git)
-  let m = s.match(/^git@[^:/]+:([^/\s]+)\/([^/\s]+?)(\.git)?\/?$/i);
+  let m = s.match(/^git@([^:/]+):([^/\s]+)\/([^/\s]+?)(\.git)?\/?$/i);
   if (m) {
-    return { org: m[1], repo: m[2] };
+    return { host: m[1].toLowerCase(), org: m[2], repo: m[3] };
   }
 
-  // scheme://host/org/repo(.git)
-  m = s.match(/^(?:https?|ssh|git):\/\/[^/\s]+\/([^/\s]+)\/([^/\s]+?)(\.git)?\/?$/i);
+  // scheme://host[:port]/org/repo(.git)
+  m = s.match(
+    /^(?:https?|ssh|git):\/\/(?:[^@/\s]+@)?([^/:\s]+)(?::\d+)?\/([^/\s]+)\/([^/\s]+?)(\.git)?\/?$/i
+  );
   if (m) {
-    return { org: m[1], repo: m[2] };
+    return { host: m[1].toLowerCase(), org: m[2], repo: m[3] };
   }
 
   // bare host/org/repo, e.g. github.com/acme/payments-api(.git)
-  m = s.match(/^[\w.-]+\.[a-z]{2,}\/([^/\s]+)\/([^/\s]+?)(\.git)?\/?$/i);
+  m = s.match(/^([\w.-]+\.[a-z]{2,})\/([^/\s]+)\/([^/\s]+?)(\.git)?\/?$/i);
   if (m) {
-    return { org: m[1], repo: m[2] };
+    return { host: m[1].toLowerCase(), org: m[2], repo: m[3] };
   }
 
   // npm scoped package: @scope/name
@@ -91,13 +103,20 @@ export function matchRepoDependency(
   }
 
   const parsed = extractOrgRepo(trimmed);
+  // A dependency that names its host only matches a repository on that host.
+  // Either side not naming one keeps the name-only match it always had.
+  const sameHost = (c: RepoDependencyCandidate) =>
+    !(parsed?.host && c.host) || parsed.host === c.host.toLowerCase();
 
   // 2. org/repo shape (bare, URL, or scoped-package form).
   if (parsed) {
     const org = parsed.org.toLowerCase();
     const repo = parsed.repo.toLowerCase().replace(/\.git$/, '');
     const byOrgRepo = candidates.find(
-      (c) => c.organizationName?.toLowerCase() === org && c.repoName?.toLowerCase() === repo
+      (c) =>
+        c.organizationName?.toLowerCase() === org &&
+        c.repoName?.toLowerCase() === repo &&
+        sameHost(c)
     );
     if (byOrgRepo) {
       return byOrgRepo.id;
@@ -106,7 +125,7 @@ export function matchRepoDependency(
 
   // 3. Bare repo-name equality — weakest tier, only when unambiguous.
   const bareName = (parsed?.repo ?? trimmed).toLowerCase().replace(/\.git$/, '');
-  const byName = candidates.filter((c) => c.repoName?.toLowerCase() === bareName);
+  const byName = candidates.filter((c) => c.repoName?.toLowerCase() === bareName && sameHost(c));
   if (byName.length === 1) {
     return byName[0].id;
   }

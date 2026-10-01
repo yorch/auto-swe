@@ -4,13 +4,31 @@
  * The ID must be unique across all workflows to avoid collisions.
  * Including organizationName prevents collisions between repos with
  * the same name in different organizations.
+ *
+ * A repository on a host other than the instance's own — its `githubUrl`
+ * override — also carries that host, because `acme/api` on github.com and on a
+ * GitHub Enterprise server are different repositories and must not share
+ * workflow ids. A repository on the instance host has no override and keeps
+ * exactly the id it always had, so nothing already running changes.
  */
 export function generateWorkflowId(
   externalTicketId: string,
   organizationName: string,
-  repoName: string
+  repoName: string,
+  githubUrl?: string | null
 ): string {
-  return `eng-${organizationName}-${repoName}-${externalTicketId}`;
+  const host = githubUrl ? hostSegment(githubUrl) : null;
+  return host
+    ? `eng-${host}-${organizationName}-${repoName}-${externalTicketId}`
+    : `eng-${organizationName}-${repoName}-${externalTicketId}`;
+}
+
+function hostSegment(url: string): string | null {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return null;
+  }
 }
 
 /**

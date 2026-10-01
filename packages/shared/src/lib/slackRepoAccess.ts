@@ -23,6 +23,7 @@ import {
   type RepoAccessRefusal,
 } from './repoAccessDecision.js';
 import { type RepoAccessGate, resolveRepoAccessGateOrLastKnown } from './repoAccessGate.js';
+import { repoMembersSelect } from './repoMembership.js';
 
 /**
  * Why a Slack user was refused.
@@ -109,7 +110,7 @@ export async function decideSlackRepoAccessWithGate(
       installation: { select: { installationId: true, isActive: true } },
       organizationName: true,
       repoName: true,
-      team: { select: { memberships: { select: { userId: true }, where: { userId: user.id } } } },
+      ...repoMembersSelect({ userId: true }, { userId: user.id }),
       type: true,
     },
     where: { id: connectionId },
@@ -134,7 +135,11 @@ export async function decideSlackRepoAccessWithGate(
     repo,
     gate,
     log,
-    action
+    action,
+    // A code task is launched as its requester, so starting one is judged by
+    // their own saved token where they have one. A steer acts on a run launched
+    // by someone else, so the steerer is judged by their login as before.
+    action === 'start-new-work' ? 'caller' : 'platform'
   );
   if (decision.allowed) {
     return ALLOWED;

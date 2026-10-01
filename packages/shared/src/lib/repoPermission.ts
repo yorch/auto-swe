@@ -7,7 +7,11 @@
  * side that has the row in hand.
  */
 import type { PrismaClient } from '../index.js';
-import { resolveUserCredential, resolveUserCredentialPolicy } from './connectionCredential.js';
+import {
+  repositoryHostsAllowed,
+  resolveUserCredential,
+  resolveUserCredentialPolicy,
+} from './connectionCredential.js';
 import { GITHUB_ACCOUNT_API_URL, verifyGithubLoginOwnership } from './githubIdentityCheck.js';
 import { resolveGitHubToken } from './githubInstallation.js';
 import {
@@ -49,6 +53,11 @@ export async function lookupRepoPermission(
     // A non-git connection has no repository to ask about. This is a caller
     // error rather than a denial, so it is not reported as `none`.
     return { failure: 'repo-not-found', ok: false };
+  }
+  // The platform token goes to this API host. An unapproved per-repository
+  // override gets no token — "could not ask", never a denial.
+  if (!(await repositoryHostsAllowed({ githubApiUrl: repo.githubApiUrl })).ok) {
+    return { failure: 'credential-rejected', ok: false };
   }
   const ghConfig = await resolveGitHubConfig();
   const apiUrl = repo.githubApiUrl ?? ghConfig.apiUrl;

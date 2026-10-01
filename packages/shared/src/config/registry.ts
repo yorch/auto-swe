@@ -23,6 +23,19 @@ function defineSetting<T>(def: SettingDefinition<T>): SettingDefinition<T> {
 }
 
 const positiveInt = z.number().int().positive();
+
+/// A list of hosts a credential may be sent to, as `host` or `host:port`.
+const hostList = z
+  .array(
+    z
+      .string()
+      .regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'must be a lowercase host or host:port')
+      // A URL never carries the default port once parsed, so `host:443` would
+      // never match anything — refuse it rather than let it look set.
+      .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
+      .max(253)
+  )
+  .max(50);
 const ratio = z.number().min(0).max(1);
 
 /// Parses a positive-integer env var, clamping to `max` rather than rejecting.
@@ -150,11 +163,25 @@ export const SETTING_DEFINITIONS = {
     unit: 'messages',
   }),
 
-  // ── Per-user GitHub credentials ────────────────────────────────────────────
-  // Whether a user may attach their own GitHub token to a repository, used only
-  // for runs they request. Deployment-wide and ADMIN-only: the host list is
-  // what lets a token reach a private-network GitHub Enterprise server, which
-  // is the same SSRF decision every other connector reserves for an admin.
+  // ── GitHub hosts and per-user credentials ──────────────────────────────────
+  // Where a GitHub credential may be sent, and whether a user may attach their
+  // own token to a repository, used only for runs they launch. Deployment-wide
+  // and ADMIN-only: each host list is an SSRF decision — it is what lets a
+  // credential reach a private-network GitHub Enterprise server — and every
+  // other connector reserves that decision for an admin.
+  'github.repositoryHosts': defineSetting({
+    defaultValue: [],
+    description:
+      "Hosts a repository's web or API URL override may point at, beyond the GitHub hosts configured on the GitHub integration (comma-separated host or host:port; github.com also covers api.github.com). The platform credential is sent to a repository's own hosts, so a team lead may only point a repository at a host listed here — and a repository already pointing elsewhere gets no credential until its host is listed.",
+    group: 'github',
+    label: 'Additional repository hosts',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: hostList,
+    sensitive: true,
+  }),
   'github.userCredentialHosts': defineSetting({
     defaultValue: ['github.com'],
     description:
@@ -165,17 +192,8 @@ export const SETTING_DEFINITIONS = {
     requiredRole: 'ADMIN',
     restartRequired: false,
     runPinned: false,
-    schema: z
-      .array(
-        z
-          .string()
-          .regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'must be a lowercase host or host:port')
-          // A URL never carries the default port once parsed, so `host:443`
-          // would never match anything — refuse it rather than let it look set.
-          .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
-          .max(253)
-      )
-      .max(50),
+    schema: hostList,
+    sensitive: true,
   }),
   'github.userCredentialsEnabled': defineSetting({
     defaultValue: false,

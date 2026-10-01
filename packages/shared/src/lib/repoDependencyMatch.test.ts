@@ -99,3 +99,34 @@ describe('matchRepoDependency', () => {
     expect(matchRepoDependency('acme/nonexistent', candidates)).toBeNull();
   });
 });
+
+describe('matchRepoDependency across GitHub hosts', () => {
+  const onGitHub: RepoDependencyCandidate = {
+    host: 'github.com',
+    id: 'gh',
+    organizationName: 'acme',
+    packageNames: [],
+    repoName: 'api',
+  };
+  const onGhe: RepoDependencyCandidate = { ...onGitHub, host: 'ghe.corp', id: 'ghe' };
+
+  it('matches a dependency URL only to the repository on the host it names', () => {
+    for (const raw of [
+      'https://ghe.corp/acme/api.git',
+      'git@ghe.corp:acme/api.git',
+      'ssh://git@ghe.corp:7999/acme/api.git',
+      'ghe.corp/acme/api',
+    ]) {
+      expect(matchRepoDependency(raw, [onGitHub, onGhe]), raw).toBe('ghe');
+    }
+    expect(matchRepoDependency('https://github.com/acme/api', [onGitHub, onGhe])).toBe('gh');
+  });
+
+  it('does not let a dependency on one host resolve to the same name on another', () => {
+    expect(matchRepoDependency('https://ghe.corp/acme/api', [onGitHub])).toBeNull();
+  });
+
+  it('keeps the name-only match for a dependency that names no host', () => {
+    expect(matchRepoDependency('acme/api', [onGhe])).toBe('ghe');
+  });
+});

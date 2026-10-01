@@ -28,6 +28,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ConfigPermission',
   'ConfigSetting',
   'Connection',
+  'ConnectionTeamShare',
   'EvalDataset',
   'EvalRubric',
   'HumanErrorBaseline',
