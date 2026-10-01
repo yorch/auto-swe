@@ -36,6 +36,7 @@ const calls: {
   readSource: unknown[];
   writeOutcome: unknown[];
   runTool: unknown[];
+  implementationRequests: Array<{ description: string }>;
   implementations: unknown[];
 } = {
   cancelledHumanSteps: [],
@@ -44,6 +45,7 @@ const calls: {
   createWorkflowRun: [],
   domainStates: [],
   finalize: [],
+  implementationRequests: [],
   implementations: [],
   readSource: [],
   resolveWorkspace: [],
@@ -92,7 +94,8 @@ const fakeActivities = {
     }
     return { pinnedSettings: currentPinnedSettings, runId: 'run-test-1', spec: currentSpec };
   },
-  executeImplementation: async (_request: unknown, subtask: unknown) => {
+  executeImplementation: async (request: { description: string }, subtask: unknown) => {
+    calls.implementationRequests.push(request);
     calls.implementations.push(subtask);
     return { branch: 'auto/T-1', headSha: 'sha' };
   },
@@ -414,6 +417,37 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     // concurrently, so compare as a set.
     expect(calls.implementations).toHaveLength(2);
     expect(calls.implementations).toEqual(expect.arrayContaining([{ id: 's1' }, { id: 's2' }]));
+  }, 120_000);
+
+  it('appends non-blank guidance to the implementer request and drops blank fields', async () => {
+    calls.implementationRequests.length = 0;
+    currentSpec = makeSpec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        impl: {
+          inputs: { guidance: { from: 'context.clarification' } },
+          next: 'done',
+          step: 'executeImplementation',
+          type: 'step',
+        },
+        seed: {
+          next: 'impl',
+          type: 'set',
+          values: {
+            'context.clarification': { literal: { approach: 'use a queue', constraints: '  ' } },
+          },
+        },
+      },
+      'seed'
+    );
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-guidance')
+    )) as { status: string };
+    expect(result.status).toBe('SUCCESS');
+    expect(calls.implementationRequests[0]?.description).toBe(
+      'test\n\n## Guidance from the requester\n- approach: use a queue'
+    );
   }, 120_000);
 
   it('answers a HITL node inside each fanOut branch through its own signal', async () => {
