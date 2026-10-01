@@ -6,9 +6,20 @@ type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
   label?: string;
   hint?: string;
   error?: string;
+  /** Dense rails and inline editors: `h-8`, mono `text-xs`. */
+  compact?: boolean;
 };
 
-export function Select({ label, hint, error, className, id, children, ...props }: SelectProps) {
+export function Select({
+  label,
+  hint,
+  error,
+  className,
+  compact = false,
+  id,
+  children,
+  ...props
+}: SelectProps) {
   const selectId = id ?? props.name ?? label?.toLowerCase().replace(/\s+/g, '-');
 
   const describedBy = fieldDescribedBy(selectId, hint, error);
@@ -18,7 +29,8 @@ export function Select({ label, hint, error, className, id, children, ...props }
       aria-describedby={describedBy}
       aria-invalid={error ? true : undefined}
       className={cn(
-        'h-10 w-full border border-ink-400 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none transition-colors',
+        'w-full border border-ink-400 bg-ink-900/60 text-paper-100 outline-none transition-colors',
+        compact ? 'h-8 px-2 font-mono text-xs' : 'h-10 px-3 text-sm',
         'focus:border-ember-400 focus:bg-ink-900/80',
         error && 'border-brick-400 focus:border-brick-400',
         className

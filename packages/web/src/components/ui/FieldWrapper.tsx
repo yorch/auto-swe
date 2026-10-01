@@ -32,10 +32,7 @@ export function FieldWrapper({ id, label, hint, error, children }: FieldWrapperP
   return (
     <div className="space-y-1.5">
       {label && (
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-          htmlFor={id}
-        >
+        <label className="label-mono block" htmlFor={id}>
           {label}
         </label>
       )}

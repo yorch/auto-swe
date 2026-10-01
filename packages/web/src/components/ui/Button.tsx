@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -29,6 +30,23 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: Size;
 };
 
+const BUTTON_STYLE = {
+  borderRadius: '10px',
+  fontSize: '13.5px',
+  letterSpacing: '0.01em',
+} as const;
+
+function buttonClassName(variant: Variant, size: Size, className?: string) {
+  return cn(
+    // `whitespace-nowrap`: a label is one action, so it never wraps — in a
+    // tight table cell "Run →" otherwise broke its arrow onto a second line.
+    'inline-flex items-center justify-center gap-2 whitespace-nowrap border transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+    VARIANTS[variant],
+    SIZES[size],
+    className
+  );
+}
+
 export function Button({
   className,
   variant = 'secondary',
@@ -39,23 +57,31 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
-      className={cn(
-        // `whitespace-nowrap`: a label is one action, so it never wraps — in a
-        // tight table cell "Run →" otherwise broke its arrow onto a second line.
-        'inline-flex items-center justify-center gap-2 whitespace-nowrap border transition-colors disabled:cursor-not-allowed disabled:opacity-40',
-        VARIANTS[variant],
-        SIZES[size],
-        className
-      )}
-      style={{
-        borderRadius: '10px',
-        fontSize: '13.5px',
-        letterSpacing: '0.01em',
-      }}
+      className={buttonClassName(variant, size, className)}
+      style={BUTTON_STYLE}
       type={type}
       {...props}
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * A navigation that looks like a button. Renders a `next/link`, so it keeps
+ * middle-click, prefetch and the URL on hover — a `Button` whose `onClick`
+ * calls `router.push` has none of those.
+ */
+export function ButtonLink({
+  className,
+  variant = 'secondary',
+  size = 'md',
+  children,
+  ...props
+}: React.ComponentProps<typeof Link> & { variant?: Variant; size?: Size }) {
+  return (
+    <Link className={buttonClassName(variant, size, className)} style={BUTTON_STYLE} {...props}>
+      {children}
+    </Link>
   );
 }

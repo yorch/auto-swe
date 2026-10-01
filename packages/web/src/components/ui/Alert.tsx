@@ -17,10 +17,13 @@ const VARIANT_PREFIX: Record<AlertVariant, string> = {
 export function Alert({
   children,
   className,
+  title,
   variant = 'error',
 }: {
   children: React.ReactNode;
   className?: string;
+  /** A mono heading line; the body then renders in body text rather than the tone colour. */
+  title?: string;
   variant?: AlertVariant;
 }) {
   return (
@@ -31,8 +34,20 @@ export function Alert({
         VARIANT_CLASSES[variant],
         className
       )}
+      role={variant === 'error' ? 'alert' : 'status'}
     >
-      {VARIANT_PREFIX[variant]} {children}
+      {title ? (
+        <>
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em]">
+            {VARIANT_PREFIX[variant]} {title}
+          </div>
+          <div className="text-xs leading-relaxed text-paper-300">{children}</div>
+        </>
+      ) : (
+        <>
+          {VARIANT_PREFIX[variant]} {children}
+        </>
+      )}
     </div>
   );
 }

@@ -170,6 +170,16 @@
     letter-spacing: 0.22em;
   }
 
+  /* Muted micro-label — field labels, rail keys, column captions. The neutral
+     sibling of .kicker, which is the ember-coloured section marker. */
+  .label-mono {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-paper-500);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+  }
+
   /* Tabular numerals — for all numbers in tables/rails */
   .num {
     font-family: var(--font-mono);
