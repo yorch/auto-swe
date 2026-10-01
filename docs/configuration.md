@@ -24,7 +24,11 @@ but `true` or `false`. Past boot the resolvers fall back to defaults instead of 
 run on paths (the scanners) that must never abort their caller.
 
 One workspace value stays in the registry: `workspace.gitHelperImage`, which cascades to team and
-organization because a team on an isolated network may need its own mirror.
+organization because a team on an isolated network may need its own mirror. The bounds on agent runs
+(`workspace.agentRunMaxSteps`, `workspace.agentRunMaxWallClockSeconds`,
+`workspace.agentRunMaxConcurrentGlobal`, `workspace.agentRunMaxConcurrentPerTeam` and
+`workspace.agentRunAllowWorkflowChanges`) are registry settings too, all ADMIN-only; see
+[agent-runs.md](./agent-runs.md#6-bounds).
 
 This doc covers the third tier. For integration credentials see
 [model-configuration.md](./model-configuration.md) and the admin pages themselves; for the

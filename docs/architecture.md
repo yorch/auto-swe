@@ -743,7 +743,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   between the sweep and the call is not covered. A replaced `git` binary (or `sh`, `sed`) is not
   touched by the sweep at all; the config rewrite, the repository pin and hook suppression close
   the configuration routes, not that one. Closing it means performing the push from a separate trusted
-  container, which the workspace (a container layer, not a volume) does not support today. The
+  container, which the workspace (a container layer, not a volume) does not support for those paths.
+  Agent runs are the exception: they check and push from a fresh container the agent never ran in
+  ([agent-runs.md §4](./agent-runs.md#4-delivery-and-the-trust-boundary)). The
   hardening also ignores `/etc/gitconfig`, so a custom workspace image that configures a private CA
   or proxy there must set it through the environment (`GIT_SSL_CAINFO`, `HTTPS_PROXY`) instead.
 - **The agent workspace keeps network access** — git and package installs need it — so its egress is

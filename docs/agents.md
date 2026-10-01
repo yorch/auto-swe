@@ -442,6 +442,13 @@ The scan runs:
 
 **`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` but is included in the canonical `AGENT_TOOL_KEYS` set (`packages/shared/src/workflow/stepRegistry.ts`), so the gateway tool-key validation accepts it. A non-empty `toolKeys` must explicitly list `'mcp'` to enable MCP; absence disables it, mirroring the built-in gating.
 
+**Agent runs read `toolKeys` differently.** The implementer reads `null`, `[]` and a list with no
+workspace tool in it as every tool. An [agent run](./agent-runs.md) launches an arbitrary library agent
+and can publish what it writes, so it grants `writeFile` and `bash` only when they are named: `null`,
+`[]` or `["mcp"]` grant `readFile` and `listDirectory` only. The two rules are separate functions
+(`createImplementerAgent` and `selectAgentRunTools`); MCP gating (`isMcpToolEnabled`) is the same in
+both. Neither matches the column comment on `Agent.toolKeys`, which says `[]` means no tools.
+
 Note: `Agent` (like `ProviderCredential`) uses partial unique indexes per scope (Prisma cannot express `WHERE IS NULL` in `upsert`). Code uses `findFirst + conditional create` for GLOBAL-scope rows instead of `upsert`.
 
 ---
