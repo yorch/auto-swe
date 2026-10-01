@@ -1052,6 +1052,33 @@ describe('workflow-templates shell-step RBAC', () => {
     await app.close();
   });
 
+  it('gates a plain step node naming runContainerStep like a containerStep node', async () => {
+    const STEP_SPEC = {
+      ...SHELL_SPEC,
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: {
+          config: { command: 'echo hi', image: 'alpine:latest' },
+          next: 'done',
+          step: 'runContainerStep',
+          type: 'step',
+        },
+      },
+    };
+    const state = { runs: [], teamRole: 'LEAD', templates: [], versions: new Map() };
+    const app = buildApp(state);
+    await app.ready();
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-step-tpl', spec: STEP_SPEC, teamId: TEAM_ID },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error?.code).toBe('SHELL_AUTHOR_FORBIDDEN');
+    await app.close();
+  });
+
   it('rejects shell-node POST on a global template for non-platform-admin users', async () => {
     const state = {
       runs: [],
