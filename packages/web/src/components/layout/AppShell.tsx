@@ -5,7 +5,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { useApprovalsStream } from '@/hooks/useApprovals';
 
-const CHROMELESS_ROUTES = ['/login'];
+const CHROMELESS_ROUTES = ['/login', '/reset-password'];
 
 // Run detail and template diff pages manage their own full-height layout.
 function isFullscreenRoute(pathname: string): boolean {

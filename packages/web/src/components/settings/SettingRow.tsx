@@ -130,15 +130,24 @@ export function SettingRow({
           {isBoolean ? (
             <ToggleSwitch
               checked={boolDraft}
-              disabled={!canWriteHere || busy}
-              label={boolDraft ? 'Enabled' : 'Disabled'}
+              disabled={!canWriteHere || busy || setting.redacted}
+              // ToggleSwitch takes no aria-label; the visually hidden prefix gives
+              // the switch the setting's name instead of just its state.
+              label={
+                <>
+                  <span className="sr-only">{setting.label}: </span>
+                  {boolDraft ? 'Enabled' : 'Disabled'}
+                </>
+              }
               onChange={() => setBoolDraft((current) => !current)}
             />
           ) : (
             <Input
+              aria-label={setting.label}
               disabled={!canWriteHere || busy || setting.redacted}
               error={invalidNumber ? 'Must be a number' : undefined}
               hint={setting.unit ?? (isList ? 'comma-separated' : undefined)}
+              id={`setting-${setting.key}`}
               inputMode={isNumber ? 'numeric' : undefined}
               onChange={(e) => setDraft(e.target.value)}
               // Withheld by the server for anyone below the setting's role.

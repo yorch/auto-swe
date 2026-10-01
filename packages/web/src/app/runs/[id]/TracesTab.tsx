@@ -91,6 +91,7 @@ function CollapsibleSection({
   return (
     <div>
       <button
+        aria-expanded={open}
         className="flex items-center gap-1 text-paper-500 hover:text-paper-300 transition-colors mb-1"
         onClick={(e) => {
           e.stopPropagation();
@@ -469,65 +470,59 @@ function EventRow({
 
   return (
     <li>
-      {/* biome-ignore lint/a11y/useSemanticElements: row contains nested interactive controls (links, collapse buttons) that cannot live inside a <button> */}
-      <div
-        aria-controls={`trace-row-${trace.id}`}
-        aria-expanded={isExpanded}
-        aria-label={isExpanded ? 'Collapse trace row' : 'Expand trace row'}
-        className="w-full text-left transition-colors hover:bg-ink-600/20 px-3 py-1.5 cursor-pointer"
-        id={`trace-row-${trace.id}`}
-        onClick={onToggle}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onToggle();
-          }
-        }}
-        role="button"
-        tabIndex={0}
-      >
+      <div className="w-full text-left transition-colors hover:bg-ink-600/20 px-3 py-1.5">
         <div className="flex items-center gap-2">
-          {/* Disclosure caret */}
-          <span
-            className="shrink-0 text-paper-600 w-3 text-center"
-            style={{ fontFamily: 'var(--font-mono)', fontSize: '8px' }}
+          {/* The toggle covers the summary only: the OTel link on the right and
+              the expanded body's own collapse buttons cannot live inside a <button>. */}
+          <button
+            aria-controls={`trace-output-${trace.id}`}
+            aria-expanded={isExpanded}
+            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+            onClick={onToggle}
+            type="button"
           >
-            {isExpanded ? '▼' : '▶'}
-          </span>
-
-          {/* Type glyph — .tg */}
-          <span
-            className="shrink-0 px-1 py-px"
-            style={{
-              background: glyph.bg,
-              borderRadius: '4px',
-              color: glyph.color,
-              fontFamily: 'var(--font-mono)',
-              fontSize: '8.5px',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-            }}
-          >
-            {glyph.label}
-          </span>
-
-          {/* Event name */}
-          <span
-            className={hasError ? 'text-brick-400' : 'text-paper-200'}
-            style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500 }}
-          >
-            {label}
-          </span>
-
-          {/* Detail / model */}
-          {detail && (
+            {/* Disclosure caret */}
             <span
-              className="text-paper-500 truncate flex-1"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+              className="shrink-0 text-paper-600 w-3 text-center"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '8px' }}
             >
-              {detail}
+              {isExpanded ? '▼' : '▶'}
             </span>
-          )}
+
+            {/* Type glyph — .tg */}
+            <span
+              className="shrink-0 px-1 py-px"
+              style={{
+                background: glyph.bg,
+                borderRadius: '4px',
+                color: glyph.color,
+                fontFamily: 'var(--font-mono)',
+                fontSize: '8.5px',
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+              }}
+            >
+              {glyph.label}
+            </span>
+
+            {/* Event name */}
+            <span
+              className={hasError ? 'text-brick-400' : 'text-paper-200'}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500 }}
+            >
+              {label}
+            </span>
+
+            {/* Detail / model */}
+            {detail && (
+              <span
+                className="text-paper-500 truncate flex-1"
+                style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+              >
+                {detail}
+              </span>
+            )}
+          </button>
 
           {/* Right: token/cost chip + otel link + duration + error chip */}
           <div className="flex items-center gap-2 ml-auto shrink-0">
@@ -549,7 +544,11 @@ function EventRow({
           </div>
         </div>
 
-        {isExpanded && <TraceOutput trace={trace} />}
+        {isExpanded && (
+          <div id={`trace-output-${trace.id}`}>
+            <TraceOutput trace={trace} />
+          </div>
+        )}
       </div>
     </li>
   );

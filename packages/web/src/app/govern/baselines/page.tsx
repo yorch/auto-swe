@@ -5,11 +5,10 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
@@ -95,52 +94,53 @@ function CreateBaselineModal({
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
         {error && <p className="text-xs text-brick-400">{error}</p>}
-        <FieldWrapper label="Organization">
-          <Select
-            onChange={(e) => setForm((f) => ({ ...f, orgId: e.target.value }))}
-            value={form.orgId}
-          >
-            {orgs.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </Select>
-        </FieldWrapper>
-        <FieldWrapper label="Domain">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))}
-            placeholder="e.g. git_repo"
-            required
-            value={form.domain}
-          />
-        </FieldWrapper>
-        <FieldWrapper hint="Optional narrower bucket" label="Outcome type">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, outcomeType: e.target.value }))}
-            value={form.outcomeType}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Sample size">
-          <Input
-            min={1}
-            onChange={(e) => setForm((f) => ({ ...f, sampleSize: e.target.value }))}
-            required
-            step={1}
-            type="number"
-            value={form.sampleSize}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Errors found">
-          <Input
-            min={0}
-            onChange={(e) => setForm((f) => ({ ...f, errorCount: e.target.value }))}
-            required
-            step={1}
-            type="number"
-            value={form.errorCount}
-          />
-        </FieldWrapper>
+        <Select
+          id="baseline-org"
+          label="Organization"
+          onChange={(e) => setForm((f) => ({ ...f, orgId: e.target.value }))}
+          value={form.orgId}
+        >
+          {orgs.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+        </Select>
+        <Input
+          id="baseline-domain"
+          label="Domain"
+          onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))}
+          placeholder="e.g. git_repo"
+          required
+          value={form.domain}
+        />
+        <Input
+          hint="Optional narrower bucket"
+          id="baseline-outcome-type"
+          label="Outcome type"
+          onChange={(e) => setForm((f) => ({ ...f, outcomeType: e.target.value }))}
+          value={form.outcomeType}
+        />
+        <Input
+          id="baseline-sample-size"
+          label="Sample size"
+          min={1}
+          onChange={(e) => setForm((f) => ({ ...f, sampleSize: e.target.value }))}
+          required
+          step={1}
+          type="number"
+          value={form.sampleSize}
+        />
+        <Input
+          id="baseline-error-count"
+          label="Errors found"
+          min={0}
+          onChange={(e) => setForm((f) => ({ ...f, errorCount: e.target.value }))}
+          required
+          step={1}
+          type="number"
+          value={form.errorCount}
+        />
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">
             Cancel
@@ -159,10 +159,18 @@ export default function GovernBaselinesPage() {
   const [selectedOrgId, setSelectedOrgId] = useState<string>('all');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; domain: string } | null>(null);
   const deleteBaseline = useDeleteHumanErrorBaseline();
-  const { data: orgs, isLoading: orgsLoading } = useUserOrgs();
-  const { data: baselines, isLoading: baselinesLoading } = useHumanErrorBaselines(
-    selectedOrgId === 'all' ? undefined : selectedOrgId
-  );
+  const {
+    data: orgs,
+    isLoading: orgsLoading,
+    isError: orgsIsError,
+    error: orgsError,
+  } = useUserOrgs();
+  const {
+    data: baselines,
+    isLoading: baselinesLoading,
+    isError: baselinesIsError,
+    error: baselinesError,
+  } = useHumanErrorBaselines(selectedOrgId === 'all' ? undefined : selectedOrgId);
 
   const orgOptions = useMemo(
     () => [{ id: 'all', name: 'All my organizations' }, ...(orgs ?? [])],
@@ -199,9 +207,12 @@ export default function GovernBaselinesPage() {
         </Select>
       </div>
 
-      {orgsLoading || baselinesLoading ? (
-        <LoadingState />
-      ) : (
+      <QueryBoundary
+        error={orgsIsError ? orgsError : baselinesError}
+        isError={orgsIsError || baselinesIsError}
+        isLoading={orgsLoading || baselinesLoading}
+        label="baselines"
+      >
         <Card>
           <CardHeader>
             <CardTitle>Recorded baselines</CardTitle>
@@ -253,7 +264,7 @@ export default function GovernBaselinesPage() {
             </div>
           )}
         </Card>
-      )}
+      </QueryBoundary>
 
       <CreateBaselineModal
         onClose={() => setNewOpen(false)}

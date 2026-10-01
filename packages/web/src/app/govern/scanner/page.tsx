@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -71,45 +70,43 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
   return (
     <Modal eyebrow="Admin / Scanner" onClose={onClose} open={open} title="New Scanner Pattern">
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <FieldWrapper label="Label">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-            placeholder="my-custom-pattern"
-            required
-            value={form.label}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Type">
-          <Select
-            onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
-            value={form.type}
-          >
-            {patternTypeOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-        </FieldWrapper>
-        <FieldWrapper label="Pattern (regex source)">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
-            placeholder="my\s+pattern"
-            required
-            value={form.pattern}
-          />
-        </FieldWrapper>
-        <FieldWrapper
-          hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
-          label="Flags"
+        <Input
+          id="scanner-new-label"
+          label="Label"
+          onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+          placeholder="my-custom-pattern"
+          required
+          value={form.label}
+        />
+        <Select
+          id="scanner-new-type"
+          label="Type"
+          onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
+          value={form.type}
         >
-          <Input
-            maxLength={10}
-            onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
-            placeholder="i"
-            value={form.flags}
-          />
-        </FieldWrapper>
+          {patternTypeOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
+        <Input
+          id="scanner-new-pattern"
+          label="Pattern (regex source)"
+          onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
+          placeholder="my\s+pattern"
+          required
+          value={form.pattern}
+        />
+        <Input
+          hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
+          id="scanner-new-flags"
+          label="Flags"
+          maxLength={10}
+          onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
+          placeholder="i"
+          value={form.flags}
+        />
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">
@@ -192,42 +189,40 @@ function PatternDetailModal({
     >
       {editing ? (
         <form className="space-y-4" onSubmit={handleSave}>
-          <FieldWrapper label="Label">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-              required
-              value={form.label}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Type">
-            <Select
-              onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
-              value={form.type}
-            >
-              {patternTypeOptions.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </FieldWrapper>
-          <FieldWrapper label="Pattern (regex source)">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
-              required
-              value={form.pattern}
-            />
-          </FieldWrapper>
-          <FieldWrapper
-            hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
-            label="Flags"
+          <Input
+            id="scanner-edit-label"
+            label="Label"
+            onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+            required
+            value={form.label}
+          />
+          <Select
+            id="scanner-edit-type"
+            label="Type"
+            onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
+            value={form.type}
           >
-            <Input
-              maxLength={10}
-              onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
-              value={form.flags}
-            />
-          </FieldWrapper>
+            {patternTypeOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
+          <Input
+            id="scanner-edit-pattern"
+            label="Pattern (regex source)"
+            onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
+            required
+            value={form.pattern}
+          />
+          <Input
+            hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
+            id="scanner-edit-flags"
+            label="Flags"
+            maxLength={10}
+            onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
+            value={form.flags}
+          />
           {error && <p className="text-xs text-brick-400">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
             <Button onClick={cancelEdit} type="button" variant="ghost">

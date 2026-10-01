@@ -7,6 +7,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TabBar } from '@/components/ui/TabBar';
@@ -32,10 +33,11 @@ const PAGE_SIZE = 20;
 const RUN_STATUSES = [
   { label: 'All statuses', value: '' },
   { label: 'Running', value: 'RUNNING' },
-  { label: 'Succeeded', value: 'SUCCEEDED' },
+  { label: 'Succeeded', value: 'SUCCESS' },
   { label: 'Failed', value: 'FAILED' },
   { label: 'Cancelled', value: 'CANCELLED' },
   { label: 'Timed out', value: 'TIMED_OUT' },
+  { label: 'Skipped', value: 'SKIPPED' },
 ];
 
 function runDuration(start: string, end: string | null): string {
@@ -54,7 +56,10 @@ export default function TemplateRunsPage({ params }: PageProps) {
   const [statusFilter, setStatusFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
 
-  const { data, isLoading } = useTemplateRuns(id ?? '', { limit: PAGE_SIZE, offset });
+  const { data, error, isError, isLoading } = useTemplateRuns(id ?? '', {
+    limit: PAGE_SIZE,
+    offset,
+  });
 
   const rows = data?.data ?? [];
   const total = data?.total ?? 0;
@@ -172,110 +177,108 @@ export default function TemplateRunsPage({ params }: PageProps) {
         )}
         {(statusFilter || versionFilter) && (
           <span className="font-mono text-[11px] text-paper-500">
-            {filteredRows.length} of {rows.length} shown
+            {filteredRows.length} of {rows.length} on this page shown — filters apply to the current
+            page only
           </span>
         )}
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-          <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-          loading runs…
-        </div>
-      ) : (
-        <>
-          <Card className="fade-up stagger-2 overflow-hidden p-0" variant="inset">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-600">
-                  <Th>Started</Th>
-                  <Th>Status</Th>
-                  <Th>Template ver.</Th>
-                  <Th>Work request</Th>
-                  <Th align="right">Duration</Th>
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isLoading={isLoading}
+        label="runs"
+        loadingMessage="loading runs…"
+      >
+        <Card className="fade-up stagger-2 overflow-hidden p-0" variant="inset">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ink-600">
+                <Th>Started</Th>
+                <Th>Status</Th>
+                <Th>Template ver.</Th>
+                <Th>Work request</Th>
+                <Th align="right">Duration</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRows.map((r) => (
+                <tr
+                  className="border-b border-ink-600 transition-colors hover:bg-ink-700/40"
+                  key={r.id}
+                >
+                  <td className="px-4 py-3">
+                    <Link className="text-paper-100 hover:text-ember-400" href={`/runs/${r.id}`}>
+                      {formatDate(r.startedAt)}
+                    </Link>
+                    <div className="font-mono text-[11px] text-paper-500">
+                      {formatRelativeTime(r.startedAt)}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-paper-300">
+                    v{r.templateVersion}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {r.workRequest ? (
+                      <>
+                        <div className="font-mono text-paper-100">
+                          {r.workRequest.externalTicketId}
+                        </div>
+                        <div className="max-w-md truncate text-paper-500">
+                          {r.workRequest.description}
+                        </div>
+                      </>
+                    ) : (
+                      <span className="font-mono text-[11px] uppercase tracking-wider text-paper-500">
+                        —
+                      </span>
+                    )}
+                  </td>
+                  <td className="tabular px-4 py-3 text-right font-mono text-xs">
+                    {r.endedAt === null ? (
+                      <span className="inline-flex items-center gap-1.5 text-ember-400">
+                        <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
+                        running
+                      </span>
+                    ) : (
+                      <span className="text-paper-300">{runDuration(r.startedAt, r.endedAt)}</span>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filteredRows.map((r) => (
-                  <tr
-                    className="border-b border-ink-600 transition-colors hover:bg-ink-700/40"
-                    key={r.id}
+              ))}
+              {filteredRows.length === 0 && (
+                <tr>
+                  <td
+                    className="px-4 py-12 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
+                    colSpan={5}
                   >
-                    <td className="px-4 py-3">
-                      <Link className="text-paper-100 hover:text-ember-400" href={`/runs/${r.id}`}>
-                        {formatDate(r.startedAt)}
-                      </Link>
-                      <div className="font-mono text-[11px] text-paper-500">
-                        {formatRelativeTime(r.startedAt)}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={r.status} />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-paper-300">
-                      v{r.templateVersion}
-                    </td>
-                    <td className="px-4 py-3 text-xs">
-                      {r.workRequest ? (
-                        <>
-                          <div className="font-mono text-paper-100">
-                            {r.workRequest.externalTicketId}
-                          </div>
-                          <div className="max-w-md truncate text-paper-500">
-                            {r.workRequest.description}
-                          </div>
-                        </>
-                      ) : (
-                        <span className="font-mono text-[11px] uppercase tracking-wider text-paper-500">
-                          —
-                        </span>
-                      )}
-                    </td>
-                    <td className="tabular px-4 py-3 text-right font-mono text-xs">
-                      {r.endedAt === null ? (
-                        <span className="inline-flex items-center gap-1.5 text-ember-400">
-                          <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-                          running
-                        </span>
-                      ) : (
-                        <span className="text-paper-300">
-                          {runDuration(r.startedAt, r.endedAt)}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {filteredRows.length === 0 && (
-                  <tr>
-                    <td
-                      className="px-4 py-12 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
-                      colSpan={5}
-                    >
-                      {rows.length === 0
-                        ? 'no runs yet — start a new request to trigger one'
-                        : 'no runs match the current filters'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </Card>
+                    {rows.length === 0
+                      ? 'no runs yet — start a new request to trigger one'
+                      : 'no runs on this page match the current filters'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </Card>
 
-          {total > PAGE_SIZE && (
-            <div className="fade-up stagger-3">
-              <Pagination
-                hasNext={offset + PAGE_SIZE < total}
-                hasPrev={offset > 0}
-                onNext={handleNext}
-                onPrev={handlePrev}
-                rangeEnd={Math.min(offset + PAGE_SIZE, total)}
-                rangeStart={offset + 1}
-                total={total}
-              />
-            </div>
-          )}
-        </>
-      )}
+        {total > PAGE_SIZE && (
+          <div className="fade-up stagger-3">
+            <Pagination
+              hasNext={offset + PAGE_SIZE < total}
+              hasPrev={offset > 0}
+              onNext={handleNext}
+              onPrev={handlePrev}
+              rangeEnd={Math.min(offset + PAGE_SIZE, total)}
+              rangeStart={offset + 1}
+              total={total}
+            />
+          </div>
+        )}
+      </QueryBoundary>
     </div>
   );
 }

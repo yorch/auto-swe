@@ -6,6 +6,7 @@ import { useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Select } from '@/components/ui/Select';
 import { useRespondToApproval } from '@/hooks/useApprovals';
 import { formatDuration, formatRelativeTime } from '@/lib/utils';
@@ -122,6 +123,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   // respond.isPending flips to true in the component's closure.
   const inFlight = useRef(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [confirmReject, setConfirmReject] = useState(false);
 
   function toggleExpanded() {
     if (!expanded) {
@@ -147,6 +149,23 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         onSuccess: () => setExpanded(false),
       }
     );
+  }
+
+  // Reject goes through a ConfirmModal, which needs a promise to show its
+  // pending state and render a failure inline.
+  async function handleReject() {
+    if (inFlight.current) {
+      return;
+    }
+    inFlight.current = true;
+    setPendingAction('reject');
+    try {
+      await respond.mutateAsync({ action: 'reject', id: step.id });
+      setExpanded(false);
+    } finally {
+      inFlight.current = false;
+      setPendingAction(null);
+    }
   }
 
   const contextStr = contextToString(step.context);
@@ -263,11 +282,11 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
               </Button>
               <Button
                 disabled={respond.isPending}
-                onClick={() => handleRespond('reject')}
+                onClick={() => setConfirmReject(true)}
                 size="sm"
                 variant="danger"
               >
-                Reject
+                {pendingAction === 'reject' ? 'Rejecting…' : 'Reject'}
               </Button>
             </div>
           )}
@@ -399,6 +418,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                   </span>
                 )}
                 <textarea
+                  aria-label="Review notes"
                   className="w-full text-sm border border-ink-600 rounded px-2 py-1 font-mono resize-y"
                   onChange={(e) => setReviewText(e.target.value)}
                   placeholder="Add your review notes…"
@@ -418,6 +438,17 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           )}
         </div>
       )}
+
+      <ConfirmModal
+        confirmLabel="Reject"
+        dangerous
+        message="The workflow is told this step was rejected and continues down its rejection path. This cannot be undone."
+        onClose={() => setConfirmReject(false)}
+        onConfirm={handleReject}
+        open={confirmReject}
+        pendingLabel="Rejecting…"
+        title={`Reject ${step.title}?`}
+      />
     </div>
   );
 }

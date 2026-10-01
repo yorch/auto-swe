@@ -5,8 +5,8 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
 import {
   type LessonRepoStats,
@@ -67,8 +67,19 @@ function RepoStatsRow({
 }
 
 export default function GovernLessonsPage() {
-  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminLessonStats();
-  const { data: lessons, isLoading: lessonsLoading } = useLessons(false, { limit: 20 });
+  const {
+    data: stats,
+    isLoading: statsLoading,
+    isError: statsIsError,
+    error: statsError,
+    refetch: refetchStats,
+  } = useAdminLessonStats();
+  const {
+    data: lessons,
+    isLoading: lessonsLoading,
+    isError: lessonsIsError,
+    error: lessonsError,
+  } = useLessons(false, { limit: 20 });
   const { data: consolidation } = useConsolidationConfig();
   const deleteLesson = useDeleteLesson();
 
@@ -90,8 +101,13 @@ export default function GovernLessonsPage() {
   };
 
   const handleTriggerRepo = async (repoId: string) => {
-    await triggerRepoConsolidation(repoId);
-    void refetchStats();
+    setTriggerError(null);
+    try {
+      await triggerRepoConsolidation(repoId);
+      void refetchStats();
+    } catch (err) {
+      setTriggerError(errMsg(err, 'Failed to trigger'));
+    }
   };
 
   const totalActive = stats?.reduce((sum, r) => sum + r.activeCount, 0) ?? 0;
@@ -166,36 +182,41 @@ export default function GovernLessonsPage() {
           </div>
         </CardHeader>
 
-        {statsLoading ? (
-          <LoadingState compact />
-        ) : !stats || stats.length === 0 ? (
-          <EmptyState className="py-0 text-left text-paper-600" title="No repositories found." />
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr>
-                <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                  Repository
-                </th>
-                <th className="pb-2 text-center font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                  Active
-                </th>
-                <th className="pb-2 text-center font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                  Consolidated
-                </th>
-                <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                  Last run
-                </th>
-                <th className="pb-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {stats.map((repo) => (
-                <RepoStatsRow key={repo.id} onTrigger={handleTriggerRepo} repo={repo} />
-              ))}
-            </tbody>
-          </table>
-        )}
+        <QueryBoundary
+          error={statsError}
+          isError={statsIsError}
+          isLoading={statsLoading}
+          label="lesson stats"
+        >
+          {!stats || stats.length === 0 ? (
+            <EmptyState className="py-0 text-left text-paper-600" title="No repositories found." />
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                    Repository
+                  </th>
+                  <th className="pb-2 text-center font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                    Active
+                  </th>
+                  <th className="pb-2 text-center font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                    Consolidated
+                  </th>
+                  <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                    Last run
+                  </th>
+                  <th className="pb-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {stats.map((repo) => (
+                  <RepoStatsRow key={repo.id} onTrigger={handleTriggerRepo} repo={repo} />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </QueryBoundary>
       </Card>
 
       {/* Recent active lessons */}
@@ -204,44 +225,49 @@ export default function GovernLessonsPage() {
           <CardTitle eyebrow="Recent">Active lessons</CardTitle>
         </CardHeader>
 
-        {lessonsLoading ? (
-          <LoadingState compact />
-        ) : !lessons || lessons.length === 0 ? (
-          <EmptyState className="py-0 text-left text-paper-600" title="No active lessons." />
-        ) : (
-          <div className="divide-y divide-ink-700">
-            {lessons.slice(0, 20).map((lesson) => (
-              <div className="flex items-start gap-4 py-3" key={lesson.id}>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[10px] text-paper-600">
-                      {lesson.repository.organizationName}/{lesson.repository.repoName}
-                    </span>
-                    {lesson.failureType && (
-                      <span className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-paper-500">
-                        {lesson.failureType}
+        <QueryBoundary
+          error={lessonsError}
+          isError={lessonsIsError}
+          isLoading={lessonsLoading}
+          label="lessons"
+        >
+          {!lessons || lessons.length === 0 ? (
+            <EmptyState className="py-0 text-left text-paper-600" title="No active lessons." />
+          ) : (
+            <div className="divide-y divide-ink-700">
+              {lessons.slice(0, 20).map((lesson) => (
+                <div className="flex items-start gap-4 py-3" key={lesson.id}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[10px] text-paper-600">
+                        {lesson.repository.organizationName}/{lesson.repository.repoName}
                       </span>
+                      {lesson.failureType && (
+                        <span className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-paper-500">
+                          {lesson.failureType}
+                        </span>
+                      )}
+                      <span className="ml-auto font-mono text-[10px] text-paper-600">
+                        {formatDate(lesson.createdAt)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-paper-200">{lesson.lessonSummary}</p>
+                    {lesson.rationale && (
+                      <p className="mt-0.5 text-xs text-paper-500">{lesson.rationale}</p>
                     )}
-                    <span className="ml-auto font-mono text-[10px] text-paper-600">
-                      {formatDate(lesson.createdAt)}
-                    </span>
                   </div>
-                  <p className="mt-1 text-sm text-paper-200">{lesson.lessonSummary}</p>
-                  {lesson.rationale && (
-                    <p className="mt-0.5 text-xs text-paper-500">{lesson.rationale}</p>
-                  )}
+                  <button
+                    className="shrink-0 font-mono text-[10px] text-paper-600 hover:text-brick-400"
+                    onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
+                    type="button"
+                  >
+                    delete
+                  </button>
                 </div>
-                <button
-                  className="shrink-0 font-mono text-[10px] text-paper-600 hover:text-brick-400"
-                  onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
-                  type="button"
-                >
-                  delete
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </QueryBoundary>
       </Card>
 
       <ConfirmModal
@@ -249,9 +275,9 @@ export default function GovernLessonsPage() {
         dangerous
         message={`Delete "${deleting?.summary}"? This cannot be undone.`}
         onClose={() => setDeleting(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (deleting) {
-            deleteLesson.mutate(deleting.id);
+            await deleteLesson.mutateAsync(deleting.id);
           }
         }}
         open={deleting !== null}

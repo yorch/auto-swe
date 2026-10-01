@@ -42,6 +42,19 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
     isLoading,
   } = useWorkflowTemplateAnalytics(id ?? '', windowDays);
 
+  // Sections in render order — numbered from this one list so a conditional
+  // section never leaves a gap or a duplicate.
+  const sections = stats
+    ? [
+        stats.perStepFailureRates.length > 0 && 'failures',
+        stats.significanceHint && 'significance',
+        stats.perVersionCounts.length > 1 && 'versions',
+        stats.perOutcome.length > 0 && 'outcomes',
+        'detail',
+      ].filter(Boolean)
+    : [];
+  const sectionNumber = (key: string) => String(sections.indexOf(key) + 1).padStart(2, '0');
+
   const handleTabChange = (tab: SubTab) => {
     if (tab === 'editor') {
       router.push(`/workflows/library/${id}`);
@@ -141,7 +154,11 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
           {/* Per-step failure rate chart */}
           {stats.perStepFailureRates.length > 0 && (
             <section className="fade-up stagger-2">
-              <SectionHeader hint="sorted by failure rate" number="01" title="Step failure rates" />
+              <SectionHeader
+                hint="sorted by failure rate"
+                number={sectionNumber('failures')}
+                title="Step failure rates"
+              />
               <Card>
                 <p className="mb-6 text-xs text-paper-400">
                   Failure rate per node across all executions in this window. Skipped and pending
@@ -205,7 +222,11 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
 
           {stats.significanceHint && (
             <section className="fade-up stagger-3">
-              <SectionHeader hint="two-proportion z-test" number="02" title="A/B significance" />
+              <SectionHeader
+                hint="two-proportion z-test"
+                number={sectionNumber('significance')}
+                title="A/B significance"
+              />
               <Card>
                 <div className="mb-3 flex items-center justify-between">
                   <p className="text-xs text-paper-400">
@@ -255,7 +276,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
             <section className="fade-up stagger-4">
               <SectionHeader
                 hint="traffic split"
-                number={stats.significanceHint ? '03' : '02'}
+                number={sectionNumber('versions')}
                 title="Per-version run mix"
               />
               <Card>
@@ -299,15 +320,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
             <section className="fade-up stagger-4">
               <SectionHeader
                 hint="cost by outcome"
-                number={
-                  stats.significanceHint
-                    ? stats.perVersionCounts.length > 1
-                      ? '04'
-                      : '03'
-                    : stats.perVersionCounts.length > 1
-                      ? '03'
-                      : '02'
-                }
+                number={sectionNumber('outcomes')}
                 title="Outcomes"
               />
               <Card>
@@ -334,9 +347,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
           <section className="fade-up stagger-5">
             <SectionHeader
               hint="grouped by node"
-              number={
-                stats.significanceHint ? '04' : stats.perVersionCounts.length > 1 ? '03' : '02'
-              }
+              number={sectionNumber('detail')}
               title="Per-step detail"
             />
             <Card>

@@ -1,7 +1,9 @@
 'use client';
 
 import type { AutonomyDecisionDto } from '@auto-swe/shared/types/api';
+import { Alert } from '@/components/ui/Alert';
 import { useAutonomyDecisionsForRun } from '@/hooks/useRuns';
+import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
 
 function DecisionRow({ row }: { row: AutonomyDecisionDto }) {
@@ -31,7 +33,21 @@ function DecisionRow({ row }: { row: AutonomyDecisionDto }) {
  * table captures.
  */
 export function AutonomyDecisionsPanel({ runId }: { runId: string }) {
-  const { data, isLoading } = useAutonomyDecisionsForRun(runId);
+  const { data, error, isError, isLoading } = useAutonomyDecisionsForRun(runId);
+
+  if (isError) {
+    return (
+      <>
+        <div className="h-px mx-5 bg-ink-500/40" />
+        <div className="px-5 py-4">
+          <div className="kicker mb-2">Autonomy decisions</div>
+          <Alert className="text-xs" variant="error">
+            Could not load autonomy decisions: {errMsg(error, 'request failed')}
+          </Alert>
+        </div>
+      </>
+    );
+  }
 
   if (isLoading || !data || data.length === 0) {
     return null;

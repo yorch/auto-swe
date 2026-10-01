@@ -23,7 +23,7 @@ import { useAuthStore } from '@/stores/authStore';
 export default function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: team, isLoading } = useTeam(id ?? '');
+  const { data: team, error, isError, isLoading } = useTeam(id ?? '');
   const updateMember = useUpdateTeamMember(id ?? '');
   const removeMember = useRemoveTeamMember(id ?? '');
   const platformRole = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
@@ -44,6 +44,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
   const [personaInput, setPersonaInput] = useState('');
   const [personaError, setPersonaError] = useState<string | null>(null);
+  const [confirmClearPersona, setConfirmClearPersona] = useState(false);
+  const [memberError, setMemberError] = useState<string | null>(null);
 
   if (!id) {
     return <div className="text-center py-12 text-paper-400">Team not found</div>;
@@ -62,6 +64,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   if (isLoading) {
     return <LoadingState />;
   }
+  if (isError) {
+    return <Alert variant="error">Could not load team: {errMsg(error, 'request failed')}</Alert>;
+  }
   if (!team) {
     return <div className="text-center py-12 text-paper-400">Team not found</div>;
   }
@@ -74,7 +79,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       <PageHeader
         actions={
           <>
-            <Link className="text-ember-400 hover:underline text-sm" href="/teams">
+            <Link className="text-ember-400 hover:underline text-sm" href="/govern/teams">
               &larr; Teams
             </Link>
             {canManage && (
@@ -98,6 +103,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               </Button>
             )}
           </CardHeader>
+          {memberError && <Alert variant="error">{memberError}</Alert>}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-ink-600">
@@ -121,7 +127,12 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                           (() => {
                             const role = e.target.value;
                             if (role === 'ADMIN' || role === 'LEAD' || role === 'ENGINEER') {
-                              updateMember.mutate({ role, userId: m.user.id });
+                              setMemberError(null);
+                              updateMember
+                                .mutateAsync({ role, userId: m.user.id })
+                                .catch((err) =>
+                                  setMemberError(errMsg(err, 'Failed to change role'))
+                                );
                             }
                           })()
                         }
@@ -239,10 +250,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             {team.defaultPersonaPrompt && (
               <Button
                 disabled={updateTeam.isPending}
-                onClick={() => {
-                  setPersonaInput('');
-                  updateTeam.mutate({ defaultPersonaPrompt: null });
-                }}
+                onClick={() => setConfirmClearPersona(true)}
                 variant="ghost"
               >
                 Clear persona
@@ -275,13 +283,25 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           setConfirmRemoveId(null);
           setConfirmRemoveEmail(null);
         }}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (confirmRemoveId) {
-            removeMember.mutate(confirmRemoveId);
+            await removeMember.mutateAsync(confirmRemoveId);
           }
         }}
         open={confirmRemoveId !== null}
         title="Remove member"
+      />
+      <ConfirmModal
+        confirmLabel="Clear"
+        dangerous
+        message="The team-wide default persona is removed; channels that set their own persona are unaffected. The current text is not kept."
+        onClose={() => setConfirmClearPersona(false)}
+        onConfirm={async () => {
+          await updateTeam.mutateAsync({ defaultPersonaPrompt: null });
+          setPersonaInput('');
+        }}
+        open={confirmClearPersona}
+        title="Clear persona?"
       />
     </div>
   );

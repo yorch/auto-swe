@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
@@ -17,7 +17,7 @@ import {
 /// `generateEmbedding` throws (pgvector column is fixed-width); the UI doesn't
 /// enforce dimensionality directly — the worker errors loudly when wrong.
 export function EmbeddingsTab() {
-  const { data: config, isLoading } = useEmbeddingConfig();
+  const { data: config, error: loadError, isError, isLoading } = useEmbeddingConfig();
   const { data: credentials } = useAdminCredentials();
   const update = useUpdateEmbeddingConfig();
 
@@ -36,6 +36,17 @@ export function EmbeddingsTab() {
     }
   }, [config, dirty]);
 
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="embedding config"
+      />
+    );
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     void submit(
@@ -51,7 +62,6 @@ export function EmbeddingsTab() {
       <CardHeader>
         <CardTitle eyebrow="Embeddings">System-wide model</CardTitle>
       </CardHeader>
-      {isLoading && <LoadingState compact />}
       <p className="mb-4 text-xs text-paper-500">
         Used by the semantic-memory commit step. Singleton — no per-team or per-template overrides.
         The model MUST produce 1536-dimensional vectors (the <code>agent_lessons.embedding</code>{' '}

@@ -195,12 +195,13 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
   return (
     <li>
       <button
+        aria-expanded={expanded}
         className="w-full text-left rounded hover:bg-ink-800 px-2 py-1.5 transition-colors"
         onClick={() => setExpanded((e) => !e)}
         type="button"
       >
         <div className="flex items-center gap-2 text-xs">
-          <span className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dot}`} />
+          <span aria-hidden className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dot}`} />
           <SecurityEventBadge type={event.eventType} />
           <span className="font-mono text-paper-200 truncate">{primary}</span>
           {secondary && (

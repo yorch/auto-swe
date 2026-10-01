@@ -1,10 +1,12 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { API_BASE } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
@@ -56,6 +58,7 @@ const SOCIAL_PROVIDERS: Provider[] = [
 ];
 
 export default function SettingsPage() {
+  const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const linkProvider = useAuthStore((s) => s.linkProvider);
@@ -69,6 +72,11 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [unlinkTarget, setUnlinkTarget] = useState<{
+    accountId: string;
+    label: string;
+    providerId: string;
+  } | null>(null);
 
   useEffect(() => {
     // Parallel reads: which providers the backend is configured for, and
@@ -94,6 +102,13 @@ export default function SettingsPage() {
 
   const linkedIds = new Set(linked.map((a) => a.providerId));
 
+  const handleLogout = async () => {
+    // Same as the TopBar: wait for logout() to clear the session before
+    // navigating, or /login can load with the old session still valid.
+    await logout();
+    router.push('/login');
+  };
+
   const handleLink = async (provider: SocialProviderId) => {
     setBusy(provider);
     setError(null);
@@ -111,29 +126,22 @@ export default function SettingsPage() {
   // `accountId` is better-auth's own account-row id (`LinkedAccount.id`), not
   // the provider's subject. Since 1.7 the unlink endpoint selects purely on
   // that row id — passing `providerId` alongside it is rejected as an unknown
-  // body field.
+  // body field. Rejects on failure so the ConfirmModal shows the error inline.
   const handleUnlink = async (providerId: string, accountId: string) => {
-    setBusy(providerId);
     setError(null);
     setInfo(null);
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/unlink-account`, {
-        body: JSON.stringify({ accountId }),
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(errBody?.message ?? `unlink failed (${res.status})`);
-      }
-      setLinked((prev) => prev.filter((a) => a.providerId !== providerId));
-      setInfo(`${providerId} unlinked from this account.`);
-    } catch (err) {
-      setError(errMsg(err, 'unlink failed'));
-    } finally {
-      setBusy(null);
+    const res = await fetch(`${API_BASE}/api/auth/unlink-account`, {
+      body: JSON.stringify({ accountId }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(errBody?.message ?? `unlink failed (${res.status})`);
     }
+    setLinked((prev) => prev.filter((a) => a.providerId !== providerId));
+    setInfo(`${providerId} unlinked from this account.`);
   };
 
   return (
@@ -168,7 +176,7 @@ export default function SettingsPage() {
             </dd>
           </dl>
           <div className="mt-6 border-t border-ink-600 pt-4">
-            <Button onClick={logout} size="sm" variant="danger">
+            <Button onClick={handleLogout} size="sm" variant="danger">
               Sign out
             </Button>
           </div>
@@ -222,12 +230,13 @@ export default function SettingsPage() {
                   </div>
                   {isLinked && account ? (
                     <Button
-                      disabled={busy === p.id}
-                      onClick={() => handleUnlink(p.id, account.id)}
+                      onClick={() =>
+                        setUnlinkTarget({ accountId: account.id, label: p.label, providerId: p.id })
+                      }
                       size="sm"
                       variant="ghost"
                     >
-                      {busy === p.id ? 'Unlinking…' : 'Unlink'}
+                      Unlink
                     </Button>
                   ) : configured ? (
                     <Button
@@ -301,6 +310,19 @@ export default function SettingsPage() {
         <SectionHeader hint="for the auto-swe CLI" number="04" title="API tokens" />
         <AccessTokensSection />
       </section>
+
+      <ConfirmModal
+        confirmLabel="Unlink"
+        dangerous
+        message={`You will no longer be able to sign in with ${unlinkTarget?.label ?? 'this provider'} until you link it again.`}
+        onClose={() => setUnlinkTarget(null)}
+        onConfirm={() =>
+          unlinkTarget ? handleUnlink(unlinkTarget.providerId, unlinkTarget.accountId) : undefined
+        }
+        open={unlinkTarget !== null}
+        pendingLabel="Unlinking…"
+        title={`Unlink ${unlinkTarget?.label ?? 'account'}?`}
+      />
     </div>
   );
 }

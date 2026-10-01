@@ -76,6 +76,7 @@ export function SkillRefEditor({
             >
               <span className="flex-1 text-paper-200">{nameFor(ref.skillId)}</span>
               <button
+                aria-label={`Move ${nameFor(ref.skillId)} up`}
                 className="text-paper-500 hover:text-paper-200 disabled:opacity-30"
                 disabled={i === 0}
                 onClick={() => move(i, -1)}
@@ -84,6 +85,7 @@ export function SkillRefEditor({
                 ↑
               </button>
               <button
+                aria-label={`Move ${nameFor(ref.skillId)} down`}
                 className="text-paper-500 hover:text-paper-200 disabled:opacity-30"
                 disabled={i === refs.length - 1}
                 onClick={() => move(i, 1)}
@@ -92,6 +94,7 @@ export function SkillRefEditor({
                 ↓
               </button>
               <button
+                aria-label={`Remove ${nameFor(ref.skillId)}`}
                 className="text-brick-400 hover:text-brick-600"
                 onClick={() => remove(i)}
                 type="button"

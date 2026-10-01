@@ -3,8 +3,8 @@
 import Link from 'next/link';
 import { use } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useRunsForWorkRequest, useWorkflow } from '@/hooks/useRuns';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
@@ -14,15 +14,16 @@ import { formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/
 export default function WorkflowDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: workflow, isLoading } = useWorkflow(id ?? '');
+  const { data: workflow, error, isError, isLoading } = useWorkflow(id ?? '');
   const temporalUrl = useTemporalWorkflowUrl(workflow?.temporalWorkflowId ?? '');
   const { data: runs } = useRunsForWorkRequest(workflow?.workRequest?.id);
 
   if (!id) {
     return <div className="text-center py-12 text-paper-400">Workflow not found</div>;
   }
-  if (isLoading) {
-    return <LoadingState />;
+  // Before the not-found branch, so a 403 or 500 is not reported as "not found".
+  if (isLoading || isError) {
+    return <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="workflow" />;
   }
   if (!workflow) {
     return <div className="text-center py-12 text-paper-400">Workflow not found</div>;

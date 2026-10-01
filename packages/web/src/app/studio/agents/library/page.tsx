@@ -12,9 +12,9 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
@@ -71,7 +71,12 @@ function toolKeysLabel(toolKeys: string[] | null): string {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AgentLibraryPage() {
-  const { data: agents, isLoading } = useAgentLibrary({ scope: 'GLOBAL' });
+  const {
+    data: agents,
+    error: loadError,
+    isError,
+    isLoading,
+  } = useAgentLibrary({ scope: 'GLOBAL' });
   const { data: mcpConnections } = useMcpConnections();
   const { data: skills } = useSkills();
   const { data: credentials } = useAdminCredentials();
@@ -85,10 +90,11 @@ export default function AgentLibraryPage() {
   const [editing, setEditing] = useState<AgentRow | null>(null);
   const [deleting, setDeleting] = useState<AgentRow | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
 
   async function submitCreate() {
-    setError(null);
+    setCreateError(null);
     setWarnings([]);
     try {
       const res = await createAgent.mutateAsync(
@@ -98,7 +104,7 @@ export default function AgentLibraryPage() {
       setCreateOpen(false);
       setCreateForm(EMPTY_CREATE);
     } catch (e) {
-      setError(errMsg(e, 'Create failed'));
+      setCreateError(errMsg(e, 'Create failed'));
     }
   }
 
@@ -106,7 +112,7 @@ export default function AgentLibraryPage() {
     if (!editing) {
       return;
     }
-    setError(null);
+    setEditError(null);
     setWarnings([]);
     try {
       const skillRefsPayload: SkillRefInput[] = (editing.skillRefs ?? []).map((r, i) => ({
@@ -132,11 +138,12 @@ export default function AgentLibraryPage() {
       setWarnings(res.scanWarnings ?? []);
       setEditing(null);
     } catch (e) {
-      setError(errMsg(e, 'Update failed'));
+      setEditError(errMsg(e, 'Update failed'));
     }
   }
 
   function openEdit(a: AgentRow) {
+    setEditError(null);
     setEditing({ ...a });
   }
 
@@ -157,7 +164,13 @@ export default function AgentLibraryPage() {
     <div className="space-y-6">
       <PageHeader
         actions={
-          <Button onClick={() => setCreateOpen(true)} variant="primary">
+          <Button
+            onClick={() => {
+              setCreateError(null);
+              setCreateOpen(true);
+            }}
+            variant="primary"
+          >
             + New Agent
           </Button>
         }
@@ -165,18 +178,15 @@ export default function AgentLibraryPage() {
         title="Agent Library"
       />
 
-      {error ? <Alert variant="error">{error}</Alert> : null}
       {warnings.length > 0 ? (
-        <Alert variant="error">Content scan warnings: {warnings.join('; ')}</Alert>
+        <Alert variant="warning">Content scan warnings: {warnings.join('; ')}</Alert>
       ) : null}
 
       <Card>
         <CardHeader>
           <CardTitle eyebrow="GLOBAL scope">Agents</CardTitle>
         </CardHeader>
-        {isLoading ? (
-          <LoadingState />
-        ) : (
+        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="agents">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-ink-600 text-left text-xs text-paper-500">
@@ -241,7 +251,7 @@ export default function AgentLibraryPage() {
               ))}
             </tbody>
           </table>
-        )}
+        </QueryBoundary>
       </Card>
 
       {/* ── Create ── */}
@@ -388,6 +398,7 @@ export default function AgentLibraryPage() {
             ))}
           </Select>
         </div>
+        {createError && <Alert variant="error">{createError}</Alert>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={() => setCreateOpen(false)} variant="secondary">
             Cancel
@@ -498,6 +509,7 @@ export default function AgentLibraryPage() {
                 ))}
               </Select>
             </div>
+            {editError && <Alert variant="error">{editError}</Alert>}
             <div className="flex justify-end gap-2 pt-2">
               <Button onClick={() => setEditing(null)} variant="secondary">
                 Cancel

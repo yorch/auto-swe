@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type KnowledgeBaseConfigInput,
   type KnowledgeBaseProvider,
@@ -32,7 +32,7 @@ const PROVIDER_HINTS: Record<
 };
 
 export function KnowledgeBaseTab() {
-  const { data: resp, isLoading } = useKnowledgeBaseConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useKnowledgeBaseConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateKnowledgeBaseConfig();
@@ -104,8 +104,15 @@ export function KnowledgeBaseTab() {
     runTest(() => testKnowledgeBaseConnection(testQuery.trim()));
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="knowledge base config"
+      />
+    );
   }
 
   return (

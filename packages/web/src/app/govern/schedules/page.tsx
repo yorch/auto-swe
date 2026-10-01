@@ -6,7 +6,6 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -80,89 +79,89 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
   return (
     <Modal eyebrow="Admin / Schedules" onClose={onClose} open={open} title="New Schedule">
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <FieldWrapper label="Name">
+        <Input
+          id="schedule-name"
+          label="Name"
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          placeholder="Weekly dependency update"
+          required
+          value={form.name}
+        />
+        <Select
+          id="schedule-repo"
+          label="Repository"
+          onChange={(e) => setForm((f) => ({ ...f, repoId: e.target.value }))}
+          required
+          value={form.repoId}
+        >
+          <option disabled value="">
+            Select a repository…
+          </option>
+          {(repos ?? [])
+            .filter((r) => r.isActive)
+            .map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.organizationName}/{r.repoName}
+              </option>
+            ))}
+        </Select>
+        <div className="grid grid-cols-2 gap-4">
           <Input
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            placeholder="Weekly dependency update"
+            id="schedule-cron"
+            label="Cron (5-field, UTC)"
+            onChange={(e) => setForm((f) => ({ ...f, cronExpression: e.target.value }))}
+            placeholder="0 3 * * 1"
             required
-            value={form.name}
+            value={form.cronExpression}
           />
-        </FieldWrapper>
-        <FieldWrapper label="Repository">
+          <Input
+            id="schedule-ticket-prefix"
+            label="Ticket Prefix"
+            onChange={(e) => setForm((f) => ({ ...f, externalTicketPrefix: e.target.value }))}
+            placeholder="DEPS"
+            required
+            value={form.externalTicketPrefix}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
           <Select
-            onChange={(e) => setForm((f) => ({ ...f, repoId: e.target.value }))}
-            required
-            value={form.repoId}
+            id="schedule-template"
+            label="Template (blank → team default)"
+            onChange={(e) => setForm((f) => ({ ...f, templateId: e.target.value }))}
+            value={form.templateId}
           >
-            <option disabled value="">
-              Select a repository…
-            </option>
-            {(repos ?? [])
-              .filter((r) => r.isActive)
-              .map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.organizationName}/{r.repoName}
-                </option>
-              ))}
+            <option value="">Team default (resolved on save)</option>
+            {(templates ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
           </Select>
-        </FieldWrapper>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldWrapper label="Cron (5-field, UTC)">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, cronExpression: e.target.value }))}
-              placeholder="0 3 * * 1"
-              required
-              value={form.cronExpression}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Ticket Prefix">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, externalTicketPrefix: e.target.value }))}
-              placeholder="DEPS"
-              required
-              value={form.externalTicketPrefix}
-            />
-          </FieldWrapper>
+          <Select
+            id="schedule-budget-tier"
+            label="Budget Tier"
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                budgetTier: e.target.value as ScheduleForm['budgetTier'],
+              }))
+            }
+            value={form.budgetTier}
+          >
+            <option value="STANDARD">STANDARD</option>
+            <option value="LARGE">LARGE</option>
+            <option value="EPIC">EPIC</option>
+          </Select>
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldWrapper label="Template (blank → team default)">
-            <Select
-              onChange={(e) => setForm((f) => ({ ...f, templateId: e.target.value }))}
-              value={form.templateId}
-            >
-              <option value="">Team default (resolved on save)</option>
-              {(templates ?? []).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
-          </FieldWrapper>
-          <FieldWrapper label="Budget Tier">
-            <Select
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  budgetTier: e.target.value as ScheduleForm['budgetTier'],
-                }))
-              }
-              value={form.budgetTier}
-            >
-              <option value="STANDARD">STANDARD</option>
-              <option value="LARGE">LARGE</option>
-              <option value="EPIC">EPIC</option>
-            </Select>
-          </FieldWrapper>
-        </div>
-        <FieldWrapper label="Description (what the agent should do each fire)">
-          <Textarea
-            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            placeholder="Update all dependencies to their latest compatible versions and fix any breakages."
-            required
-            rows={4}
-            value={form.description}
-          />
-        </FieldWrapper>
+        <Textarea
+          id="schedule-description"
+          label="Description (what the agent should do each fire)"
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          placeholder="Update all dependencies to their latest compatible versions and fix any breakages."
+          required
+          rows={4}
+          value={form.description}
+        />
         {error && <Alert variant="error">{error}</Alert>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">
@@ -367,7 +366,12 @@ export default function GovernSchedulesPage() {
       </Card>
 
       <ScheduleFormModal onClose={() => setNewOpen(false)} open={newOpen} />
-      <DeleteConfirmModal onClose={() => setDeleteTarget(null)} schedule={deleteTarget} />
+      {/* Keyed by row so a failed delete's error does not carry over to the next schedule. */}
+      <DeleteConfirmModal
+        key={deleteTarget?.id}
+        onClose={() => setDeleteTarget(null)}
+        schedule={deleteTarget}
+      />
     </div>
   );
 }

@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -25,7 +24,8 @@ function CreateInstallationModal({ onClose, open }: { onClose: () => void; open:
   const [error, setError] = useState<string | null>(null);
   const create = useCreateGithubInstallation();
 
-  async function submit() {
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
     setError(null);
     try {
       await create.mutateAsync({
@@ -42,41 +42,37 @@ function CreateInstallationModal({ onClose, open }: { onClose: () => void; open:
 
   return (
     <Modal onClose={onClose} open={open} title="Add GitHub installation">
-      <div className="space-y-4">
-        <FieldWrapper
+      <form className="space-y-4" onSubmit={submit}>
+        <Input
           hint="From the installation's settings URL on GitHub: github.com/organizations/<org>/settings/installations/<id>"
+          id="gh-install-new-installation-id"
           label="Installation ID"
-        >
-          <Input
-            onChange={(e) => setInstallationId(e.target.value)}
-            placeholder="12345678"
-            value={installationId}
-          />
-        </FieldWrapper>
-        <FieldWrapper
+          onChange={(e) => setInstallationId(e.target.value)}
+          placeholder="12345678"
+          value={installationId}
+        />
+        <Input
           hint="The organization or user the app is installed on. Shown here only — GitHub remains authoritative."
+          id="gh-install-new-account"
           label="Account"
-        >
-          <Input
-            onChange={(e) => setAccountLogin(e.target.value)}
-            placeholder="acme"
-            value={accountLogin}
-          />
-        </FieldWrapper>
+          onChange={(e) => setAccountLogin(e.target.value)}
+          placeholder="acme"
+          value={accountLogin}
+        />
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="secondary">
+          <Button onClick={onClose} type="button" variant="secondary">
             Cancel
           </Button>
           <Button
             disabled={!installationId.trim() || !accountLogin.trim() || create.isPending}
-            onClick={submit}
+            type="submit"
             variant="primary"
           >
             {create.isPending ? 'Adding…' : 'Add'}
           </Button>
         </div>
-      </div>
+      </form>
     </Modal>
   );
 }
@@ -100,7 +96,8 @@ function EditInstallationModal({
   // compiler has already narrowed rather than asserting non-null inside it.
   const target = installation;
 
-  async function submit() {
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
     setError(null);
     try {
       await update.mutateAsync({
@@ -115,29 +112,33 @@ function EditInstallationModal({
 
   return (
     <Modal onClose={onClose} open title={`Edit installation ${installation.installationId}`}>
-      <div className="space-y-4">
-        <FieldWrapper label="Account">
-          <Input onChange={(e) => setAccountLogin(e.target.value)} value={accountLogin} />
-        </FieldWrapper>
-        <FieldWrapper
+      <form className="space-y-4" onSubmit={submit}>
+        <Input
+          id="gh-install-edit-account"
+          label="Account"
+          onChange={(e) => setAccountLogin(e.target.value)}
+          value={accountLogin}
+        />
+        <Select
           hint="Retiring stops NEW runs against the repositories pointing here. Work already in flight keeps cloning, pushing and reading CI through it, and nothing is disconnected on GitHub."
+          id="gh-install-edit-status"
           label="Status"
+          onChange={(e) => setIsActive(e.target.value)}
+          value={isActive}
         >
-          <Select onChange={(e) => setIsActive(e.target.value)} value={isActive}>
-            <option value="true">In use</option>
-            <option value="false">Retired</option>
-          </Select>
-        </FieldWrapper>
+          <option value="true">In use</option>
+          <option value="false">Retired</option>
+        </Select>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="secondary">
+          <Button onClick={onClose} type="button" variant="secondary">
             Cancel
           </Button>
-          <Button disabled={update.isPending} onClick={submit} variant="primary">
+          <Button disabled={update.isPending} type="submit" variant="primary">
             {update.isPending ? 'Saving…' : 'Save'}
           </Button>
         </div>
-      </div>
+      </form>
     </Modal>
   );
 }

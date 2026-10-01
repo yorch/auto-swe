@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type FigmaConfigInput,
   testFigmaConnection,
@@ -15,7 +15,7 @@ import { ConfigField } from './ConfigField';
 import { SecretInput } from './SecretInput';
 
 export function FigmaTab() {
-  const { data: resp, isLoading } = useFigmaConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useFigmaConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateFigmaConfig();
@@ -53,8 +53,15 @@ export function FigmaTab() {
     runTest(() => testFigmaConnection());
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="Figma config"
+      />
+    );
   }
 
   return (

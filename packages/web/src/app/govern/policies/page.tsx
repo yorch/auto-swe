@@ -1,14 +1,13 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import {
   type AutonomyPolicy,
@@ -228,67 +227,62 @@ function PolicyModal({
   return (
     <Modal eyebrow={eyebrow} onClose={onClose} open={open} title={title}>
       <form className="space-y-4 min-w-[560px] max-w-2xl" onSubmit={handleSubmit}>
-        <FieldWrapper label="Name">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            placeholder="e.g. Strict external comms"
-            required
-            value={form.name}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Description">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            placeholder="What this policy controls"
-            value={form.description}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Scope">
-          <Select
-            onChange={(e) =>
-              setForm((f) => ({
-                ...f,
-                scope: e.target.value as Scope,
-                teamId: '',
-                templateId: '',
-              }))
-            }
-            value={form.scope}
-          >
-            <option value="global">Global default</option>
-            <option value="team">Team default</option>
-            <option value="template">Template override</option>
-          </Select>
-        </FieldWrapper>
+        <Input
+          label="Name"
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          placeholder="e.g. Strict external comms"
+          required
+          value={form.name}
+        />
+        <Input
+          label="Description"
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          placeholder="What this policy controls"
+          value={form.description}
+        />
+        <Select
+          label="Scope"
+          onChange={(e) =>
+            setForm((f) => ({
+              ...f,
+              scope: e.target.value as Scope,
+              teamId: '',
+              templateId: '',
+            }))
+          }
+          value={form.scope}
+        >
+          <option value="global">Global default</option>
+          <option value="team">Team default</option>
+          <option value="template">Template override</option>
+        </Select>
         {form.scope === 'team' && (
-          <FieldWrapper label="Team">
-            <Select
-              onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
-              value={form.teamId}
-            >
-              <option value="">Select a team</option>
-              {(teams ?? []).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
-          </FieldWrapper>
+          <Select
+            label="Team"
+            onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
+            value={form.teamId}
+          >
+            <option value="">Select a team</option>
+            {(teams ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
         )}
         {form.scope === 'template' && (
-          <FieldWrapper label="Template">
-            <Select
-              onChange={(e) => setForm((f) => ({ ...f, templateId: e.target.value }))}
-              value={form.templateId}
-            >
-              <option value="">Select a template</option>
-              {(templates ?? []).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
-          </FieldWrapper>
+          <Select
+            label="Template"
+            onChange={(e) => setForm((f) => ({ ...f, templateId: e.target.value }))}
+            value={form.templateId}
+          >
+            <option value="">Select a template</option>
+            {(templates ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
         )}
         <Card variant="inset">
           <CardHeader>
@@ -297,35 +291,41 @@ function PolicyModal({
           <div className="space-y-3">
             {form.rules.map((r, i) => (
               <div className="grid grid-cols-[1fr_120px_80px_40px] gap-2 items-end" key={r.id}>
-                <FieldWrapper label={i === 0 ? 'Risk class' : undefined}>
-                  <Input
-                    onChange={(e) => setRuleField(i, { riskClass: e.target.value })}
-                    placeholder="e.g. external_communication"
-                    value={r.riskClass}
-                  />
-                </FieldWrapper>
-                <FieldWrapper label={i === 0 ? 'Action' : undefined}>
-                  <Select
-                    onChange={(e) =>
-                      setRuleField(i, { action: e.target.value as RuleRow['action'] })
-                    }
-                    value={r.action}
-                  >
-                    <option value="auto">Auto</option>
-                    <option value="require_approval">Require approval</option>
-                  </Select>
-                </FieldWrapper>
-                <FieldWrapper label={i === 0 ? 'Approvers' : undefined}>
-                  <Input
-                    disabled={r.action !== 'require_approval'}
-                    min="1"
-                    onChange={(e) => setRuleField(i, { approverCount: e.target.value })}
-                    placeholder="1"
-                    type="number"
-                    value={r.approverCount}
-                  />
-                </FieldWrapper>
-                <Button onClick={() => removeRule(i)} type="button" variant="ghost">
+                <Input
+                  aria-label={i === 0 ? undefined : `Risk class, rule ${i + 1}`}
+                  id={`rule-${r.id}-risk-class`}
+                  label={i === 0 ? 'Risk class' : undefined}
+                  onChange={(e) => setRuleField(i, { riskClass: e.target.value })}
+                  placeholder="e.g. external_communication"
+                  value={r.riskClass}
+                />
+                <Select
+                  aria-label={i === 0 ? undefined : `Action, rule ${i + 1}`}
+                  id={`rule-${r.id}-action`}
+                  label={i === 0 ? 'Action' : undefined}
+                  onChange={(e) => setRuleField(i, { action: e.target.value as RuleRow['action'] })}
+                  value={r.action}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="require_approval">Require approval</option>
+                </Select>
+                <Input
+                  aria-label={i === 0 ? undefined : `Approvers, rule ${i + 1}`}
+                  disabled={r.action !== 'require_approval'}
+                  id={`rule-${r.id}-approvers`}
+                  label={i === 0 ? 'Approvers' : undefined}
+                  min="1"
+                  onChange={(e) => setRuleField(i, { approverCount: e.target.value })}
+                  placeholder="1"
+                  type="number"
+                  value={r.approverCount}
+                />
+                <Button
+                  aria-label={`Remove rule ${i + 1}`}
+                  onClick={() => removeRule(i)}
+                  type="button"
+                  variant="ghost"
+                >
                   ×
                 </Button>
               </div>
@@ -356,20 +356,16 @@ function PolicyModal({
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AutonomyPoliciesPage() {
-  const router = useRouter();
-  const { data: policies, isLoading } = useAutonomyPolicies();
+  const { data: policies, isLoading, isError, error } = useAutonomyPolicies();
   const deletePolicy = useDeleteAutonomyPolicy();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<AutonomyPolicy | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AutonomyPolicy | null>(null);
 
   const sorted = useMemo(
     () => [...(policies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [policies]
   );
-
-  if (isLoading) {
-    return <LoadingState message="loading policies…" />;
-  }
 
   function startEdit(policy: AutonomyPolicy) {
     setEditing(policy);
@@ -386,9 +382,9 @@ export default function AutonomyPoliciesPage() {
       <PageHeader
         actions={
           <div className="flex gap-2">
-            <Button onClick={() => router.push('/govern/policies/decisions')} variant="secondary">
+            <ButtonLink href="/govern/policies/decisions" variant="secondary">
               Audit decisions
-            </Button>
+            </ButtonLink>
             <Button onClick={startCreate} variant="primary">
               New Policy
             </Button>
@@ -398,38 +394,47 @@ export default function AutonomyPoliciesPage() {
         title="Autonomy Policies"
       />
 
-      <Card variant="inset">
-        <div className="divide-y divide-ink-600">
-          {sorted.map((p) => (
-            <div className="flex items-start justify-between p-4" key={p.id}>
-              <div className="space-y-1">
-                <p className="font-medium text-sm">{p.name}</p>
-                <p className="text-xs text-paper-400">{scopeLabel(p)}</p>
-                {p.description && <p className="text-xs text-paper-500">{p.description}</p>}
-                <p className="text-xs text-paper-500">
-                  {Object.keys(p.rules).length} rule
-                  {Object.keys(p.rules).length === 1 ? '' : 's'} · updated {formatDate(p.updatedAt)}
-                </p>
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isLoading={isLoading}
+        label="policies"
+        loadingMessage="loading policies…"
+      >
+        <Card variant="inset">
+          <div className="divide-y divide-ink-600">
+            {sorted.map((p) => (
+              <div className="flex items-start justify-between p-4" key={p.id}>
+                <div className="space-y-1">
+                  <p className="font-medium text-sm">{p.name}</p>
+                  <p className="text-xs text-paper-400">{scopeLabel(p)}</p>
+                  {p.description && <p className="text-xs text-paper-500">{p.description}</p>}
+                  <p className="text-xs text-paper-500">
+                    {Object.keys(p.rules).length} rule
+                    {Object.keys(p.rules).length === 1 ? '' : 's'} · updated{' '}
+                    {formatDate(p.updatedAt)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={() => startEdit(p)} variant="secondary">
+                    Edit
+                  </Button>
+                  <Button
+                    disabled={deletePolicy.isPending}
+                    onClick={() => setDeleteTarget(p)}
+                    variant="danger"
+                  >
+                    Delete
+                  </Button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <Button onClick={() => startEdit(p)} variant="secondary">
-                  Edit
-                </Button>
-                <Button
-                  disabled={deletePolicy.isPending}
-                  onClick={() => deletePolicy.mutate(p.id)}
-                  variant="danger"
-                >
-                  Delete
-                </Button>
-              </div>
-            </div>
-          ))}
-          {sorted.length === 0 && (
-            <p className="text-center text-paper-400 py-12">No autonomy policies yet.</p>
-          )}
-        </div>
-      </Card>
+            ))}
+            {sorted.length === 0 && (
+              <p className="text-center text-paper-400 py-12">No autonomy policies yet.</p>
+            )}
+          </div>
+        </Card>
+      </QueryBoundary>
 
       <PolicyModal
         editing={editing}
@@ -438,6 +443,20 @@ export default function AutonomyPoliciesPage() {
           setEditing(null);
         }}
         open={open}
+      />
+
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message={`Delete the "${deleteTarget?.name}" autonomy policy? This cannot be undone.`}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (deleteTarget) {
+            await deletePolicy.mutateAsync(deleteTarget.id);
+          }
+        }}
+        open={deleteTarget !== null}
+        title="Delete autonomy policy?"
       />
     </div>
   );

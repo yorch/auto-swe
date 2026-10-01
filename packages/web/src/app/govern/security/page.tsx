@@ -60,6 +60,7 @@ export default function GovernSecurityPage() {
         actions={
           <div className="w-52 shrink-0">
             <Select
+              aria-label="Filter by event type"
               onChange={(e) => setTypeFilter(e.target.value as SecurityEventType | '')}
               value={typeFilter}
             >

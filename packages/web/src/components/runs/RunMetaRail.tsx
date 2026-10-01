@@ -38,6 +38,8 @@ function MonoValue({ children, accent }: { children: React.ReactNode; accent?: b
 
 export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMetaRailProps) {
   const temporalUrl = useTemporalWorkflowUrl(run.workflowId);
+  const shortWorkflowId =
+    run.workflowId.length > 22 ? `${run.workflowId.slice(0, 22)}…` : run.workflowId;
   const durationMs =
     run.startedAt && run.endedAt
       ? new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()
@@ -79,11 +81,11 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
                   target="_blank"
                   title={`${run.workflowId} — open in Temporal`}
                 >
-                  {run.workflowId.slice(0, 22)}…
+                  {shortWorkflowId}
                 </a>
               ) : (
                 <span className="truncate block max-w-[140px] text-right" title={run.workflowId}>
-                  {run.workflowId.slice(0, 22)}…
+                  {shortWorkflowId}
                 </span>
               )}
             </MonoValue>

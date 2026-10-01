@@ -9,11 +9,12 @@ import {
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
@@ -57,7 +58,7 @@ function modelLabel(a: AgentRow): string {
  * library, resolved by `resolveAgent` ahead of GLOBAL for this team's runs.
  */
 export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
-  const { data: agents, isLoading } = useTeamAgents(teamId);
+  const { data: agents, error: loadError, isError, isLoading } = useTeamAgents(teamId);
   const createAgent = useCreateTeamAgent(teamId);
   const updateAgent = useUpdateTeamAgent(teamId);
   const deleteAgent = useDeleteTeamAgent(teamId);
@@ -68,29 +69,17 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const [form, setForm] = useState<CreateTeamAgentBody>(EMPTY);
   const [editing, setEditing] = useState<AgentRow | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<AgentRow | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function submitDelete() {
-    if (!deleteConfirm) {
-      return;
-    }
-    setError(null);
-    try {
-      await deleteAgent.mutateAsync(deleteConfirm.id);
-      setDeleteConfirm(null);
-    } catch (e) {
-      setError(errMsg(e, 'Delete failed'));
-    }
-  }
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
 
   async function submitCreate() {
-    setError(null);
+    setCreateError(null);
     try {
       await createAgent.mutateAsync(cleanAgentPayload({ ...form }) as CreateTeamAgentBody);
       setCreateOpen(false);
       setForm(EMPTY);
     } catch (e) {
-      setError(errMsg(e, 'Create failed'));
+      setCreateError(errMsg(e, 'Create failed'));
     }
   }
 
@@ -98,7 +87,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
     if (!editing) {
       return;
     }
-    setError(null);
+    setEditError(null);
     try {
       const skillRefsPayload: SkillRefInput[] = (editing.skillRefs ?? []).map((r, i) => ({
         skillId: r.skillId,
@@ -121,7 +110,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       });
       setEditing(null);
     } catch (e) {
-      setError(errMsg(e, 'Update failed'));
+      setEditError(errMsg(e, 'Update failed'));
     }
   }
 
@@ -142,7 +131,14 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
     <Card>
       <CardHeader>
         <CardTitle eyebrow="TEAM scope">Agent overrides</CardTitle>
-        <Button onClick={() => setCreateOpen(true)} size="sm" variant="primary">
+        <Button
+          onClick={() => {
+            setCreateError(null);
+            setCreateOpen(true);
+          }}
+          size="sm"
+          variant="primary"
+        >
           + New
         </Button>
       </CardHeader>
@@ -151,47 +147,54 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
         inherit from GLOBAL.
       </p>
 
-      {error ? <Alert variant="error">{error}</Alert> : null}
-
-      {isLoading ? (
-        <LoadingState />
-      ) : (agents ?? []).length === 0 ? (
-        <EmptyState className="py-3 text-xs text-paper-500" title="No team overrides yet." />
-      ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-ink-600 text-left text-xs text-paper-500">
-              <th className="py-2 pr-3">Key</th>
-              <th className="py-2 pr-3">Model</th>
-              <th className="py-2 pr-3">Skills</th>
-              <th className="py-2 pr-3">Ver</th>
-              <th className="py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {(agents ?? []).map((a) => (
-              <tr className="border-b border-ink-600 last:border-0" key={a.id}>
-                <td className="py-2 pr-3 font-mono text-[11px] text-paper-200">{a.key}</td>
-                <td className="py-2 pr-3 font-mono text-[11px] text-paper-400">{modelLabel(a)}</td>
-                <td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
-                  {a.skillRefs.length > 0 ? a.skillRefs.length : '—'}
-                </td>
-                <td className="py-2 pr-3 tabular-nums text-paper-400">v{a.version}</td>
-                <td className="py-2 text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <Button onClick={() => setEditing({ ...a })} size="sm" variant="ghost">
-                      Edit
-                    </Button>
-                    <Button onClick={() => setDeleteConfirm(a)} size="sm" variant="ghost">
-                      <span className="text-brick-400">Delete</span>
-                    </Button>
-                  </div>
-                </td>
+      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="team agents">
+        {(agents ?? []).length === 0 ? (
+          <EmptyState className="py-3 text-xs text-paper-500" title="No team overrides yet." />
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ink-600 text-left text-xs text-paper-500">
+                <th className="py-2 pr-3">Key</th>
+                <th className="py-2 pr-3">Model</th>
+                <th className="py-2 pr-3">Skills</th>
+                <th className="py-2 pr-3">Ver</th>
+                <th className="py-2" />
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {(agents ?? []).map((a) => (
+                <tr className="border-b border-ink-600 last:border-0" key={a.id}>
+                  <td className="py-2 pr-3 font-mono text-[11px] text-paper-200">{a.key}</td>
+                  <td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
+                    {modelLabel(a)}
+                  </td>
+                  <td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
+                    {a.skillRefs.length > 0 ? a.skillRefs.length : '—'}
+                  </td>
+                  <td className="py-2 pr-3 tabular-nums text-paper-400">v{a.version}</td>
+                  <td className="py-2 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        onClick={() => {
+                          setEditError(null);
+                          setEditing({ ...a });
+                        }}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Edit
+                      </Button>
+                      <Button onClick={() => setDeleteConfirm(a)} size="sm" variant="ghost">
+                        <span className="text-brick-400">Delete</span>
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </QueryBoundary>
 
       {/* Create */}
       <Modal
@@ -265,6 +268,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
             ))}
           </Select>
         </div>
+        {createError && <Alert variant="error">{createError}</Alert>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={() => setCreateOpen(false)} variant="secondary">
             Cancel
@@ -350,6 +354,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
                 ))}
               </Select>
             </div>
+            {editError && <Alert variant="error">{editError}</Alert>}
             <div className="flex justify-end gap-2 pt-2">
               <Button onClick={() => setEditing(null)} variant="secondary">
                 Cancel
@@ -363,29 +368,20 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       </Modal>
 
       {/* Delete confirmation */}
-      <Modal
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message={`Deactivate ${deleteConfirm?.key ?? 'this agent'} for this team? GLOBAL agents are unaffected — runs will fall through to the GLOBAL version.`}
         onClose={() => setDeleteConfirm(null)}
+        onConfirm={async () => {
+          if (deleteConfirm) {
+            await deleteAgent.mutateAsync(deleteConfirm.id);
+          }
+        }}
         open={deleteConfirm !== null}
-        title="Delete team agent"
-      >
-        {deleteConfirm ? (
-          <>
-            <p className="mb-4 text-sm text-paper-300">
-              Deactivate <span className="font-mono text-paper-100">{deleteConfirm.key}</span> for
-              this team? GLOBAL agents are unaffected — runs will fall through to the GLOBAL
-              version.
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button onClick={() => setDeleteConfirm(null)} variant="secondary">
-                Cancel
-              </Button>
-              <Button disabled={deleteAgent.isPending} onClick={submitDelete} variant="primary">
-                Delete
-              </Button>
-            </div>
-          </>
-        ) : null}
-      </Modal>
+        pendingLabel="Deleting…"
+        title="Delete team agent?"
+      />
     </Card>
   );
 }

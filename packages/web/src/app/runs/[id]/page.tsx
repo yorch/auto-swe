@@ -638,6 +638,7 @@ function LayoutC({
         <div className="flex items-center gap-5 mb-3">
           {/* Play/Pause */}
           <button
+            aria-label={playing ? 'Pause replay' : 'Play replay'}
             className="flex items-center justify-center w-9 h-9 rounded-full border-2 transition-colors"
             onClick={() => {
               if (playhead >= 1) {
@@ -710,6 +711,7 @@ function LayoutC({
         {/* Timeline track */}
         <div className="relative">
           <input
+            aria-label="Replay position"
             className="w-full appearance-none h-6 cursor-pointer"
             max={1000}
             min={0}

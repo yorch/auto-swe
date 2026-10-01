@@ -156,13 +156,22 @@ interface StepEntry {
 
 interface Props {
   steps: StepEntry[];
+  /** Keyboard alternative to drag-and-drop: Enter/Space on an item adds it. */
+  onAdd: (payload: PaletteDragKind) => void;
 }
 
-function PrimitiveGroup({ group }: { group: PrimitiveGroup }) {
+function PrimitiveGroup({
+  group,
+  onAdd,
+}: {
+  group: PrimitiveGroup;
+  onAdd: (payload: PaletteDragKind) => void;
+}) {
   const [open, setOpen] = useState(true);
   return (
     <div className="mb-1">
       <button
+        aria-expanded={open}
         className="flex w-full items-center justify-between px-1 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-paper-600 hover:text-paper-400"
         onClick={() => setOpen((v) => !v)}
         type="button"
@@ -179,6 +188,7 @@ function PrimitiveGroup({ group }: { group: PrimitiveGroup }) {
               hint={p.hint}
               key={p.type}
               label={p.label}
+              onAdd={onAdd}
               swatch={p.swatch}
             />
           ))}
@@ -188,7 +198,7 @@ function PrimitiveGroup({ group }: { group: PrimitiveGroup }) {
   );
 }
 
-export function NodePalette({ steps }: Props) {
+export function NodePalette({ steps, onAdd }: Props) {
   const [query, setQuery] = useState('');
 
   const filteredSteps = useMemo(() => {
@@ -221,7 +231,7 @@ export function NodePalette({ steps }: Props) {
           ¶ Palette
         </div>
         <p className="mt-1 text-[11px] leading-snug text-paper-400">
-          Drag onto the canvas to add a node.
+          Drag onto the canvas, or press Enter, to add a node.
         </p>
       </div>
 
@@ -231,7 +241,7 @@ export function NodePalette({ steps }: Props) {
           Primitives
         </div>
         {PRIMITIVE_GROUPS.map((g) => (
-          <PrimitiveGroup group={g} key={g.label} />
+          <PrimitiveGroup group={g} key={g.label} onAdd={onAdd} />
         ))}
       </div>
 
@@ -268,6 +278,7 @@ export function NodePalette({ steps }: Props) {
                     hint={s.label}
                     key={s.name}
                     label={s.name}
+                    onAdd={onAdd}
                     swatch="bg-ember-400"
                     title={s.description}
                   />
@@ -288,6 +299,7 @@ function PaletteItem({
   dragPayload,
   title,
   elevated,
+  onAdd,
 }: {
   label: string;
   hint?: string;
@@ -295,6 +307,7 @@ function PaletteItem({
   dragPayload: PaletteDragKind;
   title?: string;
   elevated?: boolean;
+  onAdd: (payload: PaletteDragKind) => void;
 }) {
   return (
     <li>
@@ -314,8 +327,7 @@ function PaletteItem({
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            // Keep the element keyboard-focusable even though DnD itself is
-            // pointer-driven; screen-reader users can discover the purpose.
+            onAdd(dragPayload);
           }
         }}
         role="button"

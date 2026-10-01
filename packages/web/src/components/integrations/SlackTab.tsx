@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type SlackConfigInput,
   testSlackConnection,
@@ -25,7 +26,7 @@ interface SlackTabProps {
 }
 
 export function SlackTab({ installedTeamId }: SlackTabProps) {
-  const { data: resp, isLoading } = useSlackConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useSlackConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateSlackConfig();
@@ -73,8 +74,15 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
     runTest(() => testSlackConnection());
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="Slack config"
+      />
+    );
   }
 
   return (
@@ -185,7 +193,12 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
  * form) so navigating to the install endpoint doesn't trip the form submit.
  */
 function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
-  const { data: workspaces, isLoading } = useSlackWorkspaces();
+  const {
+    data: workspaces,
+    error: workspacesError,
+    isError: workspacesIsError,
+    isLoading,
+  } = useSlackWorkspaces();
 
   return (
     <Card>
@@ -214,6 +227,8 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
 
       {isLoading ? (
         <LoadingState compact message="loading workspaces…" />
+      ) : workspacesIsError ? (
+        <QueryBoundary error={workspacesError} isError isLoading={false} label="workspaces" />
       ) : !workspaces || workspaces.length === 0 ? (
         <EmptyState className="py-0 text-left text-paper-500" title="No workspaces yet." />
       ) : (

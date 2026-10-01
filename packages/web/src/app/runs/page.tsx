@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -21,7 +22,7 @@ export default function WorkflowRunsPage() {
   const [includeChannel, setIncludeChannel] = useState(false);
   const [offset, setOffset] = useState(0);
   const { data: templates = [] } = useWorkflowTemplates();
-  const { data, isLoading } = useAllWorkflowRuns({
+  const { data, error, isError, isLoading } = useAllWorkflowRuns({
     includeChannel,
     limit: PAGE_SIZE,
     offset,
@@ -87,84 +88,91 @@ export default function WorkflowRunsPage() {
         </label>
       </Card>
 
-      <Card className="p-0 overflow-hidden">
-        <Table>
-          <THead className="bg-ink-800">
-            <Th variant="plain">Ticket</Th>
-            <Th variant="plain">Description</Th>
-            <Th variant="plain">Template</Th>
-            <Th variant="plain">Status</Th>
-            <Th variant="plain">Started</Th>
-            <Th variant="plain">Duration</Th>
-            <Th variant="plain">Cost</Th>
-          </THead>
-          <tbody>
-            {isLoading && (
-              <TRow>
-                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={7}>
-                  Loading…
-                </Td>
-              </TRow>
-            )}
-            {!isLoading && runs.length === 0 && (
-              <TRow>
-                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={7}>
-                  No runs match these filters.
-                </Td>
-              </TRow>
-            )}
-            {runs.map((r) => (
-              <TRow hover key={r.id}>
-                <Td className="px-4 py-3">
-                  <Link
-                    className="text-ember-400 hover:underline font-medium"
-                    href={`/runs/${r.id}`}
-                  >
-                    {r.workRequest?.externalTicketId ?? '—'}
-                  </Link>
-                </Td>
-                <Td className="px-4 py-3 text-paper-400 truncate max-w-md">
-                  {r.workRequest?.description ?? '—'}
-                </Td>
-                <Td className="px-4 py-3 font-mono text-xs text-paper-400">
-                  {r.templateName ?? '—'} v{r.templateVersion}
-                </Td>
-                <Td className="px-4 py-3">
-                  <StatusBadge status={r.status} />
-                </Td>
-                <Td className="px-4 py-3 text-paper-400">{formatRelativeTime(r.startedAt)}</Td>
-                <Td className="px-4 py-3 font-mono text-xs text-paper-400">
-                  {r.endedAt
-                    ? formatDuration(
-                        // Clamped: start and end are stamped by different processes.
-                        Math.max(0, new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime())
-                      )
-                    : '—'}
-                </Td>
-                {/* Denormalized when the run finalizes; a running run has not been totalled
-                    yet. formatCost renders 0 as '—', which here would read the same way. */}
-                <Td className="px-4 py-3 font-mono text-xs text-paper-400">
-                  {r.status === 'RUNNING'
-                    ? '—'
-                    : r.costUsdAccrued === 0
-                      ? '$0.00'
-                      : formatCost(r.costUsdAccrued)}
-                </Td>
-              </TRow>
-            ))}
-          </tbody>
-        </Table>
-      </Card>
+      {/* The table keeps its own in-row loading state; the boundary only swaps in
+          the error alert, so a 403/500 is not shown as "No runs match". */}
+      <QueryBoundary error={error} isError={isError} isLoading={false} label="runs">
+        <Card className="p-0 overflow-hidden">
+          <Table>
+            <THead className="bg-ink-800">
+              <Th variant="plain">Ticket</Th>
+              <Th variant="plain">Description</Th>
+              <Th variant="plain">Template</Th>
+              <Th variant="plain">Status</Th>
+              <Th variant="plain">Started</Th>
+              <Th variant="plain">Duration</Th>
+              <Th variant="plain">Cost</Th>
+            </THead>
+            <tbody>
+              {isLoading && (
+                <TRow>
+                  <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={7}>
+                    Loading…
+                  </Td>
+                </TRow>
+              )}
+              {!isLoading && runs.length === 0 && (
+                <TRow>
+                  <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={7}>
+                    No runs match these filters.
+                  </Td>
+                </TRow>
+              )}
+              {runs.map((r) => (
+                <TRow hover key={r.id}>
+                  <Td className="px-4 py-3">
+                    <Link
+                      className="text-ember-400 hover:underline font-medium"
+                      href={`/runs/${r.id}`}
+                    >
+                      {r.workRequest?.externalTicketId ?? '—'}
+                    </Link>
+                  </Td>
+                  <Td className="px-4 py-3 text-paper-400 truncate max-w-md">
+                    {r.workRequest?.description ?? '—'}
+                  </Td>
+                  <Td className="px-4 py-3 font-mono text-xs text-paper-400">
+                    {r.templateName ?? '—'} v{r.templateVersion}
+                  </Td>
+                  <Td className="px-4 py-3">
+                    <StatusBadge status={r.status} />
+                  </Td>
+                  <Td className="px-4 py-3 text-paper-400">{formatRelativeTime(r.startedAt)}</Td>
+                  <Td className="px-4 py-3 font-mono text-xs text-paper-400">
+                    {r.endedAt
+                      ? formatDuration(
+                          // Clamped: start and end are stamped by different processes.
+                          Math.max(
+                            0,
+                            new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime()
+                          )
+                        )
+                      : '—'}
+                  </Td>
+                  {/* Denormalized when the run finalizes; a running run has not been totalled
+                      yet. formatCost renders 0 as '—', which here would read the same way. */}
+                  <Td className="px-4 py-3 font-mono text-xs text-paper-400">
+                    {r.status === 'RUNNING'
+                      ? '—'
+                      : r.costUsdAccrued === 0
+                        ? '$0.00'
+                        : formatCost(r.costUsdAccrued)}
+                  </Td>
+                </TRow>
+              ))}
+            </tbody>
+          </Table>
+        </Card>
 
-      <Pagination
-        hasNext={hasNext}
-        hasPrev={hasPrev}
-        onNext={() => setOffset((o) => o + PAGE_SIZE)}
-        onPrev={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
-        rangeEnd={Math.min(offset + PAGE_SIZE, total)}
-        rangeStart={total === 0 ? 0 : offset + 1}
-        total={total}
-      />
+        <Pagination
+          hasNext={hasNext}
+          hasPrev={hasPrev}
+          onNext={() => setOffset((o) => o + PAGE_SIZE)}
+          onPrev={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+          rangeEnd={Math.min(offset + PAGE_SIZE, total)}
+          rangeStart={total === 0 ? 0 : offset + 1}
+          total={total}
+        />
+      </QueryBoundary>
     </div>
   );
 }

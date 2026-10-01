@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type ConsolidationConfig,
   type ConsolidationConfigInput,
@@ -16,6 +16,8 @@ import {
   useUpdateConsolidationConfig,
 } from '@/hooks/useAdminConfig';
 import { useConfigForm } from '@/hooks/useConfigForm';
+import { useTransientFlag } from '@/hooks/useTransientFlag';
+import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
 
 interface ConsolidationFormState {
@@ -51,7 +53,7 @@ function toBody(form: ConsolidationFormState): ConsolidationConfigInput {
 }
 
 export function ConsolidationForm() {
-  const { data: consolidation, isLoading } = useConsolidationConfig();
+  const { data: consolidation, error: loadError, isError, isLoading } = useConsolidationConfig();
   const update = useUpdateConsolidationConfig();
   const { form, setField, submit, saved, error } = useConfigForm({
     data: consolidation,
@@ -62,11 +64,17 @@ export function ConsolidationForm() {
   });
 
   const [triggering, setTriggering] = useState(false);
+  const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [triggered, markTriggered] = useTransientFlag();
 
   const handleTriggerNow = async () => {
     setTriggering(true);
+    setTriggerError(null);
     try {
       await triggerConsolidationNow();
+      markTriggered();
+    } catch (err) {
+      setTriggerError(errMsg(err, 'could not start consolidation'));
     } finally {
       setTriggering(false);
     }
@@ -80,9 +88,13 @@ export function ConsolidationForm() {
         title="Lesson consolidation"
       />
 
-      {isLoading ? (
-        <LoadingState message="Loading…" />
-      ) : (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="the consolidation schedule"
+        loadingMessage="Loading…"
+      >
         <form className="space-y-6" onSubmit={submit}>
           <Card>
             <CardHeader>
@@ -163,6 +175,8 @@ export function ConsolidationForm() {
 
           {saved && <Alert variant="success">Consolidation schedule saved and synced.</Alert>}
           {error && <Alert variant="error">{error}</Alert>}
+          {triggered && <Alert variant="success">Consolidation run started.</Alert>}
+          {triggerError && <Alert variant="error">{triggerError}</Alert>}
 
           <div className="flex items-center justify-end gap-3">
             <Button
@@ -178,7 +192,7 @@ export function ConsolidationForm() {
             </Button>
           </div>
         </form>
-      )}
+      </QueryBoundary>
     </>
   );
 }

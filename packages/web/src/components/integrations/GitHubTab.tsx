@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type GitHubConfigInput,
   testGitHubConnection,
@@ -19,7 +19,7 @@ import { SecretInput } from './SecretInput';
 import { UrlRow } from './UrlRow';
 
 export function GitHubTab() {
-  const { data: resp, isLoading } = useGitHubConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useGitHubConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateGitHubConfig();
@@ -102,8 +102,15 @@ export function GitHubTab() {
     runTest(() => testGitHubConnection());
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="GitHub config"
+      />
+    );
   }
 
   return (

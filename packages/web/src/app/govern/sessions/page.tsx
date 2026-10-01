@@ -1,7 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -11,6 +13,7 @@ import { formatDate, formatRelativeTime } from '@/lib/utils';
 export default function GovernSessionsPage() {
   const { data: sessions, isLoading, isError, error: loadError } = useAdminSessions();
   const revoke = useAdminRevokeSession();
+  const [revokeTarget, setRevokeTarget] = useState<{ email: string; id: string } | null>(null);
 
   if (isLoading || isError) {
     return (
@@ -73,8 +76,7 @@ export default function GovernSessionsPage() {
                   <Td className="px-4 py-3 font-mono text-[10px] text-paper-500">{s.token}</Td>
                   <Td className="px-4 py-3 text-right">
                     <Button
-                      disabled={revoke.isPending}
-                      onClick={() => revoke.mutate(s.id)}
+                      onClick={() => setRevokeTarget({ email: s.user.email, id: s.id })}
                       size="sm"
                       variant="danger"
                     >
@@ -97,6 +99,20 @@ export default function GovernSessionsPage() {
           </Table>
         </Card>
       </section>
+
+      <ConfirmModal
+        confirmLabel="Revoke"
+        dangerous
+        message={`${revokeTarget?.email ?? 'The user'} is signed out of this session immediately and must sign in again. This cannot be undone.`}
+        onClose={() => setRevokeTarget(null)}
+        onConfirm={async () => {
+          if (revokeTarget) {
+            await revoke.mutateAsync(revokeTarget.id);
+          }
+        }}
+        open={revokeTarget !== null}
+        title="Revoke session?"
+      />
     </div>
   );
 }

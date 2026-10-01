@@ -1,5 +1,6 @@
 'use client';
 
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -10,6 +11,7 @@ import {
   useUpdateCanaryConfig,
 } from '@/hooks/useAdminConfig';
 import { useConfigForm } from '@/hooks/useConfigForm';
+import { errMsg } from '@/lib/errors';
 
 interface CanaryFormState {
   enabled: boolean;
@@ -44,7 +46,7 @@ function toBody(form: CanaryFormState): CanaryConfigInput {
 }
 
 export function CanaryForm() {
-  const { data: canary, isLoading } = useCanaryConfig();
+  const { data: canary, error: loadError, isError, isLoading } = useCanaryConfig();
   const update = useUpdateCanaryConfig();
   const { form, setField, submit, saved, error } = useConfigForm({
     data: canary,
@@ -67,6 +69,8 @@ export function CanaryForm() {
 
       {isLoading ? (
         <LoadingState compact />
+      ) : isError ? (
+        <Alert>{`Could not load the canary configuration: ${errMsg(loadError, 'request failed')}`}</Alert>
       ) : (
         <form className="space-y-6" onSubmit={submit}>
           <Card>

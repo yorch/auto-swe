@@ -196,7 +196,7 @@ export default function ConnectionsPage() {
           );
         })}
         {meta !== undefined && meta.total > (repos ?? []).length && (
-          <p className="text-center font-mono text-[11px] uppercase tracking-wider text-paper-500">
+          <p className="col-span-full text-center font-mono text-[11px] uppercase tracking-wider text-paper-500">
             showing the first {(repos ?? []).length} of {meta.total} connections
           </p>
         )}

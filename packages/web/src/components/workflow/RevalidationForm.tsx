@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -12,6 +13,8 @@ import {
   useUpdateRevalidationConfig,
 } from '@/hooks/useAdminConfig';
 import { useConfigForm } from '@/hooks/useConfigForm';
+import { useTransientFlag } from '@/hooks/useTransientFlag';
+import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
 
 interface RevalidationFormState {
@@ -43,7 +46,7 @@ function toBody(form: RevalidationFormState): RevalidationConfigInput {
 }
 
 export function RevalidationForm() {
-  const { data: revalidation, isLoading } = useRevalidationConfig();
+  const { data: revalidation, error: loadError, isError, isLoading } = useRevalidationConfig();
   const update = useUpdateRevalidationConfig();
   const { form, setField, submit, saved, error } = useConfigForm({
     data: revalidation,
@@ -54,11 +57,17 @@ export function RevalidationForm() {
   });
 
   const [triggering, setTriggering] = useState(false);
+  const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [triggered, markTriggered] = useTransientFlag();
 
   const handleTriggerNow = async () => {
     setTriggering(true);
+    setTriggerError(null);
     try {
       await triggerRevalidationNow();
+      markTriggered();
+    } catch (err) {
+      setTriggerError(errMsg(err, 'could not start re-validation'));
     } finally {
       setTriggering(false);
     }
@@ -77,6 +86,8 @@ export function RevalidationForm() {
 
       {isLoading ? (
         <LoadingState compact />
+      ) : isError ? (
+        <Alert>{`Could not load the re-validation schedule: ${errMsg(loadError, 'request failed')}`}</Alert>
       ) : (
         <form className="space-y-6" onSubmit={submit}>
           <Card>
@@ -157,6 +168,8 @@ export function RevalidationForm() {
             <p className="text-sm text-moss-400">Re-validation schedule saved and synced.</p>
           )}
           {error && <p className="text-sm text-brick-400">{error}</p>}
+          {triggered && <p className="text-sm text-moss-400">Re-validation run started.</p>}
+          {triggerError && <Alert>{triggerError}</Alert>}
 
           <div className="flex items-center justify-end gap-3">
             <Button

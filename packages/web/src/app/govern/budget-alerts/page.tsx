@@ -45,8 +45,11 @@ export default function BudgetAlertsPage() {
             <CardHeader>
               <CardTitle>Alerting organizations</CardTitle>
             </CardHeader>
-            {(orgs ?? []).length === 0 ? (
-              <EmptyState className="px-4 pt-0 pb-4 text-left" title="No organizations found." />
+            {alerting.length === 0 ? (
+              <EmptyState
+                className="px-4 pt-0 pb-4 text-left"
+                title="No organizations above their alert threshold."
+              />
             ) : (
               <div className="overflow-x-auto">
                 <Table>
@@ -69,41 +72,39 @@ export default function BudgetAlertsPage() {
                     </Th>
                   </THead>
                   <tbody>
-                    {(orgs ?? [])
-                      .filter((o) => o.alert.triggered)
-                      .map((org) => (
-                        <TRow key={org.id}>
-                          <Td className="px-4 py-2">
-                            <Link
-                              className="text-ember-400 hover:underline"
-                              href={`/govern/organizations/${org.id}`}
-                            >
-                              {org.name}
-                            </Link>
-                          </Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {fmtCents(org.monthlyBudgetUsdCents)}
-                          </Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {org.currentMonthUsage
-                              ? `$${org.currentMonthUsage.costUsdAccrued.toFixed(2)}`
-                              : '$0.00'}
-                          </Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {org.budgetAlertThresholdPercent != null
-                              ? `${org.budgetAlertThresholdPercent}%`
-                              : '—'}
-                          </Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {org.alert.percent != null ? `${org.alert.percent.toFixed(1)}%` : '—'}
-                          </Td>
-                          <Td className="px-4 py-2 text-center">
-                            <Badge className="text-[11px]" tone="brick">
-                              Alert
-                            </Badge>
-                          </Td>
-                        </TRow>
-                      ))}
+                    {alerting.map((org) => (
+                      <TRow key={org.id}>
+                        <Td className="px-4 py-2">
+                          <Link
+                            className="text-ember-400 hover:underline"
+                            href={`/govern/organizations/${org.id}`}
+                          >
+                            {org.name}
+                          </Link>
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {fmtCents(org.monthlyBudgetUsdCents)}
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {org.currentMonthUsage
+                            ? `$${org.currentMonthUsage.costUsdAccrued.toFixed(2)}`
+                            : '$0.00'}
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {org.budgetAlertThresholdPercent != null
+                            ? `${org.budgetAlertThresholdPercent}%`
+                            : '—'}
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {org.alert.percent != null ? `${org.alert.percent.toFixed(1)}%` : '—'}
+                        </Td>
+                        <Td className="px-4 py-2 text-center">
+                          <Badge className="text-[11px]" tone="brick">
+                            Alert
+                          </Badge>
+                        </Td>
+                      </TRow>
+                    ))}
                   </tbody>
                 </Table>
               </div>

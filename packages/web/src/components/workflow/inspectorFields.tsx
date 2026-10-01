@@ -149,11 +149,15 @@ export function OnFailSection({
 
   return (
     <div className="mt-4 space-y-2 border-t border-ink-600 pt-4">
-      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+      <label
+        className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+        htmlFor="onfail-mode"
+      >
         On fail
-      </div>
+      </label>
       <Select
         className="h-9 px-2 font-mono text-xs"
+        id="onfail-mode"
         onChange={(e) => {
           const v = e.target.value;
           if (v === 'block') {
@@ -245,6 +249,7 @@ export function InputsBindingsSection({
           <div className="space-y-1" key={key}>
             <div className="flex items-center gap-1">
               <input
+                aria-label="Binding key"
                 className="h-7 min-w-0 flex-1 rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400"
                 defaultValue={key}
                 onBlur={(e) => {
@@ -260,6 +265,7 @@ export function InputsBindingsSection({
                 placeholder="key"
               />
               <Select
+                aria-label="Binding type"
                 className="h-7 w-auto px-1 font-mono text-[10px]"
                 onChange={(e) => {
                   if (e.target.value === 'from') {
@@ -274,6 +280,7 @@ export function InputsBindingsSection({
                 <option value="literal">literal</option>
               </Select>
               <button
+                aria-label="Remove binding"
                 className="font-mono text-[10px] text-brick-400 hover:text-brick-600"
                 onClick={() => removeEntry(key)}
                 type="button"
@@ -282,6 +289,7 @@ export function InputsBindingsSection({
               </button>
             </div>
             <input
+              aria-label="Binding value"
               className="h-7 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400"
               onChange={(e) => {
                 const v = e.target.value;

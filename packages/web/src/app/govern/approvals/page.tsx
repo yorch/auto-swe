@@ -2,14 +2,12 @@
 
 import { useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
-import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { TabBar } from '@/components/ui/TabBar';
 import { type ApprovalFilter, type ApprovalSort, useApprovals } from '@/hooks/useApprovals';
-import { errMsg } from '@/lib/errors';
 
 const TABS: { id: ApprovalFilter; label: string }[] = [
   { id: 'PENDING', label: 'Pending' },
@@ -37,18 +35,6 @@ export default function GovernApprovalsPage() {
     isFetching,
   } = useApprovals(filter, sort, overdueOnly);
 
-  if (isLoading) {
-    return <LoadingState />;
-  }
-
-  if (isError) {
-    return (
-      <div className="p-8">
-        <Alert>{errMsg(error, 'Failed to load inbox')}</Alert>
-      </div>
-    );
-  }
-
   const count = steps?.length ?? 0;
 
   return (
@@ -61,11 +47,13 @@ export default function GovernApprovalsPage() {
         }
         chapter="§ Inbox"
         subtitle={
-          filter === 'PENDING'
-            ? count === 0
-              ? 'No pending actions'
-              : `${count} pending action${count !== 1 ? 's' : ''}`
-            : `${count} step${count !== 1 ? 's' : ''} total`
+          isLoading || isError
+            ? undefined
+            : filter === 'PENDING'
+              ? count === 0
+                ? 'No pending actions'
+                : `${count} pending action${count !== 1 ? 's' : ''}`
+              : `${count} step${count !== 1 ? 's' : ''} total`
         }
         title="Inbox"
       />
@@ -96,19 +84,21 @@ export default function GovernApprovalsPage() {
         </label>
       </div>
 
-      {count > 0 && (
-        <div className="space-y-3">
-          {steps?.map((step) => (
-            <HumanStepCard key={step.id} step={step} />
-          ))}
-        </div>
-      )}
+      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="inbox">
+        {count > 0 && (
+          <div className="space-y-3">
+            {steps?.map((step) => (
+              <HumanStepCard key={step.id} step={step} />
+            ))}
+          </div>
+        )}
 
-      {count === 0 && !isLoading && (
-        <p className="text-sm text-paper-400">
-          {filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'}
-        </p>
-      )}
+        {count === 0 && (
+          <p className="text-sm text-paper-400">
+            {filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'}
+          </p>
+        )}
+      </QueryBoundary>
     </div>
   );
 }

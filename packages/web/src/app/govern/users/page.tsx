@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -25,6 +26,9 @@ export default function UsersPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [creatingDirect, setCreatingDirect] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<string | null>(null);
+  const [suspendTarget, setSuspendTarget] = useState<{ email: string; id: string } | null>(null);
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
   // users get a dedicated top section so admins notice them; the rest go
@@ -54,8 +58,17 @@ export default function UsersPage() {
     );
   }
 
-  const handleApprove = (id: string) => updateUser.mutate({ id, patch: { isActive: true } });
-  const handleSuspend = (id: string) => updateUser.mutate({ id, patch: { isActive: false } });
+  const handleApprove = async (id: string) => {
+    setApproveError(null);
+    setApprovingId(id);
+    try {
+      await updateUser.mutateAsync({ id, patch: { isActive: true } });
+    } catch (err) {
+      setApproveError(errMsg(err, 'approve failed'));
+    } finally {
+      setApprovingId(null);
+    }
+  };
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -153,6 +166,11 @@ export default function UsersPage() {
             title="Pending sign-ups"
           />
           <Card variant="inset">
+            {approveError && (
+              <Alert className="mb-3" variant="error">
+                {approveError}
+              </Alert>
+            )}
             <ul className="divide-y divide-ink-600">
               {pending.map((u) => (
                 <li className="flex items-center justify-between py-3" key={u.id}>
@@ -178,12 +196,12 @@ export default function UsersPage() {
                     </div>
                   </div>
                   <Button
-                    disabled={updateUser.isPending}
+                    disabled={approvingId !== null}
                     onClick={() => handleApprove(u.id)}
                     size="sm"
                     variant="primary"
                   >
-                    {updateUser.isPending ? 'Approving…' : 'Approve →'}
+                    {approvingId === u.id ? 'Approving…' : 'Approve →'}
                   </Button>
                 </li>
               ))}
@@ -227,8 +245,7 @@ export default function UsersPage() {
                   </Td>
                   <Td className="px-4 py-3 text-right">
                     <Button
-                      disabled={updateUser.isPending}
-                      onClick={() => handleSuspend(u.id)}
+                      onClick={() => setSuspendTarget({ email: u.email, id: u.id })}
                       size="sm"
                       variant="ghost"
                     >
@@ -253,6 +270,19 @@ export default function UsersPage() {
       </section>
 
       <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
+      <ConfirmModal
+        confirmLabel="Suspend"
+        dangerous
+        message={`${suspendTarget?.email ?? 'This user'} will no longer be able to sign in and moves back to the pending queue. You can approve them again later.`}
+        onClose={() => setSuspendTarget(null)}
+        onConfirm={async () => {
+          if (suspendTarget) {
+            await updateUser.mutateAsync({ id: suspendTarget.id, patch: { isActive: false } });
+          }
+        }}
+        open={suspendTarget !== null}
+        title="Suspend user?"
+      />
     </div>
   );
 }

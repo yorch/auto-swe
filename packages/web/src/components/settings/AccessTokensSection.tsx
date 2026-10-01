@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
@@ -18,7 +19,7 @@ import { errMsg } from '@/lib/errors';
 import { formatRelativeTime } from '@/lib/utils';
 
 export function AccessTokensSection() {
-  const { data: tokens, isLoading } = usePersonalAccessTokens();
+  const { data: tokens, error: loadError, isError, isLoading } = usePersonalAccessTokens();
   const create = useCreatePat();
   const revoke = useRevokePat();
 
@@ -72,6 +73,10 @@ export function AccessTokensSection() {
 
         {isLoading ? (
           <LoadingState compact />
+        ) : isError ? (
+          <Alert variant="error">
+            Could not load tokens: {errMsg(loadError, 'request failed')}
+          </Alert>
         ) : (tokens ?? []).length === 0 ? (
           <p className="text-xs text-paper-500">
             No tokens yet. Create one to authenticate the CLI via

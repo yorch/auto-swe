@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type GoogleOAuthConfigInput,
   type OktaOAuthConfigInput,
@@ -53,7 +53,7 @@ function CallbackUrl({ help, url }: { help: React.ReactNode; url: string }) {
 }
 
 function GoogleOAuthForm() {
-  const { data: resp, isLoading } = useGoogleOAuthConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useGoogleOAuthConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateGoogleOAuthConfig();
@@ -80,8 +80,15 @@ function GoogleOAuthForm() {
     );
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="Google OAuth config"
+      />
+    );
   }
 
   return (
@@ -145,7 +152,7 @@ function GoogleOAuthForm() {
 }
 
 function OktaOAuthForm() {
-  const { data: resp, isLoading } = useOktaOAuthConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useOktaOAuthConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateOktaOAuthConfig();
@@ -184,8 +191,15 @@ function OktaOAuthForm() {
     );
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="Okta OAuth config"
+      />
+    );
   }
 
   return (

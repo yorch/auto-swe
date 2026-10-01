@@ -16,6 +16,7 @@ import {
   type WorkflowDefaultsInput,
 } from '@/hooks/useAdminConfig';
 import { useConfigForm } from '@/hooks/useConfigForm';
+import { errMsg } from '@/lib/errors';
 
 // Flat form shape: one object instead of ~22 scalar useState hooks. Budgets are
 // nested on the read payload (`budgetTiers`) but flat on the PUT body, so we
@@ -175,7 +176,7 @@ function FieldGroup({ label, children }: { label: string; children: ReactNode })
 }
 
 export function WorkflowDefaultsForm() {
-  const { data, isLoading } = useWorkflowDefaultsConfig();
+  const { data, error: loadError, isError, isLoading } = useWorkflowDefaultsConfig();
   const update = useUpdateWorkflowDefaultsConfig();
   const { form, setField, submit, saved, error } = useConfigForm({
     data,
@@ -189,6 +190,13 @@ export function WorkflowDefaultsForm() {
 
   if (isLoading) {
     return <LoadingState message="Loading…" />;
+  }
+  // A failed load must not render the form: it would show the built-in
+  // defaults as if they were the saved values, and saving would overwrite them.
+  if (isError) {
+    return (
+      <Alert>{`Could not load workflow defaults: ${errMsg(loadError, 'request failed')}`}</Alert>
+    );
   }
 
   return (

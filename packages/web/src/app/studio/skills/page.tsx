@@ -110,20 +110,23 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     >
       {editing ? (
         <form className="space-y-4" onSubmit={handleSave}>
-          <FieldWrapper label="Name">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              required
-              value={form.name}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Description">
-            <Input
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              value={form.description}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Prompt Text">
+          <Input
+            id="skill-edit-name"
+            label="Name"
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            required
+            value={form.name}
+          />
+          <Input
+            id="skill-edit-description"
+            label="Description"
+            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            value={form.description}
+          />
+          <FieldWrapper
+            id={skill.isBuiltIn ? undefined : 'skill-edit-prompt-text'}
+            label="Prompt Text"
+          >
             {skill.isBuiltIn ? (
               <pre className="w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
                 {skill.promptText}
@@ -131,6 +134,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             ) : (
               <textarea
                 className="w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 font-mono text-xs text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
+                id="skill-edit-prompt-text"
                 onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
                 required
                 rows={12}
@@ -250,22 +254,23 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
   return (
     <Modal eyebrow="Admin / Skills" onClose={onClose} open={open} title="New Skill">
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <FieldWrapper label="Name">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            required
-            value={form.name}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Description">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            value={form.description}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Prompt Text">
+        <Input
+          id="skill-new-name"
+          label="Name"
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          required
+          value={form.name}
+        />
+        <Input
+          id="skill-new-description"
+          label="Description"
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          value={form.description}
+        />
+        <FieldWrapper id="skill-new-prompt-text" label="Prompt Text">
           <textarea
             className="w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 font-mono text-xs text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
+            id="skill-new-prompt-text"
             onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
             required
             rows={8}
@@ -353,6 +358,20 @@ export default function StudioSkillsPage() {
   const deleteSkill = useDeleteSkill();
   const { data: skills, isLoading, isError, error: loadError } = useSkills();
   const update = useUpdateSkill();
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+
+  async function handleToggleActive(skill: Skill) {
+    setToggleError(null);
+    setTogglingId(skill.id);
+    try {
+      await update.mutateAsync({ id: skill.id, isActive: !skill.isActive });
+    } catch (err) {
+      setToggleError(errMsg(err, `Failed to update "${skill.name}"`));
+    } finally {
+      setTogglingId(null);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -370,6 +389,7 @@ export default function StudioSkillsPage() {
         <CardHeader>
           <CardTitle>All Skills</CardTitle>
         </CardHeader>
+        {toggleError && <Alert variant="error">{toggleError}</Alert>}
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="skills">
           {!skills?.length ? (
             <EmptyState title="No skills yet. Create one with the button above." />
@@ -417,8 +437,8 @@ export default function StudioSkillsPage() {
                     <Td className="py-2 pr-4">
                       <ToggleSwitch
                         checked={skill.isActive}
-                        disabled={update.isPending}
-                        onChange={() => update.mutate({ id: skill.id, isActive: !skill.isActive })}
+                        disabled={togglingId === skill.id}
+                        onChange={() => handleToggleActive(skill)}
                       />
                     </Td>
                     <Td className="py-2 text-right">

@@ -1,6 +1,7 @@
 'use client';
 
 import type { UserSummary } from '@auto-swe/shared/types/api';
+import Link from 'next/link';
 import { Select } from '@/components/ui/Select';
 
 /**
@@ -25,7 +26,10 @@ export function EligibleUserSelect({
   if (eligible.length === 0) {
     return (
       <p className="text-xs text-paper-500">
-        No active users left to add. Invite one from <span className="text-paper-200">/users</span>{' '}
+        No active users left to add. Invite one from{' '}
+        <Link className="text-ember-400 hover:underline" href="/govern/users">
+          Users
+        </Link>{' '}
         first.
       </p>
     );

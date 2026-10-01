@@ -4,9 +4,10 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useGlobalAnalytics } from '@/hooks/useTemplates';
 import { formatPercent } from '@/lib/utils';
 
@@ -81,7 +82,7 @@ export default function GlobalAnalyticsPage() {
   const [sortKey, setSortKey] = useState<SortKey>('runs');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(0);
-  const { data, isLoading } = useGlobalAnalytics(windowDays);
+  const { data, isLoading, isError, error } = useGlobalAnalytics(windowDays);
 
   const handleSort = (k: SortKey) => {
     if (k === sortKey) {
@@ -156,248 +157,254 @@ export default function GlobalAnalyticsPage() {
         title="Platform Analytics"
       />
 
-      {isLoading || !data ? (
-        <LoadingState />
-      ) : (
-        <>
-          {data.isTruncated && (
-            <Alert variant="warning">
-              Results capped at the 10,000 most recent runs. Totals and rates reflect the capped
-              window — older runs are omitted.
-            </Alert>
-          )}
+      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="analytics">
+        {!data ? (
+          <EmptyState title="No analytics data available." />
+        ) : (
+          <>
+            {data.isTruncated && (
+              <Alert variant="warning">
+                Results capped at the 10,000 most recent runs. Totals and rates reflect the capped
+                window — older runs are omitted.
+              </Alert>
+            )}
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <KpiTile label="Total runs" value={String(data.totalRuns)} />
-            <KpiTile label="Completed runs" value={String(data.completedRuns)} />
-            <KpiTile label="Running runs" value={String(data.runningRuns)} />
-            <KpiTile
-              label="Success rate (completed)"
-              value={formatPercent(data.successRate)}
-              valueClass="text-moss-400"
-            />
-            <KpiTile label="Succeeded" value={String(data.succeeded)} valueClass="text-moss-400" />
-            <KpiTile label="Failed" value={String(data.failed)} valueClass="text-brick-400" />
-            <KpiTile label="Total cost" value={fmtCost(data.totalCost)} />
-            <KpiTile
-              label="Avg cost/run"
-              value={data.totalRuns > 0 ? fmtCost(data.totalCost / data.totalRuns) : '—'}
-            />
-            <KpiTile
-              label="Time saved"
-              value={`${Math.round(data.estimatedHumanTimeSavedTotal ?? 0)} min`}
-              valueClass="text-moss-400"
-            />
-            <KpiTile label="Autonomy rate" value={formatPercent(data.autonomyRate)} />
-            <KpiTile label="Human review rate" value={formatPercent(data.humanReviewRate)} />
-          </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <KpiTile label="Total runs" value={String(data.totalRuns)} />
+              <KpiTile label="Completed runs" value={String(data.completedRuns)} />
+              <KpiTile label="Running runs" value={String(data.runningRuns)} />
+              <KpiTile
+                label="Success rate (completed)"
+                value={formatPercent(data.successRate)}
+                valueClass="text-moss-400"
+              />
+              <KpiTile
+                label="Succeeded"
+                value={String(data.succeeded)}
+                valueClass="text-moss-400"
+              />
+              <KpiTile label="Failed" value={String(data.failed)} valueClass="text-brick-400" />
+              <KpiTile label="Total cost" value={fmtCost(data.totalCost)} />
+              <KpiTile
+                label="Avg cost/run"
+                value={data.totalRuns > 0 ? fmtCost(data.totalCost / data.totalRuns) : '—'}
+              />
+              <KpiTile
+                label="Time saved"
+                value={`${Math.round(data.estimatedHumanTimeSavedTotal ?? 0)} min`}
+                valueClass="text-moss-400"
+              />
+              <KpiTile label="Autonomy rate" value={formatPercent(data.autonomyRate)} />
+              <KpiTile label="Human review rate" value={formatPercent(data.humanReviewRate)} />
+            </div>
 
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Templates — ranked by traffic</CardTitle>
-                <input
-                  aria-label="Filter templates by name"
-                  className="text-sm border border-ink-600 rounded px-2 py-1 bg-ink-900 w-48"
-                  onChange={(e) => handleFilter(e.target.value)}
-                  placeholder="Filter templates…"
-                  type="text"
-                  value={filter}
-                />
-              </div>
-            </CardHeader>
-            {rows.length === 0 ? (
-              <p className="px-4 pb-4 text-sm text-paper-400">
-                {filter
-                  ? 'No templates match your filter.'
-                  : `No runs in the last ${windowDays} days.`}
-              </p>
-            ) : (
-              <>
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Templates — ranked by traffic</CardTitle>
+                  <input
+                    aria-label="Filter templates by name"
+                    className="text-sm border border-ink-600 rounded px-2 py-1 bg-ink-900 w-48"
+                    onChange={(e) => handleFilter(e.target.value)}
+                    placeholder="Filter templates…"
+                    type="text"
+                    value={filter}
+                  />
+                </div>
+              </CardHeader>
+              {rows.length === 0 ? (
+                <p className="px-4 pb-4 text-sm text-paper-400">
+                  {filter
+                    ? 'No templates match your filter.'
+                    : `No runs in the last ${windowDays} days.`}
+                </p>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
+                          <th className="px-4 py-2 font-medium">Template</th>
+                          <SortHeader
+                            col="runs"
+                            label="Runs"
+                            onSort={handleSort}
+                            sortDir={sortDir}
+                            sortKey={sortKey}
+                          />
+                          <SortHeader
+                            col="successRate"
+                            label="Success rate"
+                            onSort={handleSort}
+                            sortDir={sortDir}
+                            sortKey={sortKey}
+                          />
+                          <SortHeader
+                            col="totalCost"
+                            label="Total cost"
+                            onSort={handleSort}
+                            sortDir={sortDir}
+                            sortKey={sortKey}
+                          />
+                          <SortHeader
+                            col="avgCost"
+                            label="Avg cost/run"
+                            onSort={handleSort}
+                            sortDir={sortDir}
+                            sortKey={sortKey}
+                          />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pageRows.map((row) => {
+                          const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
+                          const srPct = row.successRate !== null ? row.successRate * 100 : null;
+                          return (
+                            <tr
+                              className="border-b border-ink-600 last:border-0 hover:bg-ink-800"
+                              key={row.templateId}
+                            >
+                              <td className="px-4 py-2">
+                                <Link
+                                  className="text-ember-400 hover:underline"
+                                  href={`/workflows/library/${row.templateId}`}
+                                >
+                                  {row.templateName}
+                                </Link>
+                              </td>
+                              <td className="px-4 py-2 text-right tabular-nums">{row.totalRuns}</td>
+                              <td className="px-4 py-2 text-right tabular-nums">
+                                {srPct !== null ? (
+                                  <span
+                                    className={
+                                      srPct >= 80
+                                        ? 'text-moss-400'
+                                        : srPct >= 50
+                                          ? 'text-amber-600'
+                                          : 'text-brick-400'
+                                    }
+                                  >
+                                    {fmt(srPct)}%
+                                  </span>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+                              <td className="px-4 py-2 text-right tabular-nums">
+                                {fmtCost(row.totalCost)}
+                              </td>
+                              <td className="px-4 py-2 text-right tabular-nums">
+                                {avgCost !== null ? fmtCost(avgCost) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {totalPages > 1 && (
+                    <Pagination
+                      hasNext={page < totalPages - 1}
+                      hasPrev={page > 0}
+                      onNext={() => setPage((p) => p + 1)}
+                      onPrev={() => setPage((p) => p - 1)}
+                      rangeEnd={Math.min((page + 1) * PAGE_SIZE, rows.length)}
+                      rangeStart={rows.length === 0 ? 0 : page * PAGE_SIZE + 1}
+                      total={rows.length}
+                    />
+                  )}
+                </>
+              )}
+            </Card>
+
+            {data.perDomain.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>By domain</CardTitle>
+                </CardHeader>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
-                        <th className="px-4 py-2 font-medium">Template</th>
-                        <SortHeader
-                          col="runs"
-                          label="Runs"
-                          onSort={handleSort}
-                          sortDir={sortDir}
-                          sortKey={sortKey}
-                        />
-                        <SortHeader
-                          col="successRate"
-                          label="Success rate"
-                          onSort={handleSort}
-                          sortDir={sortDir}
-                          sortKey={sortKey}
-                        />
-                        <SortHeader
-                          col="totalCost"
-                          label="Total cost"
-                          onSort={handleSort}
-                          sortDir={sortDir}
-                          sortKey={sortKey}
-                        />
-                        <SortHeader
-                          col="avgCost"
-                          label="Avg cost/run"
-                          onSort={handleSort}
-                          sortDir={sortDir}
-                          sortKey={sortKey}
-                        />
+                        <th className="px-4 py-2 font-medium">Domain</th>
+                        <th className="px-4 py-2 font-medium text-right">Runs</th>
+                        <th className="px-4 py-2 font-medium text-right">Total cost</th>
+                        <th className="px-4 py-2 font-medium text-right">Time saved</th>
+                        <th className="px-4 py-2 font-medium text-right">Agent error</th>
+                        <th className="px-4 py-2 font-medium text-right">Human error</th>
+                        <th className="px-4 py-2 font-medium text-right">vs human</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {pageRows.map((row) => {
-                        const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
-                        const srPct = row.successRate !== null ? row.successRate * 100 : null;
-                        return (
-                          <tr
-                            className="border-b border-ink-600 last:border-0 hover:bg-ink-800"
-                            key={row.templateId}
-                          >
-                            <td className="px-4 py-2">
-                              <Link
-                                className="text-ember-400 hover:underline"
-                                href={`/workflows/library/${row.templateId}`}
-                              >
-                                {row.templateName}
-                              </Link>
-                            </td>
-                            <td className="px-4 py-2 text-right tabular-nums">{row.totalRuns}</td>
-                            <td className="px-4 py-2 text-right tabular-nums">
-                              {srPct !== null ? (
-                                <span
-                                  className={
-                                    srPct >= 80
-                                      ? 'text-moss-400'
-                                      : srPct >= 50
-                                        ? 'text-amber-600'
-                                        : 'text-brick-400'
-                                  }
-                                >
-                                  {fmt(srPct)}%
-                                </span>
-                              ) : (
-                                '—'
-                              )}
-                            </td>
-                            <td className="px-4 py-2 text-right tabular-nums">
-                              {fmtCost(row.totalCost)}
-                            </td>
-                            <td className="px-4 py-2 text-right tabular-nums">
-                              {avgCost !== null ? fmtCost(avgCost) : '—'}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                      {data.perDomain.map((d) => (
+                        <tr className="border-b border-ink-600 last:border-0" key={d.domain}>
+                          <td className="px-4 py-2">{d.domain}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">{d.totalRuns}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">
+                            {fmtCost(d.totalCost)}
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums">
+                            {d.estimatedHumanTimeSavedTotal != null
+                              ? `${Math.round(d.estimatedHumanTimeSavedTotal)} min`
+                              : '—'}
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums">
+                            {d.agentErrorRate != null ? `${fmt(d.agentErrorRate * 100, 1)}%` : '—'}
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums">
+                            {d.humanErrorRate != null ? `${fmt(d.humanErrorRate * 100, 1)}%` : '—'}
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums">
+                            {d.errorRateVsHuman != null ? (
+                              `${fmt(d.errorRateVsHuman * 100, 1)}pp`
+                            ) : d.baselineSampleSize != null && d.baselineSampleSize < 30 ? (
+                              <span className="text-paper-400" title="Baseline sample too small">
+                                n={d.baselineSampleSize}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-                {totalPages > 1 && (
-                  <Pagination
-                    hasNext={page < totalPages - 1}
-                    hasPrev={page > 0}
-                    onNext={() => setPage((p) => p + 1)}
-                    onPrev={() => setPage((p) => p - 1)}
-                    rangeEnd={Math.min((page + 1) * PAGE_SIZE, rows.length)}
-                    rangeStart={rows.length === 0 ? 0 : page * PAGE_SIZE + 1}
-                    total={rows.length}
-                  />
-                )}
-              </>
+              </Card>
             )}
-          </Card>
 
-          {data.perDomain.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>By domain</CardTitle>
-              </CardHeader>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
-                      <th className="px-4 py-2 font-medium">Domain</th>
-                      <th className="px-4 py-2 font-medium text-right">Runs</th>
-                      <th className="px-4 py-2 font-medium text-right">Total cost</th>
-                      <th className="px-4 py-2 font-medium text-right">Time saved</th>
-                      <th className="px-4 py-2 font-medium text-right">Agent error</th>
-                      <th className="px-4 py-2 font-medium text-right">Human error</th>
-                      <th className="px-4 py-2 font-medium text-right">vs human</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.perDomain.map((d) => (
-                      <tr className="border-b border-ink-600 last:border-0" key={d.domain}>
-                        <td className="px-4 py-2">{d.domain}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{d.totalRuns}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {fmtCost(d.totalCost)}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {d.estimatedHumanTimeSavedTotal != null
-                            ? `${Math.round(d.estimatedHumanTimeSavedTotal)} min`
-                            : '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {d.agentErrorRate != null ? `${fmt(d.agentErrorRate * 100, 1)}%` : '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {d.humanErrorRate != null ? `${fmt(d.humanErrorRate * 100, 1)}%` : '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {d.errorRateVsHuman != null ? (
-                            `${fmt(d.errorRateVsHuman * 100, 1)}pp`
-                          ) : d.baselineSampleSize != null && d.baselineSampleSize < 30 ? (
-                            <span className="text-paper-400" title="Baseline sample too small">
-                              n={d.baselineSampleSize}
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
+            {data.perOutcome.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>By outcome</CardTitle>
+                </CardHeader>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
+                        <th className="px-4 py-2 font-medium">Outcome</th>
+                        <th className="px-4 py-2 font-medium text-right">Runs</th>
+                        <th className="px-4 py-2 font-medium text-right">Total cost</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          )}
-
-          {data.perOutcome.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>By outcome</CardTitle>
-              </CardHeader>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
-                      <th className="px-4 py-2 font-medium">Outcome</th>
-                      <th className="px-4 py-2 font-medium text-right">Runs</th>
-                      <th className="px-4 py-2 font-medium text-right">Total cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.perOutcome.map((o) => (
-                      <tr className="border-b border-ink-600 last:border-0" key={o.outcomeType}>
-                        <td className="px-4 py-2">{o.outcomeType}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{o.runCount}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {fmtCost(o.totalCost)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          )}
-        </>
-      )}
+                    </thead>
+                    <tbody>
+                      {data.perOutcome.map((o) => (
+                        <tr className="border-b border-ink-600 last:border-0" key={o.outcomeType}>
+                          <td className="px-4 py-2">{o.outcomeType}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">{o.runCount}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">
+                            {fmtCost(o.totalCost)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+          </>
+        )}
+      </QueryBoundary>
     </div>
   );
 }

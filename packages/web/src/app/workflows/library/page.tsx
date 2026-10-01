@@ -652,11 +652,12 @@ function ArchiveConfirmModal({
   return (
     <ConfirmModal
       confirmLabel="Archive"
+      dangerous
       message={`Archive "${target?.name ?? ''}"? It will no longer be available for new runs. You can restore it by changing its status back to Active.`}
       onClose={onClose}
       onConfirm={handleArchive}
       open={target !== null}
-      title="Archive template"
+      title="Archive template?"
     />
   );
 }

@@ -17,6 +17,7 @@ function pageTitle(pathname: string): string {
     ['/govern/approvals', 'Approvals'],
     ['/workflows/library', 'Workflow library'],
     ['/workflows', 'Request queue'],
+    ['/epics', 'Epics'],
     ['/connections', 'Connections'],
     ['/govern/security', 'Security'],
     ['/govern/scanner', 'Scanner'],
@@ -104,7 +105,7 @@ export function TopBar() {
 
       {/* Team context selector */}
       <label
-        className="relative flex cursor-pointer items-center gap-[6px]"
+        className="relative flex cursor-pointer items-center gap-[6px] rounded-[8px] focus-within:ring-2 focus-within:ring-ember-400"
         htmlFor="topbar-team-select"
         style={{ marginLeft: 8 }}
       >

@@ -270,12 +270,14 @@ function EditSchemaModal({
 }
 
 function ExperimentCard({
+  number,
   templateId,
   versions,
   activeVersion,
   experimentVersion,
   experimentSplit,
 }: {
+  number: string;
   templateId: string;
   versions: { id: string; version: number }[];
   activeVersion: number | null;
@@ -320,7 +322,7 @@ function ExperimentCard({
 
   return (
     <Card variant="inset">
-      <SectionHeader hint="A/B" number="03" title="Experiment" />
+      <SectionHeader hint="A/B" number={number} title="Experiment" />
       {error && <Alert className="mb-3 text-xs">{error}</Alert>}
       <div className="space-y-3">
         <Select
@@ -423,10 +425,52 @@ function ExplainModal({
   );
 }
 
+/** Regenerate / Revoke for an existing webhook URL. Both invalidate the
+ *  current URL, so each goes through a confirmation. */
+function WebhookActions({
+  onRegenerate,
+  onRevoke,
+}: {
+  onRegenerate: () => Promise<void>;
+  onRevoke: () => Promise<void>;
+}) {
+  const [confirming, setConfirming] = useState<'regenerate' | 'revoke' | null>(null);
+  return (
+    <div className="flex gap-2">
+      <Button onClick={() => setConfirming('regenerate')} size="sm" variant="secondary">
+        Regenerate
+      </Button>
+      <Button onClick={() => setConfirming('revoke')} size="sm" variant="danger">
+        Revoke
+      </Button>
+      <ConfirmModal
+        confirmLabel="Regenerate"
+        dangerous
+        message="A new webhook URL is issued and the current URL stops working immediately. Anything calling the old URL must be updated."
+        onClose={() => setConfirming(null)}
+        onConfirm={onRegenerate}
+        open={confirming === 'regenerate'}
+        title="Regenerate webhook URL?"
+      />
+      <ConfirmModal
+        confirmLabel="Revoke"
+        dangerous
+        message="The current webhook URL stops working immediately. You can generate a new one later, but the old URL cannot be restored."
+        onClose={() => setConfirming(null)}
+        onConfirm={onRevoke}
+        open={confirming === 'revoke'}
+        title="Revoke webhook URL?"
+      />
+    </div>
+  );
+}
+
 function WebhookCard({
+  number,
   template,
   canManage,
 }: {
+  number: string;
   template: WorkflowTemplateSummary;
   canManage: boolean;
 }) {
@@ -452,19 +496,22 @@ function WebhookCard({
     }
   };
 
-  const handleRevoke = async () => {
+  // Confirmed from WebhookActions: errors propagate so the ConfirmModal shows them.
+  const confirmRegenerate = async () => {
     setError(null);
-    try {
-      await revoke.mutateAsync();
-      setFreshToken(null);
-    } catch (err) {
-      setError(errMsg(err, 'revoke failed'));
-    }
+    const { webhookToken } = await regenerate.mutateAsync();
+    setFreshToken(webhookToken);
+  };
+
+  const confirmRevoke = async () => {
+    setError(null);
+    await revoke.mutateAsync();
+    setFreshToken(null);
   };
 
   return (
     <Card variant="inset">
-      <SectionHeader hint="HTTP" number="04" title="Webhook trigger" />
+      <SectionHeader hint="HTTP" number={number} title="Webhook trigger" />
       {error && <Alert className="mb-3 text-xs">{error}</Alert>}
       {webhookUrl ? (
         <div className="space-y-3">
@@ -475,24 +522,7 @@ function WebhookCard({
             <CopyButton value={webhookUrl} />
           </div>
           {canManage && (
-            <div className="flex gap-2">
-              <Button
-                disabled={regenerate.isPending}
-                onClick={handleRegenerate}
-                size="sm"
-                variant="secondary"
-              >
-                {regenerate.isPending ? 'Regenerating…' : 'Regenerate'}
-              </Button>
-              <Button
-                disabled={revoke.isPending}
-                onClick={handleRevoke}
-                size="sm"
-                variant="secondary"
-              >
-                {revoke.isPending ? 'Revoking…' : 'Revoke'}
-              </Button>
-            </div>
+            <WebhookActions onRegenerate={confirmRegenerate} onRevoke={confirmRevoke} />
           )}
         </div>
       ) : template.webhookConfigured ? (
@@ -502,24 +532,7 @@ function WebhookCard({
             regenerate to issue a new one (the previous URL stops working) or revoke it.
           </p>
           {canManage && (
-            <div className="flex gap-2">
-              <Button
-                disabled={regenerate.isPending}
-                onClick={handleRegenerate}
-                size="sm"
-                variant="secondary"
-              >
-                {regenerate.isPending ? 'Regenerating…' : 'Regenerate'}
-              </Button>
-              <Button
-                disabled={revoke.isPending}
-                onClick={handleRevoke}
-                size="sm"
-                variant="secondary"
-              >
-                {revoke.isPending ? 'Revoking…' : 'Revoke'}
-              </Button>
-            </div>
+            <WebhookActions onRegenerate={confirmRegenerate} onRevoke={confirmRevoke} />
           )}
         </div>
       ) : (
@@ -662,15 +675,36 @@ export default function TemplateDetailPage({ params }: PageProps) {
     if (effectiveVersion === null) {
       return;
     }
-    await promoteVersion.mutateAsync(effectiveVersion);
+    try {
+      await promoteVersion.mutateAsync(effectiveVersion);
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(errMsg(err, 'promote failed'));
+    }
   };
 
   const handleReview = async () => {
     if (effectiveVersion === null) {
       return;
     }
-    await reviewVersion.mutateAsync(effectiveVersion);
+    try {
+      await reviewVersion.mutateAsync(effectiveVersion);
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(errMsg(err, 'review failed'));
+    }
   };
+
+  // Right-rail sections, in render order — numbered from this one list so a
+  // conditional section never leaves a gap or a duplicate.
+  const railSections = [
+    template.versions.length > 1 && 'versions',
+    analytics && analytics.totalRuns > 0 && 'observed',
+    'schema',
+    template.versions.length > 1 && 'experiment',
+    'webhook',
+  ].filter(Boolean);
+  const railNumber = (key: string) => String(railSections.indexOf(key) + 1).padStart(2, '0');
 
   const selectedNeedsReview =
     canManage &&
@@ -932,7 +966,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
               </Card>
             ) : (
               <Card variant="inset">
-                <SectionHeader hint={`${template.versions.length}`} number="01" title="Versions" />
+                <SectionHeader
+                  hint={`${template.versions.length}`}
+                  number={railNumber('versions')}
+                  title="Versions"
+                />
                 <ul className="space-y-1">
                   {template.versions.map((v) => (
                     <li key={v.id}>
@@ -978,7 +1016,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
             {/* Observed analytics summary */}
             {analytics && analytics.totalRuns > 0 && (
               <Card variant="inset">
-                <SectionHeader hint="30d" number="02" title="Observed" />
+                <SectionHeader hint="30d" number={railNumber('observed')} title="Observed" />
                 <dl className="space-y-3 text-sm">
                   <VersionStat label="Runs" value={analytics.totalRuns} />
                   <VersionStat label="Success rate" value={formatPercent(analytics.successRate)} />
@@ -1025,7 +1063,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
             {/* Run schema */}
             <Card variant="inset">
               <div className="flex items-center justify-between">
-                <SectionHeader number="03" title="Run schema" />
+                <SectionHeader number={railNumber('schema')} title="Run schema" />
                 <Button onClick={() => setEditSchemaOpen(true)} size="sm" variant="ghost">
                   Edit
                 </Button>
@@ -1059,13 +1097,14 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 activeVersion={template.activeVersion}
                 experimentSplit={template.experimentSplit ?? null}
                 experimentVersion={template.experimentVersion ?? null}
+                number={railNumber('experiment')}
                 templateId={id}
                 versions={template.versions}
               />
             )}
 
             {/* Webhook trigger */}
-            <WebhookCard canManage={canManage} template={template} />
+            <WebhookCard canManage={canManage} number={railNumber('webhook')} template={template} />
           </aside>
         </div>
       )}

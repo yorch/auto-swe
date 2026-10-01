@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -43,35 +42,38 @@ function parseTimeoutInputs(form: {
 /** The list/call timeout grid, shared by the create + edit connection modals. */
 function McpTimeoutFields({
   callTimeoutMs,
+  idPrefix,
   listTimeoutMs,
   onChange,
 }: {
+  /** Distinguishes the create and edit forms' field ids, which can be mounted together. */
+  idPrefix: string;
   listTimeoutMs: string;
   callTimeoutMs: string;
   onChange: (patch: { listTimeoutMs?: string; callTimeoutMs?: string }) => void;
 }) {
   return (
     <div className="grid grid-cols-2 gap-4">
-      <FieldWrapper label="List timeout (ms)">
-        <Input
-          min={1}
-          onChange={(e) => onChange({ listTimeoutMs: e.target.value })}
-          placeholder="15000"
-          step={1}
-          type="number"
-          value={listTimeoutMs}
-        />
-      </FieldWrapper>
-      <FieldWrapper label="Call timeout (ms)">
-        <Input
-          min={1}
-          onChange={(e) => onChange({ callTimeoutMs: e.target.value })}
-          placeholder="60000"
-          step={1}
-          type="number"
-          value={callTimeoutMs}
-        />
-      </FieldWrapper>
+      <Input
+        id={`${idPrefix}-list-timeout`}
+        label="List timeout (ms)"
+        min={1}
+        onChange={(e) => onChange({ listTimeoutMs: e.target.value })}
+        placeholder="15000"
+        step={1}
+        type="number"
+        value={listTimeoutMs}
+      />
+      <Input
+        id={`${idPrefix}-call-timeout`}
+        label="Call timeout (ms)"
+        min={1}
+        onChange={(e) => onChange({ callTimeoutMs: e.target.value })}
+        placeholder="60000"
+        step={1}
+        type="number"
+        value={callTimeoutMs}
+      />
     </div>
   );
 }
@@ -110,41 +112,42 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
   return (
     <Modal eyebrow="Admin / MCP" onClose={onClose} open={open} title="New MCP Connection">
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <FieldWrapper label="Name">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            placeholder="docs-server"
-            required
-            value={form.name}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Server URL (http/https)">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-            placeholder="https://mcp.example.com/mcp"
-            required
-            type="url"
-            value={form.url}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Team">
-          <Select
-            onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
-            required
-            value={form.teamId}
-          >
-            <option disabled value="">
-              Select a team…
+        <Input
+          id="mcp-new-name"
+          label="Name"
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          placeholder="docs-server"
+          required
+          value={form.name}
+        />
+        <Input
+          id="mcp-new-server-url"
+          label="Server URL (http/https)"
+          onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+          placeholder="https://mcp.example.com/mcp"
+          required
+          type="url"
+          value={form.url}
+        />
+        <Select
+          id="mcp-new-team"
+          label="Team"
+          onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
+          required
+          value={form.teamId}
+        >
+          <option disabled value="">
+            Select a team…
+          </option>
+          {teams?.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
             </option>
-            {teams?.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
-        </FieldWrapper>
+          ))}
+        </Select>
         <McpTimeoutFields
           callTimeoutMs={form.callTimeoutMs}
+          idPrefix="mcp-new"
           listTimeoutMs={form.listTimeoutMs}
           onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
         />
@@ -222,23 +225,24 @@ function EditMcpConnectionModal({
       title={`Edit "${connection.name}"`}
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <FieldWrapper label="Name">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            required
-            value={form.name}
-          />
-        </FieldWrapper>
-        <FieldWrapper label="Server URL (http/https)">
-          <Input
-            onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-            required
-            type="url"
-            value={form.url}
-          />
-        </FieldWrapper>
+        <Input
+          id="mcp-edit-name"
+          label="Name"
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          required
+          value={form.name}
+        />
+        <Input
+          id="mcp-edit-server-url"
+          label="Server URL (http/https)"
+          onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+          required
+          type="url"
+          value={form.url}
+        />
         <McpTimeoutFields
           callTimeoutMs={form.callTimeoutMs}
+          idPrefix="mcp-edit"
           listTimeoutMs={form.listTimeoutMs}
           onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
         />
@@ -392,7 +396,12 @@ export default function StudioMcpConnectionsPage() {
         key={editTarget?.id}
         onClose={() => setEditTarget(null)}
       />
-      <DeleteMcpConnectionModal connection={deleteTarget} onClose={() => setDeleteTarget(null)} />
+      {/* Keyed like the edit modal so a failed delete's error does not carry over to the next row. */}
+      <DeleteMcpConnectionModal
+        connection={deleteTarget}
+        key={deleteTarget?.id}
+        onClose={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

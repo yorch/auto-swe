@@ -1,7 +1,9 @@
 'use client';
 
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
+import { Alert } from '@/components/ui/Alert';
 import { useEvalResultsForRun } from '@/hooks/useRuns';
+import { errMsg } from '@/lib/errors';
 import { scoreColor } from '@/lib/utils';
 
 function SignalRow({ row }: { row: EvalResultDto }) {
@@ -40,7 +42,21 @@ function SignalRow({ row }: { row: EvalResultDto }) {
  * layer; trend dashboards arrive in P3.
  */
 export function EvalSignalsPanel({ runId }: { runId: string }) {
-  const { data, isLoading } = useEvalResultsForRun(runId);
+  const { data, error, isError, isLoading } = useEvalResultsForRun(runId);
+
+  if (isError) {
+    return (
+      <>
+        <div className="h-px mx-5 bg-ink-500/40" />
+        <div className="px-5 py-4">
+          <div className="kicker mb-2">Eval signals</div>
+          <Alert className="text-xs" variant="error">
+            Could not load eval signals: {errMsg(error, 'request failed')}
+          </Alert>
+        </div>
+      </>
+    );
+  }
 
   if (isLoading || !data || data.length === 0) {
     return null;

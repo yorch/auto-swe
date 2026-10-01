@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useAutonomyDecisions } from '@/hooks/useAutonomyPolicies';
 import { formatDate } from '@/lib/utils';
 
@@ -22,7 +22,11 @@ export default function AutonomyDecisionsPage() {
   const [filters, setFilters] = useState(form);
   const [offset, setOffset] = useState(0);
 
-  const { data, isLoading } = useAutonomyDecisions({ ...filters, limit: LIMIT, offset });
+  const { data, isLoading, isError, error } = useAutonomyDecisions({
+    ...filters,
+    limit: LIMIT,
+    offset,
+  });
 
   function applyFilters(e: React.FormEvent) {
     e.preventDefault();
@@ -49,26 +53,31 @@ export default function AutonomyDecisionsPage() {
         onSubmit={applyFilters}
       >
         <Input
+          aria-label="Filter by policy name"
           onChange={(e) => setForm((f) => ({ ...f, policyName: e.target.value }))}
           placeholder="Policy name"
           value={form.policyName}
         />
         <Input
+          aria-label="Filter by risk class"
           onChange={(e) => setForm((f) => ({ ...f, riskClass: e.target.value }))}
           placeholder="Risk class"
           value={form.riskClass}
         />
         <Input
+          aria-label="Filter by event"
           onChange={(e) => setForm((f) => ({ ...f, event: e.target.value }))}
           placeholder="Event"
           value={form.event}
         />
         <Input
+          aria-label="Filter by actor ID"
           onChange={(e) => setForm((f) => ({ ...f, actorId: e.target.value }))}
           placeholder="Actor ID (UUID)"
           value={form.actorId}
         />
         <Input
+          aria-label="Filter by run ID"
           onChange={(e) => setForm((f) => ({ ...f, runId: e.target.value }))}
           placeholder="Run ID (UUID)"
           value={form.runId}
@@ -83,9 +92,13 @@ export default function AutonomyDecisionsPage() {
         </div>
       </form>
 
-      {isLoading && <LoadingState message="loading decisions…" />}
-
-      {!isLoading && (
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isLoading={isLoading}
+        label="autonomy decisions"
+        loadingMessage="loading decisions…"
+      >
         <div className="border border-ink-600 rounded-lg overflow-hidden">
           <table className="w-full text-left text-sm">
             <thead className="bg-ink-700 text-paper-400">
@@ -129,7 +142,7 @@ export default function AutonomyDecisionsPage() {
             </tbody>
           </table>
         </div>
-      )}
+      </QueryBoundary>
 
       <div className="flex items-center justify-between text-xs text-paper-400">
         <span>

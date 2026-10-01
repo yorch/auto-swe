@@ -7,7 +7,6 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -793,20 +792,14 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
   } = useChannelMemory(channel?.id ?? null, showConsolidated);
   const deleteMemory = useDeleteChannelMemory();
   const [confirmItem, setConfirmItem] = useState<MemoryItemDto | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // Rejections surface inside the ConfirmModal, under its message.
   async function handleDeleteConfirm() {
     if (!confirmItem || !channel) {
       return;
     }
-    setDeleteError(null);
-    try {
-      await deleteMemory.mutateAsync({ channelId: channel.id, memoryId: confirmItem.id });
-      setConfirmItem(null);
-    } catch (err) {
-      setDeleteError(errMsg(err, 'Failed to delete memory item'));
-    }
+    await deleteMemory.mutateAsync({ channelId: channel.id, memoryId: confirmItem.id });
   }
 
   return (
@@ -893,14 +886,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
                             >
                               Edit
                             </Button>
-                            <Button
-                              onClick={() => {
-                                setDeleteError(null);
-                                setConfirmItem(item);
-                              }}
-                              size="sm"
-                              variant="danger"
-                            >
+                            <Button onClick={() => setConfirmItem(item)} size="sm" variant="danger">
                               Delete
                             </Button>
                           </div>
@@ -923,14 +909,8 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message={
-          deleteError ??
-          `Delete this memory item? This cannot be undone.\n"${confirmItem?.lessonSummary ?? ''}"`
-        }
-        onClose={() => {
-          setConfirmItem(null);
-          setDeleteError(null);
-        }}
+        message={`Delete this memory item? This cannot be undone.\n"${confirmItem?.lessonSummary ?? ''}"`}
+        onClose={() => setConfirmItem(null)}
         onConfirm={handleDeleteConfirm}
         open={confirmItem !== null}
         title="Delete memory item"
@@ -1086,7 +1066,12 @@ const AUDIT_KIND_TONES: Record<ChannelAuditKind, BadgeTone> = {
 
 function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClose: () => void }) {
   const [kindFilter, setKindFilter] = useState<ChannelAuditKind | 'all'>('all');
-  const { data: entries, isLoading } = useChannelAudit(channel?.id ?? null, kindFilter);
+  const {
+    data: entries,
+    error: loadError,
+    isError,
+    isLoading,
+  } = useChannelAudit(channel?.id ?? null, kindFilter);
 
   return (
     <Modal
@@ -1117,8 +1102,13 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
           ))}
         </div>
 
-        {isLoading ? (
-          <LoadingState />
+        {isLoading || isError ? (
+          <QueryBoundary
+            error={loadError}
+            isError={isError}
+            isLoading={isLoading}
+            label="audit entries"
+          />
         ) : !entries || entries.length === 0 ? (
           <p className="py-4 text-center text-sm text-paper-500">
             No {kindFilter !== 'all' ? kindFilter : ''} activity recorded for this channel yet.
@@ -1192,9 +1182,22 @@ function ChannelRow({
   onOpenItems: (ch: SlackChannel) => void;
 }) {
   const update = useUpdateSlackChannel();
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
+  // Deactivating stops the assistant in a live channel, so it confirms first;
+  // reactivating does not.
   async function handleToggleActive() {
-    await update.mutateAsync({ id: channel.id, isActive: !channel.isActive });
+    setToggleError(null);
+    if (channel.isActive) {
+      setConfirmDeactivate(true);
+      return;
+    }
+    try {
+      await update.mutateAsync({ id: channel.id, isActive: true });
+    } catch (err) {
+      setToggleError(errMsg(err, 'Failed to activate channel'));
+    }
   }
 
   const spent = channel.currentMonthUsage?.costUsdAccrued;
@@ -1249,6 +1252,7 @@ function ChannelRow({
       <td className="py-3 pr-4 font-mono text-[11px] text-paper-400">{fmtBudget(spent, budget)}</td>
       <td className="py-3 pr-4 text-center">
         <button
+          aria-pressed={channel.isActive}
           className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
             channel.isActive
               ? 'bg-moss-400/10 text-moss-400 hover:bg-moss-400/20'
@@ -1260,6 +1264,18 @@ function ChannelRow({
         >
           {channel.isActive ? 'active' : 'inactive'}
         </button>
+        {toggleError && <p className="mt-1 text-[10px] text-brick-400">{toggleError}</p>}
+        <ConfirmModal
+          confirmLabel="Deactivate"
+          dangerous
+          message={`The assistant stops responding in "${channel.name ?? channel.slackChannelId}" until the channel is activated again.`}
+          onClose={() => setConfirmDeactivate(false)}
+          onConfirm={async () => {
+            await update.mutateAsync({ id: channel.id, isActive: false });
+          }}
+          open={confirmDeactivate}
+          title="Deactivate channel?"
+        />
       </td>
       <td className="py-3 text-right">
         <div className="flex items-center justify-end gap-2">
@@ -1287,7 +1303,7 @@ function ChannelRow({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function GovernSlackChannelsPage() {
-  const { data: channels, isLoading } = useSlackChannels();
+  const { data: channels, error: loadError, isError, isLoading } = useSlackChannels();
   const deleteChannel = useDeleteSlackChannel();
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -1296,19 +1312,13 @@ export default function GovernSlackChannelsPage() {
   const [openItemsTarget, setOpenItemsTarget] = useState<SlackChannel | null>(null);
   const [auditTarget, setAuditTarget] = useState<SlackChannel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SlackChannel | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Rejections surface inside the ConfirmModal, under its message.
   async function handleDelete() {
     if (!deleteTarget) {
       return;
     }
-    setDeleteError(null);
-    try {
-      await deleteChannel.mutateAsync(deleteTarget.id);
-      setDeleteTarget(null);
-    } catch (err) {
-      setDeleteError(errMsg(err, 'Failed to delete channel'));
-    }
+    await deleteChannel.mutateAsync(deleteTarget.id);
   }
 
   return (
@@ -1323,9 +1333,12 @@ export default function GovernSlackChannelsPage() {
         title="Slack Channels"
       />
 
-      {isLoading ? (
-        <LoadingState />
-      ) : (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="Slack channels"
+      >
         <Card>
           <CardHeader>
             <CardTitle eyebrow="Channels">Registered channels</CardTitle>
@@ -1378,7 +1391,7 @@ export default function GovernSlackChannelsPage() {
             </table>
           )}
         </Card>
-      )}
+      </QueryBoundary>
 
       <CreateChannelModal onClose={() => setCreateOpen(false)} open={createOpen} />
 
@@ -1393,14 +1406,8 @@ export default function GovernSlackChannelsPage() {
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message={
-          deleteError ??
-          `Delete channel "${deleteTarget?.name ?? deleteTarget?.slackChannelId ?? ''}"? This cannot be undone.`
-        }
-        onClose={() => {
-          setDeleteTarget(null);
-          setDeleteError(null);
-        }}
+        message={`Delete channel "${deleteTarget?.name ?? deleteTarget?.slackChannelId ?? ''}"? This cannot be undone.`}
+        onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         open={deleteTarget !== null}
         title="Delete Slack channel"

@@ -139,24 +139,13 @@ function EditorInner({
     [spec, onChange]
   );
 
-  /** Drop-from-palette → new node in the spec at the cursor position. We
-   *  don't persist position in the spec (spec is purely logical), but the
-   *  newly added node will render at the drop position for this session
-   *  because we'll seed an override in the local React Flow state. */
-  const handleDrop = useCallback(
-    (event: React.DragEvent) => {
-      event.preventDefault();
-      const payloadRaw = event.dataTransfer.getData(PALETTE_MIME);
-      if (!payloadRaw) {
-        return;
-      }
-      const parsed = PaletteDragSchema.safeParse(JSON.parse(payloadRaw));
-      if (!parsed.success) {
-        return;
-      }
-      const payload: PaletteDragKind = parsed.data;
-
-      const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+  /** Palette item → new node in the spec at a screen position. We don't
+   *  persist position in the spec (spec is purely logical), but the newly
+   *  added node will render at that position for this session because we'll
+   *  seed an override in the local React Flow state. */
+  const addNodeAt = useCallback(
+    (payload: PaletteDragKind, screen: { x: number; y: number }) => {
+      const pos = screenToFlowPosition(screen);
 
       const existingIds = Object.keys(spec.nodes);
       const baseName =
@@ -186,6 +175,35 @@ function EditorInner({
       });
     },
     [spec, onChange, onSelect, screenToFlowPosition, setNodes]
+  );
+
+  /** Drop-from-palette → new node at the cursor position. */
+  const handleDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      const payloadRaw = event.dataTransfer.getData(PALETTE_MIME);
+      if (!payloadRaw) {
+        return;
+      }
+      const parsed = PaletteDragSchema.safeParse(JSON.parse(payloadRaw));
+      if (!parsed.success) {
+        return;
+      }
+      addNodeAt(parsed.data, { x: event.clientX, y: event.clientY });
+    },
+    [addNodeAt]
+  );
+
+  /** Keyboard add from the palette → new node at the centre of the canvas. */
+  const handlePaletteAdd = useCallback(
+    (payload: PaletteDragKind) => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) {
+        return;
+      }
+      addNodeAt(payload, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+    },
+    [addNodeAt]
   );
 
   const handleDragOver = useCallback((event: React.DragEvent) => {
@@ -371,7 +389,7 @@ function EditorInner({
       )}
 
       <div className="flex flex-1 overflow-hidden" ref={wrapperRef}>
-        <NodePalette steps={stepRegistry} />
+        <NodePalette onAdd={handlePaletteAdd} steps={stepRegistry} />
 
         {/* Canvas — this wrapper is the HTML5 drag-and-drop target; the React Flow
             canvas inside it is the interactive surface. */}

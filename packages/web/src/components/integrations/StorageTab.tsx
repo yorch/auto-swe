@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type StorageBackend,
   type StorageConfigInput,
@@ -17,7 +17,7 @@ import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
 
 export function StorageTab() {
-  const { data: resp, isLoading } = useStorageConfig();
+  const { data: resp, error: loadError, isError, isLoading } = useStorageConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateStorageConfig();
@@ -83,8 +83,15 @@ export function StorageTab() {
     runTest(() => testStorageConnection());
   };
 
-  if (isLoading) {
-    return <LoadingState />;
+  if (isLoading || isError) {
+    return (
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="storage config"
+      />
+    );
   }
 
   return (
