@@ -342,6 +342,78 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.min(5).max(500),
     unit: 'steps',
   }),
+  'workspace.agentRunAllowWorkflowChanges': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether an agent run may publish changes under .github/workflows. A pushed branch triggers its push workflows with repository secrets, and a workflow file can request secrets and permissions that ordinary code cannot, so a run that touches one is refused unless this is on.',
+    group: 'workspace',
+    label: 'Agent run: allow workflow file changes',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'workspace.agentRunMaxConcurrentGlobal': defineSetting({
+    defaultValue: 4,
+    description:
+      'Most agent runs that may be in flight across the whole platform. Each holds a worker activity slot and a workspace container for its full duration, so this is what stops agent runs starving every other workflow. 0 disables agent runs.',
+    group: 'workspace',
+    label: 'Agent run: max concurrent (platform)',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(100),
+    unit: 'runs',
+  }),
+  'workspace.agentRunMaxConcurrentPerTeam': defineSetting({
+    defaultValue: 2,
+    description:
+      "Most agent runs one team (the repository's owning team) may have in flight. 0 disables agent runs for the team.",
+    group: 'workspace',
+    label: 'Agent run: max concurrent (per team)',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(100),
+    unit: 'runs',
+  }),
+
+  // ── Agent runs ─────────────────────────────────────────────────────────────
+  // Ad-hoc "run this library agent on this repo" launches. Every one of these is
+  // ADMIN-only: they bound what any ENGINEER can spend or publish from a text
+  // box, so a LEAD who may tune the implementer's step budget must not be able
+  // to raise them. A per-launch cap can only LOWER the ceilings below; the
+  // gateway rejects a cap above one and the worker clamps again, because a
+  // ceiling can drop between launch and start.
+  'workspace.agentRunMaxSteps': defineSetting({
+    defaultValue: 50,
+    description:
+      'Ceiling on model steps in one agent run (every tool call and the final answer count as one). A launch may request fewer, never more. Each step re-checks the run budget, so a lower ceiling mainly bounds latency and how far one run can overshoot its tier.',
+    group: 'workspace',
+    label: 'Agent run: max steps',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(500),
+    unit: 'steps',
+  }),
+  'workspace.agentRunMaxWallClockSeconds': defineSetting({
+    defaultValue: 1800,
+    description:
+      'Ceiling on the wall-clock time an agent run may spend in the agent loop. A launch may request less, never more. A run that hits it stops where it is; changes made so far are still checked and, when delivery was requested, still published.',
+    group: 'workspace',
+    label: 'Agent run: max wall-clock time',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.min(60).max(14_400),
+    unit: 'seconds',
+  }),
 
   // ── Shell-step helper image ────────────────────────────────────────────────
   // Cascades to TEAM / ORGANIZATION, unlike the rest of the workspace
