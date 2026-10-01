@@ -10,6 +10,7 @@ import {
   testStoredCredential,
   updateCredential,
 } from '../lib/credentialService.js';
+import { catalogWarnings } from '../lib/modelCatalogService.js';
 import { upsertEmbeddingConfig } from '../lib/modelConfigService.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -338,7 +339,8 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: EMBEDDING_CONFIG_SENTINEL_UUID,
         entityType: 'EmbeddingConfig',
       });
-      return { data: updated };
+      const warnings = await catalogWarnings(fastify.prisma, modelSpec, 'EMBEDDING');
+      return { data: updated, ...(warnings.length > 0 ? { catalogWarnings: warnings } : {}) };
     }
   );
 };

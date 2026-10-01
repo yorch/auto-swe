@@ -79,6 +79,10 @@ export function suggestSpec(spec: string, priced: Iterable<string>): string | nu
   return tied ? null : best;
 }
 
+function kindPhrase(kind: ModelKind): string {
+  return kind === 'EMBEDDING' ? 'an embedding' : 'a chat';
+}
+
 /** Every spec the worker can price: catalog rows plus the built-in table. */
 async function pricedSpecs(prisma: PrismaClient): Promise<Set<string>> {
   const rows = await prisma.modelCatalogEntry.findMany({
@@ -122,7 +126,7 @@ export async function catalogWarnings(
   const warnings: string[] = [];
   if (entry.kind !== kind) {
     warnings.push(
-      `'${spec}' is cataloged as a ${entry.kind.toLowerCase()} model, but is being used as a ${kind.toLowerCase()} model.`
+      `'${spec}' is cataloged as ${kindPhrase(entry.kind)} model, but is being used as ${kindPhrase(kind)} model.`
     );
   }
   if (entry.status === 'RETIRED') {
