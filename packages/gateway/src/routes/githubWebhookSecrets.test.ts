@@ -102,6 +102,23 @@ describe('githubWebhookSecretRoutes', () => {
     expect(engineer.prisma.gitHubHostWebhookSecret.create).not.toHaveBeenCalled();
   });
 
+  it.each(['github.com', 'api.github.com'])(
+    'refuses a secret for %s, which sends no enterprise-host header',
+    async (host) => {
+      const res = await admin.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { host, secret: 's3cret' },
+        url: BASE,
+      });
+      expect(res.statusCode).toBe(400);
+      const error = JSON.parse(res.payload).error;
+      expect(error.code).toBe('HOST_SENDS_NO_HEADER');
+      expect(error.message).toContain('GitHub Enterprise Server');
+      expect(admin.prisma.gitHubHostWebhookSecret.create).not.toHaveBeenCalled();
+    }
+  );
+
   it('lists hosts and last four, never the secret', async () => {
     admin.prisma.gitHubHostWebhookSecret.findMany.mockResolvedValue([row()]);
     const res = await admin.app.inject({ headers: AUTH, method: 'GET', url: BASE });

@@ -12,7 +12,9 @@ vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
 }));
 
 const {
+  claimsHostWithOwnSecret,
   deliveryHostMatches,
+  isGitHubDotComHost,
   insensitiveName,
   likeLiteral,
   repositoryHostWhere,
@@ -142,15 +144,20 @@ describe('webhookRepositoryWhere', () => {
       await expect(webhookHostScope(prisma, null)).resolves.toEqual({ id: { notIn: ['on-ghe'] } });
     });
 
-    it('also excludes the instance-host connections when the instance host has a row', async () => {
-      secretRows.mockResolvedValue([{ host: 'github.com' }]);
+    it('never excludes github.com connections for a github.com row (legacy data)', async () => {
+      secretRows.mockResolvedValue([{ host: 'github.com' }, { host: 'api.github.com' }]);
+      await expect(webhookHostScope(prisma, null)).resolves.toEqual({});
+      expect(findMany).not.toHaveBeenCalled();
+    });
+
+    it('still excludes the real enterprise host next to a github.com row', async () => {
+      secretRows.mockResolvedValue([{ host: 'github.com' }, { host: 'ghe.corp' }]);
       findMany.mockResolvedValue([
         { githubUrl: null, id: 'implicit' },
+        { githubUrl: 'https://github.com', id: 'explicit' },
         { githubUrl: 'https://ghe.corp', id: 'on-ghe' },
       ]);
-      await expect(webhookHostScope(prisma, null)).resolves.toEqual({
-        id: { notIn: ['implicit'] },
-      });
+      await expect(webhookHostScope(prisma, null)).resolves.toEqual({ id: { notIn: ['on-ghe'] } });
     });
 
     it('adds no constraint, and reads no connections, when no host has a secret', async () => {
@@ -184,6 +191,51 @@ describe('deliveryHostMatches', () => {
     expect(deliveryHostMatches('ghe.corp', 'https://github.com/acme/api')).toBe(false);
     expect(deliveryHostMatches('ghe.corp', 'https://ghe.corp:8443/acme/api')).toBe(false);
     expect(deliveryHostMatches('ghe.corp', 'not a url')).toBe(false);
+  });
+});
+
+describe('isGitHubDotComHost', () => {
+  it('recognises github.com and its API host, with or without a port', () => {
+    for (const host of ['github.com', 'API.github.com', 'github.com:8443']) {
+      expect(isGitHubDotComHost(host)).toBe(true);
+    }
+    for (const host of ['ghe.corp', 'github.com.evil.example', 'gist.github.com']) {
+      expect(isGitHubDotComHost(host)).toBe(false);
+    }
+  });
+});
+
+describe('claimsHostWithOwnSecret', () => {
+  const secretRows = vi.fn();
+  const prisma = { gitHubHostWebhookSecret: { findMany: secretRows } } as never;
+
+  beforeEach(() => {
+    secretRows.mockReset();
+    secretRows.mockResolvedValue([{ host: 'ghe.corp' }, { host: 'github.com' }]);
+  });
+
+  it('is true for an instance-secret delivery naming a host with its own secret', async () => {
+    await expect(claimsHostWithOwnSecret(prisma, null, 'https://GHE.corp/acme/api')).resolves.toBe(
+      true
+    );
+  });
+
+  it('is false for another host, github.com (a row there is never used), or no html_url', async () => {
+    await expect(claimsHostWithOwnSecret(prisma, null, 'https://other.corp/a/b')).resolves.toBe(
+      false
+    );
+    await expect(claimsHostWithOwnSecret(prisma, null, 'https://github.com/a/b')).resolves.toBe(
+      false
+    );
+    await expect(claimsHostWithOwnSecret(prisma, null, undefined)).resolves.toBe(false);
+    await expect(claimsHostWithOwnSecret(prisma, null, 'not a url')).resolves.toBe(false);
+  });
+
+  it('claims nothing for a delivery a per-host secret verified, and reads nothing', async () => {
+    await expect(claimsHostWithOwnSecret(prisma, 'ghe.corp', 'https://ghe.corp/a/b')).resolves.toBe(
+      false
+    );
+    expect(secretRows).not.toHaveBeenCalled();
   });
 });
 

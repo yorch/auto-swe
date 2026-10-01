@@ -37,10 +37,16 @@ Everything that names a repository by owner and name takes the host into account
 the API is `<githubApiUrl>/repos/<owner>/<name>`. They exist for a repository on a different GitHub
 host than the instance's.
 
-Every GitHub credential — the platform's App or PAT, and a user's own token — is sent to a
-repository's own bases. A team lead can set those, so an unchecked override would let a lead point a
-repository at a host they control and collect the platform's token on the next run. Overrides are
-therefore restricted:
+A credential is sent to a repository's own bases, but only the one that is valid there. A user's own
+token is bound to the origins it was verified on. The platform's credential — the singleton App
+installation or the instance PAT — is the instance's and goes only to the instance's own hosts: for
+a repository on any other host it is refused with a non-retryable `REPO_CREDENTIAL_HOST_MISMATCH`
+(the repository is on that host, which needs its own GitHub App installation under Studio → GitHub
+installations, or a user's own token), unless the repository has an installation of its own and the
+App is in use. A repository with a web base of its own but no API base would send its API calls to
+the instance's API, so those fail with `REPO_HOST_MISCONFIGURED` until the API URL is set. A team
+lead can set the overrides, so an unchecked one would let a lead point a repository at a host they
+control and collect a token on the next run. Overrides are therefore restricted:
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -65,7 +71,9 @@ The GitHub integration holds one webhook secret. Each GitHub Enterprise Server h
 own webhooks, so each can have its own secret (`GitHubHostWebhookSecret`, managed by platform admins
 at `/studio/integrations → GitHub` or under `/api/v1/platform/github-webhook-secrets`). The host
 must be the integration's own host or listed in `github.repositoryHosts`; a secret for any other
-host is refused.
+host is refused. So is one for `github.com` or `api.github.com` (`HOST_SENDS_NO_HEADER`): they send
+no header, so such a row could never be selected. A legacy row for them is ignored when scoping
+deliveries and the gateway warns about it at startup.
 
 GitHub Enterprise Server names the sending host in `X-GitHub-Enterprise-Host`. For every
 `/webhooks/git`, `/webhooks/ci` and `/webhooks/access` delivery:
@@ -90,7 +98,8 @@ carried into the lookup that finds the repository:
   `repository.html_url` names a different host is ignored, so a host's secret cannot sign a payload
   about a repository on another host.
 - **The instance secret** reaches no repository on a host that has a secret of its own: those hosts
-  are verified with theirs alone. Elsewhere the host is consulted only when the owner/name is
+  are verified with theirs alone, so an instance-secret delivery whose `repository.html_url` names
+  such a host is ignored. Elsewhere the host is consulted only when the owner/name is
   ambiguous, as above.
 
 This applies to `/webhooks/git`, `/webhooks/ci` and `/webhooks/access`; a user-wide access event
@@ -106,8 +115,9 @@ for the repository's own installation. The instance's credentials stay on the in
 host: a repository with no installation of its own would take the instance's installation, which
 lives on the instance's host, so on another host it is sent no token; the instance PAT is likewise
 never sent to another host. A user's token is never used, since no user launched a webhook. A
-repository whose overrides fail the approved-host check, or that has no credential valid on its
-host, is sent none, and its run is signalled per check run instead.
+repository whose overrides fail the approved-host check, that has no credential valid on its host,
+or that has a web base of its own but no API base (the lookup would reach the instance's API), is
+sent none, and its run is signalled per check run instead.
 
 The same commit can be tracked on repositories on different hosts (a mirror, or the same name on
 two hosts). Matched pull requests are grouped by repository and each group is aggregated on its own

@@ -12,10 +12,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 const state = vi.hoisted(() => ({
   github: {
     apiUrl: 'https://api.github.com',
+    baseUrl: 'https://github.com',
     token: 'gh-pat-token' as string | null,
     webhookSecret: 'hook-secret' as string | null,
   } as {
     apiUrl: string;
+    baseUrl: string;
     appId?: string;
     appPrivateKey?: string;
     authMode?: 'app' | 'auto' | 'pat';
@@ -166,6 +168,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 import { prisma } from '@auto-swe/shared/db';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
+import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { webhookRoutes } from './webhooks.js';
 
 const SECRET = 'hook-secret';
@@ -409,6 +412,7 @@ describe('webhook routes', () => {
     vi.mocked(resolveGitHubToken).mockClear();
     state.github = {
       apiUrl: 'https://api.github.com',
+      baseUrl: 'https://github.com',
       token: 'gh-pat-token',
       webhookSecret: SECRET,
     };
@@ -1451,6 +1455,90 @@ describe('webhook routes', () => {
         await inject('/api/v1/webhooks/git', body, sign(body));
         expect(signalCalls).toHaveLength(1);
       });
+
+      it.each(['/git', '/ci', '/access'])(
+        '%s ignores an html_url on a host with its own secret even when that host has no connection to exclude',
+        async (path) => {
+          // The scope above only excludes connections; the delivery itself is
+          // refused, so a same-named repository elsewhere cannot be reached by
+          // a payload that claims the host.
+          connectionHosts.rows = [{ githubUrl: null, id: 'repo-github' }];
+          trackedPr = trackedOn('repo-github');
+          openPrs = [openOn('repo-github')];
+          const body =
+            path === '/git'
+              ? mergedBody(GHE_A_URL)
+              : path === '/ci'
+                ? checkBody(GHE_A_URL)
+                : accessBody(GHE_A_URL);
+          const res = await inject(`/api/v1/webhooks${path}`, body, sign(body), {
+            'x-github-event': 'repository',
+          });
+          expect(JSON.parse(res.payload).data).toEqual({
+            ignored: true,
+            reason: 'Repository is not on the host that signed this delivery',
+          });
+          expect(signalCalls).toHaveLength(0);
+        }
+      );
+    });
+
+    describe('a webhook-secret row for github.com (legacy data)', () => {
+      beforeEach(() => {
+        hostSecrets.rows.set('github.com', 'never-used');
+        hostSecrets.rows.set('api.github.com', 'never-used');
+      });
+
+      it('does not stop github.com deliveries from acting on github.com repositories', async () => {
+        trackedPr = trackedOn('repo-github');
+        const body = mergedBody(GITHUB_URL);
+        await inject('/api/v1/webhooks/git', body, sign(body));
+        expect(signalCalls).toHaveLength(1);
+      });
+
+      it('/access still reaches the instance-host connections, and still excludes the real GHE host', async () => {
+        const body = accessBody();
+        await inject('/api/v1/webhooks/access', body, sign(body), {
+          'x-github-event': 'repository',
+        });
+        expect(accessRepositoryIds()).toEqual({ notIn: ['repo-ghe-a'] });
+      });
+    });
+
+    describe('the tracker link of a merged PR', () => {
+      it("is built from the repository's own web base, not the instance's", async () => {
+        trackedPr = {
+          ...trackedOn('repo-ghe-a'),
+          workflow: {
+            repository: { githubUrl: 'https://ghe-a.corp', team: null },
+            temporalWorkflowId: 'wf-1',
+            workRequest: { externalTicketId: 'PROJ-1' },
+          },
+        };
+        const body = mergedBody(GHE_A_URL);
+        await inject('/api/v1/webhooks/git', body, sign(body, 'a-secret'), GHE_A);
+        expect(syncTrackerOnEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ prUrl: 'https://ghe-a.corp/acme/api/pull/7' }),
+          expect.anything()
+        );
+      });
+
+      it('falls back to the instance base for a repository with no override', async () => {
+        trackedPr = {
+          ...trackedOn('repo-github'),
+          workflow: {
+            repository: { githubUrl: null, team: null },
+            temporalWorkflowId: 'wf-1',
+            workRequest: { externalTicketId: 'PROJ-1' },
+          },
+        };
+        const body = mergedBody(GITHUB_URL);
+        await inject('/api/v1/webhooks/git', body, sign(body));
+        expect(syncTrackerOnEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ prUrl: 'https://github.com/acme/api/pull/7' }),
+          expect.anything()
+        );
+      });
     });
 
     it.each(['/git', '/ci'])(
@@ -1702,6 +1790,39 @@ describe('webhook routes', () => {
       expect(fetchMock).not.toHaveBeenCalled();
       // Aggregation is unavailable, so the run is signalled per check run.
       expect(signalCalls).toHaveLength(1);
+    });
+
+    it('does not ask the instance about a repository with a web host of its own and no API URL', async () => {
+      // Without an API override the lookup would go to the instance's API, where
+      // a same-named repository could decide this one's verdict.
+      state.github = { ...state.github, ...APP_MODE };
+      trackRepo({
+        githubApiUrl: null,
+        githubUrl: 'https://mirror.corp',
+        installation: { installationId: '777' },
+      });
+
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(res.statusCode).toBe(200);
+      expect(resolveGitHubToken).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      // Aggregation is unavailable, so the run is signalled per check run.
+      expect(signalCalls).toHaveLength(1);
+    });
+
+    it('still queries the instance for a repository whose web override is the instance host', async () => {
+      state.github = { ...state.github, ...APP_MODE };
+      trackRepo({ githubApiUrl: null, githubUrl: 'https://github.com', installation: null });
+      vi.mocked(resolveGitHubToken).mockResolvedValueOnce('singleton-token');
+      fetchMock.mockResolvedValueOnce(done);
+
+      await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('https://api.github.com/repos/'),
+        expect.anything()
+      );
     });
 
     it('never sends the instance PAT to another host, installation or not', async () => {

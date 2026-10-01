@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   REPO_IDENTITY_INDEX,
   REPO_IDENTITY_INDEX_SQL,
+  warnIfGitHubDotComWebhookSecret,
   warnIfRepoIdentityIndexMissing,
 } from './repoIdentityIndexCheck.js';
 
@@ -67,5 +68,36 @@ describe('warnIfRepoIdentityIndexMissing', () => {
       expect.objectContaining({ err: expect.any(Error) }),
       expect.any(String)
     );
+  });
+});
+
+describe('warnIfGitHubDotComWebhookSecret', () => {
+  const setupRows = (rows: Array<{ host: string }> | Error) => {
+    const findMany = vi.fn(async () => {
+      if (rows instanceof Error) {
+        throw rows;
+      }
+      return rows;
+    });
+    return { prisma: { gitHubHostWebhookSecret: { findMany } } as never, warn: vi.fn() };
+  };
+
+  it('warns, naming the hosts, when a row exists for github.com or api.github.com', async () => {
+    const { prisma, warn } = setupRows([{ host: 'github.com' }, { host: 'ghe.corp' }]);
+    await expect(warnIfGitHubDotComWebhookSecret(prisma, { warn })).resolves.toBe(true);
+    expect(warn.mock.calls[0][0]).toEqual({ hosts: ['github.com'] });
+    expect(warn.mock.calls[0][1]).toContain('X-GitHub-Enterprise-Host');
+  });
+
+  it('is silent when only enterprise hosts have rows', async () => {
+    const { prisma, warn } = setupRows([{ host: 'ghe.corp' }]);
+    await expect(warnIfGitHubDotComWebhookSecret(prisma, { warn })).resolves.toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('never throws', async () => {
+    const { prisma, warn } = setupRows(new Error('db down'));
+    await expect(warnIfGitHubDotComWebhookSecret(prisma, { warn })).resolves.toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

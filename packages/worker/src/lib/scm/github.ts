@@ -71,10 +71,7 @@ function hostKey(url: string): string {
 }
 
 type PlatformConfig = { baseUrl: string; apiUrl: string } & Partial<
-  Pick<
-    Awaited<ReturnType<typeof resolveGitHubConfig>>,
-    'authMode' | 'appId' | 'appPrivateKey'
-  >
+  Pick<Awaited<ReturnType<typeof resolveGitHubConfig>>, 'authMode' | 'appId' | 'appPrivateKey'>
 >;
 
 /**
@@ -119,7 +116,9 @@ function credentialHostMismatch(repo: RepoRef, ghConfig: PlatformConfig) {
  */
 function hasMisconfiguredHost(repo: RepoRef, ghConfig: { baseUrl: string }): boolean {
   return (
-    Boolean(repo.baseUrl) && !repo.apiUrl && hostKey(repo.baseUrl as string) !== hostKey(ghConfig.baseUrl)
+    Boolean(repo.baseUrl) &&
+    !repo.apiUrl &&
+    hostKey(repo.baseUrl as string) !== hostKey(ghConfig.baseUrl)
   );
 }
 
@@ -402,7 +401,7 @@ export class GitHubScmProvider implements ScmProvider {
               return own.ok && own.trusted;
             })()
           : false;
-    if (!githubToken && platformTrusted) {
+    if (!githubToken && (platformTrusted || target.trusted)) {
       // The platform credential — an App JWT, when minting an installation token
       // — goes to this repository's own API host. Every other route to a token
       // checks the repository's overrides first; this one reaches the minting
@@ -416,6 +415,8 @@ export class GitHubScmProvider implements ScmProvider {
           return `Cannot fetch CI logs — repository URL ${hosts.url} is not on an allowed GitHub host`;
         }
       }
+    }
+    if (!githubToken && platformTrusted) {
       try {
         // `repo` is optional because a logs URL can arrive without one, but
         // when it is available the token must come from that repository's
@@ -485,7 +486,10 @@ export class GitHubScmProvider implements ScmProvider {
     const ghConfig = await resolveGitHubConfig();
     // Not the instance's credential, and not the instance's API: either would
     // answer for a repository on another host.
-    if (platformCredentialScope(repo, ghConfig) === 'mismatch' || hasMisconfiguredHost(repo, ghConfig)) {
+    if (
+      platformCredentialScope(repo, ghConfig) === 'mismatch' ||
+      hasMisconfiguredHost(repo, ghConfig)
+    ) {
       return { failure: 'credential-rejected', ok: false };
     }
     const target = installationTarget(repo, ghConfig);
