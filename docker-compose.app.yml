@@ -113,7 +113,7 @@ services:
 
   # Observability: Grafana LGTM (Grafana + Tempo + Loki + Prometheus + OTel Collector)
   otel-lgtm:
-    image: grafana/otel-lgtm:0.33.1
+    image: grafana/otel-lgtm:0.34.0
     restart: unless-stopped
     ports:
       - "${GRAFANA_PORT:-127.0.0.1:3001}:3000"   # Grafana UI (3000 taken by Next.js)
