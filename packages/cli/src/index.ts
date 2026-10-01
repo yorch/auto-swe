@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { runAgentCommand } from './commands/agent.js';
 import { runBundleCommand } from './commands/bundle.js';
 import { runBundlesCommand } from './commands/bundles.js';
 import { runEvalsCommand } from './commands/evals.js';
@@ -18,6 +19,12 @@ USAGE
 COMMANDS
   run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
                                        Submit a work request and start a run on the default template
+
+  agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|draft_pr]
+            [--max-steps=N] [--timeout=SECONDS] [--wait]
+                                       Run a library agent on a repository in a throwaway workspace;
+                                       --deliver=branch|draft_pr publishes it after the platform's checks
+  agent rerun <workRequestId> [--wait] Run an earlier agent run again as a new run
 
   workflows list                       List workflow templates visible to you
   workflows show <name> [--version=N]  Print one template's active (or given) spec (JSON)
@@ -100,6 +107,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'run') {
     return await runWorkRequestsCommand(rest, env);
+  }
+  if (cmd === 'agent') {
+    return await runAgentCommand(rest, env);
   }
   if (cmd === 'workflows') {
     return await runWorkflowsCommand(rest, env);

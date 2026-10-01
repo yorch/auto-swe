@@ -37,7 +37,7 @@ export const REPO_PAGE_SIZE = 500;
  * can see. The list endpoint has no name filter, and a caller with more
  * repositories than one page holds must still resolve the ones past it.
  */
-async function findRepoByName(
+export async function findRepoByName(
   env: CliEnv,
   org: string,
   repoName: string
