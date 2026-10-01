@@ -33,10 +33,12 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
 } from 'react';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
 import { FlowChrome } from './flowChrome';
+import { foldBookkeeping } from './foldBookkeeping';
 import { FIT_VIEW_OPTIONS, specToFlow } from './specToFlow';
 
 export type { DiffKind } from '@/lib/workflowLayout';
@@ -55,11 +57,49 @@ interface Props {
   responsive?: boolean;
   /** Container height. Defaults to 480px so the diagram has room to breathe. */
   height?: number | string;
+  /**
+   * Start with bookkeeping nodes (`set`, `updateDomainState`) folded out of the
+   * view. Defaults to on for graphs past {@link AUTO_FOLD_NODE_COUNT} nodes. The
+   * viewer can flip it either way; the spec itself is never changed.
+   */
+  foldBookkeeping?: boolean;
 }
+
+/** Graphs larger than this open folded unless the caller says otherwise. */
+export const AUTO_FOLD_NODE_COUNT = 20;
+
+/** Statuses a viewer is actively looking for — never folded away. */
+const ALWAYS_VISIBLE_STATUSES = new Set(['FAILED', 'RUNNING', 'PENDING']);
 
 const NODE_TYPES = { dag: DagNode };
 
-function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, height }: Props) {
+function InnerDag({
+  spec: fullSpec,
+  statuses,
+  diffMarkers,
+  selectedNodeId,
+  onSelect,
+  height,
+  foldBookkeeping: foldDefault,
+}: Props) {
+  const [folded, setFolded] = useState(
+    () => foldDefault ?? Object.keys(fullSpec.nodes).length > AUTO_FOLD_NODE_COUNT
+  );
+  // What the viewer is looking at is never folded away: a node that failed, is
+  // running or waiting, was changed in a diff, or is selected stays on the canvas.
+  const keepKey = JSON.stringify([
+    Object.entries(statuses?.byNodeId ?? {})
+      .filter(([, v]) => v && ALWAYS_VISIBLE_STATUSES.has(v.status))
+      .map(([id]) => id),
+    Object.keys(diffMarkers ?? {}),
+    selectedNodeId,
+  ]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keepKey is the serialized content of everything `keep` reads
+  const fold = useMemo(() => {
+    const keep = new Set<string>(JSON.parse(keepKey).flat().filter(Boolean) as string[]);
+    return foldBookkeeping(fullSpec, keep);
+  }, [JSON.stringify(fullSpec), keepKey]);
+  const spec = folded ? fold.spec : fullSpec;
   // Poll refreshes hand us new object identities for `spec` / `statuses` /
   // `diffMarkers` every 3-5s even when their content is unchanged. Keying the
   // memo on serialized content (rather than identity) means a poll with no
@@ -177,6 +217,17 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
       role="application"
       style={{ height: height ?? 480 }}
     >
+      {fold.hidden.length > 0 && (
+        <button
+          aria-pressed={folded}
+          className="absolute left-2 top-2 z-10 rounded-sm border border-ink-600 bg-ink-800/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-400 hover:text-paper-100"
+          onClick={() => setFolded((v) => !v)}
+          title="Status stamps and counters (set / updateDomainState nodes) change run state but do no work. Folding them out shortens the graph; nothing is edited."
+          type="button"
+        >
+          {folded ? `Show ${fold.hidden.length} bookkeeping nodes` : 'Hide bookkeeping nodes'}
+        </button>
+      )}
       <ReactFlow
         edges={edges}
         fitView
