@@ -134,7 +134,7 @@ async function recordEmbeddingUsage(
   durationMs: number
 ): Promise<void> {
   const costUsd =
-    tokens === null ? null : Math.round(calculateCostUsd(spec, tokens, 0) * 1e6) / 1e6;
+    tokens === null ? null : Math.round((await calculateCostUsd(spec, tokens, 0)) * 1e6) / 1e6;
   // Counted whether or not there is an activity to attribute it to, or usage
   // to price: the call was made either way.
   recordLlmCallMetrics({

@@ -645,17 +645,19 @@ and §8 below.
 
 ### Cost Tracking
 
-`packages/worker/src/lib/costTracking.ts` prices each call from `BUILTIN_MODELS` in
-`packages/shared/src/lib/builtinModels.ts` (USD per MTok). Unknown models fall back to zero cost and
-emit `llm.cost_pricing_known=false` on the OTel span — usage is still recorded, so runs are never
-lost to a missing price. Add an entry there as agents are routed to new models —
-`builtinModels.test.ts` fails the build when a seeded agent default, either side of a
-`PREVIOUS_DEFAULT_MODEL_SPECS` pair, or the seeded embedding default has none — or set a per-model
-env override:
+`packages/worker/src/lib/costTracking.ts` prices each call (USD per MTok) from the **model
+catalog** (`model_catalog_entries`), falling back to `BUILTIN_MODELS` in
+`packages/shared/src/lib/builtinModels.ts`; the span's `llm.cost_price_source` says which. Unknown
+models fall back to zero cost and emit `llm.cost_pricing_known=false` — usage is still recorded, so
+runs are never lost to a missing price. The catalog is read once per config-cache window, and
+pricing **never throws**: an unreadable catalog serves the last good read, else the built-in table,
+and is not queried again for one window. Add a model to `BUILTIN_MODELS` as agents are routed to it
+— `builtinModels.test.ts` fails the build when a seeded agent default, either side of a
+`PREVIOUS_DEFAULT_MODEL_SPECS` pair, or the seeded embedding default has none.
 
-```
-MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumerics → _
-```
+`MODEL_PRICE_*` environment overrides are **not read**; the worker names any it finds at startup.
+Pricing logs go through `logWarn`/`logError` (`lib/activityLog.ts`), never `log` directly:
+embedding usage is priced outside an activity too, where `log` throws.
 
 Pricing keys off the resolved `provider/model` spec only — it is decoupled from agent identity,
 which is retained purely for attribution and telemetry.

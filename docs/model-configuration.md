@@ -83,6 +83,31 @@ known, free model such as a self-hosted endpoint, distinct from an unknown one.
 
 Nothing is deleted: a model dropped from `BUILTIN_MODELS` stays priced for the runs that used it.
 
+**Pricing reads the catalog.** Each LLM and embedding call is priced from its spec's catalog row,
+falling back to `BUILTIN_MODELS` when the catalog has none — so a model is priced before the gateway
+has seeded the catalog. The lookup is exact: a near-miss such as `gpt-5-5` for `gpt-5.5` is unknown
+and priced at $0, never at its neighbour's rate. A row with a negative or non-finite price is
+skipped. The worker reads the catalog once per config-cache window, so an edit lands within
+`CONFIG_CACHE_TTL_MS`; a call's cost is fixed when it is recorded, so an edit never reprices history.
+If the catalog cannot be read, pricing uses the last good read, else the built-in table, and retries
+after one window — a pricing failure never fails a call.
+
+**Setting a price** — for a negotiated rate, a self-hosted model (`0`/`0`), or a model the built-in
+table lacks — is a row edit. Mark an edited built-in row customized, or the next gateway startup
+reverts it:
+
+```sql
+UPDATE model_catalog_entries
+SET input_usd_per_mtok = 3.5, output_usd_per_mtok = 17, is_customized = true
+WHERE provider = 'anthropic' AND model_id = 'claude-opus-5-5';
+
+INSERT INTO model_catalog_entries (provider, model_id, input_usd_per_mtok, output_usd_per_mtok)
+VALUES ('ollama', 'llama-4', 0, 0);
+```
+
+`MODEL_PRICE_<PROVIDER>_<MODEL>` environment overrides are not read. The worker names any that are
+set at startup.
+
 ### Bootstrap (fresh deployment)
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
@@ -289,14 +314,17 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 - **The config cache means edits are eventually consistent.** Model config is cached in-process with
   a ~30 s TTL (`CONFIG_CACHE_TTL_MS`) and gateway and worker are separate processes, so the two can
   briefly disagree after an edit. A `generate()` call already in flight keeps the model it bound.
-- **Pricing is keyed on the resolved `provider/model` spec.** A model with no `BUILTIN_MODELS`
-  entry and no `MODEL_PRICE_*` override records usage at **zero cost** rather than failing — the
-  span carries `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
+- **Pricing is keyed on the resolved `provider/model` spec.** A model with no catalog row and no
+  `BUILTIN_MODELS` entry records usage at **zero cost** rather than failing — the span carries
+  `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
   unpriced model is still capped there, but every USD-denominated limit — the organization monthly
   budget, channel budgets and the channel hold estimate — reads its spend as $0 and never stops it.
-- **LLM calls are priced from `BUILTIN_MODELS`, not the model catalog.** The catalog is seeded from
-  the same table, but nothing reads its rows: editing a row's price changes no recorded cost, and
-  there is no API or admin page to edit it from.
+- **The model catalog has no API or admin page.** A price is set with SQL against
+  `model_catalog_entries` (see [Model catalog](#model-catalog)), and an edited built-in row must be
+  marked `is_customized` by hand or the next gateway startup reverts it.
+- **Prices are base rates.** Prompt-caching multipliers, batch discounts, data-residency and
+  fast-mode premiums, and long-context surcharges are not modelled, so a call that used them is
+  recorded at the base rate.
 - **Credential resolution has no fallback past GLOBAL.** The TEAM → ORGANIZATION → GLOBAL cascade
   ends there; a missing GLOBAL row is a `ConfigMissingError`, not a silent skip.
 - **Embeddings are locked to 1536 dimensions.** `memory_items.embedding` is `vector(1536)`, so a

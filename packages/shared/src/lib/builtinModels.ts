@@ -10,8 +10,8 @@
  * so USD budgets never see its spend — `builtinModels.test.ts` fails the build
  * if any model this repo seeds is missing.
  *
- * Caveats these prices do NOT account for — set per-model env overrides if any
- * apply to your deployment:
+ * Caveats these prices do NOT account for — set a customized catalog price if
+ * any apply to your deployment:
  *  - Prompt caching multipliers (0.1x reads, 1.25x/2x writes)
  *  - Batch API discount (50%)
  *  - Anthropic data-residency premium (1.1x for `inference_geo: us`)

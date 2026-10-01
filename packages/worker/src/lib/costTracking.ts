@@ -6,6 +6,7 @@ import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { type Span, trace } from '@opentelemetry/api';
 import { ApplicationFailure, log } from '@temporalio/activity';
 import { currentActivityType, currentWorkflowId } from './activityContext.js';
+import { logWarn } from './activityLog.js';
 import { gatedStepNames } from './config/deploymentAgents.js';
 import { STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
 import { recordBudgetExceeded, recordLlmCallMetrics } from './metrics.js';
@@ -21,9 +22,11 @@ export interface ModelPrice {
 }
 
 /**
- * Price table keyed by `<provider>/<model-id>`, USD per million tokens. A view
- * over `BUILTIN_MODELS` in `@auto-swe/shared/lib/builtinModels` — add or
- * correct a model's price there.
+ * Built-in prices keyed by `<provider>/<model-id>`, USD per million tokens: a
+ * view over `BUILTIN_MODELS` in `@auto-swe/shared/lib/builtinModels`. Pricing
+ * reads the model catalog first and falls back to this table, so a model is
+ * still priced before the gateway has seeded the catalog or while the database
+ * is unreachable.
  */
 export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = Object.fromEntries(
   BUILTIN_MODELS.map((m) => [
@@ -34,51 +37,93 @@ export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = Object.fromEnt
 
 const ZERO_PRICE: ModelPrice = { input: 0, output: 0 };
 
-function parsePriceOverride(value: string): ModelPrice | null {
-  const parts = value.split(':');
-  if (parts.length !== 2) {
-    return null;
-  }
-  const input = Number(parts[0]);
-  const output = Number(parts[1]);
-  if (!Number.isFinite(input) || !Number.isFinite(output)) {
-    return null;
-  }
-  // Reject negative or NaN-derived rates: a negative override would invert cost
-  // accumulation and could be used to bypass BUDGET_EXCEEDED.
-  if (input < 0 || output < 0) {
-    return null;
-  }
-  return { input, output };
+export type PriceSource = 'catalog' | 'builtin' | 'unknown';
+
+const MODEL_CATALOG_CACHE_KEY = 'model-catalog:prices';
+
+/** The last catalog read that succeeded; prices calls while the catalog is unreadable. */
+let lastGoodCatalog: ReadonlyMap<string, ModelPrice> | null = null;
+/** After a failed read, the catalog is not queried again before this time. */
+let catalogRetryAt = 0;
+
+/** A negative or non-finite rate would invert cost accrual and slip past USD budgets. */
+function isValidPrice(input: number, output: number): boolean {
+  return Number.isFinite(input) && Number.isFinite(output) && input >= 0 && output >= 0;
 }
 
 /**
- * Looks up the cost rate for a model spec. Honours per-model env overrides of the
- * form `MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>` (USD per MTok), with
- * non-alphanumeric characters in the spec replaced by underscores. Falls back to
- * the static MODEL_PRICES table; unknown specs return zero with `known=false`.
- *
- * Negative or malformed overrides are ignored (fall through to the static table).
+ * The catalog's prices, read once per config-cache window. Never throws: a
+ * failed read serves the last good catalog (or none, so built-in prices apply)
+ * and backs off for one window. `withCache` does not cache a rejection, so
+ * without the backoff an unreachable database would cost a query per LLM call.
  */
-function resolveEnvPriceOverride(spec: string): ModelPrice | null {
-  const envKey = `MODEL_PRICE_${spec.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
-  const envValue = process.env[envKey];
-  if (!envValue) {
-    return null;
+async function catalogPrices(): Promise<ReadonlyMap<string, ModelPrice> | null> {
+  if (Date.now() < catalogRetryAt) {
+    return lastGoodCatalog;
   }
-  return parsePriceOverride(envValue);
+  try {
+    lastGoodCatalog = await withCache(MODEL_CATALOG_CACHE_KEY, configCacheTtlMs(), async () => {
+      const rows = await prisma.modelCatalogEntry.findMany({
+        select: { inputUsdPerMTok: true, modelId: true, outputUsdPerMTok: true, provider: true },
+      });
+      const prices = new Map<string, ModelPrice>();
+      for (const r of rows) {
+        if (isValidPrice(r.inputUsdPerMTok, r.outputUsdPerMTok)) {
+          prices.set(`${r.provider}/${r.modelId}`, {
+            input: r.inputUsdPerMTok,
+            output: r.outputUsdPerMTok,
+          });
+        }
+      }
+      return prices;
+    });
+  } catch (err) {
+    catalogRetryAt = Date.now() + configCacheTtlMs();
+    // Through the context-guarded logger: embedding usage is priced outside an
+    // activity too, where `log` itself throws.
+    logWarn(
+      'Model catalog unreadable — pricing from the last catalog read, else the built-in prices',
+      {
+        error: err instanceof Error ? err.message : String(err),
+      }
+    );
+  }
+  return lastGoodCatalog;
 }
 
-export function getModelPrice(spec: string): { price: ModelPrice; known: boolean } {
-  const override = resolveEnvPriceOverride(spec);
-  if (override) {
-    return { known: true, price: override };
+export function _resetModelPricesForTests(): void {
+  lastGoodCatalog = null;
+  catalogRetryAt = 0;
+}
+
+/**
+ * Looks up the cost rate for a model spec: the model catalog, then the built-in
+ * table, else zero with `known=false`. The lookup is exact — a near-miss such as
+ * `gpt-5-5` for `gpt-5.5` is unknown, never silently priced as its neighbour.
+ */
+export async function getModelPrice(
+  spec: string
+): Promise<{ price: ModelPrice; known: boolean; source: PriceSource }> {
+  const fromCatalog = (await catalogPrices())?.get(spec);
+  if (fromCatalog) {
+    return { known: true, price: fromCatalog, source: 'catalog' };
   }
-  const price = MODEL_PRICES[spec];
-  if (price) {
-    return { known: true, price };
+  const builtin = MODEL_PRICES[spec];
+  if (builtin) {
+    return { known: true, price: builtin, source: 'builtin' };
   }
-  return { known: false, price: ZERO_PRICE };
+  return { known: false, price: ZERO_PRICE, source: 'unknown' };
+}
+
+/**
+ * `MODEL_PRICE_*` variables set in `env`. They once overrode a model's price and
+ * are no longer read — the worker names them at startup so an operator moves
+ * those prices into the model catalog instead of losing them silently.
+ */
+export function ignoredPriceOverrideVars(env: NodeJS.ProcessEnv = process.env): string[] {
+  return Object.keys(env)
+    .filter((k) => k.startsWith('MODEL_PRICE_'))
+    .sort();
 }
 
 /**
@@ -117,12 +162,15 @@ async function resolveBudgetTiers(): Promise<
  * Returns 0 for unknown models — callers should rely on the OTel span attribute
  * `llm.cost_pricing_known` to detect missing entries.
  */
-export function calculateCostUsd(
+export async function calculateCostUsd(
   modelSpec: string,
   inputTokens: number,
   outputTokens: number
-): number {
-  const { price } = getModelPrice(modelSpec);
+): Promise<number> {
+  return costFromPrice((await getModelPrice(modelSpec)).price, inputTokens, outputTokens);
+}
+
+function costFromPrice(price: ModelPrice, inputTokens: number, outputTokens: number): number {
   return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }
 
@@ -316,10 +364,10 @@ export async function recordLlmUsage(
     modelSpec = 'unknown/unknown';
     specResolutionError = err;
   }
-  const { known } = getModelPrice(modelSpec);
+  const { known, price, source } = await getModelPrice(modelSpec);
   if (!known) {
     log.warn(
-      'Unknown model pricing — cost will be recorded as $0. Add the model to BUILTIN_MODELS (@auto-swe/shared/lib/builtinModels) or set a MODEL_PRICE_<SPEC> env override.',
+      'Unknown model pricing — cost will be recorded as $0 and USD budgets will not see it. Add the model to the model catalog.',
       { modelSpec, role, temporalWorkflowId }
     );
   }
@@ -328,7 +376,7 @@ export async function recordLlmUsage(
   // they're available for the fallback return path (no workflow found).
   const inputTokens = usage.inputTokens ?? 0;
   const outputTokens = usage.outputTokens ?? 0;
-  const callCost = calculateCostUsd(modelSpec, inputTokens, outputTokens);
+  const callCost = costFromPrice(price, inputTokens, outputTokens);
   // Before the ledger: a call with no ledger row (channel, PRD, authoring) was
   // still made and paid for.
   recordLlmCallMetrics({
@@ -351,6 +399,7 @@ export async function recordLlmUsage(
         // is touched: a run with no ledger row (channel, PRD, authoring) still
         // spent tokens, and its span should say so.
         span.setAttributes({
+          'llm.cost_price_source': source,
           'llm.cost_pricing_known': known,
           'llm.cost_usd': callCost,
           'llm.input_tokens': inputTokens,
