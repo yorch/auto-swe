@@ -48,6 +48,32 @@ The UI shows a yellow "restart required" banner after saving to remind you.
 
 Refresh the login page. The **Continue with GitHub** button should now appear. Click it, authorize on GitHub, and you'll be returned to `/login?bridge=1` with a fresh better-auth session cookie — subsequent API calls authenticate via that session.
 
+### GitHub Enterprise
+
+To sign in against a GitHub Enterprise (GHE) instance instead of github.com:
+
+1. Register the OAuth app on the GHE instance itself (**Settings → Developer settings → OAuth Apps → New OAuth App**), using the same form values as above. The callback URL is unchanged: `{BETTER_AUTH_URL}/api/auth/callback/github`.
+2. On `/studio/integrations → GitHub tab`, set the **Base URL** to the instance (for example `https://ghe.example.com`). Leave the **API URL** blank (or at `https://api.github.com`) and it is derived as `{Base URL}/api/v3`; set it explicitly only if the API lives elsewhere.
+3. Enter the GHE app's client ID and secret in the **OAuth** fields (not the GitHub App fields) and click **Save**.
+4. Restart the gateway. OAuth credentials and URLs are read once at startup.
+
+When the saved Base URL's host is not github.com, **Continue with GitHub** behaves as follows:
+
+| Step           | Endpoint                                              |
+| -------------- | ----------------------------------------------------- |
+| Authorize      | `{Base URL}/login/oauth/authorize`                    |
+| Token exchange | `{Base URL}/login/oauth/access_token`                 |
+| Profile        | `{API URL}/user`                                      |
+| Emails         | `{API URL}/user/emails`                               |
+
+Notes:
+
+- **Primary verified email.** Sign-in is accepted only for an account whose primary email is verified.
+- **Account identity.** The linked account is stored as `{host}:{id}`, so numeric ids from github.com and GHE never collide. Accounts created earlier under a bare numeric id are not migrated.
+- **One GitHub provider.** GHE sign-in replaces github.com sign-in: both use the single `github` provider id and cannot coexist on one gateway.
+- **Email linking.** A sign-in links onto an existing user with the same verified email, so enable GHE sign-in only for an instance whose email verification you trust.
+- **Invalid Base URL.** A Base URL that is not an `http` or `https` URL registers no GitHub sign-in; the gateway logs the reason and the login page hides the button.
+
 ### Production-only extras
 
 - **Public homepage**: GitHub requires a real homepage URL for apps used in production. Set `Homepage URL` to your real domain.
