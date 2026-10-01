@@ -392,7 +392,8 @@ open https://app.example.com
 | Concern                    | Where to look                                                                                                   |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | Workflow visibility        | Temporal UI (`:8233`), or `/workflows`, `/runs`, `/workflows/:id` in the dashboard.                              |
-| Cost tracking              | `WorkflowRun.costUsdAccrued`, `/analytics` page, OTel span attribute `llm.cost_usd`. Unknown models log `llm.cost_pricing_known=false`. |
+| Cost tracking              | `/govern/usage` (every LLM and embedding call, runs or not), `WorkflowRun.costUsdAccrued`, `/govern/analytics`, the `llm_cost_usd_total` metric. Unknown models log `llm.cost_pricing_known=false`. |
+| Metrics & traces           | Grafana (`:3001` with the bundled `otel-lgtm`) → **auto-swe — LLM & workflow overview**, provisioned from `infra/grafana/`. With your own collector, import `infra/grafana/dashboards/auto-swe-overview.json`; it expects Prometheus and Tempo datasources with UIDs `prometheus` and `tempo`. |
 | Per-team A/B experiments   | `/templates/:id` → set `experimentVersion` + `experimentSplit`.                                                  |
 | Rotating LLM models        | Change model spec at `/studio/models` (takes effect on next activity call). For pricing of new models use `MODEL_PRICE_<PROVIDER>_<MODEL>` env overrides. |
 | Rotating GitHub PAT        | `/studio/integrations → GitHub` → enter new token → Save. No restart required. |

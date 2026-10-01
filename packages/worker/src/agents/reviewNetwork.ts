@@ -9,7 +9,8 @@ import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
-import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
@@ -50,8 +51,10 @@ async function runReviewerAgent(
     async (span) => {
       const start = Date.now();
       let llmUserMessage = '';
+      let modelSpec: string | undefined;
+      let recorded: LlmAttribution | undefined;
       try {
-        const modelSpec = await getModelSpec('reviewer');
+        modelSpec = await getModelSpec('reviewer');
         const model = await getModel('reviewer');
         span.setAttribute('llm.model', modelSpec);
         const agent = new Agent({
@@ -73,7 +76,7 @@ async function runReviewerAgent(
 
         let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
         if (result.usage) {
-          attribution = await recordLlmUsage(
+          attribution = recorded = await recordLlmUsage(
             currentWorkflowId(),
             'reviewer',
             result.usage,
@@ -101,6 +104,7 @@ async function runReviewerAgent(
         return verdictWithType;
       } catch (e) {
         tracer?.addLlmResponse({
+          ...failedCallAttribution(e, modelSpec, recorded),
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt: prompt, userMessage: llmUserMessage },

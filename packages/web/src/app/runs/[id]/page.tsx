@@ -843,7 +843,24 @@ function LayoutC({
 export default function RunDetailPage({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: run, isError, isLoading, error } = useWorkflowRun(id ?? '');
+  const [fullTraces, setFullTraces] = useState(false);
+  const {
+    data: run,
+    isError,
+    isLoading,
+    isPlaceholderData,
+    error,
+  } = useWorkflowRun(id ?? '', true, fullTraces);
+  const [fullTracesFailed, setFullTracesFailed] = useState(false);
+  // A full-payload response can run to many MB, so it can fail where the
+  // trimmed one did not. Fall back to the trimmed view rather than replacing
+  // the run with an error page.
+  useEffect(() => {
+    if (fullTraces && isError) {
+      setFullTraces(false);
+      setFullTracesFailed(true);
+    }
+  }, [fullTraces, isError]);
   const cancelRun = useCancelWorkflowRun(id ?? '');
   const retryRun = useRetryWorkRequest();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -956,6 +973,7 @@ export default function RunDetailPage({ params }: PageProps) {
 
   const traces = run.traces ?? [];
   const failedStep = getFailedStep(run.steps);
+  const tracesTrimmed = traces.some((t) => t.trimmed);
 
   return (
     <div className="flex flex-col h-full" style={{ background: 'var(--color-ink-800)' }}>
@@ -1018,6 +1036,32 @@ export default function RunDetailPage({ params }: PageProps) {
               }}
             >
               {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
+            </span>
+          )}
+          {(tracesTrimmed || fullTraces) && (
+            <Button
+              disabled={isPlaceholderData}
+              onClick={() => {
+                setFullTracesFailed(false);
+                setFullTraces((v) => !v);
+              }}
+              size="sm"
+              title={
+                fullTraces
+                  ? 'Full payloads are fetched once and not refreshed; trim them to resume live updates'
+                  : 'Trace payloads are trimmed to 4,000 characters per field while the page polls'
+              }
+              variant="secondary"
+            >
+              {isPlaceholderData ? 'Loading…' : fullTraces ? 'Trim payloads' : 'Load full payloads'}
+            </Button>
+          )}
+          {fullTracesFailed && (
+            <span
+              className="text-brick-400"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+            >
+              Full payloads failed to load
             </span>
           )}
           {run.status === 'RUNNING' && (

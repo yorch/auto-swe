@@ -226,6 +226,8 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     const [trace] = res.json().data.traces;
     expect(trace.inputJson.text.length).toBeLessThan(LONG_STRING.length);
     expect(trace.inputJson.text).toContain('[truncated');
+    // The flag is what the run page offers "load full payloads" on.
+    expect(trace.trimmed).toBe(true);
   });
 
   it('returns untrimmed trace fields when fullTraces=true', async () => {
@@ -240,6 +242,47 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(res.statusCode).toBe(200);
     const [trace] = res.json().data.traces;
     expect(trace.inputJson.text).toBe(LONG_STRING);
+    expect(trace.trimmed).toBe(false);
+  });
+
+  it('flags a trace trimmed only by a long string nested in an array', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    const row = (id: string, inputJson: unknown) => ({
+      agentKey: 'implementer',
+      attempt: 1,
+      costUsd: 0,
+      createdAt: new Date(),
+      durationMs: 1,
+      error: null,
+      id,
+      inputJson,
+      inputTokens: 1,
+      model: null,
+      nodeId: 'n-1',
+      otelSpanId: null,
+      otelTraceId: null,
+      outputJson: null,
+      outputTokens: 1,
+      seq: 0,
+      toolName: null,
+      type: 'llm_response',
+    });
+    prisma.agentTrace.findMany.mockResolvedValue([
+      row('nested', { messages: [{ content: LONG_STRING }] }),
+      row('short', { text: 'short' }),
+    ]);
+
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}?includeTraces=true`,
+    });
+
+    const traces = res.json().data.traces as { id: string; trimmed: boolean }[];
+    expect(traces.find((t) => t.id === 'nested')?.trimmed).toBe(true);
+    // Nothing over the cap means nothing to load in full.
+    expect(traces.find((t) => t.id === 'short')?.trimmed).toBe(false);
   });
 });
 

@@ -7,9 +7,10 @@ import { currentWorkflowRunId, persistActivityTrace } from '../lib/activityConte
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
-import { getModel, resolveSystemPrompt } from '../lib/models.js';
+import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 
 const LessonOutputSchema = z.object({
   failureType: z
@@ -129,6 +130,12 @@ export async function commitToMemory(
     workflowId: workflow.id,
   });
 
+  // Only for the failure row; a lookup error must not fail the activity.
+  const modelSpec = await getModelSpec('commitToMemory').catch(() => undefined);
+  let recorded: LlmAttribution | undefined;
+  // Set once the success row is written: a later failure (the memory write)
+  // must not add a second, priced row for the same call.
+  let llmTraced = false;
   try {
     await assertBudgetAvailable('commitToMemory');
     const result = await memoryAgent.generate([{ content: llmUserMessage, role: 'user' }], {
@@ -137,7 +144,7 @@ export async function commitToMemory(
 
     let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
     if (result.usage) {
-      attribution = await recordLlmUsage(
+      attribution = recorded = await recordLlmUsage(
         temporalWorkflowId,
         'commitToMemory',
         result.usage,
@@ -164,6 +171,7 @@ export async function commitToMemory(
       outputTokens: attribution.outputTokens,
       role: 'commitToMemory',
     });
+    llmTraced = true;
 
     const lessonId = await writeMemoryItemRow({
       agentKey: 'commitToMemory',
@@ -186,12 +194,15 @@ export async function commitToMemory(
 
     return lessonId;
   } catch (e) {
-    agentTracer.addLlmResponse({
-      durationMs: Date.now() - start,
-      error: (e as Error).message,
-      inputJson: { systemPrompt, userMessage: llmUserMessage },
-      role: 'commitToMemory',
-    });
+    if (!llmTraced) {
+      agentTracer.addLlmResponse({
+        ...failedCallAttribution(e, modelSpec, recorded),
+        durationMs: Date.now() - start,
+        error: (e as Error).message,
+        inputJson: { systemPrompt, userMessage: llmUserMessage },
+        role: 'commitToMemory',
+      });
+    }
     throw e;
   } finally {
     await persistActivityTrace(agentTracer, 'commitToMemory');

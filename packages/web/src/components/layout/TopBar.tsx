@@ -30,6 +30,7 @@ function pageTitle(pathname: string): string {
     ['/govern/api-tokens', 'API tokens'],
     ['/govern/lessons', 'Lessons'],
     ['/govern/analytics', 'Analytics'],
+    ['/govern/usage', 'LLM usage'],
     ['/govern/baselines', 'Error baselines'],
     ['/govern/sessions', 'Sessions'],
     ['/govern/slack-channels', 'Slack channels'],

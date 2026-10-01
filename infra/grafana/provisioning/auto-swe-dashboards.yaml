@@ -1,0 +1,13 @@
+# Grafana dashboard provider for the bundled otel-lgtm container. Mounted into
+# its provisioning directory by docker-compose.app.yml, beside the image's own
+# providers; the dashboards themselves are mounted at the path below.
+apiVersion: 1
+
+providers:
+  - name: auto-swe
+    folder: auto-swe
+    type: file
+    disableDeletion: true
+    options:
+      path: /otel-lgtm/auto-swe-dashboards
+      foldersFromFilesStructure: false

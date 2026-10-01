@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { useRepositories } from '@/hooks/useRepositories';
-import { API_BASE, TEMPORAL_UI_URL } from '@/lib/config';
+import { useTemporalUiUrl } from '@/hooks/useTemporalUi';
+import { API_BASE } from '@/lib/config';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER' | string;
 
@@ -19,12 +20,7 @@ export function DashboardOnboarding({
 }) {
   const { data: repos = [], isLoading: connectionsLoading } = useRepositories();
 
-  // Start empty so SSR output is stable regardless of runtime env. After mount,
-  // window.__APP_CONFIG__ is set and TEMPORAL_UI_URL holds the runtime value.
-  const [temporalUiUrl, setTemporalUiUrl] = useState('');
-  useEffect(() => {
-    setTemporalUiUrl(TEMPORAL_UI_URL);
-  }, []);
+  const temporalUiUrl = useTemporalUiUrl();
 
   const canManageRepos = role === 'ADMIN' || role === 'LEAD';
   const hasConnections = repos.length > 0;

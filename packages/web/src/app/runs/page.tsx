@@ -11,7 +11,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAllWorkflowRuns } from '@/hooks/useRuns';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
-import { formatRelativeTime } from '@/lib/utils';
+import { formatCost, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 const PAGE_SIZE = 50;
 
@@ -95,18 +95,20 @@ export default function WorkflowRunsPage() {
             <Th variant="plain">Template</Th>
             <Th variant="plain">Status</Th>
             <Th variant="plain">Started</Th>
+            <Th variant="plain">Duration</Th>
+            <Th variant="plain">Cost</Th>
           </THead>
           <tbody>
             {isLoading && (
               <TRow>
-                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={7}>
                   Loading…
                 </Td>
               </TRow>
             )}
             {!isLoading && runs.length === 0 && (
               <TRow>
-                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+                <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={7}>
                   No runs match these filters.
                 </Td>
               </TRow>
@@ -131,6 +133,23 @@ export default function WorkflowRunsPage() {
                   <StatusBadge status={r.status} />
                 </Td>
                 <Td className="px-4 py-3 text-paper-400">{formatRelativeTime(r.startedAt)}</Td>
+                <Td className="px-4 py-3 font-mono text-xs text-paper-400">
+                  {r.endedAt
+                    ? formatDuration(
+                        // Clamped: start and end are stamped by different processes.
+                        Math.max(0, new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime())
+                      )
+                    : '—'}
+                </Td>
+                {/* Denormalized when the run finalizes; a running run has not been totalled
+                    yet. formatCost renders 0 as '—', which here would read the same way. */}
+                <Td className="px-4 py-3 font-mono text-xs text-paper-400">
+                  {r.status === 'RUNNING'
+                    ? '—'
+                    : r.costUsdAccrued === 0
+                      ? '$0.00'
+                      : formatCost(r.costUsdAccrued)}
+                </Td>
               </TRow>
             ))}
           </tbody>

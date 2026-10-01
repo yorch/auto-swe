@@ -157,6 +157,35 @@ function capped(text: string): string {
 }
 
 /**
+ * A trace body capped by `capped()`, with a toggle to render all of it. The cap
+ * keeps a long page responsive; it should not be the reason a payload the
+ * browser already holds cannot be read.
+ */
+function CappedPre({ text, radius }: { text: string; radius: '2px' | '6px' }) {
+  const [expanded, setExpanded] = useState(false);
+  const isCapped = text.length > BODY_LIMIT;
+  return (
+    <>
+      <TracePre radius={radius}>{expanded ? text : capped(text)}</TracePre>
+      {isCapped && (
+        <button
+          className="text-dust-400 hover:text-dust-300 transition-colors mt-0.5"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
+          type="button"
+        >
+          {expanded ? 'show less' : `show all (${text.length.toLocaleString()} chars)`}
+        </button>
+      )}
+    </>
+  );
+}
+
+/**
  * The red banner carrying `trace.error`.
  *
  * `tone` mirrors the same pre-existing divergence as `TracePre`'s `radius`:
@@ -278,7 +307,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
         )}
         {outputText && (
           <CollapsibleSection defaultOpen={true} label="Response">
-            <TracePre radius="2px">{capped(outputText)}</TracePre>
+            <CappedPre radius="2px" text={outputText} />
           </CollapsibleSection>
         )}
       </div>
@@ -310,29 +339,43 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
             >
               INPUT
             </div>
-            <TracePre radius="2px">{capped(inputText)}</TracePre>
+            <CappedPre radius="2px" text={inputText} />
           </div>
         )}
-        {outputText && <TracePre radius="2px">{capped(outputText)}</TracePre>}
+        {outputText && <CappedPre radius="2px" text={outputText} />}
       </div>
     );
   }
 
-  // Default: show outputJson only (tool_call and fallback)
+  // Default (tool_call and fallback): the call's input, then its output. The
+  // row's one-line summary truncates a bash command at 80 chars and shows
+  // nothing at all for other tools, so the input has to be readable here.
+  const toolInputText = input ? JSON.stringify(input, null, 2) : null;
   const text = output
     ? ((OUTPUT_TEXT_FIELDS.map((k) => output[k]).find((v) => typeof v === 'string') as
         | string
         | undefined) ?? JSON.stringify(output, null, 2))
     : null;
 
-  if (!trace.error && !text) {
+  if (!trace.error && !text && !toolInputText) {
     return null;
   }
 
   return (
     <div className="mt-2 space-y-1.5">
       {trace.error && <TraceErrorBanner tone="brick">{trace.error}</TraceErrorBanner>}
-      {text && <TracePre radius="6px">{capped(text)}</TracePre>}
+      {toolInputText && (
+        <div>
+          <div
+            className="text-paper-600 mb-0.5"
+            style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
+          >
+            INPUT
+          </div>
+          <CappedPre radius="6px" text={toolInputText} />
+        </div>
+      )}
+      {text && <CappedPre radius="6px" text={text} />}
     </div>
   );
 }

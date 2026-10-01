@@ -166,6 +166,7 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Analytics',
         roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
+      { href: '/govern/usage', icon: 'analytics', label: 'LLM usage', roles: ['ADMIN'] },
       {
         href: '/govern/baselines',
         icon: 'analytics',

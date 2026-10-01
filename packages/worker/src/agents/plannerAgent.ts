@@ -4,7 +4,8 @@ import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
-import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { PLANNER_AGENT_PROMPT } from './prompts.js';
 
@@ -37,8 +38,10 @@ export async function decomposeEpic(
       const start = Date.now();
       let systemPrompt = '';
       let llmUserMessage = '';
+      let modelSpec: string | undefined;
+      let recorded: LlmAttribution | undefined;
       try {
-        const modelSpec = await getModelSpec('planner');
+        modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
         span.setAttribute('llm.model', modelSpec);
         const basePrompt = await resolveSystemPrompt('planner', PLANNER_AGENT_PROMPT);
@@ -58,7 +61,7 @@ export async function decomposeEpic(
 
         let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
         if (result.usage) {
-          attribution = await recordLlmUsage(
+          attribution = recorded = await recordLlmUsage(
             currentWorkflowId(),
             'planner',
             result.usage,
@@ -99,6 +102,7 @@ export async function decomposeEpic(
         return finalRepos;
       } catch (e) {
         tracer?.addLlmResponse({
+          ...failedCallAttribution(e, modelSpec, recorded),
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt, userMessage: llmUserMessage },

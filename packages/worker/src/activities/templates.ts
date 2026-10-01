@@ -11,11 +11,13 @@ import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/s
 import { Context } from '@temporalio/activity';
 import { currentTemporalRunId } from '../lib/activityContext.js';
 import { logError } from '../lib/activityLog.js';
+import { recordRunFinalized } from '../lib/metrics.js';
 import {
   notifySlackRunComplete,
   notifySlackStepFailure,
   postSlackThreadMessage,
 } from '../lib/slackNotify.js';
+import { sumRunTraceUsage } from '../lib/traceTotals.js';
 import { accrueChannelUsage } from './channelAssistant.js';
 
 /**
@@ -395,13 +397,10 @@ export async function finalizeWorkflowRun(
   // channel-budget ledger so `finalizeChannelTaskRun` doesn't re-aggregate.
   let channelTraceCostUsd: number | undefined;
   if (workflows.length === 0) {
-    const traceTotals = await prisma.agentTrace.aggregate({
-      _sum: { costUsd: true, inputTokens: true, outputTokens: true },
-      where: { runId },
-    });
-    costUsdAccrued = traceTotals._sum.costUsd ?? 0;
-    tokensInputTotal = BigInt(traceTotals._sum.inputTokens ?? 0);
-    tokensOutputTotal = BigInt(traceTotals._sum.outputTokens ?? 0);
+    const traceTotals = await sumRunTraceUsage(runId);
+    costUsdAccrued = traceTotals.costUsd;
+    tokensInputTotal = traceTotals.inputTokens;
+    tokensOutputTotal = traceTotals.outputTokens;
     channelTraceCostUsd = costUsdAccrued;
   }
 
@@ -505,6 +504,8 @@ export async function finalizeWorkflowRun(
   if (!didFinalize) {
     return;
   }
+  // Counted only by the attempt that finalized, so a retried activity cannot double it.
+  recordRunFinalized(status);
 
   // The side effects below (Slack notifications + channel task finalization +
   // tracker sync) are non-idempotent. Only fire them when we actually finalized

@@ -30,17 +30,28 @@ export function useWorkflow(id: string) {
   });
 }
 
-export function useWorkflowRun(id: string, includeTraces = true) {
+/**
+ * `fullTraces` skips the server's 4 000-char trim of trace payloads. It is
+ * opt-in, and fetched once rather than polled: full prompts run to tens of KB
+ * each, and re-downloading all of them every few seconds is the cost the trim
+ * exists to avoid.
+ */
+export function useWorkflowRun(id: string, includeTraces = true, fullTraces = false) {
+  const query = fullTraces ? '?fullTraces=true' : includeTraces ? '?includeTraces=true' : '';
   return useQuery<WorkflowRunDetail>({
     enabled: !!id,
+    // Switching to full payloads must not blank the page while it refetches —
+    // but only for the same run, or the previous run would flash on navigation.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === id ? prev : undefined),
     queryFn: () =>
       api
-        .get<{ data: WorkflowRunDetail }>(
-          `/api/v1/workflow-runs/${id}${includeTraces ? '?includeTraces=true' : ''}`
-        )
+        .get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}${query}`)
         .then((r) => r.data),
-    queryKey: ['workflow-run', id, includeTraces],
+    queryKey: ['workflow-run', id, includeTraces, fullTraces],
     refetchInterval: (q) => {
+      if (fullTraces) {
+        return false;
+      }
       const data = q.state.data;
       return data?.status === 'RUNNING' ? 3_000 : 30_000;
     },

@@ -30,6 +30,8 @@ import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput } from '../lib/errors.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
+import { getModelSpec } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
@@ -413,38 +415,64 @@ async function mergeOneWithResolver(
       opts.tracer,
       activityCtx
     );
+    const systemPrompt =
+      MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : '');
+    // Declared out here so the catch can trace the request. Built inside the
+    // try: reading the payloads can throw, and the MCP client is already open.
+    let userMessage = '';
+    let calledModel = false;
+    const start = Date.now();
     try {
+      userMessage = JSON.stringify({
+        attempt,
+        conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
+        sourceBranch: source,
+        targetBranch,
+      });
       await assertBudgetAvailable('decomposition');
+      calledModel = true;
       const result = await agent.generate(
         [
-          {
-            content: MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : ''),
-            role: 'system',
-          },
-          {
-            content: JSON.stringify({
-              attempt,
-              conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
-              sourceBranch: source,
-              targetBranch,
-            }),
-            role: 'user',
-          },
+          { content: systemPrompt, role: 'system' },
+          { content: userMessage, role: 'user' },
         ],
         { toolChoice: 'auto' }
       );
 
-      if (result.usage) {
-        // Capture attribution but discard — no tracer addLlmResponse here since
-        // the agent drives tool calls internally and we don't have text/object output
-        // to record at this point. The OTel span from recordLlmUsage still fires.
-        await recordLlmUsage(
-          currentWorkflowId(),
-          'implementer',
-          result.usage,
-          `llm.resolve_conflict.${source}.attempt_${attempt}`
-        );
+      const attribution = result.usage
+        ? await recordLlmUsage(
+            currentWorkflowId(),
+            'implementer',
+            result.usage,
+            `llm.resolve_conflict.${source}.attempt_${attempt}`
+          )
+        : undefined;
+      // The resolver's file edits are recorded as tool calls through the
+      // tracer; this row carries the call's tokens and cost.
+      opts.tracer.addLlmResponse({
+        costUsd: attribution?.costUsd,
+        durationMs: Date.now() - start,
+        inputJson: { systemPrompt, userMessage },
+        inputTokens: attribution?.inputTokens,
+        model: attribution?.modelSpec,
+        outputJson: { text: result.text || undefined },
+        outputTokens: attribution?.outputTokens,
+        // The resolver is the implementer agent with a different prompt; it is
+        // priced and configured as `implementer`, so it is labelled as one.
+        role: 'implementer',
+      });
+    } catch (e) {
+      // No row when the model was never called (payload read or budget gate).
+      if (calledModel) {
+        opts.tracer.addLlmResponse({
+          ...failedCallAttribution(e, await getModelSpec('implementer').catch(() => undefined)),
+          durationMs: Date.now() - start,
+          error: (e as Error).message,
+          inputJson: { systemPrompt, userMessage },
+          role: 'implementer',
+        });
       }
+      throw e;
     } finally {
       await closeMcp?.();
     }

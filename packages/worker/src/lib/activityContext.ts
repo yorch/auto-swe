@@ -73,17 +73,18 @@ export async function currentWorkflowRunId(): Promise<string | undefined> {
 
 /**
  * Persist all in-memory traces for the currently executing activity.
- * Captures the active OTel span context (if any) so trace rows can be
- * correlated with Grafana/Tempo spans via otelTraceId/otelSpanId.
+ * Captures the active OTel span context (if any, and unless the caller already
+ * attached a more specific one) so trace rows can be correlated with
+ * Grafana/Tempo spans via otelTraceId/otelSpanId.
  * Best-effort: errors are swallowed inside `AgentTracer.persist`.
  */
 export async function persistActivityTrace(tracer: AgentTracer, agentKey: string): Promise<void> {
   const spanContext = trace.getActiveSpan()?.spanContext();
-  if (spanContext?.traceId && spanContext?.spanId) {
+  if (!tracer.hasSpanContext() && spanContext?.traceId && spanContext?.spanId) {
     tracer.setSpanContext(spanContext.traceId, spanContext.spanId);
   }
   await tracer.persist(
-    await currentWorkflowRunId(),
+    { runId: await currentWorkflowRunId(), workflowId: currentWorkflowId() },
     currentActivityType(),
     agentKey,
     currentAttempt()

@@ -3,7 +3,8 @@ import { trace } from '@opentelemetry/api';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import type { AgentSpec } from '../lib/config/agentSpec.js';
-import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
 
@@ -59,6 +60,11 @@ export async function runAgent<T = unknown>(
   try {
     return await otelTracer.startActiveSpan(spanName, async (span) => {
       const start = Date.now();
+      // The trace is persisted after this span ends, so capture its context now
+      // or the rows lose their link to Tempo.
+      const { traceId, spanId } = span.spanContext();
+      tracer.setSpanContext(traceId, spanId);
+      let recorded: LlmAttribution | undefined;
       try {
         span.setAttribute('llm.model', spec.modelSpec);
         span.setAttribute('agent.key', spec.agentKey);
@@ -78,9 +84,14 @@ export async function runAgent<T = unknown>(
             })
           : await agent.generate([{ content: userMessage, role: 'user' }]);
 
-        let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
+        let attribution: LlmAttribution = {
+          costUsd: 0,
+          inputTokens: 0,
+          modelSpec: '',
+          outputTokens: 0,
+        };
         if (genResult.usage) {
-          attribution = await recordLlmUsage(
+          attribution = recorded = await recordLlmUsage(
             currentWorkflowId(),
             spec.agentKey,
             genResult.usage,
@@ -112,6 +123,7 @@ export async function runAgent<T = unknown>(
         };
       } catch (e) {
         tracer.addLlmResponse({
+          ...failedCallAttribution(e, spec.modelSpec, recorded),
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt: spec.systemPrompt, userMessage },

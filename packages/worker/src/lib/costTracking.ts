@@ -7,6 +7,7 @@ import { ApplicationFailure, log } from '@temporalio/activity';
 import { currentActivityType, currentWorkflowId } from './activityContext.js';
 import { gatedStepNames } from './config/deploymentAgents.js';
 import { STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
+import { recordBudgetExceeded, recordLlmCallMetrics } from './metrics.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -84,6 +85,9 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'openai/gpt-6-astra': { input: 10, output: 50 },
   'openai/gpt-6-luna': { input: 0.1, output: 0.5 },
   'openai/gpt-6.1-sol': { input: 2, output: 10 },
+  // OpenAI — embeddings (input only)
+  'openai/text-embedding-3-large': { input: 0.13, output: 0 },
+  'openai/text-embedding-3-small': { input: 0.02, output: 0 },
 };
 
 const ZERO_PRICE: ModelPrice = { input: 0, output: 0 };
@@ -383,6 +387,15 @@ export async function recordLlmUsage(
   const inputTokens = usage.inputTokens ?? 0;
   const outputTokens = usage.outputTokens ?? 0;
   const callCost = calculateCostUsd(modelSpec, inputTokens, outputTokens);
+  // Before the ledger: a call with no ledger row (channel, PRD, authoring) was
+  // still made and paid for.
+  recordLlmCallMetrics({
+    agent: role,
+    costUsd: callCost,
+    inputTokens,
+    model: modelSpec,
+    outputTokens,
+  });
 
   const attribution = await tracer.startActiveSpan(
     spanName,
@@ -392,6 +405,17 @@ export async function recordLlmUsage(
           span.setAttribute('llm.spec_resolution_failed', true);
           span.recordException(specResolutionError as Error);
         }
+        // Per-call facts do not depend on the ledger, so they are set before it
+        // is touched: a run with no ledger row (channel, PRD, authoring) still
+        // spent tokens, and its span should say so.
+        span.setAttributes({
+          'llm.cost_pricing_known': known,
+          'llm.cost_usd': callCost,
+          'llm.input_tokens': inputTokens,
+          'llm.model': modelSpec,
+          'llm.output_tokens': outputTokens,
+          'llm.role': role,
+        });
         // Atomic increments, not read-modify-write.
         //
         // This used to read the counters, add locally, and write the sums back.
@@ -450,12 +474,6 @@ export async function recordLlmUsage(
         const newCost = updated.costUsdAccrued;
 
         span.setAttributes({
-          'llm.cost_pricing_known': known,
-          'llm.cost_usd': callCost,
-          'llm.input_tokens': inputTokens,
-          'llm.model': modelSpec,
-          'llm.output_tokens': outputTokens,
-          'llm.role': role,
           'workflow.budget_tier': updated.budgetTier ?? 'STANDARD',
           'workflow.cost_usd_cumulative': newCost,
           'workflow.tokens_input_cumulative': newInput,
@@ -475,10 +493,19 @@ export async function recordLlmUsage(
         });
 
         if (newInput > limits.inputTokens || newOutput > limits.outputTokens) {
+          recordBudgetExceeded(tier);
           throw ApplicationFailure.nonRetryable(
             `Budget exceeded for tier ${tier}: ${newInput}/${limits.inputTokens} input tokens, ${newOutput}/${limits.outputTokens} output tokens used ($${newCost.toFixed(4)})`,
             'BUDGET_EXCEEDED',
-            { newCost, newInput, newOutput, tier }
+            {
+              // The call was made and the ledger debited; carry its attribution
+              // so the caller's trace row is priced (see failedCallAttribution).
+              attribution: { costUsd: callCost, inputTokens, modelSpec, outputTokens },
+              newCost,
+              newInput,
+              newOutput,
+              tier,
+            }
           );
         }
 

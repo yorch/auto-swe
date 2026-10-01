@@ -5,7 +5,7 @@ import type {
   EvalDatasetSummary,
   EvalResultDto,
 } from '@auto-swe/shared/types/api';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 export interface ScannerPattern {
@@ -174,10 +174,11 @@ export interface SecurityEvent {
   inputJson: unknown;
   nodeId: string;
   outputJson: unknown;
-  runId: string;
-  startedAt: string;
+  /** Null for workflows that keep no run (evals, workflow authoring). */
+  runId: string | null;
+  startedAt: string | null;
   toolName: string | null;
-  workflowId: string;
+  workflowId: string | null;
   workRequestId: string | null;
 }
 
@@ -203,6 +204,62 @@ export function useSecurityEvents(params?: {
         .then((r) => r.data),
     queryKey: ['security-events', params],
     refetchInterval: 30_000,
+  });
+}
+
+// ── Platform LLM usage ──
+
+export interface UsageBucket {
+  avgDurationMs: number | null;
+  calls: number;
+  costUsd: number;
+  errors: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface PlatformUsage {
+  byActivity: (UsageBucket & { nodeId: string })[];
+  byAgent: (UsageBucket & { agentKey: string })[];
+  byModel: (UsageBucket & { model: string | null })[];
+  daily: {
+    calls: number;
+    costUsd: number;
+    date: string;
+    inputTokens: number;
+    outputTokens: number;
+  }[];
+  since: string;
+  /** Exclusive end of the window: the end of the current UTC day. */
+  until: string;
+  topRuns: {
+    costUsd: number;
+    externalTicketId: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    runId: string;
+    startedAt: string;
+    status: string;
+    templateName: string;
+  }[];
+  totals: UsageBucket;
+  /** Spend from workflows that keep no run (authoring, evals, consolidation, …). */
+  unattributed: { calls: number; costUsd: number };
+  windowDays: number;
+}
+
+export function usePlatformUsage(windowDays: number) {
+  return useQuery({
+    // Keep the previous window on screen while the next one loads.
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      api
+        .get<{ data: PlatformUsage }>(`/api/v1/platform/usage?window=${windowDays}`)
+        .then((r) => r.data),
+    queryKey: ['platform-usage', windowDays],
+    // Not polled: each report costs a full-window scan plus one query per day,
+    // and spend does not move fast enough to need it. Refetched on focus.
+    staleTime: 60_000,
   });
 }
 

@@ -111,7 +111,8 @@ export async function getSkillEffectivenessReport(prisma: PrismaClient, windowDa
   const skillsByRun = new Map<string, Set<string>>();
   for (const ev of events) {
     const names = (ev.outputJson as { skills?: unknown } | null)?.skills;
-    if (!Array.isArray(names)) {
+    // Runless traces (evals, authoring) have no outcome to correlate against.
+    if (!ev.runId || !Array.isArray(names)) {
       continue;
     }
     const set = skillsByRun.get(ev.runId) ?? new Set<string>();

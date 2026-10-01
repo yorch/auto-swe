@@ -93,6 +93,10 @@ services:
       - "3001:3000"   # Grafana UI (3000 taken by Next.js)
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP
+    volumes:
+      # Provisions the "auto-swe — LLM & workflow overview" dashboard.
+      - ./infra/grafana/provisioning/auto-swe-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/auto-swe-dashboards.yaml:ro
+      - ./infra/grafana/dashboards:/otel-lgtm/auto-swe-dashboards:ro
 
   # Phase 4: Web Dashboard
   web:

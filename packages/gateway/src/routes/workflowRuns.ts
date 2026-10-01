@@ -54,11 +54,12 @@ const TRACE_FIELD_CAP = 4_000;
 /**
  * Trim large string fields out of trace payloads. LLM-response rows carry the
  * full system prompt + user message (often tens of KB including diffs) which
- * the run page polls every few seconds but never renders beyond a 2 000-char
- * preview. `?fullTraces=true` bypasses the trim for forensic use.
+ * the run page polls every few seconds. `?fullTraces=true` bypasses the trim;
+ * the run page offers it on demand when a trace reports `trimmed`.
  */
-function trimTraceJson(value: unknown): unknown {
+function trimTraceJson(value: unknown, onTrim: () => void): unknown {
   if (typeof value === 'string' && value.length > TRACE_FIELD_CAP) {
+    onTrim();
     // Head *and* tail. A head-only cut drops precisely what the reader came
     // for: an offloaded tool result carries the failing line and its
     // `/workspace/.tool-output/` path at the end, and an LLM response's verdict
@@ -70,14 +71,36 @@ function trimTraceJson(value: unknown): unknown {
     return `${value.slice(0, head)}…[truncated ${elided} chars — refetch with ?fullTraces=true]…${value.slice(value.length - tail)}`;
   }
   if (Array.isArray(value)) {
-    return value.map(trimTraceJson);
+    return value.map((v) => trimTraceJson(v, onTrim));
   }
   if (value && typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, trimTraceJson(v)])
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        k,
+        trimTraceJson(v, onTrim),
+      ])
     );
   }
   return value;
+}
+
+/** Trim both payloads of a trace, reporting whether anything was cut. */
+function trimTracePayloads(
+  t: { inputJson: unknown; outputJson: unknown },
+  full: boolean
+): { inputJson: unknown; outputJson: unknown; trimmed: boolean } {
+  if (full) {
+    return { inputJson: t.inputJson, outputJson: t.outputJson, trimmed: false };
+  }
+  let trimmed = false;
+  const onTrim = () => {
+    trimmed = true;
+  };
+  return {
+    inputJson: trimTraceJson(t.inputJson, onTrim),
+    outputJson: trimTraceJson(t.outputJson, onTrim),
+    trimmed,
+  };
 }
 /**
  * Names of the GLOBAL templates whose runs are conversational/assistant chatter,
@@ -326,6 +349,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           tokensInputTotal: Number(run.tokensInputTotal),
           tokensOutputTotal: Number(run.tokensOutputTotal),
           traces: traces.map((t) => ({
+            ...trimTracePayloads(t, fullTraces),
             agentKey: t.agentKey,
             attempt: t.attempt,
             costUsd: t.costUsd,
@@ -333,13 +357,11 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             durationMs: t.durationMs,
             error: t.error,
             id: t.id,
-            inputJson: fullTraces ? t.inputJson : trimTraceJson(t.inputJson),
             inputTokens: t.inputTokens,
             model: t.model,
             nodeId: t.nodeId,
             otelSpanId: t.otelSpanId,
             otelTraceId: t.otelTraceId,
-            outputJson: fullTraces ? t.outputJson : trimTraceJson(t.outputJson),
             outputTokens: t.outputTokens,
             seq: t.seq,
             toolName: t.toolName,

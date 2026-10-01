@@ -10,6 +10,22 @@ vi.mock('@mastra/core/agent', () => ({
   }),
 }));
 
+// A recording tracer: the real API is a no-op without an SDK, and its spans all
+// carry the same all-zero context, which cannot show *which* span was captured.
+vi.mock('@opentelemetry/api', () => ({
+  trace: {
+    getTracer: () => ({
+      startActiveSpan: (_name: string, fn: (span: unknown) => unknown) =>
+        fn({
+          end: vi.fn(),
+          recordException: vi.fn(),
+          setAttribute: vi.fn(),
+          spanContext: () => ({ spanId: 'llm-span', traceId: 'llm-trace' }),
+        }),
+    }),
+  },
+}));
+
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue('wf-1'),
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
@@ -25,6 +41,7 @@ vi.mock('../lib/costTracking.js', () => ({
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import type { AgentSpec } from '../lib/config/agentSpec.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { runAgent } from './runAgent.js';
@@ -119,5 +136,18 @@ describe('runAgent', () => {
     generateMock.mockResolvedValue({ object: { ok: true } });
     await runAgent(makeSpec(), 'M');
     expect(mockedPersist).toHaveBeenCalledWith(expect.anything(), 'validateContext');
+  });
+
+  it('attaches its own LLM span to the trace, since it persists after that span ends', async () => {
+    generateMock.mockResolvedValue({ text: 'ok', usage: { inputTokens: 1, outputTokens: 1 } });
+    const setSpanContext = vi.spyOn(AgentTracer.prototype, 'setSpanContext');
+
+    await runAgent(makeSpec(), 'USER_MSG');
+
+    expect(setSpanContext).toHaveBeenCalledWith('llm-trace', 'llm-span');
+    // ...and before persisting, so persistActivityTrace sees it already set.
+    const tracer = mockedPersist.mock.calls[0]?.[0] as AgentTracer;
+    expect(tracer.hasSpanContext()).toBe(true);
+    setSpanContext.mockRestore();
   });
 });

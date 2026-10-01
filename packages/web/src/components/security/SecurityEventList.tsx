@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import type { SecurityEvent, SecurityEventType } from '@/hooks/useAdmin';
@@ -211,19 +212,29 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
             {formatRelativeTime(event.createdAt)}
           </span>
         </div>
-        {showRunLink && event.externalTicketId && (
-          <div className="flex items-center gap-2 mt-0.5 pl-4">
-            <span className="text-[10px] text-paper-500 font-mono">{event.externalTicketId}</span>
-            <span className="text-[10px] text-paper-600">·</span>
-            <span className="text-[10px] text-paper-500 font-mono">{event.nodeId}</span>
-          </div>
-        )}
-        {expanded && (
-          <div className="pl-4">
-            <ExpandedDetail event={event} />
-          </div>
-        )}
       </button>
+      {/* Outside the button: a link cannot nest inside one. */}
+      {showRunLink && (
+        <div className="flex items-center gap-2 px-2 pl-6 text-[10px] font-mono">
+          {event.runId ? (
+            <Link className="text-ember-400 hover:underline" href={`/runs/${event.runId}`}>
+              {event.externalTicketId ?? 'view run'}
+            </Link>
+          ) : (
+            // Workflows that keep no run (evals, workflow authoring) have no page to link to.
+            <span className="text-paper-500" title="This workflow keeps no run record">
+              {event.workflowId}
+            </span>
+          )}
+          <span className="text-paper-600">·</span>
+          <span className="text-paper-500">{event.nodeId}</span>
+        </div>
+      )}
+      {expanded && (
+        <div className="px-2 pl-6">
+          <ExpandedDetail event={event} />
+        </div>
+      )}
     </li>
   );
 }

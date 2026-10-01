@@ -2,6 +2,7 @@ import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME } from '@auto-swe/shared/lib/channelTask';
 import { logError } from '../lib/activityLog.js';
+import { sumRunTraceUsage } from '../lib/traceTotals.js';
 
 /**
  * Name of the GLOBAL workflow template that backs channel-run observability —
@@ -253,18 +254,15 @@ export async function finalizeChannelRun(input: FinalizeChannelRunInput): Promis
     return;
   }
 
-  const totals = await prisma.agentTrace.aggregate({
-    _sum: { costUsd: true, inputTokens: true, outputTokens: true },
-    where: { runId: run.id },
-  });
+  const totals = await sumRunTraceUsage(run.id);
 
   await prisma.workflowRun.update({
     data: {
-      costUsdAccrued: totals._sum.costUsd ?? 0,
+      costUsdAccrued: totals.costUsd,
       endedAt: new Date(),
       status: input.status,
-      tokensInputTotal: BigInt(totals._sum.inputTokens ?? 0),
-      tokensOutputTotal: BigInt(totals._sum.outputTokens ?? 0),
+      tokensInputTotal: totals.inputTokens,
+      tokensOutputTotal: totals.outputTokens,
     },
     where: { id: run.id },
   });

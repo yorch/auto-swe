@@ -516,14 +516,31 @@ points `ARTIFACT_S3_ENDPOINT` at the provider instead.
 
 ## 8. Observability & Cost
 
-Every worker LLM call is wrapped in an OpenTelemetry span, exported over OTLP/HTTP to the Grafana
-LGTM stack.
+Every worker LLM call is wrapped in an OpenTelemetry span, exported over OTLP to the Grafana LGTM
+stack. Every activity attempt is itself wrapped in an `activity.<type>` span by a worker activity
+interceptor (`lib/activitySpans.ts`), so an attempt's `llm.*` spans share one trace, and its
+`temporal.workflow_id` attribute finds a run's traces in Tempo. The same trace ID is what
+`AgentTrace.otelTraceId` records, which is how the run viewer links an LLM call to Tempo.
 
 | Span attribute | Value |
 |-----------|-------|
 | `llm.cost_usd` | USD cost computed from `MODEL_PRICES` |
 | `llm.cost_pricing_known` | `false` when the model has no price entry — usage is still recorded at zero cost rather than failing the run |
 | `workflow.budget_remaining_input` / `_output` | Remaining token budget for the run |
+
+The worker also exports metrics (`lib/metrics.ts`), labelled only by low-cardinality keys — model,
+agent, activity, status, tier — never a run or ticket:
+
+| Metric (Prometheus name) | Labels | Recorded by |
+|---|---|---|
+| `llm_calls_total`, `llm_tokens_total`, `llm_cost_usd_total` | `model`, `agent` (+ `direction` on tokens) | `recordLlmUsage`, embedding usage |
+| `workflow_runs_finalized_total` | `status` | `finalizeWorkflowRun`, once per run it finalizes |
+| `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, on each call that ends over the tier |
+| `activity_duration_seconds` (histogram) | `activity`, `outcome` (`success` / `failure` / `cancelled`) | the activity interceptor |
+
+Temporal Core's own runtime metrics export beside them. The bundled `otel-lgtm` container provisions
+an **auto-swe — LLM & workflow overview** dashboard from `infra/grafana/` — spend, calls, and tokens
+by model and agent, run outcomes, activity p95 latency and failure rate, and recent activity traces.
 
 **Budget tiers.** Every run carries a tier, set at submission (default `STANDARD`).
 `recordLlmUsage` accrues tokens and cost onto `ActiveWorkflow` *before* checking the limit, so the
@@ -541,6 +558,15 @@ falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 **Agent traces.** Each LLM-calling activity records tool calls, LLM requests/responses, and named
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
 mandatory `finally` — is in [AGENTS.md §6](../AGENTS.md#agent-observability-agenttracer).
+
+**Platform usage.** Every LLM call and every successful embedding call writes one `llm_response`
+row carrying its model, tokens, and cost — including calls from workflows that keep no `WorkflowRun`
+— so those rows are the one complete record of spend. `GET /api/v1/platform/usage?window=7|30|90` (ADMIN) aggregates them
+into totals, a per-UTC-day series, breakdowns by model, agent, and activity (calls, tokens, average
+latency of the calls that succeeded, error rate, cost), the spend from workflows without a run,
+and the ten runs that spent most inside the window. The
+dashboard renders it at `/govern/usage`. It is ADMIN-only because rows without a run carry no team to
+scope them by.
 
 ### Workspace hardening
 
@@ -664,6 +690,28 @@ Current constraints of the system as built. Deliberate product boundaries are in
   quarantined per process for 10 min: the blocking scanners then block on it outright until an
   admin fixes the row, the advisory ones run without it. See
   [agents.md §11](./agents.md#11-limitations).
+- **Workflows without a run have no budget.** Workflow authoring, scheduled evals, lesson
+  consolidation, repo-access sync, and epic planning keep no `ActiveWorkflow` ledger, so no tier
+  limit applies to them and their spend never reaches `OrgMonthlyUsage`. It is recorded on their
+  trace rows and shown at `/govern/usage`, but nothing stops it.
+- **Metrics undercount at their edges.** `workflow_runs_finalized_total` counts only runs the worker
+  finalizes: a run cancelled from the dashboard is closed by the gateway, and channel and eval runs
+  by other paths. `llm_calls_total` counts agent calls, not model round trips inside a tool loop.
+  Prometheus `increase()` reads a new series' first sample as its baseline; status and tier series
+  are seeded with a zero at boot, but a model's or agent's first call after a worker restart does
+  not appear in increase-based panels.
+- **Traces start at the activity, not the workflow.** There is no workflow interceptor, so an
+  activity span has no parent and the spans of one run are separate traces tied together only by
+  their `temporal.workflow_id` attribute. Propagating context from the workflow means running an
+  interceptor inside the V8 isolate, and the official Temporal package for it pins the 1.x
+  OpenTelemetry SDK beside this repo's 2.x one. The gateway emits HTTP spans but none link to the
+  workflows a request starts. Logs go to stdout, not OTLP.
+- **The usage report is platform-wide only.** It has no per-team, per-org, or per-repository
+  breakdown: a trace reaches its team only through run → request → connection, which Prisma cannot
+  group by. Its daily series is one aggregate per UTC day, so a 90-day window costs 90 small queries.
+  A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call
+  succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
+  so it counts as a failure.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a

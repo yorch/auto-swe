@@ -5,7 +5,8 @@ import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 
@@ -46,8 +47,10 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
   return otelTracer.startActiveSpan('llm.security_scan', async (span) => {
     const tracer = new AgentTracer();
     const start = Date.now();
+    let modelSpec: string | undefined;
+    let recorded: LlmAttribution | undefined;
     try {
-      const modelSpec = await getModelSpec('securityReview');
+      modelSpec = await getModelSpec('securityReview');
       const model = await getModel('securityReview');
       span.setAttribute('llm.model', modelSpec);
       const agent = new Agent({
@@ -70,7 +73,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
 
       let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
       if (result.usage) {
-        attribution = await recordLlmUsage(
+        attribution = recorded = await recordLlmUsage(
           currentWorkflowId(),
           'securityReview',
           result.usage,
@@ -108,6 +111,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
       return finalResult;
     } catch (e) {
       tracer.addLlmResponse({
+        ...failedCallAttribution(e, modelSpec, recorded),
         durationMs: Date.now() - start,
         error: (e as Error).message,
         inputJson: { systemPrompt: instructions, userMessage: diff },
