@@ -1,3 +1,4 @@
+import type { Prisma } from '@auto-swe/shared';
 import { hasTenantPredicate } from '@auto-swe/shared/lib/tenantGuard';
 import { describe, expect, it } from 'vitest';
 import { memberOrgs, memberTeams, reachableConnections } from './tenantScope.js';
@@ -12,8 +13,8 @@ const actor = { sub: '11111111-1111-1111-1111-111111111111' };
  * chain would turn a missing clause — the failure these tests exist to catch —
  * into a `TypeError` several lines from the cause.
  */
-function permissionClause(filter: { OR?: unknown[] }): Record<string, unknown> {
-  const branch = (filter.OR ?? []).find(
+function permissionClause(filter: Prisma.ConnectionWhereInput): Record<string, unknown> {
+  const branch = (permissionHalf(filter).OR ?? []).find(
     (b) => typeof b === 'object' && b !== null && 'repoAccess' in b
   ) as { repoAccess?: { some?: Record<string, unknown> } } | undefined;
   const some = branch?.repoAccess?.some;
@@ -22,6 +23,30 @@ function permissionClause(filter: { OR?: unknown[] }): Record<string, unknown> {
   }
   return some;
 }
+
+/**
+ * The two ANDed halves of a `reachableConnections` filter — membership first,
+ * the permission requirement second. Throws on any other shape for the same
+ * reason `permissionClause` does.
+ */
+function halves(
+  filter: Prisma.ConnectionWhereInput
+): [Prisma.ConnectionWhereInput, Prisma.ConnectionWhereInput] {
+  const and = filter.AND;
+  if (!Array.isArray(and) || and.length !== 2) {
+    throw new Error('reachable filter is not an AND of membership and permission');
+  }
+  return [and[0] as Prisma.ConnectionWhereInput, and[1] as Prisma.ConnectionWhereInput];
+}
+
+function permissionHalf(filter: Prisma.ConnectionWhereInput): Prisma.ConnectionWhereInput {
+  return halves(filter)[1];
+}
+
+/** Owning-team membership, or membership of a team the repository is shared with. */
+const membership = {
+  OR: [{ team: memberTeams(actor) }, { shares: { some: { team: memberTeams(actor) } } }],
+};
 
 /**
  * These are one-line predicates; what is worth pinning is not their shape but
@@ -63,10 +88,10 @@ describe('tenant scope predicates', () => {
     // advisory signal instead.
     for (const mode of ['off', 'advisory'] as const) {
       expect(reachableConnections(actor, { mode, staleAfterHours: 72 })).toEqual({
-        team: memberTeams(actor),
+        AND: [membership, {}],
       });
     }
-    expect(reachableConnections(actor, undefined)).toEqual({ team: memberTeams(actor) });
+    expect(reachableConnections(actor, undefined)).toEqual({ AND: [membership, {}] });
   });
 
   it('ANDs the permission requirement onto team membership when enforcing', () => {
@@ -74,7 +99,7 @@ describe('tenant scope predicates', () => {
     // only ever take access away, so nobody reaches a repository whose team
     // they do not belong to, whatever GitHub says.
     const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 });
-    expect(filter.team).toEqual(memberTeams(actor));
+    expect(halves(filter)[0]).toEqual(membership);
     expect(permissionClause(filter)).toMatchObject({
       permission: { in: ['READ', 'WRITE', 'ADMIN'] },
       userId: actor.sub,
@@ -88,7 +113,7 @@ describe('tenant scope predicates', () => {
     // every one of them vanish for every non-admin on the day enforcement is
     // switched on, with no way to get it back.
     const filter = reachableConnections(actor, { mode: 'enforce', staleAfterHours: 72 });
-    expect(filter.OR).toContainEqual({ type: { not: 'git_repo' } });
+    expect(permissionHalf(filter).OR).toContainEqual({ type: { not: 'git_repo' } });
   });
 
   it('excludes a cached answer older than the staleness bound', () => {
@@ -122,6 +147,6 @@ describe('tenant scope predicates', () => {
     for (const predicate of [memberTeams(actor), memberOrgs(actor)]) {
       expect(predicate.memberships).toEqual({ some: { userId: actor.sub } });
     }
-    expect(reachableConnections(actor, undefined).team).toEqual(memberTeams(actor));
+    expect(halves(reachableConnections(actor, undefined))[0]).toEqual(membership);
   });
 });

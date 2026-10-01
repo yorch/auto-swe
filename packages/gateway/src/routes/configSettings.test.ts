@@ -81,6 +81,39 @@ beforeEach(() => {
   orgMembership.findUnique.mockResolvedValue(null as never);
 });
 
+describe('GET /config/settings — sensitive values', () => {
+  it('withholds a host allowlist from anyone below its required role', async () => {
+    // It can name internal GitHub Enterprise servers on a private network.
+    configSetting.findMany.mockResolvedValue([
+      { key: 'github.repositoryHosts', scope: 'GLOBAL', value: ['ghe.internal.corp'] },
+    ] as never);
+    const app = await buildApp();
+    const asEngineer = await app.inject({
+      headers: auth('ENGINEER'),
+      method: 'GET',
+      url: '/api/v1/platform/config/settings',
+    });
+    const hidden = (asEngineer.json().data as Array<Record<string, unknown>>).find(
+      (s) => s.key === 'github.repositoryHosts'
+    );
+    expect(hidden).toMatchObject({ redacted: true, value: null });
+    expect(hidden?.overrideAtScope).toBeUndefined();
+    expect(asEngineer.payload).not.toContain('ghe.internal.corp');
+
+    const asAdmin = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'GET',
+      url: '/api/v1/platform/config/settings',
+    });
+    expect(
+      (asAdmin.json().data as Array<Record<string, unknown>>).find(
+        (s) => s.key === 'github.repositoryHosts'
+      )
+    ).toMatchObject({ value: ['ghe.internal.corp'] });
+    await app.close();
+  });
+});
+
 describe('GET /config/settings', () => {
   it('returns every definition with its effective value and provenance', async () => {
     const app = await buildApp();

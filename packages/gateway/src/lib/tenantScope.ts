@@ -100,7 +100,23 @@ export function reachableConnections(
   actor: ScopeActor,
   gate: MaybeGate
 ): Prisma.ConnectionWhereInput {
-  return { team: memberTeams(actor), ...permissionRequirement(actor, gate) };
+  // AND, not a spread: both halves are `OR`s, and spreading one beside the
+  // other would silently drop whichever came first.
+  return { AND: [memberOrSharedTeams(actor), permissionRequirement(actor, gate)] };
+}
+
+/**
+ * Repositories whose owning team the actor belongs to, or that have been
+ * shared with a team the actor belongs to (`ConnectionTeamShare`).
+ *
+ * The membership half of {@link reachableConnections}: a shared team's members
+ * see and launch on a repository exactly as the owning team's do. Managing it
+ * is not membership and does not go through here.
+ */
+export function memberOrSharedTeams(actor: ScopeActor): Prisma.ConnectionWhereInput {
+  return {
+    OR: [{ team: memberTeams(actor) }, { shares: { some: { team: memberTeams(actor) } } }],
+  };
 }
 
 /** The oldest `checkedAt` a cached answer may carry and still count. */

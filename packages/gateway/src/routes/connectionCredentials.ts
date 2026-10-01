@@ -20,6 +20,7 @@ import {
 } from '@auto-swe/shared/lib/connectionCredential';
 import { fetchOwnRepoPermission, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
+import { isRepoMember, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -53,6 +54,9 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
         isActive: true,
         organizationName: true,
         repoName: true,
+        // A member of a team the repository is shared with launches on it, so
+        // they may hold a token for it too.
+        shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
         team: {
           select: {
             isActive: true,
@@ -66,7 +70,7 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
     if (repo?.type !== 'git_repo' || !(repo.organizationName && repo.repoName)) {
       return null;
     }
-    if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
+    if (user.role !== 'ADMIN' && !isRepoMember(repo, user.sub)) {
       return null;
     }
     return repo;
@@ -93,7 +97,10 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
           updatedAt: r.updatedAt,
         })),
         enabled: policy.enabled,
-        hosts: policy.hosts,
+        // ADMIN-only: the list can name internal GitHub Enterprise hosts, and an
+        // engineer refused at save time is told which of their repository's
+        // own URLs was refused — something they can already see.
+        ...(user.role === 'ADMIN' ? { hosts: policy.hosts } : {}),
       },
     };
   });

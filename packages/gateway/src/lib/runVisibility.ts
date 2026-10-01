@@ -1,5 +1,10 @@
 import type { Prisma } from '@auto-swe/shared';
-import { type MaybeGate, memberTeams, reachableConnections } from './tenantScope.js';
+import {
+  type MaybeGate,
+  memberTeams,
+  permissionRequirement,
+  reachableConnections,
+} from './tenantScope.js';
 
 /** A caller that needs a run- or step-level visibility predicate. */
 export interface VisibilityActor {
@@ -35,6 +40,52 @@ export function buildWorkflowRunVisibilityFilter(
       },
     ],
   };
+}
+
+/**
+ * Runs the actor may CONTROL — cancel, or answer a human step on. Narrower than
+ * {@link buildWorkflowRunVisibilityFilter}: a repository shared with the actor's
+ * team lets them see the owning team's runs and start their own, not stop or
+ * steer the owning team's. So the repository branch is the owning team's
+ * members only, plus whoever launched the run, which keeps a shared-team
+ * member in control of the runs they started.
+ */
+export function buildWorkflowRunControlFilter(
+  actor: VisibilityActor,
+  gate: MaybeGate
+): Prisma.WorkflowRunWhereInput {
+  if (actor.role === 'ADMIN') {
+    return {};
+  }
+  return {
+    OR: [
+      { template: { teamId: null } },
+      { template: { team: memberTeams(actor) } },
+      { launchedById: actor.sub },
+      {
+        workRequest: {
+          activeWorkflows: {
+            some: {
+              repository: {
+                AND: [{ team: memberTeams(actor) }, permissionRequirement(actor, gate)],
+              },
+            },
+          },
+        },
+      },
+    ],
+  };
+}
+
+/** Human steps the actor may answer — see {@link buildWorkflowRunControlFilter}. */
+export function buildWorkflowHumanStepControlFilter(
+  actor: VisibilityActor,
+  gate: MaybeGate
+): Prisma.WorkflowHumanStepWhereInput {
+  if (actor.role === 'ADMIN') {
+    return {};
+  }
+  return { run: buildWorkflowRunControlFilter(actor, gate) };
 }
 
 /** Build the human-step visibility predicate used by `/inbox` and Slack actions. */

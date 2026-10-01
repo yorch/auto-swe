@@ -1,8 +1,11 @@
 import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma, Role } from '@auto-swe/shared';
+import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { sendConflict } from '../lib/conflict.js';
 import { redactConnection } from '../lib/connectionRedaction.js';
 import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
@@ -58,6 +61,9 @@ const CreateRepoSchema = z.object({
 const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 });
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
+
+/** The full set of further teams to share a repository with; replaces the current set. */
+const SharesSchema = z.object({ teamIds: z.array(z.string().uuid()).max(50) });
 
 const UpdateRepoSchema = z.object({
   apiToken: z.string().nullable().optional(),
@@ -117,6 +123,97 @@ function rejectsInstallationChange(
   return installationId !== undefined && user.role !== Role.ADMIN;
 }
 
+/**
+ * Validate and normalise a repository's URL overrides for storage.
+ *
+ * Every GitHub credential the platform holds — and a user's own — is sent to a
+ * repository's web and API bases. A team lead sets those, so an unchecked
+ * override is a way to point a repository at a host the lead controls and
+ * collect the platform's token on the next run. Overrides must therefore be on
+ * an approved host (`repositoryHostsAllowed`), and must be BASE URLs: the
+ * clone is `<web base>/<org>/<repo>.git` and the API is
+ * `<api base>/repos/<org>/<repo>`, so a repository-level URL here produces a
+ * path that does not exist rather than an error anyone would recognise.
+ *
+ * Normalised so a repository's identity is stable: the web base is stored as
+ * its origin, the API base without a trailing slash, and either one equal to
+ * the instance's own GitHub host is stored as null — which is what "no
+ * override" already means. The unique index on (host, owner, name) keys on the
+ * stored web base, so two spellings of one host must not make two
+ * repositories.
+ *
+ * `undefined` passes through untouched (a PATCH not setting the field).
+ *
+ * Applies to every role, ADMIN included: an admin who wants a new host lists
+ * it under `github.repositoryHosts` first, which keeps "a repository URL is on
+ * an approved host" true of every row written from here on.
+ */
+async function normaliseRepositoryUrls(urls: {
+  githubUrl?: string | null;
+  githubApiUrl?: string | null;
+}): Promise<
+  | { ok: true; githubUrl: string | null | undefined; githubApiUrl: string | null | undefined }
+  | { ok: false; message: string }
+> {
+  let githubUrl = urls.githubUrl;
+  let githubApiUrl = urls.githubApiUrl;
+  // Nothing to normalise or check: a PATCH not touching URLs reads nothing.
+  if (!(githubUrl || githubApiUrl)) {
+    return { githubApiUrl, githubUrl, ok: true };
+  }
+  const ghConfig = await resolveGitHubConfig();
+
+  if (githubUrl) {
+    const parsed = new URL(githubUrl);
+    if (parsed.pathname !== '/' && parsed.pathname !== '') {
+      return {
+        message:
+          "githubUrl must be the web base (e.g. https://ghe.example.com), not the repository's own URL",
+        ok: false,
+      };
+    }
+    githubUrl = parsed.origin === originOf(ghConfig.baseUrl) ? null : parsed.origin;
+  }
+  if (githubApiUrl) {
+    if (new URL(githubApiUrl).pathname.includes('/repos/')) {
+      return {
+        message:
+          "githubApiUrl must be the API base (e.g. https://ghe.example.com/api/v3), not the repository's API URL",
+        ok: false,
+      };
+    }
+    const trimmed = githubApiUrl.replace(/\/+$/, '');
+    githubApiUrl =
+      trimmed.toLowerCase() === ghConfig.apiUrl.replace(/\/+$/, '').toLowerCase() ? null : trimmed;
+  }
+
+  const hosts = await repositoryHostsAllowed({ githubApiUrl, githubUrl });
+  if (!hosts.ok) {
+    return {
+      message: `${hosts.url} is not on an allowed GitHub host. A platform admin can allow it under the github.repositoryHosts setting.`,
+      ok: false,
+    };
+  }
+  return { githubApiUrl, githubUrl, ok: true };
+}
+
+/**
+ * The `Connection` predicate for repositories on the same host as a (normalised)
+ * web base override. Null — the instance's own host — also matches a row whose
+ * override spells that host out, which rows written before overrides were
+ * normalised, or on a deployment configuring its host only through the
+ * environment, can carry. Both mean the same repository.
+ */
+async function sameHostWhere(githubUrl: string | null): Promise<Prisma.ConnectionWhereInput> {
+  if (githubUrl) {
+    return { githubUrl };
+  }
+  const instanceOrigin = originOf((await resolveGitHubConfig()).baseUrl);
+  return instanceOrigin
+    ? { OR: [{ githubUrl: null }, { githubUrl: instanceOrigin }] }
+    : { githubUrl: null };
+}
+
 export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -145,13 +242,17 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // are already imported; scoped to the caller's teams it would report a
       // repo another team already imported as available, and importing it again
       // creates a duplicate Connection for the same repository.
+      // The listing comes from the instance's own host, so only repositories on
+      // that host can be the same repository; `acme/api` on another host is a
+      // different one.
+      const onInstanceHost = await sameHostWhere(null);
       const existing = await runUnscoped(
         'import de-duplication must span every team',
         ['Connection'],
         () =>
           fastify.prisma.connection.findMany({
             select: { organizationName: true, repoName: true },
-            where: { type: 'git_repo' },
+            where: { ...onInstanceHost, type: 'git_repo' },
           })
       );
       const importedSet = new Set(existing.map((c) => `${c.organizationName}/${c.repoName}`));
@@ -189,6 +290,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.connection.findMany({
               include: {
                 _count: { select: { activeWorkflows: true } },
+                shares: { select: { team: { select: { id: true, name: true, slug: true } } } },
                 team: { select: { id: true, name: true, slug: true } },
               },
               orderBy: { repoName: 'asc' },
@@ -252,11 +354,28 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Check for duplicate (org/repo uniqueness is a partial index scoped to
-      // git_repo connections, so query by fields rather than a compound unique).
+      const urls = await normaliseRepositoryUrls({
+        githubApiUrl: request.body.githubApiUrl,
+        githubUrl: request.body.githubUrl,
+      });
+      if (!urls.ok) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'REPO_HOST_NOT_ALLOWED', message: urls.message } });
+      }
+
+      // Check for duplicate. Identity is (host, owner, name) — a partial,
+      // expression-based unique index scoped to git_repo connections — so query
+      // by fields rather than a compound unique. The host is the normalised web
+      // base, null meaning the instance's own.
       if (type === 'git_repo' && organizationName && repoName) {
         const existing = await fastify.prisma.connection.findFirst({
-          where: { organizationName, repoName, type: 'git_repo' },
+          where: {
+            ...(await sameHostWhere(urls.githubUrl ?? null)),
+            organizationName,
+            repoName,
+            type: 'git_repo',
+          },
         });
         if (existing) {
           return sendConflict(reply, 'REPO_EXISTS', 'Repository already onboarded');
@@ -265,7 +384,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
 
       // The findFirst check above is a friendly pre-check, not a guarantee —
       // it can't stop two concurrent onboard requests from racing past it. The
-      // partial unique index on (organizationName, repoName) for git_repo
+      // partial unique index on (host, organizationName, repoName) for git_repo
       // connections is the real guard; catch its violation here and translate
       // it to the same 409 rather than a raw 500.
       const tokenColumns = apiToken
@@ -289,6 +408,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             teamId,
             type: type ?? 'git_repo',
             ...rest,
+            githubApiUrl: urls.githubApiUrl ?? null,
+            githubUrl: urls.githubUrl ?? null,
           },
           include: { team: { select: { id: true, name: true, slug: true } } },
         });
@@ -321,7 +442,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const repo = await fastify.prisma.connection.findUnique({
-        select: { id: true, teamId: true, type: true },
+        select: { id: true, organizationName: true, repoName: true, teamId: true, type: true },
         where: { id: request.params.id },
       });
       // MCP rows are invisible to this route (see CreateRepoSchema.type): their
@@ -357,6 +478,18 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      // Only the overrides this request sets; a row already pointing somewhere
+      // unapproved is refused a credential at run time instead.
+      const urls = await normaliseRepositoryUrls({
+        githubApiUrl: request.body.githubApiUrl,
+        githubUrl: request.body.githubUrl,
+      });
+      if (!urls.ok) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'REPO_HOST_NOT_ALLOWED', message: urls.message } });
+      }
+
       const {
         apiToken,
         config,
@@ -364,13 +497,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         defaultBranch,
         description,
         executorImage,
-        githubApiUrl,
-        githubUrl,
         isActive,
         language,
         name,
         teamId,
       } = request.body;
+      const { githubApiUrl, githubUrl } = urls;
 
       const tokenUpdate =
         apiToken === undefined
@@ -384,31 +516,201 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
                 apiKeyVersion: 1,
               };
 
-      const updated = await fastify.prisma.connection.update({
-        data: {
-          ...tokenUpdate,
-          config:
-            config === undefined
-              ? undefined
-              : config != null
-                ? (config as unknown as Prisma.InputJsonValue)
-                : Prisma.DbNull,
-          consolidationEnabled,
-          defaultBranch,
-          description,
-          executorImage,
-          githubApiUrl,
-          githubUrl,
-          isActive,
-          language,
-          name,
-          teamId,
-        },
-        include: { team: { select: { id: true, name: true, slug: true } } },
-        where: { id: request.params.id },
-      });
+      const moving = !!newTeamId && newTeamId !== repo.teamId;
+      const updateRow = (tx: Prisma.TransactionClient) =>
+        tx.connection.update({
+          data: {
+            ...tokenUpdate,
+            config:
+              config === undefined
+                ? undefined
+                : config != null
+                  ? (config as unknown as Prisma.InputJsonValue)
+                  : Prisma.DbNull,
+            consolidationEnabled,
+            defaultBranch,
+            description,
+            executorImage,
+            githubApiUrl,
+            githubUrl,
+            isActive,
+            language,
+            name,
+            teamId,
+          },
+          include: { team: { select: { id: true, name: true, slug: true } } },
+          where: { id: request.params.id },
+        });
+
+      let updated: Awaited<ReturnType<typeof updateRow>>;
+      try {
+        updated = moving
+          ? // Moving the repository to another team: a share with its new owner
+            // is now redundant, and a share with a team outside the new owner's
+            // organization would carry the repository across a tenant boundary
+            // that creating it never could. Dropped in the same transaction as
+            // the move, so the move can never commit without the cleanup.
+            await runUnscoped(
+              "a repository's shares are keyed by the repository, and span the teams it names",
+              ['ConnectionTeamShare'],
+              () =>
+                fastify.prisma.$transaction(async (tx) => {
+                  const row = await updateRow(tx);
+                  const owner = await tx.team.findUnique({
+                    select: { orgId: true },
+                    where: { id: newTeamId },
+                  });
+                  await tx.connectionTeamShare.deleteMany({
+                    where: {
+                      connectionId: repo.id,
+                      OR: [{ teamId: newTeamId }, { team: { orgId: { not: owner?.orgId } } }],
+                    },
+                  });
+                  return row;
+                })
+            )
+          : await updateRow(fastify.prisma);
+      } catch (err) {
+        // Repointing the web base onto a host where the same owner/name is
+        // already onboarded collides with the (host, owner, name) identity.
+        if (isUniqueConstraintError(err)) {
+          return sendConflict(
+            reply,
+            'REPO_EXISTS',
+            'That repository is already onboarded on that host'
+          );
+        }
+        throw err;
+      }
 
       return { data: redactConnection(updated) };
+    }
+  );
+
+  // GET /api/v1/repositories/:id/share-candidates — the teams this repository
+  // could be shared with: active teams in its owning team's organization, other
+  // than the owner. Only for someone who may manage the repository, because a
+  // team lead otherwise sees only the teams they belong to, and the share must
+  // be pickable without granting a wider view of the organization.
+  app.get(
+    '/:id/share-candidates',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { params: RepoParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await fastify.prisma.connection.findUnique({
+        select: { team: { select: { orgId: true } }, teamId: true, type: true },
+        where: { id: request.params.id },
+      });
+      if (repo?.type !== 'git_repo') {
+        return reply.status(404).send({
+          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
+        });
+      }
+      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: "Requires LEAD role in this repository's team" },
+        });
+      }
+      const teams = await fastify.prisma.team.findMany({
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, slug: true },
+        where: { id: { not: repo.teamId }, isActive: true, orgId: repo.team.orgId },
+      });
+      return { data: teams };
+    }
+  );
+
+  // PUT /api/v1/repositories/:id/shares — replace the set of further teams the
+  // repository is shared with. Members of a shared team see and launch on it;
+  // the owning team keeps management, so only someone who may manage the
+  // repository may change who it is shared with.
+  app.put(
+    '/:id/shares',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { body: SharesSchema, params: RepoParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await fastify.prisma.connection.findUnique({
+        select: {
+          id: true,
+          shares: { select: { teamId: true } },
+          team: { select: { orgId: true } },
+          teamId: true,
+          type: true,
+        },
+        where: { id: request.params.id },
+      });
+      // Repositories only: a shared MCP server or API connection would be a
+      // way around the admin-only routes that manage those.
+      if (repo?.type !== 'git_repo') {
+        return reply.status(404).send({
+          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
+        });
+      }
+      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: "Requires LEAD role in this repository's team" },
+        });
+      }
+
+      const teamIds = [...new Set(request.body.teamIds)].filter((id) => id !== repo.teamId);
+      // Same organization only, so a share never moves a repository across a
+      // tenant boundary — the organization is where budgets, members and
+      // policy are drawn.
+      const teams = await fastify.prisma.team.findMany({
+        select: { id: true },
+        where: { id: { in: teamIds }, isActive: true, orgId: repo.team.orgId },
+      });
+      if (teams.length !== teamIds.length) {
+        const found = new Set(teams.map((t) => t.id));
+        return reply.status(400).send({
+          error: {
+            code: 'INVALID_SHARE_TEAMS',
+            message: `These teams do not exist, are inactive, or are in another organization: ${teamIds
+              .filter((id) => !found.has(id))
+              .join(', ')}`,
+          },
+        });
+      }
+
+      const before = repo.shares.map((s) => s.teamId).sort();
+      await runUnscoped(
+        "a repository's shares are keyed by the repository, and span the teams it names",
+        ['ConnectionTeamShare'],
+        () =>
+          fastify.prisma.$transaction([
+            fastify.prisma.connectionTeamShare.deleteMany({
+              where: { connectionId: repo.id, teamId: { notIn: teamIds } },
+            }),
+            fastify.prisma.connectionTeamShare.createMany({
+              data: teamIds.map((teamId) => ({
+                connectionId: repo.id,
+                createdById: user.sub,
+                teamId,
+              })),
+              skipDuplicates: true,
+            }),
+          ])
+      );
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { sharedWithTeamIds: [...teamIds].sort() },
+        before: { sharedWithTeamIds: before },
+        entityId: repo.id,
+        entityType: 'Connection',
+      });
+
+      const shares = await fastify.prisma.connection.findUnique({
+        select: { shares: { select: { team: { select: { id: true, name: true, slug: true } } } } },
+        where: { id: repo.id },
+      });
+      return { data: shares?.shares ?? [] };
     }
   );
 };

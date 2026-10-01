@@ -5,6 +5,7 @@ import {
   repoAccessErrorBody,
 } from '@auto-swe/shared/lib/repoAccessDecision';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
+import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import type { WorkspaceProviderMetadata } from '@auto-swe/shared/lib/workspaceProviders';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
@@ -29,6 +30,9 @@ export interface ValidateRunConnectionInput {
 export type ValidateRunConnectionResult =
   | { budgetCap: number | null; budgetOrgId: string | null; ok: true }
   | { ok: false };
+
+/** A user id no row can carry, for a membership filter that must match nobody. */
+const NO_USER = '00000000-0000-0000-0000-000000000000';
 
 /**
  * Shared validation for a run's target connection.
@@ -58,6 +62,11 @@ export async function validateRunConnection(
     const connection = await prisma.connection.findUnique({
       include: {
         installation: { select: { installationId: true, isActive: true } },
+        // A member of a team the repository is shared with may run against it
+        // too. Filtered to the acting user; with no user (a public or webhook
+        // caller) the decision never runs, so match nobody rather than load
+        // every shared team's membership for nothing.
+        shares: repoMembersSelect({ userId: true }, { userId: user?.sub ?? NO_USER }).shares,
         team: {
           include: {
             // Filtered to the acting user. It used to load every member of the

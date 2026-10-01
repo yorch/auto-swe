@@ -40,6 +40,7 @@ function repo(
     installation: null,
     organizationName: 'acme',
     repoName: 'payments',
+    shares: [],
     team: { memberships: members.map((user) => ({ user })) },
   };
 }

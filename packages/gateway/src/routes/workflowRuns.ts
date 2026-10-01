@@ -12,7 +12,10 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
-import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import {
+  buildWorkflowRunControlFilter,
+  buildWorkflowRunVisibilityFilter,
+} from '../lib/runVisibility.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import {
   AutonomyDecisionSchema,
@@ -199,7 +202,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const run = await fastify.prisma.workflowRun.findFirst({
         where: {
           id: request.params.id,
-          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+          ...buildWorkflowRunControlFilter(user, request.repoAccessGate),
         },
       });
       if (!run) {

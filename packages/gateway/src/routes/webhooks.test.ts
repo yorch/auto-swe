@@ -1262,3 +1262,25 @@ describe('webhook routes', () => {
     });
   });
 });
+
+describe('webhook events carry the repository host', () => {
+  it("keeps the payload's repository URL so a lookup can match on host", async () => {
+    const { normalizeGitHubCheckRunEvent, normalizeGitHubPullRequestEvent } = await import(
+      './webhooks.js'
+    );
+    expect(
+      normalizeGitHubPullRequestEvent({
+        action: 'closed',
+        pull_request: { merged: true, number: 7 },
+        repository: { full_name: 'acme/api', html_url: 'https://ghe.corp/acme/api' },
+      })
+    ).toMatchObject({ repoHtmlUrl: 'https://ghe.corp/acme/api', type: 'merged' });
+    expect(
+      normalizeGitHubCheckRunEvent({
+        action: 'completed',
+        check_run: { conclusion: 'success', head_sha: 'abc', html_url: 'https://x' },
+        repository: { full_name: 'acme/api' },
+      })
+    ).toMatchObject({ repoHtmlUrl: undefined, type: 'completed' });
+  });
+});

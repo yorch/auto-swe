@@ -35,6 +35,7 @@ const JiraWebhookSchema = z
   })
   .passthrough();
 
+import { webhookRepositoryWhere } from '../lib/repositoryHost.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { postSlackMessage } from '../lib/slack.js';
 // The webhook handlers below undo their DB write and answer non-2xx when a
@@ -51,7 +52,9 @@ import { resolveDefaultTemplate } from './workRequests.js';
 const PullRequestWebhookSchema = z.object({
   action: z.string(),
   pull_request: z.object({ merged: z.boolean(), number: z.number() }),
-  repository: z.object({ full_name: z.string() }),
+  // `html_url` carries the host `full_name` lacks; optional so a payload
+  // without it still matches by name, as before.
+  repository: z.object({ full_name: z.string(), html_url: z.string().optional() }),
 });
 
 const CheckRunWebhookSchema = z.object({
@@ -59,7 +62,7 @@ const CheckRunWebhookSchema = z.object({
   check_run: z
     .object({ conclusion: z.string(), head_sha: z.string(), html_url: z.string() })
     .optional(),
-  repository: z.object({ full_name: z.string() }),
+  repository: z.object({ full_name: z.string(), html_url: z.string().optional() }),
 });
 
 // ── GitHub payload → domain-event normalization ──
@@ -75,7 +78,14 @@ export type PullRequestMergedEvent =
   | { type: 'unrecognized' }
   /** Valid payload but not a merged-PR event (e.g. opened, closed-unmerged). */
   | { type: 'ignored' }
-  | { type: 'merged'; prNumber: number; org: string; repoName: string };
+  | {
+      type: 'merged';
+      prNumber: number;
+      org: string;
+      repoName: string;
+      /** The repository's web URL, which names its host. */
+      repoHtmlUrl?: string;
+    };
 
 /** A CI check-completion domain event extracted from a provider webhook payload. */
 export type CheckRunCompletedEvent =
@@ -86,6 +96,8 @@ export type CheckRunCompletedEvent =
       type: 'completed';
       org: string;
       repoName: string;
+      /** The repository's web URL, which names its host. */
+      repoHtmlUrl?: string;
       headSha: string;
       conclusion: string;
       logsUrl: string;
@@ -108,6 +120,7 @@ export function normalizeGitHubPullRequestEvent(body: unknown): PullRequestMerge
   return {
     org,
     prNumber: payload.pull_request.number,
+    repoHtmlUrl: payload.repository.html_url,
     repoName,
     type: 'merged',
   };
@@ -133,6 +146,7 @@ export function normalizeGitHubCheckRunEvent(body: unknown): CheckRunCompletedEv
     headSha: checkRun.head_sha,
     logsUrl: checkRun.html_url,
     org,
+    repoHtmlUrl: payload.repository.html_url,
     repoName,
     type: 'completed',
   };
@@ -286,6 +300,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const { org, prNumber, repoName } = event;
+      const repositoryWhere = await webhookRepositoryWhere(
+        fastify.prisma,
+        org,
+        repoName,
+        event.repoHtmlUrl
+      );
 
       // Find the tracked PR (include Slack context for the merge notification)
       const pullRequest = await fastify.prisma.pullRequest.findFirst({
@@ -301,7 +321,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: {
           prNumber,
-          repository: { organizationName: org, repoName },
+          repository: repositoryWhere,
           status: 'OPEN',
         },
       });
@@ -518,6 +538,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { conclusion, headSha, org, repoName } = event;
       let logsUrl = event.logsUrl;
+      const repositoryWhere = await webhookRepositoryWhere(
+        fastify.prisma,
+        org,
+        repoName,
+        event.repoHtmlUrl
+      );
 
       // Find tracked PRs by commit SHA
       const pullRequests = await fastify.prisma.pullRequest.findMany({
@@ -530,7 +556,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: {
           headSha,
-          repository: { organizationName: org, repoName },
+          repository: repositoryWhere,
           status: 'OPEN',
         },
       });

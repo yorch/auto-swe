@@ -54,6 +54,8 @@ describe('POST /api/v1/work-requests', () => {
   /** The repo's installation. Null is "the singleton's", which is the default. */
   let installation: { installationId: string; isActive: boolean } | null = null;
   let orgSpentUsd: number | null = null;
+  // The repository's web base override; null is the instance host.
+  let repoGithubUrl: string | null = null;
 
   beforeAll(async () => {
     app.setValidatorCompiler(validatorCompiler);
@@ -94,11 +96,13 @@ describe('POST /api/v1/work-requests', () => {
       },
       connection: {
         findUnique: async () => ({
+          githubUrl: repoGithubUrl,
           id: 'repo-1',
           installation,
           isActive: true,
           organizationName: 'org',
           repoName: 'test',
+          shares: [],
           team: {
             memberships: [{ userId: 'user-1' }],
             organization: { id: 'org-1', monthlyBudgetUsdCents: orgBudgetCents },
@@ -426,6 +430,29 @@ describe('POST /api/v1/work-requests', () => {
     });
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.payload).error.code).toBe('WORKFLOW_ALREADY_EXISTS');
+  });
+
+  it('returns 409 for a host-qualified repo whose ticket is still running under its old id', async () => {
+    // Ids gained a host segment for repositories on another host. A run that
+    // started before that, under `eng-org-test-…`, is the same ticket on the
+    // same repository and must block a second one pushing the same branch.
+    repoGithubUrl = 'https://ghe.corp';
+    existingWorkflows = [
+      { currentStatus: 'IMPLEMENTING', temporalWorkflowId: 'eng-org-test-JIRA-1' },
+    ];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-1',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    repoGithubUrl = null;
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.message).toContain('eng-org-test-JIRA-1');
   });
 
   it('allocates an -rN workflow ID when re-submitting a finished ticket', async () => {

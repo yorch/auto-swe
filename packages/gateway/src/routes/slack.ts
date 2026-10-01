@@ -15,6 +15,7 @@ import {
   type RepoAccessGate,
   resolveRepoAccessGateOrLastKnown,
 } from '@auto-swe/shared/lib/repoAccessGate';
+import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { decideSlackRepoAccessWithGate } from '@auto-swe/shared/lib/slackRepoAccess';
 import {
   resolvePublicUrl,
@@ -1901,6 +1902,7 @@ async function handleRunModalSubmission(
   const repo = await fastify.prisma.connection.findUnique({
     include: {
       installation: { select: { installationId: true, isActive: true } },
+      shares: repoMembersSelect({ userId: true }, { userId: user.id }).shares,
       team: { select: { memberships: { where: { userId: user.id } } } },
     },
     where: { id: repoId },
@@ -1941,7 +1943,12 @@ async function handleRunModalSubmission(
     fastify.prisma,
     { role: user.role, sub: user.id },
     repo,
-    gate
+    gate,
+    undefined,
+    'start-new-work',
+    // The run is launched as the linked platform user (`launchedById` below),
+    // so it may use their own saved token and the gate judges that token.
+    'caller'
   );
   if (!decision.allowed) {
     return {
@@ -1983,7 +1990,12 @@ async function handleRunModalSubmission(
     resolvedTemplate = { templateId: def.templateId, version: def.version };
   }
 
-  const temporalWorkflowId = generateWorkflowId(ticket, repo.organizationName, repo.repoName);
+  const temporalWorkflowId = generateWorkflowId(
+    ticket,
+    repo.organizationName,
+    repo.repoName,
+    repo.githubUrl
+  );
   const { branchPrefix: slackBranchPrefix } = await resolveWorkflowDefaults();
   const branch = generateBranchName(ticket, slackBranchPrefix);
   const workRequestId = crypto.randomUUID();
@@ -1991,6 +2003,9 @@ async function handleRunModalSubmission(
     budgetTier: 'STANDARD',
     description,
     externalTicketId: ticket,
+    // The Slack request is signature-verified and the account link names the
+    // platform user, the same identity the access gate above judged.
+    launchedById: user.id,
     repoId: repo.id,
     requestPayload: JSON.stringify({ description, externalTicketId: ticket, source: 'slack' }),
     workRequestId,

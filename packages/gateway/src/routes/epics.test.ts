@@ -165,9 +165,10 @@ describe('epic routes', () => {
           ) ?? null,
       },
       connection: {
-        findMany: async (args: { where: { id?: { in: string[] }; team?: unknown } }) => {
-          // Membership-scoped query (accessibleRepoIds helper)
-          if (args.where.team) {
+        findMany: async (args: { where: { id?: { in: string[] }; AND?: unknown } }) => {
+          // Membership-scoped query (accessibleRepoIds helper): owning or
+          // shared team, ANDed with the permission requirement.
+          if (args.where.AND) {
             return repoFixtures
               .filter((r) => r.memberIds.includes(currentSub))
               .map((r) => ({ id: r.id }));
@@ -179,6 +180,7 @@ describe('epic routes', () => {
               id: r.id,
               organizationName: r.organizationName,
               repoName: r.repoName,
+              shares: [],
               team: {
                 memberships: r.memberIds.includes(currentSub) ? [{ userId: currentSub }] : [],
                 organization: { id: r.orgId, monthlyBudgetUsdCents: r.monthlyBudgetUsdCents },

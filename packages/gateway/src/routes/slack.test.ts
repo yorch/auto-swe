@@ -1289,6 +1289,7 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       installation: null,
       organizationName: 'acme',
       repoName: 'payments',
+      shares: [],
       team: { memberships: [] },
       type: 'git_repo',
     };
@@ -2047,6 +2048,7 @@ describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
     isActive: true,
     organizationName: 'acme',
     repoName: 'payments',
+    shares: [],
     team: { memberships: [{ userId: 'u1' }] },
     teamId: 'team-a',
     type: 'git_repo',

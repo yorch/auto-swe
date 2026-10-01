@@ -46,6 +46,7 @@ function repoRow(over: Record<string, unknown> = {}) {
     isActive: true,
     organizationName: 'acme',
     repoName: 'payments',
+    shares: [],
     team: { isActive: true, memberships: [{ userId: 'user-1' }] },
     type: 'git_repo',
     ...over,
@@ -270,7 +271,9 @@ describe('connectionCredentialRoutes', () => {
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload).data;
-    expect(body).toMatchObject({ enabled: true, hosts: ['github.com'] });
+    expect(body).toMatchObject({ enabled: true });
+    // The allowlist can name internal GHE hosts: platform admins only.
+    expect(body).not.toHaveProperty('hosts');
     expect(body.credentials).toEqual([
       expect.objectContaining({ connectionId: CONN, lastFour: 'abcd' }),
     ]);

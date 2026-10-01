@@ -175,6 +175,7 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
       app.prisma as unknown as { connection: { findUnique: () => Promise<unknown> } }
     ).connection.findUnique = async () => ({
       isActive: true,
+      shares: [],
       team: {
         memberships: [{ userId: USER_ID }],
         organization: { id: 'org-1', monthlyBudgetUsdCents: null },
