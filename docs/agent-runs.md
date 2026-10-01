@@ -180,7 +180,10 @@ a timeout never skips the gate.
 
 An agent run resolves its agent at GLOBAL and the repository's ORGANIZATION scope only. TEAM-, CHANNEL-
 and WORKFLOW_TEMPLATE-scope overrides do not apply, so a shared-team member never reaches the owning
-team's own agents (and the MCP connections they bind). `key@version` pins the GLOBAL lineage. The
+team's own agents (and the MCP connections they bind). `key@version` pins the GLOBAL lineage, and is
+refused (`AGENT_PIN_SHADOWED`) when the repository's organization has an active override of that key,
+because the worker resolves the organization row first and the pin would silently not apply. Launch
+without `@version` to run the override. The
 launch-time agent-version snapshot applies as for any run.
 
 A code list, `NON_LAUNCHABLE_AGENT_KEYS` (`securityReview`, `evalJudge`, `commitToMemory`,

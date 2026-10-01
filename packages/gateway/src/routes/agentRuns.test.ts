@@ -306,6 +306,18 @@ describe('POST /api/v1/agent-runs', () => {
       expect((await post({ agent: 'contentWriter@9' })).statusCode).toBe(404);
     });
 
+    it('refuses a pin when an active ORGANIZATION override would shadow it', async () => {
+      s.agents = [
+        { scope: 'GLOBAL', version: 3 },
+        { scope: 'ORGANIZATION', version: 9 },
+      ];
+      const pinned = await post({ agent: 'contentWriter@3' });
+      expect(pinned.statusCode).toBe(400);
+      expect(pinned.json().error.code).toBe('AGENT_PIN_SHADOWED');
+      // Unpinned, the override is what runs, and that is fine.
+      expect((await post({ agent: 'contentWriter' })).statusCode).toBe(201);
+    });
+
     it('rejects a malformed agent reference', async () => {
       expect((await post({ agent: 'a b' })).statusCode).toBe(400);
       expect((await post({ agent: 'a@0' })).statusCode).toBe(400);

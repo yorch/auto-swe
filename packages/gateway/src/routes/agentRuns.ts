@@ -182,6 +182,20 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
+    // The worker resolves ORGANIZATION before GLOBAL, and a version pin only
+    // applies to GLOBAL, so with an active ORG override the run would execute
+    // the org's latest version, not the one the caller named. Refuse rather
+    // than run a different agent than the one asked for.
+    if (version !== undefined && agents.some((a) => a.scope === 'ORGANIZATION')) {
+      return error(
+        reply,
+        400,
+        'AGENT_PIN_SHADOWED',
+        `'${key}' has an active organization-scope override, which a version pin cannot select; ` +
+          'launch it without @version to run the override'
+      );
+    }
+
     // Ceilings and the kill switch. A launch can only lower a ceiling.
     const settings = await resolveSettings(
       [
