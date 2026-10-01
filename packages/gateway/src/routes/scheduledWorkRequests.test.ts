@@ -64,6 +64,8 @@ describe('/api/v1/scheduled-work-requests', () => {
   /** Fail the Nth (1-based) Temporal sync of a test; null = never. */
   let failSyncAtCall: number | null = null;
   let syncCallCount = 0;
+  /** Nth (1-based) conditional row write finds the row deactivated meanwhile (count 0). */
+  let deactivateAtUpdateMany: number | null = null;
   const updateManyWheres: Array<Record<string, unknown>> = [];
   /** Teams the repo is shared with, and the caller's role in each (null = not a member). */
   let sharedTeams: Array<{ teamId: string; role: string | null }> = [];
@@ -196,6 +198,10 @@ describe('/api/v1/scheduled-work-requests', () => {
             throw new Error('db down');
           }
           updateManyWheres.push(args.where);
+          if (updateManyWheres.length === deactivateAtUpdateMany) {
+            scheduleRow = { ...scheduleRow, isActive: false };
+            return { count: 0 };
+          }
           if (rowMovedUnderneath) {
             return { count: 0 };
           }
@@ -274,6 +280,7 @@ describe('/api/v1/scheduled-work-requests', () => {
     rowMovedUnderneath = false;
     failSyncAtCall = null;
     syncCallCount = 0;
+    deactivateAtUpdateMany = null;
     updateManyWheres.length = 0;
     lastUpdateData = {};
     sharedTeams = [];
@@ -749,6 +756,38 @@ describe('/api/v1/scheduled-work-requests', () => {
       expect(scheduleUpdates[0].actsAsUserId).toBe('user-1');
     });
 
+    it('moves a stranded schedule to the owning team when it is revived', async () => {
+      // Its team (team-9) is neither the owner (team-1) nor a sharer, so the
+      // next share change would silently re-pause it.
+      scheduleRow = { ...authored(), isActive: false, teamId: 'team-9' };
+      const res = await inject({
+        method: 'PATCH',
+        payload: { isActive: true },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(scheduleUpdates[0].teamId).toBe('team-1');
+      // The claim still matches the team it was read with.
+      expect(updateManyWheres.at(-1)).toMatchObject({ teamId: 'team-9' });
+      expect(auditRows.at(-1)).toMatchObject({
+        afterJson: { actsAsUserId: 'user-1', teamId: 'team-1' },
+        beforeJson: { actsAsUserId: 'author-1', teamId: 'team-9' },
+      });
+    });
+
+    it('leaves the team alone when the reviving schedule team still has a claim', async () => {
+      sharedTeams = [{ role: 'LEAD', teamId: 'team-2' }];
+      scheduleRow = { ...authored(), isActive: false, teamId: 'team-2' };
+      await inject({
+        method: 'PATCH',
+        payload: { isActive: true },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+      expect(scheduleUpdates[0]).not.toHaveProperty('teamId');
+    });
+
     it('moves to the editor when an edit picks up a new team-default template', async () => {
       // The schedule stores no template of its own; it last ran tpl-1 v2, and
       // the team default is now v3. Any edit re-syncs it with v3 — new content
@@ -933,8 +972,9 @@ describe('/api/v1/scheduled-work-requests', () => {
       failSyncAtCall = 2;
       const res = await fire();
       expect(res.statusCode).toBe(502);
-      // Temporal holds the firer, so the row is NOT reverted to the author.
-      expect(scheduleUpdates.map((u) => u.actsAsUserId)).toEqual(['user-1']);
+      // The row is reverted first, then Temporal cannot follow, so the row is
+      // put back on the firer to match what Temporal holds.
+      expect(scheduleUpdates.map((u) => u.actsAsUserId)).toEqual(['user-1', 'author-1', 'user-1']);
       expect(auditRows.at(-1)).toMatchObject({
         actorId: 'user-1',
         afterJson: { actsAsUserId: 'user-1', event: 'acts-as-takeover-kept' },
@@ -942,17 +982,57 @@ describe('/api/v1/scheduled-work-requests', () => {
     });
 
     it('answers 409 and re-syncs Temporal from the row when the row moved under the takeover', async () => {
-      scheduleRow = owned({ isActive: false });
+      scheduleRow = owned();
       rowMovedUnderneath = true;
       const res = await fire();
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).error.code).toBe('SCHEDULE_CONFLICT');
       expect(triggeredIds).toHaveLength(0);
       expect(auditRows).toHaveLength(0);
-      // Never paused:false for a row that is not active: the final sync is the
-      // row's own state (paused, its author).
-      expect(syncCalls.at(-1)).toMatchObject({ paused: true });
+      // The final sync is the row's own state: its author.
       expect(syncCalls.at(-1)?.request.launchedById).toBe('author-1');
+    });
+
+    it('refuses to fire a paused schedule, before any takeover or write', async () => {
+      scheduleRow = owned({ isActive: false });
+      const res = await fire();
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('SCHEDULE_INACTIVE');
+      expect(syncCalls).toHaveLength(0);
+      expect(triggeredIds).toHaveLength(0);
+      expect(scheduleUpdates).toHaveLength(0);
+      expect(updateManyWheres).toHaveLength(0);
+      expect(auditRows).toHaveLength(0);
+    });
+
+    it('reverts the row only while it is as the takeover left it', async () => {
+      scheduleRow = owned({ updatedAt: new Date(5) });
+      triggerShouldFail = true;
+      await fire();
+      expect(updateManyWheres.at(-1)).toEqual({
+        actsAsUserId: 'user-1',
+        id: SCHEDULE_ID,
+        isActive: true,
+        teamId: undefined,
+        updatedAt: { gte: new Date(5), lt: new Date(6) },
+      });
+    });
+
+    it('follows a deactivation that lands between the takeover and a failed trigger', async () => {
+      scheduleRow = owned();
+      triggerShouldFail = true;
+      // Call 1 is the claim; call 2 is the conditional revert, which finds the
+      // row paused meanwhile and so does not match.
+      deactivateAtUpdateMany = 2;
+      const res = await fire();
+      expect(res.statusCode).toBe(502);
+      // Temporal is synced from the row as it now stands (paused), never from
+      // the stale active snapshot, and nothing is recorded as reverted.
+      expect(syncCalls.at(-1)).toMatchObject({ paused: true });
+      expect(syncCalls.map((c) => c.paused)).toEqual([false, true]);
+      expect(auditRows.map((a) => (a.afterJson as { event: string }).event)).toEqual([
+        'acts-as-changed',
+      ]);
     });
 
     it('refuses a takeover of an orphaned schedule', async () => {

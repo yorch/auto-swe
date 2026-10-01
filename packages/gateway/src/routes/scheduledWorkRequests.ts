@@ -829,6 +829,15 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         (body.budgetTier !== undefined && body.budgetTier !== existing.budgetTier) ||
         (body.isActive === true && !existing.isActive);
       const takesOver = rebinds && user.sub !== existing.actsAsUserId;
+      // Reviving a schedule whose team has lost its claim on the repository (it
+      // was unshared, moved, or deleted) would leave it stranded: the next share
+      // change re-pauses it. Only the owning team's lead or an ADMIN can manage
+      // such a schedule at all, so the repository's owning team adopts it.
+      const revives = body.isActive === true && !existing.isActive;
+      const movesTeam =
+        revives &&
+        repo.teamId !== existing.teamId &&
+        !repo.shares.some((s) => s.teamId === existing.teamId);
 
       // Becoming who it runs as is a launch decision about the editor, taken
       // before anything is written — the same one creating a schedule takes. It
@@ -892,6 +901,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
               ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
               ...(body.name !== undefined ? { name: body.name } : {}),
               ...(rebinds ? { actsAsUserId: user.sub } : {}),
+              ...(movesTeam ? { teamId: repo.teamId } : {}),
               templateId: nextTemplateId,
               templateVersion: nextTemplateId ? template.templateVersion : null,
             },
@@ -919,13 +929,20 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           // Taking a schedule over changes whose identity every later fire runs
           // as, and whose access it is checked against — so the transfer is
           // recorded, never silent.
-          if (rebinds && existing.actsAsUserId !== user.sub) {
+          if ((rebinds && existing.actsAsUserId !== user.sub) || movesTeam) {
             await tx.configAuditLog.create({
               data: {
                 action: 'UPDATE',
                 actorId: user.sub,
-                afterJson: { actsAsUserId: user.sub, event: 'acts-as-changed' },
-                beforeJson: { actsAsUserId: existing.actsAsUserId },
+                afterJson: {
+                  actsAsUserId: user.sub,
+                  event: 'acts-as-changed',
+                  ...(movesTeam ? { teamId: repo.teamId } : {}),
+                },
+                beforeJson: {
+                  actsAsUserId: existing.actsAsUserId,
+                  ...(movesTeam ? { teamId: existing.teamId } : {}),
+                },
                 entityId: existing.id,
                 entityType: 'ScheduledWorkRequest',
               },
@@ -980,6 +997,18 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
         });
       }
+      // A paused schedule cannot be fired by hand: Temporal would accept the
+      // trigger, but the worker refuses every fire of an inactive row, so the
+      // request would answer 202 and always fail, after a takeover had already
+      // changed whose identity it runs as. Refused before any of that.
+      if (!existing.isActive) {
+        return reply.status(409).send({
+          error: {
+            code: 'SCHEDULE_INACTIVE',
+            message: 'The schedule is paused; resume it before firing it',
+          },
+        });
+      }
       // Whoever causes a fire is who it runs as, the same rule as editing. The
       // firer is judged as themselves ('caller') whether they are the author or
       // about to become it, since either way their own saved token is what the
@@ -999,7 +1028,8 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       // Same order as PATCH: Temporal, then the (conditional) row; whichever
       // step fails puts Temporal back in step with the row as it now stands, so
       // the two never name different launchers.
-      let restoreAuthor: (() => Promise<boolean>) | null = null;
+      // The row's updatedAt as the takeover left it, for the revert's predicate.
+      let claimedAt: Date | null = null;
       if (takesOver) {
         const workRequestId = existing.workRequestId;
         const synced = workRequestId
@@ -1027,23 +1057,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
           });
         }
-        // Whether Temporal was put back to the author; a failure is the caller's
-        // to handle, because the row must then keep the firer too.
-        restoreAuthor = async () => {
-          try {
-            await fastify.temporal.syncWorkRequestSchedule(
-              buildScheduleInput(existing, template, workRequestId)
-            );
-            return true;
-          } catch (restoreErr) {
-            request.log.error(
-              { err: restoreErr, scheduleId: existing.id },
-              'fire failed and the Temporal schedule could not be restored to its author'
-            );
-            return false;
-          }
-        };
-        let claimed: boolean;
+        let claimed: Date | null;
         try {
           claimed = await fastify.prisma.$transaction(async (tx) => {
             // Conditional on what was read: if the row changed meanwhile (an
@@ -1059,8 +1073,14 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
               },
             });
             if (result.count === 0) {
-              return false;
+              return null;
             }
+            // Read inside the transaction: our own write holds the row lock, so
+            // this is exactly the state a revert must find unchanged.
+            const after = await tx.scheduledWorkRequest.findUnique({
+              select: { updatedAt: true },
+              where: { id: existing.id },
+            });
             // A takeover is recorded, never silent.
             await tx.configAuditLog.create({
               data: {
@@ -1072,12 +1092,13 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
                 entityType: 'ScheduledWorkRequest',
               },
             });
-            return true;
+            return after?.updatedAt ?? existing.updatedAt;
           });
         } catch (err) {
           await resyncTemporalFromRow(fastify, existing.id, request.log);
           throw err;
         }
+        claimedAt = claimed;
         if (!claimed) {
           // Temporal holds the firer for a row that did not take it; make it
           // match the row as it is now (which may be paused: never resurrect it).
@@ -1091,11 +1112,15 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       } catch (err) {
         request.log.error({ err }, 'failed to trigger schedule');
         // Nothing ran, so the author keeps the schedule: a takeover that did not
-        // fire anything is undone in both places, but only if Temporal can be
-        // put back. If it cannot, Temporal already holds the firer, so the row
-        // keeps the firer too rather than leave the two naming different people.
-        if (restoreAuthor) {
-          const restored = await restoreAuthor();
+        // fire anything is undone. The ROW is reverted first, and only if it is
+        // still exactly as the takeover left it; Temporal is then synced from
+        // the row as it now stands, so a deactivation or edit that landed
+        // meanwhile is what Temporal follows, never a stale snapshot. If
+        // Temporal cannot be brought to the row, it still holds the firer, so
+        // the row keeps the firer too rather than leave the two naming
+        // different people.
+        if (claimedAt) {
+          const takenAt = claimedAt;
           const audit = (event: string, extra: Record<string, unknown>) =>
             fastify.prisma.configAuditLog
               .create({
@@ -1111,52 +1136,59 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
               .catch((auditErr: unknown) => {
                 request.log.error({ err: auditErr, scheduleId: existing.id }, 'audit write failed');
               });
-          if (!restored) {
-            await audit('acts-as-takeover-kept', {
-              actsAsUserId: user.sub,
-              reason:
-                'the fire failed and the Temporal schedule could not be restored to its author',
-            });
-          } else {
-            try {
-              const reverted = await fastify.prisma.$transaction(async (tx) => {
-                const result = await tx.scheduledWorkRequest.updateMany({
-                  data: { actsAsUserId: existing.actsAsUserId },
-                  where: { actsAsUserId: user.sub, id: existing.id, teamId: existing.teamId },
-                });
-                if (result.count === 0) {
-                  return false;
-                }
-                await tx.configAuditLog.create({
-                  data: {
-                    action: 'UPDATE',
-                    actorId: user.sub,
-                    afterJson: { actsAsUserId: existing.actsAsUserId, event: 'acts-as-reverted' },
-                    beforeJson: { actsAsUserId: user.sub },
-                    entityId: existing.id,
-                    entityType: 'ScheduledWorkRequest',
-                  },
-                });
-                return true;
-              });
-              if (!reverted) {
-                // Someone changed the row after the takeover; whatever they set
-                // is the truth, so Temporal follows it.
-                await resyncTemporalFromRow(fastify, existing.id, request.log);
-              }
-            } catch (revertErr) {
-              // The row could not be reverted, so it still names the firer:
-              // put Temporal back on the firer to match, and say so.
-              request.log.error(
-                { err: revertErr, scheduleId: existing.id },
-                'fire failed and the schedule row could not be restored to its author'
-              );
-              await resyncTemporalFromRow(fastify, existing.id, request.log);
-              await audit('acts-as-takeover-kept', {
+          const keepTakeover = (reason: string) =>
+            audit('acts-as-takeover-kept', { actsAsUserId: user.sub, reason });
+          let reverted: boolean | null;
+          try {
+            const result = await fastify.prisma.scheduledWorkRequest.updateMany({
+              data: { actsAsUserId: existing.actsAsUserId },
+              where: {
                 actsAsUserId: user.sub,
-                reason: 'the fire failed and the schedule row could not be restored to its author',
+                id: existing.id,
+                isActive: existing.isActive,
+                teamId: existing.teamId,
+                updatedAt: sameMillisecond(takenAt),
+              },
+            });
+            reverted = result.count > 0;
+          } catch (revertErr) {
+            request.log.error(
+              { err: revertErr, scheduleId: existing.id },
+              'fire failed and the schedule row could not be restored to its author'
+            );
+            reverted = null;
+          }
+          if (reverted === null) {
+            // The row still names the firer: Temporal (which holds the firer)
+            // is re-synced from it, and the takeover is recorded as kept.
+            await resyncTemporalFromRow(fastify, existing.id, request.log);
+            await keepTakeover(
+              'the fire failed and the schedule row could not be restored to its author'
+            );
+          } else if (!reverted) {
+            // Someone changed the row after the takeover; whatever they set is
+            // the truth, so Temporal follows it (a pause stays a pause).
+            await resyncTemporalFromRow(fastify, existing.id, request.log);
+          } else if (await resyncTemporalFromRow(fastify, existing.id, request.log)) {
+            await audit('acts-as-reverted', { actsAsUserId: existing.actsAsUserId });
+          } else {
+            // Temporal still holds the firer: put the row back on the firer so
+            // the two agree, and say so.
+            await fastify.prisma.scheduledWorkRequest
+              .updateMany({
+                data: { actsAsUserId: user.sub },
+                where: {
+                  actsAsUserId: existing.actsAsUserId,
+                  id: existing.id,
+                  teamId: existing.teamId,
+                },
+              })
+              .catch((err: unknown) => {
+                request.log.error({ err, scheduleId: existing.id }, 'could not re-take the row');
               });
-            }
+            await keepTakeover(
+              'the fire failed and the Temporal schedule could not be restored to its author'
+            );
           }
         }
         return reply.status(502).send({

@@ -223,6 +223,7 @@ function ScheduleRow({
   const fire = useFireSchedule();
   const [error, setError] = useState<string | null>(null);
   const [confirmFire, setConfirmFire] = useState(false);
+  const [confirmResume, setConfirmResume] = useState(false);
   const me = useAuthStore((s) => s.user);
 
   // What fires actually obey is the Temporal schedule; the row is only what the
@@ -233,6 +234,13 @@ function ScheduleRow({
   // Firing by hand as someone other than the author makes the schedule run as
   // you from then on, so it is confirmed rather than a surprise.
   const takesOver = schedule.actsAs?.id !== me?.sub;
+  const actsAsName = schedule.actsAs
+    ? (schedule.actsAs.name ?? schedule.actsAs.email)
+    : 'the platform';
+  // Resuming follows what is actually running, like the badge. It makes the
+  // resumer the author, so it is confirmed like Fire when that is someone else.
+  const resume = livePaused;
+  const toggle = () => update.mutateAsync({ id: schedule.id, isActive: resume });
 
   async function run(action: () => Promise<unknown>) {
     setError(null);
@@ -250,10 +258,7 @@ function ScheduleRow({
           <div className="font-medium text-paper-100">{schedule.name}</div>
           <div className="font-mono text-[10px] text-paper-500">{schedule.externalTicketId}</div>
           {/* Whose GitHub identity fires act as; editing it or firing it by hand makes it yours. */}
-          <div className="text-[11px] text-paper-500">
-            Runs as:{' '}
-            {schedule.actsAs ? (schedule.actsAs.name ?? schedule.actsAs.email) : 'the platform'}
-          </div>
+          <div className="text-[11px] text-paper-500">Runs as: {actsAsName}</div>
         </Td>
         <Td className="py-2 pr-4 text-paper-400">
           {schedule.repository.organizationName}/{schedule.repository.repoName}
@@ -274,7 +279,7 @@ function ScheduleRow({
           {mismatch && (
             <Badge
               className="ml-2"
-              title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but Temporal has it ${live.paused ? 'paused' : 'running'}. Pause and resume it to bring them back in step.`}
+              title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but Temporal has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
               tone="brick"
               uppercase
               variant="text"
@@ -295,11 +300,12 @@ function ScheduleRow({
         <Td className="py-2 text-right">
           <div className="flex justify-end gap-1">
             <Button
-              disabled={fire.isPending}
+              disabled={fire.isPending || !schedule.isActive}
               onClick={() =>
                 takesOver ? setConfirmFire(true) : run(() => fire.mutateAsync(schedule.id))
               }
               size="sm"
+              title={schedule.isActive ? undefined : 'Paused: resume the schedule before firing it'}
               variant="ghost"
             >
               {fire.isPending ? 'Firing…' : 'Fire now'}
@@ -307,12 +313,12 @@ function ScheduleRow({
             <Button
               disabled={update.isPending}
               onClick={() =>
-                run(() => update.mutateAsync({ id: schedule.id, isActive: !schedule.isActive }))
+                resume && takesOver && !schedule.isActive ? setConfirmResume(true) : run(toggle)
               }
               size="sm"
               variant="ghost"
             >
-              {schedule.isActive ? 'Pause' : 'Resume'}
+              {resume ? 'Resume' : 'Pause'}
             </Button>
             <Button onClick={onDelete} size="sm" variant="danger">
               Delete
@@ -321,10 +327,17 @@ function ScheduleRow({
         </Td>
       </TRow>
       <ConfirmModal
+        confirmLabel="Resume and take over"
+        message={`This schedule currently runs as ${actsAsName}. Resuming it makes it run as you for every future fire, using your saved GitHub token, until someone else takes it over. The change is recorded in the audit log.`}
+        onClose={() => setConfirmResume(false)}
+        onConfirm={() => run(toggle)}
+        open={confirmResume}
+        pendingLabel="Resuming…"
+        title={`Resume "${schedule.name}" as yourself?`}
+      />
+      <ConfirmModal
         confirmLabel="Fire and take over"
-        message={`This schedule currently runs as ${
-          schedule.actsAs ? (schedule.actsAs.name ?? schedule.actsAs.email) : 'the platform'
-        }. Firing it now makes it run as you for every future fire, using your saved GitHub token, until someone else takes it over. The change is recorded in the audit log.`}
+        message={`This schedule currently runs as ${actsAsName}. Firing it now makes it run as you for every future fire, using your saved GitHub token, until someone else takes it over. The change is recorded in the audit log.`}
         onClose={() => setConfirmFire(false)}
         onConfirm={() => run(() => fire.mutateAsync(schedule.id))}
         open={confirmFire}

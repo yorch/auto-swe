@@ -169,12 +169,15 @@ to another team), its schedules on it are deactivated after the change commits, 
 audited first: the row is marked inactive and the Temporal schedule is paused. Each schedule is
 handled on its own, and a failure on one is logged and never fails the request. The worker also
 refuses to fire a schedule whose row is inactive, so a pause that did not reach Temporal still
-stops it. They stay listed, and a lead of the owning team may delete them or re-activate them,
-which makes the re-activating lead the author.
+stops it. They stay listed, and a lead of the owning team (or an admin) may delete them or
+re-activate them, which makes the re-activating person the author and moves the schedule to the
+repository's owning team (recorded in the audit log), so the next share change does not pause it
+again. A paused schedule cannot be fired by hand (`409 SCHEDULE_INACTIVE`); resume it first.
 
 Writes to a schedule row are conditional on the state the request read. An edit, a fire by hand
 and a deactivation that overlap are not merged: the loser answers `409 SCHEDULE_CONFLICT` and the
-Temporal schedule is re-synced from the row as it then stands.
+Temporal schedule is re-synced from the row as it then stands. A fire records when it ran on
+the row, so an edit that overlaps a fire can answer `409 SCHEDULE_CONFLICT` too; retry it.
 
 A team never asks to receive a share, so a shared repository never changes what that team's own
 repositories resolve to: a code task names it to reach it, and a name the team also owns resolves to

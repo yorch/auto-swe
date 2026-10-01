@@ -53,19 +53,23 @@ runs as. The launcher is stored in the Temporal schedule's own arguments, so a c
 by hand launch as the same person. Pressing **fire** follows the same rule as editing: whoever
 causes a run is who it runs as. A firer who is not the current author is judged by the access gate
 as themselves, becomes the author (recorded in the audit log), and the Temporal schedule is
-re-synced to carry them before it is triggered. If the trigger fails, the Temporal schedule is put
-back to the author and the row is reverted (both recorded in the audit log); if it cannot be put
-back, Temporal already holds the firer, so the row keeps the firer too and that is recorded. The
-row writes are conditional on the state read, so a fire that overlaps an edit or a deactivation is
-a `409 SCHEDULE_CONFLICT`. The author firing their own schedule changes nothing, and is judged as
+re-synced to carry them before it is triggered. A paused schedule cannot be fired by hand: it is
+refused with `409 SCHEDULE_INACTIVE` before anything changes, because the worker would refuse the
+fire anyway. If the trigger fails, the row is reverted to the author first, only if it is still as
+the takeover left it, and the Temporal schedule is then re-synced from the row as it stands (the
+revert is recorded in the audit log); if Temporal cannot be brought back, it already holds the
+firer, so the row keeps the firer too and that is recorded. The row writes are conditional on the
+state read, so a fire that overlaps an edit or a deactivation is a `409 SCHEDULE_CONFLICT`. The author firing their own schedule changes nothing, and is judged as
 themselves too. The schedules page asks for confirmation before a fire that would change the
 author.
 
 Each scheduled fire checks the Temporal arguments against the row before anything else: the
-launcher in the arguments must be the row's author, and the row must be active. A mismatch (a
-takeover or edit whose Temporal restore failed) is refused with a non-retryable
-`launcher-out-of-sync` reason until the schedule is saved again, so a run never uses one person's
-token on the strength of another's access. Schedules created before authors were recorded have none and run as
+launcher in the arguments must be the row's author, the row must be active (`schedule-inactive`),
+and the author must be an active user (`acting-user-missing`). A mismatch (a takeover or edit whose
+Temporal restore failed) is refused with a non-retryable `launcher-out-of-sync` reason until the
+schedule is saved again (an owning-team lead pausing it re-syncs it without taking it over;
+resuming it makes the resumer the author), so a run never uses one person's token on the strength
+of another's access. Schedules created before authors were recorded have none and run as
 nobody until someone fires or edits them.
 
 **Slack launches run as the linked platform user.** The request is signature-verified and the
@@ -191,11 +195,13 @@ verification answer in `repo_access` like any other lookup.
   for. Against a repository with no platform credential, those runs fail with a configuration
   error.
 - **A schedule runs as its author for as long as it exists.** Its author leaving the team or being
-  deactivated stops the token being used (the run falls back to the platform credential), but the
-  schedule keeps that author recorded until someone edits what it does. Schedules created before
+  deactivated makes every fire refuse with `acting-user-missing`; it does not fall back to the
+  platform credential. The schedule keeps that author recorded until an admin or team lead edits
+  or re-activates it, which takes it over. Schedules created before
   authors were recorded run as nobody until then.
 - **Overlapping changes to a schedule resolve by retry.** The loser of an edit, a fire by hand and
-  a deactivation that overlap gets `409 SCHEDULE_CONFLICT` and repeats it; Temporal is re-synced
+  a deactivation that overlap gets `409 SCHEDULE_CONFLICT` and repeats it (a fire by hand of a paused
+  schedule is `409 SCHEDULE_INACTIVE` instead: resume it first); Temporal is re-synced
   from the row on a best-effort basis, and the out-of-sync refusal above is what stops a fire if
   that re-sync also fails.
 - **A Slack launch is only as trustworthy as the account link.** Whoever controls the linked Slack
