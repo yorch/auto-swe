@@ -189,6 +189,25 @@ function assertSidebarCovers(pages) {
   }
 }
 
+/**
+ * Headings that collide with an entry Starlight adds itself.
+ *
+ * Starlight puts an "Overview" entry, pointing at the top of the page, first in
+ * every table of contents. A doc whose own section is titled "Overview" therefore
+ * lists it twice, and the two entries go to different places.
+ */
+const RESERVED_HEADING = /^#{2,6}\s+Overview\s*$/im;
+
+/** Throws when a published doc uses a heading Starlight reserves. */
+export function assertNoReservedHeadings(source, markdown) {
+  if (RESERVED_HEADING.test(markdown)) {
+    throw new Error(
+      `${source} has a section titled "Overview", which Starlight already adds to every ` +
+        "page's table of contents. Retitle the section for what it covers."
+    );
+  }
+}
+
 async function main() {
   const pages = await collectPages();
   assertSidebarCovers(pages);
@@ -208,6 +227,7 @@ async function main() {
   for (const page of pages) {
     const raw = await readFile(join(REPO_ROOT, page.source), 'utf8');
     const derived = extractFrontmatter(raw);
+    assertNoReservedHeadings(page.source, derived.body);
     const body = rewriteMarkdownLinks(derived.body, {
       ref: REPO_REF,
       repoUrl: REPO_URL,

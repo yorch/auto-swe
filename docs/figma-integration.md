@@ -1,4 +1,4 @@
-# Figma Integration
+# Figma integration
 
 Design context for UI work, so a frontend ticket is implemented *from the design* rather than
 guessed from prose. Two independent paths, at different altitudes:

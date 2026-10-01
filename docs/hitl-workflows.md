@@ -1,10 +1,10 @@
-# Human-In-The-Loop (HITL) Workflows
+# Human-in-the-loop workflows
 
 > How to pause a running workflow, collect human input or approval, and resume execution.
 
 ---
 
-## Overview
+## What a HITL node does
 
 HITL nodes let you insert a human decision point anywhere in a workflow spec. When the interpreter reaches a HITL node it:
 

@@ -10,9 +10,23 @@ import {
   SIDEBAR,
   siteUrl,
 } from './manifest.mjs';
-import { extractFrontmatter } from './syncDocs.mjs';
+import { assertNoReservedHeadings, extractFrontmatter } from './syncDocs.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
+
+describe('assertNoReservedHeadings', () => {
+  it('rejects a section titled Overview, which Starlight already lists', () => {
+    expect(() => assertNoReservedHeadings('docs/x.md', 'Intro.\n\n## Overview\n\nText.\n')).toThrow(
+      /docs\/x\.md has a section titled "Overview"/
+    );
+  });
+
+  it('allows Overview as a word inside a longer heading or in prose', () => {
+    expect(() =>
+      assertNoReservedHeadings('docs/x.md', '## Overview of the engine\n\nAn overview.\n')
+    ).not.toThrow();
+  });
+});
 
 describe('extractFrontmatter', () => {
   it('takes the title from the H1 and removes it from the body', () => {

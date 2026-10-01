@@ -1,4 +1,4 @@
-# Production Deployment
+# Production deployment
 
 End-to-end runbook for taking auto-swe from a fresh clone to a running production deployment. For local development, use the quickstart in [`README.md`](../README.md). For OAuth provider configuration, see [`oauth-setup.md`](./oauth-setup.md).
 

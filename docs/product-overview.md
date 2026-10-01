@@ -1,4 +1,4 @@
-# Product Overview — auto-swe
+# Product overview
 
 > What auto-swe is, who it is for, the value it delivers, the end-to-end use cases it covers, and what is deliberately out of scope. For the technical "how" see [architecture.md](./architecture.md) and [agents.md](./agents.md).
 

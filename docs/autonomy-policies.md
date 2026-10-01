@@ -1,4 +1,4 @@
-# Autonomy Policies
+# Autonomy policies
 
 > How a run decides whether it may act on its own or must stop and ask a person. Policies are
 > resolved per run, cascade from template to team to global, and fail closed. For the human-facing

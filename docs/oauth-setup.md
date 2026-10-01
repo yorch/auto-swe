@@ -1,4 +1,4 @@
-# OAuth setup — GitHub, Google & Okta
+# OAuth setup
 
 Step-by-step for wiring **GitHub**, **Google**, and **Okta** (enterprise SSO) sign-in via better-auth. Magic-link works out of the box and needs no provider registration.
 

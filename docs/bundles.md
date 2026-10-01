@@ -1,4 +1,4 @@
-# Bundles — Distribution & Reuse
+# Bundles
 
 > A bundle is a versioned, self-describing export of a tagged set of library entities (agents,
 > skills, scanner patterns, and templates). It is the portable unit for moving reusable content

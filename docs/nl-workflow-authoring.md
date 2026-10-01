@@ -1,4 +1,4 @@
-# Natural-Language Workflow Authoring
+# Natural-language workflow authoring
 
 > Describe an automation in plain language; an AI agent assembles a valid
 > `WorkflowSpec` and saves it as a **DRAFT** template for a human to review,
