@@ -7,6 +7,7 @@ import { ApplicationFailure, log } from '@temporalio/activity';
 import { currentActivityType, currentWorkflowId } from './activityContext.js';
 import { gatedStepNames } from './config/deploymentAgents.js';
 import { STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
+import { recordBudgetExceeded, recordLlmCallMetrics } from './metrics.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -369,6 +370,15 @@ export async function recordLlmUsage(
   const inputTokens = usage.inputTokens ?? 0;
   const outputTokens = usage.outputTokens ?? 0;
   const callCost = calculateCostUsd(modelSpec, inputTokens, outputTokens);
+  // Before the ledger: a call with no ledger row (channel, PRD, authoring) was
+  // still made and paid for.
+  recordLlmCallMetrics({
+    agent: role,
+    costUsd: callCost,
+    inputTokens,
+    model: modelSpec,
+    outputTokens,
+  });
 
   const attribution = await tracer.startActiveSpan(
     spanName,
@@ -466,6 +476,7 @@ export async function recordLlmUsage(
         });
 
         if (newInput > limits.inputTokens || newOutput > limits.outputTokens) {
+          recordBudgetExceeded(tier);
           throw ApplicationFailure.nonRetryable(
             `Budget exceeded for tier ${tier}: ${newInput}/${limits.inputTokens} input tokens, ${newOutput}/${limits.outputTokens} output tokens used ($${newCost.toFixed(4)})`,
             'BUDGET_EXCEEDED',

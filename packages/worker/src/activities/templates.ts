@@ -10,6 +10,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { Context } from '@temporalio/activity';
 import { logError } from '../lib/activityLog.js';
+import { recordRunFinalized } from '../lib/metrics.js';
 import {
   notifySlackRunComplete,
   notifySlackStepFailure,
@@ -491,6 +492,8 @@ export async function finalizeWorkflowRun(
   if (!didFinalize) {
     return;
   }
+  // Counted only by the attempt that finalized, so a retried activity cannot double it.
+  recordRunFinalized(status);
 
   // The side effects below (Slack notifications + channel task finalization +
   // tracker sync) are non-idempotent. Only fire them when we actually finalized

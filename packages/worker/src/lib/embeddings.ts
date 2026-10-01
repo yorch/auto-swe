@@ -5,6 +5,7 @@ import { embed } from 'ai';
 import { currentActivityType, currentAttempt, currentWorkflowId } from './activityContext.js';
 import { resolveEmbeddingConfig } from './config/resolver.js';
 import { calculateCostUsd } from './costTracking.js';
+import { recordLlmCallMetrics } from './metrics.js';
 import { parseProviderModelSpec } from './providerUtils.js';
 import { EMBEDDING_AGENT_KEY } from './traceTotals.js';
 
@@ -144,6 +145,15 @@ async function recordEmbeddingUsage(
   }
   const costUsd =
     tokens === null ? null : Math.round(calculateCostUsd(spec, tokens, 0) * 1e6) / 1e6;
+  if (tokens !== null && costUsd !== null) {
+    recordLlmCallMetrics({
+      agent: EMBEDDING_AGENT_KEY,
+      costUsd,
+      inputTokens: tokens,
+      model: spec,
+      outputTokens: 0,
+    });
+  }
   try {
     const run = await prisma.workflowRun.findUnique({
       select: { id: true },

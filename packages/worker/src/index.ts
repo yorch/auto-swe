@@ -11,6 +11,7 @@ import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { assertBuiltinStepsRegistered } from '@auto-swe/shared/workflow';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
+import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
 import { initTemporalClient } from './lib/temporalClient.js';
 
@@ -76,6 +77,8 @@ async function run() {
     // Read once at boot from the config registry (`workspace.maxConcurrentActivities`,
     // which still falls back to WORKER_MAX_CONCURRENT_ACTIVITIES), so the value
     // is visible in the dashboard rather than only in the process environment.
+    // One span + duration sample per activity attempt; see lib/activitySpans.ts.
+    interceptors: { activity: [activitySpanInterceptor] },
     maxConcurrentActivityTaskExecutions: maxConcurrentActivities,
     namespace: 'default',
     taskQueue: 'engineering-workflow',

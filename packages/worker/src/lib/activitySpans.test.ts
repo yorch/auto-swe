@@ -1,0 +1,89 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { span, started, recordDuration } = vi.hoisted(() => ({
+  recordDuration: vi.fn(),
+  span: { end: vi.fn(), recordException: vi.fn(), setStatus: vi.fn() },
+  started: [] as Array<{ name: string; attributes: Record<string, unknown> }>,
+}));
+
+vi.mock('@opentelemetry/api', () => ({
+  SpanStatusCode: { ERROR: 2 },
+  trace: {
+    getTracer: () => ({
+      startActiveSpan: (
+        name: string,
+        opts: { attributes: Record<string, unknown> },
+        fn: (s: typeof span) => unknown
+      ) => {
+        started.push({ attributes: opts.attributes, name });
+        return fn(span);
+      },
+    }),
+  },
+}));
+
+vi.mock('./metrics.js', () => ({ recordActivityDuration: recordDuration }));
+
+import { activitySpanInterceptor } from './activitySpans.js';
+
+const ctx = {
+  info: {
+    activityType: 'executeImplementation',
+    attempt: 2,
+    taskQueue: 'engineering-workflow',
+    workflowExecution: { runId: 'r', workflowId: 'eng-acme-svc-JIRA-1' },
+    workflowType: 'RunnableWorkflow',
+  },
+} as never;
+
+const input = { args: [], headers: {} };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  started.length = 0;
+});
+
+describe('activitySpanInterceptor', () => {
+  it('runs the activity inside a span named for it, tagged with its workflow', async () => {
+    const next = vi.fn(async () => 'result');
+
+    const out = await activitySpanInterceptor(ctx).inbound?.execute?.(input, next);
+
+    expect(out).toBe('result');
+    expect(next).toHaveBeenCalledWith(input);
+    expect(started).toEqual([
+      {
+        attributes: expect.objectContaining({
+          'temporal.attempt': 2,
+          'temporal.workflow_id': 'eng-acme-svc-JIRA-1',
+        }),
+        name: 'activity.executeImplementation',
+      },
+    ]);
+    expect(span.end).toHaveBeenCalled();
+    expect(recordDuration).toHaveBeenCalledWith(
+      'executeImplementation',
+      'success',
+      expect.any(Number)
+    );
+  });
+
+  it('marks the span failed, still ends it, and rethrows', async () => {
+    const boom = new Error('docker went away');
+
+    await expect(
+      activitySpanInterceptor(ctx).inbound?.execute?.(input, async () => {
+        throw boom;
+      })
+    ).rejects.toBe(boom);
+
+    expect(span.recordException).toHaveBeenCalledWith(boom);
+    expect(span.setStatus).toHaveBeenCalledWith({ code: 2, message: 'docker went away' });
+    expect(span.end).toHaveBeenCalled();
+    expect(recordDuration).toHaveBeenCalledWith(
+      'executeImplementation',
+      'failure',
+      expect.any(Number)
+    );
+  });
+});
