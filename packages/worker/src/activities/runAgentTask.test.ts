@@ -78,9 +78,22 @@ vi.mock('../lib/config/contextLookup.js', () => ({
   })),
 }));
 vi.mock('../lib/config/agentResolver.js', () => ({
-  resolveAgent: vi.fn(async (key: string) => ({ key, toolKeys: m.toolKeys, version: 3 })),
+  resolveAgent: vi.fn(async (key: string) => ({
+    key,
+    model: { apiBase: undefined, apiKey: 'k', spec: 'anthropic/x', systemPrompt: null },
+    skills: [],
+    toolKeys: m.toolKeys,
+    version: 3,
+  })),
 }));
-vi.mock('../lib/config/agentSpec.js', () => ({ resolveAgentSpec: m.resolveAgentSpec }));
+// The REAL resolveAgentSpec runs (it intersects the offered tools with the
+// agent's toolKeys again), so the tool tests see what the agent is really given.
+vi.mock('../lib/config/agentSpec.js', async (orig) => {
+  const actual = await orig<typeof import('../lib/config/agentSpec.js')>();
+  m.resolveAgentSpec.mockImplementation(actual.resolveAgentSpec);
+  return { resolveAgentSpec: m.resolveAgentSpec };
+});
+vi.mock('../lib/models.js', () => ({ resolveModel: vi.fn(() => 'model') }));
 vi.mock('../lib/config/mcpConnection.js', () => ({ resolveAgentMcpUrl: vi.fn(async () => null) }));
 vi.mock('../agents/mcpTools.js', () => ({ loadMcpTools: vi.fn() }));
 vi.mock('../agents/workspaceTools.js', () => ({
@@ -166,11 +179,6 @@ beforeEach(() => {
     .mockResolvedValueOnce(m.agentWs as never)
     .mockResolvedValueOnce(m.trustedWs as never);
   m.agentWs.exec.mockResolvedValue('base-sha\n');
-  m.resolveAgentSpec.mockResolvedValue({
-    agentKey: 'contentWriter',
-    systemPrompt: 'sys',
-    tools: {},
-  });
   m.runAgent.mockResolvedValue({ costUsd: 0.5, stepCount: 4, text: 'done' });
   m.commit.mockResolvedValue({ empty: false, sha: GATED.sha });
   m.gate.mockResolvedValue(GATED);
@@ -299,25 +307,40 @@ describe('bounds', () => {
 });
 
 describe('tool grants and agent scope', () => {
-  const offered = () =>
-    Object.keys(m.resolveAgentSpec.mock.calls[0]?.[0].availableTools as object).sort();
+  /** The tools the agent loop is actually handed, after the real resolution. */
+  const granted = () => {
+    const spec = m.runAgent.mock.calls[0]?.[0] as { tools: Record<string, unknown> };
+    return Object.keys(spec.tools).sort();
+  };
 
   it('toolKeys null grants the read tools only', async () => {
     m.toolKeys = null;
     await runAgentTask({ request: request() });
-    expect(offered()).toEqual(['listDirectory', 'readFile']);
+    expect(granted()).toEqual(['listDirectory', 'readFile']);
   });
 
-  it.each([[[]], [['mcp']]])('toolKeys %j does not grant write tools either', async (keys) => {
-    m.toolKeys = keys as string[];
+  it('toolKeys [] grants no tools at all', async () => {
+    m.toolKeys = [];
     await runAgentTask({ request: request() });
-    expect(offered()).toEqual(['listDirectory', 'readFile']);
+    expect(granted()).toEqual([]);
   });
 
-  it('grants a write tool only when it is named', async () => {
+  it('toolKeys ["mcp"] grants no workspace tool (MCP only)', async () => {
+    m.toolKeys = ['mcp'];
+    await runAgentTask({ request: request() });
+    expect(granted()).toEqual([]);
+  });
+
+  it('grants a write tool only when it is named, and only the ones named', async () => {
     m.toolKeys = ['writeFile', 'bash'];
     await runAgentTask({ request: request() });
-    expect(offered()).toEqual(['bash', 'writeFile']);
+    expect(granted()).toEqual(['bash', 'writeFile']);
+  });
+
+  it('naming a read tool alone does not add a write tool', async () => {
+    m.toolKeys = ['readFile'];
+    await runAgentTask({ request: request() });
+    expect(granted()).toEqual(['readFile']);
   });
 
   it('resolves the agent with no team, template or channel scope (shared-team launch safe)', async () => {

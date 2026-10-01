@@ -7,14 +7,18 @@ import {
 } from './agentRunTools.js';
 
 describe('agent run tool grants', () => {
+  it('null (an agent with no opinion about tools) grants the read tools only', () => {
+    expect(grantedWorkspaceToolIds(null)).toEqual([...READ_TOOL_IDS]);
+    expect(grantsWriteTools(null)).toBe(false);
+  });
+
   it.each([
-    ['null (an agent with no opinion about tools)', null],
     ['an empty list', []],
     ['mcp only', ['mcp']],
     ['an unknown key', ['frobnicate']],
-  ])('%s grants the read tools only, never bash or writeFile', (_label, keys) => {
-    expect(grantedWorkspaceToolIds(keys as string[] | null)).toEqual([...READ_TOOL_IDS]);
-    expect(grantsWriteTools(keys as string[] | null)).toBe(false);
+  ])('%s grants no workspace tool at all', (_label, keys) => {
+    expect(grantedWorkspaceToolIds(keys)).toEqual([]);
+    expect(grantsWriteTools(keys)).toBe(false);
   });
 
   it('grants a write tool only when it is named', () => {

@@ -102,11 +102,11 @@ that is deliberately stricter than the implementer's:
 
 | `Agent.toolKeys` | Granted workspace tools |
 |---|---|
-| `null`, `[]`, or a list naming no workspace tool (`["mcp"]`) | `readFile`, `listDirectory` |
-| names `writeFile` and/or `bash` | exactly the workspace tools named |
+| `null` (no opinion) | `readFile`, `listDirectory` |
+| a list | exactly the workspace tools it names; `[]` and `["mcp"]` grant none |
 
-A write tool is granted only when it is **named**. The implementer reads `null`, `[]` and "no workspace
-tool listed" as every tool; applied to arbitrary library agents that would hand `bash` and `writeFile`
+A write tool is granted only when it is **named**, so `toolKeys` is an allowlist and `[]` really means no
+tools. The implementer reads `null`, `[]` and "no workspace tool listed" as every tool; applied to arbitrary library agents that would hand `bash` and `writeFile`
 to every agent that has no opinion about tools (`contentWriter`, `supportResponder` and the reviewer
 personas all seed with `toolKeys: null`), and an agent run can publish what the agent writes.
 
