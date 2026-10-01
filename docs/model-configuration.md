@@ -107,6 +107,13 @@ credential **Test** — and shows the ones nothing prices, each with an **Add** 
 id, kind and display name. Discovery only suggests: it writes nothing, so a discovered model is not
 "known" until an admin adds it with a price.
 
+**The workflow editor's cost estimate** prices each step from the same source. A step's
+`costHint` names a role; `GET /model-catalog/role-pricing` — readable by any signed-in user, since
+template authors cannot read the agent library — returns, per role, the model its GLOBAL agent runs
+(following `inheritsModelFrom`) and that model's catalog price, else its built-in one. A role whose
+model nothing prices keeps the estimator's default, which tracks the seeded agents' built-in prices
+(`costEstimator.test.ts` fails when they drift apart).
+
 **Setting a price** — for a negotiated rate, a self-hosted model (`0`/`0`), or a model the built-in
 table lacks — is a Catalog tab edit, or a call to the catalog API under
 `/api/v1/platform/model-catalog` (recipes in [Scripted operations](#scripted-operations)). Any signed-in user can read the catalog; every write
@@ -367,6 +374,9 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
   unpriced model is still capped there, but every USD-denominated limit — the organization monthly
   budget, channel budgets and the channel hold estimate — reads its spend as $0 and never stops it.
+- **The editor's cost estimate prices GLOBAL defaults.** It uses the model each role's GLOBAL agent
+  runs, so a team, organization or template override of that agent's model is not reflected, and
+  token counts come from each step's static `costHint`, not from measured runs.
 - **Discovery runs only on demand, through GLOBAL credentials.** Nothing checks providers on a
   schedule, and a model reachable only through a team or organization credential is not listed.
   It suggests by name, not by capability: speech, transcription, image, video and moderation models

@@ -36,6 +36,7 @@ import {
 } from '@/components/workflow/templateNav';
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { useRolePricing } from '@/hooks/useModelCatalog';
 import { useLedTeamIds } from '@/hooks/useTeams';
 import {
   useCreateWorkflowVersion,
@@ -52,6 +53,7 @@ import {
 } from '@/hooks/useTemplates';
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
+import { estimatorPricing } from '@/lib/modelCatalog';
 import { validateRouteParam } from '@/lib/routeParams';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { formatCost, formatDuration, formatPercent, formatRelativeTime } from '@/lib/utils';
@@ -595,12 +597,18 @@ export default function TemplateDetailPage({ params }: PageProps) {
     () => (stepRegistry ? new Map(stepRegistry.map((s) => [s.name, s as StepMetadata])) : null),
     [stepRegistry]
   );
+  // Each role at the price of the model its GLOBAL agent runs today; a role
+  // the catalog cannot price keeps the estimator's built-in default.
+  const { data: rolePrices } = useRolePricing();
   const costEstimate = useMemo(() => {
     if (!visualSpec || !stepRegistryByName) {
       return null;
     }
-    return estimateSpecCost(visualSpec, { stepLookup: (name) => stepRegistryByName.get(name) });
-  }, [visualSpec, stepRegistryByName]);
+    return estimateSpecCost(visualSpec, {
+      pricing: rolePrices ? estimatorPricing(rolePrices) : undefined,
+      stepLookup: (name) => stepRegistryByName.get(name),
+    });
+  }, [visualSpec, stepRegistryByName, rolePrices]);
 
   if (!id) {
     return <TemplateNotFound />;

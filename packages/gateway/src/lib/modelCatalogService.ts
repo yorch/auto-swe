@@ -197,3 +197,77 @@ export async function findUnpricedSpecs(
     }))
     .sort((a, b) => a.spec.localeCompare(b.spec));
 }
+
+export interface RolePrice {
+  /** The model the role's GLOBAL agent runs, after following `inheritsModelFrom`. */
+  modelSpec: string;
+  inputUsdPerMTok: number;
+  outputUsdPerMTok: number;
+}
+
+/** How far `inheritsModelFrom` is followed before a chain is treated as broken. */
+const MAX_INHERIT_DEPTH = 5;
+
+/**
+ * Per-role prices for the workflow editor's cost estimate: for each of `roles`
+ * (agent keys), the model its latest active GLOBAL agent runs — following
+ * `inheritsModelFrom` as the resolver does — priced from its catalog row, else
+ * the built-in table. A role whose model has no price is left out, so the
+ * estimator falls back to its default for that role rather than show $0.
+ *
+ * Only GLOBAL agents: the editor estimates a template, not a run, so team and
+ * template overrides are not known here.
+ */
+export async function rolePricing(
+  prisma: PrismaClient,
+  roles: readonly string[]
+): Promise<Record<string, RolePrice>> {
+  const [agents, catalog] = await Promise.all([
+    runUnscoped('editor estimate reads the models of the GLOBAL agents', ['Agent'], () =>
+      prisma.agent.findMany({
+        orderBy: { version: 'desc' },
+        select: { inheritsModelFrom: true, key: true, modelSpec: true },
+        where: { isActive: true, scope: 'GLOBAL' },
+      })
+    ),
+    prisma.modelCatalogEntry.findMany({
+      select: { inputUsdPerMTok: true, modelId: true, outputUsdPerMTok: true, provider: true },
+    }),
+  ]);
+  // Ordered by version descending, so the first row per key is the latest.
+  const latest = new Map<string, { modelSpec: string | null; inheritsModelFrom: string | null }>();
+  for (const a of agents) {
+    if (!latest.has(a.key)) {
+      latest.set(a.key, a);
+    }
+  }
+  const prices = new Map(
+    catalog
+      .filter((r) => r.inputUsdPerMTok >= 0 && r.outputUsdPerMTok >= 0)
+      .map((r) => [`${r.provider}/${r.modelId}`, r])
+  );
+  const specFor = (key: string): string | null => {
+    let current = latest.get(key);
+    for (let depth = 0; current && depth < MAX_INHERIT_DEPTH; depth++) {
+      if (current.modelSpec) {
+        return current.modelSpec;
+      }
+      current = current.inheritsModelFrom ? latest.get(current.inheritsModelFrom) : undefined;
+    }
+    return null;
+  };
+
+  const result: Record<string, RolePrice> = {};
+  for (const role of roles) {
+    const spec = specFor(role);
+    const price = spec ? (prices.get(spec) ?? builtinModelFor(spec)) : undefined;
+    if (spec && price) {
+      result[role] = {
+        inputUsdPerMTok: price.inputUsdPerMTok,
+        modelSpec: spec,
+        outputUsdPerMTok: price.outputUsdPerMTok,
+      };
+    }
+  }
+  return result;
+}

@@ -82,3 +82,25 @@ export function divergesFromBuiltin(e: ModelCatalogEntry): boolean {
       e.builtin.status !== e.status)
   );
 }
+
+/** A role's price as `/model-catalog/role-pricing` returns it. */
+export interface RolePrice {
+  modelSpec: string;
+  inputUsdPerMTok: number;
+  outputUsdPerMTok: number;
+}
+
+/**
+ * The cost estimator's per-role `pricing` override from live role prices. A role
+ * the gateway could not price is absent, so the estimator keeps its default.
+ */
+export function estimatorPricing(
+  roles: Record<string, RolePrice>
+): Record<string, { inputUsdPerM: number; outputUsdPerM: number }> {
+  return Object.fromEntries(
+    Object.entries(roles).map(([role, p]) => [
+      role,
+      { inputUsdPerM: p.inputUsdPerMTok, outputUsdPerM: p.outputUsdPerMTok },
+    ])
+  );
+}

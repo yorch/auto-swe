@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   divergesFromBuiltin,
+  estimatorPricing,
   formatPrice,
   type ModelCatalogEntry,
   modelSpecOptions,
@@ -83,5 +84,19 @@ describe('divergesFromBuiltin', () => {
       false
     );
     expect(divergesFromBuiltin(entry({ isCustomized: true }))).toBe(false);
+  });
+});
+
+describe('estimatorPricing', () => {
+  it("maps each role's live price onto the estimator's rate shape", () => {
+    expect(
+      estimatorPricing({
+        implementer: {
+          inputUsdPerMTok: 4,
+          modelSpec: 'anthropic/claude-opus-5-5',
+          outputUsdPerMTok: 20,
+        },
+      })
+    ).toEqual({ implementer: { inputUsdPerM: 4, outputUsdPerM: 20 } });
   });
 });

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { ModelCatalogEntry, ModelKind, ModelStatus } from '@/lib/modelCatalog';
+import type { ModelCatalogEntry, ModelKind, ModelStatus, RolePrice } from '@/lib/modelCatalog';
 
 /** A spec in use that nothing prices, with where it is used and what it likely meant. */
 export interface UnpricedModel {
@@ -100,5 +100,15 @@ export function useDiscoverModels() {
   return useMutation({
     mutationFn: () =>
       api.post<{ data: ProviderDiscovery[] }>(`${BASE}/discover`, {}).then((r) => r.data),
+  });
+}
+
+/// Live per-role prices for the workflow editor's cost estimate. Readable by
+/// any signed-in user; roles the gateway cannot price are absent.
+export function useRolePricing() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: Record<string, RolePrice> }>(`${BASE}/role-pricing`).then((r) => r.data),
+    queryKey: ['model-catalog', 'role-pricing'],
   });
 }
