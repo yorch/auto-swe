@@ -20,6 +20,23 @@ function isOnPublicAuthPage(): boolean {
   return ['/login', '/reset-password'].some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+/**
+ * A non-2xx gateway response. Extends `Error` with the message as before, so
+ * every existing `errMsg(err)` caller is unchanged, and adds the HTTP status and
+ * the gateway's machine-readable `error.code` for callers that branch on it.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
 export class ApiClient {
   private accessToken: string | null = null;
   private refreshPromise: Promise<boolean> | null = null;
@@ -112,7 +129,7 @@ export class ApiClient {
             this.expireSession();
           }
           if (!retryResponse.ok) {
-            throw new Error(await this.extractErrorMessage(retryResponse));
+            throw await this.toApiError(retryResponse);
           }
           return this.parseBody<T>(retryResponse);
         }
@@ -122,7 +139,7 @@ export class ApiClient {
     }
 
     if (!response.ok) {
-      throw new Error(await this.extractErrorMessage(response));
+      throw await this.toApiError(response);
     }
 
     return this.parseBody<T>(response);
@@ -155,17 +172,15 @@ export class ApiClient {
     throw new Error(hadSession ? 'Session expired' : 'Not signed in');
   }
 
-  private async extractErrorMessage(res: Response): Promise<string> {
+  private async toApiError(res: Response): Promise<ApiError> {
     const body: unknown = await res.json().catch(() => ({}));
-    if (
-      isRecord(body) &&
-      isRecord(body.error) &&
-      typeof body.error.message === 'string' &&
-      body.error.message.length > 0
-    ) {
-      return body.error.message;
-    }
-    return `HTTP ${res.status}`;
+    const err = isRecord(body) && isRecord(body.error) ? body.error : null;
+    const message =
+      err && typeof err.message === 'string' && err.message.length > 0
+        ? err.message
+        : `HTTP ${res.status}`;
+    const code = err && typeof err.code === 'string' ? err.code : null;
+    return new ApiError(message, res.status, code);
   }
 
   private tryRefresh(): Promise<boolean> {
