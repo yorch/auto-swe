@@ -75,7 +75,9 @@ for good error messages, but the template is reachable from other launch paths
 - the ceilings, the kill switch and the concurrency cap (sections 6 and 7).
 
 The activity makes a single attempt: a retry would re-spend and could re-publish. Its Temporal timeout
-(5 h) is only a backstop; the real wall-clock bound is the per-run deadline inside the activity.
+(6 h) is only a backstop; the real wall-clock bound is the per-run deadline inside the activity. The
+timeout is the setting's hard maximum (4 h) plus 2 h of headroom for the clones, export, scan and push
+around the loop, so a run at the ceiling is not killed mid-delivery.
 
 ### The hidden template
 

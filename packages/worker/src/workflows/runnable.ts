@@ -44,6 +44,7 @@ import {
   T_30M,
   T_30S,
   T_60M,
+  T_AGENT_RUN_ACTIVITY,
 } from './proxyOptions.js';
 
 /**
@@ -189,12 +190,13 @@ const agentNodeActivities = proxyActivities<
 // up to the platform's wall-clock ceiling (max 4 h), then a trusted-container
 // gate and push. Single attempt, because a retry would re-spend and could
 // re-publish; `startToCloseTimeout` is only a backstop (the real bound is the
-// per-run deadline inside the activity) and must exceed the ceiling plus the
-// clone, export, scan and push around it.
+// per-run deadline inside the activity). It is derived from the setting's hard
+// maximum plus a documented headroom for the clone, export, scan and push around
+// the loop (see `T_AGENT_RUN_ACTIVITY` in proxyOptions.ts).
 const agentTaskActivities = proxyActivities<Pick<typeof activitiesType, 'runAgentTask'>>({
   heartbeatTimeout: T_5M,
   retry: RETRY_SINGLE_ATTEMPT,
-  startToCloseTimeout: '5h',
+  startToCloseTimeout: T_AGENT_RUN_ACTIVITY,
 });
 
 // Evals P2: declarative `eval` node. Runs scorers (assert/trajectory + judge

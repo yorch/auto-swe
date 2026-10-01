@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { MAX_FANOUT_CONCURRENCY } from '../workflow/spec.js';
 import type { SettingDefinition } from './types.js';
@@ -411,7 +412,7 @@ export const SETTING_DEFINITIONS = {
     requiredRole: 'ADMIN',
     restartRequired: false,
     runPinned: false,
-    schema: positiveInt.min(60).max(14_400),
+    schema: positiveInt.min(60).max(AGENT_RUN_MAX_WALL_CLOCK_SECONDS),
     unit: 'seconds',
   }),
 

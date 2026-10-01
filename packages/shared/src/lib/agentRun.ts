@@ -103,6 +103,13 @@ export const AGENT_RUN_MAX_GATED_DIFF_CHARS = 300_000;
 /** Longest agent text kept in the run output. */
 export const AGENT_RUN_MAX_TEXT_CHARS = 20_000;
 /** Most changed files a delivered run may publish. */
+/**
+ * Hard upper bound of `workspace.agentRunMaxWallClockSeconds` (4 h). The
+ * workflow's activity timeout is derived from it
+ * (`workflows/proxyOptions.ts` `T_AGENT_RUN_ACTIVITY_SECONDS`, which cannot
+ * import this value because workflow code runs in an isolate; a test pins the two).
+ */
+export const AGENT_RUN_MAX_WALL_CLOCK_SECONDS = 14_400;
 export const AGENT_RUN_MAX_CHANGED_FILES = 500;
 /** Largest single changed file a delivered run may publish. */
 export const AGENT_RUN_MAX_FILE_BYTES = 1_000_000;
