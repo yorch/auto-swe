@@ -14,9 +14,12 @@ const WORK_REQUEST_ID = 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb';
 describe('POST /work-requests/:id/retry', () => {
   let app: FastifyInstance;
   let started: string[];
+  /** The snapshot template row the retry looks up; null = an ordinary template. */
+  let snapshotTemplate: { origin: string | null; teamId: string | null } | null;
 
   beforeEach(async () => {
     started = [];
+    snapshotTemplate = null;
     app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
@@ -70,6 +73,7 @@ describe('POST /work-requests/:id/retry', () => {
           templateVersion: 2,
         }),
       },
+      workflowTemplate: { findFirst: async () => snapshotTemplate },
     };
     app.decorate('prisma', prismaMock as unknown as never);
     app.decorate('temporal', {
@@ -97,5 +101,18 @@ describe('POST /work-requests/:id/retry', () => {
     expect(data.temporalWorkflowId).toBe(started[0]);
     expect(data.workRequestId).toBe(WORK_REQUEST_ID);
     expect(data.workflowIds).toEqual(['aw-new']);
+  });
+
+  it('refuses to retry an agent run (its payload is dropped and its branch would collide)', async () => {
+    snapshotTemplate = { origin: 'system:agent-run', teamId: null };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      payload: {},
+      url: `/api/v1/work-requests/${WORK_REQUEST_ID}/retry`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('USE_AGENT_RUN_RERUN');
+    expect(started).toHaveLength(0);
   });
 });
