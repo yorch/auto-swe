@@ -42,18 +42,51 @@ const TH_VARIANT: Record<ThVariant, string> = {
   plain: 'px-4 py-3 font-medium',
 };
 
+export type SortDirection = 'ascending' | 'descending' | 'none';
+
+/**
+ * `sort` makes the header sortable: the `<th>` carries `aria-sort` and the
+ * label becomes a button that calls `onSort`, with a direction arrow that
+ * screen readers skip (the state is already in `aria-sort`).
+ */
 export function Th({
   align = 'left',
   children,
   className,
+  onSort,
+  sort,
   variant = 'mono',
 }: {
   align?: Align;
   children?: ReactNode;
   className?: string;
+  onSort?: () => void;
+  sort?: SortDirection;
   variant?: ThVariant;
 }) {
-  return <th className={cn(TH_VARIANT[variant], ALIGN[align], className)}>{children}</th>;
+  const sortable = sort !== undefined;
+  return (
+    <th
+      aria-sort={sort}
+      className={cn(TH_VARIANT[variant], ALIGN[align], className)}
+      scope={sortable ? 'col' : undefined}
+    >
+      {sortable ? (
+        <button
+          className={cn('hover:underline', sort === 'none' ? 'text-paper-400' : 'text-paper-200')}
+          onClick={onSort}
+          type="button"
+        >
+          {children}
+          <span aria-hidden="true">
+            {sort === 'descending' ? ' ↓' : sort === 'ascending' ? ' ↑' : ''}
+          </span>
+        </button>
+      ) : (
+        children
+      )}
+    </th>
+  );
 }
 
 /** Body row with the standard divider; `hover` adds the row highlight. */

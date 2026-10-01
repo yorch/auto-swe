@@ -2,8 +2,8 @@
 
 import type {
   AutonomyDecisionDto,
-  CreateWorkRequestResponse,
   EvalResultDto,
+  RetryWorkRequestResponse,
   WorkflowDetail,
   WorkflowRunDetail,
   WorkflowRunSummary,
@@ -11,6 +11,7 @@ import type {
 } from '@auto-swe/shared/types/api';
 import { isTerminalWorkflowRunStatus } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { api } from '@/lib/api';
 
@@ -59,6 +60,39 @@ export function useWorkflowRun(id: string, includeTraces = true, fullTraces = fa
   });
 }
 
+/**
+ * The run page's trace-payload mode. A full-payload response can run to many
+ * MB, so it can fail where the trimmed one did not; when it does, fall back to
+ * the trimmed view. The fallback is made while rendering (React's "adjust state
+ * during render"), so the failed query's `isError` is never committed — an
+ * effect would let the page paint its load-error branch for a frame first.
+ */
+export function useRunDetail(id: string) {
+  const [fullTraces, setFullTraces] = useState(false);
+  const [fullTracesFailed, setFullTracesFailed] = useState(false);
+  const query = useWorkflowRun(id, true, fullTraces);
+  if (fullTraces && query.isError) {
+    setFullTraces(false);
+    setFullTracesFailed(true);
+  }
+  const toggleFullTraces = () => {
+    setFullTracesFailed(false);
+    setFullTraces((v) => !v);
+  };
+  // Named fields only: spreading the query result reads every property, which
+  // opts the page out of tracked re-renders and re-renders it on each poll.
+  return {
+    data: query.data,
+    error: query.error,
+    fullTraces,
+    fullTracesFailed,
+    isError: query.isError,
+    isLoading: query.isLoading,
+    isPlaceholderData: query.isPlaceholderData,
+    toggleFullTraces,
+  };
+}
+
 /** P0 evals: captured quality signals (gate / review / merge) for a run. */
 export function useEvalResultsForRun(runId?: string) {
   return useQuery({
@@ -89,6 +123,7 @@ export function useAllWorkflowRuns(
   filters: {
     status?: string;
     templateId?: string;
+    templateVersion?: number;
     scope?: 'ALL' | 'MINE' | 'TEAM';
     limit?: number;
     offset?: number;
@@ -101,6 +136,9 @@ export function useAllWorkflowRuns(
   }
   if (filters.templateId) {
     params.set('templateId', filters.templateId);
+  }
+  if (filters.templateVersion) {
+    params.set('templateVersion', String(filters.templateVersion));
   }
   if (filters.scope) {
     params.set('scope', filters.scope);
@@ -153,10 +191,47 @@ export function useRetryWorkRequest() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (workRequestId: string) =>
-      api.post<CreateWorkRequestResponse>(`/api/v1/work-requests/${workRequestId}/retry`, {}),
+      api.post<RetryWorkRequestResponse>(`/api/v1/work-requests/${workRequestId}/retry`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workflows'] });
       qc.invalidateQueries({ queryKey: ['workflow-runs'] });
     },
   });
+}
+
+/** How long to look for a re-run's WorkflowRun row before giving up on it. */
+export const RETRIED_RUN_WAIT_MS = 60_000;
+const RETRIED_RUN_POLL_MS = 2_000;
+
+/**
+ * Finds the run a re-run started. The worker creates the WorkflowRun row once
+ * the workflow begins, so right after the retry call it does not exist yet: poll
+ * the work request's runs for the one keyed by the Temporal workflow id, for a
+ * bounded time. `timedOut` lets the caller fall back to a generic link.
+ */
+export function useRetriedRun(workRequestId: string | null, workflowId: string | null) {
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    setTimedOut(false);
+    if (!workflowId) {
+      return;
+    }
+    const timer = setTimeout(() => setTimedOut(true), RETRIED_RUN_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [workflowId]);
+
+  const { data: runId } = useQuery({
+    enabled: !!workRequestId && !!workflowId && !timedOut,
+    queryFn: () =>
+      api
+        .get<{ data: WorkflowRunSummary[] }>(
+          `/api/v1/workflow-runs?workRequestId=${workRequestId}&limit=20&offset=0`
+        )
+        .then((r) => r.data),
+    queryKey: ['workflow-runs', 'retried', workRequestId, workflowId],
+    refetchInterval: (q) =>
+      q.state.data?.some((r) => r.workflowId === workflowId) ? false : RETRIED_RUN_POLL_MS,
+    select: (runs) => runs.find((r) => r.workflowId === workflowId)?.id ?? null,
+  });
+  return { runId: runId ?? null, timedOut: timedOut && !runId };
 }

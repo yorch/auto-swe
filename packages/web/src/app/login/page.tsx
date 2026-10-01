@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { isOkResponse, probeGateway } from '@/hooks/useGatewayStatus';
 import { api } from '@/lib/api';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
@@ -184,9 +185,9 @@ function LoginPageInner() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/v1/auth/providers`);
-        if (!res.ok) {
-          // 4xx/5xx — could be the real gateway throwing, or a wrong server
+        const res = await probeGateway('/api/v1/auth/providers', isOkResponse);
+        if (!res) {
+          // Non-2xx — could be the real gateway throwing, or a wrong server
           // on the port. Either way the page can't continue, so surface it.
           setGatewayDown(true);
           return;

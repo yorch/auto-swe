@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { RadioGroup } from '@/components/ui/RadioGroup';
 import {
   type StorageBackend,
   type StorageConfigInput,
@@ -95,47 +96,35 @@ export function StorageTab() {
         <CardHeader>
           <CardTitle eyebrow="Storage">Backend</CardTitle>
         </CardHeader>
-        <div className="space-y-3">
-          <label className="flex cursor-pointer items-start gap-3">
-            <input
-              checked={backend === 'inline'}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-ember-400"
-              name="storage-backend"
-              onChange={() => setBackend('inline')}
-              type="radio"
-              value="inline"
-            />
-            <span>
-              <span className="text-sm text-paper-100">
-                Inline (Postgres)
-                {sources.backend === 'env' && (
-                  <span className="ml-2">
-                    <SourceBadge source="env" />
-                  </span>
-                )}
-              </span>
-              <span className="mt-0.5 block text-xs text-paper-500">
-                Store artifacts directly in the database. Simple setup, no extra infra.
-              </span>
-            </span>
-          </label>
-          <label className="flex cursor-pointer items-start gap-3">
-            <input
-              checked={backend === 's3'}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-ember-400"
-              name="storage-backend"
-              onChange={() => setBackend('s3')}
-              type="radio"
-              value="s3"
-            />
-            <span>
-              <span className="text-sm text-paper-100">S3-compatible</span>
-              <span className="mt-0.5 block text-xs text-paper-500">
-                Bundled Garage, AWS S3, Cloudflare R2, Backblaze B2, etc.
-              </span>
-            </span>
-          </label>
-        </div>
+        <RadioGroup
+          hideLegend
+          legend="Storage backend"
+          name="storage-backend"
+          onChange={setBackend}
+          options={[
+            {
+              description:
+                'Store artifacts directly in the database. Simple setup, no extra infra.',
+              label: (
+                <>
+                  Inline (Postgres)
+                  {sources.backend === 'env' && (
+                    <span className="ml-2">
+                      <SourceBadge source="env" />
+                    </span>
+                  )}
+                </>
+              ),
+              value: 'inline',
+            },
+            {
+              description: 'Bundled Garage, AWS S3, Cloudflare R2, Backblaze B2, etc.',
+              label: 'S3-compatible',
+              value: 's3',
+            },
+          ]}
+          value={backend}
+        />
       </Card>
 
       {backend === 's3' && (

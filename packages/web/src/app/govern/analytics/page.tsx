@@ -11,7 +11,7 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Stat } from '@/components/ui/Stat';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { type SortDirection, Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useGlobalAnalytics } from '@/hooks/useTemplates';
 import { formatCost, formatDuration, formatPercent } from '@/lib/utils';
 
@@ -36,33 +36,6 @@ function successRateClass(rate: number): string {
   return rate >= 0.5 ? 'text-amber-400' : 'text-brick-400';
 }
 
-function SortHeader({
-  label,
-  col,
-  sortKey,
-  sortDir,
-  onSort,
-}: {
-  label: string;
-  col: SortKey;
-  sortKey: SortKey;
-  sortDir: 'asc' | 'desc';
-  onSort: (k: SortKey) => void;
-}) {
-  const active = sortKey === col;
-  return (
-    <Th align="right" variant="dense">
-      <button
-        className={`hover:underline ${active ? 'text-paper-200' : 'text-paper-400'}`}
-        onClick={() => onSort(col)}
-        type="button"
-      >
-        {label} {active ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-      </button>
-    </Th>
-  );
-}
-
 const PAGE_SIZE = 25;
 
 export default function GlobalAnalyticsPage() {
@@ -82,6 +55,9 @@ export default function GlobalAnalyticsPage() {
     }
     setPage(0);
   };
+
+  const sortDirection = (k: SortKey): SortDirection =>
+    k !== sortKey ? 'none' : sortDir === 'desc' ? 'descending' : 'ascending';
 
   const handleFilter = (v: string) => {
     setFilter(v);
@@ -205,34 +181,38 @@ export default function GlobalAnalyticsPage() {
                     <Table>
                       <THead className="text-left text-xs text-paper-400">
                         <Th variant="dense">Template</Th>
-                        <SortHeader
-                          col="runs"
-                          label="Runs"
-                          onSort={handleSort}
-                          sortDir={sortDir}
-                          sortKey={sortKey}
-                        />
-                        <SortHeader
-                          col="successRate"
-                          label="Success rate"
-                          onSort={handleSort}
-                          sortDir={sortDir}
-                          sortKey={sortKey}
-                        />
-                        <SortHeader
-                          col="totalCost"
-                          label="Total cost"
-                          onSort={handleSort}
-                          sortDir={sortDir}
-                          sortKey={sortKey}
-                        />
-                        <SortHeader
-                          col="avgCost"
-                          label="Avg cost/run"
-                          onSort={handleSort}
-                          sortDir={sortDir}
-                          sortKey={sortKey}
-                        />
+                        <Th
+                          align="right"
+                          onSort={() => handleSort('runs')}
+                          sort={sortDirection('runs')}
+                          variant="dense"
+                        >
+                          Runs
+                        </Th>
+                        <Th
+                          align="right"
+                          onSort={() => handleSort('successRate')}
+                          sort={sortDirection('successRate')}
+                          variant="dense"
+                        >
+                          Success rate
+                        </Th>
+                        <Th
+                          align="right"
+                          onSort={() => handleSort('totalCost')}
+                          sort={sortDirection('totalCost')}
+                          variant="dense"
+                        >
+                          Total cost
+                        </Th>
+                        <Th
+                          align="right"
+                          onSort={() => handleSort('avgCost')}
+                          sort={sortDirection('avgCost')}
+                          variant="dense"
+                        >
+                          Avg cost/run
+                        </Th>
                       </THead>
                       <tbody>
                         {pageRows.map((row) => {
