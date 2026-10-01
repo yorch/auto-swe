@@ -525,7 +525,7 @@ interceptor (`lib/activitySpans.ts`), so an attempt's `llm.*` spans share one tr
 
 | Span attribute | Value |
 |-----------|-------|
-| `llm.cost_usd` | USD cost computed from `MODEL_PRICES` |
+| `llm.cost_usd` | USD cost computed from `BUILTIN_MODELS` |
 | `llm.cost_pricing_known` | `false` when the model has no price entry — usage is still recorded at zero cost rather than failing the run |
 | `workflow.budget_remaining_input` / `_output` | Remaining token budget for the run |
 

@@ -618,7 +618,7 @@ cutting a new version — never by editing the old one, which a run may have pin
 `WorkflowRun.agentVersions`. Any admin-chosen value is left alone. Add the outgoing default to that
 map whenever you change a `modelSpec` in `SWE_AGENTS`.
 
-Current model IDs — override defaults from the dashboard; pricing for these lives in `MODEL_PRICES`:
+Current model IDs — override defaults from the dashboard; pricing for these lives in `BUILTIN_MODELS`:
 
 | Provider  | Reasoning / heavy            | Balanced                    | Fast / cheap                            |
 | --------- | ---------------------------- | --------------------------- | --------------------------------------- |
@@ -636,10 +636,13 @@ and §8 below.
 
 ### Cost Tracking
 
-`packages/worker/src/lib/costTracking.ts` prices each call from `MODEL_PRICES` (USD per MTok).
-Unknown models fall back to zero cost and emit `llm.cost_pricing_known=false` on the OTel span —
-usage is still recorded, so runs are never lost to a missing price. Add new entries as agents are
-routed to new models, or set a per-model env override:
+`packages/worker/src/lib/costTracking.ts` prices each call from `BUILTIN_MODELS` in
+`packages/shared/src/lib/builtinModels.ts` (USD per MTok). Unknown models fall back to zero cost and
+emit `llm.cost_pricing_known=false` on the OTel span — usage is still recorded, so runs are never
+lost to a missing price. Add an entry there as agents are routed to new models —
+`builtinModels.test.ts` fails the build when a seeded agent default, either side of a
+`PREVIOUS_DEFAULT_MODEL_SPECS` pair, or the seeded embedding default has none — or set a per-model
+env override:
 
 ```
 MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumerics → _

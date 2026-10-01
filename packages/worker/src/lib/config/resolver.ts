@@ -1,7 +1,7 @@
 import { configCacheTtlMs, invalidate, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
-import { parseProviderModelSpec } from '../providerUtils.js';
+import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import type { ResolveCtx } from './types.js';
 
 /// Thrown when a required configuration row is missing. The worker boot

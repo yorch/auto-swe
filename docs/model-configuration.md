@@ -269,10 +269,11 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 - **The config cache means edits are eventually consistent.** Model config is cached in-process with
   a ~30 s TTL (`CONFIG_CACHE_TTL_MS`) and gateway and worker are separate processes, so the two can
   briefly disagree after an edit. A `generate()` call already in flight keeps the model it bound.
-- **Pricing is keyed on the resolved `provider/model` spec.** A model with no `MODEL_PRICES` entry
-  and no `MODEL_PRICE_*` override records usage at **zero cost** rather than failing — the span
-  carries `llm.cost_pricing_known=false`. Budget caps are enforced on tokens, so an unpriced model
-  is still capped, but its USD figures read as $0.
+- **Pricing is keyed on the resolved `provider/model` spec.** A model with no `BUILTIN_MODELS`
+  entry and no `MODEL_PRICE_*` override records usage at **zero cost** rather than failing — the
+  span carries `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
+  unpriced model is still capped there, but every USD-denominated limit — the organization monthly
+  budget, channel budgets and the channel hold estimate — reads its spend as $0 and never stops it.
 - **Credential resolution has no fallback past GLOBAL.** The TEAM → ORGANIZATION → GLOBAL cascade
   ends there; a missing GLOBAL row is a `ConfigMissingError`, not a silent skip.
 - **Embeddings are locked to 1536 dimensions.** `memory_items.embedding` is `vector(1536)`, so a

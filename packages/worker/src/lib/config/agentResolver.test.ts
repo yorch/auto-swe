@@ -20,7 +20,7 @@ vi.mock('@auto-swe/shared/config/cache', () => ({
   },
 }));
 
-vi.mock('../providerUtils.js', () => ({
+vi.mock('@auto-swe/shared/lib/modelSpec', () => ({
   parseProviderModelSpec: (spec: string) => ({
     modelId: spec.split('/')[1] ?? '',
     provider: spec.split('/')[0] ?? '',
