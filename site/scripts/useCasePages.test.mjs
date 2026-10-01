@@ -2,10 +2,18 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { SWE_AGENTS } from '../../packages/shared/src/lib/syncBuiltins.ts';
+import { NodeSchema } from '../../packages/shared/src/workflow/spec.ts';
+import { hasStep } from '../../packages/shared/src/workflow/stepRegistry.ts';
 import { BUILTIN_TEMPLATES } from '../../packages/shared/src/workflow/templates/index.ts';
 import { humanize, specToMermaid, summarizeSpec } from './templateGraph.mjs';
-import { assertCatalogueCovers, describeUseCases, renderUseCasePage } from './useCasePages.mjs';
-import { USE_CASES } from './useCases.mjs';
+import {
+  assertCatalogueCovers,
+  describeUseCases,
+  renderUseCaseIndex,
+  renderUseCasePage,
+} from './useCasePages.mjs';
+import { USE_CASES, WORKFLOW_IDEAS } from './useCases.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -122,6 +130,41 @@ describe('the use-case catalogue', () => {
         .filter(Boolean);
       expect(gates.length, useCase.name).toBe(useCase.facts.people.length);
       expect(page.includes('Nobody inside the run'), useCase.name).toBe(gates.length === 0);
+    }
+  });
+});
+
+describe('workflow ideas', () => {
+  const nodeTypes = new Set(NodeSchema.options.map((o) => o.shape.type.value));
+  const templates = new Set(BUILTIN_TEMPLATES.map((t) => t.name));
+  const agents = new Set(SWE_AGENTS.map((a) => a.key));
+
+  // An idea is prose with no spec behind it, so this is the only thing that
+  // keeps it honest: every node, step, template, or agent it names in code
+  // formatting must exist, or the page recommends something nobody can build.
+  it('names only node types, steps, templates, and agents that exist', () => {
+    for (const idea of WORKFLOW_IDEAS) {
+      for (const [, name] of idea.builtFrom.matchAll(/`([^`]+)`/g)) {
+        const known =
+          nodeTypes.has(name) || hasStep(name) || templates.has(name) || agents.has(name);
+        expect(known, `${idea.title}: \`${name}\``).toBe(true);
+      }
+    }
+  });
+
+  it('never shares a title with a shipped use case', () => {
+    const shipped = new Set(Object.values(USE_CASES).map((u) => u.title));
+    for (const idea of WORKFLOW_IDEAS) {
+      expect(shipped.has(idea.title), idea.title).toBe(false);
+    }
+  });
+
+  it('prints the ideas under a heading that says they do not ship', () => {
+    const index = renderUseCaseIndex(describeUseCases());
+    expect(index).toContain('## Workflows you could build');
+    expect(index).toContain('None of these ship.');
+    for (const idea of WORKFLOW_IDEAS) {
+      expect(index).toContain(`### ${idea.title}`);
     }
   });
 });

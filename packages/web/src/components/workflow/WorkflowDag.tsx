@@ -39,7 +39,7 @@ import {
 import { TOKEN } from '@/lib/palette';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
-import { specToFlow } from './specToFlow';
+import { FIT_VIEW_OPTIONS, specToFlow } from './specToFlow';
 
 export type { DiffKind } from '@/lib/workflowLayout';
 
@@ -168,7 +168,7 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
       <ReactFlow
         edges={edges}
         fitView
-        fitViewOptions={{ maxZoom: 1.2, minZoom: 0.55, padding: 0.18 }}
+        fitViewOptions={FIT_VIEW_OPTIONS}
         maxZoom={2.5}
         minZoom={0.15}
         nodes={nodesWithSelection}
@@ -194,10 +194,7 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
           }}
           zoomable
         />
-        <Controls
-          className="![&>button]:!bg-ink-800 ![&>button]:!border-ink-500 ![&>button]:!text-paper-200"
-          showInteractive={false}
-        />
+        <Controls fitViewOptions={FIT_VIEW_OPTIONS} showInteractive={false} />
       </ReactFlow>
     </div>
   );

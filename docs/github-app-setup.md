@@ -1,4 +1,4 @@
-# GitHub App Setup
+# GitHub App setup
 
 auto-swe supports two GitHub authentication modes:
 

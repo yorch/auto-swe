@@ -1,4 +1,4 @@
-# Model & Credential Configuration
+# Models and credentials
 
 > How LLM model selection and provider credentials work in auto-swe.
 

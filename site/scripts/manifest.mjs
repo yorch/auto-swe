@@ -38,15 +38,16 @@ export const DOCS_ROUTE_PREFIX = 'docs';
 /**
  * `docs/README.md` is the index of the living docs, so it becomes the index of
  * the docs section rather than a page named "README". Its own H1 is the bare
- * word "Documentation", which is a useless sidebar entry sitting above sixteen
- * other documentation pages.
+ * word "Documentation", which is a useless sidebar entry sitting above every
+ * other documentation page. "Overview" was no better: beside "Introduction" and
+ * "Product overview" in the same group, a reader cannot tell the three apart.
  */
 export const DOCS_INDEX = {
-  description: 'Index of the living documentation — start here',
+  description: 'Every living doc, what each covers, and where known gaps are written down',
   file: `${DOCS_ROUTE_PREFIX}/index.md`,
   slug: DOCS_ROUTE_PREFIX,
   source: `${DOCS_DIR}/README.md`,
-  title: 'Overview',
+  title: 'All docs',
 };
 
 /**
@@ -91,7 +92,15 @@ export const EXTERNAL_PAGES = [
 export const SIDEBAR = [
   {
     label: 'Start here',
-    slugs: ['introduction', 'docs', 'docs/product-overview', 'docs/architecture', 'docs/agents'],
+    slugs: [
+      'introduction',
+      'docs/quickstart',
+      'docs/concepts',
+      'docs/product-overview',
+      'docs/architecture',
+      'docs/agents',
+      'docs',
+    ],
   },
   {
     label: 'Capabilities',

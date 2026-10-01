@@ -1,4 +1,4 @@
-# System Architecture
+# Architecture
 
 How auto-swe is put together. For conventions and implementation gotchas see
 [AGENTS.md](../AGENTS.md); for the agent layer see [agents.md](./agents.md); for deployment see

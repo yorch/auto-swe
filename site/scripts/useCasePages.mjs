@@ -14,6 +14,7 @@ import {
   USE_CASE_ROUTE_PREFIX,
   USE_CASES,
   useCaseSlug,
+  WORKFLOW_IDEAS,
 } from './useCases.mjs';
 
 /** What a run works on, by workspace provider, in a reader's words. */
@@ -139,7 +140,7 @@ export function renderUseCasePage(useCase, { repoUrl, ref }) {
 }
 
 /** Markdown for the index of all use cases. */
-export function renderUseCaseIndex(useCases) {
+export function renderUseCaseIndex(useCases, ideas = WORKFLOW_IDEAS) {
   const sections = USE_CASE_GROUPS.map((group) => {
     const items = useCases.filter((u) => u.group === group.id);
     const lines = items.map((u) => {
@@ -169,6 +170,28 @@ export function renderUseCaseIndex(useCases) {
       'something else authors its own on the same nodes.',
     '',
     ...sections,
+    renderIdeas(ideas),
+  ].join('\n');
+}
+
+/** The "could build" section: unshipped ideas, labelled as such. */
+function renderIdeas(ideas) {
+  return [
+    '## Workflows you could build',
+    '',
+    'None of these ship. Each is an idea for a team to author on the same nodes the templates ' +
+      'above use, with what it would be built from — including anything it needs that the ' +
+      `platform does not provide. See [architecture](${siteUrl('docs/architecture')}#node-types) ` +
+      'for the node types.',
+    '',
+    ...ideas.flatMap((idea) => [
+      `### ${idea.title}`,
+      '',
+      idea.summary,
+      '',
+      `**Built from:** ${idea.builtFrom}`,
+      '',
+    ]),
   ].join('\n');
 }
 

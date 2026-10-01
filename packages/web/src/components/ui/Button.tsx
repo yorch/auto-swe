@@ -40,7 +40,9 @@ export function Button({
   return (
     <button
       className={cn(
-        'inline-flex items-center justify-center gap-2 border transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+        // `whitespace-nowrap`: a label is one action, so it never wraps — in a
+        // tight table cell "Run →" otherwise broke its arrow onto a second line.
+        'inline-flex items-center justify-center gap-2 whitespace-nowrap border transition-colors disabled:cursor-not-allowed disabled:opacity-40',
         VARIANTS[variant],
         SIZES[size],
         className

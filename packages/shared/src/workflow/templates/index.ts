@@ -2,6 +2,7 @@ import type { InputSchema } from '../../lib/inputSchema.js';
 import type { WorkspaceProviderType } from '../../lib/workspaceProviders.js';
 import { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
 import type { WorkflowSpec } from '../spec.js';
+import { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 import { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
 import { CODE_AND_CI_SPEC } from './codeAndCi.js';
 import { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
@@ -19,7 +20,6 @@ import { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 import { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
 import { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
 import { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
-import { REVIEW_AND_MERGE_SPEC } from './reviewAndMerge.js';
 import { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 import { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 import { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
@@ -48,7 +48,10 @@ export interface BuiltinTemplate {
 export const SWE_INPUT_SCHEMA: InputSchema = {
   properties: {
     budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
-    connectionId: { format: 'uuid', type: 'string' },
+    // `connection`, not a uuid-format string: validation is identical (both
+    // must be a UUID), but the run form renders a picker of git_repo
+    // connections instead of a field asking the user to paste an id.
+    connectionId: { connectionType: 'git_repo', type: 'connection' },
     description: { type: 'string' },
     ticketId: { type: 'string' },
   },
@@ -79,9 +82,9 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     spec: CODE_AND_CI_SPEC,
   },
   {
-    description: REVIEW_AND_MERGE_SPEC.description,
-    name: REVIEW_AND_MERGE_SPEC.name,
-    spec: REVIEW_AND_MERGE_SPEC,
+    description: AGENT_REVIEWED_PR_SPEC.description,
+    name: AGENT_REVIEWED_PR_SPEC.name,
+    spec: AGENT_REVIEWED_PR_SPEC,
   },
   {
     description: CONSENSUS_REVIEW_SPEC.description,
@@ -285,6 +288,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
 
 // Re-export individual specs so callers can import from this module directly.
 export { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
+export { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 export { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
 export { CODE_AND_CI_SPEC } from './codeAndCi.js';
 export { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
@@ -302,7 +306,6 @@ export { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 export { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
 export { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
 export { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
-export { REVIEW_AND_MERGE_SPEC } from './reviewAndMerge.js';
 export { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 export { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 export { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';

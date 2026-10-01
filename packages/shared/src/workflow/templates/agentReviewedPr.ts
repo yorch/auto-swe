@@ -1,16 +1,22 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 
 /**
- * Automated agent review loop → CI → PR. No HITL, no waiting for human merge.
- * A faster alternative to default-engineering when human sign-off is not required.
+ * Automated agent review loop → PR → CI. No HITL, and the run ends when CI is
+ * green rather than waiting for a human merge. A faster alternative to
+ * default-engineering when human sign-off inside the run is not required.
+ *
+ * Seeded as `review-and-merge` before it was renamed, a name that suggested it
+ * merges — nothing the platform ships does. `syncBuiltins` renames that row in
+ * place (see `RENAMED_TEMPLATES`), so its history and overrides carry over.
  */
-export const REVIEW_AND_MERGE_SPEC: WorkflowSpec = {
+export const AGENT_REVIEWED_PR_SPEC: WorkflowSpec = {
   description:
     'Implement, run the automated review network (up to 3 attempts), open a PR, ' +
-    'then wait for CI. Fully automated — no human approval steps. ' +
-    'Use this when the agent review loop is sufficient quality gate before a PR.',
+    'then wait for CI. No human approval steps, and it never merges: the run ends ' +
+    'when CI is green and the pull request waits for a person. Use this when the ' +
+    'agent review loop is a sufficient quality gate before a PR.',
   entry: 'setValidating',
-  name: 'review-and-merge',
+  name: 'agent-reviewed-pr',
   nodes: {
     checkApproval: {
       expr: 'nodes.review.output.approved == true',

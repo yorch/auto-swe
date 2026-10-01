@@ -1,4 +1,4 @@
-# Repo Dependency Graph
+# Repository dependency graph
 
 auto-swe models each Git repository as a `Connection` (`type='git_repo'`). The repo dependency graph
 adds **directed relationships between those repos** — "repo A depends on repo B" — as durable,

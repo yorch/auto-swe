@@ -305,7 +305,7 @@ async function syncEvalRubrics(prisma: PrismaClient): Promise<void> {
  * credential is still resolved by provider from `ProviderCredential` at run
  * time, so a fresh deploy only needs the admin to add a credential.
  */
-interface SweAgentDef {
+export interface SweAgentDef {
   key: string;
   name: string;
   description: string;
@@ -348,7 +348,7 @@ You MUST respond with valid JSON matching this schema:
   ]
 }`;
 
-const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
+export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     description: 'Writes code in the workspace via the TDD loop.',
     key: 'implementer',
@@ -741,15 +741,73 @@ async function syncAgents(prisma: PrismaClient): Promise<void> {
   }
 }
 
+/**
+ * Built-in templates seeded under an earlier name, `old → new`.
+ *
+ * Sync matches a GLOBAL template by name, so renaming one in code alone would
+ * create a second row and strand the first — along with its run history, its
+ * versions, and every team override pointing at it. This renames the existing
+ * row in place first. Entries stay until no deployment can still hold the old
+ * name; removing one early re-creates the duplicate.
+ */
+export const RENAMED_TEMPLATES: Readonly<Record<string, string>> = {
+  // It opens a PR and stops at green CI; the old name said it merged.
+  'review-and-merge': 'agent-reviewed-pr',
+};
+
+/**
+ * Earlier built-in descriptions, by current template name.
+ *
+ * Sync never overwrites a template's description, because an admin may have
+ * edited it. A row still carrying one of these exact strings was never edited,
+ * so it is safe to bring up to date — same rule as the `systemPrompt` backfill
+ * in {@link syncAgents}.
+ */
+export const SUPERSEDED_TEMPLATE_DESCRIPTIONS: Readonly<Record<string, readonly string[]>> = {
+  'agent-reviewed-pr': [
+    'Implement, run the automated review network (up to 3 attempts), open a PR, then wait ' +
+      'for CI. Fully automated — no human approval steps. Use this when the agent review ' +
+      'loop is sufficient quality gate before a PR.',
+  ],
+  'default-engineering': [
+    'Default engineering workflow (parity with hardcoded EngineeringWorkflow).',
+  ],
+};
+
+async function renameTemplates(prisma: PrismaClient): Promise<void> {
+  for (const [from, to] of Object.entries(RENAMED_TEMPLATES)) {
+    const legacy = await prisma.workflowTemplate.findFirst({ where: { name: from, teamId: null } });
+    if (!legacy) {
+      continue;
+    }
+    const current = await prisma.workflowTemplate.findFirst({ where: { name: to, teamId: null } });
+    if (current) {
+      // Both exist — the new one was created before this rename ran. Leave the
+      // legacy row for an admin rather than guess which history to keep.
+      console.warn(
+        `[syncBuiltins] template "${from}" was renamed to "${to}", but both exist; ` +
+          `leaving "${from}" (${legacy.id}) for an admin to archive`
+      );
+      continue;
+    }
+    await prisma.workflowTemplate.update({ data: { name: to }, where: { id: legacy.id } });
+  }
+}
+
 async function syncTemplates(prisma: PrismaClient): Promise<void> {
+  await renameTemplates(prisma);
   for (const tmpl of BUILTIN_TEMPLATES) {
     const existing = await prisma.workflowTemplate.findFirst({
       where: { name: tmpl.name, teamId: null },
     });
+    const staleDescription =
+      existing !== null &&
+      (SUPERSEDED_TEMPLATE_DESCRIPTIONS[tmpl.name] ?? []).includes(existing.description);
     const t = existing
       ? await prisma.workflowTemplate.update({
           data: {
             activeVersion: 1,
+            ...(staleDescription ? { description: tmpl.description } : {}),
             ...(tmpl.inputSchema ? { inputSchema: tmpl.inputSchema as object } : {}),
             isDefault: tmpl.isDefault ?? false,
             origin: SWE_ORIGIN,

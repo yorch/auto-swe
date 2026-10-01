@@ -1,4 +1,4 @@
-# Agents, Tools & Skills — Reference
+# Agents, tools, and skills
 
 > Comprehensive reference for the agent layer: role definitions, tools, skill system, observability pattern, and admin API. See [architecture.md](./architecture.md) for the broader system context.
 

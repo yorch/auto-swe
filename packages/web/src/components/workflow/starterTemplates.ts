@@ -43,11 +43,11 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     description:
       'Implement a change, run a review loop, gate on approval, then wait for human merge. Mirrors the default engineering workflow at smaller scale.',
     id: 'review-loop',
-    name: 'Review-and-merge',
+    name: 'Agent-reviewed PR',
     spec: {
       description: 'Implement → review → gate on approval → wait for human merge.',
       entry: 'implement',
-      name: 'review-and-merge',
+      name: 'agent-reviewed-pr',
       nodes: {
         awaitMerge: { next: 'done', step: 'wait-for-human-merge', type: 'step' },
         done: { status: 'SUCCESS', type: 'terminate' },

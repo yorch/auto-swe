@@ -8,105 +8,18 @@
  * Clearing the signal is the one thing on the page that only a person can do, which
  * is also the one thing the product never does for you.
  *
- * Each route is a built-in template, simplified for a panel: bookkeeping steps are
- * folded into the station they serve, but no step and no gate is invented, and the
- * timeouts are the specs' own. The generated use-case pages draw the full graphs.
+ * Each route is a built-in template, simplified for a panel. The routes live in
+ * `scripts/heroRoutes.mjs`, where a test holds their gates and timeouts to the
+ * template specs. The generated use-case pages draw the full graphs.
  */
+
+import { HERO_ROUTES, stationDetail } from '../../scripts/heroRoutes.mjs';
 
 const BASE = '/auto-swe';
 
-interface Station {
-  label: string;
-  detail: string;
-  /** Present on a gate: what the panel says while held, and what clearing it means. */
-  gate?: { held: string; action: string };
-}
+type Route = (typeof HERO_ROUTES)[number];
 
-interface Route {
-  id: string;
-  tab: string;
-  template: string;
-  stations: Station[];
-  done: string;
-  note: string;
-}
-
-const routes: Route[] = [
-  {
-    done: 'Run complete. What it learned is stored for the next run on this repository.',
-    id: 'ticket',
-    note: 'On GitHub, this signal is the merge webhook: a person merges there, and the run hears it.',
-    stations: [
-      { detail: 'From the dashboard, Slack, the CLI, or the REST API', label: 'Work request' },
-      { detail: 'Checks the ticket and recalls lessons from this repository', label: 'Context' },
-      { detail: 'In an isolated Docker sandbox, until the tests pass', label: 'Implement' },
-      { detail: 'Security, domain-logic, and performance reviewers', label: 'Review network' },
-      { detail: 'Opened on a branch of your repository', label: 'Pull request' },
-      { detail: 'Failures are read from the logs and fixed', label: 'CI' },
-      {
-        detail: 'Up to 7 days',
-        gate: {
-          action: 'Merge the pull request',
-          held: 'Held at the signal. A person merges — the agent never does.',
-        },
-        label: 'Merge',
-      },
-      { detail: 'Embedded for the next run', label: 'Lesson stored' },
-    ],
-    tab: 'Ticket to pull request',
-    template: 'default-engineering',
-  },
-  {
-    done: 'Run complete. The reply is on the ticket, and the approval is in the audit log.',
-    id: 'support',
-    note: 'A seeded template: the connector and agents exist, but only the engineering flow is exercised end to end.',
-    stations: [
-      { detail: 'From Zendesk', label: 'Ticket read' },
-      { detail: 'By the support responder agent', label: 'Reply drafted' },
-      { detail: "Your team's autonomy policy decides", label: 'Policy check' },
-      {
-        detail: 'Up to 24 hours',
-        gate: {
-          action: 'Approve the reply',
-          held: 'Held at the signal. Under the default policy, a public reply needs a person.',
-        },
-        label: 'Approval',
-      },
-      { detail: 'Written back to the ticket', label: 'Reply posted' },
-    ],
-    tab: 'Support reply',
-    template: 'zendesk-ticket-reply',
-  },
-  {
-    done: 'Run complete. Two people signed off before anyone on GitHub saw the change.',
-    id: 'four-eyes',
-    note: 'Two approvals in sequence, each with its own 24-hour window, before the pull request exists.',
-    stations: [
-      { detail: 'From the dashboard, Slack, the CLI, or the REST API', label: 'Work request' },
-      { detail: 'In an isolated Docker sandbox, until the tests pass', label: 'Implement' },
-      { detail: 'Agent review loop, up to three attempts', label: 'Review network' },
-      {
-        detail: 'Author or team lead',
-        gate: {
-          action: 'Sign off as team lead',
-          held: 'Held at the first signal. The author or a team lead signs off.',
-        },
-        label: 'First sign-off',
-      },
-      {
-        detail: 'Someone independent',
-        gate: {
-          action: 'Sign off as second reviewer',
-          held: 'Held at the second signal. An independent reviewer signs off.',
-        },
-        label: 'Second sign-off',
-      },
-      { detail: 'Opened only now, then CI', label: 'Pull request' },
-    ],
-    tab: 'Four-eyes change',
-    template: 'four-eyes',
-  },
-];
+const routes = HERO_ROUTES;
 
 /**
  * The state each station is rendered in before the script runs — and the state a
@@ -182,7 +95,7 @@ const firstGate = first.stations.find((s) => s.gate);
                 {station.gate && <span class="station__lamp" />}
               </span>
               <span class="station__label">{station.label}</span>
-              <span class="station__detail">{station.detail}</span>
+              <span class="station__detail">{stationDetail(station)}</span>
             </li>
           ))}
         </ol>

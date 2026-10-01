@@ -137,14 +137,14 @@ export const USE_CASES = {
       'review agents and no people inside the run: for low-risk, well-tested codebases.',
     title: 'Code and CI only',
   },
-  'review-and-merge': {
+  'agent-reviewed-pr': {
     group: 'engineering',
     maturity: 'composed',
-    source: 'packages/shared/src/workflow/templates/reviewAndMerge.ts',
+    source: 'packages/shared/src/workflow/templates/agentReviewedPr.ts',
     summary:
       'The agent review loop, up to three attempts, then a pull request and a CI wait. ' +
-      'Despite the template name it merges nothing: the run ends when CI is green, and the ' +
-      'pull request waits for a person like every other.',
+      'No person acts inside the run; it ends when CI is green, and the pull request waits ' +
+      'for a person to merge like every other.',
     title: 'Agent-reviewed pull request',
   },
   'consensus-review': {
@@ -331,6 +331,57 @@ export const USE_CASES = {
     title: 'Post a Slack update',
   },
 };
+
+/**
+ * Workflows that do not ship, but could be authored from pieces that do.
+ *
+ * Kept apart from `USE_CASES` on purpose: nothing here has a spec, so nothing here
+ * is generated, tested, or proven, and the index prints these under their own
+ * heading saying so. Each names what it would be built from — and where it needs
+ * something the platform does not ship, such as a third-party MCP server, it says
+ * that too. An idea that becomes a built-in template moves to `USE_CASES`.
+ */
+export const WORKFLOW_IDEAS = [
+  {
+    builtFrom:
+      'A scheduled work request on the repository, running `code-and-ci` with a custom ' +
+      'skill on the implementer that says what drift to look for.',
+    summary:
+      'Once a week, compare the docs against the code they describe, and open a pull request ' +
+      'fixing what no longer matches.',
+    title: 'Docs that drift from the code',
+  },
+  {
+    builtFrom:
+      'The template webhook, fired by CI on a release tag; an `mcp` node calling a GitHub MCP ' +
+      'server (not shipped) for the merged pull requests; an `agent` node with ' +
+      '`contentWriter`; a `humanReview` node; `writeOutcome` to a Notion page.',
+    summary:
+      'Draft release notes from the pull requests merged since the last tag, for a person to ' +
+      'edit before they are published.',
+    title: 'Release notes',
+  },
+  {
+    builtFrom:
+      'The template webhook, fired by the incident tool with the timeline as its payload; an ' +
+      '`agent` node to draft; a `humanReview` node for the incident lead; `writeOutcome` to ' +
+      'a Notion page.',
+    summary:
+      'Turn an incident timeline into a first-draft postmortem the incident lead corrects, ' +
+      'rather than writes from a blank page.',
+    title: 'Incident postmortem draft',
+  },
+  {
+    builtFrom:
+      'An external scheduler firing the template webhook — schedules inside auto-swe are tied ' +
+      'to a repository; an `mcp` node calling a help-desk MCP server (not shipped); an `agent` ' +
+      'node to summarise; a `humanApproval` node, then `writeOutcome` to Slack.',
+    summary:
+      'Summarise the week in support — volume, recurring problems, tickets waiting longest — ' +
+      'and post it to a channel once someone has approved it.',
+    title: 'Weekly support digest',
+  },
+];
 
 /** Route slug for a template's page. */
 export function useCaseSlug(name) {

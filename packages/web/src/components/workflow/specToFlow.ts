@@ -13,6 +13,15 @@ import { TOKEN } from '@/lib/palette';
 import { type DiffKind, type EdgeKind, layoutSpec } from '@/lib/workflowLayout';
 import type { DagNodeData } from './dagNode';
 
+/**
+ * How far "fit view" may zoom, for both the initial view and the toolbar's fit
+ * button. `<ReactFlow fitViewOptions>` covers only the initial fit; `<Controls>`
+ * takes its own and defaults to the canvas `minZoom` (0.15), at which a wide
+ * graph's labels are unreadable. Passing this to both keeps the button from
+ * undoing the readable view the canvas opened with.
+ */
+export const FIT_VIEW_OPTIONS = { maxZoom: 1.2, minZoom: 0.55, padding: 0.18 };
+
 const EDGE_LABEL: Partial<Record<EdgeKind, string>> = {
   onApprove: 'approve',
   onFalse: 'false',

@@ -1,4 +1,4 @@
-# Channel Assistant
+# Channel assistant
 
 One shared assistant that lives in a Slack channel. Anyone can `@mention` it to ask a question or
 delegate work; it carries channel-scoped memory, tools, budget, and persona, and can act

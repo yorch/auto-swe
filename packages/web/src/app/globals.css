@@ -325,29 +325,26 @@
 
 /* ─────────────────────────────────────────────────────────────────────────
    React Flow theme overrides — dark surface, violet accents.
+
+   Colours go through React Flow's own `--xy-*` variables, not through
+   property overrides. Its stylesheet is imported by the canvas components,
+   after this file, and sets the same properties at the same specificity — so
+   a property override here loses and the controls render white on the dark
+   canvas. The library's rules read these variables wherever it loads.
    ──────────────────────────────────────────────────────────────────────── */
+.react-flow {
+  --xy-controls-box-shadow: none;
+  --xy-controls-button-background-color: var(--color-ink-600);
+  --xy-controls-button-background-color-hover: var(--color-ink-500);
+  --xy-controls-button-color: var(--color-paper-400);
+  --xy-controls-button-color-hover: var(--color-ember-400);
+  --xy-controls-button-border-color: var(--color-ink-400);
+  --xy-minimap-background-color: var(--color-ink-900);
+}
 .react-flow__controls {
-  background: var(--color-ink-600);
+  overflow: hidden;
   border: 1px solid var(--color-ink-400);
   border-radius: 8px;
-  box-shadow: none;
-}
-.react-flow__controls-button {
-  width: 28px;
-  height: 28px;
-  color: var(--color-paper-400);
-  background: var(--color-ink-600);
-  border-bottom: 1px solid var(--color-ink-400);
-  fill: var(--color-paper-400);
-}
-.react-flow__controls-button:hover {
-  color: var(--color-ember-400);
-  background: var(--color-ink-600);
-  fill: var(--color-ember-400);
-}
-.react-flow__controls-button svg {
-  max-width: 12px;
-  max-height: 12px;
 }
 .react-flow__attribution {
   display: none;
