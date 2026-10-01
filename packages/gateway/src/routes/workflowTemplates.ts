@@ -15,6 +15,8 @@ import {
   computeGlobalAnalytics,
   diffSpecs,
   formatValidationIssue,
+  getStepMetadata,
+  hasStep,
   migrateSpec,
   parseWorkflowSpec,
   ShellImageNotAllowedError,
@@ -121,12 +123,30 @@ interface ShellNodeWithId {
   node: { image: string; command: string; network?: 'none' | 'egress' };
 }
 
-// Both `shell` and `containerStep` execute team-authored code in a container, so
-// they share the same authoring RBAC, image allowlist, and audit trail.
+// `shell`, `containerStep`, and a plain `step` node naming a `shell`-category step
+// (`runContainerStep`) all execute team-authored code in a container, so they share
+// the same authoring RBAC, image allowlist, and audit trail. The `step` spelling is
+// reachable by hand-written JSON: the interpreter dispatches it to the same executor
+// as the declarative node, so gating on node type alone would leave it ungated.
 function collectShellNodes(spec: WorkflowSpec): ShellNodeWithId[] {
   const out: ShellNodeWithId[] = [];
   for (const [id, node] of Object.entries(spec.nodes)) {
-    if (node.type === 'shell') {
+    if (
+      node.type === 'step' &&
+      hasStep(node.step) &&
+      getStepMetadata(node.step).category === 'shell'
+    ) {
+      const cfg = node.config ?? {};
+      out.push({
+        id,
+        node: {
+          command: typeof cfg.command === 'string' ? cfg.command : '',
+          // A non-string image cannot pass the allowlist; '' makes that check refuse it.
+          image: typeof cfg.image === 'string' ? cfg.image : '',
+          network: cfg.network === 'none' || cfg.network === 'egress' ? cfg.network : undefined,
+        },
+      });
+    } else if (node.type === 'shell') {
       out.push({ id, node });
     } else if (node.type === 'containerStep') {
       out.push({

@@ -628,8 +628,14 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         (lookupPath(ctx, itemKey) as Subtask | undefined);
       // `subtask` is already `Subtask | undefined`, so both arms of the ternary
       // this replaced passed the same thing.
+      const guidance = formatGuidance(inputs.guidance);
       return agentActivities.executeImplementation(
-        request,
+        guidance
+          ? {
+              ...request,
+              description: `${request.description}\n\n## Guidance from the requester\n${guidance}`,
+            }
+          : request,
         subtask,
         systemPromptOverride,
         crossRepo
@@ -971,6 +977,24 @@ async function dispatchStepImpl(
 }
 
 // ── Helpers ──
+
+/**
+ * Render a human-supplied `guidance` input (free text, or the field map a
+ * `humanInput` node stores) as prompt text. Blank fields are dropped so an
+ * unanswered form contributes nothing.
+ */
+function formatGuidance(raw: unknown): string {
+  if (typeof raw === 'string') {
+    return raw.trim();
+  }
+  if (typeof raw !== 'object' || raw === null) {
+    return '';
+  }
+  return Object.entries(raw as Record<string, unknown>)
+    .filter(([, v]) => typeof v === 'string' && v.trim() !== '')
+    .map(([k, v]) => `- ${k}: ${(v as string).trim()}`)
+    .join('\n');
+}
 
 function pickCodeResult(provided: unknown, ctx: Context): CodeResult {
   const v = provided ?? lookupPath(ctx, 'context.currentCodeResult');

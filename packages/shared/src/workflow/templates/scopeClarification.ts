@@ -47,7 +47,7 @@ export const SCOPE_CLARIFICATION_SPEC: WorkflowSpec = {
         },
       ],
       onSubmit: 'storeClarification',
-      onTimeout: 'setImplementing',
+      onTimeout: 'validate',
       storeAs: 'context.clarification',
       timeout: '30m',
       title: 'Clarify implementation requirements',
@@ -62,6 +62,8 @@ export const SCOPE_CLARIFICATION_SPEC: WorkflowSpec = {
       type: 'terminate',
     },
     implement: {
+      // Without this binding the human's answers never reach the implementer.
+      inputs: { guidance: { default: '', from: 'context.clarification' } },
       next: 'initCounters',
       step: 'executeImplementation',
       type: 'step',
@@ -116,7 +118,7 @@ export const SCOPE_CLARIFICATION_SPEC: WorkflowSpec = {
       type: 'step',
     },
     storeClarification: {
-      next: 'setImplementing',
+      next: 'validate',
       type: 'set',
       values: { 'context.clarification': { from: 'nodes.clarify.output.data' } },
     },

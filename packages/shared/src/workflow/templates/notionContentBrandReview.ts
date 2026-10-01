@@ -23,10 +23,25 @@ export const NOTION_CONTENT_BRAND_REVIEW_SPEC: WorkflowSpec = {
       spanName: 'llm.brand_review',
       type: 'agent',
     },
+    checkAuto: {
+      expr: "nodes.publishOutcome.output.decision == 'require_approval'",
+      onFalse: 'writeOutcome',
+      onTrue: 'humanApproval',
+      type: 'cond',
+    },
     done: {
       result: {
         targetPageId: { from: 'request.payload.targetPageId' },
         text: { from: 'nodes.brandReview.output.text' },
+      },
+      status: 'SUCCESS',
+      type: 'terminate',
+    },
+    doneRejected: {
+      result: {
+        approved: { literal: false },
+        targetPageId: { from: 'request.payload.targetPageId' },
+        written: { literal: false },
       },
       status: 'SUCCESS',
       type: 'terminate',
@@ -41,12 +56,24 @@ export const NOTION_CONTENT_BRAND_REVIEW_SPEC: WorkflowSpec = {
       spanName: 'llm.content_draft',
       type: 'agent',
     },
+    humanApproval: {
+      approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
+      contextFrom: 'nodes.brandReview.output.text',
+      description:
+        'Approve appending the reviewed draft to the target Notion page, or reject to discard it.',
+      onApprove: 'writeOutcome',
+      onReject: 'doneRejected',
+      onTimeout: 'doneRejected',
+      timeout: '24h',
+      title: 'Approve write',
+      type: 'humanApproval',
+    },
     publishOutcome: {
       config: { action: 'internal_write' },
       inputs: {
         description: { from: 'request.payload.instructions' },
       },
-      next: 'writeOutcome',
+      next: 'checkAuto',
       step: 'publishOutcome',
       type: 'step',
     },

@@ -66,9 +66,11 @@ describe('RunnableWorkflow — history replay', () => {
     // while the suite stayed green.
     expect(fixtures.map((f) => f.name)).toEqual([
       'agent-node',
+      'cond-loop',
       'container-step',
       'context-spill',
       'eval',
+      'fan-out-block-cancel',
       'fan-out',
       'human-approval',
       'human-decision',
@@ -76,6 +78,9 @@ describe('RunnableWorkflow — history replay', () => {
       'human-review',
       'linear',
       'mcp',
+      'nested-fan-out',
+      'on-error-continue',
+      'on-fail-retry',
       'shell',
       'signal',
     ]);

@@ -17,6 +17,12 @@
  *     - NODE_CANT_TERMINATE a reachable node has no path to any `terminate`
  *     - UNKNOWN_STEP       a `step` is not a built-in (may be a custom registry)
  *     - MISSING_CONFIG     a required step config field is absent
+ *     - FANOUT_LEAK        a fan-out branch can walk into its own `join` node (or back into
+ *                          the fan-out), so every branch would run what is meant to run once
+ *     - TERMINAL_IN_SUBGRAPH_ONLY  every reachable terminate sits inside a fan-out branch,
+ *                          where a terminate ends one branch, not the run
+ *     - IGNORED_FIELD      a node sets `retry` / `startToCloseTimeout` / `heartbeatTimeout`,
+ *                          which the interpreter never reads (use `onFail: { retry }`)
  *
  * Pure + I/O-free so it runs identically in the worker (pre-run / repair loop),
  * the gateway, and the web canvas (live lint). Wiring differs by caller: the
@@ -104,6 +110,9 @@ function fromPathNamesKnownNode(from: string, nodeIds: Set<string>): boolean {
   return false;
 }
 
+/** Node fields the schema accepts for stored-spec compatibility but the interpreter never reads. */
+const IGNORED_NODE_FIELDS = ['retry', 'startToCloseTimeout', 'heartbeatTimeout'] as const;
+
 export function validateSpec(spec: WorkflowSpec): ValidationReport {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
@@ -111,6 +120,19 @@ export function validateSpec(spec: WorkflowSpec): ValidationReport {
 
   // ── Expression lint + binding provenance ──
   for (const [id, node] of Object.entries(spec.nodes)) {
+    for (const field of IGNORED_NODE_FIELDS) {
+      if ((node as Record<string, unknown>)[field] !== undefined) {
+        warnings.push({
+          code: 'IGNORED_FIELD',
+          field,
+          message:
+            `'${field}' has no effect: activity retry and timeouts come from the worker's fixed ` +
+            'proxy groups. Use `onFail: { retry: N }` for workflow-level retry.',
+          nodeId: id,
+          severity: 'warning',
+        });
+      }
+    }
     if (node.type === 'cond') {
       const e = checkExprSyntax(node.expr);
       if (e) {
@@ -199,6 +221,49 @@ export function validateSpec(spec: WorkflowSpec): ValidationReport {
     }
   }
 
+  // ── Fan-out closure ──
+  // The interpreter walks a branch from `subgraph` until a node ends it, over the
+  // same flat node map as the main flow, so nothing but the edges keeps the two
+  // apart. A branch that can reach its own `join` runs the post-join nodes once per
+  // branch; one that reaches its own fan-out recurses.
+  const reachableFrom = (start: string, skipSubgraph: boolean): Set<string> => {
+    const seen = new Set<string>();
+    const stack = nodeIds.has(start) ? [start] : [];
+    while (stack.length > 0) {
+      const cur = stack.pop() as string;
+      if (seen.has(cur)) {
+        continue;
+      }
+      seen.add(cur);
+      for (const [field, target] of nodeEdges(spec.nodes[cur] as Node)) {
+        if (skipSubgraph && field === 'subgraph') {
+          continue;
+        }
+        if (nodeIds.has(target)) {
+          stack.push(target);
+        }
+      }
+    }
+    return seen;
+  };
+  for (const [id, node] of Object.entries(spec.nodes)) {
+    if (node.type !== 'fanOut') {
+      continue;
+    }
+    const inBranch = reachableFrom(node.subgraph, false);
+    if (inBranch.has(node.join) || inBranch.has(id)) {
+      warnings.push({
+        code: 'FANOUT_LEAK',
+        field: 'subgraph',
+        message: inBranch.has(id)
+          ? `a branch of fan-out '${id}' can reach the fan-out itself`
+          : `a branch of fan-out '${id}' can reach its join node '${node.join}'; branches should end instead of continuing into it`,
+        nodeId: id,
+        severity: 'warning',
+      });
+    }
+  }
+
   // ── Termination: at least one terminate reachable; flag nodes that can't reach one ──
   const terminals = [...nodeIds].filter((id) => (spec.nodes[id] as Node).type === 'terminate');
   const reachableTerminals = terminals.filter((id) => reachable.has(id));
@@ -209,6 +274,15 @@ export function validateSpec(spec: WorkflowSpec): ValidationReport {
       severity: 'error',
     });
   } else {
+    const mainFlow = reachableFrom(spec.entry, true);
+    if (!reachableTerminals.some((t) => mainFlow.has(t))) {
+      warnings.push({
+        code: 'TERMINAL_IN_SUBGRAPH_ONLY',
+        message:
+          'every reachable terminate node sits inside a fan-out branch, where it ends one branch rather than the run',
+        severity: 'warning',
+      });
+    }
     // Reverse-reachability: which nodes can reach SOME terminate?
     const canTerminate = new Set<string>(terminals);
     let changed = true;

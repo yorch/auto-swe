@@ -411,6 +411,32 @@ async function genericWriteOutcome(
  * Write a validated outcome to the target connection. Placeholder for non-git
  * types pending the domain-specific activity packs.
  */
+/**
+ * Refuse a write while the run's latest `publishOutcome` decision requires approval
+ * and no approval has been recorded since. A template that records the decision but
+ * routes straight to `writeOutcome` would otherwise write anyway while the audit log
+ * says approval was required. A run with no recorded decision is not gated.
+ */
+async function assertApprovalSatisfied(runId: string): Promise<void> {
+  const published = await prisma.autonomyDecision.findFirst({
+    orderBy: { createdAt: 'desc' },
+    where: { event: 'publish', runId },
+  });
+  const payload = published?.payload as { decision?: string } | null | undefined;
+  if (!published || payload?.decision !== 'require_approval') {
+    return;
+  }
+  const approved = await prisma.autonomyDecision.findFirst({
+    where: { createdAt: { gte: published.createdAt }, event: 'approve', runId },
+  });
+  if (!approved) {
+    throw ApplicationFailure.nonRetryable(
+      `writeOutcome refused: policy '${published.policyName ?? 'unknown'}' requires human approval for '${published.riskClass ?? 'this action'}' and none was recorded`,
+      'APPROVAL_REQUIRED'
+    );
+  }
+}
+
 export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutcomeResult> {
   const { connectionId, data, nodeId } = validateInput(
     z.object({
@@ -430,16 +456,15 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   const info = Context.current().info;
   const attempt = info.attempt;
   const workflowId = info.workflowExecution?.workflowId;
-  let runId: string | undefined;
-  if (nodeId && workflowId) {
-    const run = await prisma.workflowRun.findUnique({
-      select: { id: true },
-      where: { workflowId },
-    });
-    runId = run?.id;
-  }
+  const run = workflowId
+    ? await prisma.workflowRun.findUnique({ select: { id: true }, where: { workflowId } })
+    : null;
+  const runId = nodeId ? run?.id : undefined;
 
   async function perform(): Promise<WriteOutcomeResult> {
+    if (run) {
+      await assertApprovalSatisfied(run.id);
+    }
     const connection = await loadConnection(connectionId);
     const token = getApiToken(connection);
     switch (connection.type) {

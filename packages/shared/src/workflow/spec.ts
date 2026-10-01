@@ -72,8 +72,10 @@ const OnErrorSchema = z.enum(['fail', 'continue']).default('fail');
  *   - `{ retry: N }` : re-run the step up to N additional times; after the
  *                      final attempt fails, fall back to `block` semantics
  *
- * Use this for workflow-level failure handling. Activity-level retry policy
- * (transient infra/IO errors) still lives on the `retry` field.
+ * Use this for workflow-level failure handling. Activity-level retry and
+ * timeouts are not per-node: the worker applies fixed proxy groups by step kind.
+ * The `retry` / `startToCloseTimeout` / `heartbeatTimeout` node fields are still
+ * accepted so stored specs parse, but nothing reads them (`validateSpec` warns).
  */
 const OnFailSchema = z.union([
   z.literal('block'),

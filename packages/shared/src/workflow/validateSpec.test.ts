@@ -8,6 +8,78 @@ function spec(nodes: Record<string, unknown>, entry = 'a') {
   return parseWorkflowSpec({ entry, name: 'test', nodes, schemaVersion: 1 });
 }
 
+describe('validateSpec fan-out closure', () => {
+  const fan = (branchNext?: string) =>
+    spec(
+      {
+        branch: {
+          step: 'executeImplementation',
+          type: 'step',
+          ...(branchNext && { next: branchNext }),
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          over: { literal: [1, 2] },
+          subgraph: 'branch',
+          type: 'fanOut',
+        },
+      },
+      'fan'
+    );
+
+  it('is quiet for a branch that ends on its own', () => {
+    const codes = validateSpec(fan()).warnings.map((w) => w.code);
+    expect(codes).not.toContain('FANOUT_LEAK');
+    expect(codes).not.toContain('TERMINAL_IN_SUBGRAPH_ONLY');
+  });
+
+  it('warns when a branch continues into the join node', () => {
+    const w = validateSpec(fan('done')).warnings.find((x) => x.code === 'FANOUT_LEAK');
+    expect(w?.nodeId).toBe('fan');
+  });
+
+  it('warns when the only terminate is inside a branch', () => {
+    const report = validateSpec(
+      spec(
+        {
+          after: { type: 'set', values: { 'context.x': { literal: 1 } } },
+          branch: { next: 'end', step: 'executeImplementation', type: 'step' },
+          end: { status: 'SUCCESS', type: 'terminate' },
+          fan: { join: 'after', over: { literal: [1] }, subgraph: 'branch', type: 'fanOut' },
+        },
+        'fan'
+      )
+    );
+    expect(report.warnings.map((w) => w.code)).toContain('TERMINAL_IN_SUBGRAPH_ONLY');
+  });
+});
+
+describe('validateSpec IGNORED_FIELD', () => {
+  it('warns on retry/timeout fields the interpreter never reads, and still parses them', () => {
+    const report = validateSpec(
+      spec({
+        a: {
+          heartbeatTimeout: '5m',
+          next: 'done',
+          retry: { maximumAttempts: 3 },
+          startToCloseTimeout: '30m',
+          step: 'executeImplementation',
+          type: 'step',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      })
+    );
+    expect(report.errors).toEqual([]);
+    const ignored = report.warnings.filter((w) => w.code === 'IGNORED_FIELD');
+    expect(ignored.map((w) => w.field).sort()).toEqual([
+      'heartbeatTimeout',
+      'retry',
+      'startToCloseTimeout',
+    ]);
+  });
+});
+
 describe('validateSpec', () => {
   it('passes a clean linear spec', () => {
     const r = validateSpec(

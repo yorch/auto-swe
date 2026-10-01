@@ -331,9 +331,10 @@ interface Dispatcher {
 }
 ```
 
-`RunnableWorkflow` implements this by wrapping activity proxies. Only `step` and `shell` cross the
-activity boundary — `set`, `cond`, `signal`, `terminate`, `fanOut`, and the human nodes are handled
-internally. Because the interpreter has no Temporal imports, it runs in tests against a mock
+`RunnableWorkflow` implements this by wrapping activity proxies. The dispatch nodes — `step`,
+`agent`, `mcp`, `eval`, `containerStep`, and `shell` — cross the activity boundary, and the human
+nodes call `notifyHumanStep` / `resolveHumanStep` for their bookkeeping. `set`, `cond`, `signal`,
+`terminate`, and `fanOut` are handled internally. Because the interpreter has no Temporal imports, it runs in tests against a mock
 dispatcher, and the gateway can import the step catalog without a worker dependency.
 
 ### Versioning and reproducibility

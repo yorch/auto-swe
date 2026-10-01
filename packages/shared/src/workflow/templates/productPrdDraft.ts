@@ -24,6 +24,12 @@ export const PRODUCT_PRD_DRAFT_SPEC: WorkflowSpec = {
       spanName: 'llm.product_analysis',
       type: 'agent',
     },
+    checkAuto: {
+      expr: "nodes.publishOutcome.output.decision == 'require_approval'",
+      onFalse: 'writeOutcome',
+      onTrue: 'humanApproval',
+      type: 'cond',
+    },
     checkSource: {
       expr: 'request.payload.sourcePageId == null',
       onFalse: 'readSource',
@@ -38,6 +44,15 @@ export const PRODUCT_PRD_DRAFT_SPEC: WorkflowSpec = {
       status: 'SUCCESS',
       type: 'terminate',
     },
+    doneRejected: {
+      result: {
+        approved: { literal: false },
+        targetPageId: { from: 'request.payload.targetPageId' },
+        written: { literal: false },
+      },
+      status: 'SUCCESS',
+      type: 'terminate',
+    },
     draftPrd: {
       agentRef: 'prdWriter',
       inputs: {
@@ -48,12 +63,23 @@ export const PRODUCT_PRD_DRAFT_SPEC: WorkflowSpec = {
       spanName: 'llm.prd_draft',
       type: 'agent',
     },
+    humanApproval: {
+      approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
+      contextFrom: 'nodes.draftPrd.output.text',
+      description: 'Approve writing the drafted PRD to the target page, or reject to discard it.',
+      onApprove: 'writeOutcome',
+      onReject: 'doneRejected',
+      onTimeout: 'doneRejected',
+      timeout: '24h',
+      title: 'Approve write',
+      type: 'humanApproval',
+    },
     publishOutcome: {
       config: { action: 'internal_write' },
       inputs: {
         description: { from: 'request.payload.instructions' },
       },
-      next: 'writeOutcome',
+      next: 'checkAuto',
       step: 'publishOutcome',
       type: 'step',
     },

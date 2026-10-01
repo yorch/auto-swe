@@ -11,12 +11,16 @@
  * make a failing replay pass defeats the entire point of the test: a
  * determinism violation is exactly what it is meant to catch.
  *
- *   yarn workspace @auto-swe/worker exec tsx scripts/recordReplayHistory.ts
+ *   yarn workspace @auto-swe/worker exec tsx scripts/recordReplayHistory.ts [scenario ...]
+ *
+ * With no arguments every scenario is re-recorded; name scenarios to record only
+ * those (a new shape should never rewrite the fixtures that already pass).
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import { ApplicationFailure } from '@temporalio/activity';
 import proto from '@temporalio/proto';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
@@ -43,6 +47,11 @@ interface Scenario {
    * the wait node is deliberately dropped, so this has to observe first.
    */
   drive?: (handle: DriveHandle, states: string[]) => Promise<void>;
+  /**
+   * Activity overrides for this scenario, built fresh per recording so a closure
+   * (an attempt counter, say) cannot leak between scenarios.
+   */
+  activities?: () => Record<string, (...args: never[]) => unknown>;
 }
 
 interface DriveHandle {
@@ -314,6 +323,138 @@ const SCENARIOS: Scenario[] = [
     ),
   },
   {
+    // A `cond` that points back at an earlier node: the loop shape every
+    // review/CI retry in the seeded templates is built from. Walks the same
+    // nodes three times, so a change to how revisits are recorded surfaces here.
+    name: 'cond-loop',
+    spec: spec(
+      {
+        check: {
+          expr: 'context.n >= 2',
+          onFalse: 'work',
+          onTrue: 'done',
+          type: 'cond',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        inc: { next: 'check', type: 'set', values: { 'context.n': { expr: 'context.n + 1' } } },
+        init: { next: 'work', type: 'set', values: { 'context.n': { literal: 0 } } },
+        work: { next: 'inc', step: 'executeImplementation', type: 'step' },
+      },
+      'init'
+    ),
+  },
+  {
+    // onFail: { retry } — a gate that fails once, is re-run by the interpreter
+    // (not Temporal), and passes. Records the failed attempt and the pass.
+    activities: () => {
+      let calls = 0;
+      return {
+        runLint: async () => {
+          calls += 1;
+          return calls === 1
+            ? { passed: false, summary: 'lint failed on the first attempt' }
+            : { passed: true, summary: 'ok' };
+        },
+      };
+    },
+    name: 'on-fail-retry',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        lint: { next: 'done', onFail: { retry: 2 }, step: 'runLint', type: 'step' },
+      },
+      'lint'
+    ),
+  },
+  {
+    // onError: 'continue' — a step that throws is recorded SKIPPED and the run
+    // moves on. It bypasses retry and onFail, so it is its own path.
+    activities: () => ({
+      executeImplementation: async () => {
+        throw ApplicationFailure.nonRetryable('fixture failure');
+      },
+    }),
+    name: 'on-error-continue',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        work: { next: 'done', onError: 'continue', step: 'executeImplementation', type: 'step' },
+      },
+      'work'
+    ),
+  },
+  {
+    // A fan-out whose branches each run a fan-out. The inner pool shares the
+    // run-wide transition cap and branch-index allocation with the outer one.
+    name: 'nested-fan-out',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        inner: {
+          concurrency: 2,
+          itemKey: 'leafItem',
+          join: 'innerDone',
+          over: { literal: [{ id: 'x' }, { id: 'y' }] },
+          subgraph: 'leaf',
+          type: 'fanOut',
+        },
+        innerDone: { next: undefined, type: 'set', values: { 'context.inner': { literal: true } } },
+        leaf: { step: 'executeImplementation', type: 'step' },
+        outer: {
+          concurrency: 2,
+          itemKey: 'subtask',
+          join: 'done',
+          over: { literal: [{ id: 'a' }, { id: 'b' }] },
+          subgraph: 'inner',
+          type: 'fanOut',
+        },
+      },
+      'outer'
+    ),
+  },
+  {
+    // Block-mode fan-out cancellation: one branch fails while its sibling is
+    // parked on a human approval. The sibling's wait must be interrupted rather
+    // than held for the 24h timeout, and the run fails.
+    activities: () => ({
+      executeImplementation: async () => {
+        throw ApplicationFailure.nonRetryable('fixture branch failure');
+      },
+    }),
+    name: 'fan-out-block-cancel',
+    spec: spec(
+      {
+        branchDone: { type: 'set', values: { 'context.branch': { literal: true } } },
+        branchFail: { next: 'branchDone', step: 'executeImplementation', type: 'step' },
+        branchGate: {
+          onApprove: 'branchDone',
+          onReject: 'branchDone',
+          onTimeout: 'branchDone',
+          timeout: '24h',
+          title: 'Hold this branch open',
+          type: 'humanApproval',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          concurrency: 2,
+          itemKey: 'subtask',
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [{ bad: true }, { bad: false }] },
+          subgraph: 'route',
+          type: 'fanOut',
+        },
+        route: {
+          expr: 'subtask.bad == true',
+          onFalse: 'branchGate',
+          onTrue: 'branchFail',
+          type: 'cond',
+        },
+      },
+      'fan'
+    ),
+  },
+  {
     // Finalization spills oversized context to artifacts. No other fixture
     // walks that path, so a change to the spill batching replays clean
     // everywhere else — which is exactly how the batching change slipped past
@@ -380,6 +521,7 @@ async function record(scenario: Scenario, env: TestWorkflowEnvironment): Promise
       updateDomainState: async (_wf: string, status: string) => {
         states.push(status);
       },
+      ...scenario.activities?.(),
     },
     connection: env.nativeConnection,
     taskQueue,
@@ -427,7 +569,15 @@ async function main(): Promise<void> {
   mkdirSync(OUT_DIR, { recursive: true });
   const env = await TestWorkflowEnvironment.createTimeSkipping();
   try {
-    for (const scenario of SCENARIOS) {
+    // Name scenarios on the command line to record only those. Re-recording a
+    // fixture that still replays defeats it, so adding a scenario must not touch
+    // the existing ones.
+    const only = process.argv.slice(2);
+    const unknown = only.filter((n) => !SCENARIOS.some((sc) => sc.name === n));
+    if (unknown.length) {
+      throw new Error(`unknown scenario(s): ${unknown.join(', ')}`);
+    }
+    for (const scenario of SCENARIOS.filter((sc) => only.length === 0 || only.includes(sc.name))) {
       const events = await withTimeout(scenario.name, record(scenario, env));
       console.log(`${scenario.name.padEnd(16)} ${events} events`);
     }

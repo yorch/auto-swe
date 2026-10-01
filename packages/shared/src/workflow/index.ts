@@ -51,6 +51,7 @@ export {
   BranchCancelledError,
   DEFAULT_FANOUT_CONCURRENCY,
   DEFAULT_MAX_TRANSITIONS,
+  normalizeApproverCount,
   runSpec,
 } from './interpreter.js';
 export type {
