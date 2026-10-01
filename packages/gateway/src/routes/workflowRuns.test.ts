@@ -397,3 +397,57 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     );
   });
 });
+
+describe('workflowRunRoutes GET / (status and templateVersion filters)', () => {
+  const templateId = '6f9619ff-8b86-4a08-8b86-3e6f9619ffd1';
+  const list = (app: Awaited<ReturnType<typeof buildApp>>['app'], qs: string) =>
+    app.inject({ headers: AUTH, method: 'GET', url: `/api/v1/workflow-runs?${qs}` });
+
+  it('applies status and templateVersion to the list and the count', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await list(app, `templateId=${templateId}&status=FAILED&templateVersion=2`);
+
+    expect(res.statusCode).toBe(200);
+    const expected = { status: 'FAILED', templateId, templateVersion: 2 };
+    expect(lastListWhere(prisma)).toMatchObject(expected);
+    // Same where for the count, so `total` describes the filtered set.
+    expect(prisma.workflowRun.count.mock.calls[0][0].where).toMatchObject(expected);
+  });
+
+  it('reports the count of the filtered set as the total', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.count.mockResolvedValue(3);
+    const res = await list(app, `templateId=${templateId}&templateVersion=2&limit=1`);
+    expect(res.json().meta.total).toBe(3);
+  });
+
+  it('adds no templateVersion key when none is given', async () => {
+    const { app, prisma } = await buildApp();
+    await list(app, `templateId=${templateId}`);
+    expect(lastListWhere(prisma)).not.toHaveProperty('templateVersion');
+  });
+
+  it('rejects an unknown status', async () => {
+    const { app } = await buildApp();
+    expect((await list(app, 'status=SUCCEEDED')).statusCode).toBe(400);
+  });
+
+  it.each(['0', '-1', '1.5', 'abc'])('rejects templateVersion=%s', async (v) => {
+    const { app } = await buildApp();
+    expect((await list(app, `templateVersion=${v}`)).statusCode).toBe(400);
+  });
+
+  it('keeps the repository-share visibility branch alongside the filters for a non-admin', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    await list(app, `templateId=${templateId}&status=FAILED&templateVersion=2`);
+
+    const where = lastListWhere(prisma);
+    expect(where).toMatchObject({ status: 'FAILED', templateId, templateVersion: 2 });
+    // The filters narrow the visible set; they must not replace it. The OR is
+    // the visibility filter, and its repository branches are what let a member
+    // of a team a repository is shared with see the owning team's runs. A run
+    // reachable only through a share therefore still lists, filtered. There is
+    // no template-membership gate on this route, unlike the template-scoped one.
+    expect(JSON.stringify(where.OR)).toContain('"shares"');
+  });
+});

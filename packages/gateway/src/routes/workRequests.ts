@@ -726,6 +726,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return reply.status(201).send({
         data: {
+          // The Temporal workflow id keys the WorkflowRun row the worker
+          // creates once the workflow begins, so a client can find the new run
+          // by it. `workflowIds` holds ledger ids, which no run is keyed by.
+          temporalWorkflowId: allocated.workflowId,
           workflowIds: [launch.activeWorkflowId],
           workRequestId: workRequest.id,
         },
