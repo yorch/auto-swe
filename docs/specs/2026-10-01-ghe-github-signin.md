@@ -65,9 +65,10 @@ is the entry that is both `primary` and `verified`; the public `email` on `/user
 because it carries no verification flag. With no such entry it returns `null`, which makes
 better-auth refuse the sign-in.
 
-**Account id is namespaced** as `{host}:{numeric id}`. Both servers issue small numeric ids and every
-account row is `(providerId = 'github', accountId)`, so a bare numeric id from GHE could match a
-user's earlier github.com account and sign the wrong person in. Prefixing the host makes that
+**Account id is namespaced** as `{host}:{numeric id}`. Both servers issue small numeric ids and accounts
+are keyed unique on `(issuer, accountId)`; a generic provider with no `accountIssuer` gets
+`local:oauth:github`, the same issuer as the built-in provider. A bare numeric id from GHE could
+therefore match a user's earlier github.com account and sign the wrong person in. Prefixing the host makes that
 impossible. The `refreshGithubLogin` hook and the backfill script key on `providerId` and the access
 token, not on `accountId`, so they are unaffected.
 

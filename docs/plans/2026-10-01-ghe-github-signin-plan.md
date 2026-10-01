@@ -10,10 +10,10 @@ Jira: N/A
      appends the task's commit SHA as it lands; s1-eng-resume reads this list
      (and cross-checks it against git) to find where to pick up. -->
 
-- [ ] Task 1: Fetch and map a GHE profile into a better-auth user
-- [ ] Task 2: Build the GHE sign-in provider and prove the authorize URL
+- [x] Task 1: Fetch and map a GHE profile into a better-auth user — `aad6076`
+- [x] Task 2: Build the GHE sign-in provider and prove the authorize URL — `c46f900`
 - [ ] Task 3: Wire GHE sign-in into the gateway
-- [ ] Task 4: Document GHE sign-in in the OAuth setup guide
+- [x] Task 4: Document GHE sign-in in the OAuth setup guide — `ecd6c18`
 
 ## Tasks
 
