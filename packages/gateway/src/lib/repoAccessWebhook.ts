@@ -14,10 +14,13 @@
 
 /** Which cached answers a webhook invalidates. */
 export type AccessInvalidation =
-  /** One user on one repository — a direct collaborator change. */
-  | { kind: 'pair'; org: string; repo: string; login: string }
+  /**
+   * One user on one repository — a direct collaborator change. `htmlUrl` is
+   * the repository's web URL, which names the host its owner/name live on.
+   */
+  | { kind: 'pair'; org: string; repo: string; login: string; htmlUrl?: string }
   /** Every user on one repository — a team was added/removed, or the repo changed. */
-  | { kind: 'repo'; org: string; repo: string }
+  | { kind: 'repo'; org: string; repo: string; htmlUrl?: string }
   /** One user everywhere — they left the organization, or a team's membership changed. */
   | { kind: 'user'; login: string }
   /** Nothing this event can affect. */
@@ -41,7 +44,9 @@ function normalizedLogin(value: unknown): string | null {
   return str(value)?.toLowerCase() ?? null;
 }
 
-function repoIdentity(payload: Record<string, unknown>): { org: string; repo: string } | null {
+function repoIdentity(
+  payload: Record<string, unknown>
+): { org: string; repo: string; htmlUrl?: string } | null {
   const repository = payload.repository as Record<string, unknown> | undefined;
   if (!repository) {
     return null;
@@ -49,7 +54,10 @@ function repoIdentity(payload: Record<string, unknown>): { org: string; repo: st
   const owner = repository.owner as Record<string, unknown> | undefined;
   const org = str(owner?.login);
   const repo = str(repository.name);
-  return org && repo ? { org, repo } : null;
+  // The host, which owner/name alone do not carry: the same names on another
+  // GitHub host are a different repository. Absent, the match is by name only.
+  const htmlUrl = str(repository.html_url);
+  return org && repo ? { org, repo, ...(htmlUrl ? { htmlUrl } : {}) } : null;
 }
 
 /**

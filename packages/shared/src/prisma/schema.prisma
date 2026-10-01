@@ -348,6 +348,9 @@ model Connection {
   repoAccess            RepoAccess[]
   /// Per-user GitHub tokens for this repository (see `ConnectionCredential`).
   credentials           ConnectionCredential[]
+  /// Further teams whose members may see and launch on this repository. The
+  /// owning team (`teamId`) keeps management, budgets and settings.
+  shares                ConnectionTeamShare[]
 
   @@index([teamId])
   @@index([installationId])
@@ -387,6 +390,31 @@ model RepoAccess {
   @@index([connectionId])
   @@index([checkedAt])
   @@map("repo_access")
+}
+
+/// One further team a repository is shared with.
+///
+/// Members of a shared team reach the repository exactly as owning-team
+/// members do for seeing it and launching runs on it — every membership test
+/// accepts either. They do NOT manage it: editing, deleting, re-sharing,
+/// schedules and dependency edges stay with the owning team, and runs keep the
+/// owning team's budget, default template and settings. Shares are limited to
+/// teams in the owning team's organization, so a repository never crosses a
+/// tenant boundary this way.
+model ConnectionTeamShare {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  connectionId String     @map("connection_id") @db.Uuid
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  teamId       String     @map("team_id") @db.Uuid
+  team         Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdById  String?    @map("created_by_id") @db.Uuid
+  createdBy    User?      @relation("ConnectionShareCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([connectionId, teamId])
+  @@index([teamId])
+  @@index([createdById])
+  @@map("connection_team_shares")
 }
 
 /// One user's own GitHub token for one repository.
@@ -571,6 +599,8 @@ model Team {
 
   memberships         TeamMembership[]
   repositories        Connection[]
+  /// Repositories other teams have shared with this one (see `ConnectionTeamShare`).
+  sharedRepositories  ConnectionTeamShare[]
   workflowTemplates   WorkflowTemplate[]
   shellAudits         WorkflowShellAudit[]
   providerCredentials ProviderCredential[]
@@ -963,11 +993,13 @@ model User {
   humanStepsResolved    WorkflowHumanStep[]
   humanErrorBaselines   HumanErrorBaseline[]
   workRequests          RunInput[]
-  scheduledWorkRequests ScheduledWorkRequest[]
+  scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleCreator")
+  schedulesActingAs     ScheduledWorkRequest[] @relation("ScheduleActsAs")
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
   connectionCredentials ConnectionCredential[]
   launchedRuns          WorkflowRun[]          @relation("WorkflowRunLauncher")
+  createdShares         ConnectionTeamShare[]  @relation("ConnectionShareCreator")
 
   @@map("users")
 }
@@ -1113,7 +1145,15 @@ model ScheduledWorkRequest {
   budgetTier           String            @default("STANDARD") @map("budget_tier")
   isActive             Boolean           @default(true) @map("is_active")
   createdById          String?           @map("created_by_id") @db.Uuid
-  createdBy            User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy            User?             @relation("ScheduleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  /// Whose identity every fire launches as: the user who last defined WHAT the
+  /// schedule does (created it, or changed its description or template). Fires
+  /// may use that user's own saved GitHub token, so a person editing someone
+  /// else's schedule takes it over rather than borrowing their token. Null —
+  /// the author was deleted, or the schedule predates this — means no launcher
+  /// and only the platform credential.
+  actsAsUserId         String?           @map("acts_as_user_id") @db.Uuid
+  actsAsUser           User?             @relation("ScheduleActsAs", fields: [actsAsUserId], references: [id], onDelete: SetNull)
   /// Standing WorkRequest that all scheduled fires attach their WorkflowRuns to.
   workRequestId        String?           @map("work_request_id") @db.Uuid
   workRequest          RunInput?         @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
@@ -1126,6 +1166,7 @@ model ScheduledWorkRequest {
   @@index([repoId])
   @@index([templateId])
   @@index([createdById])
+  @@index([actsAsUserId])
   @@index([workRequestId])
   @@map("scheduled_work_requests")
 }

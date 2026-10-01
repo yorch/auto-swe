@@ -9,6 +9,7 @@ import {
   createKnowledgeBaseProvider,
 } from '@auto-swe/shared/lib/integrations/registry';
 import { decideRepoAccess, repoAccessErrorBody } from '@auto-swe/shared/lib/repoAccessDecision';
+import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import {
   resolveCanaryConfig,
   resolveFigmaConfig,
@@ -286,20 +287,45 @@ const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLE
  * (unique on temporalWorkflowId) all see a fresh execution instead of
  * colliding with the previous one. Returns a conflict when an execution for
  * this ticket+repo is still in flight.
+ *
+ * `legacyBaseId` is the id the same ticket had before repository ids carried
+ * their host (only a repository with a host override has one). An execution
+ * still in flight under it is the same ticket on the same repository, and must
+ * block a second one exactly as an in-flight execution under `baseId` does —
+ * otherwise the upgrade, or giving a repository a host override, would let two
+ * runs push the same branch. Repointing from one override host to another
+ * while a run is in flight is not covered.
  */
 async function allocateWorkflowId(
   prisma: FastifyInstance['prisma'],
-  baseId: string
+  baseId: string,
+  legacyBaseId?: string
 ): Promise<{ workflowId: string; isRerun: boolean } | { conflictWorkflowId: string }> {
+  const families = legacyBaseId && legacyBaseId !== baseId ? [baseId, legacyBaseId] : [baseId];
   const rows = await prisma.activeWorkflow.findMany({
     select: { currentStatus: true, temporalWorkflowId: true },
     where: {
-      OR: [{ temporalWorkflowId: baseId }, { temporalWorkflowId: { startsWith: `${baseId}-r` } }],
+      OR: families.flatMap((id) => [
+        { temporalWorkflowId: id },
+        { temporalWorkflowId: { startsWith: `${id}-r` } },
+      ]),
     },
   });
   // The startsWith match can catch a *different* ticket whose ID happens to
   // extend this one — keep only the base ID and exact `-r<N>` suffixes.
-  const suffixRe = new RegExp(`^${baseId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-r\\d+)?$`);
+  const familyRe = (id: string) =>
+    new RegExp(`^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-r\\d+)?$`);
+  const legacyActive = legacyBaseId
+    ? rows.find(
+        (w) =>
+          familyRe(legacyBaseId).test(w.temporalWorkflowId) &&
+          !TERMINAL_STATUSES.has(w.currentStatus)
+      )
+    : undefined;
+  if (legacyActive) {
+    return { conflictWorkflowId: legacyActive.temporalWorkflowId };
+  }
+  const suffixRe = familyRe(baseId);
   const existing = rows.filter((w) => suffixRe.test(w.temporalWorkflowId));
   if (existing.length === 0) {
     return { isRerun: false, workflowId: baseId };
@@ -401,6 +427,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const repo = await fastify.prisma.connection.findUnique({
         include: {
           installation: { select: { installationId: true, isActive: true } },
+          // A member of a team the repository is shared with may launch too.
+          shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
           team: {
             select: {
               memberships: {
@@ -476,9 +504,14 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const baseWorkflowId = generateWorkflowId(
         externalTicketId,
         repo.organizationName,
-        repo.repoName
+        repo.repoName,
+        repo.githubUrl
       );
-      const allocated = await allocateWorkflowId(fastify.prisma, baseWorkflowId);
+      const allocated = await allocateWorkflowId(
+        fastify.prisma,
+        baseWorkflowId,
+        generateWorkflowId(externalTicketId, repo.organizationName, repo.repoName)
+      );
       if ('conflictWorkflowId' in allocated) {
         return reply.status(409).send({
           error: {
@@ -647,6 +680,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
               repository: {
                 include: {
                   installation: { select: { installationId: true, isActive: true } },
+                  shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
                   team: {
                     select: {
                       memberships: { select: { userId: true }, where: { userId: user.sub } },
@@ -727,9 +761,14 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const baseWorkflowId = generateWorkflowId(
         workRequest.externalTicketId,
         repo.organizationName,
-        repo.repoName
+        repo.repoName,
+        repo.githubUrl
       );
-      const allocated = await allocateWorkflowId(fastify.prisma, baseWorkflowId);
+      const allocated = await allocateWorkflowId(
+        fastify.prisma,
+        baseWorkflowId,
+        generateWorkflowId(workRequest.externalTicketId, repo.organizationName, repo.repoName)
+      );
       if ('conflictWorkflowId' in allocated) {
         return reply.status(409).send({
           error: {

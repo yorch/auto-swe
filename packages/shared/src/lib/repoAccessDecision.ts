@@ -31,6 +31,7 @@ import {
   type RepoAccessGate,
   type RunIdentity,
 } from './repoAccessGate.js';
+import { isRepoMember } from './repoMembership.js';
 
 /**
  * Everything a decision reads, with nothing optional.
@@ -53,6 +54,13 @@ export interface RepoAccessSubject {
   installation: { installationId: string; isActive: boolean } | null;
   /** Must be filtered to the acting user, or pre-filtered by the query. */
   team: { memberships: Array<{ userId: string }> };
+  /**
+   * The teams the repository is shared with, memberships filtered the same
+   * way. Required for the same reason `team` is: a call site that forgot to
+   * select it would compile, and quietly refuse every shared-team member.
+   * `repoMembersSelect` produces both.
+   */
+  shares: Array<{ team: { memberships: Array<{ userId: string }> } }>;
 }
 
 export type RepoAccessRefusal = 'not-a-team-member' | 'installation-retired' | LaunchRefusal;
@@ -159,7 +167,8 @@ export async function decideRepoAccess(
   // Membership first, and only for non-admins. Someone outside the team gets
   // the answer that is actionable for them, rather than being told about an
   // installation they have no stake in.
-  if (user.role !== 'ADMIN' && !repo.team.memberships.some((m) => m.userId === user.sub)) {
+  // A shared team's members count, exactly as the owning team's do.
+  if (user.role !== 'ADMIN' && !isRepoMember(repo, user.sub)) {
     return { allowed: false, reason: 'not-a-team-member' };
   }
   // Then the installation — when the caller is starting work, and then for

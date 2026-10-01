@@ -22,6 +22,15 @@ vi.mock('@auto-swe/shared', () => ({
   Role: { ADMIN: 'ADMIN', ENGINEER: 'ENGINEER', LEAD: 'LEAD' },
 }));
 
+// URL normalisation compares overrides with the instance's own GitHub hosts;
+// stub the config read so it never reaches the database.
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubConfig: async () => ({
+    apiUrl: 'https://api.github.com',
+    baseUrl: 'https://github.com',
+  }),
+}));
+
 import { repositoryRoutes } from './repositories.js';
 
 interface AuthState {
@@ -168,9 +177,11 @@ describe('repositoryRoutes', () => {
       });
 
       const findManyArgs = ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0];
+      // The caller's own teams, or a team the repository is shared with.
+      const member = { memberships: { some: { userId: 'engineer-7' } } };
       expect(findManyArgs.where).toEqual({
+        AND: [{ OR: [{ team: member }, { shares: { some: { team: member } } }] }, {}],
         isActive: true,
-        team: { memberships: { some: { userId: 'engineer-7' } } },
       });
     });
 
@@ -255,6 +266,21 @@ describe('repositoryRoutes', () => {
 
       expect(res.statusCode).toBe(201);
       expect(JSON.parse(res.payload).data.id).toBe(REPO_ID);
+      // Identity is (host, owner, name); no override means the instance's host,
+      // which a row spelling that host out also is.
+      expect(ctx.mockPrisma.connection.findFirst).toHaveBeenCalledWith({
+        where: {
+          OR: [{ githubUrl: null }, { githubUrl: 'https://github.com' }],
+          organizationName: 'acme',
+          repoName: 'widgets',
+          type: 'git_repo',
+        },
+      });
+      expect(ctx.mockPrisma.connection.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ githubApiUrl: null, githubUrl: null }),
+        })
+      );
     });
 
     it('returns 409 REPO_EXISTS on the friendly pre-check duplicate (no create call)', async () => {

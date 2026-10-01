@@ -8,6 +8,7 @@ import {
   isSettingKey,
   type ResolvedSetting,
   resolveEffectiveSettings,
+  roleMeets,
   SETTING_DEFINITIONS,
   type SettingKey,
   type SettingResolveCtx,
@@ -205,6 +206,9 @@ export interface SettingView extends ResolvedSetting {
   /// `value`, which is what the cascade resolves to — an operator needs to see
   /// both to understand why a change at their scope did or did not take effect.
   overrideAtScope?: unknown;
+  /// Set when `value` and `overrideAtScope` were withheld because the setting
+  /// is sensitive and this actor is below its `requiredRole`.
+  redacted?: boolean;
 }
 
 export async function listSettings(
@@ -221,8 +225,13 @@ export async function listSettings(
 
   return settings.map((resolved) => {
     const definition = getSettingDefinition(resolved.key as SettingKey);
+    // A sensitive value (a host allowlist naming internal servers) is shown only
+    // to someone who could change it. Everyone else sees the definition, not
+    // what it is set to.
+    const redacted = !!definition.sensitive && !roleMeets(actor.role, definition.requiredRole);
     return {
       ...resolved,
+      ...(redacted ? { redacted: true, value: null } : {}),
       // Computed server-side because only the server knows the grants. A client
       // that re-derives this from the role alone can only see the floor, so a
       // lead holding a grant would be shown a disabled control for a key they
@@ -242,7 +251,7 @@ export async function listSettings(
       group: definition.group,
       label: definition.label,
       overridableAt: definition.overridableAt,
-      overrideAtScope: overrideAt(resolved.key, selector.scope),
+      overrideAtScope: redacted ? undefined : overrideAt(resolved.key, selector.scope),
       requiredRole: definition.requiredRole,
       restartRequired: definition.restartRequired,
       runPinned: definition.runPinned,

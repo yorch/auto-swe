@@ -185,6 +185,13 @@ async function buildChannelTaskRun(
     channelId: input.channelId,
     description: input.description,
     externalTicketId,
+    // A code task acts as the person who asked for it, when Slack names a
+    // linked platform user — the identity the access gate judges when it is on
+    // (with the gate off nothing judged them, as for every other launch). It
+    // may then use their own saved token for the repository;
+    // `resolveUserCredential` still requires them to be an active member of
+    // its team, or a team it is shared with, at run time.
+    ...(repoId && requestedById ? { launchedById: requestedById } : {}),
     repoId,
     requestPayload: input.description,
     slackChannel: input.threadTs,
@@ -214,7 +221,8 @@ function validFutureRunAt(runAt: string | undefined): string | undefined {
  * Channel assistant (Phase B): resolve which `git_repo` Connection a code task in
  * this channel should run against.
  *
- * Query the channel team's active `git_repo` connections, then:
+ * Query the active `git_repo` connections the channel's team owns or has been
+ * shared, then:
  *  (a) if `repoHint` case-insensitively matches a connection's `repoName` or its
  *      `organizationName/repoName`, use that connection;
  *  (b) else, if the team has EXACTLY ONE active `git_repo` connection, use it
@@ -238,11 +246,21 @@ export async function resolveChannelRepo(
     return null;
   }
 
+  // The channel team's own repositories and those shared with it: a shared
+  // team's members launch on a shared repository like on their own.
   const rows = await prisma.connection.findMany({
-    select: { id: true, organizationName: true, repoName: true, type: true },
-    where: { isActive: true, teamId: channel.teamId, type: 'git_repo' },
+    select: { id: true, organizationName: true, repoName: true, teamId: true, type: true },
+    where: {
+      isActive: true,
+      OR: [{ teamId: channel.teamId }, { shares: { some: { teamId: channel.teamId } } }],
+      type: 'git_repo',
+    },
   });
   const repos = rows.filter(isGitRepoConnection);
+  // A team never consented to receiving a share, so a shared repository must
+  // not change what the team's own repositories resolve to: it is reachable by
+  // name, never a default, and loses a tie to one the team owns.
+  const owned = repos.filter((r) => r.teamId === channel.teamId);
   if (repos.length === 0) {
     return null;
   }
@@ -250,23 +268,31 @@ export async function resolveChannelRepo(
   // (a) Hint match: accept either the bare `repoName` or `organizationName/repoName`.
   const hint = repoHint?.trim().toLowerCase();
   if (hint) {
-    const match = repos.find(
-      (r) =>
-        r.repoName.toLowerCase() === hint ||
-        `${r.organizationName}/${r.repoName}`.toLowerCase() === hint
-    );
-    // A hint that matches → use it. A hint that does NOT match → fall back to the
-    // general route (return null) rather than silently opening a PR against an
-    // unrelated repo. Only the no-hint case takes the single-repo default below.
+    const matches = (candidates: typeof repos) =>
+      candidates.filter(
+        (r) =>
+          r.repoName.toLowerCase() === hint ||
+          `${r.organizationName}/${r.repoName}`.toLowerCase() === hint
+      );
+    const all = matches(repos);
+    const ownedMatches = matches(owned);
+    // One match → use it; several → the one the team owns, if exactly one. A
+    // hint that matches nothing, or still matches several, falls back to the
+    // general route (return null) rather than opening a PR against a repository
+    // the requester may not have meant. Only the no-hint case takes the
+    // single-repo default below.
+    const match = all.length === 1 ? all[0] : ownedMatches.length === 1 ? ownedMatches[0] : null;
     return match ? { repoId: match.id } : null;
   }
 
-  // (b) No hint + exactly one repo → unambiguous default.
-  if (repos.length === 1) {
-    return { repoId: repos[0].id };
+  // (b) No hint + exactly one repo the team owns → unambiguous default.
+  // Shared repositories never take part.
+  if (owned.length === 1) {
+    return { repoId: owned[0].id };
   }
 
-  // (c) No hint + multiple repos → ambiguous; caller falls back to general.
+  // (c) No hint + none or several owned repos → ambiguous; caller falls back
+  // to general.
   return null;
 }
 

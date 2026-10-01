@@ -9,6 +9,7 @@ import {
   matchRepoDependency,
   type RepoDependencyCandidate,
 } from '@auto-swe/shared/lib/repoDependencyMatch';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { findEdgeWriteTarget } from '../lib/repoDependencyEdgeWrite.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { RepoRef, ScmProvider } from '../lib/scm/types.js';
@@ -46,6 +47,15 @@ interface RawDependency {
  * not sink the whole scan. Logged (not silently dropped) so a real, recurring
  * failure is still visible in worker logs.
  */
+/** Lower-cased hostname of a URL (no port), or null when it does not parse. */
+function hostnameOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 async function safeFetchFile(
   provider: ScmProvider,
   repoRef: RepoRef,
@@ -197,10 +207,20 @@ export async function detectRepoDependencies(
   // predicate required by tenantGuard.coverage.test.ts — do not extract into
   // a helper or spread it in.
   const candidateRows = await prisma.connection.findMany({
-    select: { id: true, organizationName: true, packageNames: true, repoName: true },
+    select: {
+      githubUrl: true,
+      id: true,
+      organizationName: true,
+      packageNames: true,
+      repoName: true,
+    },
     where: { isActive: true, team: { orgId: connection.team.orgId }, type: 'git_repo' },
   });
+  // Each candidate's host, so a dependency URL naming a host matches only the
+  // repository on that host — no override means the instance's own.
+  const instanceBase = (await resolveGitHubConfig()).baseUrl;
   const candidates: RepoDependencyCandidate[] = candidateRows.map((c) => ({
+    host: hostnameOf(c.githubUrl ?? instanceBase),
     id: c.id,
     organizationName: c.organizationName,
     packageNames: c.packageNames,

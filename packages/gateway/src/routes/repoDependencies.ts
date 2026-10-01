@@ -91,7 +91,11 @@ async function bothTeamsLead(
   return a && b;
 }
 
-/** Whether the user can see repo `:id` at all — ADMIN, or a member of its team. */
+/**
+ * Whether the user can see repo `:id` at all — ADMIN, a member of its team, or
+ * a member of a team it is shared with. Seeing is membership; editing edges
+ * stays with the owning teams' leads (`bothTeamsLead`).
+ */
 async function canViewRepo(
   prisma: RoutePrisma,
   user: { sub: string; role: string },
@@ -103,7 +107,14 @@ async function canViewRepo(
   const membership = await prisma.teamMembership.findUnique({
     where: { userId_teamId: { teamId: repo.teamId, userId: user.sub } },
   });
-  return !!membership;
+  if (membership) {
+    return true;
+  }
+  const share = await prisma.connectionTeamShare.findFirst({
+    select: { id: true },
+    where: { connectionId: repo.id, team: { memberships: { some: { userId: user.sub } } } },
+  });
+  return !!share;
 }
 
 export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {

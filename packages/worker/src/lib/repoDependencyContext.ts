@@ -214,14 +214,20 @@ export async function checkoutUpstreamRepos(
     const orderedRows = neighborIds.map((id) => byId.get(id)).filter((r) => r !== undefined);
 
     const deps: { authedCloneUrl: string; branch?: string; name: string }[] = [];
+    const usedNames = new Set<string>();
     for (const row of orderedRows) {
       try {
         const ref = toRepoRef(row);
         const { authedCloneUrl } = await getScmProvider(ref).cloneCredentials(ref);
+        // The same owner/name can exist on two GitHub hosts; only a collision
+        // gets a suffix, so the usual checkout path is unchanged.
+        const base = `${row.organizationName}-${row.repoName}`;
+        const name = usedNames.has(base) ? `${base}-${row.id.slice(0, 8)}` : base;
+        usedNames.add(name);
         deps.push({
           authedCloneUrl,
           branch: row.defaultBranch ?? undefined,
-          name: `${row.organizationName}-${row.repoName}`,
+          name,
         });
       } catch {
         // A dependency we cannot get credentials for is simply not checked out.

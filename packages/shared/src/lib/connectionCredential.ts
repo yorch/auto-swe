@@ -19,9 +19,10 @@
  *    admin approved that host by name, the same opt-in the tracker and
  *    knowledge-base connectors require for a private address.
  */
-import { resolveSettings } from '../config/index.js';
+import { resolveSetting, resolveSettings } from '../config/index.js';
 import type { PrismaClient } from '../index.js';
 import { decryptSecret, encryptSecret } from './crypto.js';
+import { isRepoMember, repoMembersSelect } from './repoMembership.js';
 import { resolveGitHubConfig } from './systemConfig.js';
 
 /** Columns of an encrypted `ConnectionCredential.token`. */
@@ -100,6 +101,56 @@ export function credentialHostAllowed(url: string, hosts: readonly string[]): bo
   return host === 'api.github.com' && allowed.has('github.com');
 }
 
+/** `host[:port]` of a URL, lowercased, or null when it does not parse. */
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a repository's own URL overrides may receive a GitHub credential.
+ *
+ * The platform credential — and a user's — is sent to a repository's own web
+ * and API bases. Those are per-repository overrides a team lead can set, so
+ * without this a lead could point a repository at a host they control and
+ * collect the platform's token on the next run. An override must therefore be
+ * a canonical HTTPS URL on one of the instance's own GitHub hosts (the GitHub
+ * integration's web and API URLs, which only an admin sets) or on
+ * `github.repositoryHosts`.
+ *
+ * A repository with no overrides uses the instance hosts and is allowed
+ * without reading anything, so the common case costs nothing.
+ *
+ * Returns the first refused URL so a caller can name it.
+ */
+export async function repositoryHostsAllowed(repo: {
+  githubUrl?: string | null;
+  githubApiUrl?: string | null;
+}): Promise<{ ok: true } | { ok: false; url: string }> {
+  const overrides = [repo.githubUrl, repo.githubApiUrl].filter(
+    (u): u is string => typeof u === 'string' && u.length > 0
+  );
+  if (overrides.length === 0) {
+    return { ok: true };
+  }
+  const [ghConfig, extra] = await Promise.all([
+    resolveGitHubConfig(),
+    resolveSetting('github.repositoryHosts'),
+  ]);
+  const hosts = [hostOf(ghConfig.baseUrl), hostOf(ghConfig.apiUrl), ...extra].filter(
+    (h): h is string => h !== null
+  );
+  for (const url of overrides) {
+    if (!credentialHostAllowed(url, hosts)) {
+      return { ok: false, url };
+    }
+  }
+  return { ok: true };
+}
+
 /** The policy both settings make up, read in one round trip. */
 export async function resolveUserCredentialPolicy(): Promise<{
   enabled: boolean;
@@ -130,9 +181,10 @@ export interface UsableCredential {
  *
  *  - the feature is on;
  *  - the user saved a token for this repository;
- *  - the user is active, and still a member of the repository's team (or a
- *    platform ADMIN, consistent with every other repository check). Membership
- *    is the outer bound everywhere else; a token must not outlive it;
+ *  - the user is active, and still a member of the repository's team or of a
+ *    team it is shared with (or a platform ADMIN, consistent with every other
+ *    repository check). Membership is the outer bound everywhere else; a token
+ *    must not outlive it;
  *  - both of the repository's current bases — web for the clone, API for
  *    everything else — are on the allowlist;
  *  - and both still have the origins the token was verified against when it
@@ -162,11 +214,8 @@ export async function resolveUserCredential(
         select: {
           githubApiUrl: true,
           githubUrl: true,
-          team: {
-            select: {
-              memberships: { select: { userId: true }, where: { userId: args.userId } },
-            },
-          },
+          // The owning team or a team it is shared with.
+          ...repoMembersSelect({ userId: true }, { userId: args.userId }),
         },
       },
       tokenAuthTag: true,
@@ -181,7 +230,7 @@ export async function resolveUserCredential(
   if (!row?.user.isActive) {
     return null;
   }
-  if (row.user.role !== 'ADMIN' && row.connection.team.memberships.length === 0) {
+  if (row.user.role !== 'ADMIN' && !isRepoMember(row.connection, args.userId)) {
     return null;
   }
 
@@ -197,11 +246,36 @@ export async function resolveUserCredential(
     return null;
   }
 
-  const token = decryptSecret({
-    authTag: row.tokenAuthTag,
-    ciphertext: row.tokenCiphertext,
-    keyVersion: row.tokenKeyVersion,
-    nonce: row.tokenNonce,
-  });
+  let token: string;
+  try {
+    token = decryptSecret({
+      authTag: row.tokenAuthTag,
+      ciphertext: row.tokenCiphertext,
+      keyVersion: row.tokenKeyVersion,
+      nonce: row.tokenNonce,
+    });
+  } catch (err) {
+    throw new CredentialUnreadableError(err);
+  }
   return { apiUrl, baseUrl, token };
+}
+
+/**
+ * A saved token exists and may be used, but cannot be decrypted — written
+ * under a key version this process no longer holds, or damaged.
+ *
+ * Typed so a caller can tell it from a database error. A database error is
+ * transient and worth retrying; this is not, and retrying it only burns the
+ * activity's retry budget before failing the same way. It is never resolved to
+ * "use the platform credential" either: that would switch the identity the run
+ * acts as. The fix is the owner's — save the token again.
+ */
+export class CredentialUnreadableError extends Error {
+  constructor(cause: unknown) {
+    super(
+      'Your saved GitHub token for this repository can no longer be decrypted. Save it again on the Connections page.',
+      { cause }
+    );
+    this.name = 'CredentialUnreadableError';
+  }
 }

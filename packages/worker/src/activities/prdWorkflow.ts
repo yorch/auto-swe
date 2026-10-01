@@ -21,6 +21,7 @@ import {
   createTrackerEpic,
   createTrackerStory,
 } from '@auto-swe/shared/lib/trackerWrite';
+import { generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
@@ -305,7 +306,7 @@ export async function submitPrdWorkRequests(
   // the caller's access to each one.
   const repos = await runUnscoped('ids already authorised at submit time', ['Connection'], () =>
     prisma.connection.findMany({
-      select: { id: true, organizationName: true, repoName: true, teamId: true },
+      select: { githubUrl: true, id: true, organizationName: true, repoName: true, teamId: true },
       where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
     })
   );
@@ -367,7 +368,38 @@ export async function submitPrdWorkRequests(
         storyTicketMap.get(story.title.toLowerCase()) ?? `${prdPrefix}-${storyIndex}`;
 
       const workRequestId = crypto.randomUUID();
-      const workflowId = `eng-${repoInfo.organizationName}-${repoInfo.repoName}-${externalTicketId}`;
+      // Through the shared generator, so a repository on a non-default host gets
+      // the host segment every other launch path gives it.
+      const workflowId = generateWorkflowId(
+        externalTicketId,
+        repoInfo.organizationName ?? '',
+        repoInfo.repoName ?? '',
+        repoInfo.githubUrl
+      );
+      // Before ids carried the host, a repository with a host override had a
+      // host-less one. A run still in flight under it is this same ticket on
+      // this same repository — starting another would push the same branch
+      // twice — so the story is skipped, as a duplicate start already is.
+      if (repoInfo.githubUrl) {
+        const legacyId = generateWorkflowId(
+          externalTicketId,
+          repoInfo.organizationName ?? '',
+          repoInfo.repoName ?? ''
+        );
+        const inFlight = await prisma.activeWorkflow.findFirst({
+          select: { id: true },
+          where: {
+            currentStatus: { notIn: ['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'] },
+            OR: [
+              { temporalWorkflowId: legacyId },
+              { temporalWorkflowId: { startsWith: `${legacyId}-r` } },
+            ],
+          },
+        });
+        if (inFlight) {
+          continue;
+        }
+      }
 
       // Build the description with acceptance criteria appended.
       const description = [

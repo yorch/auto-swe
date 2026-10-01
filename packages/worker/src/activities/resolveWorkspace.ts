@@ -5,6 +5,7 @@ import {
   parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import type { WorkspaceProviderType } from '@auto-swe/shared/lib/workspaceProviders';
 import { ApplicationFailure } from '@temporalio/activity';
 import { fetchIssue } from '../connectors/issueTracker.js';
@@ -70,11 +71,16 @@ async function resolveGitRepoWorkspace(connectionId: string): Promise<WorkspaceC
       `git_repo connection ${connectionId} is missing owner/name`
     );
   }
+  // `githubUrl` is the web BASE (e.g. a GitHub Enterprise host), exactly as the
+  // SCM provider reads it when it clones — not a repository URL — and its
+  // absence means the instance's configured host, not github.com.
+  const baseUrl = (connection.githubUrl ?? (await resolveGitHubConfig()).baseUrl).replace(
+    /\/$/,
+    ''
+  );
   return {
     branch: connection.defaultBranch,
-    cloneUrl:
-      connection.githubUrl ??
-      `https://github.com/${connection.organizationName}/${connection.repoName}.git`,
+    cloneUrl: `${baseUrl}/${connection.organizationName}/${connection.repoName}.git`,
     connectionId,
     defaultBranch: connection.defaultBranch,
     provider: 'git_repo',

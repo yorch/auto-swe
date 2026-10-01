@@ -4,6 +4,7 @@ import {
   multiRepoRefusalBody,
   type RepoAccessRefusal,
 } from '@auto-swe/shared/lib/repoAccessDecision';
+import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -68,6 +69,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
               installation: { select: { installationId: true, isActive: true } },
               organizationName: true,
               repoName: true,
+              shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
               team: {
                 select: {
                   memberships: {

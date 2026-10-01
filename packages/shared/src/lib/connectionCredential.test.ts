@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../index.js';
 
 const resolveSettings = vi.fn();
+const resolveSetting = vi.fn();
 vi.mock('../config/index.js', () => ({
+  resolveSetting: (...a: unknown[]) => resolveSetting(...a),
   resolveSettings: (...a: unknown[]) => resolveSettings(...a),
 }));
 
@@ -14,9 +16,13 @@ vi.mock('./systemConfig.js', () => ({
   }),
 }));
 
-const { credentialHostAllowed, encryptCredentialToken, resolveUserCredential } = await import(
-  './connectionCredential.js'
-);
+const {
+  CredentialUnreadableError,
+  credentialHostAllowed,
+  encryptCredentialToken,
+  repositoryHostsAllowed,
+  resolveUserCredential,
+} = await import('./connectionCredential.js');
 const { _resetKeyCacheForTests } = await import('./crypto.js');
 
 function policy(enabled: boolean, hosts: string[] = ['github.com']) {
@@ -89,6 +95,7 @@ describe('resolveUserCredential', () => {
       connection: {
         githubApiUrl: null,
         githubUrl: null,
+        shares: [],
         team: { memberships: [{ userId: 'user-1' }] },
       },
       user: { isActive: true, role: 'ENGINEER' },
@@ -168,6 +175,7 @@ describe('resolveUserCredential', () => {
         connection: {
           githubApiUrl: 'https://ghe.corp/api/v3',
           githubUrl: 'https://ghe.corp',
+          shares: [],
           team: { memberships: [{ userId: 'user-1' }] },
         },
         webOrigin: 'https://ghe.corp',
@@ -186,11 +194,64 @@ describe('resolveUserCredential', () => {
     await expect(resolveUserCredential(prisma, ARGS)).resolves.toBeNull();
   });
 
+  it('reports an undecryptable token as its own error, not a database one', async () => {
+    // Written under a key version this process no longer holds: retrying will
+    // not help, so the worker must be able to tell it apart and fail fast.
+    policy(true);
+    findUnique.mockResolvedValue(row({ tokenKeyVersion: 99 }));
+    await expect(resolveUserCredential(prisma, ARGS)).rejects.toBeInstanceOf(
+      CredentialUnreadableError
+    );
+  });
+
   it('throws rather than degrading to null when the row cannot be read', async () => {
     // Null means "use the platform credential"; a database failure must not
     // silently switch the identity a run acts as.
     policy(true);
     findUnique.mockRejectedValue(new Error('connection reset'));
     await expect(resolveUserCredential(prisma, ARGS)).rejects.toThrow('connection reset');
+  });
+});
+
+describe('repositoryHostsAllowed', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveSetting.mockResolvedValue(['ghe.corp']);
+  });
+
+  it('allows a repository with no overrides without reading anything', async () => {
+    await expect(repositoryHostsAllowed({ githubApiUrl: null, githubUrl: null })).resolves.toEqual({
+      ok: true,
+    });
+    expect(resolveSetting).not.toHaveBeenCalled();
+  });
+
+  it("allows the instance's own hosts and the admin-listed ones", async () => {
+    await expect(
+      repositoryHostsAllowed({ githubApiUrl: 'https://api.github.com', githubUrl: null })
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      repositoryHostsAllowed({
+        githubApiUrl: 'https://ghe.corp/api/v3',
+        githubUrl: 'https://ghe.corp',
+      })
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it('refuses, and names, an override on a host nobody approved', async () => {
+    // A team lead pointing a repository at a host they control would otherwise
+    // receive the platform token on the next run.
+    await expect(
+      repositoryHostsAllowed({
+        githubApiUrl: 'https://ghe.corp/api/v3',
+        githubUrl: 'https://collector.example',
+      })
+    ).resolves.toEqual({ ok: false, url: 'https://collector.example' });
+  });
+
+  it('refuses a non-canonical override even on an allowed host', async () => {
+    await expect(
+      repositoryHostsAllowed({ githubApiUrl: null, githubUrl: 'https://github.com\\@evil.example' })
+    ).resolves.toMatchObject({ ok: false });
   });
 });

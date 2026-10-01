@@ -105,8 +105,9 @@ beforeEach(() => {
 });
 
 /** Build a `git_repo` connection row as `prisma.connection.findMany` returns it. */
-function gitRepo(id: string, org: string, repo: string) {
-  return { id, organizationName: org, repoName: repo, type: 'git_repo' };
+/** A repository the channel's team (`team-1`) owns, unless another team is given. */
+function gitRepo(id: string, org: string, repo: string, teamId = 'team-1') {
+  return { id, organizationName: org, repoName: repo, teamId, type: 'git_repo' };
 }
 
 describe('createChannelTaskRun', () => {
@@ -254,9 +255,48 @@ describe('resolveChannelRepo', () => {
     expect(await resolveChannelRepo('chan-1', 'payments-api')).toBeNull();
   });
 
+  describe('with repositories shared with the channel team', () => {
+    it('never makes a shared repository the no-hint default', async () => {
+      // The team owns one repo; a share must not make that ambiguous.
+      findConnections.mockResolvedValue([
+        gitRepo('c-own', 'acme', 'payments-api'),
+        gitRepo('c-shared', 'other', 'web', 'team-2'),
+      ] as never);
+      expect(await resolveChannelRepo('chan-1')).toEqual({ repoId: 'c-own' });
+
+      // And a team that owns nothing does not default to something shared.
+      findConnections.mockResolvedValue([gitRepo('c-shared', 'other', 'web', 'team-2')] as never);
+      expect(await resolveChannelRepo('chan-1')).toBeNull();
+    });
+
+    it('reaches a shared repository by name', async () => {
+      findConnections.mockResolvedValue([
+        gitRepo('c-own', 'acme', 'payments-api'),
+        gitRepo('c-shared', 'other', 'web', 'team-2'),
+      ] as never);
+      expect(await resolveChannelRepo('chan-1', 'web')).toEqual({ repoId: 'c-shared' });
+    });
+
+    it('lets an owned repository win a name collision, and refuses to guess otherwise', async () => {
+      // Someone shared their `api` into a team that owns an `api`: a task in
+      // that team's channel must not open a PR on the other team's repo.
+      findConnections.mockResolvedValue([
+        gitRepo('c-own', 'acme', 'api'),
+        gitRepo('c-shared', 'other', 'api', 'team-2'),
+      ] as never);
+      expect(await resolveChannelRepo('chan-1', 'api')).toEqual({ repoId: 'c-own' });
+
+      findConnections.mockResolvedValue([
+        gitRepo('c-a', 'one', 'api', 'team-2'),
+        gitRepo('c-b', 'two', 'api', 'team-3'),
+      ] as never);
+      expect(await resolveChannelRepo('chan-1', 'api')).toBeNull();
+    });
+  });
+
   it('ignores git rows missing org/repo identity (guard)', async () => {
     findConnections.mockResolvedValue([
-      { id: 'c-bad', organizationName: null, repoName: null, type: 'git_repo' },
+      { id: 'c-bad', organizationName: null, repoName: null, teamId: 'team-1', type: 'git_repo' },
       gitRepo('c-1', 'acme', 'payments-api'),
     ] as never);
 

@@ -68,6 +68,11 @@ export interface SettingDefinition<T = unknown> {
   /// of a run disagree with the first. Everything else re-resolves per call,
   /// which is what lets a model edit land inside an in-flight workflow.
   runPinned: boolean;
+  /// True when the value itself must not be shown to anyone below
+  /// `requiredRole` — a host allowlist can name internal servers on a private
+  /// network. The definition (label, description, default) stays visible; the
+  /// resolved and stored values are redacted in every read.
+  sensitive?: boolean;
   /// True when a process must restart before the new value takes effect.
   /// Surfaced in the UI; the resolver does not enforce it.
   restartRequired: boolean;

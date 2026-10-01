@@ -69,6 +69,7 @@ function repo(members: { id: string; githubLogin: string | null }[], over = {}) 
     installation: null,
     organizationName: 'acme',
     repoName: 'payments',
+    shares: [],
     team: { memberships: members.map((user) => ({ user })) },
     ...over,
   };
@@ -80,6 +81,33 @@ beforeEach(() => {
   verifyGithubLoginOwnership.mockResolvedValue({ status: 'ok' });
   lookupPermissionViaUserCredential.mockResolvedValue(null);
   credentialPolicy.mockResolvedValue({ enabled: true, hosts: ['github.com'] });
+});
+
+describe('syncRepoAccess for a repository shared with another team', () => {
+  it('asks about shared-team members too, and about someone in both teams once', async () => {
+    // Without them, a shared-team member would have no permission row and be
+    // filtered out of every listing under enforcement.
+    findMany.mockResolvedValue([
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], {
+        shares: [
+          {
+            team: {
+              memberships: [
+                { user: { githubLogin: 'hubot', id: 'user-2' } },
+                { user: { githubLogin: 'octocat', id: 'user-1' } },
+              ],
+            },
+          },
+        ],
+      }),
+    ]);
+    repoPermission.mockResolvedValue({ ok: true, permission: 'read' });
+
+    const result = await syncRepoAccess();
+
+    expect(repoPermission.mock.calls.map((c) => c[1]).sort()).toEqual(['hubot', 'octocat']);
+    expect(result.refreshed).toBe(2);
+  });
 });
 
 describe('syncRepoAccess with saved user credentials', () => {

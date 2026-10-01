@@ -4,6 +4,7 @@ import {
   multiRepoRefusalBody,
   type RepoAccessRefusal,
 } from '@auto-swe/shared/lib/repoAccessDecision';
+import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -64,7 +65,15 @@ async function accessibleRepoIds(
 ): Promise<Set<string>> {
   const rows = await prisma.connection.findMany({
     select: { id: true },
-    where: { team: memberTeams(actor), ...permissionRequirement(actor, gate) },
+    // Spelled out rather than `reachableConnections(…)` so the tenant-guard
+    // audit can read the `team` key off the literal; a repository shared with
+    // one of the actor's teams counts like one their team owns.
+    where: {
+      AND: [
+        { OR: [{ team: memberTeams(actor) }, { shares: { some: { team: memberTeams(actor) } } }] },
+        permissionRequirement(actor, gate),
+      ],
+    },
   });
   return new Set(rows.map((r: { id: string }) => r.id));
 }
@@ -107,6 +116,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
               installation: { select: { installationId: true, isActive: true } },
               organizationName: true,
               repoName: true,
+              shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
               team: {
                 select: {
                   memberships: {

@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import { decideRepoAccess, repoAccessErrorBody } from '@auto-swe/shared/lib/repoAccessDecision';
+import type { RunIdentity } from '@auto-swe/shared/lib/repoAccessGate';
+import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -107,6 +109,9 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
   return prisma.connection.findFirst({
     include: {
       installation: { select: { installationId: true, isActive: true } },
+      // Shared-team membership satisfies the launch decision; `canManage`
+      // reads the owning team's role only, so schedules stay the owner's.
+      shares: repoMembersSelect({ userId: true }, { userId }).shares,
       team: {
         select: {
           memberships: { select: { role: true, userId: true }, where: { userId } },
@@ -134,14 +139,17 @@ async function passesRepoLaunchGate(
   request: FastifyRequest,
   user: JwtPayload,
   repo: RepoWithMembership,
-  reply: FastifyReply
+  reply: FastifyReply,
+  runIdentity: RunIdentity
 ): Promise<boolean> {
   const decision = await decideRepoAccess(
     fastify.prisma,
     user,
     repo,
     request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-    request.log
+    request.log,
+    'start-new-work',
+    runIdentity
   );
   if (decision.allowed) {
     return true;
@@ -197,6 +205,8 @@ async function resolveScheduleTemplate(
 
 interface ScheduleRowForSync {
   id: string;
+  /** Whose identity every fire launches as — see `ScheduledWorkRequest.actsAsUserId`. */
+  actsAsUserId: string | null;
   cronExpression: string;
   isActive: boolean;
   budgetTier: string;
@@ -222,6 +232,11 @@ function buildScheduleInput(
     budgetTier: row.budgetTier as RepoWorkRequest['budgetTier'],
     description: row.description,
     externalTicketId: scheduleTicketId(row.externalTicketPrefix, row.id),
+    // Fixed in the Temporal schedule's stored arguments, so every fire — cron
+    // or by hand — launches as the user who last defined what the schedule
+    // does, and nobody else. Absent (a schedule from before this existed, or
+    // its author deleted) means no launcher: the platform credential.
+    ...(row.actsAsUserId ? { launchedById: row.actsAsUserId } : {}),
     repoId: row.repoId,
     requestPayload: JSON.stringify({
       name: row.name,
@@ -241,6 +256,7 @@ function buildScheduleInput(
 }
 
 const scheduleInclude = {
+  actsAsUser: { select: { email: true, id: true, name: true } },
   createdBy: { select: { email: true, id: true, name: true } },
   repository: { select: { id: true, organizationName: true, repoName: true } },
   template: { select: { id: true, name: true } },
@@ -249,6 +265,8 @@ const scheduleInclude = {
 // biome-ignore lint/suspicious/noExplicitAny: row shape comes from the include above; serialized explicitly
 function serializeSchedule(row: any, schedule: unknown) {
   return {
+    /** Whose own GitHub token fires may use — the last author of its contents. */
+    actsAs: row.actsAsUser ?? null,
     budgetTier: row.budgetTier,
     createdAt: row.createdAt,
     createdBy: row.createdBy,
@@ -324,7 +342,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           },
         });
       }
-      if (!(await passesRepoLaunchGate(fastify, request, user, repo, reply))) {
+      if (!(await passesRepoLaunchGate(fastify, request, user, repo, reply, 'caller'))) {
         return;
       }
 
@@ -388,6 +406,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
 
       const scheduleCreate = fastify.prisma.scheduledWorkRequest.create({
         data: {
+          actsAsUserId: user.sub,
           budgetTier: body.budgetTier,
           createdById: user.sub,
           cronExpression: body.cronExpression,
@@ -504,8 +523,42 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           .send({ error: { code: 'TEMPLATE_NOT_RESOLVABLE', message: template.error } });
       }
 
+      // Whoever changes what the schedule does, how often it does it, how much it
+      // may spend, or switches it back on, becomes who it runs as. Without this
+      // a lead could rewrite — or revive, or speed up — another person's
+      // schedule and have it run with that person's own GitHub token. Pausing
+      // and renaming do not rebind: they cannot cause anything to run.
+      // What actually ran last time is the template synced to Temporal, which
+      // the standing run input records. A schedule on the team default stores no
+      // template of its own, so comparing stored columns would miss a new team
+      // default — or a new active version of it — being picked up by this edit.
+      const lastSynced = await fastify.prisma.runInput.findUnique({
+        select: { templateId: true, templateVersion: true },
+        where: { id: existing.workRequestId },
+      });
+      const rebinds =
+        (body.description !== undefined && body.description !== existing.description) ||
+        nextTemplateId !== existing.templateId ||
+        nextTemplateVersion !== existing.templateVersion ||
+        template.templateId !== lastSynced?.templateId ||
+        template.templateVersion !== lastSynced?.templateVersion ||
+        (body.cronExpression !== undefined && body.cronExpression !== existing.cronExpression) ||
+        (body.budgetTier !== undefined && body.budgetTier !== existing.budgetTier) ||
+        (body.isActive === true && !existing.isActive);
+
+      // Becoming who it runs as is a launch decision about the editor, taken
+      // before anything is written — the same one creating a schedule takes.
+      if (
+        rebinds &&
+        user.sub !== existing.actsAsUserId &&
+        !(await passesRepoLaunchGate(fastify, request, user, repo, reply, 'caller'))
+      ) {
+        return;
+      }
+
       const row = await fastify.prisma.scheduledWorkRequest.update({
         data: {
+          ...(rebinds ? { actsAsUserId: user.sub } : {}),
           ...(body.budgetTier !== undefined ? { budgetTier: body.budgetTier } : {}),
           ...(body.cronExpression !== undefined ? { cronExpression: body.cronExpression } : {}),
           ...(body.description !== undefined ? { description: body.description } : {}),
@@ -577,7 +630,10 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           },
         });
       }
-      if (!(await passesRepoLaunchGate(fastify, request, user, repo, reply))) {
+      // The fire launches as the schedule's author (`actsAsUserId`), not as
+      // the person pressing the button, so the firer is judged by their login
+      // — their own saved token is not what the run will use.
+      if (!(await passesRepoLaunchGate(fastify, request, user, repo, reply, 'platform'))) {
         return;
       }
 

@@ -16,6 +16,8 @@ vi.mock('../githubAuth.js', () => ({
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
 vi.mock('@auto-swe/shared/lib/connectionCredential', () => ({
+  CredentialUnreadableError: class CredentialUnreadableError extends Error {},
+  repositoryHostsAllowed: vi.fn(async () => ({ ok: true })),
   resolveUserCredential: vi.fn(async () => null),
   resolveUserCredentialPolicy: vi.fn(async () => ({ enabled: true, hosts: ['github.com'] })),
 }));
@@ -25,6 +27,8 @@ vi.mock('../runLauncher.js', () => ({
 }));
 
 import {
+  CredentialUnreadableError,
+  repositoryHostsAllowed,
   resolveUserCredential,
   resolveUserCredentialPolicy,
 } from '@auto-swe/shared/lib/connectionCredential';
@@ -202,6 +206,35 @@ describe("GitHubScmProvider and the run launcher's own credential", () => {
     vi.mocked(resolveUserCredential).mockResolvedValue(USABLE);
     const creds = await provider.cloneCredentials({ ...REPO, baseUrl: 'https://ghe.corp' });
     expect(creds.token).toBe('ghp_tok');
+  });
+
+  it('fails fast, without retrying, on a saved token that cannot be decrypted', async () => {
+    vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
+    vi.mocked(resolveUserCredential).mockRejectedValue(new CredentialUnreadableError('bad key'));
+    await expect(provider.cloneCredentials(REPO)).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'CREDENTIAL_UNREADABLE',
+    });
+    // And never falls back to acting as the platform instead.
+    expect(requireGitHubToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps a database failure retryable', async () => {
+    vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
+    vi.mocked(resolveUserCredential).mockRejectedValue(new Error('connection reset'));
+    await expect(provider.cloneCredentials(REPO)).rejects.toThrow('connection reset');
+  });
+
+  it('sends no credential at all to a repository on an unapproved host', async () => {
+    vi.mocked(repositoryHostsAllowed).mockResolvedValueOnce({
+      ok: false,
+      url: 'https://collector.example',
+    });
+    await expect(
+      provider.cloneCredentials({ ...REPO, baseUrl: 'https://collector.example' })
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'REPO_HOST_NOT_ALLOWED' });
+    expect(requireGitHubToken).not.toHaveBeenCalled();
+    expect(resolveUserCredential).not.toHaveBeenCalled();
   });
 
   it('never looks for a user token on a ref built without a connection', async () => {

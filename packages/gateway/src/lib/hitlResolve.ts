@@ -2,7 +2,7 @@ import type { PrismaClient } from '@auto-swe/shared';
 import { Prisma } from '@auto-swe/shared';
 import { HITL_VALID_ACTIONS, type HitlKind } from '@auto-swe/shared/workflow/interpreter';
 import { z } from 'zod';
-import { buildWorkflowHumanStepVisibilityFilter } from './runVisibility.js';
+import { buildWorkflowHumanStepControlFilter } from './runVisibility.js';
 import { isTerminalSignalError } from './temporalErrors.js';
 import type { ConnectionScopeGate } from './tenantScope.js';
 
@@ -11,8 +11,8 @@ import type { ConnectionScopeGate } from './tenantScope.js';
  *   - `routes/humanSteps.ts` — POST /api/v1/human-steps/:id/respond (human step API)
  *   - `routes/slack.ts`      — `hitl_resolve` Block Kit button interactions
  *
- * Both entry points enforce the SAME authorization (team visibility via
- * {@link buildWorkflowHumanStepVisibilityFilter}), the same action validation, the same atomic
+ * Both entry points enforce the SAME authorization (run control via
+ * {@link buildWorkflowHumanStepControlFilter}), the same action validation, the same atomic
  * PENDING→RESOLVED guard, and the same Temporal-signal-with-rollback semantics.
  * The HTTP wire contracts live in the callers; this module only returns a
  * typed result.
@@ -258,7 +258,9 @@ export async function resolveHitlStep(
 
   const step = await prisma.workflowHumanStep.findFirst({
     include: { run: { select: { id: true, status: true, workflowId: true } } },
-    where: { id: stepId, ...buildWorkflowHumanStepVisibilityFilter(user, deps.gate) },
+    // Control, not visibility: a team a repository is shared with may see the
+    // owning team's runs but not answer their human steps.
+    where: { id: stepId, ...buildWorkflowHumanStepControlFilter(user, deps.gate) },
   });
   if (!step) {
     return { code: 'NOT_FOUND', message: 'Human step not found', ok: false };

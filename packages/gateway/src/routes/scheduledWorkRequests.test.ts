@@ -46,6 +46,11 @@ describe('/api/v1/scheduled-work-requests', () => {
   let membershipRole = 'LEAD';
   let scheduleRow: Record<string, unknown> | null = null;
   let syncShouldFail = false;
+  // The team default (tpl-1 v3) unless a test says the schedule last ran another.
+  let lastSyncedTemplate: { templateId: string; templateVersion: number } = {
+    templateId: 'tpl-1',
+    templateVersion: 3,
+  };
 
   const syncCalls: WorkRequestScheduleInput[] = [];
   const triggeredIds: string[] = [];
@@ -99,6 +104,7 @@ describe('/api/v1/scheduled-work-requests', () => {
           isActive: true,
           organizationName: 'org',
           repoName: 'test',
+          shares: [],
           team: {
             memberships:
               membershipRole === 'NONE' ? [] : [{ role: membershipRole, userId: 'user-1' }],
@@ -116,6 +122,8 @@ describe('/api/v1/scheduled-work-requests', () => {
           deletedWorkRequestIds.push(args.where.id);
           return {};
         },
+        // The template last synced to Temporal for the schedule.
+        findUnique: async () => lastSyncedTemplate,
         update: async (args: { data: Record<string, unknown> }) => ({ ...args.data }),
       },
       scheduledWorkRequest: {
@@ -343,6 +351,114 @@ describe('/api/v1/scheduled-work-requests', () => {
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].paused).toBe(true);
     expect(syncCalls[0].request.workRequestId).toBe(WR_ID);
+  });
+
+  describe('whose identity fires launch as', () => {
+    const authored = () => ({
+      actsAsUserId: 'author-1',
+      budgetTier: 'STANDARD',
+      cronExpression: '0 3 * * 1',
+      description: 'Update all dependencies',
+      externalTicketPrefix: 'DEPS',
+      id: SCHEDULE_ID,
+      isActive: true,
+      name: 'Weekly dependency update',
+      repoId: REPO_ID,
+      templateId: null,
+      templateVersion: null,
+      workRequestId: WR_ID,
+    });
+
+    it('launches as the creator, fixed into the Temporal schedule arguments', async () => {
+      const res = await inject({
+        method: 'POST',
+        payload: validBody,
+        token: 'lead-token',
+        url: '/api/v1/scheduled-work-requests',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(syncCalls[0].request.launchedById).toBe('user-1');
+    });
+
+    it('moves to whoever changes what the schedule does', async () => {
+      // Without this, a lead could rewrite someone else's schedule and have it
+      // run with that person's own GitHub token.
+      scheduleRow = authored();
+      const res = await inject({
+        method: 'PATCH',
+        payload: { description: 'Delete the production branch protection' },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(scheduleUpdates[0].actsAsUserId).toBe('user-1');
+      expect(syncCalls[0].request.launchedById).toBe('user-1');
+    });
+
+    it('stays with the author when it is only paused or renamed', async () => {
+      // Neither can cause anything to run.
+      scheduleRow = authored();
+      const res = await inject({
+        method: 'PATCH',
+        payload: { isActive: false, name: 'Renamed' },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(scheduleUpdates[0]).not.toHaveProperty('actsAsUserId');
+      expect(syncCalls[0].request.launchedById).toBe('author-1');
+    });
+
+    it('moves to whoever revives it or makes it fire more often', async () => {
+      for (const payload of [{ cronExpression: '* * * * *' }, { budgetTier: 'EPIC' }]) {
+        scheduleRow = authored();
+        scheduleUpdates.length = 0;
+        await inject({
+          method: 'PATCH',
+          payload,
+          token: 'lead-token',
+          url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+        });
+        expect(scheduleUpdates[0].actsAsUserId, JSON.stringify(payload)).toBe('user-1');
+      }
+      scheduleRow = { ...authored(), isActive: false };
+      scheduleUpdates.length = 0;
+      await inject({
+        method: 'PATCH',
+        payload: { isActive: true },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+      expect(scheduleUpdates[0].actsAsUserId).toBe('user-1');
+    });
+
+    it('moves to the editor when an edit picks up a new team-default template', async () => {
+      // The schedule stores no template of its own; it last ran tpl-1 v2, and
+      // the team default is now v3. Any edit re-syncs it with v3 — new content
+      // the author never saw — so the editor becomes who it runs as.
+      lastSyncedTemplate = { templateId: 'tpl-1', templateVersion: 2 };
+      scheduleRow = authored();
+      await inject({
+        method: 'PATCH',
+        payload: { name: 'Renamed' },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+      lastSyncedTemplate = { templateId: 'tpl-1', templateVersion: 3 };
+      expect(scheduleUpdates[0].actsAsUserId).toBe('user-1');
+      expect(syncCalls[0].request.launchedById).toBe('user-1');
+    });
+
+    it('launches as nobody when no author is recorded', async () => {
+      scheduleRow = { ...authored(), actsAsUserId: null };
+      await inject({
+        method: 'PATCH',
+        payload: { isActive: false },
+        token: 'lead-token',
+        url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+      });
+      expect(syncCalls[0].request).not.toHaveProperty('launchedById');
+    });
   });
 
   it('fires the schedule now via the Temporal trigger', async () => {

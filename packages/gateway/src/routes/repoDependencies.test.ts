@@ -43,6 +43,7 @@ async function buildApp() {
 
   const mockPrisma = {
     connection: { findMany: vi.fn(), findUnique: vi.fn() },
+    connectionTeamShare: { findFirst: vi.fn().mockResolvedValue(null) },
     repoDependency: {
       create: vi.fn(),
       delete: vi.fn(),
@@ -366,8 +367,10 @@ describe('repoDependencyRoutes', () => {
       const where = ctx.mockPrisma.repoDependency.findMany.mock.calls[0][0].where;
       expect(where.status).toBe('unresolved');
       // The membership predicate is what stops one team seeing another's backlog.
+      // A team the repo is shared with reaches it too; the gate adds nothing here.
+      const member = { memberships: { some: { userId: 'user-1' } } };
       expect(where.fromRepo).toEqual({
-        team: { memberships: { some: { userId: 'user-1' } } },
+        AND: [{ OR: [{ team: member }, { shares: { some: { team: member } } }] }, {}],
       });
     });
 

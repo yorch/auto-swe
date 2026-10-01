@@ -11,6 +11,11 @@ import type { PrismaClient } from '@auto-swe/shared';
 import { resolveUserCredentialPolicy } from '@auto-swe/shared/lib/connectionCredential';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import {
+  allRepoMemberships,
+  repoMembersSelect,
+  repoMemberWhere,
+} from '@auto-swe/shared/lib/repoMembership';
+import {
   lookupPermissionViaUserCredential,
   lookupRepoPermission,
   PERMISSION_REPO_SELECT,
@@ -18,6 +23,7 @@ import {
 } from '@auto-swe/shared/lib/repoPermission';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { AccessInvalidation } from './repoAccessWebhook.js';
+import { webhookRepositoryWhere } from './repositoryHost.js';
 
 export interface RefreshOutcome {
   /** Pairs GitHub answered for. */
@@ -28,19 +34,18 @@ export interface RefreshOutcome {
   skipped?: string;
 }
 
-/** The connection columns a refresh needs, plus its team's members. */
+/**
+ * The connection columns a refresh needs, plus everyone who reaches it: the
+ * owning team's members and those of every team it is shared with.
+ */
 const REFRESH_SELECT = {
   ...PERMISSION_REPO_SELECT,
   credentials: { select: { userId: true } },
   id: true,
-  team: {
-    select: {
-      memberships: {
-        select: { user: { select: { githubLogin: true, id: true } } },
-        where: { user: { isActive: true } },
-      },
-    },
-  },
+  ...repoMembersSelect(
+    { user: { select: { githubLogin: true, id: true } } },
+    { user: { isActive: true } }
+  ),
 } as const;
 
 /**
@@ -71,20 +76,25 @@ export async function refreshInvalidatedAccess(
   }
 
   // A webhook names a GitHub org/repo or login; which teams those map to is
-  // exactly what we are here to find out, so the lookup spans tenants.
+  // exactly what we are here to find out, so the lookup spans tenants. A named
+  // repository is matched on its host as well when the owner/name alone is
+  // onboarded on more than one host — those are different repositories.
+  const repoWhere =
+    invalidation.kind === 'user'
+      ? repoMemberWhere({ user: { githubLogin: invalidation.login } })
+      : await webhookRepositoryWhere(
+          prisma,
+          invalidation.org,
+          invalidation.repo,
+          invalidation.htmlUrl
+        );
   const repos = await runUnscoped(
     'a webhook names a GitHub repository, not a team',
     ['Connection'],
     () =>
       prisma.connection.findMany({
         select: REFRESH_SELECT,
-        where: {
-          isActive: true,
-          type: 'git_repo',
-          ...(invalidation.kind === 'user'
-            ? { team: { memberships: { some: { user: { githubLogin: invalidation.login } } } } }
-            : { organizationName: invalidation.org, repoName: invalidation.repo }),
-        },
+        where: { isActive: true, type: 'git_repo', ...repoWhere },
       })
   );
 
@@ -121,7 +131,13 @@ export async function refreshInvalidatedAccess(
 
   for (const repo of repos) {
     const credentialHolders = new Set(repo.credentials.map((c) => c.userId));
-    for (const { user } of repo.team.memberships) {
+    // Owning and shared teams can overlap; one pair is asked about once.
+    const seen = new Set<string>();
+    for (const { user } of allRepoMemberships(repo)) {
+      if (seen.has(user.id)) {
+        continue;
+      }
+      seen.add(user.id);
       const hasCredential = credentialsOn && credentialHolders.has(user.id);
       if (!(user.githubLogin || hasCredential)) {
         continue;

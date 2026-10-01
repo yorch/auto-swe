@@ -250,6 +250,11 @@ function ScheduleRow({
         <Td className="py-2 pr-4">
           <div className="font-medium text-paper-100">{schedule.name}</div>
           <div className="font-mono text-[10px] text-paper-500">{schedule.externalTicketId}</div>
+          {/* Whose GitHub identity fires act as; editing what the schedule does makes it yours. */}
+          <div className="text-[11px] text-paper-500">
+            Runs as:{' '}
+            {schedule.actsAs ? (schedule.actsAs.name ?? schedule.actsAs.email) : 'the platform'}
+          </div>
         </Td>
         <Td className="py-2 pr-4 text-paper-400">
           {schedule.repository.organizationName}/{schedule.repository.repoName}

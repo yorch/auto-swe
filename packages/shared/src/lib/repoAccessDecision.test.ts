@@ -25,11 +25,43 @@ function repo(over: Record<string, unknown> = {}) {
     installation: null,
     organizationName: 'acme',
     repoName: 'payments',
+    shares: [] as Array<{ team: { memberships: Array<{ userId: string }> } }>,
     team: { memberships: [{ userId: 'user-1' }] },
     type: 'git_repo',
     ...over,
   };
 }
+
+describe('decideRepoAccess for a repository shared with another team', () => {
+  it("admits a member of a shared team exactly as an owning team's member", async () => {
+    const decision = await decideRepoAccess(
+      prisma,
+      engineer,
+      repo({
+        shares: [{ team: { memberships: [{ userId: 'user-1' }] } }],
+        team: { memberships: [] },
+      }),
+      ENFORCE
+    );
+    expect(decision).toEqual({ allowed: true, reason: 'permitted' });
+    // Membership admits; GitHub still has to agree.
+    expect(decideRepoLaunch).toHaveBeenCalled();
+  });
+
+  it('refuses someone in neither the owning team nor a shared team', async () => {
+    await expect(
+      decideRepoAccess(
+        prisma,
+        engineer,
+        repo({
+          shares: [{ team: { memberships: [{ userId: 'someone-else' }] } }],
+          team: { memberships: [] },
+        }),
+        ENFORCE
+      )
+    ).resolves.toEqual({ allowed: false, reason: 'not-a-team-member' });
+  });
+});
 
 const RETIRED = { installationId: '900001', isActive: false };
 const LIVE = { installationId: '900001', isActive: true };

@@ -117,6 +117,11 @@ export interface RepositorySummary {
   language: string | null;
   description: string | null;
   team: TeamRef;
+  /**
+   * Further teams whose members may see and launch on this repository. The
+   * owning `team` keeps management. Present on the repository listing.
+   */
+  shares?: Array<{ team: TeamRef }>;
   _count: { activeWorkflows: number };
 }
 
@@ -642,6 +647,12 @@ export interface ScheduledWorkRequestSummary {
   /** Standing WorkRequest that every fire's WorkflowRun links to. */
   workRequestId: string | null;
   createdBy: { id: string; email: string; name: string | null } | null;
+  /**
+   * Who every fire launches as — the last person to define what the schedule
+   * does. Their own saved GitHub token may be used; null means the platform
+   * credential only.
+   */
+  actsAs: { id: string; email: string; name: string | null } | null;
   lastFiredAt: string | null;
   schedule: ScheduledWorkRequestScheduleStatus;
   createdAt: string;

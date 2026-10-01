@@ -35,11 +35,29 @@ never for a run nobody launched. This is the property the rest of this document 
 | `POST /workflow-templates/:id/runs` | the caller |
 | `POST /epics` | the caller; each per-repository child run inherits it |
 | `POST /prd-runs` | the caller; each story the PRD becomes inherits it |
-| Scheduled work requests — cron fire or `POST /scheduled-work-requests/:id/fire` | nobody |
+| Scheduled work requests — cron fire or `POST /scheduled-work-requests/:id/fire` | the schedule's author (below) |
+| Slack — the `/auto-swe run` modal | the linked platform user who submitted it |
+| Slack — a channel-assistant code task | the linked platform user who asked for it |
 | Webhooks, the issue-tracker auto-trigger | nobody |
-| Slack — the `/auto-swe run` modal and channel-assistant code tasks | nobody |
 
 A run launched by nobody uses only the platform credential.
+
+**A schedule runs as its author.** `ScheduledWorkRequest.actsAsUserId` is set to whoever creates
+the schedule, and moves to whoever later changes what it does (its description or template), how
+often it runs (its cron expression), what it may spend (its budget tier), or switches it back on.
+Pausing and renaming leave it alone — neither can cause anything to run. Becoming the author is a
+launch decision about the editor, taken by the repository access gate before anything is saved,
+exactly as creating a schedule is. So a lead editing, reviving or speeding up another person's
+schedule takes it over rather than borrowing their token, and the schedules page shows who each one
+runs as. The launcher is stored in the Temporal schedule's own arguments, so a cron fire and a fire
+by hand launch as the same person; the person pressing **fire** is checked against the repository
+by their GitHub login, as before. Schedules created before this existed have no author recorded and
+run as nobody until one of those changes is next made.
+
+**Slack launches run as the linked platform user.** The request is signature-verified and the
+account link names the platform user — the same identity the repository access gate judges on those
+paths. A code task carries that user only when it targets a repository; a thread steer by someone
+else does not change who the run acts as.
 
 ### How the launcher is recorded
 
@@ -70,7 +88,12 @@ Two settings, both `ADMIN`-only and deployment-wide, at `/govern/platform-settin
 The host list is how an admin permits a GitHub Enterprise server, including one on a private
 network: listing it by name is the same explicit opt-in the tracker and knowledge-base connectors
 require for a private address. Matching is exact — no wildcards and no suffix matching — and only
-over HTTPS.
+over HTTPS, and only for a URL already in canonical form. The list is returned to platform admins
+only; it can name internal hosts, and a user refused at save time is told which of their
+repository's own URLs was refused.
+
+A repository's URLs must also be on an approved host for any credential to reach them — see
+[repositories.md](./repositories.md) for `github.repositoryHosts`.
 
 ---
 
@@ -79,8 +102,8 @@ over HTTPS.
 A token is used only when all of these hold at the moment it is needed:
 
 - `github.userCredentialsEnabled` is on;
-- its owner is active, and still a member of the repository's team (platform `ADMIN`s pass this,
-  as they do every repository check);
+- its owner is active, and still a member of the repository's team or of a team it is shared with
+  (platform `ADMIN`s pass this, as they do every repository check);
 - both of the repository's current URLs — web and API — are on `github.userCredentialHosts`;
 - both URLs still have the origins the token was verified against when it was saved.
 
@@ -91,6 +114,11 @@ than following the repository to a new host, and their owners save them again.
 When any condition fails, the run falls back to the platform credential. It never falls back to
 another user's token.
 
+A token that passes every check but **cannot be decrypted** — written under a key version the
+process no longer holds — is different: the run fails at once with a non-retryable
+`CREDENTIAL_UNREADABLE` error telling its owner to save it again. It neither retries a condition
+that cannot clear by itself nor quietly switches the run to the platform's identity.
+
 ---
 
 ## 4. Saving a token
@@ -100,7 +128,7 @@ From the dashboard: **Connections** → a repository → **My token**. Over the 
 | Route | Who | Does |
 |---|---|---|
 | `GET /api/v1/repositories/credentials/mine` | any signed-in user | The policy, and which repositories the caller has saved a token for. Never returns a token. |
-| `PUT /api/v1/repositories/:id/credential` | a member of the repository's team | Save or replace the caller's token |
+| `PUT /api/v1/repositories/:id/credential` | a member of the repository's team, or of a team it is shared with | Save or replace the caller's token |
 | `DELETE /api/v1/repositories/:id/credential` | the token's owner | Remove it — allowed with the feature off, and after leaving the team |
 
 Every route acts on the caller's own token. There is no route that reads, lists or removes
@@ -129,9 +157,12 @@ stored GitHub login may do. That is the identity the run acts as, it needs no li
 account, and it works on a GitHub Enterprise host whose usernames the github.com login does not
 name.
 
-A launch whose run uses the platform credential — Slack, schedules — is judged by the login as it
-always was, whatever the caller saved. Judging it by their token would refuse for a token the run
-never touches, or admit someone on an identity the run does not act as.
+Creating a schedule, the Slack run modal and a channel-assistant code task all launch as the
+caller, so they are judged the same way. Two decisions are not: firing a schedule by hand launches
+as the schedule's author rather than the person firing it, and a Slack thread steer acts on a run
+someone else launched — so the person firing or steering is judged by their login, whatever they
+saved. Judging them by their own token would refuse for a token the run never touches, or admit
+someone on an identity the run does not act as.
 
 The scheduled sweep and the webhook refresh prefer the token where one is usable, and fall back to
 the login-based lookup where it is not. A token GitHub rejects, or that
@@ -143,11 +174,18 @@ verification answer in `repo_access` like any other lookup.
 
 ## Limitations
 
-- **Scheduled, webhook and Slack runs never use a saved token.** None of them carries an
-  authenticated launcher: a cron fire has no user, a schedule's contents can be changed by others
-  after it was created, and Slack identifies a person through a linked account rather than a
-  session. Against a repository with no platform credential, those runs fail with a configuration
+- **Webhook and issue-tracker runs never use a saved token.** They carry no platform user to act
+  for. Against a repository with no platform credential, those runs fail with a configuration
   error.
+- **A schedule runs as its author for as long as it exists.** Its author leaving the team or being
+  deactivated stops the token being used (the run falls back to the platform credential), but the
+  schedule keeps that author recorded until someone edits what it does. Schedules created before
+  authors were recorded run as nobody until then.
+- **A Slack launch is only as trustworthy as the account link.** Whoever controls the linked Slack
+  account launches as the platform user it is linked to, including with their saved token.
+- **A schedule can be fired by hand as its author.** A lead of the owning team can press **fire** on
+  someone else's schedule; the run is the one the author defined, at a time they did not choose, and
+  acts as them. Firing changes when, not what, so it does not take the schedule over.
 - **Other people can steer a run that acts as you.** A human step, a review comment fed to the
   review fixer, or a Slack thread steer can be answered by anyone the existing rules allow, and the
   run keeps acting with its launcher's token. This is the same exposure the platform credential
@@ -161,9 +199,9 @@ verification answer in `repo_access` like any other lookup.
   repository they connected themselves. A deployment whose repositories are reached through user
   tokens sets the CI wait strategy to `poll` at `/govern/workflow-defaults`; it is deployment-wide,
   not per repository.
-- **A repository belongs to one team.** A user outside that team cannot save a token for it, and
-  cannot onboard the same repository into their own team: `organizationName`/`repoName` are unique
-  across the deployment, and that uniqueness does not include the host.
+- **A user outside the owning team and every shared team cannot save a token for it.** Getting
+  access is a matter of the owning team sharing the repository with theirs — see
+  [repositories.md](./repositories.md).
 - **Runs in flight keep their identity.** Removing a token, or turning the feature off, takes
   effect on the next GitHub call; a call already made is not undone, and a pull request already
   opened stays attributed to the token's owner.
