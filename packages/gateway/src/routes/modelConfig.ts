@@ -72,7 +72,9 @@ const IdParams = z.object({ id: z.string().uuid() });
 
 const AuditQuery = z.object({
   entityId: z.string().uuid().optional(),
-  entityType: z.enum(['Agent', 'ProviderCredential', 'EmbeddingConfig']).optional(),
+  entityType: z
+    .enum(['Agent', 'ProviderCredential', 'EmbeddingConfig', 'ModelCatalogEntry'])
+    .optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 
