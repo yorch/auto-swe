@@ -112,6 +112,27 @@ function rootOf(url: URL): string {
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
 }
 
+function isGithubDotCom(url: URL): boolean {
+  return url.hostname.replace(/\.$/, '') === GITHUB_COM_HOST;
+}
+
+// The saved API URL defaults to api.github.com; an admin who only filled in a GHE Base URL means
+// that instance's /api/v3. The one place this is decided, so no caller derives its own.
+function apiRootFor(base: URL, api: URL): string {
+  const apiRoot = rootOf(api);
+  return apiRoot === GITHUB_COM_API && !isGithubDotCom(base) ? `${rootOf(base)}/api/v3` : apiRoot;
+}
+
+/**
+ * The API root to use for GitHub calls made with a user's own access token, or null when either
+ * saved URL is invalid. Matches the API URL GHE sign-in resolved.
+ */
+export function resolveGithubApiUrl(baseUrl: string, apiUrl: string): string | null {
+  const base = parseHttpUrl(baseUrl);
+  const api = parseHttpUrl(apiUrl);
+  return base && api ? apiRootFor(base, api) : null;
+}
+
 /**
  * Decide how "Continue with GitHub" is wired from the saved GitHub config.
  *
@@ -138,7 +159,7 @@ export function resolveGithubSignIn(input: {
     console.warn('[better-auth] GitHub sign-in disabled: the Base URL is not a valid http(s) URL');
     return { mode: 'none' };
   }
-  if (base.hostname.replace(/\.$/, '') === GITHUB_COM_HOST) {
+  if (isGithubDotCom(base)) {
     return { clientId, clientSecret, mode: 'builtin' };
   }
 
@@ -155,8 +176,7 @@ export function resolveGithubSignIn(input: {
   }
 
   const baseRoot = rootOf(base);
-  // The API URL defaults to api.github.com; an admin who only filled in the Base URL means GHE's /api/v3.
-  const apiRoot = rootOf(api) === GITHUB_COM_API ? `${baseRoot}/api/v3` : rootOf(api);
+  const apiRoot = apiRootFor(base, api);
 
   return {
     apiUrl: apiRoot,

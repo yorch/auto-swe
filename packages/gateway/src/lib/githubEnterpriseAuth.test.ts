@@ -2,7 +2,11 @@ import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { genericOAuth } from 'better-auth/plugins/generic-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchGhesUserInfo, resolveGithubSignIn } from './githubEnterpriseAuth.js';
+import {
+  fetchGhesUserInfo,
+  resolveGithubApiUrl,
+  resolveGithubSignIn,
+} from './githubEnterpriseAuth.js';
 
 const API = 'https://ghe.example.com/api/v3';
 const HOST = 'ghe.example.com';
@@ -380,6 +384,51 @@ describe('resolveGithubSignIn URL handling', () => {
     resolveGithubSignIn({ ...CREDS, apiUrl: GITHUB_API, baseUrl: 'ftp://ghe.example.com' });
 
     expect(String(warn.mock.calls[0]?.[0])).toContain('GitHub sign-in disabled');
+  });
+});
+
+describe('resolveGithubApiUrl', () => {
+  it.each([
+    [
+      'derives {base}/api/v3 when the API URL is still the github.com default',
+      'https://ghe.example.com',
+      GITHUB_API,
+      'https://ghe.example.com/api/v3',
+    ],
+    [
+      'keeps an explicit API URL, without its trailing slash',
+      'https://ghe.example.com',
+      'https://api.ghe.example.com/',
+      'https://api.ghe.example.com',
+    ],
+    [
+      'keeps the saved API URL for github.com',
+      'https://github.com',
+      'https://api.github.com/',
+      'https://api.github.com',
+    ],
+  ])('%s', (_name, baseUrl, apiUrl, expected) => {
+    expect(resolveGithubApiUrl(baseUrl, apiUrl)).toBe(expected);
+  });
+
+  it.each([
+    ['an invalid base URL', 'ftp://ghe.example.com', GITHUB_API],
+    ['an invalid API URL', 'https://ghe.example.com', 'not a url'],
+  ])('returns null for %s', (_name, baseUrl, apiUrl) => {
+    expect(resolveGithubApiUrl(baseUrl, apiUrl)).toBeNull();
+  });
+
+  it('agrees with the API URL sign-in resolved, so no caller derives its own', () => {
+    const resolved = resolveGithubSignIn({
+      ...CREDS,
+      apiUrl: GITHUB_API,
+      baseUrl: 'https://ghe.example.com/',
+    });
+
+    expect(resolved).toMatchObject({
+      apiUrl: resolveGithubApiUrl('https://ghe.example.com/', GITHUB_API),
+      mode: 'ghe',
+    });
   });
 });
 

@@ -334,6 +334,10 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   clears it when it does not. A plain rename is harmless and is deliberately left alone, because
   GitHub redirects the old name to the same account id. The exposure window is one sweep interval,
   and a deployment with the sweep disabled has no detection at all.
+- **A re-registered username on a GitHub Enterprise instance is not detected.** An account created by
+  GHE sign-in has an id of the form `{host}:{id}`, which belongs to that host's id space rather than
+  github.com's, so the sweep cannot compare it and reports the login as unverifiable. Nothing is
+  cleared and no takeover is recorded for it.
 - **Revocation is not instant.** Webhooks make it seconds, but a missed or undelivered webhook
   leaves the previous answer in place until the next sweep, and a paused sweep extends that to
   `repoAccess.viewStaleAfterHours`. The launch path is unaffected, because it asks live.

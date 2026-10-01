@@ -34,3 +34,10 @@
 **Decision**: Only a `/user/emails` entry that is both `primary` and `verified` is accepted; the public `email` on `/user` is never used; with no such entry the sign-in is refused. Scopes are `read:user` and `user:email`. PKCE is off.
 **Reason**: `github` is a trusted provider for account linking, so an address that is not verified could link a sign-in onto another person's user. The built-in provider does not use PKCE, GHE versions differ in their support for it, and the client is confidential (it holds a secret).
 **Alternatives considered**: Accepting the public profile email, which carries no verification flag. Enabling PKCE, which risks breaking older GHE versions for a protection the client secret already provides at the token endpoint.
+
+## D6 — 2026-10-01 — Review: GHE accounts and the other consumers of the stored account
+
+**Status**: Accepted
+**Decision**: The ownership sweep reports a host-namespaced account id (`{host}:{id}`) as unverifiable instead of comparing it with github.com, and the backfill script uses the same resolved API URL as sign-in (`resolveGithubApiUrl`, the one derivation).
+**Reason**: Found by reviewing the branch as a whole, because both consumers live outside the three task diffs. The sweep compared the GHE account id with a github.com id, so a GHE user whose login also exists on github.com was cleared and a false takeover was audited. The backfill sent every stored token to the saved API URL, which is api.github.com when only a Base URL is saved.
+**Alternatives considered**: Verifying GHE logins against the GHE host with the platform token. Rejected for now: it needs the host to be trusted from the id and a GHE-capable platform token in the sweep, a larger change to the access projection than this feature warrants. The gap is recorded under Limitations in `docs/repo-access-gating.md`.

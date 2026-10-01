@@ -131,6 +131,15 @@ export async function verifyGithubLoginOwnership(
     return { clearedLogin: args.login, status: 'unlinked' };
   }
 
+  // A GitHub Enterprise account id is `{host}:{id}`: that host's id space, not github.com's.
+  // Asking github.com would read as a mismatch and clear a valid login, with a false takeover audit.
+  if (account.accountId.includes(':')) {
+    return {
+      reason: 'GitHub Enterprise account; ownership is not verified against github.com',
+      status: 'unverifiable',
+    };
+  }
+
   const currentOwner = await fetchGithubUserId(args.login, args.apiUrl, args.token);
   if (currentOwner === null) {
     return { reason: 'GitHub did not answer for this login', status: 'unverifiable' };
