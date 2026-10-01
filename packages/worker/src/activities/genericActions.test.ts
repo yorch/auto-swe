@@ -28,6 +28,7 @@ vi.mock('@auto-swe/shared', async (importOriginal) => {
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    autonomyDecision: { findFirst: vi.fn() },
     connection: { findUnique: vi.fn() },
     workflowOutcomeReference: { create: vi.fn(), findFirst: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
@@ -138,6 +139,68 @@ describe('readSource', () => {
     await expect(
       readSource({ connectionId: '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5' })
     ).rejects.toThrow('not found or inactive');
+  });
+});
+
+describe('writeOutcome approval guard', () => {
+  const args = {
+    connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
+    data: { blocks: [{ type: 'paragraph' }], pageId: 'page-1' },
+  };
+  const publishedAt = new Date('2026-01-01T00:00:00Z');
+
+  beforeEach(() => {
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'run-1' });
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('notion', { token: true })
+    );
+    (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      appended: 1,
+      pageId: 'page-1',
+    });
+  });
+
+  it('refuses when the latest publish decision requires approval and none was recorded', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        createdAt: publishedAt,
+        payload: { decision: 'require_approval' },
+        policyName: 'default',
+        riskClass: 'internal_write',
+      })
+      .mockResolvedValueOnce(null);
+
+    await expect(writeOutcome(args)).rejects.toThrow('requires human approval');
+    expect(appendNotionBlocks).not.toHaveBeenCalled();
+  });
+
+  it('writes when an approval was recorded after the publish decision', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        createdAt: publishedAt,
+        payload: { decision: 'require_approval' },
+      })
+      .mockResolvedValueOnce({ id: 'approval-1' });
+
+    const result = await writeOutcome(args);
+    expect(result.ok).toBe(true);
+  });
+
+  it('writes when the publish decision is auto', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      createdAt: publishedAt,
+      payload: { decision: 'auto' },
+    });
+
+    const result = await writeOutcome(args);
+    expect(result.ok).toBe(true);
+  });
+
+  it('does not gate a run that recorded no publish decision', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+
+    const result = await writeOutcome(args);
+    expect(result.ok).toBe(true);
   });
 });
 
