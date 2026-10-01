@@ -111,6 +111,7 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
       </Modal>
 
       <Modal
+        closeOnBackdropClick={false}
         eyebrow="§ Copy now — shown only once"
         onClose={handleRevealClose}
         open={revealed !== null}

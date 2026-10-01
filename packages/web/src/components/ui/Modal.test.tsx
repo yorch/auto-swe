@@ -16,10 +16,10 @@ beforeAll(() => {
   };
 });
 
-function renderModal() {
+function renderModal(props: { closeOnBackdropClick?: boolean } = {}) {
   const onClose = vi.fn();
   render(
-    <Modal onClose={onClose} open title="Skill">
+    <Modal onClose={onClose} open title="Skill" {...props}>
       <input aria-label="Name" />
     </Modal>
   );
@@ -37,6 +37,15 @@ describe('Modal', () => {
     const { dialog, onClose } = renderModal();
     fireEvent.mouseDown(dialog);
     fireEvent.click(dialog);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores the backdrop when closeOnBackdropClick is off, but still closes from the button', () => {
+    const { dialog, onClose } = renderModal({ closeOnBackdropClick: false });
+    fireEvent.mouseDown(dialog);
+    fireEvent.click(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { hidden: true, name: 'Close' }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
