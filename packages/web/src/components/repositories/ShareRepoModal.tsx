@@ -2,8 +2,11 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
-import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
+import { Alert } from '@/components/ui/Alert';
+import { Checkbox } from '@/components/ui/Checkbox';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { LoadingState } from '@/components/ui/LoadingState';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { useSetRepoShares, useShareCandidates } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
@@ -53,47 +56,36 @@ export function ShareRepoModal({
       title={connectionLabel(repo)}
     >
       <form className="space-y-5" onSubmit={(e) => void handleSave(e).catch(() => {})}>
-        {candidates.isLoading && <p className="text-sm text-paper-400">Loading teams…</p>}
+        {candidates.isLoading && <LoadingState compact message="loading teams…" />}
         {candidates.isError && (
-          <p className="text-sm text-brick-400">
-            {errMsg(candidates.error, 'Could not load the teams.')}
-          </p>
+          <Alert>{errMsg(candidates.error, 'Could not load the teams.')}</Alert>
         )}
         {candidates.data && candidates.data.length === 0 && (
-          <p className="text-sm text-paper-400">
-            There are no other active teams in this organization.
-          </p>
+          <EmptyState title="There are no other active teams in this organization." />
         )}
         {candidates.data && candidates.data.length > 0 && (
           <fieldset className="space-y-2">
             <legend className="sr-only">Teams to share with</legend>
             {candidates.data.map((team) => (
-              <label className="flex items-center gap-2 text-sm text-paper-200" key={team.id}>
-                <input
-                  checked={selected.has(team.id)}
-                  disabled={save.isPending}
-                  onChange={() => toggle(team.id)}
-                  type="checkbox"
-                />
-                <span>{team.name}</span>
-              </label>
+              <Checkbox
+                checked={selected.has(team.id)}
+                disabled={save.isPending}
+                key={team.id}
+                label={team.name}
+                onChange={() => toggle(team.id)}
+              />
             ))}
           </fieldset>
         )}
 
-        {save.isError && (
-          <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">
-            {errMsg(save.error, 'Could not update sharing.')}
-          </p>
-        )}
-        <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancel
-          </Button>
-          <Button disabled={save.isPending || !candidates.data} type="submit" variant="primary">
-            {save.isPending ? 'Saving…' : 'Save sharing'}
-          </Button>
-        </div>
+        {save.isError && <Alert>{errMsg(save.error, 'Could not update sharing.')}</Alert>}
+        <ModalFooter
+          disabled={!candidates.data}
+          isPending={save.isPending}
+          onCancel={onClose}
+          pendingLabel="Saving…"
+          submitLabel="Save changes"
+        />
       </form>
     </Modal>
   );
