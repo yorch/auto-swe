@@ -10,7 +10,7 @@
  * way; what the index adds is protection against two concurrent onboardings.
  */
 import type { PrismaClient } from '@auto-swe/shared';
-import { hostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import { hostFamily, platformCredentialScope } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isGitHubDotComHost } from './repositoryHost.js';
@@ -106,40 +106,71 @@ export async function warnIfGitHubDotComWebhookSecret(
   }
 }
 
+const MAX_UNUSABLE_LISTED = 20;
+
 /**
- * Warns when two or more active repositories all override onto one and the
- * same foreign host. That shape usually means the instance's own GitHub host
- * (Studio -> GitHub integration web and API URLs) is wrong, not that every
- * repository is an exception: the platform credential is held to the instance's
- * host, so each of these repositories is refused it. Returns whether it
- * warned; never throws.
+ * Warns, listing them (the first 20, plus the count), when active git
+ * repositories sit on a host the platform credential may not go to: another
+ * host than the instance's (`mismatch`), or web and API overrides on different
+ * hosts (`misconfigured`). Their runs fail non-retryably with
+ * `REPO_CREDENTIAL_HOST_MISMATCH` / `REPO_HOST_MISCONFIGURED`, and the launch
+ * gate refuses with `host-mismatch`. The remedy is the instance's web and API
+ * URLs (when the platform's credential belongs to that host), both overrides
+ * on one host, or a user's own saved token. Returns whether it warned; never
+ * throws.
  */
-export async function warnIfAllReposOnOneForeignHost(
+export async function warnIfReposOnUnusableHosts(
   prisma: PrismaClient,
   log: Logger
 ): Promise<boolean> {
   try {
     const repos = await runUnscoped('a startup check spans every team', ['Connection'], () =>
       prisma.connection.findMany({
-        select: { githubUrl: true },
+        select: {
+          githubApiUrl: true,
+          githubUrl: true,
+          id: true,
+          installation: { select: { installationId: true } },
+          organizationName: true,
+          repoName: true,
+        },
         where: { isActive: true, type: 'git_repo' },
       })
     );
-    if (repos.length < 2 || repos.some((r) => !r.githubUrl)) {
-      return false;
-    }
-    const hosts = new Set(repos.map((r) => hostFamily(r.githubUrl as string)));
-    if (hosts.size !== 1) {
-      return false;
-    }
     const ghConfig = await resolveGitHubConfig();
-    const [host] = [...hosts];
-    if (host === hostFamily(ghConfig.baseUrl)) {
+    const unusable = repos.flatMap((r) => {
+      const scope = platformCredentialScope(
+        {
+          apiUrl: r.githubApiUrl,
+          baseUrl: r.githubUrl,
+          installationId: r.installation?.installationId ?? null,
+        },
+        ghConfig
+      );
+      return scope === 'instance'
+        ? []
+        : [
+            {
+              error:
+                scope === 'misconfigured'
+                  ? 'REPO_HOST_MISCONFIGURED'
+                  : 'REPO_CREDENTIAL_HOST_MISMATCH',
+              host: hostFamily(r.githubUrl ?? r.githubApiUrl ?? ghConfig.baseUrl),
+              id: r.id,
+              repository: `${r.organizationName}/${r.repoName}`,
+            },
+          ];
+    });
+    if (unusable.length === 0) {
       return false;
     }
     log.warn(
-      { host, instanceHost: hostFamily(ghConfig.baseUrl), repositories: repos.length },
-      `every active repository overrides onto ${host}, which is not the instance's GitHub host. The platform's credential is sent only to the instance's own host, so if its credential belongs to ${host}, set the GitHub integration's web and API URLs to ${host} (Studio -> Integrations -> GitHub).`
+      {
+        instanceHost: hostFamily(ghConfig.baseUrl),
+        repositories: unusable.slice(0, MAX_UNUSABLE_LISTED),
+        total: unusable.length,
+      },
+      `${unusable.length} active repositor${unusable.length === 1 ? 'y is' : 'ies are'} on a host the platform's GitHub credential is not valid on (the instance's host is ${hostFamily(ghConfig.baseUrl)}); the platform credential is never sent elsewhere, so their runs fail with the error named per repository. Remedy: if the platform's credential belongs to that host, set the GitHub integration's web and API URLs to it (Studio -> Integrations -> GitHub); for a half override, set both URL overrides to one host; otherwise a user must save their own token for the repository.`
     );
     return true;
   } catch (err) {

@@ -22,9 +22,9 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import {
-  warnIfAllReposOnOneForeignHost,
   warnIfGitHubDotComWebhookSecret,
   warnIfRepoIdentityIndexMissing,
+  warnIfReposOnUnusableHosts,
 } from './lib/repoIdentityIndexCheck.js';
 import { parseTrustProxy } from './lib/trustProxy.js';
 import authPlugin, {
@@ -158,7 +158,7 @@ async function start() {
   // warning it raises. Say so here, where an operator reads the logs.
   await warnIfRepoIdentityIndexMissing(app.prisma, app.log);
   await warnIfGitHubDotComWebhookSecret(app.prisma, app.log);
-  await warnIfAllReposOnOneForeignHost(app.prisma, app.log);
+  await warnIfReposOnUnusableHosts(app.prisma, app.log);
 
   // Sync the lesson consolidation Temporal Schedule with whatever config is in
   // the DB. Best-effort — a Temporal connectivity failure at startup shouldn't

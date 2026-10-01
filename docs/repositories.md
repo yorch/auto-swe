@@ -37,19 +37,20 @@ Everything that names a repository by owner and name takes the host into account
 the API is `<githubApiUrl>/repos/<owner>/<name>`. They exist for a repository on a different GitHub
 host than the instance's.
 
-A credential is sent to a repository's own bases, but only the one that is valid there. A user's own
-token is bound to the origins it was verified on. A **platform credential** — the instance PAT, the
-singleton App installation token, or an App JWT (which can mint a token for every installation of
-the App) — is the instance's and goes only to the instance's own host. It is never sent to another
-host unless the repository has its own GitHub App installation on that host *and* the instance is in
-App mode. One rule (`@auto-swe/shared/lib/githubHostScope`) decides this for the worker, the
-gateway's check-run lookup and the shared permission lookup, and `resolveGitHubToken` enforces its
-API-host half as a last line, so even a caller that forgot to ask cannot send a platform credential,
-or post an App JWT, to a foreign host. A repository on a host the rule does not cover is refused with
-a non-retryable `REPO_CREDENTIAL_HOST_MISMATCH` (it needs its own GitHub App installation under
-Studio → GitHub installations, or a user's own token; and if the platform's own credential belongs to
-that host, set the GitHub integration's web and API URLs to it). A permission lookup reports that it
-could not ask.
+A user's own token is bound to the origins it was verified on. A **platform credential** — the
+instance PAT, any App installation token, or an App JWT (which can mint a token for every
+installation of the App) — belongs to the instance's own GitHub host and goes nowhere else. That
+holds whatever installation the repository records: the App and all its installations live on the
+instance's host, so an installation cannot exist on another one, and an App JWT posted to a foreign
+host would be replayable against the real one. One rule (`@auto-swe/shared/lib/githubHostScope`)
+decides this for the worker, the gateway's check-run lookup and the shared permission lookup, and
+`resolveGitHubToken` enforces its API-host half as a last line, so even a caller that forgot to ask
+cannot send a platform credential, or post an App JWT, to a foreign host. A repository on another
+host is reachable only with a user's own saved token; without one it is refused with a
+non-retryable `REPO_CREDENTIAL_HOST_MISMATCH` (if the platform's own credential belongs to that
+host, set the GitHub integration's web and API URLs to it). A permission lookup reports
+`host-mismatch` rather than a transient failure, and a launch under the access gate is refused with
+the `host-mismatch` reason, which names the same remedy instead of suggesting a retry.
 
 **The web base and the API base must be on the same host.** github.com with api.github.com, and
 `<tenant>.ghe.com` with `api.<tenant>.ghe.com`, are each one host; a GitHub Enterprise Server keeps
@@ -80,10 +81,11 @@ in two places:
 
 A repository with no overrides is never checked, so the common case costs nothing.
 
-At startup the gateway warns when two or more active repositories all override onto one and the same
-foreign host. That usually means the instance's own GitHub host (Studio → Integrations → GitHub web
-and API URLs) is wrong, not that every repository is an exception, because the platform credential
-is sent only to the instance's own host.
+At startup the gateway warns, listing them (the first 20 and the total), when active repositories sit
+on a host the platform credential is not valid on: another host than the instance's, or a half
+override. Each entry names the error its runs will hit. When many repositories share one foreign
+host, the instance's own GitHub host (Studio → Integrations → GitHub web and API URLs) is usually
+what is wrong, because the platform credential is sent only to the instance's own host.
 
 ### Webhook secrets per host
 
@@ -131,18 +133,18 @@ characters), and are re-encrypted by key rotation.
 ### CI status lookups
 
 When a check run succeeds, the gateway asks GitHub for the other check runs on the commit before
-signalling the workflow. That request goes to the tracked repository's own API base, with a token
-for the repository's own installation. The instance's credentials stay on the instance's own API
-host: a repository with no installation of its own would take the instance's installation, which
-lives on the instance's host, so on another host it is sent no token; the instance PAT is likewise
-never sent to another host. A user's token is never used, since no user launched a webhook. A
+signalling the workflow. That request goes to the tracked repository's API base, with a token
+for the repository's own installation where it has one, else the singleton's. The instance's
+credentials stay on the instance's own API host: an installation lives on the instance's host, so a
+repository on another host is sent no token whatever installation it records, and the instance PAT
+is likewise never sent to another host. A user's token is never used, since no user launched a webhook. A
 repository whose overrides fail the approved-host check, that has no credential valid on its host,
 or whose web and API bases are on different hosts, is sent none, and its run is signalled per check
 run instead.
 
-The same commit can be tracked on repositories on different hosts (a mirror, or the same name on
-two hosts). Matched pull requests are grouped by repository and each group is aggregated on its own
-host with its own credential, so one host's checks never decide another's verdict. A group whose
+The same commit can be tracked on more than one repository (a mirror, or the same name on two
+hosts). Matched pull requests are grouped by repository and each group is aggregated on its own
+with its own credential, so one repository's checks never decide another's verdict. A group whose
 checks are still running keeps waiting while the others are signalled.
 
 ### Importing from GitHub
@@ -190,7 +192,10 @@ to another team), its schedules on it are deactivated after the change commits, 
 audited first: the row is marked inactive and the Temporal schedule is paused. Each schedule is
 handled on its own, and a failure on one is logged and never fails the request. The worker also
 refuses to fire a schedule whose row is inactive, so a pause that did not reach Temporal still
-stops it. They stay listed, and a lead of the owning team (or an admin) may delete them or
+stops it, and refuses one whose team is no longer the repository's owning team or a current
+sharer (`schedule-team-unclaimed`, non-retryable), which covers a create that raced an unshare. A
+schedule whose team was deleted has no team to check and is refused the same way until an admin or
+the owning team's lead re-assigns it. They stay listed, and a lead of the owning team (or an admin) may delete them or
 re-activate them, which makes the re-activating person the author and moves the schedule to the
 repository's owning team (recorded in the audit log), so the next share change does not pause it
 again. A paused schedule cannot be fired by hand (`409 SCHEDULE_INACTIVE`); resume it first.

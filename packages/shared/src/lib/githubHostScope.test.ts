@@ -79,18 +79,18 @@ describe('platformCredentialScope', () => {
     ).toBe('misconfigured');
   });
 
-  it('is "own-installation" only for a matching pair, with an installation, in App mode', () => {
+  it('is "mismatch" for a matching foreign pair, installation or not, in any mode', () => {
     const pair = { apiUrl: GHE.apiUrl, baseUrl: GHE.baseUrl };
-    expect(platformCredentialScope({ ...pair, installationId: '7' }, { ...DOTCOM, ...APP })).toBe(
-      'own-installation'
-    );
-    expect(platformCredentialScope(pair, { ...DOTCOM, ...APP })).toBe('mismatch');
-    expect(
-      platformCredentialScope({ ...pair, installationId: '7' }, { ...DOTCOM, authMode: 'pat' })
-    ).toBe('mismatch');
+    for (const config of [
+      { ...DOTCOM, ...APP },
+      { ...DOTCOM, authMode: 'pat' },
+    ]) {
+      expect(platformCredentialScope({ ...pair, installationId: '7' }, config)).toBe('mismatch');
+      expect(platformCredentialScope(pair, config)).toBe('mismatch');
+    }
   });
 
-  it('reaches a <tenant>.ghe.com pair through its own installation', () => {
+  it('is "mismatch" for a foreign <tenant>.ghe.com pair, even with an installation', () => {
     expect(
       platformCredentialScope(
         {
@@ -100,7 +100,7 @@ describe('platformCredentialScope', () => {
         },
         { ...GHE, ...APP }
       )
-    ).toBe('own-installation');
+    ).toBe('mismatch');
   });
 
   it('is "instance" on a GHE instance for a repository using no overrides', () => {
@@ -114,8 +114,11 @@ describe('installationTargetFor', () => {
       apiUrl: DOTCOM.apiUrl,
       installationId: null,
     });
+  });
+
+  it("asks only the instance API, even for a repository's own installation on a foreign host", () => {
     expect(installationTargetFor({ apiUrl: GHE.apiUrl, installationId: '7' }, DOTCOM)).toEqual({
-      apiUrl: GHE.apiUrl,
+      apiUrl: DOTCOM.apiUrl,
       installationId: '7',
     });
   });

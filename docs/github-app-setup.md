@@ -71,14 +71,17 @@ The secret also binds the delivery to its host: a delivery verified with a host'
 on only for repositories on that host, and one verified with the instance secret is not acted on
 for repositories on a host that has a secret of its own. See [repositories.md](./repositories.md).
 
-A repository's own GitHub URL and API URL are **host overrides**, and every credential the
-platform holds for that repository — the PAT, the App JWT, the installation token, the
-authenticated clone URL — is sent to the host they name. They therefore accept only a bare host on
-public GitHub or on the configured instance (with `/api/v3` allowed on the API URL), never a
-repository URL. Only a platform ADMIN may point a repository at a different host; a team lead may
-leave the values unchanged, clear them, or set them to the configured instance. The worker and the
-permission lookups re-check the host before sending a credential, so a row that fails the check
-cannot receive one however it was written.
+A repository's own GitHub URL and API URL are **host overrides**. They accept only a bare host (with
+`/api/v3` allowed on the API URL), never a repository URL, and the host must be the configured
+instance's or one an ADMIN listed under the `github.repositoryHosts` setting; any team lead may set
+an approved host. The platform's credentials — the PAT, the App JWT, every installation token — are
+valid on the instance's own GitHub host only and are **never** sent anywhere else: the App's id,
+private key and installations all belong to that host, so an installation cannot exist on another
+one. A repository on a different approved host is reachable only with a user's own saved token
+(bound to the origins it was verified on); if the platform's credential belongs to that host, set
+the GitHub integration's web and API URLs to it instead. The worker and the permission lookups
+re-check the host before sending any credential, so a row that fails the check cannot receive one
+however it was written.
 
 ---
 

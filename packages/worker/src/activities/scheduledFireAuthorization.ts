@@ -46,6 +46,7 @@ export type ScheduledFireRefusalReason =
   | 'schedule-missing'
   | 'acting-user-missing'
   | 'repository-inactive'
+  | 'schedule-team-unclaimed'
   | 'schedule-inactive'
   | 'launcher-out-of-sync'
   | 'gate-unreadable'
@@ -96,6 +97,9 @@ export async function scheduledFireRefusal(
       // schedule best-effort; the row is what the worker can still trust.
       isActive: true,
       repoId: true,
+      // The team the schedule belongs to; checked against the repository's
+      // current owner and sharers below.
+      teamId: true,
     },
     where: { workRequestId: input.workRequestId },
   });
@@ -179,7 +183,12 @@ export async function scheduledFireRefusal(
       organizationName: true,
       repoName: true,
       // Shared-team membership satisfies the launch decision, as at every launch.
-      shares: repoMembersSelect({ userId: true }, { userId: owner.id }).shares,
+      shares: {
+        select: {
+          ...repoMembersSelect({ userId: true }, { userId: owner.id }).shares.select,
+          teamId: true,
+        },
+      },
       team: {
         select: {
           memberships: { select: { userId: true }, where: { userId: owner.id } },
@@ -187,12 +196,31 @@ export async function scheduledFireRefusal(
           orgId: true,
         },
       },
+      teamId: true,
       type: true,
     },
     where: { id: schedule.repoId },
   });
   if (!repo?.isActive) {
     return refuse('repository-inactive', 'the repository is no longer active');
+  }
+
+  // The schedule's team must still have a claim on the repository: its owning
+  // team, or a team it is currently shared with. Deactivation on an unshare or
+  // a move is best-effort, and a create can race an unshare, so the row alone
+  // can name a team that no longer has one. A null `teamId` means the team was
+  // deleted (the schedule-team migration backfilled every earlier row, and the
+  // column is only nulled by `onDelete: SetNull`), so there is no team whose
+  // claim could be checked: it is unclaimed too, until an ADMIN or the owning
+  // team's lead re-saves it.
+  const claimed =
+    schedule.teamId != null &&
+    (repo.teamId === schedule.teamId || repo.shares.some((s) => s.teamId === schedule.teamId));
+  if (!claimed) {
+    return refuse(
+      'schedule-team-unclaimed',
+      "the schedule's team no longer owns or shares the repository; an admin or the owning team's lead must re-assign or delete it"
+    );
   }
 
   // Fail closed on an unreadable gate. The gateway can fall back to `off` for

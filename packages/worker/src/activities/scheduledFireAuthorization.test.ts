@@ -56,6 +56,7 @@ function schedule(owner: Person | null = null, actsAsUser: Person | null = null)
     id: SCHEDULE_ID,
     isActive: true,
     repoId: 'repo-1',
+    teamId: 'team-1',
   };
 }
 
@@ -83,6 +84,7 @@ function repo(
       organization: { monthlyBudgetUsdCents: overrides.cap ?? null },
       orgId: 'org-1',
     },
+    teamId: 'team-1',
     type: 'git_repo',
   };
 }
@@ -130,6 +132,35 @@ describe('scheduledFireRefusal', () => {
         workRequestId: 'wr-1',
       })
     ).toMatchObject({ reason: 'schedule-missing', scheduleId: orphanId });
+  });
+
+  it('refuses when the schedule team no longer owns or shares the repository', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({
+      ...schedule(),
+      teamId: 'team-unshared',
+    });
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+      reason: 'schedule-team-unclaimed',
+    });
+  });
+
+  it('refuses a schedule whose team was deleted (null teamId)', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({ ...schedule(), teamId: null });
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+      reason: 'schedule-team-unclaimed',
+    });
+  });
+
+  it('lets a schedule owned by a team the repository is currently shared with fire', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({
+      ...schedule(),
+      teamId: 'team-sharer',
+    });
+    db.connection.findUnique.mockResolvedValueOnce({
+      ...repo(),
+      shares: [{ team: { memberships: [{ userId: OWNER }] }, teamId: 'team-sharer' }],
+    });
+    expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
   });
 
   it('refuses when the owner was deleted or deactivated', async () => {

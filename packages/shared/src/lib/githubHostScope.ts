@@ -4,9 +4,12 @@
  * The platform's credentials — the instance PAT, the singleton App's
  * installation token, and an App JWT (which can mint a token for every
  * installation of the App) — are valid on the instance's own GitHub host and
- * nowhere else. They are never sent to another host, unless the repository has
- * its own GitHub App installation on that host and the instance is in App mode.
- * A user's own saved token is a separate thing, bound to its verified origins.
+ * nowhere else. They are NEVER sent to another host: the App's id, private key
+ * and every installation of it belong to the instance's host, so an installation
+ * cannot exist elsewhere, and posting an App JWT to another host would hand it a
+ * credential replayable against the real one. A repository on another host is
+ * reachable only with a user's own saved token, which is a separate thing, bound
+ * to its verified origins.
  *
  * Every place that sends a platform credential to a repository's host asks this
  * module, so the rule has one definition: the worker's `runToken` /
@@ -91,9 +94,7 @@ export function isAppMode(config: HostScopedConfig): boolean {
 export type PlatformCredentialScope =
   /** Both hosts are the instance's own: its credential applies. */
   | 'instance'
-  /** Another host, but the repository has its own installation there (App mode). */
-  | 'own-installation'
-  /** Another host and no installation of its own: no platform credential applies. */
+  /** Another host: no platform credential applies. */
   | 'mismatch'
   /**
    * The repository's web host and API host are different hosts (a half
@@ -101,12 +102,7 @@ export type PlatformCredentialScope =
    */
   | 'misconfigured';
 
-/**
- * Where the platform credential may go for `repo`. See the module comment.
- *
- * 'own-installation' requires the repository's API and web hosts to be one
- * host family AND its own installation AND App mode.
- */
+/** Where the platform credential may go for `repo`. See the module comment. */
 export function platformCredentialScope(
   repo: HostScopedRepo,
   config: HostScopedConfig
@@ -119,25 +115,21 @@ export function platformCredentialScope(
   }
   const web = repo.baseUrl ?? config.baseUrl;
   const api = repo.apiUrl ?? config.apiUrl;
-  if (!sameHostFamily(web, api)) {
-    return 'misconfigured';
-  }
-  return repo.installationId && isAppMode(config) ? 'own-installation' : 'mismatch';
+  return sameHostFamily(web, api) ? 'mismatch' : 'misconfigured';
 }
 
 /**
  * Which installation, and at which API host, `repo`'s platform credential comes
- * from. A repository with no installation of its own takes the singleton's —
- * which lives on the instance's host, so that is where it is asked.
+ * from. Always the instance's API host — installations live only there. A
+ * repository with no installation of its own takes the singleton's. Callers
+ * must have checked {@link platformCredentialScope} is 'instance'; the
+ * `resolveGitHubToken` guard refuses any other host regardless.
  */
 export function installationTargetFor(
   repo: HostScopedRepo,
   config: { apiUrl: string }
 ): { installationId: string | null; apiUrl: string } {
-  if (!repo.installationId) {
-    return { apiUrl: config.apiUrl, installationId: null };
-  }
-  return { apiUrl: repo.apiUrl ?? config.apiUrl, installationId: repo.installationId };
+  return { apiUrl: config.apiUrl, installationId: repo.installationId ?? null };
 }
 
 /**

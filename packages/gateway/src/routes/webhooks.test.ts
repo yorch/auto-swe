@@ -1601,7 +1601,7 @@ describe('webhook routes', () => {
 
   // ── one aggregation per repository ──
 
-  describe('POST /ci with the same commit tracked on repositories on different hosts', () => {
+  describe('POST /ci with the same commit tracked on repositories with different installations', () => {
     const HEAD_SHA = 'abc123def456';
     const body = JSON.stringify({
       action: 'completed',
@@ -1636,22 +1636,30 @@ describe('webhook routes', () => {
           headSha: HEAD_SHA,
           id: 'pr-ghe',
           repository: {
-            githubApiUrl: 'https://ghe.corp/api/v3',
-            githubUrl: 'https://ghe.corp',
+            githubApiUrl: 'https://api.github.com',
+            githubUrl: 'https://github.com',
             id: 'repo-ghe',
             installation: { installationId: '777' },
           },
           workflow: { temporalWorkflowId: 'wf-ghe' },
         },
       ];
+      // The credential follows the repository's installation, whatever order the
+      // aggregations run in.
+      const tokenFor = async (_cfg: unknown, target?: { installationId?: string | null }) =>
+        target?.installationId === '777' ? 'ghe-token' : 'here-token';
       vi.mocked(resolveGitHubToken)
-        .mockResolvedValueOnce('here-token')
-        .mockResolvedValueOnce('ghe-token');
+        .mockImplementationOnce(tokenFor as never)
+        .mockImplementationOnce(tokenFor as never);
     });
 
-    it("aggregates each repository on its own host, so one host's checks never decide another's", async () => {
-      fetchMock.mockImplementation(async (url: string) =>
-        url.startsWith('https://ghe.corp/')
+    /** Which repository a lookup was made for, from the token it carried. */
+    const isInstalled = (init: { headers: Record<string, string> }) =>
+      init.headers.Authorization === 'Bearer ghe-token';
+
+    it("aggregates each repository on its own, so one repository's checks never decide another's", async () => {
+      fetchMock.mockImplementation(async (_url: string, init: never) =>
+        isInstalled(init)
           ? run('in_progress', null, 'https://ghe/runs/1')
           : run('completed', 'success', 'https://here/runs/1')
       );
@@ -1664,13 +1672,12 @@ describe('webhook routes', () => {
       expect(signalCalls[0].args).toEqual([{ logsUrl: 'https://x/runs/1', passed: true }]);
       expect(fetchMock).toHaveBeenCalledTimes(2);
       const urls = fetchMock.mock.calls.map((c) => c[0] as string);
-      expect(urls.some((u) => u.startsWith('https://api.github.com/'))).toBe(true);
-      expect(urls.some((u) => u.startsWith('https://ghe.corp/api/v3/'))).toBe(true);
+      expect(urls.every((u) => u.startsWith('https://api.github.com/'))).toBe(true);
     });
 
     it('gives each repository its own verdict and failing logs', async () => {
-      fetchMock.mockImplementation(async (url: string) =>
-        url.startsWith('https://ghe.corp/')
+      fetchMock.mockImplementation(async (_url: string, init: never) =>
+        isInstalled(init)
           ? run('completed', 'failure', 'https://ghe/runs/failed')
           : run('completed', 'success', 'https://here/runs/1')
       );
@@ -1694,7 +1701,7 @@ describe('webhook routes', () => {
 
   // ── CI status lookup targets the repository's own host ──
 
-  describe('POST /ci check-run lookup for a repository on another host', () => {
+  describe('POST /ci check-run lookup and the repository host', () => {
     const HEAD_SHA = 'abc123def456';
     const body = JSON.stringify({
       action: 'completed',
@@ -1723,12 +1730,11 @@ describe('webhook routes', () => {
       ];
     }
 
-    it("queries the repository's own API host with a token for its installation", async () => {
-      // App mode: an installation token is what is minted for a repository's own installation.
+    it("queries the instance API with a token for the repository's own installation", async () => {
       state.github = { ...state.github, ...APP_MODE };
       trackRepo({
-        githubApiUrl: 'https://ghe.corp/api/v3',
-        githubUrl: 'https://ghe.corp',
+        githubApiUrl: 'https://api.github.com',
+        githubUrl: 'https://github.com',
         installation: { installationId: '777' },
       });
       vi.mocked(resolveGitHubToken).mockResolvedValueOnce('inst-777-token');
@@ -1737,20 +1743,32 @@ describe('webhook routes', () => {
       const res = await inject('/api/v1/webhooks/ci', body, sign(body));
 
       expect(res.statusCode).toBe(200);
-      expect(repositoryHostsAllowed).toHaveBeenCalledWith({
-        githubApiUrl: 'https://ghe.corp/api/v3',
-        githubUrl: 'https://ghe.corp',
-      });
       expect(resolveGitHubToken).toHaveBeenCalledWith(expect.anything(), {
-        apiUrl: 'https://ghe.corp/api/v3',
+        apiUrl: 'https://api.github.com',
         installationId: '777',
       });
       expect(fetchMock).toHaveBeenCalledWith(
-        `https://ghe.corp/api/v3/repos/acme/payments-api/commits/${HEAD_SHA}/check-runs?per_page=100&page=1`,
+        `https://api.github.com/repos/acme/payments-api/commits/${HEAD_SHA}/check-runs?per_page=100&page=1`,
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer inst-777-token' }),
         })
       );
+    });
+
+    it('sends no JWT, PAT or token to a foreign host for an installed repository repointed there (App mode)', async () => {
+      state.github = { ...state.github, ...APP_MODE };
+      trackRepo({
+        githubApiUrl: 'https://ghe.corp/api/v3',
+        githubUrl: 'https://ghe.corp',
+        installation: { installationId: '777' },
+      });
+
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(res.statusCode).toBe(200);
+      expect(resolveGitHubToken).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(signalCalls).toHaveLength(1);
     });
 
     it('asks for the singleton installation on the singleton host when the repository has none and is on it', async () => {
@@ -1774,8 +1792,7 @@ describe('webhook routes', () => {
     });
 
     it('sends no token to another host for a repository with no installation of its own', async () => {
-      // The singleton's installation lives on the singleton's host; the worker's
-      // `installationTarget` sends nothing to another host, and neither does this.
+      // The singleton's installation lives on the singleton's host.
       state.github = { ...state.github, ...APP_MODE };
       trackRepo({
         githubApiUrl: 'https://ghe.corp/api/v3',

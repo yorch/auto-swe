@@ -120,7 +120,7 @@ describe('lookupRepoPermission and the platform credential', () => {
     ...over,
   });
   const GHE = { githubApiUrl: 'https://ghe.corp/api/v3', githubUrl: 'https://ghe.corp' };
-  const COULD_NOT_ASK = { failure: 'credential-rejected', ok: false };
+  const HOST_MISMATCH = { failure: 'host-mismatch', ok: false };
   let fetchSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -143,17 +143,17 @@ describe('lookupRepoPermission and the platform credential', () => {
   });
 
   it('posts no App JWT to a foreign host with no installation of its own (App mode)', async () => {
-    await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(COULD_NOT_ASK);
+    await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(HOST_MISMATCH);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(fetchRepoPermission).not.toHaveBeenCalled();
   });
 
   it('sends no instance PAT to a foreign host (PAT mode)', async () => {
     resolveGitHubConfig.mockResolvedValue(instance({ authMode: 'pat' }));
-    await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(COULD_NOT_ASK);
+    await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(HOST_MISMATCH);
     await expect(
       lookupRepoPermission(repo({ ...GHE, installation: { installationId: '7' } }), 'octocat')
-    ).resolves.toEqual(COULD_NOT_ASK);
+    ).resolves.toEqual(HOST_MISMATCH);
     expect(fetchRepoPermission).not.toHaveBeenCalled();
   });
 
@@ -161,19 +161,27 @@ describe('lookupRepoPermission and the platform credential', () => {
     for (const half of [{ githubApiUrl: GHE.githubApiUrl }, { githubUrl: GHE.githubUrl }]) {
       await expect(
         lookupRepoPermission(repo({ ...half, installation: { installationId: '7' } }), 'octocat')
-      ).resolves.toEqual(COULD_NOT_ASK);
+      ).resolves.toEqual(HOST_MISMATCH);
     }
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(fetchRepoPermission).not.toHaveBeenCalled();
   });
 
-  it("asks a foreign host with the repository's own installation, in App mode", async () => {
-    await lookupRepoPermission(repo({ ...GHE, installation: { installationId: '7' } }), 'octocat');
+  it('posts no App JWT, PAT or token to a foreign host even for an installed repository (App mode)', async () => {
+    await expect(
+      lookupRepoPermission(repo({ ...GHE, installation: { installationId: '7' } }), 'octocat')
+    ).resolves.toEqual(HOST_MISMATCH);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchRepoPermission).not.toHaveBeenCalled();
+  });
+
+  it("asks the instance host with a repository's own installation's token", async () => {
+    await lookupRepoPermission(repo({ installation: { installationId: '7' } }), 'octocat');
     expect(fetchSpy.mock.calls[0][0]).toBe(
-      'https://ghe.corp/api/v3/app/installations/7/access_tokens'
+      'https://api.github.com/app/installations/7/access_tokens'
     );
     expect(fetchRepoPermission).toHaveBeenCalledWith(
-      expect.objectContaining({ apiUrl: 'https://ghe.corp/api/v3', token: 'minted' })
+      expect.objectContaining({ apiUrl: 'https://api.github.com', token: 'minted' })
     );
   });
 

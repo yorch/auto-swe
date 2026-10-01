@@ -38,6 +38,11 @@ export function permissionMeets(actual: RepoPermission, required: RepoPermission
 export type PermissionLookupFailure =
   | 'repo-not-found'
   | 'credential-rejected'
+  /**
+   * The repository is on a host the platform's credential may not go to (or its
+   * web and API hosts disagree). Standing configuration: retrying cannot help.
+   */
+  | 'host-mismatch'
   | 'rate-limited'
   | 'unavailable';
 

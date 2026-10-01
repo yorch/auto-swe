@@ -23,6 +23,7 @@ import {
   installationTargetFor,
   platformCredentialScope as scopeOf,
 } from '@auto-swe/shared/lib/githubHostScope';
+import { PlatformCredentialHostError } from '@auto-swe/shared/lib/githubInstallation';
 import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -61,7 +62,7 @@ function platformCredentialScope(repo: RepoRef, ghConfig: PlatformConfig) {
   );
 }
 
-/** Which installation, and at which API host, a repository's credential comes from. */
+/** Which installation a repository's credential comes from — always on the instance's host. */
 function installationTarget(repo: RepoRef, ghConfig: { apiUrl: string }) {
   return installationTargetFor(
     { apiUrl: repo.apiUrl, baseUrl: repo.baseUrl, installationId: repo.installationId },
@@ -74,7 +75,7 @@ function credentialHostMismatch(repo: RepoRef, ghConfig: PlatformConfig) {
   const host = hostKey(repo.baseUrl ?? repo.apiUrl ?? ghConfig.baseUrl);
   const instanceHost = hostKey(ghConfig.baseUrl);
   return ApplicationFailure.nonRetryable(
-    `The repository is on ${host}, which needs its own GitHub App installation (Studio → GitHub installations) or a user's own token. The platform's credential is valid only on the instance's own GitHub host (${instanceHost}) and is not sent elsewhere. Or, if the platform's own credential belongs to ${host}, set the GitHub integration's web and API URLs to ${host}.`,
+    `The repository is on ${host}, which needs a user's own saved token. The platform's credential is valid only on the instance's own GitHub host (${instanceHost}) and is not sent elsewhere. Or, if the platform's own credential belongs to ${host}, set the GitHub integration's web and API URLs to ${host}.`,
     'REPO_CREDENTIAL_HOST_MISMATCH'
   );
 }
@@ -356,22 +357,9 @@ export class GitHubScmProvider implements ScmProvider {
       }
     }
     // The platform credential goes only where it is valid: the instance's
-    // origins for the instance's credential, the repository's own origins for
-    // its own installation's, and nowhere for a repository on another host
-    // with neither.
+    // origins, and nowhere for a repository on another host.
     const scope = repo ? platformCredentialScope(repo, ghConfig) : 'instance';
-    const platformTrusted =
-      scope === 'instance'
-        ? target.trusted
-        : scope === 'own-installation' && repo
-          ? (() => {
-              const own = resolveCiLogsTarget(
-                logsUrl,
-                trustedGitHubOrigins(repoHosts(repo, ghConfig))
-              );
-              return own.ok && own.trusted;
-            })()
-          : false;
+    const platformTrusted = scope === 'instance' && target.trusted;
     if (!githubToken && (platformTrusted || target.trusted)) {
       // The platform credential — an App JWT, when minting an installation token
       // — goes to this repository's own API host. Every other route to a token
@@ -459,17 +447,21 @@ export class GitHubScmProvider implements ScmProvider {
     // answer for a repository on another host.
     const scope = platformCredentialScope(repo, ghConfig);
     if (scope === 'mismatch' || scope === 'misconfigured') {
-      return { failure: 'credential-rejected', ok: false };
+      return { failure: 'host-mismatch', ok: false };
     }
     const target = installationTarget(repo, ghConfig);
     let token: string;
     try {
       token = await resolveGitHubToken(ghConfig, target);
-    } catch {
+    } catch (err) {
       // No usable credential is "could not ask", not "no access". Resolving it
       // to a verdict would write a denial into the projection that GitHub never
       // made, and it would look identical to a real one.
-      return { failure: 'credential-rejected', ok: false };
+      return {
+        failure:
+          err instanceof PlatformCredentialHostError ? 'host-mismatch' : 'credential-rejected',
+        ok: false,
+      };
     }
     return fetchRepoPermission({
       apiUrl: target.apiUrl,

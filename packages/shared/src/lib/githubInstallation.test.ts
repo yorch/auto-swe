@@ -86,14 +86,15 @@ describe('installation token resolution', () => {
     expect(b).toBe('tok-900004');
   });
 
-  it('treats the same installation id on a different host as a different installation', async () => {
+  it('refuses to mint for an installation id on any non-instance host', async () => {
     const { spy } = mintingFetch();
-    await resolveGitHubToken(config(), { apiUrl: 'https://api.github.com', installationId: '7' });
-    await resolveGitHubToken(config(), {
-      apiUrl: 'https://ghe.example.com/api/v3',
-      installationId: '7',
-    });
-    expect(spy).toHaveBeenCalledTimes(2);
+    await expect(
+      resolveGitHubToken(config(), {
+        apiUrl: 'https://ghe.example.com/api/v3',
+        installationId: '7',
+      })
+    ).rejects.toBeInstanceOf(PlatformCredentialHostError);
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it('re-mints when the App private key rotates', async () => {
@@ -197,7 +198,7 @@ describe('installation token resolution', () => {
 describe('the platform credential and a foreign API host', () => {
   const FOREIGN = 'https://ghe.corp/api/v3';
 
-  it('posts no App JWT to another host without an installation of its own', async () => {
+  it('posts no App JWT to another host without an installation id', async () => {
     const { spy } = mintingFetch();
     await expect(resolveGitHubToken(config(), { apiUrl: FOREIGN })).rejects.toBeInstanceOf(
       PlatformCredentialHostError
@@ -220,12 +221,20 @@ describe('the platform credential and a foreign API host', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("mints on another host through the repository's own installation, in App mode", async () => {
-    const { calls } = mintingFetch();
+  it('posts no App JWT to another host even with an installation id, in App mode', async () => {
+    const { spy } = mintingFetch();
     await expect(
       resolveGitHubToken(config(), { apiUrl: FOREIGN, installationId: '7' })
+    ).rejects.toBeInstanceOf(PlatformCredentialHostError);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("mints a repository's own installation on the instance host", async () => {
+    const { calls } = mintingFetch();
+    await expect(
+      resolveGitHubToken(config(), { apiUrl: 'https://api.github.com', installationId: '7' })
     ).resolves.toBe('tok-7');
-    expect(calls[0]).toBe(`${FOREIGN}/app/installations/7/access_tokens`);
+    expect(calls[0]).toBe('https://api.github.com/app/installations/7/access_tokens');
   });
 
   it('treats a spelling of the instance API host as the instance', async () => {

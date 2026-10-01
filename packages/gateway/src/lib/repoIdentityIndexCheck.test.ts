@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   REPO_IDENTITY_INDEX,
   REPO_IDENTITY_INDEX_SQL,
-  warnIfAllReposOnOneForeignHost,
   warnIfGitHubDotComWebhookSecret,
   warnIfRepoIdentityIndexMissing,
+  warnIfReposOnUnusableHosts,
 } from './repoIdentityIndexCheck.js';
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
@@ -117,37 +117,75 @@ describe('warnIfGitHubDotComWebhookSecret', () => {
   });
 });
 
-describe('warnIfAllReposOnOneForeignHost', () => {
-  const run = async (repos: Array<{ githubUrl: string | null }>) => {
+describe('warnIfReposOnUnusableHosts', () => {
+  const run = async (repos: object[]) => {
     const { prisma, warn, findMany } = setup({ indexed: true, repos });
-    const warned = await warnIfAllReposOnOneForeignHost(prisma, { warn });
+    const warned = await warnIfReposOnUnusableHosts(prisma, { warn });
     return { findMany, warn, warned };
   };
+  const repo = (
+    id: string,
+    githubUrl: string | null,
+    githubApiUrl: string | null = githubUrl,
+    installation: { installationId: string } | null = null
+  ) => ({
+    githubApiUrl,
+    githubUrl,
+    id,
+    installation,
+    organizationName: 'acme',
+    repoName: id,
+  });
 
-  it('warns, naming the host and the remedy, when every active repository is on one foreign host', async () => {
+  it('lists repositories on a foreign host, naming the error their runs hit and the remedy', async () => {
     const { warn, warned, findMany } = await run([
-      { githubUrl: 'https://ghe.corp' },
-      { githubUrl: 'https://GHE.corp' },
+      repo('a', 'https://ghe.corp'),
+      repo('b', null),
+      // An installation does not make a foreign host usable.
+      repo('c', 'https://ghe.corp', 'https://ghe.corp', { installationId: '7' }),
     ]);
     expect(warned).toBe(true);
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { isActive: true, type: 'git_repo' } })
     );
-    expect(warn.mock.calls[0][0]).toMatchObject({ host: 'ghe.corp', repositories: 2 });
-    expect(warn.mock.calls[0][1]).toContain(
-      "set the GitHub integration's web and API URLs to ghe.corp"
-    );
+    const [fields, message] = warn.mock.calls[0];
+    expect(fields.total).toBe(2);
+    expect(fields.repositories).toEqual([
+      expect.objectContaining({
+        error: 'REPO_CREDENTIAL_HOST_MISMATCH',
+        host: 'ghe.corp',
+        repository: 'acme/a',
+      }),
+      expect.objectContaining({ repository: 'acme/c' }),
+    ]);
+    expect(message).toContain("set the GitHub integration's web and API URLs");
+    expect(message).toContain('user must save their own token');
   });
 
-  it('is silent when any repository is on the instance host, or hosts differ, or there is only one', async () => {
-    expect((await run([{ githubUrl: 'https://ghe.corp' }, { githubUrl: null }])).warned).toBe(
-      false
-    );
-    expect(
-      (await run([{ githubUrl: 'https://a.corp' }, { githubUrl: 'https://b.corp' }])).warned
-    ).toBe(false);
-    expect((await run([{ githubUrl: 'https://ghe.corp' }])).warned).toBe(false);
+  it('flags a half override as misconfigured', async () => {
+    const { warn } = await run([repo('a', 'https://ghe.corp', null)]);
+    expect(warn.mock.calls[0][0].repositories[0]).toMatchObject({
+      error: 'REPO_HOST_MISCONFIGURED',
+    });
+  });
+
+  it('caps the list at 20 and reports the total', async () => {
+    const many = Array.from({ length: 25 }, (_, i) => repo(`r${i}`, 'https://ghe.corp'));
+    const { warn } = await run(many);
+    expect(warn.mock.calls[0][0].repositories).toHaveLength(20);
+    expect(warn.mock.calls[0][0].total).toBe(25);
+  });
+
+  it('is silent when every repository is on the instance host, installed or not', async () => {
     expect((await run([])).warned).toBe(false);
+    expect(
+      (
+        await run([
+          repo('a', null),
+          repo('b', 'https://github.com', 'https://api.github.com', { installationId: '7' }),
+        ])
+      ).warned
+    ).toBe(false);
   });
 
   it('never throws', async () => {
@@ -159,7 +197,7 @@ describe('warnIfAllReposOnOneForeignHost', () => {
         },
       },
     } as never;
-    await expect(warnIfAllReposOnOneForeignHost(prisma, { warn })).resolves.toBe(false);
+    await expect(warnIfReposOnUnusableHosts(prisma, { warn })).resolves.toBe(false);
     expect(warn).toHaveBeenCalled();
   });
 });

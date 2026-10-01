@@ -18,7 +18,7 @@ import {
   GITHUB_ACCOUNT_API_URL,
   verifyGithubLoginOwnership,
 } from './githubIdentityCheck.js';
-import { resolveGitHubToken } from './githubInstallation.js';
+import { PlatformCredentialHostError, resolveGitHubToken } from './githubInstallation.js';
 import {
   fetchOwnRepoPermission,
   fetchRepoPermission,
@@ -73,8 +73,8 @@ export async function lookupRepoPermission(
   }
   const ghConfig = await resolveGitHubConfig();
   // The platform credential goes only where it is valid (`githubHostScope`):
-  // the instance's own host, or a host the repository has its own installation
-  // on. Anything else is "could not ask" — and no App JWT is posted anywhere.
+  // the instance's own host. Anything else is "could not ask" — and no App JWT
+  // is posted anywhere.
   const scoped = {
     apiUrl: repo.githubApiUrl,
     baseUrl: repo.githubUrl,
@@ -82,14 +82,17 @@ export async function lookupRepoPermission(
   };
   const scope = platformCredentialScope(scoped, ghConfig);
   if (scope === 'mismatch' || scope === 'misconfigured') {
-    return { failure: 'credential-rejected', ok: false };
+    return { failure: 'host-mismatch', ok: false };
   }
   const target = installationTargetFor(scoped, ghConfig);
   let token: string;
   try {
     token = await resolveGitHubToken(ghConfig, target);
-  } catch {
-    return { failure: 'credential-rejected', ok: false };
+  } catch (err) {
+    return {
+      failure: err instanceof PlatformCredentialHostError ? 'host-mismatch' : 'credential-rejected',
+      ok: false,
+    };
   }
   return fetchRepoPermission({
     apiUrl: target.apiUrl,

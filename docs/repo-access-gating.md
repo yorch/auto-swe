@@ -72,6 +72,13 @@ and fall back to the login-based lookup where it is not. A
 token GitHub rejects, or that cannot see the repository, refuses a launch as
 `user-credential-rejected` rather than falling back — the run would use that token and fail.
 
+A repository on a host the platform's credential is not valid on (another host than the instance's,
+or web and API bases on different hosts) cannot be asked about with it. That lookup fails as
+`host-mismatch`, and a launch is refused with the `host-mismatch` reason, whose message names the
+remedy (set the GitHub integration's web and API URLs to that host, or save your own token) rather
+than suggesting a retry, which could never succeed. Advisory mode logs it and allows, as for every
+other refusal; the projection writes nothing on any lookup failure.
+
 The endpoint answers with a level, not a boolean, so one lookup serves two different questions:
 
 | Level | May view a repository and its runs | May start a run |

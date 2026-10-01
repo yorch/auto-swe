@@ -226,16 +226,15 @@ async function verifyWebhookOrReject(
  * The repository's own API host, and a token minted for its own installation:
  * the instance credential is for the instance's host, and a repository on
  * another GitHub Enterprise server must not be sent it. Applies the same
- * shared rule as the worker (`platformCredentialScope`) — a repository with no
- * installation of its own takes the singleton's installation, which lives on
- * the singleton's host, so on another host it gets no token; the PAT is held to
- * the same rule, and so is a repository whose web and API hosts differ. Never a
- * user's token: a webhook has no launcher.
+ * shared rule as the worker (`platformCredentialScope`) — no platform credential
+ * (PAT, App JWT, installation token) goes to another host, whatever
+ * installation the repository records; and a repository whose web and API hosts
+ * differ gets none either. Never a user's token: a webhook has no launcher.
  *
  * Null (aggregation unavailable, so the caller signals per run) when the
  * repository's URL overrides are not on an approved host — no credential is
- * minted for them — when the only credential is the instance's and the
- * repository is on another host, or when no credential can be resolved.
+ * minted for them — when the repository is on another host than the
+ * instance's, or when no credential can be resolved.
  */
 async function checkRunTarget(
   repo:
@@ -261,9 +260,8 @@ async function checkRunTarget(
     }
   }
   // The shared rule (`githubHostScope`), the same one the worker applies: the
-  // instance credential never leaves the instance's own host, a repository's
-  // web and API hosts must agree, and another host is reached only through the
-  // repository's own installation in App mode.
+  // platform credential never leaves the instance's own host, and a
+  // repository's web and API hosts must agree.
   const scoped = {
     apiUrl: repo?.githubApiUrl,
     baseUrl: repo?.githubUrl,
@@ -278,8 +276,9 @@ async function checkRunTarget(
     return null;
   }
   try {
-    const token = await resolveGitHubToken(ghConfig, installationTargetFor(scoped, ghConfig));
-    return { apiUrl, token };
+    const target = installationTargetFor(scoped, ghConfig);
+    const token = await resolveGitHubToken(ghConfig, target);
+    return { apiUrl: target.apiUrl, token };
   } catch (err) {
     log.warn({ err }, 'no GitHub credential for the check-run lookup');
     return null;

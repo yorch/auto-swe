@@ -20,7 +20,7 @@ vi.mock('@auto-swe/shared/lib/repoAccessProjection', () => ({
   recordRepoPermission: (...a: unknown[]) => recordRepoPermission(...a),
 }));
 
-const { decideRepoLaunch } = await import('./repoAccessGate.js');
+const { decideRepoLaunch, LAUNCH_REFUSAL_MESSAGE } = await import('./repoAccessGate.js');
 
 const prisma = {} as PrismaClient;
 const REPO = {
@@ -183,6 +183,31 @@ describe('decideRepoLaunch', () => {
         reason: 'lookup-unavailable',
       });
     }
+  });
+
+  it('refuses a host mismatch with a distinct, non-retryable reason that names the remedy', async () => {
+    lookupRepoPermission.mockResolvedValue({ failure: 'host-mismatch', ok: false });
+    await expect(decideRepoLaunch(prisma, engineer, REPO, ENFORCE, log)).resolves.toEqual({
+      allowed: false,
+      reason: 'host-mismatch',
+    });
+    expect(LAUNCH_REFUSAL_MESSAGE['host-mismatch']).toContain('web and API URLs');
+    expect(LAUNCH_REFUSAL_MESSAGE['host-mismatch']).toContain('your own token');
+    expect(LAUNCH_REFUSAL_MESSAGE['host-mismatch']).not.toContain('Try again');
+    // The projection writes nothing on any failure (repoAccessProjection).
+    expect(recordRepoPermission).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ lookup: { failure: 'host-mismatch', ok: false } })
+    );
+  });
+
+  it('still allows a host mismatch in advisory mode, logging it', async () => {
+    lookupRepoPermission.mockResolvedValue({ failure: 'host-mismatch', ok: false });
+    const warn = vi.fn();
+    await expect(
+      decideRepoLaunch(prisma, engineer, REPO, ADVISORY, { warn } as never)
+    ).resolves.toEqual({ allowed: true, reason: 'advisory-would-refuse' });
+    expect(warn).toHaveBeenCalled();
   });
 
   it('refuses a user whose login is missing or no longer theirs', async () => {
