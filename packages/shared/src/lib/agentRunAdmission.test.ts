@@ -25,6 +25,18 @@ describe('decideAdmission (worker authority)', () => {
     });
   });
 
+  it('fails closed when the run is in flight but not under the team it claims', () => {
+    const runs = [slot('a', 't1', 1)];
+    expect(decideAdmission(runs, { teamId: 't2', workflowId: 'a' }, limits)).toEqual({
+      admitted: false,
+      reason: 'unknown_run',
+    });
+    expect(decideAdmission(runs, { teamId: null, workflowId: 'a' }, limits)).toEqual({
+      admitted: false,
+      reason: 'unknown_run',
+    });
+  });
+
   it('applies the per-team cap on the team’s own runs only', () => {
     const runs = [slot('a', 't1', 1), slot('b', 't1', 2), slot('c', 't1', 3), slot('d', 't2', 4)];
     expect(decideAdmission(runs, { teamId: 't1', workflowId: 'c' }, limits)).toEqual({

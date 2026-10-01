@@ -62,6 +62,11 @@ export function decideAdmission(
   }
   const sameTeam = sorted.filter((r) => r.teamId === self.teamId);
   const teamRank = sameTeam.findIndex((r) => r.workflowId === self.workflowId);
+  if (teamRank === -1) {
+    // The run is in flight, but not under the team it claims: fail closed here
+    // too, rather than let -1 slip under the per-team limit.
+    return { admitted: false, reason: 'unknown_run' };
+  }
   if (teamRank >= limits.perTeam) {
     return { admitted: false, reason: 'team_limit' };
   }
