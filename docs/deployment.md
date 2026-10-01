@@ -400,7 +400,7 @@ open https://app.example.com
 | Cost tracking              | `/govern/usage` (every LLM and embedding call, runs or not), `WorkflowRun.costUsdAccrued`, `/govern/analytics`, the `llm_cost_usd_total` metric. Unknown models log `llm.cost_pricing_known=false`. |
 | Metrics & traces           | Grafana (`:3001` with the bundled `otel-lgtm`) → **auto-swe — LLM & workflow overview**, provisioned from `infra/grafana/`. With your own collector, import `infra/grafana/dashboards/auto-swe-overview.json`; it expects Prometheus and Tempo datasources with UIDs `prometheus` and `tempo`. |
 | Per-team A/B experiments   | `/templates/:id` → set `experimentVersion` + `experimentSplit`.                                                  |
-| Rotating LLM models        | Change model spec at `/studio/models` (takes effect on next activity call). For pricing of new models use `MODEL_PRICE_<PROVIDER>_<MODEL>` env overrides. |
+| Rotating LLM models        | Change model spec at `/studio/models` (takes effect on next activity call). A model with no price is recorded at $0 — price it on its `model_catalog_entries` row (see [model configuration](./model-configuration.md#model-catalog)). |
 | Rotating GitHub PAT        | `/studio/integrations → GitHub` → enter new token → Save. No restart required. |
 | Rotating Slack bot token   | `/studio/integrations → Slack` → enter new bot token → Save. No restart required. |
 | Rotating S3 credentials    | `/studio/integrations → Storage` → enter new key → Save. No restart required. |

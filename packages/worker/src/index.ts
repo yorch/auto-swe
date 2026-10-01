@@ -13,6 +13,7 @@ import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
+import { ignoredPriceOverrideVars } from './lib/costTracking.js';
 import { initMetrics } from './lib/metrics.js';
 import { initTemporalClient } from './lib/temporalClient.js';
 
@@ -43,6 +44,18 @@ async function run() {
   // (Docker Compose restart policy, K8s, etc.) keeps the worker out of the
   // rotation until config is complete.
   await assertConfigReady();
+
+  // MODEL_PRICE_* once overrode a model's price; the model catalog replaced it.
+  // Name any still set, so a deployment that relied on one learns it is no
+  // longer read instead of silently pricing at the catalog's rate.
+  const ignoredPriceOverrides = ignoredPriceOverrideVars();
+  if (ignoredPriceOverrides.length > 0) {
+    console.warn(
+      `Ignoring ${ignoredPriceOverrides.join(', ')}: per-model price overrides are no longer read. ` +
+        'Set the price on the model_catalog_entries row instead, and mark it customized so ' +
+        "startup seeding keeps it: UPDATE model_catalog_entries SET input_usd_per_mtok = <in>, output_usd_per_mtok = <out>, is_customized = true WHERE provider = '<provider>' AND model_id = '<model>';"
+    );
+  }
 
   // Every step the worker promises in BUILTIN_STEPS must have registry
   // metadata, or validateSpec flags a shipped template as UNKNOWN_STEP and the

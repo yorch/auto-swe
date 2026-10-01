@@ -1,4 +1,4 @@
-import { ApplicationFailure, log } from '@temporalio/activity';
+import { ApplicationFailure, asyncLocalStorage, log } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 // Mock prisma before importing the module under test. modelRoleConfig +
@@ -37,6 +37,8 @@ vi.mock('@auto-swe/shared/db', async () => {
         }),
       },
       embeddingConfig: { findUnique: vi.fn() },
+      // Empty by default: pricing falls through to the built-in table.
+      modelCatalogEntry: { findMany: vi.fn().mockResolvedValue([]) },
       providerCredential: {
         findFirst: vi.fn().mockResolvedValue({
           apiBase: null,
@@ -83,13 +85,33 @@ import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import {
+  _resetModelPricesForTests,
   assertBudgetAvailable,
   BUDGET_LIMITS,
   calculateCostUsd,
   getModelPrice,
+  ignoredPriceOverrideVars,
   MODEL_PRICES,
   recordLlmUsage,
 } from './costTracking.js';
+
+const catalogFindMany = prisma.modelCatalogEntry.findMany as unknown as Mock;
+
+/** A catalog row as `findMany` returns it, for the fields pricing selects. */
+/** Runs `fn` inside a stand-in activity context whose logger records warnings. */
+async function inActivity<T>(fn: () => Promise<T>): Promise<{ result: T; warn: Mock }> {
+  const warn = vi.fn();
+  const context = { log: { error: vi.fn(), warn } } as unknown as Parameters<
+    typeof asyncLocalStorage.run
+  >[0];
+  const result = await asyncLocalStorage.run(context, fn);
+  return { result, warn };
+}
+
+function catalogRow(spec: string, input: number, output: number) {
+  const [provider, ...rest] = spec.split('/');
+  return { inputUsdPerMTok: input, modelId: rest.join('/'), outputUsdPerMTok: output, provider };
+}
 
 const originalEnv = { ...process.env };
 
@@ -97,6 +119,9 @@ beforeEach(() => {
   // Drop resolved-config cache so each test's mock overrides take effect
   // instead of being shadowed by the previous test's resolution.
   _resetConfigCacheForTests();
+  _resetModelPricesForTests();
+  catalogFindMany.mockReset();
+  catalogFindMany.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -104,73 +129,148 @@ afterEach(() => {
 });
 
 describe('getModelPrice', () => {
-  it('returns the static price for a known spec', () => {
-    const r = getModelPrice('anthropic/claude-opus-4-6');
-    expect(r.known).toBe(true);
-    expect(r.price).toEqual({ input: 5, output: 25 });
+  it('prices a built-in model from the built-in table when the catalog has no row', async () => {
+    expect(await getModelPrice('anthropic/claude-opus-4-6')).toEqual({
+      known: true,
+      price: { input: 5, output: 25 },
+      source: 'builtin',
+    });
   });
 
-  it('keys OpenAI models by their dotted IDs, the form the OpenAI API serves', () => {
-    expect(getModelPrice('openai/gpt-5.5')).toEqual({
+  it('prices from the catalog first — an admin edit beats the built-in price', async () => {
+    catalogFindMany.mockResolvedValue([catalogRow('anthropic/claude-opus-4-6', 1, 2)]);
+    expect(await getModelPrice('anthropic/claude-opus-4-6')).toEqual({
+      known: true,
+      price: { input: 1, output: 2 },
+      source: 'catalog',
+    });
+  });
+
+  it('prices a model only the catalog knows, and treats a 0/0 row as known and free', async () => {
+    catalogFindMany.mockResolvedValue([
+      catalogRow('openrouter/anthropic/claude-opus-5-5', 4.4, 22),
+      catalogRow('ollama/llama-4', 0, 0),
+    ]);
+    expect(await getModelPrice('openrouter/anthropic/claude-opus-5-5')).toMatchObject({
+      known: true,
+      price: { input: 4.4, output: 22 },
+    });
+    expect(await getModelPrice('ollama/llama-4')).toEqual({
+      known: true,
+      price: { input: 0, output: 0 },
+      source: 'catalog',
+    });
+  });
+
+  it('skips a catalog row with a negative or non-finite price — it could bypass budget enforcement', async () => {
+    catalogFindMany.mockResolvedValue([
+      catalogRow('anthropic/claude-opus-4-6', -5, -25),
+      catalogRow('ollama/llama-4', Number.NaN, 0),
+    ]);
+    expect(await getModelPrice('anthropic/claude-opus-4-6')).toMatchObject({
+      price: MODEL_PRICES['anthropic/claude-opus-4-6'],
+      source: 'builtin',
+    });
+    expect((await getModelPrice('ollama/llama-4')).known).toBe(false);
+  });
+
+  it('keys OpenAI models by their dotted IDs, the form the OpenAI API serves', async () => {
+    expect(await getModelPrice('openai/gpt-5.5')).toMatchObject({
       known: true,
       price: { input: 5, output: 30 },
     });
-    expect(getModelPrice('openai/gpt-5.5-pro')).toEqual({
+    expect(await getModelPrice('openai/gpt-5.5-pro')).toMatchObject({
       known: true,
       price: { input: 30, output: 180 },
     });
     // The dashed form is not a real OpenAI ID; pricing it would hide a broken spec.
-    expect(getModelPrice('openai/gpt-5-5').known).toBe(false);
+    expect((await getModelPrice('openai/gpt-5-5')).known).toBe(false);
   });
 
-  it('returns zero with known=false for unknown specs', () => {
-    const r = getModelPrice('mystery/unreleased-model');
-    expect(r.known).toBe(false);
-    expect(r.price).toEqual({ input: 0, output: 0 });
+  it('returns zero with known=false for unknown specs', async () => {
+    expect(await getModelPrice('mystery/unreleased-model')).toEqual({
+      known: false,
+      price: { input: 0, output: 0 },
+      source: 'unknown',
+    });
   });
 
-  it('honours per-model env overrides', () => {
+  it('reads the catalog once per cache window, not once per call', async () => {
+    await getModelPrice('anthropic/claude-opus-4-6');
+    await getModelPrice('openai/gpt-5.5');
+    expect(catalogFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('never throws when the catalog is unreadable, and prices from the built-in table', async () => {
+    catalogFindMany.mockRejectedValue(new Error('connection refused'));
+    const { result, warn } = await inActivity(() => getModelPrice('anthropic/claude-opus-4-6'));
+    expect(result).toMatchObject({
+      price: MODEL_PRICES['anthropic/claude-opus-4-6'],
+      source: 'builtin',
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('never throws outside an activity, where the Temporal logger itself throws', async () => {
+    // Embedding usage is priced outside an activity too (scripts, tests).
+    catalogFindMany.mockRejectedValue(new Error('connection refused'));
+    expect(asyncLocalStorage.getStore()).toBeUndefined();
+    await expect(getModelPrice('anthropic/claude-opus-4-6')).resolves.toMatchObject({
+      source: 'builtin',
+    });
+  });
+
+  it('keeps pricing from the last catalog it read while the catalog is unreadable', async () => {
+    catalogFindMany.mockResolvedValueOnce([catalogRow('anthropic/claude-opus-4-6', 1, 2)]);
+    await getModelPrice('anthropic/claude-opus-4-6');
+    _resetConfigCacheForTests(); // the cached read expires
+    catalogFindMany.mockRejectedValue(new Error('connection refused'));
+    expect(await getModelPrice('anthropic/claude-opus-4-6')).toEqual({
+      known: true,
+      price: { input: 1, output: 2 },
+      source: 'catalog',
+    });
+  });
+
+  it('backs off after a failed read instead of querying and warning on every call', async () => {
+    catalogFindMany.mockRejectedValue(new Error('connection refused'));
+    const { warn } = await inActivity(async () => {
+      await getModelPrice('anthropic/claude-opus-4-6');
+      await getModelPrice('anthropic/claude-opus-4-6');
+      await getModelPrice('openai/gpt-5.5');
+    });
+    expect(catalogFindMany).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('no longer reads MODEL_PRICE_* environment overrides', async () => {
     process.env.MODEL_PRICE_OPENAI_GPT_5 = '7:25';
-    const r = getModelPrice('openai/gpt-5');
-    expect(r.known).toBe(true);
-    expect(r.price).toEqual({ input: 7, output: 25 });
+    expect((await getModelPrice('openai/gpt-5')).price).toEqual(MODEL_PRICES['openai/gpt-5']);
   });
+});
 
-  it('ignores malformed env overrides and falls back to the table or zero', () => {
-    process.env.MODEL_PRICE_ANTHROPIC_CLAUDE_OPUS_4_6 = 'not:numbers';
-    const r = getModelPrice('anthropic/claude-opus-4-6');
-    expect(r.price).toEqual(MODEL_PRICES['anthropic/claude-opus-4-6']);
-  });
-
-  it('ignores negative price overrides — they could bypass budget enforcement', () => {
-    process.env.MODEL_PRICE_ANTHROPIC_CLAUDE_OPUS_4_6 = '-5:-25';
-    const r = getModelPrice('anthropic/claude-opus-4-6');
-    expect(r.price).toEqual(MODEL_PRICES['anthropic/claude-opus-4-6']);
-  });
-
-  it('ignores overrides that have the wrong number of fields', () => {
-    process.env.MODEL_PRICE_ANTHROPIC_CLAUDE_OPUS_4_6 = '5';
-    const r = getModelPrice('anthropic/claude-opus-4-6');
-    expect(r.price).toEqual(MODEL_PRICES['anthropic/claude-opus-4-6']);
-  });
-
-  it('accepts zero in either field of a price override', () => {
-    process.env.MODEL_PRICE_LOCAL_OLLAMA = '0:0';
-    const r = getModelPrice('local/ollama');
-    expect(r.known).toBe(true);
-    expect(r.price).toEqual({ input: 0, output: 0 });
+describe('ignoredPriceOverrideVars', () => {
+  it('names every MODEL_PRICE_* variable set, so the worker can warn they are ignored', () => {
+    expect(
+      ignoredPriceOverrideVars({
+        HOME: '/root',
+        MODEL_PRICE_ANTHROPIC_CLAUDE_OPUS_5_5: '4:20',
+        MODEL_PRICE_OLLAMA_LLAMA3: '0:0',
+      })
+    ).toEqual(['MODEL_PRICE_ANTHROPIC_CLAUDE_OPUS_5_5', 'MODEL_PRICE_OLLAMA_LLAMA3']);
+    expect(ignoredPriceOverrideVars({ HOME: '/root' })).toEqual([]);
   });
 });
 
 describe('calculateCostUsd', () => {
-  it('prices a known model', () => {
+  it('prices a known model', async () => {
     // Opus 4.6: $5 in / $25 out per MTok → 1M in + 0 out = $5
-    expect(calculateCostUsd('anthropic/claude-opus-4-6', 1_000_000, 0)).toBeCloseTo(5);
-    expect(calculateCostUsd('anthropic/claude-opus-4-6', 0, 1_000_000)).toBeCloseTo(25);
+    expect(await calculateCostUsd('anthropic/claude-opus-4-6', 1_000_000, 0)).toBeCloseTo(5);
+    expect(await calculateCostUsd('anthropic/claude-opus-4-6', 0, 1_000_000)).toBeCloseTo(25);
   });
 
-  it('returns 0 for unknown models', () => {
-    expect(calculateCostUsd('mystery/foo', 1_000_000, 1_000_000)).toBe(0);
+  it('returns 0 for unknown models', async () => {
+    expect(await calculateCostUsd('mystery/foo', 1_000_000, 1_000_000)).toBe(0);
   });
 });
 

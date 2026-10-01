@@ -56,7 +56,7 @@ vi.mock('../lib/config/agentResolver.js', () => ({
 vi.mock('../lib/costTracking.js', () => ({
   // The hold is priced off this; without it every hold silently took the
   // unknown-model fallback. Opus rates, matching the spec the resolver returns.
-  calculateCostUsd: (_spec: string, input: number, output: number) =>
+  calculateCostUsd: async (_spec: string, input: number, output: number) =>
     (input * 5 + output * 25) / 1_000_000,
   recordLlmUsage: vi.fn().mockResolvedValue({
     costUsd: 0.02,
