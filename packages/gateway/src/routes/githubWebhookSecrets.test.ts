@@ -211,6 +211,20 @@ describe('githubWebhookSecretRoutes', () => {
     });
   });
 
+  it('refuses to rotate the secret of a host that is no longer approved', async () => {
+    approvedRepositoryHosts.mockResolvedValue(['github.com']);
+    admin.prisma.gitHubHostWebhookSecret.findUnique.mockResolvedValue(row());
+    const res = await admin.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { secret: 'new-secret-wxyz' },
+      url: `${BASE}/${ID}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('HOST_NOT_APPROVED');
+    expect(admin.prisma.gitHubHostWebhookSecret.update).not.toHaveBeenCalled();
+  });
+
   it('answers 404 when rotating or deleting an unknown id', async () => {
     admin.prisma.gitHubHostWebhookSecret.findUnique.mockResolvedValue(null);
     const patch = await admin.app.inject({

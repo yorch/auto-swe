@@ -132,6 +132,17 @@ export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => 
       if (!existing) {
         return notFound(reply);
       }
+      // A row whose host lost its approval verifies nothing; rotating its
+      // secret cannot revive it, so the operator is told rather than left to
+      // find out from a failing delivery.
+      if (!(await approvedRepositoryHosts()).includes(existing.host)) {
+        return sendError(
+          reply,
+          400,
+          'HOST_NOT_APPROVED',
+          `${existing.host} is neither a configured GitHub host nor listed in github.repositoryHosts`
+        );
+      }
       try {
         const updated = await fastify.prisma.gitHubHostWebhookSecret.update({
           data: toColumns(request.body.secret),

@@ -59,7 +59,17 @@ that host in the `github.repositoryHosts` setting. Then, at `/studio/integration
 **Per-host webhook secret** with the host exactly as that server sends it in
 `X-GitHub-Enterprise-Host` (lowercase, with `:port` if it is not 443) and the secret configured on
 that server's webhook. Deliveries naming that host are then verified with that secret alone; a
-host without one uses the instance secret. See [repositories.md](./repositories.md).
+host without one uses the instance secret.
+
+GitHub documents that header as a hostname, so a delivery matches the row for exactly its
+`host[:port]` first and otherwise the one row with that hostname, whatever its port. The row's host
+must stay approved (the integration's own host or listed in `github.repositoryHosts`): a row whose
+host has lost its approval verifies nothing, and its deliveries are refused rather than checked
+against the instance secret.
+
+The secret also binds the delivery to its host: a delivery verified with a host's secret is acted
+on only for repositories on that host, and one verified with the instance secret is not acted on
+for repositories on a host that has a secret of its own. See [repositories.md](./repositories.md).
 
 A repository's own GitHub URL and API URL are **host overrides**, and every credential the
 platform holds for that repository — the PAT, the App JWT, the installation token, the

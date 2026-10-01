@@ -13,6 +13,7 @@ import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { insensitiveName } from '../lib/repositoryHost.js';
 import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -400,8 +401,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           where: {
             ...(await sameHostWhere(urls.githubUrl ?? null)),
             // GitHub treats owner and name case-insensitively.
-            organizationName: { equals: organizationName, mode: 'insensitive' },
-            repoName: { equals: repoName, mode: 'insensitive' },
+            organizationName: insensitiveName(organizationName),
+            repoName: insensitiveName(repoName),
             type: 'git_repo',
           },
         });
@@ -531,6 +532,35 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         teamId,
       } = request.body;
       const { githubApiUrl, githubUrl } = urls;
+
+      // Repointing the web base moves the repository onto another host, where
+      // the same owner/name (compared case-insensitively) may already be
+      // onboarded. The database index may still be the case-sensitive one, so
+      // this is the guard for a case-only collision, as it is when onboarding.
+      if (
+        githubUrl !== undefined &&
+        repo.type === 'git_repo' &&
+        repo.organizationName &&
+        repo.repoName
+      ) {
+        const existing = await fastify.prisma.connection.findFirst({
+          select: { id: true },
+          where: {
+            ...(await sameHostWhere(githubUrl)),
+            id: { not: repo.id },
+            organizationName: insensitiveName(repo.organizationName),
+            repoName: insensitiveName(repo.repoName),
+            type: 'git_repo',
+          },
+        });
+        if (existing) {
+          return sendConflict(
+            reply,
+            'REPO_EXISTS',
+            'That repository is already onboarded on that host'
+          );
+        }
+      }
 
       const tokenUpdate =
         apiToken === undefined

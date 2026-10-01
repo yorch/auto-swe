@@ -39,7 +39,7 @@ const JiraWebhookSchema = z
   })
   .passthrough();
 
-import { webhookRepositoryWhere } from '../lib/repositoryHost.js';
+import { deliveryHostMatches, webhookRepositoryWhere } from '../lib/repositoryHost.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { postSlackMessage } from '../lib/slack.js';
 // The webhook handlers below undo their DB write and answer non-2xx when a
@@ -157,36 +157,59 @@ export function normalizeGitHubCheckRunEvent(body: unknown): CheckRunCompletedEv
   };
 }
 
+/**
+ * `host` is the host the verifying secret proves: the per-host row's host, or
+ * null when the instance secret verified. Handlers must bind the delivery to it
+ * (`lib/repositoryHost.ts`) — a secret proves who sent a payload, not which
+ * repository the payload may act on.
+ */
+type VerifiedWebhook = { ok: true; host: string | null } | { ok: false };
+
+/** The ignored response for a payload naming a repository on another host. */
+const HOST_MISMATCH = {
+  data: { ignored: true, reason: 'Repository is not on the host that signed this delivery' },
+};
+
 async function verifyWebhookOrReject(
   request: FastifyRequest & { rawBody?: string | Buffer },
   reply: FastifyReply
-): Promise<boolean> {
+): Promise<VerifiedWebhook> {
   const signature = request.headers['x-hub-signature-256'] as string;
-  const secret = await resolveWebhookSecret(
+  const resolved = await resolveWebhookSecret(
     request.server.prisma,
     request.headers['x-github-enterprise-host']
   );
 
+  if (resolved.status === 'host_not_approved') {
+    // Not the instance secret's to answer for: a host that lost its approval
+    // verifies nothing.
+    reply.status(401).send({
+      error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Webhook host is not an approved host' },
+    });
+    return { ok: false };
+  }
+
+  const { host, secret } = resolved;
   if (!secret || !signature) {
     reply
       .status(401)
       .send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing signature' } });
-    return false;
+    return { ok: false };
   }
 
   if (!request.rawBody) {
     reply.status(400).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing raw body' } });
-    return false;
+    return { ok: false };
   }
 
   if (!verifyGitHubSignature(request.rawBody, signature, secret)) {
     reply
       .status(401)
       .send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Invalid signature' } });
-    return false;
+    return { ok: false };
   }
 
-  return true;
+  return { host, ok: true };
 }
 
 /**
@@ -196,12 +219,14 @@ async function verifyWebhookOrReject(
  * the instance credential is for the instance's host, and a repository on
  * another GitHub Enterprise server must not be sent it. Mirrors the worker's
  * `installationTarget` — a repository with no installation of its own takes
- * the singleton's installation, which lives on the singleton's host. Never a
+ * the singleton's installation, which lives on the singleton's host, so on
+ * another host it gets no token; the PAT is held to the same rule. Never a
  * user's token: a webhook has no launcher.
  *
  * Null (aggregation unavailable, so the caller signals per run) when the
  * repository's URL overrides are not on an approved host — no credential is
- * minted for them — or when no credential can be resolved.
+ * minted for them — when the only credential is the instance's and the
+ * repository is on another host, or when no credential can be resolved.
  */
 async function checkRunTarget(
   repo:
@@ -227,6 +252,21 @@ async function checkRunTarget(
     }
   }
   const installationId = repo?.installation?.installationId ?? null;
+  // The instance credential never leaves the instance's own API host. A
+  // repository with no installation of its own takes the singleton's, which
+  // lives on the singleton's host; and in PAT mode `resolveGitHubToken` returns
+  // the instance PAT whatever host it is asked about. Either way there is no
+  // credential that is valid for another host, so none is sent.
+  const apiBase = (url: string) => url.replace(/\/+$/, '').toLowerCase();
+  if (apiBase(apiUrl) !== apiBase(ghConfig.apiUrl)) {
+    const mode = ghConfig.authMode ?? 'auto';
+    const appMode =
+      mode === 'app' || (mode === 'auto' && Boolean(ghConfig.appId && ghConfig.appPrivateKey));
+    if (!installationId || !appMode) {
+      log.warn({ apiUrl }, "no credential of the instance's is valid on this repository's host");
+      return null;
+    }
+  }
   try {
     const token = await resolveGitHubToken(ghConfig, {
       apiUrl: installationId ? apiUrl : ghConfig.apiUrl,
@@ -345,7 +385,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       config: { rawBody: true },
     },
     async (request, reply) => {
-      if (!(await verifyWebhookOrReject(request, reply))) {
+      const verified = await verifyWebhookOrReject(request, reply);
+      if (!verified.ok) {
         return;
       }
 
@@ -356,13 +397,17 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       if (event.type === 'ignored') {
         return { data: { ignored: true } };
       }
+      if (!deliveryHostMatches(verified.host, event.repoHtmlUrl)) {
+        return HOST_MISMATCH;
+      }
 
       const { org, prNumber, repoName } = event;
       const repositoryWhere = await webhookRepositoryWhere(
         fastify.prisma,
         org,
         repoName,
-        event.repoHtmlUrl
+        event.repoHtmlUrl,
+        verified.host
       );
 
       // Find the tracked PR (include Slack context for the merge notification)
@@ -546,7 +591,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       config: { rawBody: true },
     },
     async (request, reply) => {
-      if (!(await verifyWebhookOrReject(request, reply))) {
+      const verified = await verifyWebhookOrReject(request, reply);
+      if (!verified.ok) {
         return;
       }
 
@@ -555,12 +601,18 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       if (invalidation.kind === 'ignored') {
         return { data: { ignored: true, reason: invalidation.reason } };
       }
+      if (
+        invalidation.kind !== 'user' &&
+        !deliveryHostMatches(verified.host, invalidation.htmlUrl)
+      ) {
+        return HOST_MISMATCH;
+      }
 
       // Never fail the response on a lookup error. GitHub redelivers a non-2xx,
       // and one timed-out lookup turning into a redelivery storm is worse than
       // a pair that keeps its previous answer until the next sweep.
       try {
-        const outcome = await refreshInvalidatedAccess(fastify.prisma, invalidation);
+        const outcome = await refreshInvalidatedAccess(fastify.prisma, invalidation, verified.host);
         if (outcome.failed > 0) {
           request.log.warn(
             { eventType, ...outcome },
@@ -582,7 +634,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       config: { rawBody: true },
     },
     async (request, reply) => {
-      if (!(await verifyWebhookOrReject(request, reply))) {
+      const verified = await verifyWebhookOrReject(request, reply);
+      if (!verified.ok) {
         return;
       }
 
@@ -593,14 +646,17 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       if (event.type === 'ignored') {
         return { data: { ignored: true } };
       }
+      if (!deliveryHostMatches(verified.host, event.repoHtmlUrl)) {
+        return HOST_MISMATCH;
+      }
 
       const { conclusion, headSha, org, repoName } = event;
-      let logsUrl = event.logsUrl;
       const repositoryWhere = await webhookRepositoryWhere(
         fastify.prisma,
         org,
         repoName,
-        event.repoHtmlUrl
+        event.repoHtmlUrl,
+        verified.host
       );
 
       // Find tracked PRs by commit SHA
@@ -612,6 +668,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             select: {
               githubApiUrl: true,
               githubUrl: true,
+              id: true,
               installation: { select: { installationId: true } },
             },
           },
@@ -634,31 +691,63 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       // A failing run decides the outcome on its own — signal immediately so
       // the CI-fix loop gets the failing logs without waiting for the rest.
-      let passed = conclusion === 'success';
+      //
+      // The verdict is per repository: the same SHA can be tracked on more than
+      // one (a fork, a mirror, the same name on two hosts), and each is asked
+      // about on its own host with its own credential, never one's answer for
+      // another.
+      type TrackedRow = (typeof pullRequests)[number];
+      const verdictOf = new Map<string, { passed: boolean; logsUrl: string }>();
+      const perRun = { logsUrl: event.logsUrl, passed: conclusion === 'success' };
+      let awaiting = pullRequests;
       if (NON_FAILING_CONCLUSIONS.has(conclusion)) {
         // A passing run says nothing about the other checks on the SHA.
         // Aggregate and only signal once everything has completed.
-        const target = await checkRunTarget(pullRequests[0].repository, request.log);
-        const aggregated = target
-          ? await aggregateCheckRuns(target.apiUrl, target.token, org, repoName, headSha)
-          : null;
-        if (aggregated) {
-          if (!aggregated.complete) {
-            return {
-              data: { conclusion, deferred: true, reason: 'Other check runs still in progress' },
+        const byRepository = new Map<string, TrackedRow[]>();
+        for (const pr of pullRequests) {
+          const key = pr.repository?.id ?? '';
+          byRepository.set(key, [...(byRepository.get(key) ?? []), pr]);
+        }
+        awaiting = [];
+        for (const group of byRepository.values()) {
+          const target = await checkRunTarget(group[0].repository, request.log);
+          const aggregated = target
+            ? await aggregateCheckRuns(target.apiUrl, target.token, org, repoName, headSha)
+            : null;
+          if (aggregated && !aggregated.complete) {
+            continue;
+          }
+          let verdict = perRun;
+          if (aggregated) {
+            verdict = {
+              logsUrl:
+                !aggregated.passed && aggregated.failingLogsUrl
+                  ? aggregated.failingLogsUrl
+                  : perRun.logsUrl,
+              passed: aggregated.passed,
             };
+          } else {
+            request.log.warn(
+              { headSha, repoFullName: `${org}/${repoName}` },
+              'check-run aggregation unavailable (no PAT or API error); signaling per run'
+            );
           }
-          passed = aggregated.passed;
-          if (!passed && aggregated.failingLogsUrl) {
-            logsUrl = aggregated.failingLogsUrl;
+          for (const pr of group) {
+            verdictOf.set(pr.id, verdict);
+            awaiting.push(pr);
           }
-        } else {
-          request.log.warn(
-            { headSha, repoFullName: `${org}/${repoName}` },
-            'check-run aggregation unavailable (no PAT or API error); signaling per run'
-          );
+        }
+        if (awaiting.length === 0) {
+          return {
+            data: { conclusion, deferred: true, reason: 'Other check runs still in progress' },
+          };
+        }
+      } else {
+        for (const pr of pullRequests) {
+          verdictOf.set(pr.id, perRun);
         }
       }
+      const statusOf = (pr: TrackedRow) => (verdictOf.get(pr.id)?.passed ? 'PASSED' : 'FAILED');
 
       // Batch-update CI status in a single transaction to avoid N+1 queries.
       //
@@ -674,21 +763,20 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       //     closing the read-then-write race where the worker advances the PR
       //     to a new head between the lookup above and this update.
       //
-      // A `ciStatus: { not: newStatus }` predicate would only detect *change*,
+      // A `ciStatus: { not: <the new status> }` predicate would only detect *change*,
       // which lets a stale delivery replay over a newer verdict: a `failure`
       // whose signal failed, redelivered by hand after a later `success`
       // already resolved the wait, would flip PASSED back to FAILED and
       // re-signal `passed:false` (with stale logs) into a run that moved on.
-      const newStatus = passed ? 'PASSED' : 'FAILED';
       const updateCounts = await fastify.prisma.$transaction(
-        pullRequests.map((pr: (typeof pullRequests)[number]) =>
+        awaiting.map((pr: TrackedRow) =>
           fastify.prisma.pullRequest.updateMany({
-            data: { ciStatus: newStatus },
+            data: { ciStatus: statusOf(pr) },
             where: { ciStatus: 'PENDING', headSha, id: pr.id },
           })
         )
       );
-      const transitioned = pullRequests.filter((_, i) => updateCounts[i].count === 1);
+      const transitioned = awaiting.filter((_, i) => updateCounts[i].count === 1);
 
       if (transitioned.length === 0) {
         // Nothing was waiting on this commit's CI: the verdict for this head
@@ -698,7 +786,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         // neither may signal, so both are dropped, but they are logged rather
         // than silently discarded.
         request.log.info(
-          { conclusion, headSha, prRowIds: pullRequests.map((pr) => pr.id) },
+          { conclusion, headSha, prRowIds: awaiting.map((pr) => pr.id) },
           'CI check-run event dropped: no PR is awaiting a verdict at this commit'
         );
         return {
@@ -739,9 +827,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
       const results = await Promise.allSettled(
-        toSignal.map((t) =>
-          fastify.temporal.signalWorkflow(t.workflowId, 'ciPipelineSignal', [{ logsUrl, passed }])
-        )
+        toSignal.map((t) => {
+          const { logsUrl, passed } = verdictOf.get(t.pr.id) ?? perRun;
+          return fastify.temporal.signalWorkflow(t.workflowId, 'ciPipelineSignal', [
+            { logsUrl, passed },
+          ]);
+        })
       );
 
       const signaled: string[] = [];
@@ -780,7 +871,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.pullRequest
               .updateMany({
                 data: { ciStatus: 'PENDING' },
-                where: { ciStatus: newStatus, headSha, id: pr.id },
+                where: { ciStatus: statusOf(pr), headSha, id: pr.id },
               })
               .catch((rollbackErr: unknown) => {
                 request.log.error(
@@ -799,7 +890,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         const ticketId = pr.workflow?.workRequest?.externalTicketId;
         if (ticketId) {
           await syncTrackerOnEvent(
-            passed
+            verdictOf.get(pr.id)?.passed
               ? { issueId: ticketId, type: 'ci_passed' }
               : { issueId: ticketId, summary: `CI ${conclusion}`, type: 'ci_failed' },
             trackerConfig

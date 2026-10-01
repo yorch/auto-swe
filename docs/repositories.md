@@ -24,7 +24,7 @@ Everything that names a repository by owner and name takes the host into account
 |---|---|
 | Onboarding (`POST /repositories`) | the duplicate check and the unique index include the host and compare owner and name case-insensitively |
 | Import from GitHub | the list comes from the instance host, so only repositories with no override count as already imported |
-| PR and CI webhooks, the access webhook | when the owner/name is onboarded on more than one host, the payload's `repository.html_url` picks which; otherwise the match is by name, as before. Owner and name match case-insensitively, whatever casing the payload uses |
+| PR and CI webhooks, the access webhook | the delivery is first bound to the host its secret proved (see [Webhook secrets per host](#webhook-secrets-per-host)). Within that, when the owner/name is onboarded on more than one distinct host, the payload's `repository.html_url` picks which; otherwise the match is by name, as before. Owner and name match case-insensitively and literally (`_` and `%` in a name are not wildcards), whatever casing the payload uses |
 | Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. A run still in flight under the id without a host blocks a new one, as one under the new id does |
 | Dependency detection | a dependency URL that names a host matches only a repository on that host |
 | Dependency checkouts | two neighbours with the same owner/name get distinct directories |
@@ -73,19 +73,46 @@ GitHub Enterprise Server names the sending host in `X-GitHub-Enterprise-Host`. F
 - If the header names a host that has a secret, the signature is verified with that secret **only**.
   A payload signed with the instance secret is rejected.
 - If the header is absent, or names a host with no secret, the instance secret is used.
+- A matched secret whose host is no longer approved verifies nothing: the delivery is refused with
+  `401`, never handed to the instance secret. Rotating such a secret is refused too, with
+  `HOST_NOT_APPROVED`.
 
-The host is compared lowercase, as `host[:port]`. Secrets are encrypted at rest like every other
-credential, are write-only (the API returns the last four characters), and are re-encrypted by key
-rotation.
+GitHub documents the header as a hostname. It is compared lowercase and matches the row for exactly
+that `host[:port]` first; failing that, the one row whose hostname is the header's, whatever its
+port. A hostname shared by several rows with no exact match matches none of them.
+
+A secret proves who sent a delivery, not which repository it may act on, so the verified host is
+carried into the lookup that finds the repository:
+
+- **A per-host secret** confines the delivery to repositories on that host: those whose web base
+  (`githubUrl`) has that `host[:port]`, or, when it is the instance's own host, those with no
+  override. This holds whether or not the owner/name is ambiguous. A payload whose
+  `repository.html_url` names a different host is ignored, so a host's secret cannot sign a payload
+  about a repository on another host.
+- **The instance secret** reaches no repository on a host that has a secret of its own: those hosts
+  are verified with theirs alone. Elsewhere the host is consulted only when the owner/name is
+  ambiguous, as above.
+
+This applies to `/webhooks/git`, `/webhooks/ci` and `/webhooks/access`; a user-wide access event
+(membership or organization) names no repository, and is confined the same way. Secrets are
+encrypted at rest like every other credential, are write-only (the API returns the last four
+characters), and are re-encrypted by key rotation.
 
 ### CI status lookups
 
 When a check run succeeds, the gateway asks GitHub for the other check runs on the commit before
 signalling the workflow. That request goes to the tracked repository's own API base, with a token
-for the repository's own installation; a repository with no installation uses the instance's
-installation, on the instance's host. A user's token is never used, since no user launched a
-webhook. A repository whose overrides fail the approved-host check is sent no credential, and the
-run is signalled per check run instead.
+for the repository's own installation. The instance's credentials stay on the instance's own API
+host: a repository with no installation of its own would take the instance's installation, which
+lives on the instance's host, so on another host it is sent no token; the instance PAT is likewise
+never sent to another host. A user's token is never used, since no user launched a webhook. A
+repository whose overrides fail the approved-host check, or that has no credential valid on its
+host, is sent none, and its run is signalled per check run instead.
+
+The same commit can be tracked on repositories on different hosts (a mirror, or the same name on
+two hosts). Matched pull requests are grouped by repository and each group is aggregated on its own
+host with its own credential, so one host's checks never decide another's verdict. A group whose
+checks are still running keeps waiting while the others are signalled.
 
 ### Importing from GitHub
 
@@ -148,14 +175,17 @@ longer fit.
   origin.
 - **Only GitHub Enterprise Server hosts can have their own webhook secret.** The choice of secret
   keys on the `X-GitHub-Enterprise-Host` header (see below), which github.com does not send, so
-  github.com deliveries always use the instance secret. A payload is matched to a repository by
-  host only when it carries `repository.html_url`.
+  github.com deliveries always use the instance secret. Outside the binding a per-host secret
+  provides, a payload is matched to a repository by host only when it carries
+  `repository.html_url` and the owner/name is onboarded on more than one host.
 - **App installations are not host-scoped.** A GitHub App installation id is unique across the
   deployment, so two hosts cannot use the same numeric installation id.
 - **Existing case-only duplicates keep the case-sensitive index.** The migration that makes the
   unique index case-insensitive does not fail on a deployment that already holds two repositories
-  differing only by case; it logs a warning naming each duplicate group and leaves the previous,
-  case-sensitive index in place. Onboarding still refuses new case-variants through its
+  differing only by case; it raises a `WARNING` that `prisma migrate deploy` does not show, and
+  leaves the previous, case-sensitive index in place. The gateway checks for the new index at
+  startup and, when it is missing, logs a warning that names each duplicate group and gives the SQL
+  to create the index once they are resolved. Onboarding still refuses new case-variants through its
   case-insensitive duplicate check, but two onboarding requests racing each other are not stopped by
   the database until the duplicates are merged or deleted and the case-insensitive index is created
   by hand.

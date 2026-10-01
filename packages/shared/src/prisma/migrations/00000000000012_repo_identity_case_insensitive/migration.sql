@@ -13,12 +13,17 @@
 --
 --   * No case-only duplicates: the old index is dropped and the new one created.
 --   * Case-only duplicates exist: the old (case-sensitive) index is kept, a
---     WARNING names each duplicate (host, owner, name) group, and nothing else
---     changes. The application's pre-check is case-insensitive regardless, so
---     it still refuses new case-variant onboardings; only the database-level
---     guard against two concurrent requests stays case-sensitive. Merge or
---     delete the duplicates, then create the new index by hand with the same
---     CREATE UNIQUE INDEX statement as below (and drop the old one).
+--     WARNING is raised, and nothing else changes. `prisma migrate deploy` does
+--     not surface that WARNING, so the gateway checks at startup for the missing
+--     index and logs the duplicate groups itself (`lib/repoIdentityIndexCheck.ts`).
+--     The application's pre-check is case-insensitive regardless, so it still
+--     refuses new case-variant onboardings; only the database-level guard
+--     against two concurrent requests stays case-sensitive. Merge or delete the
+--     duplicates, then create the new index by hand with the same CREATE UNIQUE
+--     INDEX statement as below (and drop the old one).
+--
+-- Rows with a NULL owner or name cannot be duplicates of each other and are
+-- left out of the scan.
 DO $$
 DECLARE
     dups text;
@@ -36,6 +41,8 @@ BEGIN
                  count(*) AS n
             FROM "connections"
            WHERE "type" = 'git_repo'
+             AND "organization_name" IS NOT NULL
+             AND "repo_name" IS NOT NULL
            GROUP BY COALESCE("github_url", ''), lower("organization_name"), lower("repo_name")
           HAVING count(*) > 1
       ) d;

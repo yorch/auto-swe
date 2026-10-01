@@ -23,7 +23,7 @@ import {
 } from '@auto-swe/shared/lib/repoPermission';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { AccessInvalidation } from './repoAccessWebhook.js';
-import { webhookRepositoryWhere } from './repositoryHost.js';
+import { webhookHostScope, webhookRepositoryWhere } from './repositoryHost.js';
 
 export interface RefreshOutcome {
   /** Pairs GitHub answered for. */
@@ -69,7 +69,8 @@ const MAX_PAIRS_PER_EVENT = 200;
  */
 export async function refreshInvalidatedAccess(
   prisma: PrismaClient,
-  invalidation: AccessInvalidation
+  invalidation: AccessInvalidation,
+  verifiedHost: string | null
 ): Promise<RefreshOutcome> {
   if (invalidation.kind === 'ignored') {
     return { failed: 0, refreshed: 0, skipped: invalidation.reason };
@@ -78,15 +79,23 @@ export async function refreshInvalidatedAccess(
   // A webhook names a GitHub org/repo or login; which teams those map to is
   // exactly what we are here to find out, so the lookup spans tenants. A named
   // repository is matched on its host as well when the owner/name alone is
-  // onboarded on more than one host — those are different repositories.
+  // onboarded on more than one host — those are different repositories. Either
+  // way the lookup is bound to the host the delivery's secret proved: a user
+  // event names no repository, but it still may not reach another host's.
   const repoWhere =
     invalidation.kind === 'user'
-      ? repoMemberWhere({ user: { githubLogin: invalidation.login } })
+      ? {
+          AND: [
+            repoMemberWhere({ user: { githubLogin: invalidation.login } }),
+            await webhookHostScope(prisma, verifiedHost),
+          ],
+        }
       : await webhookRepositoryWhere(
           prisma,
           invalidation.org,
           invalidation.repo,
-          invalidation.htmlUrl
+          invalidation.htmlUrl,
+          verifiedHost
         );
   const repos = await runUnscoped(
     'a webhook names a GitHub repository, not a team',

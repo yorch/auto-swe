@@ -124,6 +124,76 @@ describe('repository URL overrides', () => {
     });
   });
 
+  it('matches the owner and name literally: ILIKE wildcards are escaped', async () => {
+    // Prisma compiles an insensitive `equals` to ILIKE without escaping, so an
+    // unescaped `_` would let `my_repo` collide with `my-repo`. A mock cannot
+    // see ILIKE, so the where must carry the escaped literal.
+    const res = await ctx.app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { organizationName: 'my_org', repoName: 'MY_REPO%', teamId: TEAM },
+      url: '/api/v1/repositories',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(ctx.prisma.connection.findFirst.mock.calls[0][0].where).toMatchObject({
+      organizationName: { equals: 'my\\_org', mode: 'insensitive' },
+      repoName: { equals: 'MY\\_REPO\\%', mode: 'insensitive' },
+    });
+    // What is stored is the real name, not the escaped pattern.
+    expect(ctx.prisma.connection.create.mock.calls[0][0].data).toMatchObject({
+      organizationName: 'my_org',
+      repoName: 'MY_REPO%',
+    });
+  });
+
+  describe('repointing a repository onto another host (PATCH)', () => {
+    beforeEach(() => {
+      ctx.prisma.connection.findUnique.mockResolvedValue({
+        id: REPO,
+        organizationName: 'Acme',
+        repoName: 'My_API',
+        teamId: TEAM,
+        type: 'git_repo',
+      });
+      ctx.prisma.connection.update.mockResolvedValue({ id: REPO });
+    });
+
+    const patch = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload,
+        url: `/api/v1/repositories/${REPO}`,
+      });
+
+    it('refuses a host where the same owner/name exists, ignoring case (409)', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue({ id: 'other' });
+      const res = await patch({ githubUrl: 'https://ghe.corp' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('REPO_EXISTS');
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+      expect(ctx.prisma.connection.findFirst.mock.calls[0][0].where).toMatchObject({
+        githubUrl: 'https://ghe.corp',
+        id: { not: REPO },
+        organizationName: { equals: 'Acme', mode: 'insensitive' },
+        repoName: { equals: 'My\\_API', mode: 'insensitive' },
+        type: 'git_repo',
+      });
+    });
+
+    it('allows a host where the repository is not onboarded', async () => {
+      const res = await patch({ githubUrl: 'https://ghe.corp' });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.prisma.connection.update).toHaveBeenCalled();
+    });
+
+    it('does not look for a duplicate when the host is not being changed', async () => {
+      const res = await patch({ description: 'x' });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.prisma.connection.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
   it('refuses a repository that differs from an onboarded one only by case (409)', async () => {
     ctx.prisma.connection.findFirst.mockResolvedValue({ id: REPO });
     const res = await onboard({});
