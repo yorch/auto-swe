@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SCANNER_PATTERNS } from '../scannerPatterns/index.js';
+import { BUILTIN_MODELS } from './builtinModels.js';
 import { seedCoreDefaults, seedSweStarter } from './syncBuiltins.js';
 
 /**
@@ -15,6 +16,7 @@ import { seedCoreDefaults, seedSweStarter } from './syncBuiltins.js';
  */
 
 interface Captured {
+  modelCreates: number;
   policyCreates: number;
   scannerCreates: Array<{ type: string; origin: string | null }>;
   scannerUpdates: Array<{ origin: string | null }>;
@@ -30,6 +32,7 @@ function makeMockPrisma() {
   const cap: Captured = {
     agentCreates: 0,
     agentOrigins: [],
+    modelCreates: 0,
     policyCreates: 0,
     scannerCreates: [],
     scannerUpdates: [],
@@ -62,6 +65,13 @@ function makeMockPrisma() {
     evalRubric: {
       create: vi.fn(async () => ({ id: 'rubric-id' })),
       findFirst: vi.fn(async () => null),
+    },
+    modelCatalogEntry: {
+      create: vi.fn(async () => {
+        cap.modelCreates += 1;
+        return { id: 'model-id' };
+      }),
+      findMany: vi.fn(async () => []),
     },
     scannerPattern: {
       upsert: vi.fn(
@@ -129,6 +139,9 @@ describe('seedCoreDefaults — core-only deployment', () => {
 
     // Core governance default is seeded once.
     expect(cap.policyCreates).toBe(1);
+
+    // Model prices are domain-agnostic, so the catalog is core content.
+    expect(cap.modelCreates).toBe(BUILTIN_MODELS.length);
   });
 });
 
@@ -140,6 +153,7 @@ describe('seedSweStarter — provenance tagging', () => {
     expect(cap.skillCreates).toBeGreaterThan(0);
     expect(cap.templateCreates).toBeGreaterThan(0);
     expect(cap.agentCreates).toBeGreaterThan(0);
+    expect(cap.modelCreates).toBe(0);
 
     expect(cap.skillOrigins.every((o) => o === 'swe-starter')).toBe(true);
     expect(cap.templateOrigins.every((o) => o === 'swe-starter')).toBe(true);

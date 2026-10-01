@@ -29,6 +29,7 @@ import {
   WORKFLOW_AUTHOR_PROMPT,
   WORKFLOW_EXPLAINER_PROMPT,
 } from './agentPrompts.js';
+import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME } from './channelTask.js';
 
 /** Provenance tag for all SWE seed content. */
@@ -178,6 +179,55 @@ export async function syncBuiltins(prisma: PrismaClient): Promise<void> {
 export async function seedCoreDefaults(prisma: PrismaClient): Promise<void> {
   await syncScannerPatterns(prisma, 'core');
   await syncAutonomyPolicies(prisma);
+  await syncModelCatalog(prisma);
+}
+
+/**
+ * Seed the model catalog from {@link BUILTIN_MODELS}. Code owns a built-in row
+ * until an admin edits it: an untouched one is kept in step, so a price
+ * corrected in code reaches every deployment on restart, while a customized one
+ * is never overwritten. An admin's own row for a model that later ships
+ * built-in is adopted as built-in and customized, keeping the admin's prices.
+ * Nothing is deleted — a model dropped from code still prices its history.
+ */
+export async function syncModelCatalog(prisma: PrismaClient): Promise<void> {
+  const existing = new Map(
+    (await prisma.modelCatalogEntry.findMany()).map((r) => [`${r.provider}/${r.modelId}`, r])
+  );
+  for (const model of BUILTIN_MODELS) {
+    const fromCode = {
+      inputUsdPerMTok: model.inputUsdPerMTok,
+      kind: model.kind,
+      outputUsdPerMTok: model.outputUsdPerMTok,
+      status: model.status,
+    };
+    const row = existing.get(builtinModelSpec(model));
+    if (!row) {
+      try {
+        await prisma.modelCatalogEntry.create({
+          data: { ...fromCode, isBuiltIn: true, modelId: model.modelId, provider: model.provider },
+        });
+      } catch (err) {
+        // A gateway booting alongside this one inserted it first.
+        if (!isUniqueViolation(err)) {
+          throw err;
+        }
+      }
+    } else if (!row.isBuiltIn) {
+      await prisma.modelCatalogEntry.update({
+        data: { isBuiltIn: true, isCustomized: true },
+        where: { id: row.id },
+      });
+    } else if (
+      !row.isCustomized &&
+      (row.inputUsdPerMTok !== fromCode.inputUsdPerMTok ||
+        row.outputUsdPerMTok !== fromCode.outputUsdPerMTok ||
+        row.kind !== fromCode.kind ||
+        row.status !== fromCode.status)
+    ) {
+      await prisma.modelCatalogEntry.update({ data: fromCode, where: { id: row.id } });
+    }
+  }
 }
 
 /** SWE starter content (origin='swe-starter'). Opt-out-able in the future. */
