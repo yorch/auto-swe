@@ -9,6 +9,7 @@
 import {
   GitHubTokenMissingError,
   type InstallationTarget,
+  PlatformCredentialHostError,
   resolveGitHubToken,
 } from '@auto-swe/shared/lib/githubInstallation';
 import type { ResolvedGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -38,6 +39,9 @@ export async function requireGitHubToken(
         `GitHub token not configured. Set it at /studio/integrations, or — where per-user credentials are enabled — whoever launches the run can save their own token for this repository on the Connections page.`,
         'CONFIG_MISSING'
       );
+    }
+    if (err instanceof PlatformCredentialHostError) {
+      throw ApplicationFailure.nonRetryable(err.message, 'REPO_CREDENTIAL_HOST_MISMATCH');
     }
     throw err;
   }

@@ -14,6 +14,7 @@ const GATE = { mode: 'enforce' as const, staleAfterHours: 24 };
 
 const REPO: LaunchRepo = {
   githubApiUrl: null,
+  githubUrl: null,
   id: 'repo-1',
   installation: null,
   organizationName: 'acme',

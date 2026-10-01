@@ -40,6 +40,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/tenantGuard.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/githubHostScope',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubHostScope.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/githubInstallation',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubInstallation.ts'),
       },

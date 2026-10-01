@@ -26,17 +26,14 @@ function defineSetting<T>(def: SettingDefinition<T>): SettingDefinition<T> {
 const positiveInt = z.number().int().positive();
 
 /// A list of hosts a credential may be sent to, as `host` or `host:port`.
-const hostList = z
-  .array(
-    z
-      .string()
-      .regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'must be a lowercase host or host:port')
-      // A URL never carries the default port once parsed, so `host:443` would
-      // never match anything — refuse it rather than let it look set.
-      .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
-      .max(253)
-  )
-  .max(50);
+export const hostEntry = z
+  .string()
+  .regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'must be a lowercase host or host:port')
+  // A URL never carries the default port once parsed, so `host:443` would
+  // never match anything — refuse it rather than let it look set.
+  .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
+  .max(253);
+const hostList = z.array(hostEntry).max(50);
 const ratio = z.number().min(0).max(1);
 
 /// Parses a positive-integer env var, clamping to `max` rather than rejecting.
@@ -173,7 +170,7 @@ export const SETTING_DEFINITIONS = {
   'github.repositoryHosts': defineSetting({
     defaultValue: [],
     description:
-      "Hosts a repository's web or API URL override may point at, beyond the GitHub hosts configured on the GitHub integration (comma-separated host or host:port; github.com also covers api.github.com). The platform credential is sent to a repository's own hosts, so a team lead may only point a repository at a host listed here — and a repository already pointing elsewhere gets no credential until its host is listed.",
+      "Hosts a repository's web or API URL override may point at, beyond the GitHub hosts configured on the GitHub integration (comma-separated host or host:port; github.com also covers api.github.com). A team lead may only point a repository at an approved host, and a repository already pointing elsewhere is refused outright until its host is listed. Listing a host does not send it the platform credential: that never leaves the instance's own host, so a repository on a listed host is reachable only with a user's own saved token.",
     group: 'github',
     label: 'Additional repository hosts',
     overridableAt: [],

@@ -8,6 +8,8 @@ export interface CreateScheduleBody {
   name: string;
   cronExpression: string;
   repoId: string;
+  /** Owning team; omitted lets the server pick the owner, or the one shared team you lead. */
+  teamId?: string;
   description: string;
   externalTicketPrefix: string;
   budgetTier?: 'STANDARD' | 'LARGE' | 'EPIC';

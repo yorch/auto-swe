@@ -15,6 +15,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import {
   useCreateSchedule,
@@ -23,9 +24,11 @@ import {
   useSchedules,
   useUpdateSchedule,
 } from '@/hooks/useSchedules';
+import { useLedTeamIds } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
 
 function fmtTime(iso: string | null | undefined): string {
   return iso ? formatDate(iso) : '—';
@@ -35,6 +38,7 @@ type ScheduleForm = {
   name: string;
   cronExpression: string;
   repoId: string;
+  teamId: string;
   description: string;
   externalTicketPrefix: string;
   budgetTier: 'STANDARD' | 'LARGE' | 'EPIC';
@@ -48,6 +52,7 @@ const EMPTY_FORM: ScheduleForm = {
   externalTicketPrefix: '',
   name: '',
   repoId: '',
+  teamId: '',
   templateId: '',
 };
 
@@ -57,6 +62,22 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
   const create = useCreateSchedule();
   const { data: repos } = useRepositories();
   const { data: templates } = useWorkflowTemplates();
+  const isAdmin = useHasRole('ADMIN');
+  const ledTeamIds = useLedTeamIds();
+
+  // The teams that may own a schedule on the chosen repository (its owner and
+  // the teams it is shared with) that the caller leads. With one, the server's
+  // default is right and no picker is shown.
+  const repo = (repos ?? []).find((r) => r.id === form.repoId);
+  const eligibleTeams = repo
+    ? [repo.team, ...(repo.shares ?? []).map((s) => s.team)].filter(
+        (t) => isAdmin || ledTeamIds?.has(t.id)
+      )
+    : [];
+  const showTeamPicker = eligibleTeams.length > 1;
+  const teamId = eligibleTeams.some((t) => t.id === form.teamId)
+    ? form.teamId
+    : (eligibleTeams[0]?.id ?? '');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -69,6 +90,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
         externalTicketPrefix: form.externalTicketPrefix,
         name: form.name,
         repoId: form.repoId,
+        ...(showTeamPicker ? { teamId } : {}),
         ...(form.templateId ? { templateId: form.templateId } : {}),
       });
       onClose();
@@ -107,6 +129,20 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
               </option>
             ))}
         </Select>
+        {showTeamPicker && (
+          <Select
+            id="schedule-team"
+            label="Owning team"
+            onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
+            value={teamId}
+          >
+            {eligibleTeams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        )}
         <div className="grid grid-cols-2 gap-4">
           <Input
             id="schedule-cron"
@@ -186,6 +222,25 @@ function ScheduleRow({
   const update = useUpdateSchedule();
   const fire = useFireSchedule();
   const [error, setError] = useState<string | null>(null);
+  const [confirmFire, setConfirmFire] = useState(false);
+  const [confirmResume, setConfirmResume] = useState(false);
+  const me = useAuthStore((s) => s.user);
+
+  // What fires actually obey is the Temporal schedule; the row is only what the
+  // dashboard recorded. Show the live state and flag the two disagreeing.
+  const live = schedule.schedule;
+  const livePaused = live.exists ? live.paused : !schedule.isActive;
+  const mismatch = live.exists && live.paused === schedule.isActive;
+  // Firing by hand as someone other than the author makes the schedule run as
+  // you from then on, so it is confirmed rather than a surprise.
+  const takesOver = schedule.actsAs?.id !== me?.sub;
+  const actsAsName = schedule.actsAs
+    ? (schedule.actsAs.name ?? schedule.actsAs.email)
+    : 'the platform';
+  // Resuming follows what is actually running, like the badge. It makes the
+  // resumer the author, so it is confirmed like Fire when that is someone else.
+  const resume = livePaused;
+  const toggle = () => update.mutateAsync({ id: schedule.id, isActive: resume });
 
   async function run(action: () => Promise<unknown>) {
     setError(null);
@@ -202,14 +257,14 @@ function ScheduleRow({
         <Td className="py-2 pr-4">
           <div className="font-medium text-paper-100">{schedule.name}</div>
           <div className="font-mono text-[10px] text-paper-500">{schedule.externalTicketId}</div>
-          {/* Whose GitHub identity fires act as; editing what the schedule does makes it yours. */}
-          <div className="text-[11px] text-paper-500">
-            Runs as:{' '}
-            {schedule.actsAs ? (schedule.actsAs.name ?? schedule.actsAs.email) : 'the platform'}
-          </div>
+          {/* Whose GitHub identity fires act as; editing it or firing it by hand makes it yours. */}
+          <div className="text-[11px] text-paper-500">Runs as: {actsAsName}</div>
         </Td>
         <Td className="py-2 pr-4 text-paper-400">
           {schedule.repository.organizationName}/{schedule.repository.repoName}
+          <div className="text-[11px] text-paper-500">
+            Team: {schedule.team?.name ?? 'none (team deleted)'}
+          </div>
         </Td>
         <Td className="py-2 pr-4 font-mono text-xs text-paper-300">{schedule.cronExpression}</Td>
         <Td className="py-2 pr-4 text-paper-400">
@@ -218,9 +273,20 @@ function ScheduleRow({
             : 'team default'}
         </Td>
         <Td className="py-2 pr-4">
-          <Badge tone={schedule.isActive ? 'ember' : 'muted'} uppercase variant="text">
-            {schedule.isActive ? 'active' : 'paused'}
+          <Badge tone={livePaused ? 'muted' : 'ember'} uppercase variant="text">
+            {livePaused ? 'paused' : 'active'}
           </Badge>
+          {mismatch && (
+            <Badge
+              className="ml-2"
+              title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but Temporal has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
+              tone="brick"
+              uppercase
+              variant="text"
+            >
+              out of sync
+            </Badge>
+          )}
           {!schedule.schedule.exists && (
             <Badge className="ml-2" tone="brick" uppercase variant="text">
               missing in temporal
@@ -234,9 +300,12 @@ function ScheduleRow({
         <Td className="py-2 text-right">
           <div className="flex justify-end gap-1">
             <Button
-              disabled={fire.isPending}
-              onClick={() => run(() => fire.mutateAsync(schedule.id))}
+              disabled={fire.isPending || !schedule.isActive}
+              onClick={() =>
+                takesOver ? setConfirmFire(true) : run(() => fire.mutateAsync(schedule.id))
+              }
               size="sm"
+              title={schedule.isActive ? undefined : 'Paused: resume the schedule before firing it'}
               variant="ghost"
             >
               {fire.isPending ? 'Firing…' : 'Fire now'}
@@ -244,12 +313,12 @@ function ScheduleRow({
             <Button
               disabled={update.isPending}
               onClick={() =>
-                run(() => update.mutateAsync({ id: schedule.id, isActive: !schedule.isActive }))
+                resume && takesOver && !schedule.isActive ? setConfirmResume(true) : run(toggle)
               }
               size="sm"
               variant="ghost"
             >
-              {schedule.isActive ? 'Pause' : 'Resume'}
+              {resume ? 'Resume' : 'Pause'}
             </Button>
             <Button onClick={onDelete} size="sm" variant="danger">
               Delete
@@ -257,6 +326,24 @@ function ScheduleRow({
           </div>
         </Td>
       </TRow>
+      <ConfirmModal
+        confirmLabel="Resume and take over"
+        message={`This schedule currently runs as ${actsAsName}. Resuming it makes it run as you for every future fire, using your saved GitHub token, until someone else takes it over. The change is recorded in the audit log.`}
+        onClose={() => setConfirmResume(false)}
+        onConfirm={() => run(toggle)}
+        open={confirmResume}
+        pendingLabel="Resuming…"
+        title={`Resume "${schedule.name}" as yourself?`}
+      />
+      <ConfirmModal
+        confirmLabel="Fire and take over"
+        message={`This schedule currently runs as ${actsAsName}. Firing it now makes it run as you for every future fire, using your saved GitHub token, until someone else takes it over. The change is recorded in the audit log.`}
+        onClose={() => setConfirmFire(false)}
+        onConfirm={() => run(() => fire.mutateAsync(schedule.id))}
+        open={confirmFire}
+        pendingLabel="Firing…"
+        title={`Fire "${schedule.name}" as yourself?`}
+      />
       {error && (
         <TableStatusRow colSpan={8}>
           <Alert>{error}</Alert>

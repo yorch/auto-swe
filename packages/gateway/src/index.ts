@@ -21,6 +21,11 @@ import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
+import {
+  warnIfGitHubDotComWebhookSecret,
+  warnIfRepoIdentityIndexMissing,
+  warnIfReposOnUnusableHosts,
+} from './lib/repoIdentityIndexCheck.js';
 import { parseTrustProxy } from './lib/trustProxy.js';
 import authPlugin, {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -42,6 +47,7 @@ import { connectionCredentialRoutes } from './routes/connectionCredentials.js';
 import { epicRoutes } from './routes/epics.js';
 import { evalRoutes } from './routes/evals.js';
 import { githubInstallationRoutes } from './routes/githubInstallations.js';
+import { githubWebhookSecretRoutes } from './routes/githubWebhookSecrets.js';
 import { humanErrorBaselineRoutes } from './routes/humanErrorBaselines.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
@@ -146,6 +152,13 @@ async function start() {
   // Sync built-in reference data (templates, skills, scanner patterns, tool
   // config) so every deploy automatically picks up new or updated built-ins.
   await syncBuiltins(app.prisma);
+
+  // The migration that makes repository identity case-insensitive skips its
+  // index when case-only duplicates exist, and `migrate deploy` hides the
+  // warning it raises. Say so here, where an operator reads the logs.
+  await warnIfRepoIdentityIndexMissing(app.prisma, app.log);
+  await warnIfGitHubDotComWebhookSecret(app.prisma, app.log);
+  await warnIfReposOnUnusableHosts(app.prisma, app.log);
 
   // Sync the lesson consolidation Temporal Schedule with whatever config is in
   // the DB. Best-effort — a Temporal connectivity failure at startup shouldn't
@@ -408,6 +421,7 @@ async function start() {
   await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/admin' });
   await app.register(githubInstallationRoutes, { prefix: '/api/v1/platform' });
   await app.register(githubInstallationRoutes, { prefix: '/api/v1/admin' });
+  await app.register(githubWebhookSecretRoutes, { prefix: '/api/v1/platform' });
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/admin' });

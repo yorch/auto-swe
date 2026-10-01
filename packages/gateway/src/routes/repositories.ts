@@ -1,8 +1,9 @@
 import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma, Role } from '@auto-swe/shared';
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
+import { sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -13,8 +14,28 @@ import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { insensitiveName } from '../lib/repositoryHost.js';
 import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
+import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
+
+/**
+ * Deactivate the schedules that lost their claim on a repository, after the
+ * change that took it away has committed. Never throws: the per-row work is
+ * already tolerant, and the lookup around it must not turn a committed change
+ * into a failed request.
+ */
+async function deactivateSchedulesOutsideTeamsQuietly(
+  fastify: FastifyInstance,
+  repoId: string,
+  log: FastifyRequest['log']
+): Promise<void> {
+  try {
+    await deactivateSchedulesOutsideTeams(fastify, repoId, log);
+  } catch (err) {
+    log.error({ err, repoId }, 'could not deactivate the schedules that lost their claim');
+  }
+}
 
 /**
  * `defaultBranch` is interpolated into git commands inside the workspace
@@ -151,21 +172,39 @@ function rejectsInstallationChange(
  *
  * `undefined` passes through untouched (a PATCH not setting the field).
  *
+ * The two bases must be on the same host (treating null as the instance's own),
+ * so overrides come in matching pairs; github.com with api.github.com, and
+ * `<tenant>.ghe.com` with `api.<tenant>.ghe.com`, are each one host. A web base
+ * of one host with an API base of another would have a token minted for one
+ * sent to the other — embedded in a clone URL, or sent as a bearer. A PATCH is
+ * judged against `existing`, the row's stored overrides, for the field it does
+ * not set.
+ *
  * Applies to every role, ADMIN included: an admin who wants a new host lists
  * it under `github.repositoryHosts` first, which keeps "a repository URL is on
  * an approved host" true of every row written from here on.
  */
-async function normaliseRepositoryUrls(urls: {
-  githubUrl?: string | null;
-  githubApiUrl?: string | null;
-}): Promise<
+async function normaliseRepositoryUrls(
+  urls: {
+    githubUrl?: string | null;
+    githubApiUrl?: string | null;
+  },
+  existing: { githubUrl: string | null; githubApiUrl: string | null } = {
+    githubApiUrl: null,
+    githubUrl: null,
+  }
+): Promise<
   | { ok: true; githubUrl: string | null | undefined; githubApiUrl: string | null | undefined }
-  | { ok: false; message: string }
+  | { ok: false; message: string; code?: string }
 > {
   let githubUrl = urls.githubUrl;
   let githubApiUrl = urls.githubApiUrl;
-  // Nothing to normalise or check: a PATCH not touching URLs reads nothing.
-  if (!(githubUrl || githubApiUrl)) {
+  // Nothing to normalise or check: a PATCH not touching URLs reads nothing, and
+  // clearing both overrides leaves a repository on the instance's own host.
+  if (githubUrl === undefined && githubApiUrl === undefined) {
+    return { githubApiUrl, githubUrl, ok: true };
+  }
+  if (!(githubUrl || githubApiUrl || existing.githubUrl || existing.githubApiUrl)) {
     return { githubApiUrl, githubUrl, ok: true };
   }
   const ghConfig = await resolveGitHubConfig();
@@ -198,6 +237,21 @@ async function normaliseRepositoryUrls(urls: {
   if (!hosts.ok) {
     return {
       message: `${hosts.url} is not on an allowed GitHub host. A platform admin can allow it under the github.repositoryHosts setting.`,
+      ok: false,
+    };
+  }
+
+  // Overrides come in matching pairs. What the row will hold: this request's
+  // value where it set one, the stored one otherwise.
+  const effectiveUrl = githubUrl === undefined ? existing.githubUrl : githubUrl;
+  const effectiveApi = githubApiUrl === undefined ? existing.githubApiUrl : githubApiUrl;
+  if (
+    (effectiveUrl || effectiveApi) &&
+    !sameHostFamily(effectiveUrl ?? ghConfig.baseUrl, effectiveApi ?? ghConfig.apiUrl)
+  ) {
+    return {
+      code: 'REPO_HOST_MISMATCH',
+      message: `The web URL (${effectiveUrl ?? `the instance's ${ghConfig.baseUrl}`}) and API URL (${effectiveApi ?? `the instance's ${ghConfig.apiUrl}`}) are on different hosts. Set both overrides to the same host (or neither); a credential minted for one host would be sent to the other.`,
       ok: false,
     };
   }
@@ -262,12 +316,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             where: { ...onInstanceHost, type: 'git_repo' },
           })
       );
-      const importedSet = new Set(existing.map((c) => `${c.organizationName}/${c.repoName}`));
+      const importedSet = new Set(
+        existing.map((c) => `${c.organizationName}/${c.repoName}`.toLowerCase())
+      );
 
       return {
         data: repos.map((r) => ({
           ...r,
-          alreadyImported: importedSet.has(`${r.org}/${r.name}`),
+          alreadyImported: importedSet.has(`${r.org}/${r.name}`.toLowerCase()),
         })),
       };
     }
@@ -386,7 +442,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (!urls.ok) {
         return reply
           .status(400)
-          .send({ error: { code: 'REPO_HOST_NOT_ALLOWED', message: urls.message } });
+          .send({ error: { code: urls.code ?? 'REPO_HOST_NOT_ALLOWED', message: urls.message } });
       }
 
       // Check for duplicate. Identity is (host, owner, name) — a partial,
@@ -397,8 +453,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         const existing = await fastify.prisma.connection.findFirst({
           where: {
             ...(await sameHostWhere(urls.githubUrl ?? null)),
-            organizationName,
-            repoName,
+            // GitHub treats owner and name case-insensitively.
+            organizationName: insensitiveName(organizationName),
+            repoName: insensitiveName(repoName),
             type: 'git_repo',
           },
         });
@@ -467,7 +524,15 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const repo = await fastify.prisma.connection.findUnique({
-        select: { id: true, organizationName: true, repoName: true, teamId: true, type: true },
+        select: {
+          githubApiUrl: true,
+          githubUrl: true,
+          id: true,
+          organizationName: true,
+          repoName: true,
+          teamId: true,
+          type: true,
+        },
         where: { id: request.params.id },
       });
       // MCP rows are invisible to this route (see CreateRepoSchema.type): their
@@ -505,14 +570,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Only the overrides this request sets; a row already pointing somewhere
       // unapproved is refused a credential at run time instead.
-      const urls = await normaliseRepositoryUrls({
-        githubApiUrl: request.body.githubApiUrl,
-        githubUrl: request.body.githubUrl,
-      });
+      const urls = await normaliseRepositoryUrls(
+        { githubApiUrl: request.body.githubApiUrl, githubUrl: request.body.githubUrl },
+        { githubApiUrl: repo.githubApiUrl, githubUrl: repo.githubUrl }
+      );
       if (!urls.ok) {
         return reply
           .status(400)
-          .send({ error: { code: 'REPO_HOST_NOT_ALLOWED', message: urls.message } });
+          .send({ error: { code: urls.code ?? 'REPO_HOST_NOT_ALLOWED', message: urls.message } });
       }
 
       const {
@@ -528,6 +593,35 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         teamId,
       } = request.body;
       const { githubApiUrl, githubUrl } = urls;
+
+      // Repointing the web base moves the repository onto another host, where
+      // the same owner/name (compared case-insensitively) may already be
+      // onboarded. The database index may still be the case-sensitive one, so
+      // this is the guard for a case-only collision, as it is when onboarding.
+      if (
+        githubUrl !== undefined &&
+        repo.type === 'git_repo' &&
+        repo.organizationName &&
+        repo.repoName
+      ) {
+        const existing = await fastify.prisma.connection.findFirst({
+          select: { id: true },
+          where: {
+            ...(await sameHostWhere(githubUrl)),
+            id: { not: repo.id },
+            organizationName: insensitiveName(repo.organizationName),
+            repoName: insensitiveName(repo.repoName),
+            type: 'git_repo',
+          },
+        });
+        if (existing) {
+          return sendConflict(
+            reply,
+            'REPO_EXISTS',
+            'That repository is already onboarded on that host'
+          );
+        }
+      }
 
       const tokenUpdate =
         apiToken === undefined
@@ -609,6 +703,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           );
         }
         throw err;
+      }
+
+      // A move drops the shares that no longer apply and changes who owns the
+      // repository, so schedules owned by a team with no remaining claim stop.
+      if (moving) {
+        await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log);
       }
 
       return { data: redactConnection(updated) };
@@ -733,6 +833,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: repo.id,
         entityType: 'Connection',
       });
+      // A team that lost its share keeps no schedule on the repository. After the
+      // audit, because the change is committed: a failure here must not leave it
+      // unrecorded, nor turn it into a 500.
+      await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log);
 
       const shares = await fastify.prisma.connection.findUnique({
         select: { shares: { select: { team: { select: { id: true, name: true, slug: true } } } } },

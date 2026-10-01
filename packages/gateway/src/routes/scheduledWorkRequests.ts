@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { RunIdentity } from '@auto-swe/shared/lib/repoAccessGate';
-import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -59,6 +59,8 @@ const CreateScheduleSchema = z.object({
   isActive: z.boolean().optional().default(true),
   name: z.string().min(1).max(200),
   repoId: z.string().uuid(),
+  /** The owning team: the repository's team or one it is shared with. See `resolveCreateTeam`. */
+  teamId: z.string().uuid().optional(),
   /** Explicit template override; omitted → repo team default at save time. */
   templateId: z.string().uuid().optional(),
   /** Pin a version; omitted with templateId → that template's activeVersion. */
@@ -109,9 +111,17 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
   return prisma.connection.findFirst({
     include: {
       installation: { select: { installationId: true, isActive: true } },
-      // Shared-team membership satisfies the launch decision; `canManage`
-      // reads the owning team's role only, so schedules stay the owner's.
-      shares: repoMembersSelect({ userId: true }, { userId }).shares,
+      // Shared-team membership satisfies the launch decision, and a LEAD of a
+      // shared team may schedule on the repository (see `canCreate`). The share's
+      // `teamId` is what a schedule's own `teamId` is matched against.
+      shares: {
+        select: {
+          team: {
+            select: { memberships: { select: { role: true, userId: true }, where: { userId } } },
+          },
+          teamId: true,
+        },
+      },
       team: {
         select: {
           memberships: { select: { role: true, userId: true }, where: { userId } },
@@ -165,13 +175,93 @@ async function passesLaunchAuthorization(
   return false;
 }
 
-/** ADMIN platform role, or LEAD/ADMIN membership on the repo's team. */
-function canManage(user: { role: string }, repo: RepoWithMembership): boolean {
-  if (user.role === 'ADMIN') {
+const isLead = (m: { role: string } | undefined): boolean =>
+  !!m && (m.role === 'LEAD' || m.role === 'ADMIN');
+
+/** Whether the caller leads the repository's owning team. */
+function leadsOwner(repo: RepoWithMembership): boolean {
+  return isLead(repo.team.memberships[0]);
+}
+
+/**
+ * The teams the caller leads that may own a schedule on this repository: its
+ * owning team and the teams it is shared with. Platform ADMIN's own membership
+ * is irrelevant here; callers check the role first.
+ */
+function ledScheduleTeamIds(repo: RepoWithMembership): string[] {
+  return [
+    ...(leadsOwner(repo) ? [repo.teamId] : []),
+    ...repo.shares.filter((s) => isLead(s.team.memberships[0])).map((s) => s.teamId),
+  ];
+}
+
+/** Who may create a schedule: ADMIN, or a LEAD of the owning team or of a shared team. */
+function canCreate(user: { role: string }, repo: RepoWithMembership): boolean {
+  return user.role === 'ADMIN' || ledScheduleTeamIds(repo).length > 0;
+}
+
+/**
+ * Who may edit, fire or delete a schedule: ADMIN; a LEAD of the schedule's own
+ * team; or a LEAD of the repository's owning team, which keeps authority over
+ * every schedule on its repository. A shared team's lead cannot touch another
+ * team's schedule, and a team no longer shared has no standing at all: it is no
+ * longer in `repo.shares`.
+ *
+ * A null `teamId` is a schedule whose team was deleted (the migration backfills
+ * every earlier row). Nobody can say whose it was, so it is managed
+ * conservatively: ADMIN or the owning team's lead only, never a shared team's.
+ */
+function canManage(
+  user: { role: string },
+  repo: RepoWithMembership,
+  schedule: { teamId: string | null }
+): boolean {
+  if (user.role === 'ADMIN' || leadsOwner(repo)) {
     return true;
   }
-  const membership = repo.team.memberships[0];
-  return !!membership && (membership.role === 'LEAD' || membership.role === 'ADMIN');
+  return !!schedule.teamId && ledScheduleTeamIds(repo).includes(schedule.teamId);
+}
+
+const FORBIDDEN_MESSAGE =
+  "Requires ADMIN role, or LEAD membership on the schedule's team or the repository's owning team";
+
+/**
+ * The team a new schedule belongs to. An explicit `teamId` must be the owning
+ * team or a shared team the caller leads (ADMIN: any of those). Without one:
+ * the owning team if the caller leads it (or is ADMIN), else the single shared
+ * team they lead.
+ */
+function resolveCreateTeam(
+  user: { role: string },
+  repo: RepoWithMembership,
+  requested: string | undefined
+): { teamId: string } | { status: 400 | 403; code: string; message: string } {
+  const admin = user.role === 'ADMIN';
+  const led = ledScheduleTeamIds(repo);
+  if (requested) {
+    const eligible = requested === repo.teamId || repo.shares.some((s) => s.teamId === requested);
+    if (!eligible) {
+      return {
+        code: 'INVALID_SCHEDULE_TEAM',
+        message: 'teamId must be the repository owning team or a team it is shared with',
+        status: 400,
+      };
+    }
+    return admin || led.includes(requested)
+      ? { teamId: requested }
+      : { code: 'FORBIDDEN', message: 'Requires LEAD membership on that team', status: 403 };
+  }
+  if (admin || led.includes(repo.teamId)) {
+    return { teamId: repo.teamId };
+  }
+  if (led.length === 1) {
+    return { teamId: led[0] as string };
+  }
+  return {
+    code: 'TEAM_REQUIRED',
+    message: 'You lead several teams on this repository; pass teamId to choose which owns it',
+    status: 400,
+  };
 }
 
 /**
@@ -239,6 +329,20 @@ interface ScheduleRowForSync {
 }
 
 /** Synthetic ticket ID for a schedule (static — schedule args can't vary per fire). */
+/**
+ * A `updatedAt` predicate matching the instant a row was read at.
+ *
+ * Postgres stores microseconds; a JS `Date` holds milliseconds. A row whose
+ * timestamp carries sub-millisecond digits (one written by SQL rather than by
+ * Prisma) would never equal the value read back, and an exact-equality guard
+ * would refuse every edit to it forever. Matching the read millisecond keeps
+ * the guard's meaning — "nobody has written this row since I read it" — for
+ * every row.
+ */
+function sameMillisecond(at: Date): { gte: Date; lt: Date } {
+  return { gte: at, lt: new Date(at.getTime() + 1) };
+}
+
 function scheduleTicketId(prefix: string, scheduleRowId: string): string {
   return `${prefix}-SCHED-${scheduleRowId.slice(0, 8)}`;
 }
@@ -280,6 +384,7 @@ const scheduleInclude = {
   actsAsUser: { select: { email: true, id: true, name: true } },
   createdBy: { select: { email: true, id: true, name: true } },
   repository: { select: { id: true, organizationName: true, repoName: true } },
+  team: { select: { id: true, name: true, slug: true } },
   template: { select: { id: true, name: true } },
 } as const;
 
@@ -301,11 +406,148 @@ function serializeSchedule(row: any, schedule: unknown) {
     name: row.name,
     repository: row.repository,
     schedule,
+    /** Owning team; null means its team was deleted. */
+    team: row.team ?? null,
     template: row.template,
     templateVersion: row.templateVersion,
     updatedAt: row.updatedAt,
     workRequestId: row.workRequestId,
   };
+}
+
+/** Thrown inside a transaction to roll it back when the row moved under the request. */
+class ScheduleConflictError extends Error {}
+
+const CONFLICT_BODY = {
+  error: {
+    code: 'SCHEDULE_CONFLICT',
+    message: 'The schedule was changed by someone else while this request ran; reload and retry',
+  },
+} as const;
+
+/**
+ * Put the Temporal schedule back in step with the row as it stands NOW. Used
+ * wherever a request had already synced Temporal and then lost the race for the
+ * row (or failed writing it): the row is what the next request and the worker's
+ * checks see, so Temporal is made to match it rather than a snapshot read
+ * earlier. Best-effort; returns whether Temporal now matches.
+ */
+async function resyncTemporalFromRow(
+  fastify: FastifyInstance,
+  scheduleId: string,
+  log: FastifyRequest['log']
+): Promise<boolean> {
+  try {
+    const current = await fastify.prisma.scheduledWorkRequest.findUnique({
+      where: { id: scheduleId },
+    });
+    if (!current?.workRequestId) {
+      return false;
+    }
+    const synced = await fastify.prisma.runInput.findUnique({
+      select: { templateId: true, templateVersion: true },
+      where: { id: current.workRequestId },
+    });
+    if (!(synced?.templateId && synced.templateVersion)) {
+      return false;
+    }
+    await fastify.temporal.syncWorkRequestSchedule(
+      buildScheduleInput(
+        current,
+        { templateId: synced.templateId, templateVersion: synced.templateVersion },
+        current.workRequestId
+      )
+    );
+    return true;
+  } catch (err) {
+    log.error(
+      { err, scheduleId },
+      'could not re-sync the Temporal schedule to its row; the next successful edit repairs it'
+    );
+    return false;
+  }
+}
+
+/**
+ * Pause the schedules on `repoId` whose owning team no longer has a claim on it
+ * (neither the repository's owning team nor a team it is shared with), after a
+ * share was removed or the repository moved. A null-team schedule (its team was
+ * deleted) has no claim either, so it is paused too.
+ *
+ * The row is deactivated first (a schedule must not stay "active" in the
+ * dashboard), then the Temporal schedule is paused. Nothing here fails the
+ * caller, per row: the share change has already committed, the list view shows
+ * the live Temporal state, and the worker refuses a fire of an inactive row and
+ * re-checks the author's access on every one.
+ */
+export async function deactivateSchedulesOutsideTeams(
+  fastify: FastifyInstance,
+  repoId: string,
+  log: FastifyRequest['log']
+): Promise<number> {
+  const repo = await fastify.prisma.connection.findUnique({
+    select: { shares: { select: { teamId: true } }, teamId: true },
+    where: { id: repoId },
+  });
+  if (!repo) {
+    return 0;
+  }
+  const allowed = [repo.teamId, ...repo.shares.map((s) => s.teamId)];
+  // Every team but the ones named: a cross-tenant predicate by construction,
+  // bounded to one repository.
+  const stranded = await runUnscoped(
+    "schedules of the teams that no longer have a claim on one repository, by definition not the owner's or a sharer's",
+    ['ScheduledWorkRequest'],
+    () =>
+      fastify.prisma.scheduledWorkRequest.findMany({
+        where: {
+          isActive: true,
+          OR: [{ teamId: null }, { teamId: { notIn: allowed } }],
+          repoId,
+        },
+      })
+  );
+  for (const row of stranded) {
+    try {
+      // Conditional on the team it was read with: a row someone has since moved
+      // to a team that does have a claim is left alone.
+      await fastify.prisma.scheduledWorkRequest.updateMany({
+        data: { isActive: false },
+        where: { id: row.id, isActive: true, teamId: row.teamId },
+      });
+      // Sync from the row as it stands now, so a takeover that landed meanwhile
+      // keeps its launcher and a re-activation is not paused behind its back.
+      const current = await fastify.prisma.scheduledWorkRequest.findUnique({
+        where: { id: row.id },
+      });
+      const synced = current?.workRequestId
+        ? await fastify.prisma.runInput.findUnique({
+            select: { templateId: true, templateVersion: true },
+            where: { id: current.workRequestId },
+          })
+        : null;
+      if (!(current?.workRequestId && synced?.templateId && synced.templateVersion)) {
+        log.warn(
+          { scheduleId: row.id },
+          'deactivated the schedule of an unshared team but skipped pausing its Temporal schedule: no standing work request to build it from'
+        );
+        continue;
+      }
+      await fastify.temporal.syncWorkRequestSchedule(
+        buildScheduleInput(
+          current,
+          { templateId: synced.templateId, templateVersion: synced.templateVersion },
+          current.workRequestId
+        )
+      );
+    } catch (err) {
+      log.error(
+        { err, scheduleId: row.id },
+        'could not deactivate or pause the schedule of an unshared team'
+      );
+    }
+  }
+  return stranded.length;
 }
 
 export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) => {
@@ -316,14 +558,22 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
   // Temporal Schedule (best-effort — DB columns are only bookkeeping).
   app.get('/', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
     const user = requireUser(request);
-    const rows = await fastify.prisma.scheduledWorkRequest.findMany({
-      include: scheduleInclude,
-      orderBy: { createdAt: 'desc' },
-      where:
-        user.role === 'ADMIN'
-          ? {}
-          : { repository: reachableConnections(user, request.repoAccessGate) },
-    });
+    // A schedule is visible through the repository it runs on (owner or shared
+    // team), not through its own team: the owner sees every team's schedules on
+    // its repository, so the scope is the repository relation.
+    const rows = await runUnscoped(
+      'schedules are scoped through the repository the caller can reach; an admin sees all',
+      ['ScheduledWorkRequest'],
+      () =>
+        fastify.prisma.scheduledWorkRequest.findMany({
+          include: scheduleInclude,
+          orderBy: { createdAt: 'desc' },
+          where:
+            user.role === 'ADMIN'
+              ? {}
+              : { repository: reachableConnections(user, request.repoAccessGate) },
+        })
+    );
     const statuses = await Promise.all(
       rows.map(async (row) => {
         try {
@@ -355,13 +605,20 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           },
         });
       }
-      if (!canManage(user, repo)) {
+      if (!canCreate(user, repo)) {
         return reply.status(403).send({
           error: {
             code: 'FORBIDDEN',
-            message: 'Requires ADMIN role or LEAD membership on the repository team',
+            message:
+              'Requires ADMIN role, or LEAD membership on the repository team or a team it is shared with',
           },
         });
+      }
+      const owner = resolveCreateTeam(user, repo, body.teamId);
+      if ('status' in owner) {
+        return reply
+          .status(owner.status)
+          .send({ error: { code: owner.code, message: owner.message } });
       }
       if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'caller'))) {
         return;
@@ -438,6 +695,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           isActive: body.isActive,
           name: body.name,
           repoId: repo.id,
+          teamId: owner.teamId,
           templateId: body.templateId ?? null,
           templateVersion: body.templateId ? template.templateVersion : null,
           workRequestId,
@@ -503,12 +761,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
         });
       }
-      if (!canManage(user, repo)) {
+      if (!canManage(user, repo, existing)) {
         return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Requires ADMIN role or LEAD membership on the repository team',
-          },
+          error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
         });
       }
 
@@ -574,6 +829,15 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         (body.budgetTier !== undefined && body.budgetTier !== existing.budgetTier) ||
         (body.isActive === true && !existing.isActive);
       const takesOver = rebinds && user.sub !== existing.actsAsUserId;
+      // Reviving a schedule whose team has lost its claim on the repository (it
+      // was unshared, moved, or deleted) would leave it stranded: the next share
+      // change re-pauses it. Only the owning team's lead or an ADMIN can manage
+      // such a schedule at all, so the repository's owning team adopts it.
+      const revives = body.isActive === true && !existing.isActive;
+      const movesTeam =
+        revives &&
+        repo.teamId !== existing.teamId &&
+        !repo.shares.some((s) => s.teamId === existing.teamId);
 
       // Becoming who it runs as is a launch decision about the editor, taken
       // before anything is written — the same one creating a schedule takes. It
@@ -621,38 +885,15 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         });
       }
 
-      const restorePriorSchedule = async (): Promise<void> => {
-        // The rows did not move, so put the Temporal schedule back to match
-        // them. Best-effort: if this fails too, the error is logged and the
-        // next successful edit re-syncs it.
-        const prior = await fastify.prisma.runInput
-          .findUnique({
-            select: { templateId: true, templateVersion: true },
-            where: { id: workRequestId },
-          })
-          .catch(() => null);
-        if (!(prior?.templateId && prior.templateVersion)) {
-          return;
-        }
-        await fastify.temporal
-          .syncWorkRequestSchedule(
-            buildScheduleInput(
-              existing,
-              { templateId: prior.templateId, templateVersion: prior.templateVersion },
-              workRequestId
-            )
-          )
-          .catch((restoreErr: unknown) => {
-            request.log.error(
-              { err: restoreErr, scheduleId: existing.id },
-              'schedule update failed and the Temporal schedule could not be restored'
-            );
-          });
-      };
-
-      const [row] = await fastify.prisma
-        .$transaction([
-          fastify.prisma.scheduledWorkRequest.update({
+      // The row writes are conditional on the state this request read, so an
+      // edit, a fire-by-hand takeover or an unshare-deactivation that landed
+      // meanwhile is a conflict, never silently overwritten. The transaction is
+      // interactive so the count can be checked before the standing request and
+      // the audit row are written.
+      let row: Awaited<ReturnType<typeof fastify.prisma.scheduledWorkRequest.findUniqueOrThrow>>;
+      try {
+        row = await fastify.prisma.$transaction(async (tx) => {
+          const claimed = await tx.scheduledWorkRequest.updateMany({
             data: {
               ...(body.budgetTier !== undefined ? { budgetTier: body.budgetTier } : {}),
               ...(body.cronExpression !== undefined ? { cronExpression: body.cronExpression } : {}),
@@ -660,44 +901,69 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
               ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
               ...(body.name !== undefined ? { name: body.name } : {}),
               ...(rebinds ? { actsAsUserId: user.sub } : {}),
+              ...(movesTeam ? { teamId: repo.teamId } : {}),
               templateId: nextTemplateId,
               templateVersion: nextTemplateId ? template.templateVersion : null,
             },
-            include: scheduleInclude,
-            where: { id: existing.id },
-          }),
+            where: {
+              actsAsUserId: existing.actsAsUserId,
+              id: existing.id,
+              isActive: existing.isActive,
+              teamId: existing.teamId,
+              updatedAt: sameMillisecond(existing.updatedAt),
+            },
+          });
+          if (claimed.count === 0) {
+            throw new ScheduleConflictError();
+          }
           // Keep the standing WorkRequest's description/template snapshot in
           // step so the /runs attribution stays truthful.
-          fastify.prisma.runInput.update({
+          await tx.runInput.update({
             data: {
               description: next.description,
               templateId: template.templateId,
               templateVersion: template.templateVersion,
             },
             where: { id: workRequestId },
-          }),
+          });
           // Taking a schedule over changes whose identity every later fire runs
           // as, and whose access it is checked against — so the transfer is
           // recorded, never silent.
-          ...(rebinds && existing.actsAsUserId !== user.sub
-            ? [
-                fastify.prisma.configAuditLog.create({
-                  data: {
-                    action: 'UPDATE',
-                    actorId: user.sub,
-                    afterJson: { actsAsUserId: user.sub, event: 'acts-as-changed' },
-                    beforeJson: { actsAsUserId: existing.actsAsUserId },
-                    entityId: existing.id,
-                    entityType: 'ScheduledWorkRequest',
-                  },
-                }),
-              ]
-            : []),
-        ])
-        .catch(async (err: unknown) => {
-          await restorePriorSchedule();
-          throw err;
+          if ((rebinds && existing.actsAsUserId !== user.sub) || movesTeam) {
+            await tx.configAuditLog.create({
+              data: {
+                action: 'UPDATE',
+                actorId: user.sub,
+                afterJson: {
+                  actsAsUserId: user.sub,
+                  event: 'acts-as-changed',
+                  ...(movesTeam ? { teamId: repo.teamId } : {}),
+                },
+                beforeJson: {
+                  actsAsUserId: existing.actsAsUserId,
+                  ...(movesTeam ? { teamId: existing.teamId } : {}),
+                },
+                entityId: existing.id,
+                entityType: 'ScheduledWorkRequest',
+              },
+            });
+          }
+          return tx.scheduledWorkRequest.findUniqueOrThrow({
+            include: scheduleInclude,
+            where: { id: existing.id },
+          });
         });
+      } catch (err) {
+        // The rows did not move (or moved to someone else's write), so put the
+        // Temporal schedule back to match the row as it is now. Best-effort: if
+        // this fails too, it is logged, and the worker refuses fires whose
+        // Temporal launcher no longer matches the row until it is re-saved.
+        await resyncTemporalFromRow(fastify, existing.id, request.log);
+        if (err instanceof ScheduleConflictError) {
+          return reply.status(409).send(CONFLICT_BODY);
+        }
+        throw err;
+      }
 
       const status = await fastify.temporal
         .getWorkRequestScheduleStatus(row.id)
@@ -726,26 +992,205 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         });
       }
       const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
-      if (!repo || !canManage(user, repo)) {
+      if (!repo || !canManage(user, repo, existing)) {
         return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
+        });
+      }
+      // A paused schedule cannot be fired by hand: Temporal would accept the
+      // trigger, but the worker refuses every fire of an inactive row, so the
+      // request would answer 202 and always fail, after a takeover had already
+      // changed whose identity it runs as. Refused before any of that.
+      if (!existing.isActive) {
+        return reply.status(409).send({
           error: {
-            code: 'FORBIDDEN',
-            message: 'Requires ADMIN role or LEAD membership on the repository team',
+            code: 'SCHEDULE_INACTIVE',
+            message: 'The schedule is paused; resume it before firing it',
           },
         });
       }
-      // The fire launches as the schedule's author (`actsAsUserId`), not as
-      // the person pressing the button, so the firer is judged by their login
-      // — their own saved token is not what the run will use. (The author's
-      // access is re-checked in the worker on every fire.)
-      if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'platform'))) {
+      // Whoever causes a fire is who it runs as, the same rule as editing. The
+      // firer is judged as themselves ('caller') whether they are the author or
+      // about to become it, since either way their own saved token is what the
+      // run uses.
+      const takesOver = user.sub !== existing.actsAsUserId;
+      if (takesOver && !repo.isActive) {
+        return reply.status(409).send({
+          error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
+        });
+      }
+      if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'caller'))) {
         return;
+      }
+
+      // Taking the schedule over: Temporal's stored arguments carry the
+      // launcher, so they are re-synced to the firer before anything fires.
+      // Same order as PATCH: Temporal, then the (conditional) row; whichever
+      // step fails puts Temporal back in step with the row as it now stands, so
+      // the two never name different launchers.
+      // The row's updatedAt as the takeover left it, for the revert's predicate.
+      let claimedAt: Date | null = null;
+      if (takesOver) {
+        const workRequestId = existing.workRequestId;
+        const synced = workRequestId
+          ? await fastify.prisma.runInput.findUnique({
+              select: { templateId: true, templateVersion: true },
+              where: { id: workRequestId },
+            })
+          : null;
+        if (!(workRequestId && synced?.templateId && synced.templateVersion)) {
+          return reply.status(409).send({
+            error: {
+              code: 'SCHEDULE_ORPHANED',
+              message: 'Standing work request is missing; delete and recreate this schedule',
+            },
+          });
+        }
+        const template = { templateId: synced.templateId, templateVersion: synced.templateVersion };
+        try {
+          await fastify.temporal.syncWorkRequestSchedule(
+            buildScheduleInput({ ...existing, actsAsUserId: user.sub }, template, workRequestId)
+          );
+        } catch (err) {
+          request.log.error({ err }, 'failed to re-bind Temporal schedule before fire');
+          return reply.status(502).send({
+            error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
+          });
+        }
+        let claimed: Date | null;
+        try {
+          claimed = await fastify.prisma.$transaction(async (tx) => {
+            // Conditional on what was read: if the row changed meanwhile (an
+            // edit, a pause, an unshare-deactivation) this takeover is stale.
+            const result = await tx.scheduledWorkRequest.updateMany({
+              data: { actsAsUserId: user.sub },
+              where: {
+                actsAsUserId: existing.actsAsUserId,
+                id: existing.id,
+                isActive: existing.isActive,
+                teamId: existing.teamId,
+                updatedAt: sameMillisecond(existing.updatedAt),
+              },
+            });
+            if (result.count === 0) {
+              return null;
+            }
+            // Read inside the transaction: our own write holds the row lock, so
+            // this is exactly the state a revert must find unchanged.
+            const after = await tx.scheduledWorkRequest.findUnique({
+              select: { updatedAt: true },
+              where: { id: existing.id },
+            });
+            // A takeover is recorded, never silent.
+            await tx.configAuditLog.create({
+              data: {
+                action: 'UPDATE',
+                actorId: user.sub,
+                afterJson: { actsAsUserId: user.sub, event: 'acts-as-changed' },
+                beforeJson: { actsAsUserId: existing.actsAsUserId },
+                entityId: existing.id,
+                entityType: 'ScheduledWorkRequest',
+              },
+            });
+            return after?.updatedAt ?? existing.updatedAt;
+          });
+        } catch (err) {
+          await resyncTemporalFromRow(fastify, existing.id, request.log);
+          throw err;
+        }
+        claimedAt = claimed;
+        if (!claimed) {
+          // Temporal holds the firer for a row that did not take it; make it
+          // match the row as it is now (which may be paused: never resurrect it).
+          await resyncTemporalFromRow(fastify, existing.id, request.log);
+          return reply.status(409).send(CONFLICT_BODY);
+        }
       }
 
       try {
         await fastify.temporal.triggerWorkRequestSchedule(existing.id);
       } catch (err) {
         request.log.error({ err }, 'failed to trigger schedule');
+        // Nothing ran, so the author keeps the schedule: a takeover that did not
+        // fire anything is undone. The ROW is reverted first, and only if it is
+        // still exactly as the takeover left it; Temporal is then synced from
+        // the row as it now stands, so a deactivation or edit that landed
+        // meanwhile is what Temporal follows, never a stale snapshot. If
+        // Temporal cannot be brought to the row, it still holds the firer, so
+        // the row keeps the firer too rather than leave the two naming
+        // different people.
+        if (claimedAt) {
+          const takenAt = claimedAt;
+          const audit = (event: string, extra: Record<string, unknown>) =>
+            fastify.prisma.configAuditLog
+              .create({
+                data: {
+                  action: 'UPDATE',
+                  actorId: user.sub,
+                  afterJson: { event, ...extra },
+                  beforeJson: { actsAsUserId: user.sub },
+                  entityId: existing.id,
+                  entityType: 'ScheduledWorkRequest',
+                },
+              })
+              .catch((auditErr: unknown) => {
+                request.log.error({ err: auditErr, scheduleId: existing.id }, 'audit write failed');
+              });
+          const keepTakeover = (reason: string) =>
+            audit('acts-as-takeover-kept', { actsAsUserId: user.sub, reason });
+          let reverted: boolean | null;
+          try {
+            const result = await fastify.prisma.scheduledWorkRequest.updateMany({
+              data: { actsAsUserId: existing.actsAsUserId },
+              where: {
+                actsAsUserId: user.sub,
+                id: existing.id,
+                isActive: existing.isActive,
+                teamId: existing.teamId,
+                updatedAt: sameMillisecond(takenAt),
+              },
+            });
+            reverted = result.count > 0;
+          } catch (revertErr) {
+            request.log.error(
+              { err: revertErr, scheduleId: existing.id },
+              'fire failed and the schedule row could not be restored to its author'
+            );
+            reverted = null;
+          }
+          if (reverted === null) {
+            // The row still names the firer: Temporal (which holds the firer)
+            // is re-synced from it, and the takeover is recorded as kept.
+            await resyncTemporalFromRow(fastify, existing.id, request.log);
+            await keepTakeover(
+              'the fire failed and the schedule row could not be restored to its author'
+            );
+          } else if (!reverted) {
+            // Someone changed the row after the takeover; whatever they set is
+            // the truth, so Temporal follows it (a pause stays a pause).
+            await resyncTemporalFromRow(fastify, existing.id, request.log);
+          } else if (await resyncTemporalFromRow(fastify, existing.id, request.log)) {
+            await audit('acts-as-reverted', { actsAsUserId: existing.actsAsUserId });
+          } else {
+            // Temporal still holds the firer: put the row back on the firer so
+            // the two agree, and say so.
+            await fastify.prisma.scheduledWorkRequest
+              .updateMany({
+                data: { actsAsUserId: user.sub },
+                where: {
+                  actsAsUserId: existing.actsAsUserId,
+                  id: existing.id,
+                  teamId: existing.teamId,
+                },
+              })
+              .catch((err: unknown) => {
+                request.log.error({ err, scheduleId: existing.id }, 'could not re-take the row');
+              });
+            await keepTakeover(
+              'the fire failed and the Temporal schedule could not be restored to its author'
+            );
+          }
+        }
         return reply.status(502).send({
           error: {
             code: 'SCHEDULE_TRIGGER_FAILED',
@@ -780,12 +1225,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         });
       }
       const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
-      if (!repo || !canManage(user, repo)) {
+      if (!repo || !canManage(user, repo, existing)) {
         return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Requires ADMIN role or LEAD membership on the repository team',
-          },
+          error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
         });
       }
 

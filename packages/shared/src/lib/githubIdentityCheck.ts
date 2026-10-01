@@ -18,6 +18,9 @@
  * working. Only re-registration by someone else produces a mismatch.
  */
 import type { PrismaClient } from '../index.js';
+import { instanceIsGithubDotCom } from './githubHostScope.js';
+import { resolveGitHubToken } from './githubInstallation.js';
+import type { ResolvedGitHubConfig } from './systemConfig.js';
 
 /** Wall-clock cap. This runs inside a sweep, so it must not stall it. */
 const LOOKUP_TIMEOUT_MS = 8_000;
@@ -37,6 +40,31 @@ const LOOKUP_TIMEOUT_MS = 8_000;
  * has nothing to verify there rather than verifying it wrongly.
  */
 export const GITHUB_ACCOUNT_API_URL = 'https://api.github.com';
+
+let warnedAccountHost = false;
+
+/**
+ * The credential to ask github.com about an account with, or null.
+ *
+ * The platform's credential belongs to the instance's host, and
+ * `GITHUB_ACCOUNT_API_URL` is github.com: on a GitHub Enterprise instance the
+ * two differ, and sending it would hand an Enterprise PAT or installation token
+ * to github.com. Only when the instance's API host IS github.com's is the
+ * credential attached; otherwise the lookup is unauthenticated (rate-limited,
+ * so it reads as `unverifiable`), and that is logged once per process.
+ */
+export async function accountApiToken(config: ResolvedGitHubConfig): Promise<string | null> {
+  if (!instanceIsGithubDotCom(config)) {
+    if (!warnedAccountHost) {
+      warnedAccountHost = true;
+      console.warn(
+        `[repoAccess] the instance's GitHub API host (${config.apiUrl}) is not github.com, so its credential is not sent there; GitHub login-ownership checks run unauthenticated and will rate-limit.`
+      );
+    }
+    return null;
+  }
+  return resolveGitHubToken(config).catch(() => null);
+}
 
 export type LoginOwnershipResult =
   /** The login still resolves to this user's GitHub account. */

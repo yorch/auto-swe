@@ -103,12 +103,12 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma.connection.findMany({
             select: {
               // `githubApiUrl` is what points the permission lookup at a GitHub
-              // Enterprise host. Omitting it is silent: `PermissionRepo` makes
-              // it optional, so the lookup falls back to the global API URL and
-              // asks github.com about a repository that lives on GHE — then
-              // writes that answer into the projection under the GHE
-              // connection's id, where the viewing filter reads it.
+              // Enterprise host, and `githubUrl` lets the lookup see a half
+              // override. `PermissionRepo` requires both, because omitting one
+              // is silent: the lookup would treat the repository as being on the
+              // instance's own host and send it the platform credential.
               githubApiUrl: true,
+              githubUrl: true,
               id: true,
               installation: { select: { installationId: true, isActive: true } },
               organizationName: true,

@@ -93,6 +93,7 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
     fieldsFor('appClientSecret'),
     fieldsFor('appPrivateKey'),
   ],
+  gitHubHostWebhookSecret: [fieldsFor('secret')],
   googleOAuthConfig: [fieldsFor('clientSecret')],
   issueTrackerConfig: [fieldsFor('apiToken'), fieldsFor('webhookSecret')],
   knowledgeBaseConfig: [fieldsFor('apiToken')],

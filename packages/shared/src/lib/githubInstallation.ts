@@ -16,6 +16,7 @@
  * into a 503. Only the credential mechanics are shared.
  */
 import { createHash, createSign } from 'node:crypto';
+import { sameHostFamily } from './githubHostScope.js';
 import type { ResolvedGitHubConfig } from './systemConfig.js';
 
 export class GitHubTokenMissingError extends Error {
@@ -24,6 +25,19 @@ export class GitHubTokenMissingError extends Error {
       'No GitHub token configured: set a PAT or configure GitHub App (appId + privateKey + installationId)'
     );
     this.name = 'GitHubTokenMissingError';
+  }
+}
+
+/**
+ * A platform credential was asked for on a host that is not the instance's.
+ * Standing configuration, not a transient failure.
+ */
+export class PlatformCredentialHostError extends Error {
+  constructor(readonly apiUrl: string) {
+    super(
+      `The platform's GitHub credential is valid only on the instance's own GitHub host and is not sent to ${apiUrl}. That host is reachable only with a user's own saved token.`
+    );
+    this.name = 'PlatformCredentialHostError';
   }
 }
 
@@ -156,6 +170,15 @@ export async function resolveGitHubToken(
   config: ResolvedGitHubConfig,
   target: InstallationTarget = {}
 ): Promise<string> {
+  // The last line of the host rule (`githubHostScope.ts`), on the API-host
+  // dimension: every platform credential — the PAT, an installation token, and
+  // the App JWT that mints one — leaves through this function, so refusing here
+  // covers a caller that forgot to ask. No platform credential goes to another
+  // host, installation or not: the App and its installations live on the
+  // instance's host only.
+  if (target.apiUrl && !sameHostFamily(target.apiUrl, config.apiUrl)) {
+    throw new PlatformCredentialHostError(target.apiUrl);
+  }
   const mode = config.authMode ?? 'auto';
   const installationId = target.installationId ?? config.appInstallationId;
   const appConfigured =

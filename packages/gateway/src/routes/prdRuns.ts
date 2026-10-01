@@ -61,6 +61,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma.connection.findMany({
             select: {
               githubApiUrl: true,
+              githubUrl: true,
               id: true,
               installation: { select: { installationId: true, isActive: true } },
               organizationName: true,

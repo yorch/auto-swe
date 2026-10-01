@@ -160,7 +160,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "66 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "67 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -265,7 +265,7 @@ fallback. **Never read these from `process.env` directly in new code.**
 
 | Admin page | Manages | Resolver |
 |---|---|---|
-| `/studio/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds | `resolveGitHubConfig()` |
+| `/studio/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds; per-host GHE webhook secrets (`GitHubHostWebhookSecret`) | `resolveGitHubConfig()`; `resolveWebhookSecret()` for a delivery naming a GHE host |
 | `/studio/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
 | `/studio/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
 | `/studio/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveIssueTrackerConfig()` |
