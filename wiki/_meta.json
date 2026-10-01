@@ -28,8 +28,7 @@
     {
       "slug": "2.2-workflow-spec-and-interpreter",
       "type": "detail",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 1
+      "commit_sha": "147d054a"
     },
     {
       "slug": "2.3-configuration-and-settings",
@@ -39,8 +38,7 @@
     {
       "slug": "2.4-skills-and-security-scanners",
       "type": "detail",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 0
+      "commit_sha": "147d054a"
     },
     {
       "slug": "3-gateway-api",
@@ -55,14 +53,12 @@
     {
       "slug": "3.2-authentication-and-rbac",
       "type": "detail",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 13
+      "commit_sha": "147d054a"
     },
     {
       "slug": "3.3-github-and-webhooks",
       "type": "detail",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 19
+      "commit_sha": "147d054a"
     },
     {
       "slug": "3.4-repository-access-and-credentials",
@@ -72,32 +68,27 @@
     {
       "slug": "4-temporal-worker",
       "type": "category",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 17
+      "commit_sha": "147d054a"
     },
     {
       "slug": "4.1-temporal-workflows",
       "type": "detail",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 12
+      "commit_sha": "147d054a"
     },
     {
       "slug": "4.2-activities",
       "type": "detail",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 18
+      "commit_sha": "147d054a"
     },
     {
       "slug": "4.3-agent-layer",
       "type": "detail",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 5
+      "commit_sha": "147d054a"
     },
     {
       "slug": "4.4-docker-workspaces",
       "type": "detail",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 1
+      "commit_sha": "147d054a"
     },
     {
       "slug": "4.5-observability-and-cost",
@@ -107,8 +98,7 @@
     {
       "slug": "5-web-dashboard",
       "type": "category",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 6
+      "commit_sha": "147d054a"
     },
     {
       "slug": "5.1-app-routes-and-pages",
@@ -123,20 +113,17 @@
     {
       "slug": "6-cli",
       "type": "category",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 0
+      "commit_sha": "147d054a"
     },
     {
       "slug": "7-bundle-sdk",
       "type": "category",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 4
+      "commit_sha": "147d054a"
     },
     {
       "slug": "glossary",
       "type": "glossary",
-      "commit_sha": "b1d8930",
-      "cited_ranges_edited_since_pct": 11
+      "commit_sha": "147d054a"
     }
   ],
   "primary_language": "TypeScript",
@@ -144,11 +131,11 @@
   "scope": "full",
   "stats": {
     "pages": 24,
-    "citations": 2218,
+    "citations": 2489,
     "mermaid_diagrams": 41,
     "broken_citations": 0,
     "broken_page_links": 0,
-    "note": "pages excludes the _SIDEBAR.md nav file. Validated against the commit named in each URL; citations counts every URL occurrence."
+    "note": "Validated against the commit named in each URL; citations counts every URL occurrence."
   },
   "subsystems": [
     {
@@ -225,18 +212,17 @@
     "gateway_route_modules": 38,
     "gateway_route_handlers": 239,
     "shared_subpath_exports": 75,
-    "tenant_guard_models": 20
+    "tenant_guard_models": 20,
+    "builtin_templates": 25,
+    "step_executors": 36,
+    "temporal_workflows": 17
   },
   "version": "private/unversioned",
   "pins": {
-    "b1d8930": {
-      "commit_sha_full": "b1d893057ddb97835bbb37807122c8cf2a2d1126",
-      "indexed_at": "2026-09-08T13:02:27-04:00"
-    },
     "147d054a": {
       "commit_sha_full": "147d054acd8480663a3ab18251f16a75b08534ae",
       "indexed_at": "2026-09-30T23:54:27-04:00"
     }
   },
-  "verified_counts_note": "Counts are as of 147d054a, except builtin_steps, which is carried from b1d8930 and was not recounted. gateway_route_handlers uses the counting method stated in wiki/3.1-http-routes.md and is not comparable to an arbitrary grep."
+  "verified_counts_note": "All counts are as of 147d054a. gateway_route_handlers uses the counting method stated in wiki/3.1-http-routes.md and is not comparable to an arbitrary grep."
 }

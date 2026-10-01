@@ -1,6 +1,6 @@
 # auto-swe Wiki
 
-> Commit `147d054a`; some pages carry an earlier pin, see the overview
+> Commit `147d054a`
 
 - [Overview](./README.md)
 - [Glossary](./glossary.md)
