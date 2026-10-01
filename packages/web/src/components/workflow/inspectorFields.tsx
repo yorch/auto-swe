@@ -274,7 +274,7 @@ export function InputsBindingsSection({
                 <option value="literal">literal</option>
               </Select>
               <button
-                className="font-mono text-[10px] text-brick-400 hover:text-brick-300"
+                className="font-mono text-[10px] text-brick-400 hover:text-brick-600"
                 onClick={() => removeEntry(key)}
                 type="button"
               >

@@ -5,8 +5,8 @@
  */
 export function MidRunWarning() {
   return (
-    <div className="rounded-sm border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs text-amber-200">
-      <strong className="font-semibold text-amber-100">Note:</strong> Changes here take effect on
+    <div className="rounded-sm border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-xs text-paper-300">
+      <strong className="font-semibold text-amber-400">Note:</strong> Changes here take effect on
       the next LLM call. Workflows already in progress will pick up the new model or credentials
       mid-run rather than waiting for a fresh start.
     </div>

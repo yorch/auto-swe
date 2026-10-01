@@ -109,7 +109,7 @@ export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
             </span>
           ) : null}
           <span
-            className={posted ? 'text-success-400' : 'text-ember-400'}
+            className={posted ? 'text-moss-400' : 'text-ember-400'}
             style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
           >
             {posted ? 'posted' : 'not posted'}

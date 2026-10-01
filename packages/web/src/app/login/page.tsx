@@ -357,7 +357,7 @@ function LoginPageInner() {
           </h1>
 
           {gatewayDown && (
-            <div className="mb-6 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-4 py-3 text-xs text-brick-200">
+            <div className="mb-6 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-4 py-3 text-xs text-paper-300">
               <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em] text-brick-400">
                 ! Service unavailable
               </div>
@@ -365,11 +365,11 @@ function LoginPageInner() {
                 {IS_DEV ? (
                   <>
                     Can't reach the gateway at{' '}
-                    <code className="text-brick-100" suppressHydrationWarning>
+                    <code className="text-paper-100" suppressHydrationWarning>
                       {API_BASE}
                     </code>
                     . Check that it's running and that CORS_ORIGIN includes{' '}
-                    <code className="text-brick-100">
+                    <code className="text-paper-100">
                       {typeof window !== 'undefined' ? window.location.origin : ''}
                     </code>
                     .

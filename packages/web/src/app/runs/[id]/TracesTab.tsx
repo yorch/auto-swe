@@ -229,7 +229,7 @@ function TruncatedText({ text }: { text: string }) {
       </TracePre>
       {isTruncated && (
         <button
-          className="text-dust-400 hover:text-dust-300 transition-colors mt-0.5"
+          className="text-dust-400 hover:text-dust-600 transition-colors mt-0.5"
           onClick={(e) => {
             e.stopPropagation();
             setExpanded((v) => !v);

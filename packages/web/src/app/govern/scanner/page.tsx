@@ -256,7 +256,7 @@ function PatternDetailModal({
             </span>
             <span
               className={`rounded px-2 py-0.5 font-mono ${
-                pattern.isActive ? 'bg-ember-900/40 text-ember-400' : 'bg-ink-600 text-paper-500'
+                pattern.isActive ? 'bg-ember-400/20 text-ember-400' : 'bg-ink-600 text-paper-500'
               }`}
             >
               {pattern.isActive ? 'active' : 'inactive'}

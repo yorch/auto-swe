@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -83,9 +84,9 @@ export function ImportFromGitHubModal({
                       </span>
                     )}
                     {r.alreadyImported && (
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-moss-400 bg-moss-900/30 px-1.5 py-0.5 rounded">
+                      <Badge tone="moss" uppercase>
                         Imported
-                      </span>
+                      </Badge>
                     )}
                   </div>
                 </div>

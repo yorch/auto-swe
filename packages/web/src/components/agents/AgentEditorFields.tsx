@@ -92,7 +92,7 @@ export function SkillRefEditor({
                 ↓
               </button>
               <button
-                className="text-brick-400 hover:text-brick-300"
+                className="text-brick-400 hover:text-brick-600"
                 onClick={() => remove(i)}
                 type="button"
               >

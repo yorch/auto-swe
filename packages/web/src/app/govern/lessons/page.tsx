@@ -49,7 +49,7 @@ function RepoStatsRow({
         {repo.lastConsolidatedAt ? (
           formatDate(repo.lastConsolidatedAt)
         ) : (
-          <span className="text-paper-700">never</span>
+          <span className="text-paper-600">never</span>
         )}
       </td>
       <td className="py-3 text-right">
@@ -137,7 +137,7 @@ export default function GovernLessonsPage() {
                   <span className="text-moss-400">Active</span>
                 )
               ) : (
-                <span className="text-paper-700">Not set</span>
+                <span className="text-paper-600">Not set</span>
               )}
             </div>
             {consolidation?.schedule.nextRunAt && (
@@ -222,7 +222,7 @@ export default function GovernLessonsPage() {
                         {lesson.failureType}
                       </span>
                     )}
-                    <span className="ml-auto font-mono text-[10px] text-paper-700">
+                    <span className="ml-auto font-mono text-[10px] text-paper-600">
                       {formatDate(lesson.createdAt)}
                     </span>
                   </div>
@@ -232,7 +232,7 @@ export default function GovernLessonsPage() {
                   )}
                 </div>
                 <button
-                  className="shrink-0 font-mono text-[10px] text-paper-700 hover:text-brick-400"
+                  className="shrink-0 font-mono text-[10px] text-paper-600 hover:text-brick-400"
                   onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
                   type="button"
                 >

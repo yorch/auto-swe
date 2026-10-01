@@ -66,7 +66,7 @@ function NodeJsonDiff({
 
   return (
     <details className="rounded-lg border border-ink-600 bg-ink-900/50">
-      <summary className="flex cursor-pointer items-center justify-between px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-amber-400 hover:text-amber-300">
+      <summary className="flex cursor-pointer items-center justify-between px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-amber-400 hover:text-amber-600">
         <span>changed · {nodeId}</span>
         <span className="text-paper-600">▸</span>
       </summary>

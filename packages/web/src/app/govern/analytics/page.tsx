@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -160,10 +161,10 @@ export default function GlobalAnalyticsPage() {
       ) : (
         <>
           {data.isTruncated && (
-            <div className="rounded-md bg-amber-900/30 border border-amber-700 px-4 py-3 text-sm text-amber-200">
+            <Alert variant="warning">
               Results capped at the 10,000 most recent runs. Totals and rates reflect the capped
               window — older runs are omitted.
-            </div>
+            </Alert>
           )}
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

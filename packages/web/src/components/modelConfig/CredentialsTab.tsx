@@ -309,7 +309,7 @@ function CredentialModal({
             type="password"
             value={apiKey}
           />
-          <p className="mt-1 text-[11px] text-amber-300">
+          <p className="mt-1 text-[11px] text-amber-400">
             Stored encrypted at rest. You won't see this value again — copy it from your password
             manager before saving.
           </p>

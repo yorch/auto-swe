@@ -1,5 +1,6 @@
 'use client';
 
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -71,18 +72,17 @@ export default function GovernAuditPage() {
   );
 }
 
+const AUDIT_ACTION_TONE: Record<'CREATE' | 'DELETE' | 'UPDATE', BadgeTone> = {
+  CREATE: 'moss',
+  DELETE: 'brick',
+  UPDATE: 'dust',
+};
+
 function AuditActionBadge({ action }: { action: 'CREATE' | 'DELETE' | 'UPDATE' }) {
-  const colors = {
-    CREATE: 'bg-moss-400/15 text-moss-400 border-moss-400/30',
-    DELETE: 'bg-brick-500/15 text-brick-300 border-brick-500/30',
-    UPDATE: 'bg-dust-400/15 text-dust-400 border-dust-400/30',
-  };
   return (
-    <span
-      className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${colors[action]}`}
-    >
+    <Badge tone={AUDIT_ACTION_TONE[action]} uppercase variant="outline">
       {action}
-    </span>
+    </Badge>
   );
 }
 

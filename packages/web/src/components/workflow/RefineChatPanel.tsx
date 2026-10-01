@@ -116,7 +116,7 @@ export function RefineChatPanel({
                     m.role === 'user'
                       ? 'max-w-[80%] rounded-lg bg-ember-600/20 px-3 py-2 text-sm text-paper-100'
                       : `max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-                          m.isError ? 'bg-brick-400/10 text-brick-300' : 'bg-ink-700 text-paper-200'
+                          m.isError ? 'bg-brick-400/10 text-brick-400' : 'bg-ink-700 text-paper-200'
                         }`
                   }
                 >

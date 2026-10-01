@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -97,9 +98,9 @@ export default function BudgetAlertsPage() {
                             {org.alert.percent != null ? `${org.alert.percent.toFixed(1)}%` : '—'}
                           </Td>
                           <Td className="px-4 py-2 text-center">
-                            <span className="rounded bg-brick-900/40 px-1.5 py-0.5 text-[11px] text-brick-400">
+                            <Badge className="text-[11px]" tone="brick">
                               Alert
-                            </span>
+                            </Badge>
                           </Td>
                         </TRow>
                       ))}

@@ -88,7 +88,7 @@ export function CanaryForm() {
               </div>
 
               {form.enabled && form.agentKey && form.candidateVersion > 0 && (
-                <p className="rounded-[9px] border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+                <p className="rounded-[9px] border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-400">
                   Warning: {Math.round(form.percent * 100)}% of work-requests will be routed to{' '}
                   <span className="font-mono">
                     {form.agentKey}@v{form.candidateVersion}

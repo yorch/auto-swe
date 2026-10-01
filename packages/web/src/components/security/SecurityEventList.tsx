@@ -20,7 +20,7 @@ const EVENT_STYLE: Record<SecurityEventType, { tone: BadgeTone; dot: string; lab
     tone: 'dust',
   },
   CONTENT_SECURITY_BLOCK: {
-    dot: 'bg-brick-500',
+    dot: 'bg-brick-400',
     label: 'Content Block',
     tone: 'brick',
   },
@@ -29,14 +29,14 @@ const EVENT_STYLE: Record<SecurityEventType, { tone: BadgeTone; dot: string; lab
     label: 'Content Warn',
     tone: 'amber',
   },
-  FILE_BLOCK: { dot: 'bg-brick-500', label: 'File Block', tone: 'brick' },
+  FILE_BLOCK: { dot: 'bg-brick-400', label: 'File Block', tone: 'brick' },
   LLM_SUSPICIOUS: {
     dot: 'bg-violet-400',
     label: 'LLM Suspicious',
     tone: 'violet',
   },
   SHELL_BLOCK: {
-    dot: 'bg-brick-500',
+    dot: 'bg-brick-400',
     label: 'Shell Block',
     tone: 'brick',
   },
@@ -142,7 +142,7 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
     return (
       <ul className="mt-1.5 space-y-0.5">
         {warnings.map((w) => (
-          <li className="font-mono text-[10px] text-violet-300" key={w}>
+          <li className="font-mono text-[10px] text-violet-400" key={w}>
             {w}
           </li>
         ))}

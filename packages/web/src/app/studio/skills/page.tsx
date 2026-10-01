@@ -179,13 +179,13 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
               </span>
             )}
             {!skill.isVerified && !skill.isBuiltIn && (
-              <span className="rounded bg-amber-900/40 px-2 py-0.5 font-mono text-amber-400">
+              <span className="rounded bg-amber-400/20 px-2 py-0.5 font-mono text-amber-400">
                 unverified
               </span>
             )}
             <span
               className={`rounded px-2 py-0.5 font-mono ${
-                skill.isActive ? 'bg-ember-900/40 text-ember-400' : 'bg-ink-600 text-paper-500'
+                skill.isActive ? 'bg-ember-400/20 text-ember-400' : 'bg-ink-600 text-paper-500'
               }`}
             >
               {skill.isActive ? 'active' : 'inactive'}

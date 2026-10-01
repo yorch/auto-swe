@@ -399,7 +399,7 @@ export default function AutonomyPoliciesPage() {
       />
 
       <Card variant="inset">
-        <div className="divide-y divide-ink-100/10">
+        <div className="divide-y divide-ink-600">
           {sorted.map((p) => (
             <div className="flex items-start justify-between p-4" key={p.id}>
               <div className="space-y-1">

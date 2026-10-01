@@ -828,7 +828,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
         <div className="mb-3 flex items-center gap-2">
           <input
             checked={showConsolidated}
-            className="h-4 w-4 rounded border-ink-600 bg-ink-800 text-brand-500"
+            className="h-4 w-4 accent-ember-400"
             id="show-consolidated"
             onChange={(e) => setShowConsolidated(e.target.checked)}
             type="checkbox"
