@@ -128,27 +128,25 @@ export default function GovernLessonsPage() {
       {/* Summary stats */}
       <div className="grid grid-cols-3 gap-6">
         <Stat label="Active" value={totalActive} />
-        <Stat label="Consolidated" value={totalConsolidated} />
-        <div>
-          <Stat
-            label="Schedule"
-            tone={
-              consolidation?.schedule.exists && !consolidation.schedule.paused ? 'moss' : 'default'
-            }
-            value={
-              consolidation?.schedule.exists
-                ? consolidation.schedule.paused
-                  ? 'Paused'
-                  : 'Active'
-                : 'Not set'
-            }
-          />
-          {consolidation?.schedule.nextRunAt && (
-            <div className="mt-2 pl-5 font-mono text-[10px] text-paper-600">
-              Next: {formatDate(consolidation.schedule.nextRunAt)}
-            </div>
-          )}
-        </div>
+        <Stat label="Consolidated" tone="muted" value={totalConsolidated} />
+        <Stat
+          hint={
+            consolidation?.schedule.nextRunAt && (
+              <>Next: {formatDate(consolidation.schedule.nextRunAt)}</>
+            )
+          }
+          label="Schedule"
+          tone={
+            consolidation?.schedule.exists && !consolidation.schedule.paused ? 'moss' : 'default'
+          }
+          value={
+            consolidation?.schedule.exists
+              ? consolidation.schedule.paused
+                ? 'Paused'
+                : 'Active'
+              : 'Not set'
+          }
+        />
       </div>
 
       {/* Per-repo breakdown */}

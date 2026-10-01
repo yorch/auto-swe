@@ -1,9 +1,15 @@
 import type { InputHTMLAttributes, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import { RequiredMark } from './FieldWrapper';
 
 type CheckboxProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & {
   label: ReactNode;
   hint?: ReactNode;
+  /**
+   * Shows the `*` marker only. Not the native `required`, which on a checkbox
+   * means "must be ticked" — a boolean field's `false` is a valid answer.
+   */
+  marked?: boolean;
 };
 
 /**
@@ -12,7 +18,7 @@ type CheckboxProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & {
  * on/off *setting* prefer `ToggleSwitch`; this is for choices inside a form
  * ("show consolidated", "overdue only", a selection list).
  */
-export function Checkbox({ className, disabled, hint, label, ...props }: CheckboxProps) {
+export function Checkbox({ className, disabled, hint, label, marked, ...props }: CheckboxProps) {
   return (
     <label
       className={cn(
@@ -29,6 +35,7 @@ export function Checkbox({ className, disabled, hint, label, ...props }: Checkbo
       />
       <span>
         {label}
+        {marked && <RequiredMark />}
         {hint && <span className="mt-0.5 block text-xs text-paper-500">{hint}</span>}
       </span>
     </label>

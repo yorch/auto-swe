@@ -17,6 +17,7 @@ export function Select({
   className,
   compact = false,
   id,
+  required,
   children,
   ...props
 }: SelectProps) {
@@ -36,6 +37,7 @@ export function Select({
         className
       )}
       id={selectId}
+      required={required}
       style={{ borderRadius: 9 }}
       {...props}
     >
@@ -48,7 +50,7 @@ export function Select({
   }
 
   return (
-    <FieldWrapper error={error} hint={hint} id={selectId} label={label}>
+    <FieldWrapper error={error} hint={hint} id={selectId} label={label} required={required}>
       {selectEl}
     </FieldWrapper>
   );

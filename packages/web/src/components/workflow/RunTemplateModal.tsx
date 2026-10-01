@@ -4,7 +4,6 @@ import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchem
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
-import { Button, ButtonLink } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { useRunTemplate } from '@/hooks/useTemplates';
@@ -81,15 +80,13 @@ export function RunTemplateModal({
       >
         <div className="space-y-6">
           <Alert variant="success">Your workflow is running.</Alert>
-          {/* ModalFooter's action is a button; this one navigates, so it is a link. */}
-          <div className="flex justify-end gap-3 border-t border-ink-600 pt-4">
-            <Button onClick={handleClose} variant="ghost">
-              Close
-            </Button>
-            <ButtonLink href={`/workflows/${launchedId}`} onClick={handleClose} variant="primary">
-              View workflow →
-            </ButtonLink>
-          </div>
+          <ModalFooter
+            cancelLabel="Close"
+            onCancel={handleClose}
+            onSubmit={handleClose}
+            submitHref={`/workflows/${launchedId}`}
+            submitLabel="View workflow →"
+          />
         </div>
       </Modal>
     );

@@ -63,6 +63,26 @@ API keys are AES-256-GCM encrypted with a per-record 12-byte nonce. The master k
 
 The worker keeps a process-local 30-second cache of resolved `Agent`, `ProviderCredential`, and `EmbeddingConfig` rows (`packages/shared/src/config/cache.ts`). Tune the TTL with `CONFIG_CACHE_TTL_MS`. The cache holds decrypted plaintext API keys for its TTL window — if you rotate a credential, expect up to `CONFIG_CACHE_TTL_MS` of lag before workers pick it up.
 
+### Model catalog
+
+`model_catalog_entries` holds one row per `<provider>/<model-id>` spec: its `kind` (`CHAT` or
+`EMBEDDING`), input and output price in USD per million tokens, and a `status` (`ACTIVE`,
+`DEPRECATED`, `RETIRED`) that governs which models are offered, never whether one is priced. The
+catalog is global — prices are facts about a vendor, not per-team policy — and a `0`/`0` row is a
+known, free model such as a self-hosted endpoint, distinct from an unknown one.
+
+`syncModelCatalog` seeds it at gateway startup from `BUILTIN_MODELS`
+(`packages/shared/src/lib/builtinModels.ts`). Code owns a built-in row until an admin edits it:
+
+| Row state | On each startup |
+|---|---|
+| Missing | Created as built-in |
+| Built-in, untouched | Kept in step with code, so a price corrected in code reaches every deployment |
+| Built-in, `isCustomized` | Left as the admin set it |
+| An admin's own row for a model that later ships built-in | Adopted as built-in and customized, keeping the admin's prices |
+
+Nothing is deleted: a model dropped from `BUILTIN_MODELS` stays priced for the runs that used it.
+
 ### Bootstrap (fresh deployment)
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
@@ -274,6 +294,9 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   span carries `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
   unpriced model is still capped there, but every USD-denominated limit — the organization monthly
   budget, channel budgets and the channel hold estimate — reads its spend as $0 and never stops it.
+- **LLM calls are priced from `BUILTIN_MODELS`, not the model catalog.** The catalog is seeded from
+  the same table, but nothing reads its rows: editing a row's price changes no recorded cost, and
+  there is no API or admin page to edit it from.
 - **Credential resolution has no fallback past GLOBAL.** The TEAM → ORGANIZATION → GLOBAL cascade
   ends there; a missing GLOBAL row is a `ConfigMissingError`, not a silent skip.
 - **Embeddings are locked to 1536 dimensions.** `memory_items.embedding` is `vector(1536)`, so a

@@ -1811,6 +1811,46 @@ model EmbeddingConfig {
   @@map("embedding_configs")
 }
 
+enum ModelKind {
+  CHAT
+  EMBEDDING
+}
+
+/// Drives the model pickers, never pricing: a RETIRED model is hidden from
+/// pickers but still priced, since pinned agent versions keep billing to it.
+enum ModelStatus {
+  ACTIVE
+  DEPRECATED
+  RETIRED
+}
+
+/// One row per `<provider>/<model-id>` spec: the per-MTok USD prices LLM calls
+/// are costed at. Global — prices are facts about a vendor, not policy. Built-in
+/// rows are seeded from `BUILTIN_MODELS` by `syncModelCatalog`, which keeps an
+/// untouched built-in in step with code and never overwrites a customized one.
+/// A 0/0 row is a known, free model (a self-hosted endpoint), not an unknown one.
+model ModelCatalogEntry {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Lowercase, as `parseProviderModelSpec` returns it.
+  provider         String
+  /// Everything after the first `/` of the spec; may itself contain slashes.
+  modelId          String      @map("model_id")
+  kind             ModelKind   @default(CHAT)
+  displayName      String?     @map("display_name")
+  inputUsdPerMTok  Float       @map("input_usd_per_mtok")
+  outputUsdPerMTok Float       @map("output_usd_per_mtok")
+  status           ModelStatus @default(ACTIVE)
+  notes            String?
+  isBuiltIn        Boolean     @default(false) @map("is_built_in")
+  /// Set by any admin edit to a built-in row; seeding then leaves it alone.
+  isCustomized     Boolean     @default(false) @map("is_customized")
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([provider, modelId])
+  @@map("model_catalog_entries")
+}
+
 /// Singleton GitHub integration config. One row (id = "default").
 /// Encrypted fields follow the same AES-256-GCM envelope used by
 /// ProviderCredential (ciphertext + nonce + authTag per secret).
