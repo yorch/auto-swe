@@ -4,15 +4,17 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { DailyCostChart } from '@/components/charts/DailyCostChart';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { type UsageBucket, usePlatformUsage } from '@/hooks/useAdmin';
-import { formatCost, formatDuration, formatPercent, formatTokens } from '@/lib/utils';
+import { formatCost, formatCount, formatDuration, formatPercent, formatTokens } from '@/lib/utils';
 
-const WINDOWS = [7, 30, 90] as const;
+const WINDOW_OPTIONS = [7, 30, 90].map((days) => ({ label: `${days}d`, value: String(days) }));
 
 function errorRate(b: UsageBucket): number | null {
   return b.calls > 0 ? b.errors / b.calls : null;
@@ -54,17 +56,15 @@ function BreakdownTable({
         </THead>
         <tbody>
           {rows.length === 0 && (
-            <TRow>
-              <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={6}>
-                No LLM calls in this window.
-              </Td>
-            </TRow>
+            <TableStatusRow colSpan={6}>
+              <EmptyState title="No LLM calls in this window." />
+            </TableStatusRow>
           )}
           {rows.map((r) => (
             <TRow key={r.label}>
               <Td className="px-4 py-2 font-mono text-xs text-paper-300">{r.label}</Td>
               <Td align="right" className="px-4 py-2 font-mono text-xs text-paper-400">
-                {r.calls.toLocaleString()}
+                {formatCount(r.calls)}
               </Td>
               <Td align="right" className="px-4 py-2 font-mono text-xs text-paper-400">
                 {formatTokens(r.inputTokens)} / {formatTokens(r.outputTokens)}
@@ -94,28 +94,19 @@ export default function UsagePage() {
   const { data, error, isError, isLoading } = usePlatformUsage(windowDays);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         actions={
-          <div className="flex gap-1 bg-ink-800 rounded-md p-1">
-            {WINDOWS.map((days) => (
-              <button
-                className={`px-3 py-1 text-sm rounded transition-colors ${
-                  windowDays === days
-                    ? 'bg-ink-600 text-paper-100'
-                    : 'text-paper-400 hover:text-paper-200'
-                }`}
-                key={days}
-                onClick={() => setWindowDays(days)}
-                type="button"
-              >
-                {days}d
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            ariaLabel="Time window"
+            onChange={(v) => setWindowDays(Number(v))}
+            options={WINDOW_OPTIONS}
+            value={String(windowDays)}
+          />
         }
+        chapter="§ Govern"
         subtitle="Every LLM and embedding call across the platform, including workflows that keep no run record. Days are UTC."
-        title="LLM Usage"
+        title="LLM usage"
       />
 
       {/* A failed request has no data and is not loading: show the error, not a spinner. */}
@@ -124,7 +115,7 @@ export default function UsagePage() {
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
               <Stat label="Spend" tone="ember" value={formatCost(data.totals.costUsd)} />
-              <Stat label="LLM calls" value={data.totals.calls.toLocaleString()} />
+              <Stat label="LLM calls" value={formatCount(data.totals.calls)} />
               <Stat
                 label="Error rate"
                 tone={data.totals.errors > 0 ? 'brick' : 'default'}
@@ -174,11 +165,9 @@ export default function UsagePage() {
                 </THead>
                 <tbody>
                   {data.topRuns.length === 0 && (
-                    <TRow>
-                      <Td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
-                        No priced runs in this window.
-                      </Td>
-                    </TRow>
+                    <TableStatusRow colSpan={5}>
+                      <EmptyState title="No priced runs in this window." />
+                    </TableStatusRow>
                   )}
                   {data.topRuns.map((r) => (
                     <TRow hover key={r.runId}>

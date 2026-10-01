@@ -881,12 +881,9 @@ export default function RunDetailPage({ params }: PageProps) {
             </Button>
           )}
           {fullTracesFailed && (
-            <span
-              className="text-brick-400"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-            >
+            <Badge tone="brick" variant="text">
               Full payloads failed to load
-            </span>
+            </Badge>
           )}
           {run.status === 'RUNNING' && (
             <Button
