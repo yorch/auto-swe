@@ -113,10 +113,45 @@ function fromPathNamesKnownNode(from: string, nodeIds: Set<string>): boolean {
 /** Node fields the schema accepts for stored-spec compatibility but the interpreter never reads. */
 const IGNORED_NODE_FIELDS = ['retry', 'startToCloseTimeout', 'heartbeatTimeout'] as const;
 
-export function validateSpec(spec: WorkflowSpec): ValidationReport {
+export interface ValidateSpecOptions {
+  /**
+   * Permit steps flagged `internal` in the step registry. Only the platform's own
+   * system template passes true; every authored, generated or bundled spec is
+   * checked with the default and may not name one.
+   */
+  allowInternalSteps?: boolean;
+}
+
+/** Nodes of `spec` that name an internal step. */
+export function findInternalSteps(spec: WorkflowSpec): Array<{ nodeId: string; step: string }> {
+  const found: Array<{ nodeId: string; step: string }> = [];
+  for (const [nodeId, node] of Object.entries(spec.nodes)) {
+    if (node.type === 'step' && hasStep(node.step) && getStepMetadata(node.step).internal) {
+      found.push({ nodeId, step: node.step });
+    }
+  }
+  return found;
+}
+
+export function validateSpec(
+  spec: WorkflowSpec,
+  options: ValidateSpecOptions = {}
+): ValidationReport {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
   const nodeIds = new Set(Object.keys(spec.nodes));
+
+  if (!options.allowInternalSteps) {
+    for (const { nodeId, step } of findInternalSteps(spec)) {
+      errors.push({
+        code: 'INTERNAL_STEP',
+        field: 'step',
+        message: `step '${step}' is internal to a platform template and cannot be used in an authored workflow`,
+        nodeId,
+        severity: 'error',
+      });
+    }
+  }
 
   // ── Expression lint + binding provenance ──
   for (const [id, node] of Object.entries(spec.nodes)) {

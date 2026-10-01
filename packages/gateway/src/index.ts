@@ -40,6 +40,7 @@ import prismaPlugin from './plugins/prisma.js';
 import temporalPlugin from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrary.js';
+import { agentRunRoutes } from './routes/agentRuns.js';
 import { autonomyPolicyRoutes } from './routes/autonomyPolicies.js';
 import { bundleRoutes } from './routes/bundles.js';
 import { configSettingsRoutes } from './routes/configSettings.js';
@@ -369,6 +370,7 @@ async function start() {
 
   // ── Protected routes ──
   await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
+  await app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
   await app.register(scheduledWorkRequestRoutes, { prefix: '/api/v1/scheduled-work-requests' });
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
   await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });

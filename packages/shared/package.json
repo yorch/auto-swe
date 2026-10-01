@@ -22,6 +22,8 @@
     "./lib/billing": "./dist/lib/billing.js",
     "./lib/channelBudget": "./dist/lib/channelBudget.js",
     "./lib/channelTask": "./dist/lib/channelTask.js",
+    "./lib/agentRun": "./dist/lib/agentRun.js",
+    "./lib/agentRunAdmission": "./dist/lib/agentRunAdmission.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/regexSafety": "./dist/lib/regexSafety.js",
     "./lib/modelSpec": "./dist/lib/modelSpec.js",

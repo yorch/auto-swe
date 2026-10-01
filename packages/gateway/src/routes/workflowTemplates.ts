@@ -14,6 +14,7 @@ import {
   computeAnalytics,
   computeGlobalAnalytics,
   diffSpecs,
+  findInternalSteps,
   formatValidationIssue,
   getStepMetadata,
   hasStep,
@@ -35,6 +36,11 @@ import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
+import {
+  EXCLUDE_SYSTEM_TEMPLATES,
+  isReservedTemplateName,
+  isSystemTemplate,
+} from '../lib/systemTemplate.js';
 import { ledTeams, memberOrgs, memberTeams } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -585,12 +591,26 @@ function parseSpecOrThrow(input: unknown): unknown {
       { statusCode: 400 }
     );
   }
+  let parsed: WorkflowSpec;
   try {
-    return parseWorkflowSpec(input);
+    parsed = parseWorkflowSpec(input);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'invalid spec';
     throw Object.assign(new Error(message), { statusCode: 400 });
   }
+  // An internal step (the Agent Run workspace + push step) is the platform's: an
+  // authored template may not name one. The worker refuses to run it elsewhere
+  // too; this is the early, readable refusal.
+  const internal = findInternalSteps(parsed);
+  if (internal.length > 0) {
+    throw Object.assign(
+      new Error(
+        `step '${internal[0]?.step}' is internal to a platform template and cannot be used in an authored workflow`
+      ),
+      { statusCode: 400 }
+    );
+  }
+  return parsed;
 }
 
 /**
@@ -607,6 +627,27 @@ function specValidationWarnings(spec: WorkflowSpec): string[] {
 
 export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // A system template ("Agent Run") is not addressable through any template
+  // route: not read, edited, versioned, promoted, refined, run, scheduled, or
+  // given a webhook. Runs a launch creates through its own endpoint stay visible
+  // in /runs. `preHandler` runs after the route's `onRequest` auth, so a probe
+  // that is not signed in learns nothing.
+  app.addHook('preHandler', async (request, reply) => {
+    const id = (request.params as { id?: unknown } | undefined)?.id;
+    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) {
+      return;
+    }
+    const t = await fastify.prisma.workflowTemplate.findFirst({
+      select: { origin: true, teamId: true },
+      where: { id },
+    });
+    if (t && isSystemTemplate(t)) {
+      return reply.status(404).send({
+        error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
+      });
+    }
+  });
 
   // ── Cross-template analytics (phase 8) ──
   // GET /analytics?window=<days>
@@ -897,7 +938,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const user = requireUser(request);
       const where: Prisma.WorkflowTemplateWhereInput = {
-        ...teamMembershipFilter(user),
+        // Both fragments are keyed `OR`; spreading them would let the second
+        // overwrite the first and drop the membership scope for non-admins.
+        AND: [teamMembershipFilter(user), EXCLUDE_SYSTEM_TEMPLATES],
         ...(request.query.teamId ? { teamId: request.query.teamId } : {}),
       };
       // `teamMembershipFilter` is `{}` for a platform admin.
@@ -931,6 +974,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const { name, description, teamId, spec, workspaceProvider } = request.body;
+      if (isReservedTemplateName(name)) {
+        return reply.status(400).send({
+          error: { code: 'RESERVED_TEMPLATE_NAME', message: 'That template name is reserved' },
+        });
+      }
 
       let parsed: unknown;
       try {
@@ -1075,6 +1123,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
+      if (request.body.name !== undefined && isReservedTemplateName(request.body.name)) {
+        return reply.status(400).send({
+          error: { code: 'RESERVED_TEMPLATE_NAME', message: 'That template name is reserved' },
+        });
+      }
       const existing = await fastify.prisma.workflowTemplate.findFirst({
         where: { id: request.params.id, ...templateWriteFilter(user) },
       });

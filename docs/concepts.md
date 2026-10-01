@@ -21,6 +21,11 @@ through the **scope cascade**, so one platform can behave differently per team.
   restarts and deploys, can wait days for a person or for CI, and records every step, agent
   transcript, and token it spent. Runs are listed at `/runs`.
 
+- **Agent run** — One library agent, one prompt, one repository, launched on demand instead of
+  through a workflow you author. It works in a throwaway workspace and can optionally publish what it
+  wrote as a branch or a draft pull request, after deterministic checks and the security gate. See
+  [agent-runs.md](./agent-runs.md).
+
 - **Epic** — A brief that spans several repositories. A planner agent splits it into per-repository
   runs and starts them in dependency order. See
   [repo-dependency-graph.md](./repo-dependency-graph.md).

@@ -29,6 +29,7 @@ import {
   WORKFLOW_AUTHOR_PROMPT,
   WORKFLOW_EXPLAINER_PROMPT,
 } from './agentPrompts.js';
+import { AGENT_RUN_SPEC, AGENT_RUN_TEMPLATE_NAME, AGENT_RUN_TEMPLATE_ORIGIN } from './agentRun.js';
 import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME } from './channelTask.js';
 
@@ -235,6 +236,7 @@ export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncTemplates(prisma);
   await syncChannelAssistantTemplate(prisma);
   await syncChannelTaskTemplate(prisma);
+  await syncAgentRunTemplate(prisma);
   const newSkillNames = await syncSkills(prisma);
   await syncScannerPatterns(prisma, 'swe');
   await syncAgents(prisma, newSkillNames);
@@ -269,6 +271,86 @@ async function syncChannelAssistantTemplate(prisma: PrismaClient): Promise<void>
 /** Seed the GLOBAL "Channel Task" autonomous-execution template (Phase A; single v1 spec). */
 async function syncChannelTaskTemplate(prisma: PrismaClient): Promise<void> {
   await syncGlobalChannelTemplate(prisma, CHANNEL_TASK_TEMPLATE_NAME, CHANNEL_TASK_SPEC);
+}
+
+/**
+ * Seed the hidden "Agent Run" system template behind `POST /api/v1/agent-runs`.
+ *
+ * Unlike the channel templates this row is the platform's, not the admin's: it is
+ * hidden and locked in the gateway, so there is no admin edit to preserve and the
+ * newest built-in version is always the active one. It carries a dedicated
+ * `system:` origin rather than `swe-starter`, and the sync only ever touches a
+ * row that already carries it. A GLOBAL row of the same name that does NOT (an
+ * admin created it first) is left strictly alone and reported: appending the
+ * system spec to somebody else's template would hand its owner the system step,
+ * and the gateway answers a launch with a clear "template missing" instead.
+ */
+export async function syncAgentRunTemplate(prisma: PrismaClient): Promise<void> {
+  const spec = AGENT_RUN_SPEC as unknown as object;
+  const existing = await prisma.workflowTemplate.findFirst({
+    where: { name: AGENT_RUN_TEMPLATE_NAME, teamId: null },
+  });
+
+  if (!existing) {
+    try {
+      await prisma.workflowTemplate.create({
+        data: {
+          activeVersion: 1,
+          description: AGENT_RUN_SPEC.description,
+          isDefault: false,
+          name: AGENT_RUN_TEMPLATE_NAME,
+          origin: AGENT_RUN_TEMPLATE_ORIGIN,
+          status: 'ACTIVE',
+          teamId: null,
+          versions: { create: { spec, version: 1 } },
+          workspaceProvider: 'git_repo',
+        },
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) {
+        throw err;
+      }
+    }
+    return;
+  }
+
+  if (existing.origin !== AGENT_RUN_TEMPLATE_ORIGIN) {
+    console.error(
+      `[syncBuiltins] a GLOBAL template named '${AGENT_RUN_TEMPLATE_NAME}' exists without the system origin; ` +
+        'agent runs are unavailable until it is renamed or removed'
+    );
+    return;
+  }
+
+  const latest = await prisma.workflowTemplateVersion.findFirst({
+    orderBy: { version: 'desc' },
+    select: { spec: true, version: true },
+    where: { templateId: existing.id },
+  });
+  if (latest && canonicalJson(latest.spec) === canonicalJson(spec)) {
+    if (existing.activeVersion !== latest.version || existing.status !== 'ACTIVE') {
+      await prisma.workflowTemplate.update({
+        data: { activeVersion: latest.version, status: 'ACTIVE' },
+        where: { id: existing.id },
+      });
+    }
+    return;
+  }
+  const next = (latest?.version ?? 0) + 1;
+  try {
+    await prisma.workflowTemplateVersion.create({
+      data: { spec, templateId: existing.id, version: next },
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return; // another replica appended the same spec first
+    }
+    throw err;
+  }
+  await prisma.workflowTemplate.update({
+    data: { activeVersion: next, status: 'ACTIVE' },
+    where: { id: existing.id },
+  });
 }
 
 /** The built-in code-review-quality judge rubric (evals P2). Idempotent. */

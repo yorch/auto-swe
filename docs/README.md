@@ -26,6 +26,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [hitl-workflows.md](./hitl-workflows.md) | Human-in-the-loop nodes (approval / decision / input / review), signal flow, the inbox, API |
 | [autonomy-policies.md](./autonomy-policies.md) | When a run may act alone and when it must ask — risk classes, the scope cascade, failing closed, the decision log |
 | [evals.md](./evals.md) | Output-quality measurement — the `eval` node, scorers, datasets, the regression harness, canary routing |
+| [agent-runs.md](./agent-runs.md) | Running one library agent against a repository on demand — the throwaway workspace, delivery as a branch or draft PR through a trusted container and a deterministic push policy, the tool-grant rule, bounds and concurrency |
 | [channel-assistant.md](./channel-assistant.md) | The Slack channel teammate — a capability in its own right and the platform's conversational control surface; turns, ambient and reactive modes, channel memory, personas, budgets |
 | [nl-workflow-authoring.md](./nl-workflow-authoring.md) | Describing an automation in natural language and getting a validated `WorkflowSpec` back |
 | [figma-integration.md](./figma-integration.md) | Design context — the `design-fidelity` skill and submit-time Figma enrichment |

@@ -11,6 +11,7 @@
 
 import type { ExecSyncOptions, SpawnSyncReturns } from 'node:child_process';
 import { exec, spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 import { promisify } from 'node:util';
 import { Context, heartbeat } from '@temporalio/activity';
 
@@ -379,4 +380,110 @@ export function parseSpawnSyncResult(result: SpawnSyncReturns<string>): Captured
     stderr: combined,
     stdout: result.stdout ?? '',
   };
+}
+
+export interface CappedFileResult {
+  /** Bytes written to the destination file (may exceed the cap by one chunk). */
+  bytes: number;
+  /** The child produced more than `maxBytes` and was killed. */
+  exceeded: boolean;
+  exitCode: number;
+  stderr: string;
+}
+
+/**
+ * Run `file args` and stream its stdout into `dest`, killing the child the
+ * moment more than `maxBytes` have arrived. The cap is enforced WHILE
+ * streaming: checking the size after the fact lets a producer (a sparse file
+ * expanded by `docker cp`) fill the disk first. The caller removes `dest`.
+ */
+export async function spawnToFileCapped(
+  file: string,
+  args: string[],
+  dest: string,
+  options: { maxBytes: number; timeoutMs?: number; heartbeatLabel?: string }
+): Promise<CappedFileResult> {
+  const timeoutMs = options.timeoutMs ?? 600_000;
+  const work = new Promise<CappedFileResult>((resolve) => {
+    const child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = createWriteStream(dest);
+    let bytes = 0;
+    let exceeded = false;
+    let stderr = '';
+    let exitCode = 0;
+    let closed = false;
+    let spawnError: string | undefined;
+    let timedOut = false;
+
+    const finish = () => {
+      clearTimeout(killTimer);
+      resolve({
+        bytes,
+        exceeded,
+        exitCode: spawnError ? 127 : timedOut ? 124 : exitCode,
+        stderr: spawnError ? `${stderr}\n${spawnError}`.trim() : stderr,
+      });
+    };
+    // Resolve only once BOTH the child is gone and the file is flushed.
+    let pending = 2;
+    const done = () => {
+      pending -= 1;
+      if (pending === 0) {
+        finish();
+      }
+    };
+    out.on('close', done);
+    out.on('error', (err) => {
+      spawnError = `${err.name}: ${err.message}`;
+      child.kill('SIGKILL');
+    });
+
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
+    killTimer.unref?.();
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (exceeded) {
+        return;
+      }
+      bytes += chunk.length;
+      if (bytes > options.maxBytes) {
+        exceeded = true;
+        child.kill('SIGKILL');
+        child.stdout?.unpipe(out);
+        out.end();
+        return;
+      }
+      if (!out.write(chunk)) {
+        child.stdout?.pause();
+        out.once('drain', () => child.stdout?.resume());
+      }
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (stderr.length < 64 * 1024) {
+        stderr += chunk.toString('utf-8');
+      }
+    });
+    const childGone = () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      if (!exceeded) {
+        out.end();
+      }
+      done();
+    };
+    child.on('error', (err) => {
+      spawnError = `${err.name}: ${err.message}`;
+      childGone();
+    });
+    child.on('close', (code) => {
+      exitCode = code ?? 1;
+      childGone();
+    });
+  });
+  return withHeartbeat(options.heartbeatLabel ?? 'exec', work);
 }

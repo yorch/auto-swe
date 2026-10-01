@@ -69,6 +69,21 @@ export interface CreatePullRequestInput {
    * with the host's "a pull request already exists" error.
    */
   reuseExisting?: boolean;
+  /**
+   * Open the PR as a draft. When the host cannot (GitHub refuses drafts on
+   * private repositories of plans without them), the provider throws
+   * {@link DraftPullRequestUnsupportedError} — it never falls back to a
+   * ready-for-review PR, because "draft" is a promise to the reviewer.
+   */
+  draft?: boolean;
+}
+
+/** The host rejected a draft pull request (the repository cannot have drafts). */
+export class DraftPullRequestUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DraftPullRequestUnsupportedError';
+  }
 }
 
 export interface PullRequestRef {

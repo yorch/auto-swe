@@ -265,6 +265,7 @@ function buildApp(state: {
           return tpl ? { ...tpl, _count: { versions: tpl.versions.length } } : null;
         },
         findMany: async ({ where }: { where?: Mutable }) => {
+          (state as { listWheres?: Mutable[] }).listWheres?.push(where ?? {});
           const filtered = state.templates.filter((t) => {
             if (where?.teamId && t.teamId !== where.teamId) {
               return false;
@@ -990,7 +991,9 @@ describe('workflow-templates routes', () => {
     } finally {
       prisma.workflowTemplate.findFirst = original;
     }
-    expect(wheres[0]).toMatchObject({
+    // The plugin's system-template guard looks the row up first (by id alone);
+    // the route's own write-scoped lookup is the one that carries the team filter.
+    expect(wheres.find((w) => w.team !== undefined)).toMatchObject({
       team: {
         isActive: true,
         memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: 'user-1' } },
@@ -1697,5 +1700,168 @@ describe('workflow refinement (POST /:id/refine)', () => {
     expect(res.statusCode).toBe(422);
     expect(res.json().error.code).toBe('REFINE_FAILED');
     (state as { generateError?: boolean }).generateError = false;
+  });
+});
+
+describe('system templates are hidden and locked', () => {
+  let app: FastifyInstance;
+  let state: Parameters<typeof buildApp>[0];
+  const SYSTEM_ID = '11111111-1111-4111-8111-111111111111';
+  const INTERNAL_STEP_SPEC = {
+    ...VALID_SPEC,
+    entry: 'run',
+    nodes: {
+      done: { status: 'SUCCESS', type: 'terminate' },
+      run: { next: 'done', step: 'runAgentTask', type: 'step' },
+    },
+  };
+
+  beforeAll(async () => {
+    state = {
+      runs: [],
+      templates: [
+        {
+          activeVersion: 1,
+          createdAt: new Date(),
+          description: '',
+          experimentSplit: null,
+          experimentVersion: null,
+          id: SYSTEM_ID,
+          isDefault: false,
+          name: 'Agent Run',
+          // Not in FakeTemplate; the fake returns rows as stored.
+          ...({ origin: 'system:agent-run' } as object),
+          status: 'ACTIVE',
+          team: null,
+          teamId: null,
+          updatedAt: new Date(),
+          versions: [{ createdAt: new Date(), createdBy: null, id: 'v1', version: 1 }],
+          workspaceProvider: 'git_repo',
+        },
+      ],
+      userRole: 'ADMIN',
+      versions: new Map(),
+    };
+    app = buildApp(state);
+    await app.ready();
+  });
+
+  afterAll(() => app.close());
+
+  const call = (method: 'GET' | 'PATCH' | 'POST', url: string, payload?: unknown) =>
+    app.inject({
+      headers: { authorization: 'Bearer x' },
+      method,
+      ...(payload === undefined ? {} : { payload: payload as object }),
+      url: `/api/v1/workflow-templates${url}`,
+    });
+
+  it.each([
+    ['GET', '', undefined],
+    ['PATCH', '', { description: 'x' }],
+    ['POST', '/versions', { spec: VALID_SPEC }],
+    ['POST', '/promote', { version: 1 }],
+    ['POST', '/runs', { payload: {}, repoId: SYSTEM_ID }],
+    ['POST', '/refine', { prompt: 'make it do something else' }],
+    ['POST', '/webhook/regenerate', undefined],
+    ['GET', '/versions/1', undefined],
+    ['GET', '/diff?a=1&b=1', undefined],
+  ] as const)('404s %s /:id%s for even an ADMIN', async (method, suffix, payload) => {
+    const res = await call(method, `/${SYSTEM_ID}${suffix}`, payload);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('TEMPLATE_NOT_FOUND');
+  });
+
+  it('refuses a template named "Agent Run" in any casing, on create and on rename', async () => {
+    for (const name of ['Agent Run', ' agent run ']) {
+      const created = await call('POST', '', {
+        name,
+        spec: VALID_SPEC,
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      });
+      expect(created.statusCode).toBe(400);
+      expect(created.json().error.code).toBe('RESERVED_TEMPLATE_NAME');
+    }
+    const other = await call('POST', '', {
+      name: 'ordinary',
+      spec: VALID_SPEC,
+      teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+    });
+    expect(other.statusCode).toBe(201);
+    const id = other.json().data.id as string;
+    const renamed = await call('PATCH', `/${id}`, { name: 'AGENT RUN' });
+    expect(renamed.statusCode).toBe(400);
+    expect(renamed.json().error.code).toBe('RESERVED_TEMPLATE_NAME');
+  });
+
+  it('refuses an authored spec that names the internal step, on create and on a new version', async () => {
+    const created = await call('POST', '', {
+      name: 'sneaky',
+      spec: INTERNAL_STEP_SPEC,
+      teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+    });
+    expect(created.statusCode).toBe(400);
+    expect(created.json().error.code).toBe('INVALID_SPEC');
+    expect(created.json().error.message).toContain('runAgentTask');
+
+    const ok = await call('POST', '', {
+      name: 'fine',
+      spec: VALID_SPEC,
+      teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+    });
+    const version = await call('POST', `/${ok.json().data.id}/versions`, {
+      spec: INTERNAL_STEP_SPEC,
+    });
+    expect(version.statusCode).toBe(400);
+  });
+});
+
+describe("GET / scopes the template list to the caller's teams (non-admin)", () => {
+  const OTHER_TEAM = 'b2c3d4e5-1234-4567-89ab-cdef01234567';
+  const membershipArm = {
+    OR: [{ teamId: null }, { team: { memberships: { some: { userId: 'user-1' } } } }],
+  };
+
+  const listWhere = async (role: string, query: string) => {
+    const listWheres: Mutable[] = [];
+    const app = buildApp({
+      runs: [],
+      templates: [],
+      userRole: role,
+      versions: new Map(),
+      ...({ listWheres } as object),
+    });
+    await app.ready();
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: `/api/v1/workflow-templates${query}`,
+    });
+    await app.close();
+    expect(res.statusCode).toBe(200);
+    return listWheres[0] as { AND?: Mutable[]; OR?: unknown; teamId?: string };
+  };
+
+  it.each(['ENGINEER', 'LEAD'])('%s keeps the membership arm without ?teamId', async (role) => {
+    const where = await listWhere(role, '');
+    expect(where.AND).toContainEqual(membershipArm);
+    // The system-template exclusion must not overwrite the membership `OR`.
+    expect(where.OR).toBeUndefined();
+  });
+
+  it.each(['ENGINEER', 'LEAD'])(
+    '%s keeps the membership arm with ?teamId of a team they are not in',
+    async (role) => {
+      const where = await listWhere(role, `?teamId=${OTHER_TEAM}`);
+      expect(where.teamId).toBe(OTHER_TEAM);
+      expect(where.AND).toContainEqual(membershipArm);
+      expect(where.OR).toBeUndefined();
+    }
+  );
+
+  it('ADMIN is unscoped by membership but still excludes system templates', async () => {
+    const where = await listWhere('ADMIN', '');
+    expect(where.AND).toContainEqual({});
+    expect(JSON.stringify(where)).toContain('system:');
   });
 });

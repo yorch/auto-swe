@@ -34,6 +34,13 @@ the dashboard at **Settings → API tokens**, or with
 run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
                                      Submit a work request and start a run on the default template
 
+agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|draft_pr]
+          [--max-steps=N] [--timeout=SECONDS] [--wait]
+                                     Run a library agent on a repository in a throwaway workspace;
+                                     --deliver=branch|draft_pr publishes it after the platform's
+                                     checks pass (see docs/agent-runs.md)
+agent rerun <workRequestId> [--wait] Run an earlier agent run again as a new run
+
 workflows list                       List workflow templates visible to you
 workflows show <name> [--version=N]  Print one template's active (or given) spec (JSON)
 workflows export <name> [-o <path>]  Write the active spec to a file (or stdout)
@@ -97,7 +104,7 @@ admin token; `evals run` is the regression gate a nightly CI job polls to comple
 | ---- | ----------------------------------------- |
 | `0`  | Success                                   |
 | `1`  | User error (missing arg, no token, etc.); `evals run` also exits 1 on a regression |
-| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail` also exits 2 when the run ends in a non-success status, and `evals run` when the eval run fails without reaching a verdict |
+| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail` and `agent run --wait` also exit 2 when the run ends in a non-success status, and `evals run` when the eval run fails without reaching a verdict |
 
 ## Examples
 
@@ -106,4 +113,5 @@ export AUTO_SWE_TOKEN=ats_...                 # PAT from Settings → API tokens
 auto-swe workflows list
 auto-swe run --ticket=JIRA-1 --description="Add GET /health" --repo=acme/payments-api
 auto-swe runs tail <runId> --interval=5
+auto-swe agent run contentWriter "Fix the typos in the README" --repo=acme/docs --deliver=draft_pr --wait
 ```

@@ -10,6 +10,7 @@ import {
   parseBundle,
   signContentHash,
   validateBundleScannerPatterns,
+  validateBundleTemplates,
   verifyBundleSignature,
   verifyContentHash,
 } from './index.js';
@@ -423,5 +424,57 @@ describe('verifyBundleSignature — signature binds identity', () => {
       signedBy: null,
       verified: false,
     });
+  });
+});
+
+describe('validateBundleTemplates and the system template', () => {
+  const okSpec = {
+    entry: 'done',
+    name: 'ok',
+    nodes: { done: { status: 'SUCCESS', type: 'terminate' } },
+    schemaVersion: 1,
+  };
+  const withTemplate = (t: Record<string, unknown>) =>
+    manifest({
+      entities: {
+        ...emptyEntities,
+        templates: [{ description: '', inputSchema: null, spec: okSpec, ...t }],
+      } as unknown as BundleEntities,
+    });
+
+  it('accepts an ordinary template', () => {
+    expect(validateBundleTemplates(withTemplate({ name: 'ordinary', origin: 'bundle:x' }))).toEqual(
+      []
+    );
+  });
+
+  it.each(['Agent Run', 'agent run', '  AGENT RUN  '])('refuses the reserved name %j', (name) => {
+    const errors = validateBundleTemplates(withTemplate({ name, origin: 'bundle:x' }));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('reserved');
+  });
+
+  it('refuses a template claiming a system: origin', () => {
+    expect(
+      validateBundleTemplates(withTemplate({ name: 'x', origin: 'system:agent-run' }))
+    ).toHaveLength(1);
+  });
+
+  it('refuses a template that names the internal step', () => {
+    const errors = validateBundleTemplates(
+      withTemplate({
+        name: 'sneaky',
+        origin: 'bundle:x',
+        spec: {
+          ...okSpec,
+          entry: 'run',
+          nodes: {
+            done: { status: 'SUCCESS', type: 'terminate' },
+            run: { next: 'done', step: 'runAgentTask', type: 'step' },
+          },
+        },
+      })
+    );
+    expect(errors.join('\n')).toContain('INTERNAL_STEP');
   });
 });

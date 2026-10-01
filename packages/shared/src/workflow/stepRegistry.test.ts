@@ -4,6 +4,7 @@ import {
   assertBuiltinStepsRegistered,
   getStepMetadata,
   hasStep,
+  listAllSteps,
   listSteps,
 } from './stepRegistry.js';
 
@@ -16,7 +17,7 @@ describe('stepRegistry', () => {
   });
 
   it('exposes metadata for every registered step', () => {
-    const all = listSteps();
+    const all = listAllSteps();
     expect(all.length).toBeGreaterThanOrEqual(BUILTIN_STEPS.length);
     for (const meta of all) {
       expect(meta.name).toBeTypeOf('string');
@@ -25,6 +26,12 @@ describe('stepRegistry', () => {
       expect(['agent', 'gate', 'control', 'vcs', 'shell']).toContain(meta.category);
       expect(Array.isArray(meta.configFields)).toBe(true);
     }
+  });
+
+  it('keeps internal steps out of the author-facing list but registered', () => {
+    expect(listSteps().map((s) => s.name)).not.toContain('runAgentTask');
+    expect(listAllSteps().map((s) => s.name)).toContain('runAgentTask');
+    expect(hasStep('runAgentTask')).toBe(true);
   });
 
   it('throws on unknown step name', () => {

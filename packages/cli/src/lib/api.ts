@@ -49,7 +49,8 @@ async function requestEnvelope(
   env: CliEnv,
   method: HttpMethod,
   path: string,
-  body?: unknown
+  body?: unknown,
+  extraHeaders?: Record<string, string>
 ): Promise<Record<string, unknown>> {
   const url = `${env.apiUrl}${path}`;
   let res: Response;
@@ -59,6 +60,7 @@ async function requestEnvelope(
       headers: {
         Authorization: `Bearer ${env.token}`,
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(extraHeaders ?? {}),
       },
       method,
     });
@@ -86,9 +88,10 @@ export async function apiRequest<T>(
   env: CliEnv,
   method: HttpMethod,
   path: string,
-  body?: unknown
+  body?: unknown,
+  extraHeaders?: Record<string, string>
 ): Promise<T> {
-  const json = await requestEnvelope(env, method, path, body);
+  const json = await requestEnvelope(env, method, path, body, extraHeaders);
   return (json.data ?? json) as T;
 }
 

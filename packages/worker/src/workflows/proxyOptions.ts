@@ -178,3 +178,25 @@ export const T_30_MINUTES: Duration = '30 minutes';
 export const T_5_MINUTES: Duration = '5 minutes';
 /** `'4 hours'` — full offline eval benchmark (many multi-minute Docker + LLM cases). */
 export const T_4_HOURS: Duration = '4 hours';
+
+// ── Agent run activity timeout ──────────────────────────────────────────────
+
+/** Mirror of `AGENT_RUN_MAX_WALL_CLOCK_SECONDS` (the setting's hard maximum); a test pins them. */
+export const AGENT_RUN_CEILING_SECONDS = 14_400;
+
+/**
+ * Time budgeted around the agent loop, which the wall-clock cap does not cover:
+ * a shallow and a full clone (10 min each), the ignored-file cleanup (5),
+ * export, mkdir, import and copy (about 10 each), the gate model call, the push,
+ * and the tool exec that may still be in flight when the deadline fires (up to
+ * its own timeout). About 90 minutes in the worst case; 2 h leaves slack.
+ */
+export const AGENT_RUN_HEADROOM_SECONDS = 7_200;
+
+/**
+ * `startToCloseTimeout` of the agent run step: the largest wall-clock cap a run
+ * can resolve to, plus the headroom. A backstop only; the real bound is the
+ * per-run deadline inside the activity.
+ */
+export const T_AGENT_RUN_ACTIVITY_SECONDS = AGENT_RUN_CEILING_SECONDS + AGENT_RUN_HEADROOM_SECONDS;
+export const T_AGENT_RUN_ACTIVITY: Duration = `${T_AGENT_RUN_ACTIVITY_SECONDS}s`;

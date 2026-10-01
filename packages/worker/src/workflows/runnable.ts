@@ -44,6 +44,7 @@ import {
   T_30M,
   T_30S,
   T_60M,
+  T_AGENT_RUN_ACTIVITY,
 } from './proxyOptions.js';
 
 /**
@@ -183,6 +184,19 @@ const agentNodeActivities = proxyActivities<
   heartbeatTimeout: T_2M,
   retry: RETRY_STANDARD,
   startToCloseTimeout: T_10M,
+});
+
+// The Agent Run system template's step: a workspace container, an agent loop of
+// up to the platform's wall-clock ceiling (max 4 h), then a trusted-container
+// gate and push. Single attempt, because a retry would re-spend and could
+// re-publish; `startToCloseTimeout` is only a backstop (the real bound is the
+// per-run deadline inside the activity). It is derived from the setting's hard
+// maximum plus a documented headroom for the clone, export, scan and push around
+// the loop (see `T_AGENT_RUN_ACTIVITY` in proxyOptions.ts).
+const agentTaskActivities = proxyActivities<Pick<typeof activitiesType, 'runAgentTask'>>({
+  heartbeatTimeout: T_5M,
+  retry: RETRY_SINGLE_ATTEMPT,
+  startToCloseTimeout: T_AGENT_RUN_ACTIVITY,
 });
 
 // Evals P2: declarative `eval` node. Runs scorers (assert/trajectory + judge
@@ -573,6 +587,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         systemPrompt: config.systemPrompt as string | undefined,
         userMessage: config.userMessage as string | undefined,
       }),
+  ],
+  [
+    // Internal step of the Agent Run system template. The activity re-checks that
+    // it is running for that template; nothing here is trusted to have been checked.
+    'runAgentTask',
+    ({ request }) => agentTaskActivities.runAgentTask({ request }),
   ],
   [
     // Evals P2 declarative eval node: score a target value with a list of scorers.

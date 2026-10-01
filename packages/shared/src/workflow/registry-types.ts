@@ -26,6 +26,12 @@ export interface StepMetadata {
   category: StepCategory;
   label: string;
   description: string;
+  /**
+   * Not offered to authors: left out of the palette and the authoring catalog,
+   * and refused in any template other than the system one that owns it (the
+   * gateway enforces that on save and on bundle install).
+   */
+  internal?: boolean;
   /** Config fields exposed in the UI editor. */
   configFields: readonly StepFieldDef[];
   /** Approximate per-call token usage for cost estimation (optional). */
@@ -76,6 +82,8 @@ export const BUILTIN_STEPS = [
   'resolveMergeConflict',
   // Declarative agent node — runs a library Agent by reference
   'runAgentNode',
+  // Internal: the Agent Run system template's workspace + gate + push step
+  'runAgentTask',
   // Executors behind the declarative eval / mcp / containerStep nodes
   'runEvalNode',
   'mcpCallTool',

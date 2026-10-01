@@ -108,6 +108,7 @@ export const SIDEBAR = [
       'docs/hitl-workflows',
       'docs/autonomy-policies',
       'docs/evals',
+      'docs/agent-runs',
       'docs/channel-assistant',
       'docs/nl-workflow-authoring',
       'docs/figma-integration',

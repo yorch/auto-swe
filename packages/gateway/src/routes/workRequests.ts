@@ -25,6 +25,7 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { isSystemTemplate } from '../lib/systemTemplate.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { allocateWorkflowId, launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -644,6 +645,21 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       if (!workRequest.templateId || !workRequest.templateVersion) {
         return reply.status(409).send({
           error: { code: 'NO_TEMPLATE_SNAPSHOT', message: 'Work request has no recorded template' },
+        });
+      }
+      // An agent run keeps its launch parameters in the payload this endpoint
+      // does not carry, and a re-run reusing its ticket id would collide with the
+      // branch the first run already pushed. It has its own re-run.
+      const snapshotTemplate = await fastify.prisma.workflowTemplate.findFirst({
+        select: { origin: true, teamId: true },
+        where: { id: workRequest.templateId },
+      });
+      if (snapshotTemplate && isSystemTemplate(snapshotTemplate)) {
+        return reply.status(409).send({
+          error: {
+            code: 'USE_AGENT_RUN_RERUN',
+            message: 'This is an agent run; re-run it with POST /api/v1/agent-runs/:id/rerun',
+          },
         });
       }
       // Bind the narrowed values: the start call below runs inside a closure,

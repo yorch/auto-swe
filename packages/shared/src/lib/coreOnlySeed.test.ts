@@ -156,7 +156,10 @@ describe('seedSweStarter — provenance tagging', () => {
     expect(cap.modelCreates).toBe(0);
 
     expect(cap.skillOrigins.every((o) => o === 'swe-starter')).toBe(true);
-    expect(cap.templateOrigins.every((o) => o === 'swe-starter')).toBe(true);
+    // The hidden Agent Run template is the one row that is deliberately NOT
+    // starter content: it carries the platform's reserved system: origin, so a
+    // bundle can neither overwrite nor impersonate it.
+    expect(cap.templateOrigins.filter((o) => o !== 'swe-starter')).toEqual(['system:agent-run']);
     expect(cap.agentOrigins.every((o) => o === 'swe-starter')).toBe(true);
 
     // Only the code-security scanner patterns belong to the SWE starter.
