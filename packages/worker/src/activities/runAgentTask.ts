@@ -276,7 +276,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
         ...capDiff(raw),
         codeSecurityFindingCount: 0,
         diffVerified: false,
-        filesChanged: parseDiffToFileChanges(raw).slice(0, 200),
+        filesChanged: capFilesChanged(parseDiffToFileChanges(raw)),
         gate: 'not_applicable',
       };
     }
@@ -358,7 +358,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       headSha: gated.sha,
       ...capDiff(gated.diff),
       diffVerified: true,
-      filesChanged: gated.filesChanged.slice(0, 200),
+      filesChanged: capFilesChanged(gated.filesChanged),
       gate: 'passed',
       ...(pr ? { prNumber: pr.prNumber, prUrl: pr.prUrl } : {}),
     };
@@ -396,6 +396,38 @@ function capDiff(diff: string): { diff: string; diffTruncated: boolean } {
   };
 }
 
+/** Result limits: Temporal rejects a payload over 2 MB, and a failed completion would follow a push. */
+const RESULT_MAX_FILES = 200;
+const RESULT_MAX_PATH_CHARS = 300;
+
+/** Bound `filesChanged` in count and per-path length (a path is agent-controlled, up to 4 KB). */
+function capFilesChanged(files: FileChange[]): FileChange[] {
+  return files
+    .slice(0, RESULT_MAX_FILES)
+    .map((f) =>
+      f.path.length > RESULT_MAX_PATH_CHARS
+        ? { ...f, path: `${f.path.slice(0, RESULT_MAX_PATH_CHARS)}...` }
+        : f
+    );
+}
+
+/**
+ * The changed-file list as one fenced block. A path is agent-controlled, so it
+ * must not be able to close a code span, start markdown or an image beacon, or
+ * mention anyone: the fence is longer than any backtick run inside it (inline
+ * code spans nest nothing), control characters are replaced, and every path is
+ * length-capped.
+ */
+function fencedFileList(files: FileChange[]): string {
+  const lines = files.slice(0, 100).map((f) => {
+    const safe = f.path.slice(0, RESULT_MAX_PATH_CHARS).replace(/[\u0000-\u001f\u007f]/g, '?');
+    return `${safe} (${f.operation}, +${f.linesAdded}/-${f.linesRemoved})`;
+  });
+  const longestRun = Math.max(0, ...(lines.join('\n').match(/`+/g) ?? []).map((r) => r.length));
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  return [fence, ...lines.map(neutraliseMentions), fence].join('\n');
+}
+
 /** Agent text must not notify people: a zero-width space defuses `@user` and `@org/team` mentions. */
 function neutraliseMentions(s: string): string {
   return s.replace(/@/g, '@\u200b');
@@ -414,10 +446,7 @@ function prBody(args: {
   text: string;
   workflowId: string;
 }): string {
-  const list = args.files
-    .slice(0, 100)
-    .map((f) => `- \`${f.path}\` (${f.operation}, +${f.linesAdded}/-${f.linesRemoved})`)
-    .join('\n');
+  const list = fencedFileList(args.files);
   return [
     `Opened as a **draft** by an auto-swe agent run (\`${args.agent}\`, run \`${args.workflowId}\`).`,
     '',

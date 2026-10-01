@@ -381,7 +381,11 @@ describe('delivery: trust boundary and gate-before-push', () => {
     expect(m.push.mock.calls[0]?.[0]).toBe(m.trustedWs);
     // The agent's container is never asked to use the credential.
     expect(m.agentWs.gitAuthed).not.toHaveBeenCalled();
-    expect(r).toMatchObject({ branch: 'auto/agent-0a1b2c3d111122223333444455556666', gate: 'passed', headSha: GATED.sha });
+    expect(r).toMatchObject({
+      branch: 'auto/agent-0a1b2c3d111122223333444455556666',
+      gate: 'passed',
+      headSha: GATED.sha,
+    });
     expect(r.prUrl).toBeUndefined();
   });
 
@@ -435,6 +439,57 @@ describe('delivery: trust boundary and gate-before-push', () => {
     });
     expect(arg.body).not.toMatch(/@octocat/);
     expect(r).toMatchObject({ prNumber: 7, prUrl: 'https://x/pull/7' });
+  });
+
+  it('puts agent-controlled file paths in a fence they cannot close, with mentions defused', async () => {
+    m.gate.mockResolvedValue({
+      ...GATED,
+      filesChanged: [
+        {
+          language: 'md',
+          linesAdded: 1,
+          linesRemoved: 0,
+          operation: 'CREATE',
+          path: 'a`` ![x](http://evil/p.png) @octocat\n`b',
+        },
+      ],
+    });
+    await runAgentTask({ request: deliver('draft_pr') });
+    const body = m.createPr.mock.calls[0]?.[0].body as string;
+    // Longest backtick run in the path is 2, so the fence is at least 3 and the
+    // path sits wholly inside it, on one line, with no live mention.
+    expect(body).toContain(
+      '```\na`` ![x](http://evil/p.png) @\u200boctocat?`b (CREATE, +1/-0)\n```'
+    );
+    expect(body).not.toMatch(/@octocat/);
+  });
+
+  it('uses a fence longer than any backtick run in a path', async () => {
+    m.gate.mockResolvedValue({
+      ...GATED,
+      filesChanged: [
+        { language: '', linesAdded: 0, linesRemoved: 0, operation: 'CREATE', path: 'a```b' },
+      ],
+    });
+    await runAgentTask({ request: deliver('draft_pr') });
+    const body = m.createPr.mock.calls[0]?.[0].body as string;
+    expect(body).toContain('````\na```b (CREATE, +0/-0)\n````');
+  });
+
+  it('bounds filesChanged in count and path length', async () => {
+    m.gate.mockResolvedValue({
+      ...GATED,
+      filesChanged: Array.from({ length: 500 }, (_, i) => ({
+        language: '',
+        linesAdded: 0,
+        linesRemoved: 0,
+        operation: 'CREATE' as const,
+        path: `${'p'.repeat(4000)}${i}`,
+      })),
+    });
+    const r = await runAgentTask({ request: deliver('branch') });
+    expect(r.filesChanged).toHaveLength(200);
+    expect(Math.max(...r.filesChanged.map((f) => f.path.length))).toBeLessThanOrEqual(303);
   });
 
   it('keeps the pushed branch and fails clearly when the repo cannot hold drafts', async () => {
