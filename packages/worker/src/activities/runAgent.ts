@@ -10,6 +10,7 @@ import type { ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { withHeartbeat } from '../lib/execUtils.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
+import { createStepAccounting } from '../lib/stepAccounting.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
 
@@ -23,6 +24,33 @@ export interface RunAgentOptions {
    * Defaults to the activity's request context.
    */
   ctx?: ResolveCtx;
+  /**
+   * Step ceiling for this call. Wins over `workspace.agentMaxSteps`, so a caller
+   * that has already resolved a tighter bound (an agent run's clamped cap) is
+   * not re-widened by the generic setting.
+   */
+  maxSteps?: number;
+  /**
+   * An additional abort signal (an agent run's wall-clock deadline), merged with
+   * the activity's cancellation signal. Unlike cancellation it is a *stop*, not
+   * a failure: the call returns what it has with `stoppedReason: 'wall_clock'`.
+   * Only honoured with `perStepAccounting`, which is what guarantees the spend
+   * of a partial result is recorded.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Record usage and re-check the run budget after EVERY step, instead of once
+   * before and once after a single `generate`.
+   *
+   * The default shape checks the budget once before a loop of up to 500 tool
+   * steps and records usage only when `generate` returns, so (a) a long loop can
+   * overshoot its tier many times over, and (b) an aborted call — deadline,
+   * cancellation, a provider error mid-loop — skipped `recordLlmUsage`, and the
+   * spend of every completed step went unrecorded. With this on, each finished
+   * step is debited as it lands, a step that exhausts the budget aborts the loop
+   * with `BUDGET_EXCEEDED`, and an abort loses at most the one step in flight.
+   */
+  perStepAccounting?: boolean;
 }
 
 export interface RunAgentResult<T = unknown> {
@@ -43,6 +71,15 @@ export interface RunAgentResult<T = unknown> {
   inputTokens?: number;
   /** Output tokens attributed by `recordLlmUsage` (0 when there was no usage). */
   outputTokens?: number;
+  /** Provider finish reason of the last step (`stop`, `tool-calls`, `aborted`, ...). */
+  finishReason?: string;
+  /** Number of model steps taken. */
+  stepCount?: number;
+  /**
+   * Set when the call ended before the model finished: it used every step
+   * (`max_steps`) or hit the caller's abort signal (`wall_clock`).
+   */
+  stoppedReason?: 'max_steps' | 'wall_clock';
 }
 
 /**
@@ -77,6 +114,7 @@ export async function runAgent<T = unknown>(
       const { traceId, spanId } = span.spanContext();
       tracer.setSpanContext(traceId, spanId);
       let recorded: LlmAttribution | undefined;
+      let accountingTotals: (() => LlmAttribution) | undefined;
       try {
         span.setAttribute('llm.model', spec.modelSpec);
         span.setAttribute('agent.key', spec.agentKey);
@@ -99,26 +137,52 @@ export async function runAgent<T = unknown>(
         // turn mid-task. Same setting as the implementer family. A tool-free
         // call is a single step, so it neither needs nor reads the setting.
         const hasTools = Object.keys(spec.tools ?? {}).length > 0;
-        const stepBudget = hasTools
-          ? {
-              maxSteps: await resolveSetting(
-                'workspace.agentMaxSteps',
-                options.ctx ?? (await currentRequestContext())
-              ),
-            }
-          : {};
-        const callOptions = { ...stepBudget, ...abortSignalOption() };
-        const genResult = await withHeartbeat(
-          `agent ${spec.agentKey}: generating`,
-          spec.outputSchema
-            ? agent.generate([{ content: userMessage, role: 'user' }], {
-                ...callOptions,
-                structuredOutput: { schema: spec.outputSchema },
-              })
-            : Object.keys(callOptions).length > 0
-              ? agent.generate([{ content: userMessage, role: 'user' }], callOptions)
-              : agent.generate([{ content: userMessage, role: 'user' }])
-        );
+        const maxSteps = hasTools
+          ? (options.maxSteps ??
+            (await resolveSetting(
+              'workspace.agentMaxSteps',
+              options.ctx ?? (await currentRequestContext())
+            )))
+          : undefined;
+        const stepBudget = maxSteps === undefined ? {} : { maxSteps };
+
+        // Per-step accounting (agent runs). Its abort controller is how a step
+        // that exhausts the budget stops the loop; the reason is carried out of
+        // band because an aborted generate may resolve instead of throwing.
+        const accounting = options.perStepAccounting
+          ? createStepAccounting(spec.agentKey, spanName, options.abortSignal)
+          : undefined;
+        accountingTotals = accounting?.totals;
+        const callOptions = accounting
+          ? { ...stepBudget, abortSignal: accounting.signal, onStepFinish: accounting.onStepFinish }
+          : { ...stepBudget, ...abortSignalOption() };
+
+        let genResult: Awaited<ReturnType<InstanceType<typeof Agent>['generate']>> | undefined;
+        try {
+          genResult = await withHeartbeat(
+            `agent ${spec.agentKey}: generating`,
+            spec.outputSchema
+              ? agent.generate([{ content: userMessage, role: 'user' }], {
+                  ...callOptions,
+                  structuredOutput: { schema: spec.outputSchema },
+                })
+              : Object.keys(callOptions).length > 0
+                ? agent.generate([{ content: userMessage, role: 'user' }], callOptions)
+                : agent.generate([{ content: userMessage, role: 'user' }])
+          );
+        } catch (e) {
+          // A budget stop wins over whatever the aborted call threw, and a
+          // cancellation is a failure, not a stop. Only the caller's own
+          // deadline degrades to a partial result; anything else propagates.
+          if (!accounting) {
+            throw e;
+          }
+          accounting.throwIfBudgetOrCancelled();
+          if (!accounting.deadlineHit()) {
+            throw e;
+          }
+        }
+        accounting?.throwIfBudgetOrCancelled();
 
         let attribution: LlmAttribution = {
           costUsd: 0,
@@ -126,7 +190,10 @@ export async function runAgent<T = unknown>(
           modelSpec: '',
           outputTokens: 0,
         };
-        if (genResult.usage) {
+        if (accounting) {
+          // Every step was debited as it finished; do not debit the total again.
+          attribution = recorded = accounting.totals();
+        } else if (genResult?.usage) {
           attribution = recorded = await recordLlmUsage(
             currentWorkflowId(),
             spec.agentKey,
@@ -134,9 +201,20 @@ export async function runAgent<T = unknown>(
             spanName
           );
         }
+        const deadlineHit = accounting?.deadlineHit() ?? false;
+        const stepCount = accounting ? accounting.stepCount() : genResult?.steps?.length;
+        const finishReason = genResult?.finishReason;
+        const stoppedReason: RunAgentResult['stoppedReason'] = deadlineHit
+          ? 'wall_clock'
+          : maxSteps !== undefined &&
+              finishReason !== undefined &&
+              finishReason !== 'stop' &&
+              (stepCount ?? 0) >= maxSteps
+            ? 'max_steps'
+            : undefined;
 
-        const object = (genResult.object ?? undefined) as T | undefined;
-        const text = genResult.text || undefined;
+        const object = (genResult?.object ?? undefined) as T | undefined;
+        const text = genResult?.text || accounting?.lastText() || undefined;
 
         tracer.addLlmResponse({
           costUsd: attribution.costUsd,
@@ -151,15 +229,21 @@ export async function runAgent<T = unknown>(
 
         return {
           costUsd: attribution.costUsd,
+          finishReason,
           inputTokens: attribution.inputTokens,
           object,
           outputTokens: attribution.outputTokens,
+          stepCount,
+          stoppedReason,
           text,
-          usage: genResult.usage,
+          usage: genResult?.usage,
         };
       } catch (e) {
+        // Steps already debited by per-step accounting were paid for even when
+        // the call as a whole failed.
+        const paid = recorded ?? (accountingTotals ? accountingTotals() : undefined);
         tracer.addLlmResponse({
-          ...failedCallAttribution(e, spec.modelSpec, recorded),
+          ...failedCallAttribution(e, spec.modelSpec, paid),
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt: spec.systemPrompt, userMessage },
