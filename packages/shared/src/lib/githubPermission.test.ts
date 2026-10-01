@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchRepoPermission, permissionMeets } from './githubPermission.js';
+import {
+  fetchOwnRepoPermission,
+  fetchRepoPermission,
+  permissionMeets,
+} from './githubPermission.js';
 
 const QUERY = {
   apiUrl: 'https://api.github.com',
@@ -160,6 +164,63 @@ describe('fetchRepoPermission', () => {
     stub(() => reply({}));
     await expect(fetchRepoPermission(QUERY)).resolves.toEqual({
       failure: 'unavailable',
+      ok: false,
+    });
+  });
+});
+
+describe('fetchOwnRepoPermission', () => {
+  const OWN = {
+    apiUrl: 'https://ghe.corp/api/v3/',
+    organizationName: 'acme',
+    repoName: 'payments',
+    token: 'user-tok',
+  };
+
+  it("asks for the repository itself with the user's token", async () => {
+    const spy = stub(() => reply({ permissions: { admin: false, pull: true, push: true } }));
+    await expect(fetchOwnRepoPermission(OWN)).resolves.toEqual({ ok: true, permission: 'write' });
+    expect(spy.mock.calls[0][0]).toBe('https://ghe.corp/api/v3/repos/acme/payments');
+    const headers = spy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer user-tok');
+  });
+
+  it('maps the permission flags to levels, strongest first', async () => {
+    for (const [permissions, expected] of [
+      [{ admin: true, pull: true, push: true }, 'admin'],
+      [{ maintain: true, pull: true }, 'write'],
+      [{ push: true }, 'write'],
+      [{ triage: true }, 'read'],
+      [{ pull: true }, 'read'],
+      [{ admin: false, pull: false, push: false }, 'none'],
+    ] as const) {
+      stub(() => reply({ permissions }));
+      await expect(fetchOwnRepoPermission(OWN)).resolves.toEqual({
+        ok: true,
+        permission: expected,
+      });
+    }
+  });
+
+  it('does not read a missing permissions object as none', async () => {
+    // GitHub omits `permissions` for an unauthenticated view; that is not an
+    // answer about the user.
+    stub(() => reply({ full_name: 'acme/payments' }));
+    await expect(fetchOwnRepoPermission(OWN)).resolves.toEqual({
+      failure: 'unavailable',
+      ok: false,
+    });
+  });
+
+  it('shares the failure taxonomy with the collaborator lookup', async () => {
+    stub(() => reply({}, { status: 404 }));
+    await expect(fetchOwnRepoPermission(OWN)).resolves.toEqual({
+      failure: 'repo-not-found',
+      ok: false,
+    });
+    stub(() => reply({}, { status: 401 }));
+    await expect(fetchOwnRepoPermission(OWN)).resolves.toEqual({
+      failure: 'credential-rejected',
       ok: false,
     });
   });

@@ -41,6 +41,18 @@ export interface ChannelAssistantTurnInput {
 export interface RunRequest {
   workRequestId: string;
   /**
+   * The platform user who started THIS execution — set by the launch path from
+   * the authenticated caller, never copied from a stored work request. It is
+   * what decides whose saved GitHub credential the run may use, so it is
+   * distinct from `RunInput.requestedById` on purpose: a re-run of someone
+   * else's request is launched by whoever re-ran it.
+   *
+   * Absent means nobody: a webhook, a cron fire, a schedule fired by hand. Such
+   * a run uses only the platform credential. Leaving it out is always the safe
+   * direction.
+   */
+  launchedById?: string;
+  /**
    * Target `Connection` id, or null when the run is not scoped to one.
    * Generic runs that only use agent/shell/container/API steps set this to null.
    */
@@ -217,6 +229,8 @@ export interface EpicRequest {
   description: string;
   requestPayload: string;
   workRequestId: string;
+  /** Who started the epic; each child run is launched on their behalf. See `RunRequest.launchedById`. */
+  launchedById?: string;
   repos: EpicRepoEntry[];
   /** Candidate repo IDs for planner to consider (used when repos[] is empty) */
   repoIds?: string[];

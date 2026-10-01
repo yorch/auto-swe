@@ -150,6 +150,46 @@ export const SETTING_DEFINITIONS = {
     unit: 'messages',
   }),
 
+  // ── Per-user GitHub credentials ────────────────────────────────────────────
+  // Whether a user may attach their own GitHub token to a repository, used only
+  // for runs they request. Deployment-wide and ADMIN-only: the host list is
+  // what lets a token reach a private-network GitHub Enterprise server, which
+  // is the same SSRF decision every other connector reserves for an admin.
+  'github.userCredentialHosts': defineSetting({
+    defaultValue: ['github.com'],
+    description:
+      "Hosts a user's own GitHub token may be sent to, as host or host:port (comma-separated). Both the repository's web URL and its API URL must be listed; github.com also covers api.github.com. Listing a GitHub Enterprise host here is what permits it on a private network. An empty list stops every saved token from being saved or used.",
+    group: 'github',
+    label: 'Hosts allowed for user credentials',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z
+      .array(
+        z
+          .string()
+          .regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'must be a lowercase host or host:port')
+          // A URL never carries the default port once parsed, so `host:443`
+          // would never match anything — refuse it rather than let it look set.
+          .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
+          .max(253)
+      )
+      .max(50),
+  }),
+  'github.userCredentialsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether users may attach their own GitHub token to a repository. A saved token is used only for runs its owner launches, ahead of the platform credential. Turning this off keeps saved tokens but stops using them.',
+    group: 'github',
+    label: 'Allow per-user GitHub credentials',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+
   // ── Semantic memory ────────────────────────────────────────────────────────
   'memory.orgSimilarityThreshold': defineSetting({
     defaultValue: 0.7,

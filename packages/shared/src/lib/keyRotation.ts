@@ -76,6 +76,7 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
       nonce: 'apiKeyNonce',
     },
   ],
+  connectionCredential: [fieldsFor('token')],
   figmaConfig: [fieldsFor('apiToken')],
   gitHubConfig: [
     fieldsFor('token'),
