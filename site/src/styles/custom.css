@@ -77,20 +77,27 @@ body {
 }
 
 /*
- * Headings are condensed. A condensed face at a heavy weight reads as signage
- * — the lettering on a panel in a machine room — and it buys width back, so a
- * long technical heading can be set large without wrapping to three lines.
+ * Every prose rule below skips `.not-content` subtrees, the opt-out Starlight's
+ * own markdown styles honour. The landing page is MDX, so it renders inside
+ * `.sl-markdown-content`, and without the opt-out these rules repaint the
+ * signal panel's light-on-dark text in page ink and underline its buttons.
  */
-.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
-.content-panel h1 {
+
+/*
+ * Headings are the same face as the text, set heavy and tight. Signage type
+ * earns its hierarchy from weight and size rather than from a second family,
+ * and a long technical heading stays legible because the letters stay open.
+ */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6):not(:where(.not-content *)),
+.content-panel h1:not(:where(.not-content *)) {
   font-family: var(--font-display);
-  font-weight: 700;
+  font-weight: 800;
   color: var(--ink);
-  letter-spacing: -0.005em;
+  letter-spacing: -0.015em;
   text-wrap: balance;
 }
 
-.content-panel h1 {
+.content-panel h1:not(:where(.not-content *)) {
   font-size: var(--step-5);
   line-height: 1.04;
 }
@@ -120,40 +127,40 @@ body {
   margin-top: 1.5rem;
 }
 
-.sl-markdown-content h2 {
+.sl-markdown-content h2:not(:where(.not-content *)) {
   font-size: var(--step-3);
   line-height: 1.15;
 }
 
-.sl-markdown-content h3 {
+.sl-markdown-content h3:not(:where(.not-content *)) {
   font-size: var(--step-2);
   line-height: 1.2;
 }
 
-.sl-markdown-content h4 {
+.sl-markdown-content h4:not(:where(.not-content *)) {
   font-size: var(--step-1);
   line-height: 1.25;
 }
 
-.sl-markdown-content :is(h5, h6) {
+.sl-markdown-content :is(h5, h6):not(:where(.not-content *)) {
   font-size: var(--step-0);
 }
 
-.sl-markdown-content p,
-.sl-markdown-content li {
+.sl-markdown-content p:not(:where(.not-content *)),
+.sl-markdown-content li:not(:where(.not-content *)) {
   max-width: var(--measure);
   line-height: 1.65;
   color: var(--ink);
 }
 
-.sl-markdown-content strong {
+.sl-markdown-content strong:not(:where(.not-content *)) {
   font-weight: 600;
   color: var(--ink);
 }
 
 /* Links look like links. On a page this dense, colour alone is not enough of a
  * signal, and an underline that sits clear of the descenders costs nothing. */
-.sl-markdown-content a:not(.sl-anchor-link, .btn) {
+.sl-markdown-content a:not(.sl-anchor-link, .btn):not(:where(.not-content *)) {
   color: var(--ink);
   text-decoration: underline;
   text-decoration-thickness: 1.5px;
@@ -162,7 +169,7 @@ body {
   transition: background-color 0.12s ease;
 }
 
-.sl-markdown-content a:not(.sl-anchor-link, .btn):hover {
+.sl-markdown-content a:not(.sl-anchor-link, .btn):not(:where(.not-content *)):hover {
   text-decoration-color: var(--ink);
   background: var(--gate-wash);
 }
@@ -222,6 +229,17 @@ body {
   font-weight: 600;
   color: var(--ink-faint);
   letter-spacing: 0.01em;
+}
+
+/*
+ * Nested groups — the use-case teams — sit on the rail as items with a
+ * disclosure, not as a second tier of section headings.
+ */
+.sidebar-content ul ul .large {
+  padding-inline-start: 1.1rem;
+  margin-bottom: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
 }
 
 /*
@@ -295,9 +313,6 @@ body {
   border-inline-start: 1px solid var(--rule);
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: the higher-specificity
-   heading rules above live under `.sl-markdown-content`, and the table of
-   contents is outside it, so the two never apply to the same element. */
 starlight-toc nav > h2 {
   font-family: var(--font-display);
   font-size: var(--step--1);
@@ -328,7 +343,7 @@ starlight-toc a[aria-current='true'] {
  * Content blocks
  * ======================================================================== */
 
-.sl-markdown-content blockquote {
+.sl-markdown-content blockquote:not(:where(.not-content *)) {
   padding-inline-start: 1.1rem;
   margin-inline-start: 0;
   font-style: normal;
@@ -341,7 +356,7 @@ starlight-toc a[aria-current='true'] {
  * the model matrix, the scanner list — so they are set tighter than prose and
  * given a header that stays legible when a table runs long.
  */
-.sl-markdown-content table {
+.sl-markdown-content table:not(:where(.not-content *)) {
   display: block;
   max-width: 100%;
   overflow-x: auto;
@@ -349,14 +364,14 @@ starlight-toc a[aria-current='true'] {
   border-collapse: collapse;
 }
 
-.sl-markdown-content :is(th, td) {
+.sl-markdown-content :is(th, td):not(:where(.not-content *)) {
   padding: 0.55rem 0.9rem 0.55rem 0;
   vertical-align: baseline;
   border: 0;
   border-bottom: 1px solid var(--rule);
 }
 
-.sl-markdown-content th {
+.sl-markdown-content th:not(:where(.not-content *)) {
   font-family: var(--font-display);
   font-size: var(--step-0);
   font-weight: 600;
@@ -365,15 +380,15 @@ starlight-toc a[aria-current='true'] {
   border-bottom: 1px solid var(--rule-strong);
 }
 
-.sl-markdown-content td {
+.sl-markdown-content td:not(:where(.not-content *)) {
   color: var(--ink-muted);
 }
 
-.sl-markdown-content :is(th, td):last-child {
+.sl-markdown-content :is(th, td):not(:where(.not-content *)):last-child {
   padding-right: 0;
 }
 
-.sl-markdown-content :not(pre) > code {
+.sl-markdown-content :not(pre) > code:not(:where(.not-content *)) {
   padding: 0.1em 0.35em;
   font-family: var(--font-mono);
   font-size: 0.86em;
@@ -387,7 +402,7 @@ starlight-toc a[aria-current='true'] {
   border-radius: 2px;
 }
 
-.sl-markdown-content hr {
+.sl-markdown-content hr:not(:where(.not-content *)) {
   margin-block: 2.5rem;
   border: 0;
   border-top: 1px solid var(--rule);
@@ -582,15 +597,55 @@ main:has(.landing) .sl-markdown-content {
  * light fills into a dark diagram. Scoping by `data-theme` is the only place
  * the two can differ. `!important` because mermaid injects both a <style>
  * block and inline attributes into the SVG.
+ *
+ * Scoped to `pre.mermaid`, not `.mermaid-figure`: a diagram that already fits
+ * the column is never wrapped in a figure, and scoping to the figure left every
+ * small diagram in mermaid's own theme colours.
  */
-.mermaid-figure .cluster rect,
-.mermaid-viewer .cluster rect {
+pre.mermaid .cluster rect,
+dialog.mermaid-viewer .cluster rect {
   fill: var(--paper-sunk) !important;
   stroke: var(--rule) !important;
 }
 
-.mermaid-figure .node :is(rect, polygon, path),
-.mermaid-viewer .node :is(rect, polygon, path) {
+pre.mermaid .node :is(rect, polygon, path),
+dialog.mermaid-viewer .node :is(rect, polygon, path) {
   fill: var(--paper) !important;
   stroke: var(--rule-strong) !important;
+}
+
+/*
+ * The generated use-case diagrams class the nodes where a run stops for a
+ * person `gate`, and the ones where it waits on another system `wait` — the
+ * same distinction the hero panel draws with its lamps.
+ */
+pre.mermaid .node.gate :is(rect, polygon, path),
+dialog.mermaid-viewer .node.gate :is(rect, polygon, path) {
+  fill: var(--gate-wash) !important;
+  stroke: var(--gate) !important;
+  stroke-width: 2px !important;
+}
+
+pre.mermaid .node.wait :is(rect, polygon, path),
+dialog.mermaid-viewer .node.wait :is(rect, polygon, path) {
+  fill: var(--steel-wash) !important;
+  stroke: var(--steel) !important;
+}
+
+/*
+ * Mermaid sizes each HTML label's box by measuring it, and the measurement runs
+ * short of what the label renders at — most labels on the site measured 24px and
+ * rendered 26px, losing their descenders to the box edge. Letting the label spill
+ * out of its box costs nothing, because the node shape is drawn separately.
+ */
+pre.mermaid foreignObject,
+dialog.mermaid-viewer foreignObject {
+  overflow: visible;
+}
+
+/* Opacity only: a size set here lands after mermaid has measured the label,
+ * and the box it drew for the old size clips the new one. */
+pre.mermaid .node small,
+dialog.mermaid-viewer .node small {
+  opacity: 0.8;
 }

@@ -3,9 +3,9 @@
 The living docs, rendered for the open web and published to GitHub Pages at
 <https://yorch.github.io/auto-swe/>.
 
-This workspace owns no documentation. Everything it publishes is copied in from elsewhere in the
-repository at build time, so there is exactly one copy of every sentence and nothing to keep in
-sync by hand.
+This workspace owns almost no documentation. The docs are copied in from elsewhere in the
+repository at build time, and the use-case section is generated from the built-in workflow
+templates, so there is exactly one copy of every sentence and nothing to keep in sync by hand.
 
 ## Working on it
 
@@ -26,6 +26,7 @@ from, and a base path that only exists in production is a base path nobody tests
 | `docs/README.md` | `/docs/` |
 | Root `README.md` | `/introduction/` |
 | `packages/cli/README.md` | `/reference/cli/` |
+| Built-in workflow templates + [`scripts/useCases.mjs`](./scripts/useCases.mjs) | `/use-cases/` and `/use-cases/<template>/` |
 | `src/content/docs/index.mdx` | `/` — the one hand-authored page |
 
 `docs/history/` and `docs/redesign/` are deliberately absent, matching the dashboard. Frozen docs
@@ -33,28 +34,57 @@ shown to a reader with no way to know they are frozen read as current behaviour.
 
 ## Editing
 
-**Edit the source, never the copy.** `src/content/docs/docs/`, `src/content/docs/reference/`, and
-`src/content/docs/introduction.md` are generated, gitignored, and deleted and rewritten on every
-sync. Only `src/content/docs/index.mdx` is authored here.
+**Edit the source, never the copy.** `src/content/docs/docs/`, `src/content/docs/reference/`,
+`src/content/docs/use-cases/`, `src/content/docs/introduction.md`, and `src/data/` are generated,
+gitignored, and deleted and rewritten on every sync. Only `src/content/docs/index.mdx` is authored
+here.
 
 Adding a doc to `docs/` is enough to publish it, but it must also be placed in `SIDEBAR` in
 [`scripts/manifest.mjs`](./scripts/manifest.mjs). The build fails if it is not — an unplaced doc
 still builds and still resolves by URL, so without that check nothing would notice that no reader
 can reach it.
 
+### Use cases
+
+Each use-case page is drawn from a template in `BUILTIN_TEMPLATES`: its diagram, the places a
+person acts, the systems it waits on, and the agents it calls are all read from the spec, using the
+same `nodeEdges` the workflow validator uses. Only what a spec cannot say — who the workflow is
+for, the problem in plain words, and how far it is proven — is written by hand, in
+[`scripts/useCases.mjs`](./scripts/useCases.mjs).
+
+**Adding a built-in template fails this build until it has an entry there**, and removing one fails
+it until the entry goes. That is deliberate: a template that ships without a public page, or a page
+for a workflow nobody can run, is exactly the drift the check exists to stop. The maturity wording
+is the other thing to keep honest — it restates `docs/product-overview.md` §8, so when that section
+changes, `MATURITY` changes with it.
+
+Because the templates are TypeScript, `sync` runs under `tsx`, not bare `node`.
+
 ## The design
 
-The palette is named after what a run does rather than after a brand colour picked in the abstract.
-A run advances, halts at a gate, and waits for a person, and **amber is the gate** — stopped, waiting.
-It is the only accent with identity, and it appears where a person is involved: the halt in the hero,
-the current page on the sidebar rail, a doc's Limitations heading. Steel is the machine half. The
-surface is a cool technical paper rather than a warm cream, because this is a long document about
-infrastructure that runs in a cold room.
+The site borrows the vernacular of a railway signal box, because a run behaves like a train on
+signalled track: it advances section by section, and at a gate it is held at a signal until a person
+clears it. The page is the enamel of a signal-box wall — a cool grey-green, deliberately not the
+warm cream that generated docs sites open on. The hero is the control panel mounted on that wall,
+the one dark object on a light page. Its lamps are the only saturated colour anywhere.
 
-Type is IBM Plex, all three widths: Condensed for headings, where a heavy condensed face reads as
-signage and buys width back so a long technical heading can be set large; Sans for body at a
-reading measure; Mono for code and nothing else. A monospaced micro-label is the reflex on a
-developer site and it says nothing true when the thing it labels is not code.
+**Amber is still the gate**: held, waiting for a person. It appears wherever a person is involved —
+the held signal in the hero, the gate nodes in the generated diagrams, the people listed against
+each use case, the current page on the sidebar rail, a doc's Limitations heading. Steel is the
+machine half, and in the diagrams marks a run waiting on another system rather than on a person.
+
+The hero is the one bold element, and it is interactive on purpose. A run advances along the track
+of a real template and halts at its signal, and then **the visitor clears it** — merges the pull
+request, approves the reply, signs off. Clearing the signal is the one thing on the page only a
+person can do, which is also the one thing the product never does for you. The three routes are the
+built-in `default-engineering`, `zendesk-ticket-reply`, and `four-eyes` templates, simplified for a
+panel: bookkeeping is folded into the station it serves, but no step or gate is invented, and the
+timeouts are the specs' own.
+
+Type is Overpass, which descends from Highway Gothic, the lettering of road and transit signage:
+wayfinding type, for a page about where a run goes and where it stops. One family carries display
+and text by weight alone. Overpass Mono sets code and nothing else; a monospaced micro-label is the
+reflex on a developer site, and it says nothing true when the thing it labels is not code.
 
 Structure is used to carry meaning rather than to decorate:
 
@@ -68,14 +98,18 @@ Structure is used to carry meaning rather than to decorate:
   already carries a rule; the loose one is hidden, because the heading's rule belongs to a section
   and a bare horizontal rule belongs to nothing.
 
-There is exactly one non-user-triggered animation on the site: the hero's rail draws itself down to
-the gate on load and stops there. It runs once, it is short, and it says the same thing the page
-says. `prefers-reduced-motion` skips it entirely.
+There is exactly one non-user-triggered animation on the site: the hero's run advances to its first
+signal on load and stops there. `prefers-reduced-motion` places it at the signal immediately.
+
+The landing page is MDX, so it renders inside Starlight's `.sl-markdown-content`. Its root carries
+`not-content`, the opt-out Starlight's own markdown styles honour, and every prose rule in
+`custom.css` honours it too. A new prose rule that leaves it off repaints the panel's light text in
+page ink.
 
 Every text and background pair is checked against WCAG AA. Two values exist only because of it:
-`--ink-faint` is darker than it looks like it wants to be (4.93:1, where the obvious lighter grey
-measured 4.08), and `--gate-text` is a darker gate for running text (5.25:1, where the signal value
-measures 3.74 and is fine for a mark but not for words).
+`--ink-faint` is darker than it looks like it wants to be (5.22:1 on the enamel), and `--gate-text`
+is a darker gate for running text (5.45:1, where the signal value measures 3.55 and is fine for a
+mark but not for words).
 
 ## How it fits together
 
@@ -84,10 +118,14 @@ measures 3.74 and is fine for a mark but not for words).
 | [`scripts/manifest.mjs`](./scripts/manifest.mjs) | The single answer to "is this file on the site, and where?" — routes, sidebar, base path, GitHub fallback ref |
 | [`scripts/syncDocs.mjs`](./scripts/syncDocs.mjs) | Copies each source in, derives frontmatter from its H1 and lead paragraph, points "Edit this page" at the true source |
 | [`scripts/docLinks.mjs`](./scripts/docLinks.mjs) | Rewrites every filesystem-relative link: published targets become site URLs, everything else becomes a GitHub URL |
+| [`scripts/useCases.mjs`](./scripts/useCases.mjs) | The use-case catalogue: group, plain-words summary, and maturity per built-in template; the use-case sidebar |
+| [`scripts/useCasePages.mjs`](./scripts/useCasePages.mjs) | Joins the catalogue to `BUILTIN_TEMPLATES`, fails on any mismatch, and renders the pages and the landing page's data file |
+| [`scripts/templateGraph.mjs`](./scripts/templateGraph.mjs) | Draws a workflow spec as a mermaid flowchart and summarises who has to act in it |
 | [`src/scripts/mermaidZoom.js`](./src/scripts/mermaidZoom.js) | Wraps each rendered diagram in a figure and adds the full-screen pan-and-zoom viewer |
 | [`src/styles/tokens.css`](./src/styles/tokens.css) | Colour, type, and scale, for both themes. Dark is designed, not inverted |
 | [`src/styles/custom.css`](./src/styles/custom.css) | Spends the tokens: Starlight variable mapping, then chrome and content |
-| [`src/components/Landing.astro`](./src/components/Landing.astro) | The landing page, hero included. The only hand-authored page on the site |
+| [`src/components/Landing.astro`](./src/components/Landing.astro) | The landing page. The only hand-authored page on the site |
+| [`src/components/SignalPanel.astro`](./src/components/SignalPanel.astro) | The hero: the signal panel, its three routes, and the script that runs them |
 | [`astro.config.mjs`](./astro.config.mjs) | Starlight and mermaid configuration; builds the sidebar from the manifest |
 
 The link policy is the opposite of the dashboard's, deliberately. `packages/web/src/lib/docLinks.ts`
@@ -118,7 +156,13 @@ one job that should not hold it.
   diagram, which is not the order of magnitude that would change this.
 - **The expand control is decided once, at render.** A diagram that fits its column when the page
   loads does not gain the control if the window is later made narrower. Re-checking on resize was
-  not worth an observer per diagram; every diagram in this tree overflows at every viewport.
+  not worth an observer per diagram.
+- **The hero's routes are hand-simplified, not generated.** The use-case pages draw each template
+  in full from its spec; the panel shows three of them as a short line of stations, written in
+  `SignalPanel.astro`. A change to those three templates' steps or timeouts must be carried there
+  by hand, and nothing fails if it is not.
+- **Use-case maturity is a statement, not a measurement.** Whether a template has been exercised
+  end to end is written in `useCases.mjs` from the product overview; no test establishes it.
 - **The `docs/` set is not versioned.** The site publishes the current `main`, with no archive of
   what the docs said at an earlier release.
 - **There is no `typecheck` script here, and adding one is not a small fix.** `astro check` needs
