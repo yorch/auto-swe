@@ -426,7 +426,7 @@ Note: `Agent` (like `ProviderCredential`) uses partial unique indexes per scope 
 
 **File:** `packages/worker/src/lib/agentTracer.ts`
 
-Every LLM-calling activity **must** use `AgentTracer` to record tool calls, LLM responses, and activity events. These are persisted as `AgentTrace` rows (linked to the `WorkflowRun`) and power the `/runs/[id]` viewer.
+Every LLM-calling activity **must** use `AgentTracer` to record tool calls, LLM responses, and activity events. These are persisted as `AgentTrace` rows and power the `/runs/[id]` viewer. Every row carries its Temporal `workflowId`; `runId` links it to the `WorkflowRun` when one exists. Workflows that keep no run (workflow authoring and explaining, scheduled evals, lesson consolidation, repo-dependency inference, repo-access sync, epic planning) still persist their traces with a null `runId`, so their LLM spend is recorded rather than dropped.
 
 ### 8.1 Pattern
 
@@ -465,7 +465,7 @@ tracer.addActivityEvent({
 await persistActivityTrace(tracer, 'implementer');
 ```
 
-**`persistActivityTrace(tracer, role)`** in `packages/worker/src/lib/activityContext.ts` auto-resolves `runId` and `attempt` from Temporal context and calls `tracer.persist(runId, nodeId, role, attempt)`. **Never omit this call** in new LLM-calling activities — the run viewer depends on it.
+**`persistActivityTrace(tracer, role)`** in `packages/worker/src/lib/activityContext.ts` auto-resolves the workflow ID, `runId`, and `attempt` from Temporal context and calls `tracer.persist({ runId, workflowId }, nodeId, role, attempt)`. It attaches the OTel span active at that moment unless the caller already attached a more specific one with `tracer.setSpanContext()` — `runAgent` does, because it persists after its LLM span has ended. **Never omit this call** in new LLM-calling activities — the run viewer depends on it.
 
 **`inputJson` convention for `addLlmResponse`:** always pass `{ systemPrompt, userMessage }` so the `/runs/[id]` viewer can show exactly what was sent to the model. Declare prompt variables as `let` before the `try` block (not `const` inside it) so the error `catch` path can reference them too — otherwise failed LLM calls produce traces with no request context.
 
@@ -491,7 +491,8 @@ String values are truncated to 4 000 characters per field. The `writeFile` tool 
 
 | Column | Purpose |
 |---|---|
-| `runId` | FK to `workflow_runs` |
+| `runId` | FK to `workflow_runs`; null for workflows that keep no run |
+| `workflowId` | Temporal workflow ID — always set |
 | `nodeId` | Activity type (e.g. `executeImplementation`) |
 | `agentKey` | Which agent key (identity) produced this trace |
 | `attempt` | Temporal activity attempt number (for retries) |
@@ -500,6 +501,13 @@ String values are truncated to 4 000 characters per field. The `writeFile` tool 
 | `toolName` | Tool ID, reviewer type, or event name |
 | `inputJson` / `outputJson` / `error` | Full (truncated) details |
 | `durationMs` | Wall-clock duration of the call |
+| `model` / `inputTokens` / `outputTokens` / `costUsd` | Per-call attribution on `llm_response` rows |
+| `otelTraceId` / `otelSpanId` | Correlation with the matching Tempo span |
+
+**Embeddings** are recorded too: each `generateEmbedding` call inside an activity writes one
+`llm_response` row with `agentKey: 'embedding'`, its tokens, and its cost, and adds the cost (not the
+tokens) to the workflow's `ActiveWorkflow` ledger. Tokens stay off the ledger because the per-tier
+budgets are measured in chat tokens.
 
 ---
 

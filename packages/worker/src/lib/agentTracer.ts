@@ -113,10 +113,15 @@ export class AgentTracer {
   private otelTraceId?: string;
   private otelSpanId?: string;
 
-  /** Associate the OTel span active at activity completion with all records in this batch. */
+  /** Associate an OTel span with all records in this batch. */
   setSpanContext(traceId: string, spanId: string): void {
     this.otelTraceId = traceId;
     this.otelSpanId = spanId;
+  }
+
+  /** True once a span context has been attached; a more specific span set earlier wins. */
+  hasSpanContext(): boolean {
+    return this.otelTraceId !== undefined;
   }
 
   addToolCall(opts: {
@@ -187,13 +192,18 @@ export class AgentTracer {
     });
   }
 
+  /**
+   * `runId` is undefined for workflows that keep no WorkflowRun row. Their
+   * traces are still written, keyed by `workflowId`, so their LLM spend is
+   * recorded somewhere rather than dropped.
+   */
   async persist(
-    runId: string | undefined,
+    ids: { runId: string | undefined; workflowId: string },
     nodeId: string,
     agentKey: string,
     attempt = 1
   ): Promise<void> {
-    if (!runId || this.records.length === 0) {
+    if (this.records.length === 0) {
       return;
     }
     try {
@@ -212,10 +222,11 @@ export class AgentTracer {
           otelTraceId: this.otelTraceId ?? null,
           outputJson: r.outputJson as object | undefined,
           outputTokens: r.outputTokens ?? null,
-          runId,
+          runId: ids.runId ?? null,
           seq: r.seq,
           toolName: r.toolName ?? null,
           type: r.type,
+          workflowId: ids.workflowId,
         })),
       });
     } catch {

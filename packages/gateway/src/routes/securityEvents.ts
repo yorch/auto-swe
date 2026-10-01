@@ -119,16 +119,18 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
         createdAt: t.createdAt,
         error: t.error,
         eventType: classifyEvent(t),
-        externalTicketId: t.run.workRequest?.externalTicketId ?? null,
+        // `run` is null for workflows that keep no WorkflowRun row (e.g. evals,
+        // workflow authoring); the trace still carries its Temporal workflow ID.
+        externalTicketId: t.run?.workRequest?.externalTicketId ?? null,
         id: t.id,
         inputJson: t.inputJson,
         nodeId: t.nodeId,
         outputJson: t.outputJson,
         runId: t.runId,
-        startedAt: t.run.startedAt,
+        startedAt: t.run?.startedAt ?? null,
         toolName: t.toolName,
-        workflowId: t.run.workflowId,
-        workRequestId: t.run.workRequest?.id ?? null,
+        workflowId: t.workflowId,
+        workRequestId: t.run?.workRequest?.id ?? null,
       }));
 
       return { data: events, meta: { limit, offset, total } };

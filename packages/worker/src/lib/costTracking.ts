@@ -67,6 +67,9 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'openai/gpt-5': { input: 1.25, output: 10 },
   'openai/gpt-5-5': { input: 5, output: 30 },
   'openai/gpt-5-5-pro': { input: 30, output: 180 },
+  // OpenAI — embeddings (input only)
+  'openai/text-embedding-3-large': { input: 0.13, output: 0 },
+  'openai/text-embedding-3-small': { input: 0.02, output: 0 },
 };
 
 const ZERO_PRICE: ModelPrice = { input: 0, output: 0 };
@@ -375,6 +378,17 @@ export async function recordLlmUsage(
           span.setAttribute('llm.spec_resolution_failed', true);
           span.recordException(specResolutionError as Error);
         }
+        // Per-call facts do not depend on the ledger, so they are set before it
+        // is touched: a run with no ledger row (channel, PRD, authoring) still
+        // spent tokens, and its span should say so.
+        span.setAttributes({
+          'llm.cost_pricing_known': known,
+          'llm.cost_usd': callCost,
+          'llm.input_tokens': inputTokens,
+          'llm.model': modelSpec,
+          'llm.output_tokens': outputTokens,
+          'llm.role': role,
+        });
         // Atomic increments, not read-modify-write.
         //
         // This used to read the counters, add locally, and write the sums back.
@@ -433,12 +447,6 @@ export async function recordLlmUsage(
         const newCost = updated.costUsdAccrued;
 
         span.setAttributes({
-          'llm.cost_pricing_known': known,
-          'llm.cost_usd': callCost,
-          'llm.input_tokens': inputTokens,
-          'llm.model': modelSpec,
-          'llm.output_tokens': outputTokens,
-          'llm.role': role,
           'workflow.budget_tier': updated.budgetTier ?? 'STANDARD',
           'workflow.cost_usd_cumulative': newCost,
           'workflow.tokens_input_cumulative': newInput,

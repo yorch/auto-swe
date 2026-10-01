@@ -174,8 +174,9 @@ export interface SecurityEvent {
   inputJson: unknown;
   nodeId: string;
   outputJson: unknown;
-  runId: string;
-  startedAt: string;
+  /** Null for workflows that keep no run (evals, workflow authoring). */
+  runId: string | null;
+  startedAt: string | null;
   toolName: string | null;
   workflowId: string;
   workRequestId: string | null;

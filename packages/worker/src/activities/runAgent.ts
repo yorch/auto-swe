@@ -59,6 +59,10 @@ export async function runAgent<T = unknown>(
   try {
     return await otelTracer.startActiveSpan(spanName, async (span) => {
       const start = Date.now();
+      // The trace is persisted after this span ends, so capture its context now
+      // or the rows lose their link to Tempo.
+      const { traceId, spanId } = span.spanContext();
+      tracer.setSpanContext(traceId, spanId);
       try {
         span.setAttribute('llm.model', spec.modelSpec);
         span.setAttribute('agent.key', spec.agentKey);

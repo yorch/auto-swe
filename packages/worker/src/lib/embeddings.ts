@@ -1,7 +1,10 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { prisma } from '@auto-swe/shared/db';
 import { embed } from 'ai';
+import { currentActivityType, currentAttempt, currentWorkflowId } from './activityContext.js';
 import { resolveEmbeddingConfig } from './config/resolver.js';
+import { calculateCostUsd } from './costTracking.js';
 import { parseProviderModelSpec } from './providerUtils.js';
 
 /**
@@ -92,13 +95,17 @@ export async function generateEmbeddingWithSpec(
   // OpenAI's text-embedding-3-large supports a `dimensions` option to truncate
   // from its native 3072 down to the 1536 required by the pgvector column.
   // Other providers don't accept this key, so it's only sent for OpenAI.
-  const { embedding } = await embed({
+  const start = Date.now();
+  const { embedding, usage } = await embed({
     model,
     value: text,
     ...(provider === 'openai'
       ? { providerOptions: { openai: { dimensions: REQUIRED_DIMENSIONS } } }
       : {}),
   });
+  // The SDK reports `tokens: NaN` when a provider omits usage.
+  const tokens = Number.isFinite(usage?.tokens) ? usage.tokens : null;
+  await recordEmbeddingUsage(spec, tokens, text.length, Date.now() - start);
   if (embedding.length !== REQUIRED_DIMENSIONS) {
     throw new Error(
       `Embedding model returned ${embedding.length} dimensions but the memory_items.embedding column is vector(${REQUIRED_DIMENSIONS}). ` +
@@ -106,6 +113,69 @@ export async function generateEmbeddingWithSpec(
     );
   }
   return { embedding, spec };
+}
+
+/**
+ * Record one embedding call as an `llm_response` trace row (agent key
+ * `embedding`) so its tokens and cost show up next to the run's LLM calls,
+ * and add its cost to the workflow's ledger so the run total matches.
+ *
+ * Tokens are deliberately NOT added to the ledger's token counters: those are
+ * what the per-tier budgets are measured in, and the tiers were sized for chat
+ * tokens. Outside an activity (tests, scripts) there is nothing to attribute
+ * to, so nothing is written. Best-effort: never fails the embedding.
+ */
+async function recordEmbeddingUsage(
+  spec: string,
+  tokens: number | null,
+  chars: number,
+  durationMs: number
+): Promise<void> {
+  let workflowId: string;
+  let nodeId: string;
+  let attempt: number;
+  try {
+    workflowId = currentWorkflowId();
+    nodeId = currentActivityType();
+    attempt = currentAttempt();
+  } catch {
+    return;
+  }
+  const costUsd =
+    tokens === null ? null : Math.round(calculateCostUsd(spec, tokens, 0) * 1e6) / 1e6;
+  try {
+    const run = await prisma.workflowRun.findUnique({
+      select: { id: true },
+      where: { workflowId },
+    });
+    await prisma.agentTrace.create({
+      data: {
+        agentKey: 'embedding',
+        attempt,
+        costUsd,
+        durationMs,
+        inputJson: { chars },
+        inputTokens: tokens,
+        model: spec,
+        nodeId,
+        outputTokens: tokens === null ? null : 0,
+        runId: run?.id ?? null,
+        // An embedding is its own one-record batch.
+        seq: 0,
+        toolName: 'embedding',
+        type: 'llm_response',
+        workflowId,
+      },
+    });
+    if (costUsd) {
+      await prisma.activeWorkflow.updateMany({
+        data: { costUsdAccrued: { increment: costUsd } },
+        where: { temporalWorkflowId: workflowId },
+      });
+    }
+  } catch {
+    // Usage bookkeeping is best-effort — never fail the caller's embedding.
+  }
 }
 
 /**

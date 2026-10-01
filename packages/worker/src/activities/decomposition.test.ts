@@ -115,6 +115,7 @@ vi.mock('./commitToMemory.js', () => ({
 
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { mergeBranches, resolveMergeConflict, subtaskBranchName } from './decomposition.js';
 
@@ -330,8 +331,9 @@ describe('resolveMergeConflict', () => {
     generateMock.mockImplementation(async () => {
       // Simulate the agent successfully resolving the conflict.
       conflictResolved = true;
-      return { usage: { totalTokens: 100 } };
+      return { text: 'resolved foo.ts', usage: { totalTokens: 100 } };
     });
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
 
     const result = await resolveMergeConflict({
       request: baseRequest,
@@ -342,6 +344,15 @@ describe('resolveMergeConflict', () => {
     expect(result.passed).toBe(true);
     expect(result.mergedBranches).toEqual(['auto/TICK-1/db']);
     expect(generateMock).toHaveBeenCalledTimes(1);
+    // The resolver's call is traced like every other LLM call, not just priced.
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inputJson: expect.objectContaining({ systemPrompt: expect.any(String) }),
+        outputJson: { text: 'resolved foo.ts' },
+        role: 'mergeConflictResolver',
+      })
+    );
+    addLlmResponse.mockRestore();
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
     expect(cmds).toContain('git add -A');
     expect(cmds.some((c) => c.includes('push origin'))).toBe(true);

@@ -413,38 +413,53 @@ async function mergeOneWithResolver(
       opts.tracer,
       activityCtx
     );
+    const systemPrompt =
+      MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : '');
+    const userMessage = JSON.stringify({
+      attempt,
+      conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
+      sourceBranch: source,
+      targetBranch,
+    });
+    const start = Date.now();
     try {
       await assertBudgetAvailable('decomposition');
       const result = await agent.generate(
         [
-          {
-            content: MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : ''),
-            role: 'system',
-          },
-          {
-            content: JSON.stringify({
-              attempt,
-              conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
-              sourceBranch: source,
-              targetBranch,
-            }),
-            role: 'user',
-          },
+          { content: systemPrompt, role: 'system' },
+          { content: userMessage, role: 'user' },
         ],
         { toolChoice: 'auto' }
       );
 
-      if (result.usage) {
-        // Capture attribution but discard — no tracer addLlmResponse here since
-        // the agent drives tool calls internally and we don't have text/object output
-        // to record at this point. The OTel span from recordLlmUsage still fires.
-        await recordLlmUsage(
-          currentWorkflowId(),
-          'implementer',
-          result.usage,
-          `llm.resolve_conflict.${source}.attempt_${attempt}`
-        );
-      }
+      const attribution = result.usage
+        ? await recordLlmUsage(
+            currentWorkflowId(),
+            'implementer',
+            result.usage,
+            `llm.resolve_conflict.${source}.attempt_${attempt}`
+          )
+        : undefined;
+      // The resolver's file edits are recorded as tool calls through the
+      // tracer; this row carries the call's tokens and cost.
+      opts.tracer.addLlmResponse({
+        costUsd: attribution?.costUsd,
+        durationMs: Date.now() - start,
+        inputJson: { systemPrompt, userMessage },
+        inputTokens: attribution?.inputTokens,
+        model: attribution?.modelSpec,
+        outputJson: { text: result.text || undefined },
+        outputTokens: attribution?.outputTokens,
+        role: 'mergeConflictResolver',
+      });
+    } catch (e) {
+      opts.tracer.addLlmResponse({
+        durationMs: Date.now() - start,
+        error: (e as Error).message,
+        inputJson: { systemPrompt, userMessage },
+        role: 'mergeConflictResolver',
+      });
+      throw e;
     } finally {
       await closeMcp?.();
     }
