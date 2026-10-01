@@ -37,6 +37,7 @@ import {
   useRunDetail,
 } from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
+import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
@@ -727,20 +728,10 @@ export default function RunDetailPage({ params }: PageProps) {
     [approvalSteps, id]
   );
 
-  const dagOverlay = useMemo(() => {
-    if (!run?.steps) {
-      return undefined;
-    }
-    const byNodeId: Record<string, { status: string; attempt: number }> = {};
-    for (const s of run.steps) {
-      const baseId = s.nodeId.includes('/') ? (s.nodeId.split('/').pop() ?? s.nodeId) : s.nodeId;
-      const existing = byNodeId[baseId];
-      if (!existing || s.attempt >= existing.attempt) {
-        byNodeId[baseId] = { attempt: s.attempt, status: s.status };
-      }
-    }
-    return { byNodeId };
-  }, [run?.steps]);
+  const dagOverlay = useMemo(
+    () => (run?.steps ? buildDagOverlay(run.steps) : undefined),
+    [run?.steps]
+  );
 
   const spec = useMemo<WorkflowSpec | null>(() => {
     if (!run?.specSnapshot) {
