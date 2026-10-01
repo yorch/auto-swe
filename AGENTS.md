@@ -50,20 +50,20 @@ applies to one file belongs in a skill, not in the context of every session.
 | Runtime               | Node.js                                | >=26.0.0               |
 | Package Manager       | Yarn 4 (Berry, via corepack from npm)  | 4.18.0                 |
 | Language              | TypeScript                             | 7.0.2                  |
-| HTTP Framework        | Fastify                                | 5.12.1                 |
+| HTTP Framework        | Fastify                                | 5.12.5                 |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.2 + admin-tools 1.31 + ui 2.53.3 |
-| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.22.0                 |
-| Agent Framework       | Mastra                                 | 1.60.0                 |
+| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.24.0                 |
+| Agent Framework       | Mastra                                 | 1.73.0                 |
 | LLM SDK               | Vercel AI SDK + provider adapters      | ai 7.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
-| ORM                   | Prisma                                 | 7.9.1                  |
+| ORM                   | Prisma                                 | 7.10.0                  |
 | Database              | PostgreSQL 18 + pgvector               | pgvector/pgvector:pg18 |
-| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.3.1 / 19.2.8 / 4.3.3 |
-| Public docs site      | Astro + Starlight                      | 7.3.2 / 0.42.0        |
-| Server State          | TanStack Query                         | 5.101.4                |
+| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.3.8 / 19.3.0 / 4.3.3 |
+| Public docs site      | Astro + Starlight                      | 7.3.5 / 0.42.5        |
+| Server State          | TanStack Query                         | 5.104.0                |
 | Client State          | Zustand                                | 5.0.15                 |
-| Validation            | Zod                                    | 4.4.3                  |
+| Validation            | Zod                                    | 4.6.5                  |
 | Testing               | Vitest                                 | 4.1.11                  |
-| Lint / Format         | Biome                                  | 2.5.9                 |
+| Lint / Format         | Biome                                  | 2.5.15                 |
 | Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.33.1 |
 
 ---
