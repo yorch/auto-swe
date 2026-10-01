@@ -179,7 +179,7 @@ const reviewer = defineAgent({
   key: 'reviewer',
   name: 'Reviewer',
   description: 'Reviews proposed changes.',
-  modelSpec: 'anthropic/claude-opus-4-8',
+  modelSpec: 'anthropic/claude-opus-5-5',
   toolKeys: ['readFile', 'bash'],
 });
 
