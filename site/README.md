@@ -84,8 +84,10 @@ of a real template and halts at its signal, and then **the visitor clears it** â
 request, approves the reply, signs off. Clearing the signal is the one thing on the page only a
 person can do, which is also the one thing the product never does for you. The three routes are the
 built-in `default-engineering`, `zendesk-ticket-reply`, and `four-eyes` templates, simplified for a
-panel: bookkeeping is folded into the station it serves, but no step or gate is invented, and the
-timeouts are the specs' own.
+panel: bookkeeping is folded into the station it serves, but no step or gate is invented. They live
+in [`scripts/heroRoutes.mjs`](./scripts/heroRoutes.mjs), and its test fails if a route's gates stop
+matching the places its template has a person act, if a gate's timeout is not the spec's own, or if
+the copy states a duration no gate has.
 
 Type is Overpass, which descends from Highway Gothic, the lettering of road and transit signage:
 wayfinding type, for a page about where a run goes and where it stops. One family carries display
@@ -131,7 +133,8 @@ mark but not for words).
 | [`src/styles/tokens.css`](./src/styles/tokens.css) | Colour, type, and scale, for both themes. Dark is designed, not inverted |
 | [`src/styles/custom.css`](./src/styles/custom.css) | Spends the tokens: Starlight variable mapping, then chrome and content |
 | [`src/components/Landing.astro`](./src/components/Landing.astro) | The landing page. The only hand-authored page on the site |
-| [`src/components/SignalPanel.astro`](./src/components/SignalPanel.astro) | The hero: the signal panel, its three routes, and the script that runs them |
+| [`src/components/SignalPanel.astro`](./src/components/SignalPanel.astro) | The hero: the signal panel and the script that runs it |
+| [`scripts/heroRoutes.mjs`](./scripts/heroRoutes.mjs) | The panel's three routes, as data a test holds to the template specs |
 | [`src/components/SiteFooter.astro`](./src/components/SiteFooter.astro) | Starlight's footer plus the colophon: author, license, source, and the Astro and Starlight credit |
 | [`src/components/ProductFrames.astro`](./src/components/ProductFrames.astro) | Real dashboard screens from `src/assets/screens/`, captured from a fresh local install. Retake them when those pages change; nothing flags a stale one |
 | [`astro.config.mjs`](./astro.config.mjs) | Starlight and mermaid configuration; builds the sidebar from the manifest |
@@ -165,10 +168,10 @@ one job that should not hold it.
 - **The expand control is decided once, at render.** A diagram that fits its column when the page
   loads does not gain the control if the window is later made narrower. Re-checking on resize was
   not worth an observer per diagram.
-- **The hero's routes are hand-simplified, not generated.** The use-case pages draw each template
-  in full from its spec; the panel shows three of them as a short line of stations, written in
-  `SignalPanel.astro`. A change to those three templates' steps or timeouts must be carried there
-  by hand, and nothing fails if it is not.
+- **The hero's routes are hand-simplified, and only partly checked.** Their gates and timeouts are
+  tested against the specs; their other stations are prose. A template that gains or loses an
+  ordinary step still has to be carried into `scripts/heroRoutes.mjs` by hand, and nothing fails
+  if it is not.
 - **Use-case maturity is a statement, not a measurement.** Whether a template has been exercised
   end to end is written in `useCases.mjs` from the product overview; no test establishes it.
 - **The `docs/` set is not versioned.** The site publishes the current `main`, with no archive of
