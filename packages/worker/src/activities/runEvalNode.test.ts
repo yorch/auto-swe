@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const cancel = vi.hoisted(() => ({ ctl: new AbortController() }));
+vi.mock('@temporalio/activity', () => ({
+  Context: { current: () => ({ cancellationSignal: cancel.ctl.signal }) },
+  heartbeat: vi.fn(),
+}));
+
 const mocks = vi.hoisted(() => ({
   autonomyPolicyFindFirst: vi.fn(),
   evalRubricFindFirst: vi.fn().mockResolvedValue(null),
@@ -31,6 +37,7 @@ vi.mock('../lib/evalCapture.js', () => ({ recordEvalResult: vi.fn() }));
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { EvalScorer } from '@auto-swe/shared/workflow';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
+import { recordEvalResult } from '../lib/evalCapture.js';
 import type { ScoreInput } from '../lib/scorerCombination.js';
 import { assembleScores, evalAssert, runEvalNode } from './runEvalNode.js';
 
@@ -177,5 +184,28 @@ describe('runEvalNode (pii scorer)', () => {
     expect(r.floorPassed).toBe(false);
     expect(r.score).toBe(0);
     expect(r.decision.blocked).toBe(true);
+  });
+});
+
+describe('runEvalNode (cancellation)', () => {
+  it('rethrows a cancellation that landed during scoring instead of recording results', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    cancel.ctl = new AbortController();
+    // The judge swallows every error into a neutral 0.5, an abort included — so
+    // the rubric lookup is where the cancel arrives.
+    mocks.evalRubricFindFirst.mockImplementationOnce(async () => {
+      cancel.ctl.abort(new Error('activity cancelled'));
+      return null;
+    });
+    vi.mocked(recordEvalResult).mockClear();
+
+    await expect(
+      runEvalNode({
+        scorers: [{ kind: 'judge', rubricRef: 'quality' } as EvalScorer],
+        targetValue: {},
+      })
+    ).rejects.toThrow('activity cancelled');
+    expect(recordEvalResult).not.toHaveBeenCalled();
+    cancel.ctl = new AbortController();
   });
 });

@@ -18,6 +18,30 @@ export class GatewayError extends Error {
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
 /**
+ * The request never produced a response — DNS, refused connection, TLS. Node's
+ * fetch reports all of these as a bare "fetch failed" and hides the reason in
+ * `cause`, so this names the URL and unwraps the cause into the message.
+ */
+export class NetworkError extends Error {
+  constructor(method: HttpMethod, url: string, err: unknown) {
+    super(
+      `${method} ${url} failed: ${describeCause(err)} — is the gateway running and AUTO_SWE_API_URL correct?`,
+      { cause: err }
+    );
+    this.name = 'NetworkError';
+  }
+}
+
+function describeCause(err: unknown): string {
+  const cause = err instanceof Error && err.cause !== undefined ? err.cause : err;
+  if (cause instanceof Error) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    return code && !cause.message.includes(code) ? `${code} ${cause.message}` : cause.message;
+  }
+  return String(cause);
+}
+
+/**
  * Shared fetch core: decorate with the bearer token, parse JSON, and turn a
  * non-2xx response into a typed `GatewayError`. Returns the FULL parsed envelope.
  */
@@ -27,14 +51,20 @@ async function requestEnvelope(
   path: string,
   body?: unknown
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(`${env.apiUrl}${path}`, {
-    body: body === undefined ? undefined : JSON.stringify(body),
-    headers: {
-      Authorization: `Bearer ${env.token}`,
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-    },
-    method,
-  });
+  const url = `${env.apiUrl}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: {
+        Authorization: `Bearer ${env.token}`,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      method,
+    });
+  } catch (err) {
+    throw new NetworkError(method, url, err);
+  }
   const text = await res.text();
   const json = (text ? safeParseJson(text) : {}) as Record<string, unknown> & GatewayErrorBody;
   if (!res.ok) {

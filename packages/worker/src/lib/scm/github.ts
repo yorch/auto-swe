@@ -310,6 +310,19 @@ export class GitHubScmProvider implements ScmProvider {
       }
     }
     if (!githubToken && target.trusted) {
+      // The platform credential — an App JWT, when minting an installation token
+      // — goes to this repository's own API host. Every other route to a token
+      // checks the repository's overrides first; this one reaches the minting
+      // call directly, so it checks here too rather than relying on the caller.
+      if (repo) {
+        const hosts = await repositoryHostsAllowed({
+          githubApiUrl: repo.apiUrl,
+          githubUrl: repo.baseUrl,
+        });
+        if (!hosts.ok) {
+          return `Cannot fetch CI logs — repository URL ${hosts.url} is not on an allowed GitHub host`;
+        }
+      }
       try {
         // `repo` is optional because a logs URL can arrive without one, but
         // when it is available the token must come from that repository's

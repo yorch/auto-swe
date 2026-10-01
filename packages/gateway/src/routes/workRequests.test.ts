@@ -41,7 +41,11 @@ const fetchTicketMock = vi.mocked(fetchTicket);
 describe('POST /api/v1/work-requests', () => {
   const app = Fastify();
   // Per-test control over allocateWorkflowId's view of prior executions.
-  let existingWorkflows: Array<{ currentStatus: string; temporalWorkflowId: string }> = [];
+  let existingWorkflows: Array<{
+    currentStatus: string;
+    repoId?: string | null;
+    temporalWorkflowId: string;
+  }> = [];
   const startedWorkflowIds: string[] = [];
   const snapshotUpserts: Record<string, unknown>[] = [];
   // Per-test control over the resolved template's inputSchema (P3). Null =
@@ -438,7 +442,13 @@ describe('POST /api/v1/work-requests', () => {
     // same repository and must block a second one pushing the same branch.
     repoGithubUrl = 'https://ghe.corp';
     existingWorkflows = [
-      { currentStatus: 'IMPLEMENTING', temporalWorkflowId: 'eng-org-test-JIRA-1' },
+      {
+        currentStatus: 'IMPLEMENTING',
+        // Ledger rows always carry their repository; the legacy id only blocks
+        // for the repository it belongs to.
+        repoId: 'repo-1',
+        temporalWorkflowId: 'eng-org-test-JIRA-1',
+      },
     ];
     const res = await app.inject({
       headers: { authorization: 'Bearer test-token' },
@@ -501,7 +511,8 @@ describe('POST /api/v1/work-requests', () => {
       url: '/api/v1/work-requests',
     });
     expect(res.statusCode).toBe(201);
-    expect(snapshotUpserts).toHaveLength(1);
+    // Enrichment runs after the response, so wait for it rather than assuming it.
+    await vi.waitFor(() => expect(snapshotUpserts).toHaveLength(1));
     const upsert = snapshotUpserts[0] as {
       create: { rawTicketData: { title: string }; workRequestId: string };
       where: { workRequestId: string };
@@ -513,6 +524,33 @@ describe('POST /api/v1/work-requests', () => {
       owner: 'org',
       repo: 'test',
     });
+  });
+
+  it('answers 201 without waiting for a slow tracker', async () => {
+    existingWorkflows = [];
+    snapshotUpserts.length = 0;
+    resolveIssueTrackerConfigMock.mockResolvedValueOnce({
+      allowPrivateNetwork: false,
+      apiToken: 'tok',
+      baseUrl: 'https://acme.atlassian.net',
+      email: 'bot@acme.com',
+      provider: 'jira',
+    });
+    // A tracker that never answers must not hold the submission open.
+    fetchTicketMock.mockReturnValueOnce(new Promise(() => undefined));
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-SLOW',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(snapshotUpserts).toHaveLength(0);
   });
 
   it('still returns 201 and writes no snapshot when the tracker fetch fails', async () => {

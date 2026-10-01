@@ -26,8 +26,14 @@ export interface CreateMcpConnectionBody {
 const BASE = '/api/v1/platform/mcp-connections';
 const KEY = ['admin-mcp-connections'];
 
-export function useMcpConnections() {
+/**
+ * The platform MCP connection list — `GET /platform/mcp-connections` is
+ * ADMIN-only, so a caller rendering for a non-ADMIN passes `enabled: false`
+ * rather than firing a request that can only 403.
+ */
+export function useMcpConnections(opts: { enabled?: boolean } = {}) {
   return useQuery({
+    enabled: opts.enabled ?? true,
     queryFn: () => api.get<{ data: McpConnectionRow[] }>(BASE).then((r) => r.data),
     queryKey: KEY,
   });

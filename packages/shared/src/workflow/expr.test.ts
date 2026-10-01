@@ -22,6 +22,43 @@ describe('checkExprSyntax', () => {
     expect(checkExprSyntax('a.b.c == true')).toBeNull();
     expect(checkExprSyntax('nodes.impl.output.n + 1 > 2')).toBeNull();
   });
+
+  it('reports syntax errors that sit to the right of a runtime type error', () => {
+    // An evaluating check stopped at `count >= 3` (undefined operand) and never
+    // saw these.
+    expect(checkExprSyntax('count >= 3 && (a')).toMatch(/expected \)/);
+    expect(checkExprSyntax('count >= 3 )')).toMatch(/trailing/);
+    expect(checkExprSyntax('x + 1 foo(')).toMatch(/trailing/);
+    expect(checkExprSyntax('a || b.c[')).toMatch(/unterminated \[/);
+    expect(checkExprSyntax('a ?? b.__proto__')).toMatch(/reserved segment/);
+  });
+});
+
+describe('short-circuit evaluation', () => {
+  it('does not evaluate the right side of && when the left is falsy', () => {
+    expect(evalExpr('a != null && a.count > 0', { a: null })).toBe(false);
+    expect(evalExpr('a != null && a.count > 0', { a: { count: 2 } })).toBe(true);
+    expect(evalExpr('false && missing > 1 && other < 2', {})).toBe(false);
+  });
+
+  it('does not evaluate the right side of || when the left is truthy', () => {
+    expect(evalExpr('a == null || a.count > 0', { a: null })).toBe(true);
+    expect(evalExpr('true || missing > 1', {})).toBe(true);
+    expect(evalExpr('false || 1 > 0', {})).toBe(true);
+  });
+
+  it('does not evaluate the right side of ?? when the left is present', () => {
+    expect(evalExpr('a ?? missing + 1', { a: 5 })).toBe(5);
+    expect(evalExpr('a ?? 7', {})).toBe(7);
+  });
+
+  it('still evaluates (and throws on) the right side when it is needed', () => {
+    expect(() => evalExpr('true && missing > 1', {})).toThrow(/requires a number/);
+  });
+
+  it('still rejects syntax errors inside a short-circuited branch', () => {
+    expect(() => evalExpr('false && (a', {})).toThrow(/expected \)/);
+  });
 });
 
 describe('lookupPath', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { launchTrackedWorkflow } from './workflowLaunch.js';
+import { allocateWorkflowId, launchTrackedWorkflow } from './workflowLaunch.js';
 
 function uniqueViolation() {
   return Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
@@ -212,5 +212,74 @@ describe('launchTrackedWorkflow', () => {
       // The original start error wins — a stuck row is the recoverable outcome.
     ).rejects.toThrow('temporal unreachable');
     expect(log.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('allocateWorkflowId — the id from before repository ids carried a host', () => {
+  const NEW = 'eng-ghe.corp-acme-api-T-1';
+  const LEGACY = 'eng-acme-api-T-1';
+  const MINE = { externalTicketId: 'T-1', repoId: 'repo-mine' };
+  const prismaWith = (
+    rows: Array<{
+      currentStatus: string;
+      repoId: string | null;
+      temporalWorkflowId: string;
+      workRequest: { externalTicketId: string } | null;
+    }>
+  ) =>
+    ({
+      activeWorkflow: { findMany: async () => rows },
+    }) as never;
+  const row = (temporalWorkflowId: string, currentStatus: string, repoId: string | null) => ({
+    currentStatus,
+    repoId,
+    temporalWorkflowId,
+    workRequest: { externalTicketId: 'T-1' },
+  });
+
+  it('is blocked by this repository’s execution still running under the legacy id', async () => {
+    const result = await allocateWorkflowId(
+      prismaWith([row(LEGACY, 'IMPLEMENTING', 'repo-mine')]),
+      NEW,
+      MINE,
+      LEGACY
+    );
+    expect(result).toEqual({ conflictWorkflowId: LEGACY });
+  });
+
+  it('is blocked by a legacy rerun still running', async () => {
+    const result = await allocateWorkflowId(
+      prismaWith([row(`${LEGACY}-r2`, 'IMPLEMENTING', 'repo-mine')]),
+      NEW,
+      MINE,
+      LEGACY
+    );
+    expect(result).toEqual({ conflictWorkflowId: `${LEGACY}-r2` });
+  });
+
+  it('is not blocked by a legacy execution that has finished', async () => {
+    const result = await allocateWorkflowId(
+      prismaWith([row(LEGACY, 'COMPLETED', 'repo-mine')]),
+      NEW,
+      MINE,
+      LEGACY
+    );
+    expect(result).toEqual({ isRerun: false, workflowId: NEW });
+  });
+
+  it('is not blocked by ANOTHER repository whose legacy id happens to be the same string', async () => {
+    // `acme`/`api` and a differently-split owner/name can spell the same id.
+    const result = await allocateWorkflowId(
+      prismaWith([row(LEGACY, 'IMPLEMENTING', 'repo-someone-else')]),
+      NEW,
+      MINE,
+      LEGACY
+    );
+    expect(result).toEqual({ isRerun: false, workflowId: NEW });
+  });
+
+  it('ignores a legacy id equal to the base id (no host override)', async () => {
+    const result = await allocateWorkflowId(prismaWith([]), LEGACY, MINE, LEGACY);
+    expect(result).toEqual({ isRerun: false, workflowId: LEGACY });
   });
 });

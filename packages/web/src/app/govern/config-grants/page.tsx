@@ -71,6 +71,7 @@ export default function GovernConfigGrantsPage() {
     }
   };
 
+  // Awaited so ConfirmModal keeps the dialog open and shows a failed revoke.
   const confirmRevoke = async () => {
     if (revokeTarget) {
       await revokeGrant.mutateAsync(revokeTarget.id);

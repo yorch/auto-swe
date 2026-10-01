@@ -7,6 +7,7 @@ import {
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { workflowTemplateRoutes } from './workflowTemplates.js';
 
 type Mutable = Record<string, unknown>;
@@ -45,14 +46,28 @@ function buildApp(state: {
     status: string;
     startedAt: Date;
     endedAt: Date | null;
+    /** Non-admin viewers who pass run visibility; unset = everyone. */
+    visibleTo?: string[];
   }>;
   userRole?: string;
+  /** Every run-visibility predicate the last-run lookup passed, for assertions. */
+  runVisibilityTerms?: Mutable[];
   teamRole?: string;
   teamAllowlist?: string[];
 }): FastifyInstance {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+
+  const runVisible = (r: (typeof state.runs)[number], where?: Mutable): boolean => {
+    const terms = where?.AND as Mutable[] | undefined;
+    if (!terms) {
+      return true;
+    }
+    state.runVisibilityTerms?.push(...terms);
+    const restricted = terms.some((t) => Object.keys(t).length > 0);
+    return !restricted || r.visibleTo === undefined || r.visibleTo.includes('user-1');
+  };
 
   app.decorate('auth', {
     verifyAccessToken: () => ({
@@ -141,6 +156,9 @@ function buildApp(state: {
         },
       },
       workflowRun: {
+        // The last-run lookup nests the caller's run-visibility predicate under
+        // `AND`. `{}` is ADMIN (sees all); anything else hides runs whose
+        // `visibleTo` excludes the caller.
         count: async ({ where }: { where?: Mutable }) =>
           state.runs.filter((r) => !where?.templateId || r.templateId === where.templateId).length,
         findMany: async ({ where, take }: { where?: Mutable; take?: number }) => {
@@ -152,8 +170,10 @@ function buildApp(state: {
               ? (orClauses as Array<{ templateId: string; startedAt: Date }>)
               : undefined;
           if (keys) {
-            return state.runs.filter((r) =>
-              keys.some((k) => k.templateId === r.templateId && k.startedAt === r.startedAt)
+            return state.runs.filter(
+              (r) =>
+                runVisible(r, where) &&
+                keys.some((k) => k.templateId === r.templateId && k.startedAt === r.startedAt)
             );
           }
           const filtered = state.runs.filter((r) => {
@@ -169,7 +189,7 @@ function buildApp(state: {
           const ids = (where?.templateId as { in?: string[] } | undefined)?.in;
           const max = new Map<string, Date>();
           for (const r of state.runs) {
-            if (ids && !ids.includes(r.templateId)) {
+            if ((ids && !ids.includes(r.templateId)) || !runVisible(r, where)) {
               continue;
             }
             const prev = max.get(r.templateId);
@@ -712,6 +732,63 @@ describe('workflow-templates routes', () => {
     expect(first.lastRun?.status).toBe('RUNNING');
   });
 
+  it('reports the newest run the caller may see as lastRun, not another team’s', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const before = state.runs.length;
+    state.runs.push(
+      {
+        endedAt: null,
+        id: 'run-mine',
+        startedAt: new Date('2030-01-01T00:00:00Z'),
+        status: 'SUCCESS',
+        templateId: tpl.id,
+        visibleTo: ['user-1'],
+      },
+      {
+        endedAt: null,
+        id: 'run-other-team',
+        startedAt: new Date('2030-01-02T00:00:00Z'),
+        status: 'FAILED',
+        templateId: tpl.id,
+        visibleTo: ['user-other'],
+      }
+    );
+    state.runVisibilityTerms = [];
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: '/api/v1/workflow-templates',
+      });
+      expect(res.statusCode).toBe(200);
+      const card = res.json().data.find((t: { id: string }) => t.id === tpl.id);
+      expect(card.lastRun).toMatchObject({ id: 'run-mine', status: 'SUCCESS' });
+      // Both queries carry the real predicate, not a stand-in.
+      expect(state.runVisibilityTerms.length).toBeGreaterThanOrEqual(2);
+      for (const term of state.runVisibilityTerms) {
+        expect(term).toEqual(
+          buildWorkflowRunVisibilityFilter({ role: 'LEAD', sub: 'user-1' }, undefined)
+        );
+      }
+
+      state.userRole = 'ADMIN';
+      const admin = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: '/api/v1/workflow-templates',
+      });
+      const adminCard = admin.json().data.find((t: { id: string }) => t.id === tpl.id);
+      expect(adminCard.lastRun).toMatchObject({ id: 'run-other-team' });
+    } finally {
+      state.userRole = undefined;
+      state.runVisibilityTerms = undefined;
+      state.runs.splice(before);
+    }
+  });
+
   it('creates a new version with monotonically increasing number', async () => {
     const tpl = state.templates[0];
     if (!tpl) {
@@ -829,6 +906,97 @@ describe('workflow-templates routes', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error?.code).toBe('EXPERIMENT_VERSION_NOT_FOUND');
+  });
+
+  it('refuses an unreviewed AI-generated version as the experiment arm', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const key = `${tpl.id}:2`;
+    const stored = state.versions.get(key);
+    if (!stored) {
+      throw new Error('expected version 2');
+    }
+    state.versions.set(key, {
+      ...stored,
+      generatedBy: 'workflow_author',
+      reviewedAt: null,
+    } as never);
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { experimentSplit: 25, experimentVersion: 2 },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error?.code).toBe('REVIEW_REQUIRED');
+    } finally {
+      state.versions.set(key, stored);
+    }
+  });
+
+  it('forbids reviewing a generated version you generated yourself', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const key = `${tpl.id}:2`;
+    const stored = state.versions.get(key);
+    if (!stored) {
+      throw new Error('expected version 2');
+    }
+    // The harness user is `user-1`, the same id the version records as its creator.
+    state.versions.set(key, {
+      ...stored,
+      createdBy: 'user-1',
+      generatedBy: 'workflow_author',
+    } as never);
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'POST',
+        url: `/api/v1/workflow-templates/${tpl.id}/versions/2/review`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error?.code).toBe('SELF_REVIEW_FORBIDDEN');
+    } finally {
+      state.versions.set(key, stored);
+    }
+  });
+
+  it('requires LEAD or ADMIN membership on the owning team to write a template', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const prisma = app.prisma as unknown as {
+      workflowTemplate: { findFirst: (args: { where?: Mutable }) => Promise<unknown> };
+    };
+    const original = prisma.workflowTemplate.findFirst;
+    const wheres: Mutable[] = [];
+    prisma.workflowTemplate.findFirst = async (args) => {
+      wheres.push(args.where ?? {});
+      return original(args);
+    };
+    try {
+      await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { description: 'renamed' },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+    } finally {
+      prisma.workflowTemplate.findFirst = original;
+    }
+    expect(wheres[0]).toMatchObject({
+      team: {
+        isActive: true,
+        memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: 'user-1' } },
+      },
+      teamId: { not: null },
+    });
   });
 
   it('accepts a valid experiment config and round-trips it on detail', async () => {

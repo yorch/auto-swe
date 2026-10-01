@@ -5,6 +5,7 @@ import { AppConfigScript } from '@/components/AppConfigScript';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppShell } from '@/components/layout/AppShell';
 import { Providers } from '@/components/Providers';
+import { publicApiUrl, temporalUiUrl } from '@/lib/env';
 
 const inter = Inter({
   display: 'swap',
@@ -33,10 +34,8 @@ export const dynamic = 'force-dynamic';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const appConfig = JSON.stringify({
-    apiUrl: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080',
-    temporalUiUrl:
-      process.env.NEXT_PUBLIC_TEMPORAL_UI_URL ??
-      (process.env.NODE_ENV !== 'production' ? 'http://localhost:8233' : ''),
+    apiUrl: publicApiUrl(),
+    temporalUiUrl: temporalUiUrl(),
   })
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')

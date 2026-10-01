@@ -7,6 +7,7 @@ import type {
 import { apiRequest, apiRequestFull, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { parseFlags } from '../lib/flags.js';
+import { sleep } from '../lib/time.js';
 
 const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regression gate
 
@@ -15,7 +16,8 @@ const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regressio
   evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=N]
                                       Query captured eval signals
   evals run <dataset-slug> --candidate=<ref> --against=<ref>
-                                      Start the nightly regression gate; exits 1 on a regression
+                                      Start the nightly regression gate; exits 0 on SUCCESS,
+                                      1 on a regression, 2 when the run fails without a verdict
 `;
 
 export async function runEvalsCommand(args: string[], env: CliEnv): Promise<number> {
@@ -111,7 +113,7 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
     if (run.status !== 'RUNNING') {
       const summary = (run.summary ?? {}) as { summary?: string };
       process.stdout.write(`${summary.summary ?? run.status}\n`);
-      return run.status === 'REGRESSION' ? 1 : 0;
+      return evalRunExitCode(run.status);
     }
     if (Date.now() > deadline) {
       process.stderr.write('Timed out waiting for the eval run\n');
@@ -121,8 +123,19 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Only SUCCESS passes the gate. REGRESSION is the documented 1; any other
+ * terminal status (FAILED — the harness crashed or was cancelled) means no
+ * verdict was reached, which a CI gate must not read as a pass, so it is 2.
+ */
+export function evalRunExitCode(status: string): number {
+  if (status === 'SUCCESS') {
+    return 0;
+  }
+  if (status === 'REGRESSION') {
+    return 1;
+  }
+  return 2;
 }
 
 async function cmdResults(rest: string[], env: CliEnv): Promise<number> {

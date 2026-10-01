@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CiPollDeadlineError, type CiPollDeps, runCiPollLoop } from './ciPollLoop.js';
+import {
+  CI_POLL_MAX_DEADLINE_SEC,
+  CI_POLL_MAX_INTERVAL_SEC,
+  CiPollDeadlineError,
+  type CiPollDeps,
+  CiPollFetchError,
+  normalizeCiPollOpts,
+  permanentFetchErrorStatus,
+  runCiPollLoop,
+} from './ciPollLoop.js';
 import type { CiVerdict } from './ciStatus.js';
 
 /**
@@ -76,5 +85,78 @@ describe('runCiPollLoop', () => {
     await expect(runCiPollLoop(deps, { ...opts, deadlineSec: 45 })).rejects.toBeInstanceOf(
       CiPollDeadlineError
     );
+  });
+});
+
+describe('runCiPollLoop — permanent fetch errors', () => {
+  const httpError = (status: number, extra: Record<string, unknown> = {}) =>
+    Object.assign(new Error(`HTTP ${status}`), { status, ...extra });
+
+  it('tolerates a 404 inside the grace window (a just-pushed SHA)', async () => {
+    const { deps } = makeDeps([httpError(404), httpError(404), { verdict: 'passed' }]);
+    await expect(runCiPollLoop(deps, opts)).resolves.toMatchObject({ passed: true });
+    expect(deps.fetchStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it('ends the loop on a 404 that outlasts the grace window', async () => {
+    // graceSec=60, intervalSec=15 → 404s at 0,15,30,45 are tolerated; 60 ends it.
+    const { deps } = makeDeps([httpError(404)]);
+    await expect(runCiPollLoop(deps, opts)).rejects.toMatchObject({ status: 404 });
+    expect(deps.fetchStatus).toHaveBeenCalledTimes(5);
+  });
+
+  it.each([401, 403])(
+    'ends the loop on HTTP %i immediately instead of polling to the deadline',
+    async (status) => {
+      const { deps } = makeDeps([httpError(status)]);
+      await expect(runCiPollLoop(deps, opts)).rejects.toBeInstanceOf(CiPollFetchError);
+      expect(deps.sleep).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps polling through a rate-limit 403 and a 5xx', async () => {
+    const { deps } = makeDeps([
+      httpError(403, { response: { headers: { 'x-ratelimit-remaining': '0' } } }),
+      httpError(502),
+      { verdict: 'passed' },
+    ]);
+    await expect(runCiPollLoop(deps, opts)).resolves.toMatchObject({ passed: true });
+    expect(deps.fetchStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it('classifies statuses', () => {
+    expect(permanentFetchErrorStatus(httpError(404))).toBe(404);
+    expect(permanentFetchErrorStatus(new Error('You have exceeded a secondary rate limit'))).toBe(
+      null
+    );
+    expect(permanentFetchErrorStatus(httpError(403, { message: 'API rate limit exceeded' }))).toBe(
+      null
+    );
+    expect(permanentFetchErrorStatus(httpError(500))).toBe(null);
+    expect(permanentFetchErrorStatus('boom')).toBe(null);
+  });
+});
+
+describe('normalizeCiPollOpts', () => {
+  const fallback = { deadlineSec: 14_400, graceSec: 60, intervalSec: 15 };
+
+  it('fills unbound or non-positive inputs from the fallback instead of producing NaN', () => {
+    expect(
+      normalizeCiPollOpts(
+        { deadlineSec: undefined, graceSec: Number.NaN, intervalSec: 0 },
+        fallback
+      )
+    ).toEqual(fallback);
+  });
+
+  it('clamps the interval below the heartbeat timeout and the deadline below start-to-close', () => {
+    const out = normalizeCiPollOpts(
+      { deadlineSec: 10 * 3600, graceSec: 30, intervalSec: 600 },
+      fallback
+    );
+    expect(out.intervalSec).toBe(CI_POLL_MAX_INTERVAL_SEC);
+    expect(out.deadlineSec).toBe(CI_POLL_MAX_DEADLINE_SEC);
+    expect(CI_POLL_MAX_DEADLINE_SEC).toBeLessThan(6 * 3600);
+    expect(out.graceSec).toBe(30);
   });
 });

@@ -99,15 +99,15 @@ export interface GitHubConfig {
 export interface GitHubConfigInput {
   token?: string;
   webhookSecret?: string;
-  oauthClientId?: string;
+  oauthClientId?: string | null;
   oauthClientSecret?: string;
-  baseUrl?: string;
-  apiUrl?: string;
-  appId?: string;
-  appClientId?: string;
+  baseUrl?: string | null;
+  apiUrl?: string | null;
+  appId?: string | null;
+  appClientId?: string | null;
   appClientSecret?: string;
   appPrivateKey?: string;
-  appInstallationId?: string;
+  appInstallationId?: string | null;
   authMode?: string | null;
 }
 
@@ -129,7 +129,7 @@ export interface SlackConfig {
 
 export interface SlackConfigInput {
   botToken?: string;
-  clientId?: string;
+  clientId?: string | null;
   clientSecret?: string;
   signingSecret?: string;
 }
@@ -157,12 +157,12 @@ export interface StorageConfig {
 
 export interface StorageConfigInput {
   backend?: StorageBackend;
-  s3Bucket?: string;
-  s3Region?: string;
-  s3Endpoint?: string;
-  s3Prefix?: string;
+  s3Bucket?: string | null;
+  s3Region?: string | null;
+  s3Endpoint?: string | null;
+  s3Prefix?: string | null;
   s3ForcePathStyle?: boolean;
-  awsAccessKeyId?: string;
+  awsAccessKeyId?: string | null;
   awsSecretAccessKey?: string;
 }
 
@@ -252,7 +252,7 @@ export interface GoogleOAuthConfig {
 }
 
 export interface GoogleOAuthConfigInput {
-  clientId?: string;
+  clientId?: string | null;
   clientSecret?: string;
 }
 
@@ -272,8 +272,8 @@ export interface OktaOAuthConfig {
 }
 
 export interface OktaOAuthConfigInput {
-  issuer?: string;
-  clientId?: string;
+  issuer?: string | null;
+  clientId?: string | null;
   clientSecret?: string;
 }
 

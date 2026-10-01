@@ -133,3 +133,103 @@ export function chunkScanText(
   }
   return chunks;
 }
+
+/**
+ * Canonical spelling of a shell command for scanning: line continuations
+ * (`\` + newline, which the shell deletes) are removed, every run of
+ * horizontal whitespace becomes one space, and every whitespace run that
+ * contains a newline becomes one newline.
+ *
+ * None of that changes what the shell runs, and all of it is free padding: a
+ * `curl` followed by 3,500 spaces (or 3,500 continuation lines) before its
+ * `-T /etc/passwd` is one upload, but the match is longer than any fixed window
+ * overlap. Scanning this form takes the padding away.
+ */
+export function canonicalizeShellForScan(command: string): string {
+  return command
+    .replace(/\\\r?\n/g, '')
+    .replace(/[^\S\n]*\n\s*/g, '\n')
+    .replace(/[^\S\n]+/g, ' ');
+}
+
+/** Shell list/pipe operators — where one simple command ends and the next begins. */
+const SHELL_SEGMENT_SEPARATOR = /[;&|]/g;
+
+/**
+ * Windows for a BLOCKING shell scan that follow command structure instead of
+ * fixed offsets.
+ *
+ * {@link chunkScanText} misses any match longer than its overlap that straddles
+ * a window edge, and the built-in shell rules are deliberately unbounded within
+ * a command (`\bcurl\b<rest of segment>\s-T\s`): their match runs from the
+ * command word to the flag, however far apart. So here every window starts at a
+ * segment boundary (on the `;`/`&`/`|` itself, so a rule that looks at the
+ * preceding operator still sees it), holds WHOLE segments, and carries the whole
+ * next segment — or `overlap` characters, whichever is longer — of what follows
+ * (a `| sh` after a download, a `| … curl` after an encoder). A segment longer than
+ * `windowSize` becomes a window on its own, uncut — a per-window budget still
+ * bounds its cost, and a blocking scanner fails closed if it overruns.
+ *
+ * Guarantees, for every match: it is seen if it lies within two adjacent
+ * segments, within one segment plus `overlap` characters beyond it, or if it is
+ * no longer than `overlap`. Nothing
+ * is truncated: every character lands in at least one window.
+ */
+export function shellScanWindows(
+  command: string,
+  windowSize = MAX_SCAN_TEXT_LENGTH,
+  overlap = SCAN_CHUNK_OVERLAP
+): string[] {
+  if (command.length <= windowSize) {
+    return [command];
+  }
+  // Segment starts: 0 and the index of every separator character.
+  const starts: number[] = [0];
+  SHELL_SEGMENT_SEPARATOR.lastIndex = 0;
+  for (const m of command.matchAll(SHELL_SEGMENT_SEPARATOR)) {
+    if (m.index > 0) {
+      starts.push(m.index);
+    }
+  }
+  starts.push(command.length);
+
+  const windows: string[] = [];
+  let i = 0;
+  while (i < starts.length - 1) {
+    const from = starts[i] as number;
+    // Always take at least one segment, then as many whole ones as still fit.
+    let j = i + 1;
+    while (j < starts.length - 1 && (starts[j + 1] as number) - from <= windowSize) {
+      j++;
+    }
+    const to = starts[j] as number;
+    // Carry the whole NEXT segment (skipping bare-operator segments such as the
+    // second `|` of `||`), not just `overlap` characters of it: a rule that
+    // spans one operator (`tar … | <padding> curl`) would otherwise be missed
+    // when the padding pushes its tail past the overlap at a window edge.
+    let k = j;
+    while (k < starts.length - 1 && (starts[k + 1] as number) - (starts[k] as number) <= 1) {
+      k++;
+    }
+    const nextEnd = starts[Math.min(k + 1, starts.length - 1)] as number;
+    windows.push(command.slice(from, Math.min(command.length, Math.max(to + overlap, nextEnd))));
+    i = j;
+  }
+  return windows;
+}
+
+/**
+ * Everything a blocking shell scan must look at: the command as written and,
+ * when it differs, its {@link canonicalizeShellForScan} form — each split by
+ * {@link shellScanWindows}. Duplicate windows are dropped.
+ */
+export function shellScanTargets(command: string): string[] {
+  const out = new Set(shellScanWindows(command));
+  const canonical = canonicalizeShellForScan(command);
+  if (canonical !== command) {
+    for (const w of shellScanWindows(canonical)) {
+      out.add(w);
+    }
+  }
+  return [...out];
+}

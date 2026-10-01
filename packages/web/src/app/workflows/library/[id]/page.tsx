@@ -35,6 +35,7 @@ import {
 } from '@/components/workflow/templateNav';
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { useLedTeamIds } from '@/hooks/useTeams';
 import {
   useCreateWorkflowVersion,
   useExplainWorkflowTemplate,
@@ -51,6 +52,7 @@ import {
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
+import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { formatCost, formatDuration, formatPercent, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -557,8 +559,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const createVersion = useCreateWorkflowVersion(id ?? '');
   const promoteVersion = usePromoteWorkflowVersion(id ?? '');
   const reviewVersion = useReviewWorkflowVersion(id ?? '');
-  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const canManage = role === 'ADMIN' || role === 'LEAD';
+  // Every write here (new version, promote, review, refine, metadata, webhook)
+  // is a LEAD route on the gateway that also requires LEAD membership on the
+  // template's owning team (templateWriteFilter) — a GLOBAL template is
+  // ADMIN-only. Anyone else gets a read-only view.
+  const platformRole = useAuthStore((s) => s.user?.role);
+  const ledTeamIds = useLedTeamIds();
+  const canManage = canWriteTeamResource(platformRole, template?.team?.id, ledTeamIds);
 
   const [mode, setMode] = useState<ViewMode>('view');
   const [editorSpec, setEditorSpec] = useState<WorkflowSpec | null>(null);
@@ -727,13 +734,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
   const editorActions = (
     <>
-      {mode === 'view' && (
+      {mode === 'view' && canManage && (
         <Button onClick={() => setMode('edit')} size="sm" variant="secondary">
           Edit
         </Button>
       )}
       <Button
-        onClick={() => setMode(mode === 'json' ? 'edit' : 'json')}
+        onClick={() => setMode(mode === 'json' ? (canManage ? 'edit' : 'view') : 'json')}
         size="sm"
         variant={mode === 'json' ? 'primary' : 'ghost'}
       >
@@ -755,6 +762,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
         </Button>
       )}
       {!isDirty &&
+        canManage &&
         effectiveVersion !== null &&
         effectiveVersion !== template.activeVersion &&
         (selectedNeedsReview ? (
@@ -809,9 +817,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   Refine with AI
                 </Button>
               )}
-              <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
-                Edit metadata
-              </Button>
+              {canManage && (
+                <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
+                  Edit metadata
+                </Button>
+              )}
             </>
           }
           chapter="§ Workflows"
@@ -894,6 +904,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   compact
                   id="spec-json"
                   onChange={(e) => handleJsonChange(e.target.value)}
+                  readOnly={!canManage}
                   spellCheck={false}
                   value={editorJson}
                 />
@@ -1016,9 +1027,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
             <Card variant="inset">
               <SectionHeader
                 actions={
-                  <Button onClick={() => setEditSchemaOpen(true)} size="sm" variant="ghost">
-                    Edit
-                  </Button>
+                  canManage ? (
+                    <Button onClick={() => setEditSchemaOpen(true)} size="sm" variant="ghost">
+                      Edit
+                    </Button>
+                  ) : undefined
                 }
                 number={railNumber('schema')}
                 title="Run schema"

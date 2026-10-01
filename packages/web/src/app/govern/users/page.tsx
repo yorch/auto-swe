@@ -16,6 +16,7 @@ import { CreateUserModal } from '@/components/users/CreateUserModal';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 import { cn } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
@@ -30,6 +31,7 @@ export default function UsersPage() {
   const [creatingDirect, setCreatingDirect] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approveError, setApproveError] = useState<string | null>(null);
+  const currentUserId = useAuthStore((s) => s.user?.sub ?? null);
   const [suspendTarget, setSuspendTarget] = useState<{ email: string; id: string } | null>(null);
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
@@ -238,13 +240,20 @@ export default function UsersPage() {
                       .join(', ') || <span className="text-paper-500">—</span>}
                   </Td>
                   <Td className="px-4 py-3 text-right">
-                    <Button
-                      onClick={() => setSuspendTarget({ email: u.email, id: u.id })}
-                      size="sm"
-                      variant="danger"
-                    >
-                      Suspend
-                    </Button>
+                    {/* Suspending yourself would lock you out mid-session. */}
+                    {u.id === currentUserId ? (
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                        you
+                      </span>
+                    ) : (
+                      <Button
+                        onClick={() => setSuspendTarget({ email: u.email, id: u.id })}
+                        size="sm"
+                        variant="danger"
+                      >
+                        Suspend
+                      </Button>
+                    )}
                   </Td>
                 </TRow>
               ))}

@@ -20,7 +20,9 @@ import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Tabl
 import { Textarea } from '@/components/ui/Textarea';
 import { useRemoveTeamMember, useTeam, useUpdateTeam, useUpdateTeamMember } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { isRole } from '@/lib/roles';
 import { validateRouteParam } from '@/lib/routeParams';
+import { teamPermissions } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
 const SUBTITLE = 'Members, repositories, sandbox allowlists and agent overrides for one team.';
@@ -61,16 +63,17 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const { data: team, error, isError, isLoading } = useTeam(id ?? '');
   const updateMember = useUpdateTeamMember(id ?? '');
   const removeMember = useRemoveTeamMember(id ?? '');
-  const platformRole = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
+  const platformRole = useAuthStore((s) => s.user?.role);
   const userId = useAuthStore((s) => s.user?.sub ?? null);
-  const canManage = platformRole === 'ADMIN' || platformRole === 'LEAD';
-  // The model-config team-scoped endpoints require team-ADMIN role (or
-  // platform ADMIN as bypass). Compute the user's actual team-role here so
-  // we don't render a section that 403s on every API call. Platform LEAD
-  // without a team-ADMIN membership sees nothing.
+  // Offer only what the gateway will accept from this caller on this team, so
+  // no control renders that 403s on use — see teamPermissions for the rules.
   const ownTeamRole = team?.memberships?.find((m) => m.user?.id === userId)?.role;
-  const canManageTeamConfig = platformRole === 'ADMIN' || ownTeamRole === 'ADMIN';
-
+  const {
+    canManageMembers: canManage,
+    grantableRoles,
+    canEditAllowlists,
+    canManageTeamAgents,
+  } = teamPermissions(platformRole, ownTeamRole);
   const updateTeam = useUpdateTeam(id ?? '');
 
   const [editing, setEditing] = useState(false);
@@ -156,29 +159,34 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                   <Td className="py-2 pr-3">{m.user?.email}</Td>
                   <Td className="py-2 pr-3 text-paper-400">{m.user?.role}</Td>
                   <Td className="py-2 pr-3">
-                    {canManage && m.user?.id ? (
+                    {canManage &&
+                    m.user?.id &&
+                    isRole(m.role) &&
+                    grantableRoles.includes(m.role) ? (
                       <Select
+                        aria-label={`Team role for ${m.user.email ?? 'member'}`}
                         className="w-auto"
                         compact
-                        onChange={(e) =>
-                          m.user?.id &&
-                          (() => {
-                            const role = e.target.value;
-                            if (role === 'ADMIN' || role === 'LEAD' || role === 'ENGINEER') {
-                              setMemberError(null);
-                              updateMember
-                                .mutateAsync({ role, userId: m.user.id })
-                                .catch((err) =>
-                                  setMemberError(errMsg(err, 'Failed to change role'))
-                                );
-                            }
-                          })()
-                        }
+                        disabled={updateMember.isPending}
+                        onChange={(e) => {
+                          const role = e.target.value;
+                          const memberId = m.user?.id;
+                          if (memberId && isRole(role)) {
+                            setMemberError(null);
+                            updateMember
+                              .mutateAsync({ role, userId: memberId })
+                              .catch((err) =>
+                                setMemberError(errMsg(err, 'Failed to change the member role'))
+                              );
+                          }
+                        }}
                         value={m.role}
                       >
-                        <option value="ENGINEER">ENGINEER</option>
-                        <option value="LEAD">LEAD</option>
-                        <option value="ADMIN">ADMIN</option>
+                        {grantableRoles.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
                       </Select>
                     ) : (
                       m.role
@@ -251,11 +259,12 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         </Card>
       </div>
 
-      {canManageTeamConfig && <ShellAllowlistEditor teamId={id} />}
-      {canManageTeamConfig && <EgressAllowlistEditor teamId={id} />}
-      {canManageTeamConfig && <TeamAgentLibrarySection teamId={id} />}
+      {canEditAllowlists && <ShellAllowlistEditor teamId={id} />}
+      {canEditAllowlists && <EgressAllowlistEditor teamId={id} />}
+      {canManageTeamAgents && <TeamAgentLibrarySection teamId={id} />}
 
-      {canManageTeamConfig && (
+      {/* The persona is a field on the team itself: PATCH /teams/:id, team LEAD. */}
+      {canManage && (
         <Card>
           <CardHeader>
             <CardTitle eyebrow="Channel assistant">Default persona</CardTitle>
@@ -311,6 +320,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       />
       <AddMemberModal
         existingUserIds={existingUserIds}
+        grantableRoles={grantableRoles}
         onClose={() => setAdding(false)}
         open={adding}
         teamId={id}

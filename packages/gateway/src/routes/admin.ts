@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { safePatAuditFields } from '../lib/patAuditFields.js';
 import { invalidateSessionCache, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -39,26 +40,6 @@ const AuditLogResponseSchema = z.object({
     })
   ),
 });
-
-/// Auditable subset of a personal access token row. Never includes the plaintext
-/// token or the stored sha-256 hash.
-function safePatAuditFields(row: {
-  expiresAt?: Date | null;
-  id: string;
-  name: string;
-  prefix: string;
-  revokedAt?: Date | null;
-  userId: string;
-}): Record<string, unknown> {
-  return {
-    expiresAt: row.expiresAt ?? null,
-    id: row.id,
-    name: row.name,
-    prefix: row.prefix,
-    revokedAt: row.revokedAt ?? null,
-    userId: row.userId,
-  };
-}
 
 /// Auditable subset of a browser session row. The full session token is a bearer
 /// secret, so it is never placed in the audit log.

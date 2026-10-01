@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runWorkRequestsCommand } from './workRequests.js';
+import { REPO_PAGE_SIZE, runWorkRequestsCommand } from './workRequests.js';
 
 const ENV = { apiUrl: 'http://gw', token: 't' };
 
@@ -120,5 +120,69 @@ describe('runWorkRequestsCommand', () => {
     expect(out).toContain('wf-1');
     expect(out).not.toContain('undefined');
     expect(calls.some((u) => u.includes('/work-requests'))).toBe(true);
+    // The id the endpoint returns is an ActiveWorkflow id, not a run id: the
+    // output must not present it as one, and must say how to find the run.
+    expect(out).toContain('Active workflow: wf-1');
+    expect(out).toContain('runs list --work-request-id=wr-1');
+    expect(out).not.toContain('runs tail <runId>');
+  });
+
+  it('pages through /repositories until it finds the repo', async () => {
+    const filler = Array.from({ length: REPO_PAGE_SIZE }, (_, i) => ({
+      id: `r-${i}`,
+      organizationName: 'org',
+      repoName: `other-${i}`,
+    }));
+    const pages: Record<string, unknown> = {
+      '0': { data: filler, meta: { limit: REPO_PAGE_SIZE, offset: 0, total: REPO_PAGE_SIZE + 1 } },
+      [String(REPO_PAGE_SIZE)]: {
+        data: [{ id: 'repo-late', organizationName: 'Org', repoName: 'Late' }],
+        meta: { limit: REPO_PAGE_SIZE, offset: REPO_PAGE_SIZE, total: REPO_PAGE_SIZE + 1 },
+      },
+    };
+    const posted: unknown[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const u = new URL(url);
+      if (u.pathname === '/api/v1/repositories') {
+        const body = pages[u.searchParams.get('offset') ?? ''];
+        return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify(body) });
+      }
+      posted.push(JSON.parse(String(init?.body)));
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        text: async () =>
+          JSON.stringify({ data: { workflowIds: ['aw-1'], workRequestId: 'wr-1' } }),
+      });
+    }) as unknown as typeof fetch;
+
+    const code = await runWorkRequestsCommand(
+      ['--ticket=T-1', '--description=foo', '--repo=org/late'],
+      ENV
+    );
+    expect(code).toBe(0);
+    expect(posted[0]).toMatchObject({ repoIds: ['repo-late'] });
+  });
+
+  it('stops paging at meta.total and reports not found', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      calls.push(url);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            data: [{ id: 'r', organizationName: 'org', repoName: 'x' }],
+            meta: { total: 1 },
+          }),
+      });
+    }) as unknown as typeof fetch;
+    const code = await runWorkRequestsCommand(
+      ['--ticket=T-1', '--description=foo', '--repo=org/missing'],
+      ENV
+    );
+    expect(code).toBe(1);
+    expect(calls).toHaveLength(1);
   });
 });

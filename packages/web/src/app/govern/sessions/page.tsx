@@ -73,7 +73,7 @@ export default function GovernSessionsPage() {
                     )}
                   </Td>
                   <Td className="px-4 py-3 font-mono text-[10px] text-paper-500">{s.token}</Td>
-                  <Td className="px-4 py-3 text-right">
+                  <Td align="right" className="px-4 py-3">
                     <Button
                       onClick={() => setRevokeTarget({ email: s.user.email, id: s.id })}
                       size="sm"

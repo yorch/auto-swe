@@ -8,15 +8,14 @@
  * — those are for programmatic / CLI access. Browser sessions go through
  * better-auth's cookie-based session model.
  *
- * In dev, magic-link emails are logged to the gateway stdout (no real SMTP
- * configured). Production deployments should swap `sendMagicLink` to a real
- * transactional-email transport (Resend / SES / Mailgun / etc.).
+ * Magic-link and password-reset emails go out through `authEmail.ts` (SMTP or
+ * Resend). Only in development/test does an unconfigured transport fall back
+ * to printing the link to stdout; elsewhere it fails without logging the URL.
  */
 
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
 import {
-  resolveAuthEmailConfig,
   resolveBetterAuthConfig,
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
@@ -27,13 +26,11 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { magicLink } from 'better-auth/plugins';
 import { genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
-import nodemailer, { type Transporter } from 'nodemailer';
+import { authEmailAvailable, deliverAuthEmail } from './authEmail.js';
 import { clearGithubLogin, syncGithubLoginForAccount } from './githubIdentity.js';
 
 // Share the gateway's single Prisma client (one pool, tenant guard attached)
 // instead of opening a second, unguarded connection pool for auth.
-
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 const betterAuthBootstrap = resolveBetterAuthConfig();
 const BASE_URL = betterAuthBootstrap.baseUrl;
@@ -64,155 +61,37 @@ let _oktaIssuer: string | null = null;
 let _oktaClientId: string | null = null;
 let _oktaClientSecret: string | null = null;
 
-/** Lazy-initialised SMTP transporter — only built when SMTP config is present
- *  AND the first magic link wants delivery. Reused across calls. */
-let smtpTransporter: Transporter | null = null;
-function getSmtpTransporter(): Transporter | null {
-  const { authFromEmail, smtpHost, smtpPass, smtpPort, smtpUser } = resolveAuthEmailConfig();
-  if (!(smtpHost && smtpPort && authFromEmail)) {
-    return null;
-  }
-  if (!smtpTransporter) {
-    smtpTransporter = nodemailer.createTransport({
-      auth: smtpUser && smtpPass ? { pass: smtpPass, user: smtpUser } : undefined,
-      host: smtpHost,
-      port: smtpPort,
-      // STARTTLS on 587, implicit TLS on 465. Match real-world provider defaults.
-      secure: smtpPort === 465,
-    });
-  }
-  return smtpTransporter;
-}
-
 /**
- * Send a magic-link email. Resolves the transport from env at call time so
- * tests / dev can swap behaviour without restarting. Resolution order:
- *
- *   1. SMTP_HOST + SMTP_PORT + AUTH_FROM_EMAIL → nodemailer (covers Mailgun,
- *      Postmark, SES via SMTP creds, self-hosted Postfix, etc.)
- *   2. RESEND_API_KEY + AUTH_FROM_EMAIL → POST to Resend (HTTP API)
- *   3. Else → console.log (dev convenience; URL for copy-paste)
- *
- * Production deployments must configure one of the real transports — the
- * console fallback is a dev-only convenience.
+ * Send a magic-link email. Transport resolution — and the rule that the URL is
+ * only ever printed in development/test — lives in `deliverAuthEmail`.
  */
 async function deliverMagicLink({ email, url }: { email: string; url: string }): Promise<void> {
-  const { authFromEmail, resendApiKey } = resolveAuthEmailConfig();
-  const transporter = getSmtpTransporter();
-  if (transporter) {
-    try {
-      const info = await transporter.sendMail({
-        from: authFromEmail ?? undefined,
-        html: renderMagicLinkHtml({ email, url }),
-        subject: 'Your auto-swe sign-in link',
-        text: `Sign in to auto-swe:\n\n${url}\n\n(This link expires in 10 minutes.)`,
-        to: email,
-      });
-      // SMTP `sendMail` resolves on submission acceptance, not on delivery.
-      // Inspect `accepted` / `rejected` to distinguish — a non-empty rejected
-      // list means the relay refused the address even though the call
-      // "succeeded". See the `nodemailer-sendmail-accepted-vs-delivered` skill.
-      if (info.rejected.length > 0 && info.accepted.length === 0) {
-        throw new Error(`SMTP relay rejected ${email}: ${info.response}`);
-      }
-      return;
-    } catch (err) {
-      if (IS_PRODUCTION) {
-        throw err;
-      }
-      console.warn(`[magic-link] SMTP failed (${(err as Error).message}); falling back`);
-    }
-  }
-  if (resendApiKey && authFromEmail) {
-    try {
-      const res = await fetch('https://api.resend.com/emails', {
-        body: JSON.stringify({
-          from: authFromEmail,
-          html: renderMagicLinkHtml({ email, url }),
-          subject: 'Your auto-swe sign-in link',
-          text: `Sign in to auto-swe:\n\n${url}\n\n(This link expires in 10 minutes.)`,
-          to: email,
-        }),
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`Resend returned ${res.status}: ${body.slice(0, 200)}`);
-      }
-      return;
-    } catch (err) {
-      if (IS_PRODUCTION) {
-        throw err;
-      }
-      console.warn(`[magic-link] Resend failed (${(err as Error).message}); falling back to log`);
-    }
-  }
-  console.log(
-    `\n[magic-link] → ${email}\n[magic-link]   ${url}\n[magic-link]   (link expires in 10 min)\n`
-  );
+  await deliverAuthEmail({
+    expiresIn: '10 min',
+    html: renderMagicLinkHtml({ email, url }),
+    kind: 'magic-link',
+    subject: 'Your auto-swe sign-in link',
+    text: `Sign in to auto-swe:\n\n${url}\n\n(This link expires in 10 minutes.)`,
+    to: email,
+    url,
+  });
 }
 
 /**
- * Send a password-reset email. Same transport resolution as the magic link
- * (SMTP → Resend → console). The URL better-auth supplies has the reset
+ * Send a password-reset email. The URL better-auth supplies has the reset
  * token embedded; the recipient pastes it into the /reset-password page
  * (which calls POST /api/auth/reset-password with the token + new pw).
  */
 async function deliverPasswordReset({ email, url }: { email: string; url: string }): Promise<void> {
-  const { authFromEmail, resendApiKey } = resolveAuthEmailConfig();
-  const subject = 'Reset your auto-swe password';
-  const text = `Reset your auto-swe password:\n\n${url}\n\n(This link expires in 1 hour. If you didn't request a reset, ignore this email.)`;
-  const html = renderPasswordResetHtml({ email, url });
-
-  const transporter = getSmtpTransporter();
-  if (transporter) {
-    try {
-      const info = await transporter.sendMail({
-        from: authFromEmail ?? undefined,
-        html,
-        subject,
-        text,
-        to: email,
-      });
-      if (info.rejected.length > 0 && info.accepted.length === 0) {
-        throw new Error(`SMTP relay rejected ${email}: ${info.response}`);
-      }
-      return;
-    } catch (err) {
-      if (IS_PRODUCTION) {
-        throw err;
-      }
-      console.warn(`[password-reset] SMTP failed (${(err as Error).message}); falling back`);
-    }
-  }
-  if (resendApiKey && authFromEmail) {
-    try {
-      const res = await fetch('https://api.resend.com/emails', {
-        body: JSON.stringify({ from: authFromEmail, html, subject, text, to: email }),
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        method: 'POST',
-      });
-      if (!res.ok) {
-        throw new Error(`Resend returned ${res.status}`);
-      }
-      return;
-    } catch (err) {
-      if (IS_PRODUCTION) {
-        throw err;
-      }
-      console.warn(`[password-reset] Resend failed (${(err as Error).message}); falling back`);
-    }
-  }
-  console.log(
-    `\n[password-reset] → ${email}\n[password-reset]   ${url}\n[password-reset]   (link expires in 1 hour)\n`
-  );
+  await deliverAuthEmail({
+    expiresIn: '1 hour',
+    html: renderPasswordResetHtml({ email, url }),
+    kind: 'password-reset',
+    subject: 'Reset your auto-swe password',
+    text: `Reset your auto-swe password:\n\n${url}\n\n(This link expires in 1 hour. If you didn't request a reset, ignore this email.)`,
+    to: email,
+    url,
+  });
 }
 
 // `email` is user-controlled at sign-up; escape it (and `url`, defensively)
@@ -581,7 +460,7 @@ export function configuredProviders(): {
   return {
     github: Boolean(_githubClientId && _githubClientSecret),
     google: Boolean(_googleClientId && _googleClientSecret),
-    magicLink: true,
+    magicLink: authEmailAvailable(),
     okta: oktaConfigured(),
   };
 }

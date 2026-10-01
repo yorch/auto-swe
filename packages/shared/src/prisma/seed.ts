@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '../generated/prisma/client.js';
@@ -13,14 +12,16 @@ const prisma = new PrismaClient({
 });
 
 async function main() {
-  // Derive admin password from env or generate a random one on first seed.
-  // SEED_ADMIN_PASSWORD is intentionally not printed unless it was generated,
-  // so accidental log ingestion doesn't expose a configured secret.
-  let adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  // SEED_ADMIN_PASSWORD is required rather than generated: `yarn db:seed:auth`
+  // (provisionAuthAdmin.ts) hashes the same value into better-auth's credential
+  // account in a separate process, so a password generated here could never
+  // match the one it would see. It is never printed, so log ingestion cannot
+  // expose it.
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
   if (!adminPassword) {
-    adminPassword = crypto.randomBytes(16).toString('hex');
-    console.log(`Seed: generated admin password: ${adminPassword}`);
-    console.log('  Set SEED_ADMIN_PASSWORD in your .env to use a stable password.');
+    throw new Error(
+      'SEED_ADMIN_PASSWORD is required — set it in .env (generate with `openssl rand -base64 24`).'
+    );
   }
 
   // Seed admin user. emailVerified is set TRUE so better-auth's

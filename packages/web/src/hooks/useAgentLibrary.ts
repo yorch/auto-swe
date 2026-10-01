@@ -16,6 +16,7 @@ export interface AgentRow {
   scope: AgentScope;
   teamId: string | null;
   orgId: string | null;
+  channelId?: string | null;
   workflowTemplateId: string | null;
   version: number;
   name: string;

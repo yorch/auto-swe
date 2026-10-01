@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const cancel = vi.hoisted(() => ({ ctl: new AbortController() }));
+vi.mock('@temporalio/activity', () => ({
+  Context: { current: () => ({ cancellationSignal: cancel.ctl.signal }) },
+  heartbeat: vi.fn(),
+}));
 vi.mock('../lib/config/mcpConnection.js', () => ({ mcpUrlForConnection: vi.fn() }));
 vi.mock('../agents/mcpTools.js', () => ({
   loadMcpTools: vi.fn(),
@@ -22,7 +27,10 @@ import { mcpCallTool } from './mcpCallTool.js';
 const mockedUrl = vi.mocked(mcpUrlForConnection);
 const mockedLoad = vi.mocked(loadMcpTools);
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  cancel.ctl = new AbortController();
+});
 
 describe('mcpCallTool', () => {
   it('invokes the named tool with the inputs, returns its result, and closes the client', async () => {
@@ -76,6 +84,38 @@ describe('mcpCallTool', () => {
     await expect(mcpCallTool({ connectionRef: 'c1', tool: 'missing' })).rejects.toThrow(
       /not found/
     );
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('mcpCallTool (cancellation)', () => {
+  it('does not call the tool when the activity was cancelled while connecting', async () => {
+    mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
+    const execute = vi.fn().mockResolvedValue({ ok: 1 });
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockedLoad.mockImplementation((async () => {
+      cancel.ctl.abort(new Error('activity cancelled'));
+      return { close, tools: { mcp_search_docs: { execute } } };
+    }) as never);
+
+    await expect(mcpCallTool({ connectionRef: 'c1', tool: 'search_docs' })).rejects.toThrow(
+      'activity cancelled'
+    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops waiting on an in-flight tool call when cancelled, and still closes the client', async () => {
+    mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
+    const execute = vi.fn(() => new Promise(() => undefined));
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockedLoad.mockResolvedValue({ close, tools: { mcp_search_docs: { execute } } } as never);
+
+    const pending = mcpCallTool({ connectionRef: 'c1', tool: 'search_docs' });
+    await vi.waitFor(() => expect(execute).toHaveBeenCalled());
+    cancel.ctl.abort(new Error('activity cancelled'));
+
+    await expect(pending).rejects.toThrow('activity cancelled');
     expect(close).toHaveBeenCalledTimes(1);
   });
 });

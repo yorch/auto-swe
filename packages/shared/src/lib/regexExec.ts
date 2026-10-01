@@ -2,7 +2,7 @@
  * Wall-clock-bounded execution of operator- and bundle-supplied regular
  * expressions.
  *
- * Scanner patterns are DATA: admins add them at `/admin/scanner`, and installed
+ * Scanner patterns are DATA: admins add them at `/govern/scanner`, and installed
  * bundles carry them. Their bodies are compiled with `new RegExp` and run
  * in-process against agent text (every `bash` command, every `writeFile` path,
  * every skill save, every TDD iteration's LLM output). JavaScript's backtracking
@@ -378,15 +378,22 @@ const EMPTY: RegexBatchResult = {
  * caller quarantines on. If the re-run completes, its hits are returned and the
  * pattern is treated as evaluated: the first miss was the host, not the rule.
  */
-async function evaluateGroup(
+type RunFn = (
   patterns: RegexSpec[],
   targets: RegexTarget[],
   budgetMs: number
+) => Promise<RunOutcome>;
+
+async function evaluateGroup(
+  patterns: RegexSpec[],
+  targets: RegexTarget[],
+  budgetMs: number,
+  run: RunFn = runOnce
 ): Promise<RegexBatchResult> {
   if (patterns.length === 0) {
     return EMPTY;
   }
-  const outcome = await runOnce(patterns, targets, budgetMs);
+  const outcome = await run(patterns, targets, budgetMs);
   if (outcome.ok) {
     return { ...EMPTY, hits: outcome.hits };
   }
@@ -396,7 +403,7 @@ async function evaluateGroup(
   }
   if (patterns.length === 1) {
     // Second strike, alone, on a fresh thread.
-    const again = await runOnce(patterns, targets, budgetMs);
+    const again = await run(patterns, targets, budgetMs);
     if (again.ok) {
       return { ...EMPTY, hits: again.hits };
     }
@@ -406,17 +413,40 @@ async function evaluateGroup(
   // Sequentially — the halves share one worker, so overlapping them would both
   // interleave their replies and blame the innocent half for the other's hang.
   const mid = Math.floor(patterns.length / 2);
-  const a = await evaluateGroup(patterns.slice(0, mid), targets, budgetMs);
-  const b = await evaluateGroup(patterns.slice(mid), targets, budgetMs);
+  const a = await evaluateGroup(patterns.slice(0, mid), targets, budgetMs, run);
+  const b = await evaluateGroup(patterns.slice(mid), targets, budgetMs, run);
   return {
     hits: [...a.hits, ...b.hits],
-    // The whole group overran; even if both halves then completed, the batch
-    // as observed did not, and a blocking caller must not clear on it.
-    incomplete: true,
+    // The group overran as a whole, but once both halves have been evaluated
+    // every pattern's hits are known: the result is exactly as complete as its
+    // halves. Reporting `incomplete` here would make a blocking scanner refuse
+    // a command whose every rule ran and cleared it — just because the rules
+    // together took longer than one budget.
+    incomplete: a.incomplete || b.incomplete,
     quarantinedPatternKeys: [],
     timedOutPatternKeys: [...a.timedOutPatternKeys, ...b.timedOutPatternKeys],
   };
 }
+
+/**
+ * Test seam: {@link evaluateGroup} against a scripted `run` in place of the
+ * worker thread, so bisection bookkeeping can be pinned without timing.
+ * Internal API — not stable.
+ */
+export const __evaluateGroupForTests = (
+  patterns: RegexSpec[],
+  targets: RegexTarget[],
+  budgetMs: number,
+  run: (
+    patterns: RegexSpec[],
+    targets: RegexTarget[],
+    budgetMs: number
+  ) => Promise<
+    | { ok: true; hits: RegexHit[] }
+    | { ok: false; reason: 'timeout' }
+    | { ok: false; reason: 'fault' }
+  >
+): Promise<RegexBatchResult> => evaluateGroup(patterns, targets, budgetMs, run);
 
 /**
  * Give every target its own budget. A pattern confirmed to overrun on one

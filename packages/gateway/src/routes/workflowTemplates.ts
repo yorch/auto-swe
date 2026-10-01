@@ -26,13 +26,15 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { experimentBucket } from '../lib/experimentBucket.js';
+import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
-import { assertOrgBudget } from '../lib/orgAccess.js';
+import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
-import { memberOrgs, memberTeams } from '../lib/tenantScope.js';
+import { ledTeams, memberOrgs, memberTeams } from '../lib/tenantScope.js';
+import { isValidTicketId } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
@@ -59,9 +61,31 @@ function isAuthorGenerationFailure(err: unknown): boolean {
   return false;
 }
 
+const TEMPLATE_AUTHOR_REFUSAL = {
+  code: 'FORBIDDEN',
+  message: 'Requires LEAD membership on an active team to author its templates',
+} as const;
+
+/**
+ * The caller's membership on `teamId` when it lets them author that team's
+ * templates — LEAD or ADMIN on an active team, the bar `templateWriteFilter`
+ * and `canManageTeamRepos` set — else null.
+ */
+async function findTemplateAuthorMembership(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  teamId: string
+): Promise<{ role: string } | null> {
+  const member = await fastify.prisma.teamMembership.findFirst({
+    select: { role: true },
+    where: { role: { in: ['LEAD', 'ADMIN'] }, team: { isActive: true }, teamId, userId: user.sub },
+  });
+  return member ?? null;
+}
+
 /**
  * Shared authoring RBAC for the generate endpoints: non-admins may only target a
- * team they belong to and may not author global templates. Returns the
+ * team they lead and may not author global templates. Returns the
  * `allowShell` hint (admin or team-admin) on success, or a reply to send.
  */
 async function resolveTemplateAuthScope(
@@ -79,12 +103,10 @@ async function resolveTemplateAuthScope(
       statusCode: 403,
     };
   }
-  const member = await fastify.prisma.teamMembership.findFirst({
-    where: { teamId, userId: user.sub },
-  });
+  const member = await findTemplateAuthorMembership(fastify, user, teamId);
   if (!member) {
     return {
-      body: { error: { code: 'FORBIDDEN', message: 'Not a member of this team' } },
+      body: { error: TEMPLATE_AUTHOR_REFUSAL },
       ok: false,
       statusCode: 403,
     };
@@ -416,6 +438,12 @@ function teamMembershipFilter(user: {
  * (`teamId: null`) are readable by everyone but may only be mutated by a
  * platform admin — a LEAD must never be able to edit, version, promote or
  * re-key the platform-wide fallback every other team runs.
+ *
+ * A team template needs LEAD (or ADMIN) membership on an active owning team,
+ * the same bar `canManageTeamRepos` sets for the team's repositories. The
+ * route-level `requiredRole: 'LEAD'` checks only the platform role, so without
+ * this a platform LEAD who is a plain ENGINEER on a team could rewrite the
+ * workflow every one of that team's runs executes.
  */
 function templateWriteFilter(user: {
   sub: string;
@@ -425,7 +453,7 @@ function templateWriteFilter(user: {
     return {};
   }
   return {
-    team: memberTeams(user),
+    team: { ...ledTeams(user), isActive: true },
     teamId: { not: null },
   };
 }
@@ -438,9 +466,20 @@ interface LastRunRow {
   endedAt: Date | null;
 }
 
+/**
+ * The newest run of each template **that the caller may see**.
+ *
+ * `visibility` is the caller's run-visibility predicate. Without it a GLOBAL
+ * template's card would name the id and status of whichever team's run
+ * happened to be newest — another tenant's run, one click from a 404. It is
+ * applied to both queries, so the "newest" is the newest visible run rather
+ * than a hidden run's timestamp matched against a visible one. Nested under
+ * `AND` because the non-admin predicate is itself an `OR`.
+ */
 async function loadLastRuns(
   fastify: FastifyInstance,
-  templateIds: string[]
+  templateIds: string[],
+  visibility: Prisma.WorkflowRunWhereInput
 ): Promise<Map<string, LastRunRow>> {
   if (templateIds.length === 0) {
     return new Map();
@@ -452,7 +491,7 @@ async function loadLastRuns(
   const heads = await fastify.prisma.workflowRun.groupBy({
     _max: { startedAt: true },
     by: ['templateId'],
-    where: { templateId: { in: templateIds } },
+    where: { AND: [visibility], templateId: { in: templateIds } },
   });
   const keys = heads.flatMap((h) =>
     h.templateId && h._max.startedAt
@@ -465,7 +504,7 @@ async function loadLastRuns(
   const rows = (await fastify.prisma.workflowRun.findMany({
     orderBy: { startedAt: 'desc' },
     select: { endedAt: true, id: true, startedAt: true, status: true, templateId: true },
-    where: { OR: keys },
+    where: { AND: [visibility], OR: keys },
   })) as unknown as LastRunRow[];
   // Newest first; a tie on startedAt keeps the first one seen.
   const map = new Map<string, LastRunRow>();
@@ -855,7 +894,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       );
       const lastRuns = await loadLastRuns(
         fastify,
-        templates.map((t) => t.id)
+        templates.map((t) => t.id),
+        buildWorkflowRunVisibilityFilter(user, request.repoAccessGate)
       );
       return { data: templates.map((t) => projectTemplate(t, lastRuns.get(t.id))) };
     }
@@ -890,13 +930,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             error: { code: 'FORBIDDEN', message: 'Only admins may create global templates' },
           });
         }
-        const member = await fastify.prisma.teamMembership.findFirst({
-          where: { teamId, userId: user.sub },
-        });
-        if (!member) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Not a member of this team' },
-          });
+        if (!(await findTemplateAuthorMembership(fastify, user, teamId))) {
+          return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
         }
       }
 
@@ -979,7 +1014,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
         });
       }
-      const lastRuns = await loadLastRuns(fastify, [tpl.id]);
+      const lastRuns = await loadLastRuns(
+        fastify,
+        [tpl.id],
+        buildWorkflowRunVisibilityFilter(user, request.repoAccessGate)
+      );
       const base = projectTemplate(tpl, lastRuns.get(tpl.id));
       const activeVersionRow = tpl.activeVersion
         ? await fastify.prisma.workflowTemplateVersion.findUnique({
@@ -1042,6 +1081,16 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             },
           });
         }
+        // An experiment arm serves real runs exactly like the active version,
+        // so it carries the same review requirement `/promote` enforces.
+        if (v.generatedBy && !v.reviewedAt) {
+          return sendError(
+            reply,
+            409,
+            'REVIEW_REQUIRED',
+            'This AI-generated version must be reviewed and approved before it can serve experiment traffic.'
+          );
+        }
       }
       // Enabling traffic split without a destination version is meaningless and
       // would silently no-op in the resolver — reject it up front.
@@ -1085,7 +1134,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           where: { id: existing.id },
         });
       });
-      const lastRuns = await loadLastRuns(fastify, [updated.id]);
+      const lastRuns = await loadLastRuns(
+        fastify,
+        [updated.id],
+        buildWorkflowRunVisibilityFilter(user, request.repoAccessGate)
+      );
       return { data: projectTemplate(updated, lastRuns.get(updated.id)) };
     }
   );
@@ -1371,13 +1424,24 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const target = await fastify.prisma.workflowTemplateVersion.findUnique({
-        select: { id: true },
+        select: { createdBy: true, generatedBy: true, id: true },
         where: { templateId_version: { templateId: tpl.id, version: request.params.version } },
       });
       if (!target) {
         return reply
           .status(404)
           .send({ error: { code: 'VERSION_NOT_FOUND', message: 'Version not found' } });
+      }
+      // Review is a second pair of eyes on what the author agent produced for
+      // someone. The person who asked for the generation approving it is no
+      // review at all, so it takes someone else — or a platform admin.
+      if (target.generatedBy && target.createdBy === user.sub && user.role !== 'ADMIN') {
+        return sendError(
+          reply,
+          403,
+          'SELF_REVIEW_FORBIDDEN',
+          'A generated version must be reviewed by someone other than the person who generated it.'
+        );
       }
       const version = await fastify.prisma.workflowTemplateVersion.update({
         data: { reviewedAt: new Date(), reviewedBy: user.sub },
@@ -1516,7 +1580,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         include: TEMPLATE_INCLUDE,
         where: { id: tpl.id },
       });
-      const lastRuns = await loadLastRuns(fastify, [updated.id]);
+      const lastRuns = await loadLastRuns(
+        fastify,
+        [updated.id],
+        buildWorkflowRunVisibilityFilter(user, request.repoAccessGate)
+      );
       return { data: projectTemplate(updated, lastRuns.get(updated.id)) };
     }
   );
@@ -1609,10 +1677,26 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // in the run list and nothing linked the key back to the run it named.
       // The work-request id is already unique and already the thing you would
       // look up.
+      //
+      // It also becomes the branch name (`<prefix>/<ticketId>`) and part of the
+      // Temporal workflow id in the worker, so an explicit `ticketId` must be a
+      // valid ticket id. A free-text label is only used when it happens to be
+      // one; otherwise the work-request id stands in.
+      if (typeof payload.ticketId === 'string' && !isValidTicketId(payload.ticketId)) {
+        return sendError(
+          reply,
+          400,
+          'INVALID_TICKET_ID',
+          'payload.ticketId may only contain letters, digits, ".", "_", "#", "/" and "-", and must be a valid git ref component'
+        );
+      }
+      const label = request.body.label;
       const externalTicketId =
         typeof payload.ticketId === 'string'
           ? payload.ticketId
-          : (request.body.label ?? workRequestId);
+          : label && isValidTicketId(label)
+            ? label
+            : workRequestId;
 
       const split = tpl.experimentSplit ?? 0;
       const resolvedVersion =
@@ -1649,11 +1733,19 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (!connectionResult.ok) {
         return;
       }
-      const budgetOrgId = connectionResult.budgetOrgId ?? tpl.team?.organization?.id;
-      const budgetCap = connectionResult.budgetCap ?? tpl.team?.organization?.monthlyBudgetUsdCents;
-
-      if (budgetOrgId && !(await assertOrgBudget(fastify.prisma, budgetOrgId, budgetCap, reply))) {
-        return;
+      // With a connection, `validateRunConnection` took the whole launch
+      // decision against the connection's org. Without one the run spends its
+      // template team's org, so that org's membership and cap apply instead.
+      if (!connectionResult.budgetOrgId && tpl.team?.organization) {
+        const authorization = await authorizeLaunch(fastify.prisma, user, {
+          gate: request.repoAccessGate,
+          log: request.log,
+          orgs: [tpl.team.organization],
+          repos: [],
+        });
+        if (!authorization.ok) {
+          return sendLaunchRefusal(reply, authorization.refusal);
+        }
       }
 
       const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);

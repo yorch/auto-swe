@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { spawnCaptureAsync, spawnWithStdinAsync } from './execUtils.js';
+import { describe, expect, it, vi } from 'vitest';
+import { execShellAsync, spawnCaptureAsync, spawnWithStdinAsync } from './execUtils.js';
 
 describe('spawnCaptureAsync — onStdoutLine streaming', () => {
   it('emits one callback per newline-terminated line and flushes a trailing partial', async () => {
@@ -55,5 +55,51 @@ describe('spawnWithStdinAsync', () => {
     const res = await spawnWithStdinAsync('/definitely/not/a/binary', [], 'x');
     expect(res.exitCode).toBe(127);
     expect(res.signal).toBe('SPAWN_ERROR');
+  });
+});
+
+describe('onTimeout', () => {
+  it('runs after execShellAsync kills a command for overrunning, then rethrows', async () => {
+    const onTimeout = vi.fn(async () => {});
+    await expect(execShellAsync('sleep 5', { onTimeout, timeoutMs: 100 })).rejects.toMatchObject({
+      killed: true,
+    });
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not run for an ordinary non-zero exit', async () => {
+    const onTimeout = vi.fn(async () => {});
+    await expect(execShellAsync('exit 3', { onTimeout })).rejects.toBeDefined();
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it('runs before spawnCaptureAsync resolves a timed-out result', async () => {
+    const order: string[] = [];
+    const result = await spawnCaptureAsync('sleep', ['5'], {
+      onTimeout: async () => {
+        order.push('onTimeout');
+      },
+      timeoutMs: 100,
+    });
+    order.push('resolved');
+    expect(result.exitCode).toBe(124);
+    expect(order).toEqual(['onTimeout', 'resolved']);
+  });
+
+  it('does not run when the command exits 124 on its own', async () => {
+    const onTimeout = vi.fn();
+    const result = await spawnCaptureAsync('sh', ['-c', 'exit 124'], { onTimeout });
+    expect(result.exitCode).toBe(124);
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it('a throwing onTimeout does not replace the timeout result', async () => {
+    const result = await spawnWithStdinAsync('sleep', ['5'], '', {
+      onTimeout: () => {
+        throw new Error('kill failed');
+      },
+      timeoutMs: 100,
+    });
+    expect(result.exitCode).toBe(124);
   });
 });

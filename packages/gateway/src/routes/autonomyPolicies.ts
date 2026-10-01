@@ -27,6 +27,10 @@ const UpdateSchema = z.object({
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(200).optional(),
   rules: AutonomyRulesSchema.optional(),
+  // Moving a policy between scopes: null clears, omitted keeps. The merged
+  // result is checked by validateScope like a create.
+  teamId: z.string().uuid().nullable().optional(),
+  templateId: z.string().uuid().nullable().optional(),
 });
 
 const IdParams = z.object({ id: z.string().uuid() });
@@ -112,6 +116,37 @@ function toPolicyResponseDto(row: object): z.infer<typeof PolicySchema> {
     createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
     updatedAt: r.updatedAt instanceof Date ? r.updatedAt.toISOString() : r.updatedAt,
   } as z.infer<typeof PolicySchema>;
+}
+
+/**
+ * Map a Prisma write error on a policy to the client error it really is.
+ *
+ * P2002 is a second policy at an occupied scope. P2003 is a `teamId` or
+ * `templateId` naming no row — the foreign key refuses it, and left unmapped it
+ * surfaced as a 500 for what is a bad request. Anything else is a real failure.
+ */
+function policyWriteRefusal(
+  err: unknown
+): { status: 400 | 409; error: { code: string; message: string } } | null {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) {
+    return null;
+  }
+  if (err.code === 'P2002') {
+    return {
+      error: { code: 'DUPLICATE_POLICY', message: 'A policy already exists at this scope.' },
+      status: 409,
+    };
+  }
+  if (err.code === 'P2003') {
+    return {
+      error: {
+        code: 'INVALID_SCOPE_TARGET',
+        message: 'The teamId or templateId does not name an existing team or template.',
+      },
+      status: 400,
+    };
+  }
+  return null;
 }
 
 export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
@@ -211,13 +246,9 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
         });
         return reply.status(201).send({ data: toPolicyResponseDto(row) });
       } catch (err) {
-        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-          return reply.status(409).send({
-            error: {
-              code: 'DUPLICATE_POLICY',
-              message: 'A policy already exists at this scope.',
-            },
-          });
+        const refusal = policyWriteRefusal(err);
+        if (refusal) {
+          return reply.status(refusal.status).send({ error: refusal.error });
         }
         throw err;
       }
@@ -261,6 +292,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
           200: PolicyDetailResponseSchema,
           400: ErrorResponseSchema,
           404: ErrorResponseSchema,
+          409: ErrorResponseSchema,
         },
       },
     },
@@ -278,14 +310,23 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
       if (!validateScope({ ...existing, ...data })) {
         return reply.status(400).send({ error: scopeError() });
       }
-      const updated = await fastify.prisma.autonomyPolicy.update({
-        data,
-        include: {
-          team: { select: { id: true, name: true, slug: true } },
-          template: { select: { id: true, name: true } },
-        },
-        where: { id: existing.id },
-      });
+      let updated: Awaited<ReturnType<typeof fastify.prisma.autonomyPolicy.update>>;
+      try {
+        updated = await fastify.prisma.autonomyPolicy.update({
+          data,
+          include: {
+            team: { select: { id: true, name: true, slug: true } },
+            template: { select: { id: true, name: true } },
+          },
+          where: { id: existing.id },
+        });
+      } catch (err) {
+        const refusal = policyWriteRefusal(err);
+        if (refusal) {
+          return reply.status(refusal.status).send({ error: refusal.error });
+        }
+        throw err;
+      }
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,

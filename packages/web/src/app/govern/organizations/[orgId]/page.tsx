@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { use, useEffect, useState } from 'react';
-import { EligibleUserSelect } from '@/components/EligibleUserSelect';
+import { MemberUserPicker } from '@/components/MemberUserPicker';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -14,6 +14,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { useHasRole } from '@/hooks/useHasRole';
 import {
   type OrgRole,
   useInviteOrgMember,
@@ -26,7 +27,8 @@ import {
   useRemoveOrgMember,
   useUpsertOrgMember,
 } from '@/hooks/useOrg';
-import { useEligibleUsers } from '@/hooks/useUsers';
+import { usePrefilledField } from '@/hooks/usePrefilledField';
+import { buildBudgetPatch, removeCapPatch } from '@/lib/budgetPatch';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatCents, formatPercent, formatTokens } from '@/lib/utils';
@@ -56,6 +58,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const patchBudget = usePatchOrgBudget(orgId ?? '');
 
   const authUserId = useAuthStore((s) => s.user?.sub ?? null);
+  // Every write on this page is `requiredOrgRole: 'ORG_ADMIN'` (platform ADMIN
+  // bypasses); an ORG_MEMBER reads the same data but gets no controls.
+  const isPlatformAdmin = useHasRole('ADMIN');
+  const canAdmin =
+    isPlatformAdmin ||
+    (members ?? []).some((m) => m.userId === authUserId && m.role === 'ORG_ADMIN');
 
   const [orgName, setOrgName] = useState('');
   const [orgSlug, setOrgSlug] = useState('');
@@ -72,24 +80,19 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<OrgRole>('ORG_MEMBER');
   const [inviteError, setInviteError] = useState<string | null>(null);
-  const [budgetInput, setBudgetInput] = useState('');
-  const [thresholdInput, setThresholdInput] = useState('');
+  // Prefilled with the stored values so an untouched field is sent back as-is.
+  const [budgetInput, setBudgetInput] = usePrefilledField(budget?.monthlyBudgetUsdCents);
+  const [thresholdInput, setThresholdInput] = usePrefilledField(
+    budget?.budgetAlertThresholdPercent
+  );
+  const [confirmRemoveCap, setConfirmRemoveCap] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [budgetError, setBudgetError] = useState<string | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<{ userId: string; email: string } | null>(
     null
   );
 
-  // Only offer active users who aren't already members for the add picker.
-  const eligibleUsers = useEligibleUsers((members ?? []).map((m) => m.userId));
-
-  // The selected user, falling back to the first eligible one. Derived (not
-  // stored) so the controlled <Select> and the submit handler always agree even
-  // if a refetch drops the previously-picked user from `eligibleUsers`.
-  const effectiveUserId =
-    addUserId && eligibleUsers.some((u) => u.id === addUserId)
-      ? addUserId
-      : (eligibleUsers[0]?.id ?? '');
+  const memberIds = (members ?? []).map((m) => m.userId);
 
   if (!orgId) {
     return (
@@ -102,12 +105,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
 
   async function handleAddMember() {
     setError(null);
-    if (!effectiveUserId) {
+    if (!addUserId) {
       setError('Pick a user to add');
       return;
     }
     try {
-      await upsertMember.mutateAsync({ role: addRole, userId: effectiveUserId });
+      await upsertMember.mutateAsync({ role: addRole, userId: addUserId });
       setAddUserId('');
     } catch (e) {
       setError(errMsg(e, 'Failed to add member'));
@@ -158,29 +161,34 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     }
   }
 
+  const currentBudget = {
+    budgetAlertThresholdPercent: budget?.budgetAlertThresholdPercent ?? null,
+    monthlyBudgetUsdCents: budget?.monthlyBudgetUsdCents ?? null,
+  };
+
   async function handleSaveBudget() {
     setBudgetError(null);
-    const val = budgetInput.trim();
-    const cents = val === '' ? null : Number(val);
-    if (cents !== null && (!Number.isInteger(cents) || cents < 0)) {
-      setBudgetError('Enter a non-negative integer (USD cents), or leave blank to remove the cap');
+    const result = buildBudgetPatch(budgetInput, thresholdInput, currentBudget);
+    if (result.kind === 'invalid') {
+      setBudgetError(result.error);
       return;
     }
-    const tval = thresholdInput.trim();
-    const threshold = tval === '' ? null : Number(tval);
-    if (threshold !== null && (!Number.isInteger(threshold) || threshold < 0 || threshold > 100)) {
-      setBudgetError('Alert threshold must be an integer between 0 and 100');
+    if (result.kind === 'unchanged') {
       return;
     }
     try {
-      await patchBudget.mutateAsync({
-        budgetAlertThresholdPercent: threshold,
-        monthlyBudgetUsdCents: cents,
-      });
-      setBudgetInput('');
-      setThresholdInput('');
+      await patchBudget.mutateAsync(result.body);
     } catch (e) {
       setBudgetError(errMsg(e, 'Failed to update budget'));
+    }
+  }
+
+  async function handleRemoveCap() {
+    setBudgetError(null);
+    try {
+      await patchBudget.mutateAsync(removeCapPatch(currentBudget));
+    } catch (e) {
+      setBudgetError(errMsg(e, 'Failed to remove the cap'));
     }
   }
 
@@ -239,7 +247,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     </Td>
                     <Td className="py-3 pr-3">
                       <Select
-                        disabled={isMe}
+                        disabled={isMe || !canAdmin}
                         onChange={(e) => {
                           const role = e.target.value;
                           if (isOrgRole(role)) {
@@ -253,80 +261,92 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                       </Select>
                     </Td>
                     <Td className="py-3 text-right">
-                      <Button
-                        disabled={isMe}
-                        onClick={() => setPendingRemoval({ email: m.user.email, userId: m.userId })}
-                        size="sm"
-                        variant="danger"
-                      >
-                        Remove
-                      </Button>
+                      {canAdmin && (
+                        <Button
+                          disabled={isMe}
+                          onClick={() =>
+                            setPendingRemoval({ email: m.user.email, userId: m.userId })
+                          }
+                          size="sm"
+                          variant="danger"
+                        >
+                          Remove
+                        </Button>
+                      )}
                     </Td>
                   </TRow>
                 );
               })}
             </tbody>
           </Table>
-          <div className="mt-4 flex items-end gap-3 border-t border-ink-600 pt-4">
-            <EligibleUserSelect
-              eligible={eligibleUsers}
-              label="Add user"
-              onChange={setAddUserId}
-              value={effectiveUserId}
-            />
-            {eligibleUsers.length > 0 && (
-              <>
-                <Select
-                  label="Role"
-                  onChange={(e) => {
-                    const role = e.target.value;
-                    if (isOrgRole(role)) {
-                      setAddRole(role);
-                    }
-                  }}
-                  value={addRole}
-                >
-                  <option value="ORG_MEMBER">ORG_MEMBER</option>
-                  <option value="ORG_ADMIN">ORG_ADMIN</option>
-                </Select>
-                <Button
-                  disabled={upsertMember.isPending}
-                  onClick={handleAddMember}
-                  variant="primary"
-                >
-                  Add
-                </Button>
-              </>
-            )}
-          </div>
-          <div className="mt-4 space-y-3 border-t border-ink-600 pt-4">
-            {inviteError ? <Alert variant="error">{inviteError}</Alert> : null}
-            <div className="flex items-end gap-3">
-              <Input
-                label="Invite by email"
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="colleague@example.com"
-                type="email"
-                value={inviteEmail}
-              />
-              <Select
-                label="Role"
-                onChange={(e) => {
-                  const role = e.target.value;
-                  if (isOrgRole(role)) {
-                    setInviteRole(role);
-                  }
-                }}
-                value={inviteRole}
-              >
-                <option value="ORG_MEMBER">ORG_MEMBER</option>
-                <option value="ORG_ADMIN">ORG_ADMIN</option>
-              </Select>
-              <Button disabled={inviteMember.isPending} onClick={handleInvite} variant="secondary">
-                Invite
-              </Button>
-            </div>
-          </div>
+          {canAdmin && (
+            <>
+              <div className="mt-4 flex items-end gap-3 border-t border-ink-600 pt-4">
+                <MemberUserPicker
+                  existingUserIds={memberIds}
+                  label="Add user"
+                  onChange={setAddUserId}
+                  value={addUserId}
+                />
+                {addUserId !== '' && (
+                  <>
+                    <Select
+                      label="Role"
+                      onChange={(e) => {
+                        const role = e.target.value;
+                        if (isOrgRole(role)) {
+                          setAddRole(role);
+                        }
+                      }}
+                      value={addRole}
+                    >
+                      <option value="ORG_MEMBER">ORG_MEMBER</option>
+                      <option value="ORG_ADMIN">ORG_ADMIN</option>
+                    </Select>
+                    <Button
+                      disabled={upsertMember.isPending}
+                      onClick={handleAddMember}
+                      variant="primary"
+                    >
+                      Add
+                    </Button>
+                  </>
+                )}
+              </div>
+              <div className="mt-4 space-y-3 border-t border-ink-600 pt-4">
+                {inviteError ? <Alert variant="error">{inviteError}</Alert> : null}
+                <div className="flex items-end gap-3">
+                  <Input
+                    label="Invite by email"
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="colleague@example.com"
+                    type="email"
+                    value={inviteEmail}
+                  />
+                  <Select
+                    label="Role"
+                    onChange={(e) => {
+                      const role = e.target.value;
+                      if (isOrgRole(role)) {
+                        setInviteRole(role);
+                      }
+                    }}
+                    value={inviteRole}
+                  >
+                    <option value="ORG_MEMBER">ORG_MEMBER</option>
+                    <option value="ORG_ADMIN">ORG_ADMIN</option>
+                  </Select>
+                  <Button
+                    disabled={inviteMember.isPending}
+                    onClick={handleInvite}
+                    variant="secondary"
+                  >
+                    Invite
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
         </QueryBoundary>
       </Card>
 
@@ -344,19 +364,27 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
           <div className="space-y-4">
             {orgError ? <Alert variant="error">{orgError}</Alert> : null}
             <div className="grid grid-cols-2 gap-3">
-              <Input label="Name" onChange={(e) => setOrgName(e.target.value)} value={orgName} />
+              <Input
+                label="Name"
+                onChange={(e) => setOrgName(e.target.value)}
+                readOnly={!canAdmin}
+                value={orgName}
+              />
               <Input
                 hint="Lowercase letters, numbers, hyphens"
                 label="Slug"
                 onChange={(e) => setOrgSlug(e.target.value)}
+                readOnly={!canAdmin}
                 value={orgSlug}
               />
             </div>
-            <div className="flex justify-end">
-              <Button disabled={patchOrg.isPending} onClick={handleSaveOrg} variant="primary">
-                {patchOrg.isPending ? 'Saving…' : 'Save changes'}
-              </Button>
-            </div>
+            {canAdmin && (
+              <div className="flex justify-end">
+                <Button disabled={patchOrg.isPending} onClick={handleSaveOrg} variant="primary">
+                  {patchOrg.isPending ? 'Saving…' : 'Save changes'}
+                </Button>
+              </div>
+            )}
           </div>
         </QueryBoundary>
       </Card>
@@ -422,32 +450,59 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 }
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                hint="Monthly cap in USD cents (e.g. 10000 = $100). Leave blank to remove the cap."
-                label="Set new cap (USD cents)"
-                onChange={(e) => setBudgetInput(e.target.value)}
-                placeholder={String(budget?.monthlyBudgetUsdCents ?? '')}
-                type="number"
-                value={budgetInput}
-              />
-              <Input
-                hint="Warn when spend crosses this percent of the cap. 0-100, or blank to disable."
-                label="Alert threshold (%)"
-                onChange={(e) => setThresholdInput(e.target.value)}
-                placeholder={String(budget?.budgetAlertThresholdPercent ?? '')}
-                type="number"
-                value={thresholdInput}
-              />
-            </div>
-            <div className="flex justify-end">
-              <Button disabled={patchBudget.isPending} onClick={handleSaveBudget} variant="primary">
-                {patchBudget.isPending ? 'Saving…' : 'Save changes'}
-              </Button>
-            </div>
+            {canAdmin && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    hint="Monthly cap in USD cents (e.g. 10000 = $100)."
+                    label="Monthly cap (USD cents)"
+                    onChange={(e) => setBudgetInput(e.target.value)}
+                    placeholder="No cap"
+                    type="number"
+                    value={budgetInput}
+                  />
+                  <Input
+                    hint="Warn when spend crosses this percent of the cap. 0-100, or blank to disable."
+                    label="Alert threshold (%)"
+                    onChange={(e) => setThresholdInput(e.target.value)}
+                    placeholder="Not set"
+                    type="number"
+                    value={thresholdInput}
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  {budget?.monthlyBudgetUsdCents != null && (
+                    <Button
+                      disabled={patchBudget.isPending}
+                      onClick={() => setConfirmRemoveCap(true)}
+                      variant="ghost"
+                    >
+                      Remove cap
+                    </Button>
+                  )}
+                  <Button
+                    disabled={patchBudget.isPending}
+                    onClick={handleSaveBudget}
+                    variant="primary"
+                  >
+                    {patchBudget.isPending ? 'Saving…' : 'Save changes'}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </QueryBoundary>
       </Card>
+
+      <ConfirmModal
+        confirmLabel="Remove cap"
+        dangerous
+        message="Remove the monthly budget cap? Spend in this organization will no longer be limited."
+        onClose={() => setConfirmRemoveCap(false)}
+        onConfirm={handleRemoveCap}
+        open={confirmRemoveCap}
+        title="Remove budget cap"
+      />
 
       <ConfirmModal
         confirmLabel="Remove"

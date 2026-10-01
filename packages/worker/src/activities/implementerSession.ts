@@ -9,6 +9,7 @@ import { buildImplementerForActivity } from '../agents/implementer.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { abortSignalOption, throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
@@ -21,8 +22,14 @@ import {
   parseDiffToFileChanges,
   parseTestOutput,
   TEST_RUN_TIMEOUT_MS,
+  testRunCommand,
 } from './utils.js';
-import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
+import {
+  createWorkspace,
+  fetchBranchesSubcommand,
+  shellQuote,
+  type Workspace,
+} from './workspace.js';
 
 export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX';
 
@@ -42,7 +49,11 @@ export interface FixSessionInput {
   previousCodeResult: CodeResult;
   /** Mode-specific fields merged into the user message JSON alongside `mode` and `previousDiff`. */
   userPayload: Record<string, unknown>;
-  /** Agent key to resolve the system prompt from (e.g. 'ciFixer', 'reviewFixer', 'gateFixer'). */
+  /**
+   * The persona the session runs as (e.g. 'ciFixer', 'reviewFixer', 'gateFixer'):
+   * its Agent row supplies the system prompt, tools, skills, MCP binding and —
+   * via `inheritsModelFrom` — the model.
+   */
   agentKey: string;
   /** Built-in system prompt for this mode (resolveSystemPrompt handles DB/step overrides). */
   defaultSystemPrompt: string;
@@ -122,7 +133,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // push fast-forwards. (Previously only the gate-fix path did this; the
     // CI/review fix paths operated on a stale tree.)
     try {
-      await workspace.gitAuthed(`fetch origin ${shellQuote(previousCodeResult.branch)}`);
+      await workspace.gitAuthed(fetchBranchesSubcommand([previousCodeResult.branch]));
       await workspace.exec(`git reset --hard origin/${shellQuote(previousCodeResult.branch)}`);
     } catch {
       // Branch may not exist remotely yet; proceed against the local clone.
@@ -130,18 +141,22 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     }
 
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
-    const testCommand = detectTestCommand(packageJson);
+    const testCommand = detectTestCommand(packageJson, repo.gateCommands);
 
+    // The session runs as its own persona (ciFixer / reviewFixer / gateFixer):
+    // that Agent row's prompt, tools, skills and MCP binding, with the model
+    // inherited from the implementer unless the persona overrides it.
     const activityCtx = await currentRequestContext();
     const {
       agent,
       promptSuffix,
       closeMcp: cm,
-    } = await buildImplementerForActivity(workspace, tracer, activityCtx);
+      maxSteps,
+    } = await buildImplementerForActivity(workspace, tracer, activityCtx, input.agentKey);
     closeMcp = cm;
 
     const systemPrompt = await resolveSystemPrompt(
-      'implementer',
+      input.agentKey,
       input.defaultSystemPrompt,
       input.systemPromptOverride
     );
@@ -159,7 +174,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
         { content: fullSystemPrompt, role: 'system' },
         { content: userMessage, role: 'user' },
       ],
-      { toolChoice: 'auto' }
+      { maxSteps, toolChoice: 'auto', ...abortSignalOption() }
     );
 
     heartbeat(`${mode} agent completed`);
@@ -168,7 +183,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     if (genResult.usage) {
       attribution = await recordLlmUsage(
         currentWorkflowId(),
-        'implementer',
+        input.agentKey,
         genResult.usage,
         input.usageEventName
       );
@@ -189,7 +204,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
         ? { text: genResult.text }
         : { toolCallCount: genResult.steps?.length ?? 0 },
       outputTokens: attribution.outputTokens,
-      role: 'implementer',
+      role: input.agentKey,
     });
 
     let extraNote: string | null = null;
@@ -204,8 +219,11 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     let testResult: TestRunResult;
     const testStart = Date.now();
     try {
-      const testOutput = await workspace.exec(testCommand, { timeoutMs: TEST_RUN_TIMEOUT_MS });
-      testResult = parseTestOutput(testOutput, Date.now() - testStart);
+      const testOutput = await workspace.exec(testRunCommand(testCommand), {
+        timeoutMs: TEST_RUN_TIMEOUT_MS,
+      });
+      // exec resolves only on exit 0.
+      testResult = parseTestOutput(testOutput, Date.now() - testStart, 0);
     } catch (err: unknown) {
       testResult = {
         duration_ms: 0,
@@ -233,6 +251,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     await workspace.exec(
       `git diff --cached --quiet || git commit -m ${shellQuote(input.commitMessage)}`
     );
+    // Never push on behalf of a run that has already been cancelled.
+    throwIfActivityCancelled();
     await workspace.gitAuthed(`push origin ${shellQuote(previousCodeResult.branch)}`);
 
     // `defaultBranch` is an operator-editable column — quote it like every other
@@ -295,7 +315,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     };
   } finally {
     await closeMcp?.();
-    const done = persistActivityTrace(tracer, 'implementer');
+    const done = persistActivityTrace(tracer, input.agentKey);
     await workspace.destroy();
     await done;
   }

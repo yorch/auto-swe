@@ -13,6 +13,8 @@ import {
   useUpdateFigmaConfig,
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { usePrefilledField } from '@/hooks/usePrefilledField';
+import { clearableIntField } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
@@ -25,7 +27,7 @@ export function FigmaTab() {
 
   const [enabled, setEnabled] = useState<boolean | undefined>(undefined);
   const [apiToken, setApiToken] = useState('');
-  const [maxNodes, setMaxNodes] = useState('');
+  const [maxNodes, setMaxNodes] = usePrefilledField(data?.maxNodes);
 
   const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
 
@@ -39,12 +41,8 @@ export function FigmaTab() {
     if (apiToken) {
       body.apiToken = apiToken;
     }
-    if (maxNodes) {
-      const parsed = Number.parseInt(maxNodes, 10);
-      if (!Number.isNaN(parsed)) {
-        body.maxNodes = parsed;
-      }
-    }
+    // Prefilled: omit when unchanged, send null when cleared.
+    body.maxNodes = clearableIntField(maxNodes, data?.maxNodes);
 
     submit(
       () => update.mutateAsync(body),

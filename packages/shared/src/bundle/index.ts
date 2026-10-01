@@ -14,6 +14,7 @@ import {
   SAFE_FLAGS_MESSAGE,
   SAFE_FLAGS_RE,
 } from '../lib/regexSafety.js';
+import { SCANNER_PATTERN_TYPES } from '../lib/scannerPatternTypes.js';
 import { WorkflowSpecSchema } from '../workflow/spec.js';
 import { formatValidationIssue, validateSpec } from '../workflow/validateSpec.js';
 
@@ -48,14 +49,7 @@ import { formatValidationIssue, validateSpec } from '../workflow/validateSpec.js
  */
 export const BUNDLE_SCHEMA_VERSION = 2 as const;
 
-export const SCANNER_PATTERN_TYPES = [
-  'INJECTION',
-  'EXFILTRATION',
-  'SHELL_COMMAND',
-  'CODE_SECURITY',
-  'SENSITIVE_FILE',
-  'PII',
-] as const;
+export { SCANNER_PATTERN_TYPES } from '../lib/scannerPatternTypes.js';
 
 export const BundleSkillSchema = z.object({
   description: z.string().nullable().optional(),

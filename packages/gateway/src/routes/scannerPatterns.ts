@@ -1,3 +1,4 @@
+import { SCANNER_PATTERN_TYPES } from '@auto-swe/shared/bundle';
 import { probeRegexBacktracking } from '@auto-swe/shared/lib/regexExec';
 import {
   checkRegexSafety,
@@ -13,14 +14,9 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
-const PATTERN_TYPES = [
-  'INJECTION',
-  'EXFILTRATION',
-  'SHELL_COMMAND',
-  'CODE_SECURITY',
-  'SENSITIVE_FILE',
-  'PII',
-] as const;
+// The Prisma enum's values, from the one shared list the bundle schema and the
+// pattern loader also use.
+const PATTERN_TYPES = SCANNER_PATTERN_TYPES;
 
 const PatternIdParams = z.object({ id: z.string().uuid() });
 

@@ -1793,3 +1793,221 @@ describe('agent node (P2)', () => {
     expect(agentFailures).toHaveLength(1);
   });
 });
+
+describe('fan-out block-mode reaches every place a branch can wait (F1)', () => {
+  it('stops a retrying branch between attempts once a sibling has failed', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-block-retry',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          concurrency: 2,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: {
+          inputs: { i: { from: 'subtask' } },
+          next: 'branchDone',
+          onFail: { retry: 5 },
+          step: 'flaky',
+          type: 'step',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        // Branch 0 fails hard at once; branch 1 keeps failing its gate a tick
+        // later and would retry five more times without the abort check.
+        flaky: (i: Record<string, unknown>) =>
+          i.i === 0
+            ? Promise.reject(new Error('branch 0 boom'))
+            : new Promise((resolve) => setTimeout(() => resolve({ passed: false }), 5)),
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow();
+    // Branch 0: 6 attempts (its own retries). Branch 1: its first attempt only.
+    const branch1 = calls.filter((c) => c.step === 'flaky' && c.inputs.i === 1);
+    expect(branch1).toHaveLength(1);
+  });
+
+  it('interrupts a branch waiting on a human step when a sibling fails', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-block-hitl',
+      nodes: {
+        approve: {
+          onApprove: 'branchDone',
+          onReject: 'branchDone',
+          onTimeout: 'branchDone',
+          timeout: '7d',
+          title: 'Approve',
+          type: 'humanApproval',
+        },
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fail: { next: 'branchDone', step: 'boom', type: 'step' },
+        fan: {
+          concurrency: 2,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1] },
+          subgraph: 'route',
+          type: 'fanOut',
+        },
+        route: { expr: 'subtask == 0', onFalse: 'approve', onTrue: 'fail', type: 'cond' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        boom: () => new Promise((_r, reject) => setTimeout(() => reject(new Error('boom')), 5)),
+      },
+    });
+    // The human never answers: a wait that ignored cancellation would hang.
+    dispatcher.waitSignal = () => new Promise(() => {});
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('boom');
+  });
+
+  it('interrupts a branch parked on a signal node the same way', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-block-signal',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fail: { next: 'branchDone', step: 'boom', type: 'step' },
+        fan: {
+          concurrency: 2,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1] },
+          subgraph: 'route',
+          type: 'fanOut',
+        },
+        route: { expr: 'subtask == 0', onFalse: 'wait', onTrue: 'fail', type: 'cond' },
+        wait: {
+          name: 'go',
+          onReceive: 'branchDone',
+          onTimeout: 'branchDone',
+          timeout: '7d',
+          type: 'signal',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        boom: () => new Promise((_r, reject) => setTimeout(() => reject(new Error('boom')), 5)),
+      },
+    });
+    dispatcher.waitSignal = () => new Promise(() => {});
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('boom');
+  });
+
+  it('propagates an outer block into a nested fan-out', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'outer',
+      name: 'fanout-nested-block',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fail: { next: 'branchDone', step: 'boom', type: 'step' },
+        inner: {
+          concurrency: 1,
+          join: 'branchDone',
+          onBranchFail: 'block',
+          over: { literal: [0, 1, 2, 3] },
+          subgraph: 'innerWork',
+          type: 'fanOut',
+        },
+        innerWork: { next: 'branchDone', step: 'slow', type: 'step' },
+        outer: {
+          concurrency: 2,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1] },
+          subgraph: 'route',
+          type: 'fanOut',
+        },
+        route: { expr: 'subtask == 0', onFalse: 'inner', onTrue: 'fail', type: 'cond' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        boom: () => new Promise((_r, reject) => setTimeout(() => reject(new Error('boom')), 5)),
+        slow: () => new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 20)),
+      },
+      supportsCancellation: true,
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('boom');
+    // The inner fan-out runs one branch at a time; the outer block must stop
+    // it from starting the remaining ones.
+    expect(calls.filter((c) => c.step === 'slow').length).toBeLessThan(4);
+  });
+});
+
+describe('fan-out branch contexts are isolated (F2)', () => {
+  it('a branch set on a nested path does not leak into the parent or siblings', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'init',
+      name: 'fanout-isolation',
+      nodes: {
+        branchDone: {
+          result: { seen: { from: 'context.plan.owner' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        done: {
+          result: {
+            owner: { from: 'context.plan.owner' },
+            requestFlag: { from: 'request.flag' },
+            seen: { from: 'nodes.fan.output.plucked' },
+          },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          concurrency: 1,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: ['a', 'b'] },
+          pluck: 'result.seen',
+          subgraph: 'mutate',
+          type: 'fanOut',
+        },
+        init: {
+          next: 'fan',
+          type: 'set',
+          values: { 'context.plan': { literal: { owner: 'parent' } } },
+        },
+        mutate: {
+          next: 'branchDone',
+          type: 'set',
+          values: {
+            'context.plan.owner': { from: 'subtask' },
+            'request.flag': { literal: 'branch' },
+          },
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.result).toEqual({
+      owner: 'parent',
+      requestFlag: undefined,
+      seen: ['a', 'b'],
+    });
+  });
+});

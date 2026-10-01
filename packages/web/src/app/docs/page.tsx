@@ -17,7 +17,7 @@ export default async function DocsIndexPage() {
       <PageHeader
         chapter="§ Docs"
         subtitle="Architecture, implementation, and design references for auto-swe."
-        title="Documentation"
+        title="Docs"
       />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {docs.map((doc) => (

@@ -185,6 +185,83 @@ describe('repositoryRoutes', () => {
       });
     });
 
+    it('includes deactivated connections for a LEAD+ caller that asks for them', async () => {
+      ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([]);
+      ctx.mockPrisma.connection.count.mockResolvedValueOnce(0);
+
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories?includeInactive=true',
+      });
+
+      const findManyArgs = ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0];
+      expect(findManyArgs.where).toEqual({});
+    });
+
+    it('shows a platform LEAD deactivated connections only on teams they lead', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-3';
+      ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([]);
+      ctx.mockPrisma.connection.count.mockResolvedValueOnce(0);
+
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories?includeInactive=true',
+      });
+
+      const findManyArgs = ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0];
+      const member = { memberships: { some: { userId: 'lead-3' } } };
+      expect(findManyArgs.where).toEqual({
+        AND: [
+          // Reachability: their own teams, or a team the repository is shared with.
+          { AND: [{ OR: [{ team: member }, { shares: { some: { team: member } } }] }, {}] },
+          // Active rows on any of those; inactive rows only where they are team
+          // LEAD/ADMIN and so could reactivate them.
+          {
+            OR: [
+              { isActive: true },
+              {
+                team: {
+                  memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: 'lead-3' } },
+                },
+              },
+            ],
+          },
+        ],
+      });
+      expect(ctx.mockPrisma.connection.count.mock.calls.at(-1)?.[0].where).toEqual(
+        findManyArgs.where
+      );
+    });
+
+    it('ignores includeInactive for an ENGINEER, and treats "false" as false', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.authState.sub = 'engineer-7';
+      ctx.mockPrisma.connection.findMany.mockResolvedValue([]);
+      ctx.mockPrisma.connection.count.mockResolvedValue(0);
+
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories?includeInactive=true',
+      });
+      expect(ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0].where).toMatchObject({
+        isActive: true,
+      });
+
+      ctx.authState.role = 'ADMIN';
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories?includeInactive=false',
+      });
+      expect(ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0].where).toEqual({
+        isActive: true,
+      });
+    });
+
     it('returns 400 when limit exceeds maxLimit', async () => {
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,

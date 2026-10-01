@@ -38,6 +38,23 @@ function OriginBadge({ origin }: { origin: string | null }) {
   );
 }
 
+/** Advisory findings from the skill content scanner; the save went through. */
+function ScanWarnings({ warnings }: { warnings: string[] }) {
+  if (warnings.length === 0) {
+    return null;
+  }
+  return (
+    <Alert variant="warning">
+      Saved, but the content scanner flagged this text — review it before assigning the skill:
+      <ul className="mt-1 list-disc pl-5">
+        {warnings.map((w) => (
+          <li key={w}>{w}</li>
+        ))}
+      </ul>
+    </Alert>
+  );
+}
+
 // ── Skill Detail / Edit Modal ────────────────────────────────────────────────
 
 function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: () => void }) {
@@ -45,6 +62,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ description: '', isActive: true, name: '', promptText: '' });
   const [error, setError] = useState<string | null>(null);
+  const [scanWarnings, setScanWarnings] = useState<string[]>([]);
 
   if (!skill) {
     return null;
@@ -85,8 +103,13 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
       if (!sk.isBuiltIn && form.promptText !== sk.promptText) {
         patch.promptText = form.promptText;
       }
-      await update.mutateAsync(patch);
+      const { scanWarnings: warnings } = await update.mutateAsync(patch);
       setEditing(false);
+      if (warnings.length > 0) {
+        // Saved, but the scanner flagged the text — keep the modal open to say so.
+        setScanWarnings(warnings);
+        return;
+      }
       onClose();
     } catch (err) {
       setError(errMsg(err, 'Failed to save skill'));
@@ -99,6 +122,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     <Modal
       onClose={() => {
         setEditing(false);
+        setScanWarnings([]);
         onClose();
       }}
       open={!!skill}
@@ -151,6 +175,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
         </form>
       ) : (
         <div className="space-y-5">
+          <ScanWarnings warnings={scanWarnings} />
           <EntityMetaBadges
             isActive={skill.isActive}
             isBuiltIn={skill.isBuiltIn}
@@ -195,25 +220,52 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
   const [form, setForm] = useState<SkillForm>({ description: '', name: '', promptText: '' });
   const create = useCreateSkill();
   const [error, setError] = useState<string | null>(null);
+  // Set after a save the scanner flagged: the skill exists, the modal stays
+  // open only to show the findings.
+  const [savedWarnings, setSavedWarnings] = useState<string[] | null>(null);
+
+  function close() {
+    setSavedWarnings(null);
+    onClose();
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     try {
-      await create.mutateAsync({
+      const { scanWarnings } = await create.mutateAsync({
         description: form.description || undefined,
         name: form.name,
         promptText: form.promptText,
       });
-      onClose();
       setForm({ description: '', name: '', promptText: '' });
+      if (scanWarnings.length > 0) {
+        setSavedWarnings(scanWarnings);
+        return;
+      }
+      close();
     } catch (err) {
       setError(errMsg(err, 'Failed to create skill'));
     }
   }
 
+  if (savedWarnings) {
+    return (
+      <Modal onClose={close} open={open} title="Skill created">
+        <div className="space-y-4">
+          <ScanWarnings warnings={savedWarnings} />
+          <div className="flex justify-end">
+            <Button onClick={close} variant="primary">
+              Done
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
-    <Modal onClose={onClose} open={open} title="New skill">
+    <Modal onClose={close} open={open} title="New skill">
       <form className="space-y-4" onSubmit={handleSubmit}>
         <Input
           id="skill-new-name"
@@ -239,7 +291,7 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
         {error && <Alert variant="error">{error}</Alert>}
         <ModalFooter
           isPending={create.isPending}
-          onCancel={onClose}
+          onCancel={close}
           pendingLabel="Creating…"
           submitLabel="Create skill"
         />

@@ -18,7 +18,11 @@ import { NewRequestModal } from '@/components/workflow/NewRequestModal';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { useApprovals } from '@/hooks/useApprovals';
 import { useAllWorkflowRuns, useWorkflows } from '@/hooks/useRuns';
-import { groupWorkflowsByDate, groupWorkflowsByStatus } from '@/lib/chartUtils';
+import {
+  groupWorkflowsByDate,
+  groupWorkflowsByStatus,
+  workflowStatusClass,
+} from '@/lib/chartUtils';
 import { formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -81,9 +85,9 @@ export default function DashboardPage() {
   const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
 
   const all = workflows ?? [];
-  const active = all.filter((w) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
-  const completed = all.filter((w) => w.currentStatus === 'COMPLETED');
-  const failed = all.filter((w) => w.currentStatus === 'FAILED');
+  const active = all.filter((w) => workflowStatusClass(w.currentStatus) === 'active');
+  const completed = all.filter((w) => workflowStatusClass(w.currentStatus) === 'completed');
+  const failed = all.filter((w) => workflowStatusClass(w.currentStatus) === 'failed');
   const pendingApprovals = approvalSteps ?? [];
 
   const statusData = useMemo(() => groupWorkflowsByStatus(all), [all]);

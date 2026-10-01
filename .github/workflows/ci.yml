@@ -5,10 +5,16 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # docker.yml calls this whole workflow as its publish gate, so the checks an
+  # image must pass are defined once and cannot drift from the PR gate.
+  workflow_call:
 
+# When called from docker.yml, `github.workflow` is the caller's name, so its
+# runs get their own group. Only pull-request runs cancel a superseded run: a
+# main push must finish its checks, or docker.yml never publishes that commit.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -26,10 +32,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.node-version'
 
@@ -50,7 +56,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Where `yarn` comes from here changed with Node 26, and it is no longer
       # something this repo pins. setup-node extracts the plain Node
@@ -66,7 +72,7 @@ jobs:
       # self-hosted runner without Yarn Classic on PATH needs one, e.g. a shim
       # execing the vendored release.
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.node-version'
           cache: yarn
@@ -115,10 +121,10 @@ jobs:
       SEED_ADMIN_PASSWORD: ci-only-not-a-real-deployment
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.node-version'
           cache: yarn
@@ -136,11 +142,35 @@ jobs:
       - name: Apply all migrations to a fresh database
         run: yarn db:deploy
 
-      # Fails when a migration is pending or the schema has drifted from the
-      # committed migrations, so a schema.prisma edit without a migration is
-      # caught here rather than at the next deploy.
+      # Diffs the database the migrations just built against schema.prisma, so a
+      # schema edit without a migration (or a migration the schema does not
+      # describe) fails here rather than at the next deploy. `migrate status`
+      # cannot do this: it compares the migrations table with the migrations
+      # directory and never reads the schema.
+      #
+      # The diff is never empty. DDL Prisma's DSL cannot express lives in the
+      # hand-written migrations, and the diff reads it as drift and proposes
+      # dropping it (.claude/skills/prisma-pgvector-hnsw). Those statements are
+      # listed exactly in EXPECTED; any other statement fails the step. A new
+      # hand-written index Prisma cannot express belongs in that list too.
       - name: Verify migrations match schema.prisma
-        run: yarn workspace @auto-swe/shared prisma migrate status
+        working-directory: packages/shared
+        run: |
+          set -euo pipefail
+          EXPECTED='DROP INDEX "idx_memory_items_embedding";'
+          diff_sql=$(yarn prisma migrate diff \
+            --from-config-datasource \
+            --to-schema src/prisma/schema.prisma \
+            --script)
+          unexpected=$(printf '%s\n' "$diff_sql" \
+            | grep -Ev '^[[:space:]]*(--.*)?$' \
+            | grep -vxF -e "$EXPECTED" || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::schema.prisma and the committed migrations disagree. Add a migration (see .claude/skills/prisma-pgvector-hnsw). Unexpected diff:"
+            printf '%s\n' "$unexpected"
+            exit 1
+          fi
+          echo "Migrations match schema.prisma (only the known hand-written DDL differs)."
 
       # The full seed: the shared half (admin user, default team, sample repo,
       # templates, skills, agents) and the gateway half (provisionAuthAdmin,

@@ -2,6 +2,11 @@ import { loadMcpTools, sanitizeToolName } from '../agents/mcpTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { mcpUrlForConnection } from '../lib/config/mcpConnection.js';
+import {
+  raceActivityCancellation,
+  throwIfActivityCancelled,
+  withHeartbeat,
+} from '../lib/execUtils.js';
 
 export interface McpCallToolInput {
   /** Id of an `mcp`-type Connection (its `config.url` is the server URL). */
@@ -28,6 +33,13 @@ export interface McpCallToolResult {
  * policy governs it. The MCP client is always disconnected in `finally`.
  */
 export async function mcpCallTool(input: McpCallToolInput): Promise<McpCallToolResult> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('mcpCallTool', mcpCallToolImpl(input));
+}
+
+async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResult> {
+  throwIfActivityCancelled();
   const target = await mcpUrlForConnection(input.connectionRef);
   if (!target) {
     throw new Error(
@@ -39,6 +51,8 @@ export async function mcpCallTool(input: McpCallToolInput): Promise<McpCallToolR
   const tracer = new AgentTracer();
   const loaded = await loadMcpTools(url, tracer, { callTimeoutMs, listTimeoutMs });
   try {
+    // Do not call an external tool for a run that was cancelled while connecting.
+    throwIfActivityCancelled();
     const key = `mcp_${sanitizeToolName(input.tool)}`;
     const tool = loaded.tools[key];
     if (!tool?.execute) {
@@ -56,7 +70,9 @@ export async function mcpCallTool(input: McpCallToolInput): Promise<McpCallToolR
       input: Record<string, unknown>,
       context?: unknown
     ) => Promise<unknown>;
-    const result = await execute(input.inputs ?? {});
+    // The MCP call takes no abort signal, so a cancel abandons it rather than
+    // waiting out its timeout; the client is still closed in `finally`.
+    const result = await raceActivityCancellation(execute(input.inputs ?? {}));
     return { result };
   } finally {
     await loaded.close();

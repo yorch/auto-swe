@@ -1,7 +1,8 @@
 'use client';
 
+import { getConnectionTypeMetadata, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
@@ -16,14 +17,17 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { useHasRole } from '@/hooks/useHasRole';
 import {
   useRepoDependencySuggestions,
   useTriggerRepoDependencyScan,
 } from '@/hooks/useRepoDependencies';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useMyCredentials, useRepositories } from '@/hooks/useRepositories';
+import { useLedTeamIds } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
+import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
 type ModalMode =
@@ -35,16 +39,9 @@ type ModalMode =
   | { kind: 'import' }
   | null;
 
-const TYPE_LABELS: Record<string, string> = {
-  api_endpoint: 'REST API',
-  generic: 'Generic',
-  git_repo: 'Git repo',
-};
-
 function ConnectionTypeBadge({ type }: { type: string }) {
-  const label = TYPE_LABELS[type] ?? type;
-  const tone: BadgeTone =
-    type === 'git_repo' ? 'moss' : type === 'api_endpoint' ? 'violet' : 'amber';
+  const label = isConnectionType(type) ? getConnectionTypeMetadata(type).label : type;
+  const tone: BadgeTone = type === 'git_repo' ? 'moss' : type === 'http_api' ? 'violet' : 'amber';
   return (
     <Badge className="text-[9px]" tone={tone} uppercase variant="outline">
       {label}
@@ -53,12 +50,32 @@ function ConnectionTypeBadge({ type }: { type: string }) {
 }
 
 export default function ConnectionsPage() {
-  const { data: repos, meta, isLoading, isError, error: loadError } = useRepositories();
+  // Connection writes are LEAD routes that also require LEAD membership on the
+  // connection's team (canManageTeamRepos); a platform ADMIN bypasses that.
+  // `canManage` gates the page-level controls — add, import, show inactive —
+  // which need at least one led team; each row gates on its own team.
+  const isLead = useHasRole('LEAD');
+  const isAdmin = useHasRole('ADMIN');
+  const platformRole = useAuthStore((s) => s.user?.role);
+  const ledTeamIds = useLedTeamIds();
+  const canManageTeam = useCallback(
+    (teamId: string | null | undefined) => canWriteTeamResource(platformRole, teamId, ledTeamIds),
+    [platformRole, ledTeamIds]
+  );
+  const canManage = isAdmin || (isLead && (ledTeamIds?.size ?? 0) > 0);
+  // Deactivating a connection must not make it vanish for the people who can
+  // reactivate it — they can opt into seeing inactive rows.
+  const [showInactive, setShowInactive] = useState(false);
+  const {
+    data: repos,
+    meta,
+    isLoading,
+    isError,
+    error: loadError,
+  } = useRepositories({ includeInactive: canManage && showInactive });
   const suggestions = useRepoDependencySuggestions();
   const scan = useTriggerRepoDependencyScan();
   const myCredentials = useMyCredentials();
-  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const canManage = role === 'ADMIN' || role === 'LEAD';
   const [mode, setMode] = useState<ModalMode>(null);
 
   if (isLoading || isError) {
@@ -100,6 +117,14 @@ export default function ConnectionsPage() {
         actions={
           canManage ? (
             <>
+              <label className="flex items-center gap-1.5 text-xs text-paper-400">
+                <input
+                  checked={showInactive}
+                  onChange={(e) => setShowInactive(e.target.checked)}
+                  type="checkbox"
+                />
+                Show inactive
+              </label>
               <Button onClick={() => setMode({ kind: 'import' })} size="sm" variant="secondary">
                 Import from GitHub
               </Button>
@@ -169,7 +194,7 @@ export default function ConnectionsPage() {
                       Dependencies
                     </Button>
                   )}
-                  {canManage && isGitRepo && (
+                  {canManageTeam(r.team?.id) && isGitRepo && (
                     // The server decides: only the owning team's leads (and
                     // platform admins) may change sharing.
                     <Button
@@ -180,7 +205,7 @@ export default function ConnectionsPage() {
                       Share
                     </Button>
                   )}
-                  {canManage && (
+                  {canManageTeam(r.team?.id) && (
                     <Button
                       onClick={() => setMode({ kind: 'edit', repo: r })}
                       size="sm"
@@ -215,7 +240,7 @@ export default function ConnectionsPage() {
       <section className="space-y-2">
         <SectionHeader
           actions={
-            role === 'ADMIN' && (
+            isAdmin && (
               <Button
                 disabled={scan.isPending}
                 onClick={() => scan.mutate()}
@@ -274,7 +299,8 @@ export default function ConnectionsPage() {
 
       {mode?.kind === 'dependencies' && (
         <RepoDependenciesModal
-          canManage={canManage}
+          canManage={canManageTeam(mode.repo.team?.id)}
+          canManageTeam={canManageTeam}
           onClose={() => setMode(null)}
           open
           repo={mode.repo}

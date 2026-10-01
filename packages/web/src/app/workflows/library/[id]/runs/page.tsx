@@ -17,8 +17,10 @@ import {
   TemplateNotFound,
   TemplateSubNav,
 } from '@/components/workflow/templateNav';
-import { useTemplateRuns, useWorkflowTemplate } from '@/hooks/useTemplates';
+import { useAllWorkflowRuns } from '@/hooks/useRuns';
+import { useWorkflowTemplate } from '@/hooks/useTemplates';
 import { validateRouteParam } from '@/lib/routeParams';
+import { isRunStatus, runStatusOptions } from '@/lib/runStatusOptions';
 import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
@@ -27,15 +29,7 @@ interface PageProps {
 
 const PAGE_SIZE = 20;
 
-const RUN_STATUSES = [
-  { label: 'All statuses', value: '' },
-  { label: 'Running', value: 'RUNNING' },
-  { label: 'Succeeded', value: 'SUCCESS' },
-  { label: 'Failed', value: 'FAILED' },
-  { label: 'Cancelled', value: 'CANCELLED' },
-  { label: 'Timed out', value: 'TIMED_OUT' },
-  { label: 'Skipped', value: 'SKIPPED' },
-];
+const RUN_STATUSES = runStatusOptions();
 
 function runDuration(start: string, end: string | null): string {
   if (!end) {
@@ -52,13 +46,17 @@ export default function TemplateRunsPage({ params }: PageProps) {
   const [statusFilter, setStatusFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
 
-  const { data, error, isError, isLoading } = useTemplateRuns(id ?? '', {
+  // Status is filtered server-side so pagination and the total reflect it;
+  // the run list endpoint takes the template as a filter too.
+  const { data, error, isError, isLoading } = useAllWorkflowRuns({
     limit: PAGE_SIZE,
     offset,
+    status: isRunStatus(statusFilter) ? statusFilter : undefined,
+    templateId: id ?? undefined,
   });
 
   const rows = data?.data ?? [];
-  const total = data?.total ?? 0;
+  const total = data?.meta.total ?? 0;
 
   const versions = useMemo(() => {
     const seen = new Set<number>();
@@ -70,16 +68,10 @@ export default function TemplateRunsPage({ params }: PageProps) {
 
   const filteredRows = useMemo(
     () =>
-      rows.filter((r) => {
-        if (statusFilter && r.status !== statusFilter) {
-          return false;
-        }
-        if (versionFilter && r.templateVersion !== Number(versionFilter)) {
-          return false;
-        }
-        return true;
-      }),
-    [rows, statusFilter, versionFilter]
+      // Version stays a filter over the current page: the endpoint has no
+      // version parameter.
+      rows.filter((r) => !versionFilter || r.templateVersion === Number(versionFilter)),
+    [rows, versionFilter]
   );
 
   const handlePrev = () => setOffset(Math.max(0, offset - PAGE_SIZE));
@@ -155,10 +147,10 @@ export default function TemplateRunsPage({ params }: PageProps) {
             Clear filters
           </Button>
         )}
-        {(statusFilter || versionFilter) && (
+        {versionFilter && (
           <span className="font-mono text-[11px] text-paper-500">
-            {filteredRows.length} of {rows.length} on this page shown — filters apply to the current
-            page only
+            {filteredRows.length} of {rows.length} on this page shown — the version filter applies
+            to the current page only
           </span>
         )}
       </div>
@@ -227,7 +219,7 @@ export default function TemplateRunsPage({ params }: PageProps) {
                 <TableStatusRow colSpan={5}>
                   <EmptyState
                     title={
-                      rows.length === 0
+                      rows.length === 0 && !statusFilter
                         ? 'No runs yet — start a new request to trigger one.'
                         : 'No runs on this page match the current filters.'
                     }

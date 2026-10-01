@@ -4,7 +4,8 @@ import type { Role } from '@auto-swe/shared';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
-import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { normalizeIP } from '@fastify/rate-limit';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 
@@ -22,7 +23,21 @@ declare module 'fastify' {
   interface FastifyInstance {
     auth: {
       signAccessToken: (payload: Omit<JwtPayload, 'iat' | 'exp'>) => string;
-      verifyAccessToken: (token: string) => JwtPayload;
+      /**
+       * Verify an access JWT and re-read its subject from the database.
+       *
+       * The signature only proves what the user's role was when the token was
+       * minted, up to {@link ACCESS_TOKEN_TTL_SECONDS} ago. The returned payload
+       * carries the user's *current* role, and the call rejects a token whose
+       * user has since been deactivated or deleted.
+       */
+      verifyAccessToken: (token: string) => Promise<JwtPayload>;
+      /**
+       * Signature, expiry and audience only — no database read, so the claims
+       * are NOT authorization. For callers that need a cheap, unforgeable
+       * identity before routing (the rate limiter's bucket key).
+       */
+      verifyAccessTokenClaims: (token: string) => JwtPayload;
       hashToken: (token: string) => string;
       /** Sign a single-purpose, short-lived token for OAuth `state`. Audience-
        *  scoped so it can never be replayed as an API bearer (and vice versa). */
@@ -113,13 +128,24 @@ function devSecretAllowed(): boolean {
   return process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
 }
 
+/**
+ * `JWT_SECRET`, with an empty or whitespace-only value treated as unset.
+ * `.env.example` ships a blank `JWT_SECRET=` line and both dotenv and Compose
+ * pass it through as `''`; `??` alone would keep that empty string, which
+ * slips past the dev-fallback guard below and leaves HS256 with no key.
+ */
+function jwtSecretOrFallback(): string {
+  const raw = process.env.JWT_SECRET;
+  return raw?.trim() ? raw : JWT_DEV_FALLBACK;
+}
+
 function getPrivateKey(): string {
   const keyPath = process.env.JWT_PRIVATE_KEY_PATH;
   if (keyPath) {
     return fs.readFileSync(keyPath, 'utf-8');
   }
   // Fallback for development: use a shared secret (HS256).
-  const secret = process.env.JWT_SECRET ?? JWT_DEV_FALLBACK;
+  const secret = jwtSecretOrFallback();
   if (!devSecretAllowed() && secret === JWT_DEV_FALLBACK) {
     throw new Error(
       'JWT_SECRET (or JWT_PRIVATE_KEY_PATH) must be set outside development/test — refusing to sign with the dev fallback.'
@@ -136,7 +162,7 @@ function getPublicKey(): string {
   // Fallback for development: same shared secret (HS256). Apply the same
   // guard as getPrivateKey() so a misconfigured prod deployment can't
   // silently verify tokens signed with the dev fallback.
-  const secret = process.env.JWT_SECRET ?? JWT_DEV_FALLBACK;
+  const secret = jwtSecretOrFallback();
   if (!devSecretAllowed() && secret === JWT_DEV_FALLBACK) {
     throw new Error(
       'JWT_SECRET (or JWT_PUBLIC_KEY_PATH) must be set outside development/test — refusing to verify with the dev fallback.'
@@ -148,6 +174,62 @@ function getPublicKey(): string {
 function getAlgorithm(): jwt.Algorithm {
   // Use RS256 if key files are provided, otherwise HS256 for dev
   return process.env.JWT_PRIVATE_KEY_PATH ? 'RS256' : 'HS256';
+}
+
+/** A validly signed access token whose user is inactive or gone. */
+class TokenUserRevokedError extends Error {
+  constructor() {
+    super('The user this token was issued to is inactive or no longer exists');
+    this.name = 'TokenUserRevokedError';
+  }
+}
+
+/** The user lookup behind a token check failed — the database, not the token. */
+class TokenUserLookupError extends Error {
+  constructor(cause: unknown) {
+    super('Could not load the user for this access token', { cause });
+    this.name = 'TokenUserLookupError';
+  }
+}
+
+/** The live user fields an access token's claims are re-checked against. */
+interface TokenUserState {
+  isActive: boolean;
+  role: Role;
+  slackId: string | null;
+}
+
+/**
+ * Short-lived cache of {@link TokenUserState} by user id, so a bearer-token
+ * request does not cost a users-table read in the steady state. The TTL bounds
+ * how long a demotion or deactivation can lag on a node that was not the one
+ * the change was made on; the node that made it drops the entry at once
+ * through {@link invalidateUserAuthCache}.
+ */
+const TOKEN_USER_CACHE_TTL_MS = 30_000;
+const TOKEN_USER_CACHE_MAX = 2000;
+const tokenUserCache = new Map<string, { state: TokenUserState | null; expiresAt: number }>();
+
+async function loadTokenUser(
+  prisma: FastifyInstance['prisma'],
+  userId: string
+): Promise<TokenUserState | null> {
+  const hit = tokenUserCache.get(userId);
+  if (hit && hit.expiresAt > Date.now()) {
+    return hit.state;
+  }
+  const row = await prisma.user.findUnique({
+    select: { isActive: true, role: true, slackId: true },
+    where: { id: userId },
+  });
+  if (!hit && tokenUserCache.size >= TOKEN_USER_CACHE_MAX) {
+    const firstKey = tokenUserCache.keys().next().value;
+    if (firstKey !== undefined) {
+      tokenUserCache.delete(firstKey);
+    }
+  }
+  tokenUserCache.set(userId, { expiresAt: Date.now() + TOKEN_USER_CACHE_TTL_MS, state: row });
+  return row;
 }
 
 const authPlugin: FastifyPluginAsync = async (fastify) => {
@@ -175,7 +257,26 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
-    verifyAccessToken(token: string): JwtPayload {
+    async verifyAccessToken(token: string): Promise<JwtPayload> {
+      const claims = fastify.auth.verifyAccessTokenClaims(token);
+      // The role claim is a snapshot from mint time. Authorize on the user as
+      // they are now: a demoted user must not keep the old role for the rest of
+      // the token's lifetime, and a deactivated one must not keep access at all.
+      const user = await loadTokenUser(fastify.prisma, claims.sub).catch((err: unknown) => {
+        throw new TokenUserLookupError(err);
+      });
+      if (!user?.isActive) {
+        throw new TokenUserRevokedError();
+      }
+      const { slackId: _staleSlackId, ...rest } = claims;
+      return {
+        ...rest,
+        role: user.role,
+        ...(user.slackId ? { slackId: user.slackId } : {}),
+      };
+    },
+
+    verifyAccessTokenClaims(token: string): JwtPayload {
       return jwt.verify(token, publicKey, {
         algorithms: [algorithm],
         audience: ACCESS_TOKEN_AUDIENCE,
@@ -278,6 +379,10 @@ async function verifyPatPayload(request: FastifyRequest, token: string): Promise
 // 60s. `Number(x) || default` also falls through on NaN, which is fine here.
 const SESSION_CACHE_TTL_MS = Number(process.env.SESSION_CACHE_TTL_MS) || 60_000;
 const SESSION_CACHE_MAX = 2000;
+// Keyed by the cookie value as the browser sends it, which better-auth signs:
+// `<session token>.<signature>`. The database stores only the unsigned token,
+// so invalidation by token has to match on the prefix — see
+// `invalidateSessionCache`.
 const sessionPayloadCache = new Map<string, { payload: JwtPayload; expiresAt: number }>();
 
 /** Extract the better-auth session token from a cookie header string.
@@ -367,10 +472,103 @@ async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayl
   return payload;
 }
 
-/** Drop a session from the in-memory cache (used by sign-out so the user
- *  is immediately logged out instead of waiting up to 60s for the TTL). */
+/**
+ * Drop a session from the in-memory cache, so a signed-out or revoked session
+ * stops authenticating now instead of after the TTL.
+ *
+ * Accepts either form of the token: the signed cookie value (`<token>.<sig>`,
+ * what sign-out has in hand) or the bare token as stored in `sessions.token`
+ * (what an admin revocation reads from the database). The cache is keyed by
+ * the signed form, so a bare token matches every entry it is the signed prefix
+ * of — an exact-key delete alone would never match it.
+ */
 export function invalidateSessionCache(sessionToken: string): void {
   sessionPayloadCache.delete(sessionToken);
+  const signedPrefix = `${sessionToken}.`;
+  for (const key of sessionPayloadCache.keys()) {
+    if (key.startsWith(signedPrefix)) {
+      sessionPayloadCache.delete(key);
+    }
+  }
+}
+
+/**
+ * Drop everything this process has cached about a user's authentication —
+ * every cached browser session and the bearer-token user state — so a role
+ * change or deactivation applies to the next request rather than after a TTL.
+ */
+export function invalidateUserAuthCache(userId: string): void {
+  tokenUserCache.delete(userId);
+  for (const [key, entry] of sessionPayloadCache) {
+    if (entry.payload.sub === userId) {
+      sessionPayloadCache.delete(key);
+    }
+  }
+}
+
+/**
+ * The IP half of {@link rateLimitKey}, and the whole key for the credential
+ * routes. Normalised exactly as the plugin's default key generator does: an
+ * IPv6 client is bucketed by its /64, not its full address. Supplying any
+ * custom `keyGenerator` switches that normalisation off, and a raw IPv6 key
+ * lets one client rotate through its /64 for a fresh bucket per request.
+ */
+export function ipRateLimitKey(request: FastifyRequest): string {
+  return `ip:${normalizeIP(request.ip)}`;
+}
+
+/**
+ * The rate-limit bucket for a request: the caller's user id when this process
+ * can prove who they are without a database read, otherwise their IP.
+ *
+ * Only an identity that has already been verified may pick a bucket. A key
+ * taken from an unverified header would let a client mint a fresh bucket per
+ * request by sending a new random token each time, which is the same as having
+ * no limit. So: a Bearer JWT counts once its signature verifies, and a session
+ * cookie counts once it is in the session cache (which only holds sessions
+ * better-auth has confirmed). A PAT, an unknown cookie, or anything invalid
+ * falls back to the IP — the authentication hook rejects the bad ones anyway.
+ *
+ * Without this, every server-side render from the web app shares the web
+ * server's IP, and one busy dashboard exhausts the limit for every user.
+ */
+export function rateLimitKey(request: FastifyRequest): string {
+  const authHeader = request.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    if (!token.startsWith(PAT_PREFIX)) {
+      try {
+        return `user:${request.server.auth.verifyAccessTokenClaims(token).sub}`;
+      } catch {
+        // Invalid token: fall through to the IP.
+      }
+    }
+    return ipRateLimitKey(request);
+  }
+  const cookie = extractSessionCookieValue(request.headers);
+  if (cookie) {
+    const hit = sessionPayloadCache.get(cookie);
+    if (hit && hit.expiresAt > Date.now()) {
+      return `user:${hit.payload.sub}`;
+    }
+  }
+  return ipRateLimitKey(request);
+}
+
+/** Test seam: seed a session-cache entry as a verified session would. */
+export function _cacheSessionForTests(cookieValue: string, payload: JwtPayload): void {
+  sessionPayloadCache.set(cookieValue, { expiresAt: Date.now() + 60_000, payload });
+}
+
+/** Test seam: empty both authentication caches. */
+export function _resetAuthCachesForTests(): void {
+  sessionPayloadCache.clear();
+  tokenUserCache.clear();
+}
+
+/** Test seam: whether a session-cache entry is present. */
+export function _hasCachedSessionForTests(cookieValue: string): boolean {
+  return sessionPayloadCache.has(cookieValue);
 }
 
 export function requireAuth(options: RBACOptions = {}) {
@@ -384,10 +582,15 @@ export function requireAuth(options: RBACOptions = {}) {
       try {
         payload = token.startsWith(PAT_PREFIX)
           ? await verifyPatPayload(request, token)
-          : request.server.auth.verifyAccessToken(token);
+          : await request.server.auth.verifyAccessToken(token);
       } catch (err: unknown) {
         if (err instanceof PatAuthError) {
           return reply.status(401).send({ error: { code: err.code, message: err.message } });
+        }
+        // A failed user lookup is an outage, not a verdict on the caller, and
+        // its message is internal: surface it as a server error, not a 401.
+        if (err instanceof TokenUserLookupError) {
+          throw err;
         }
         return reply.status(401).send({
           error: { code: 'TOKEN_INVALID', message: getErrorMessage(err) || 'Invalid token' },

@@ -163,9 +163,11 @@ export const CHANNEL_TASK_SPEC = {
  *     Every row is tagged `origin = 'swe-starter'` so it is distinguishable
  *     and removable.
  *
- * Behavior is identical to before — everything is still seeded — it is just
- * grouped and provenance-tagged. Safe to call on every startup (findFirst +
- * conditional create/update; scanner patterns upsert by the `label` unique index).
+ * Safe to call on every startup. What an admin owns is created when missing and
+ * otherwise left alone: a template's status / default flag / active version, an
+ * agent's versions and skill refs. A changed built-in template spec lands as a
+ * new version (see {@link syncBuiltinTemplate}). Scanner patterns upsert by the
+ * `label` unique index, preserving `isActive`.
  */
 export async function syncBuiltins(prisma: PrismaClient): Promise<void> {
   await seedCoreDefaults(prisma);
@@ -183,49 +185,29 @@ export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncTemplates(prisma);
   await syncChannelAssistantTemplate(prisma);
   await syncChannelTaskTemplate(prisma);
-  await syncSkills(prisma);
+  const newSkillNames = await syncSkills(prisma);
   await syncScannerPatterns(prisma, 'swe');
-  await syncAgents(prisma);
+  await syncAgents(prisma, newSkillNames);
   await syncEvalRubrics(prisma);
 }
 
 /**
- * Seed a GLOBAL, single-version channel template (the "Channel Assistant"
- * observability shell or the "Channel Task" autonomous-execution substrate) + its
- * v1 spec. Idempotent: matches the existing row by `(name, teamId=null)` and
- * upserts the version, exactly like {@link syncTemplates}. Active so it never
- * trips template-status gates. Both rows are distinct from the SWE templates in
- * `BUILTIN_TEMPLATES` on purpose — never offered as a run-on-submit option, so
- * not worth carrying through the BuiltinTemplate machinery.
+ * Seed a GLOBAL channel template (the "Channel Assistant" observability shell or
+ * the "Channel Task" autonomous-execution substrate) through the same versioned,
+ * admin-preserving path as {@link syncTemplates}. Both rows are distinct from the
+ * SWE templates in `BUILTIN_TEMPLATES` on purpose — never offered as a
+ * run-on-submit option, so not worth carrying through the BuiltinTemplate list.
  */
 async function syncGlobalChannelTemplate(
   prisma: PrismaClient,
   name: string,
   spec: { description: string }
 ): Promise<void> {
-  const existing = await prisma.workflowTemplate.findFirst({
-    where: { name, teamId: null },
-  });
-  const t = existing
-    ? await prisma.workflowTemplate.update({
-        data: { activeVersion: 1, isDefault: false, origin: SWE_ORIGIN, status: 'ACTIVE' },
-        where: { id: existing.id },
-      })
-    : await prisma.workflowTemplate.create({
-        data: {
-          activeVersion: 1,
-          description: spec.description,
-          isDefault: false,
-          name,
-          origin: SWE_ORIGIN,
-          status: 'ACTIVE',
-          teamId: null,
-        },
-      });
-  await prisma.workflowTemplateVersion.upsert({
-    create: { spec: spec as unknown as object, templateId: t.id, version: 1 },
-    update: { spec: spec as unknown as object },
-    where: { templateId_version: { templateId: t.id, version: 1 } },
+  await syncBuiltinTemplate(prisma, {
+    description: spec.description,
+    isDefault: false,
+    name,
+    spec,
   });
 }
 
@@ -683,15 +665,31 @@ async function migrateSeededModelDefault(
   });
 }
 
-async function syncAgents(prisma: PrismaClient): Promise<void> {
+/**
+ * Create-if-missing for the built-in GLOBAL agents. An existing agent is the
+ * admin's: its versions, activation and skill refs are never rewritten here.
+ * The one exception is an untouched seed — a latest version still carrying a
+ * model this file used to ship — which {@link migrateSeededModelDefault} moves
+ * onto the new default as a NEW version, leaving the old one for run pins.
+ *
+ * Skill refs are attached when the agent is created, and — for an existing
+ * agent — only for built-in skills that `syncSkills` created in this same run
+ * (`newSkillNames`). A ref to a skill that already existed and is missing now
+ * was removed by an admin, and re-adding it on every boot would undo that. A
+ * migrated version copies its predecessor's refs, so it keeps those removals.
+ */
+async function syncAgents(prisma: PrismaClient, newSkillNames: ReadonlySet<string>): Promise<void> {
   const skillMap = skillsByAgentKey();
   for (const def of SWE_AGENTS) {
-    // Latest version: older versions stay behind for run pins, and only the
-    // newest one says what the lineage currently runs.
+    // The newest version, deterministically — not whichever row the planner
+    // returns first. It has to be the true latest, not merely an active one:
+    // the model migration cuts `version + 1` from this row, and anything older
+    // would collide with a version that already exists.
     let agent = await prisma.agent.findFirst({
       orderBy: { version: 'desc' },
       where: { key: def.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
     });
+    const created = !agent;
     if (!agent) {
       agent = await prisma.agent.create({
         data: {
@@ -721,8 +719,10 @@ async function syncAgents(prisma: PrismaClient): Promise<void> {
       agent = await migrateSeededModelDefault(prisma, def, agent);
     }
 
-    // Sync the agent's skill refs from the built-in assignments (idempotent).
     for (const want of skillMap.get(def.key) ?? []) {
+      if (!created && !newSkillNames.has(want.name)) {
+        continue;
+      }
       const skill = await prisma.skill.findFirst({
         where: { isBuiltIn: true, name: want.name },
       });
@@ -797,47 +797,150 @@ async function renameTemplates(prisma: PrismaClient): Promise<void> {
 async function syncTemplates(prisma: PrismaClient): Promise<void> {
   await renameTemplates(prisma);
   for (const tmpl of BUILTIN_TEMPLATES) {
-    const existing = await prisma.workflowTemplate.findFirst({
-      where: { name: tmpl.name, teamId: null },
-    });
-    const staleDescription =
-      existing !== null &&
-      (SUPERSEDED_TEMPLATE_DESCRIPTIONS[tmpl.name] ?? []).includes(existing.description);
-    const t = existing
-      ? await prisma.workflowTemplate.update({
-          data: {
-            activeVersion: 1,
-            ...(staleDescription ? { description: tmpl.description } : {}),
-            ...(tmpl.inputSchema ? { inputSchema: tmpl.inputSchema as object } : {}),
-            isDefault: tmpl.isDefault ?? false,
-            origin: SWE_ORIGIN,
-            status: 'ACTIVE',
-            workspaceProvider: tmpl.workspaceProvider ?? 'git_repo',
-          },
-          where: { id: existing.id },
-        })
-      : await prisma.workflowTemplate.create({
-          data: {
-            activeVersion: 1,
-            description: tmpl.description,
-            ...(tmpl.inputSchema ? { inputSchema: tmpl.inputSchema as object } : {}),
-            isDefault: tmpl.isDefault ?? false,
-            name: tmpl.name,
-            origin: SWE_ORIGIN,
-            status: 'ACTIVE',
-            teamId: null,
-            workspaceProvider: tmpl.workspaceProvider ?? 'git_repo',
-          },
-        });
-    await prisma.workflowTemplateVersion.upsert({
-      create: { spec: tmpl.spec as unknown as object, templateId: t.id, version: 1 },
-      update: { spec: tmpl.spec as unknown as object },
-      where: { templateId_version: { templateId: t.id, version: 1 } },
+    // Legacy SWE templates predate the column and expect a git workspace.
+    await syncBuiltinTemplate(prisma, {
+      ...tmpl,
+      workspaceProvider: tmpl.workspaceProvider ?? 'git_repo',
     });
   }
 }
 
-async function syncSkills(prisma: PrismaClient): Promise<void> {
+/** JSON with object keys sorted, so a `jsonb` round trip compares equal. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_k, v) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.keys(v as Record<string, unknown>)
+            .sort()
+            .map((k) => [k, (v as Record<string, unknown>)[k]])
+        )
+      : v
+  );
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === 'P2002';
+}
+
+/**
+ * Sync one built-in GLOBAL template without overwriting what an admin owns.
+ *
+ * - **Missing** → create it at v1, ACTIVE. It becomes the global default only
+ *   when the definition asks for it AND no global default exists yet: there is
+ *   never a second one.
+ * - **Present** → `status`, `isDefault` and `activeVersion` are the admin's and
+ *   are left alone, and no existing version is rewritten (a run pins its
+ *   version; rewriting v1 in place changed the graph under it).
+ * - **Built-in spec changed** → append a NEW version. A built-in version is one
+ *   with no author (`createdBy` and `generatedBy` both null — every version a
+ *   user or the author agent saves carries one). The new version is activated,
+ *   together with the template-level built-in fields (`inputSchema`,
+ *   `workspaceProvider`), only when the template is still active on the
+ *   previous built-in version: an admin who moved it to their own version, or
+ *   archived it, keeps that choice.
+ *
+ * Safe under concurrent gateway boots: a version-number clash means another
+ * replica appended the same spec first.
+ */
+async function syncBuiltinTemplate(
+  prisma: PrismaClient,
+  tmpl: {
+    name: string;
+    description: string;
+    spec: unknown;
+    isDefault?: boolean;
+    inputSchema?: unknown;
+    workspaceProvider?: string;
+  }
+): Promise<void> {
+  const spec = tmpl.spec as object;
+  const templateFields = {
+    ...(tmpl.inputSchema ? { inputSchema: tmpl.inputSchema as object } : {}),
+    ...(tmpl.workspaceProvider ? { workspaceProvider: tmpl.workspaceProvider } : {}),
+  };
+  const existing = await prisma.workflowTemplate.findFirst({
+    where: { name: tmpl.name, teamId: null },
+  });
+
+  if (!existing) {
+    const defaultTaken = tmpl.isDefault
+      ? await prisma.workflowTemplate.findFirst({
+          select: { id: true },
+          where: { isDefault: true, teamId: null },
+        })
+      : null;
+    try {
+      await prisma.workflowTemplate.create({
+        data: {
+          activeVersion: 1,
+          description: tmpl.description,
+          ...templateFields,
+          isDefault: Boolean(tmpl.isDefault) && !defaultTaken,
+          name: tmpl.name,
+          origin: SWE_ORIGIN,
+          status: 'ACTIVE',
+          teamId: null,
+          versions: { create: { spec, version: 1 } },
+        },
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) {
+        throw err;
+      }
+    }
+    return;
+  }
+
+  // A description still holding the exact text an earlier release shipped was
+  // never edited, so it is brought up to date; an admin's edit is never
+  // overwritten. Independent of the spec comparison below.
+  if ((SUPERSEDED_TEMPLATE_DESCRIPTIONS[tmpl.name] ?? []).includes(existing.description)) {
+    await prisma.workflowTemplate.update({
+      data: { description: tmpl.description },
+      where: { id: existing.id },
+    });
+  }
+
+  const versions = await prisma.workflowTemplateVersion.findMany({
+    orderBy: { version: 'asc' },
+    select: { createdBy: true, generatedBy: true, spec: true, version: true },
+    where: { templateId: existing.id },
+  });
+  const builtins = versions.filter((v) => v.createdBy == null && v.generatedBy == null);
+  const latestBuiltin = builtins.at(-1);
+  if (latestBuiltin && canonicalJson(latestBuiltin.spec) === canonicalJson(spec)) {
+    return;
+  }
+
+  const next = (versions.at(-1)?.version ?? 0) + 1;
+  try {
+    await prisma.workflowTemplateVersion.create({
+      data: { spec, templateId: existing.id, version: next },
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return;
+    }
+    throw err;
+  }
+
+  const onPreviousBuiltin =
+    latestBuiltin !== undefined &&
+    existing.activeVersion === latestBuiltin.version &&
+    existing.status === 'ACTIVE';
+  if (onPreviousBuiltin) {
+    // Conditional on the row still pointing where we read it, so an admin's
+    // concurrent activation is not overwritten.
+    await prisma.workflowTemplate.updateMany({
+      data: { activeVersion: next, ...templateFields },
+      where: { activeVersion: latestBuiltin.version, id: existing.id, teamId: null },
+    });
+  }
+}
+
+/** Returns the names of the built-in skills this call created. */
+async function syncSkills(prisma: PrismaClient): Promise<Set<string>> {
+  const created = new Set<string>();
   for (const skillDef of BUILTIN_SKILLS) {
     const existingSkill = await prisma.skill.findFirst({
       where: { isBuiltIn: true, name: skillDef.name },
@@ -865,10 +968,11 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
           promptText: skillDef.promptText,
         },
       });
+      created.add(skillDef.name);
     }
-    // Skill→agent attachment is via the Agent's skillRefs (synced in syncAgents);
-    // the legacy AgentSkillAssignment table was removed in P1.5.
+    // Skill→agent attachment is via the Agent's skillRefs (synced in syncAgents).
   }
+  return created;
 }
 
 /**

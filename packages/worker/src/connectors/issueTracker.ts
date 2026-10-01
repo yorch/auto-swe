@@ -1,4 +1,6 @@
 import type { IssueTrackerConnectionConfig } from '@auto-swe/shared';
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 
 const ISSUE_TRACKER_TIMEOUT_MS = 30_000;
@@ -36,6 +38,40 @@ function requireBaseUrl(config: IssueTrackerConnectionConfig): string {
     throw ApplicationFailure.nonRetryable('jira connection is missing baseUrl');
   }
   return config.baseUrl.replace(/\/+$/, '');
+}
+
+/**
+ * The SSRF check for a Jira connection's `baseUrl`. That URL is on the
+ * `Connection` row, which a team LEAD can edit, and the worker sends the
+ * connection's credential to it — so an unchecked URL let a LEAD aim the
+ * worker (and the token) at loopback, a cloud metadata endpoint or any
+ * internal service.
+ *
+ * The same `isSafeProbeUrl` guard as the platform's own tracker integration.
+ * Its `allowPrivateNetwork` opt-in is honoured only for the exact origin an
+ * ADMIN configured at /studio/integrations → Tracker: an opt-in a LEAD could
+ * set on their own connection would be no guard at all.
+ */
+async function assertSafeJiraBaseUrl(baseUrl: string): Promise<void> {
+  const safety = isSafeProbeUrl(baseUrl);
+  if (safety.ok) {
+    return;
+  }
+  const admin = await resolveIssueTrackerConfig().catch(() => null);
+  if (admin?.allowPrivateNetwork && admin.baseUrl && sameOrigin(admin.baseUrl, baseUrl)) {
+    return;
+  }
+  throw ApplicationFailure.nonRetryable(
+    `jira connection baseUrl rejected by the SSRF guard: ${safety.reason}`
+  );
+}
+
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
 }
 
 function requireEmail(config: IssueTrackerConnectionConfig): string {
@@ -92,6 +128,7 @@ async function jiraFetch<T>(
 ): Promise<T> {
   const baseUrl = requireBaseUrl(connection.config);
   const email = requireEmail(connection.config);
+  await assertSafeJiraBaseUrl(baseUrl);
   const url = `${baseUrl}${path}`;
   const timeoutSignal = AbortSignal.timeout(ISSUE_TRACKER_TIMEOUT_MS);
   const response = await fetch(url, {
@@ -101,6 +138,9 @@ async function jiraFetch<T>(
       'Content-Type': 'application/json',
       ...(init.headers ?? {}),
     },
+    // A checked host must not be able to bounce the credentialed request to
+    // an unchecked one.
+    redirect: 'error',
     signal: init.signal ? AbortSignal.any([timeoutSignal, init.signal]) : timeoutSignal,
   });
 

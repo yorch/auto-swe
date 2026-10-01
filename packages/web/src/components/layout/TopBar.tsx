@@ -2,64 +2,22 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import type { RefObject } from 'react';
+import { SIDEBAR_ID } from '@/components/layout/Sidebar';
 import { Select } from '@/components/ui/Select';
 import { useApprovalsCount } from '@/hooks/useApprovals';
 import { useTeams } from '@/hooks/useTeams';
+import { pageTitle } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
 
-// Derive a readable page title from the pathname
-function pageTitle(pathname: string): string {
-  const prefixes: [string, string][] = [
-    ['/', 'Dashboard'],
-    ['/runs/', 'Run'],
-    ['/runs', 'Runs'],
-    ['/govern/approvals', 'Approvals'],
-    ['/workflows/library', 'Workflow library'],
-    ['/workflows', 'Request queue'],
-    ['/epics', 'Epics'],
-    ['/connections', 'Connections'],
-    ['/govern/security', 'Security'],
-    ['/govern/scanner', 'Scanner'],
-    ['/govern/policies', 'Autonomy policies'],
-    ['/govern/evals', 'Evals'],
-    ['/govern/schedules', 'Schedules'],
-    ['/govern/budget-alerts', 'Budget alerts'],
-    ['/govern/teams', 'Teams'],
-    ['/govern/organizations', 'Organizations'],
-    ['/govern/users', 'Users'],
-    ['/govern/api-tokens', 'API tokens'],
-    ['/govern/lessons', 'Lessons'],
-    ['/govern/analytics', 'Analytics'],
-    ['/govern/usage', 'LLM usage'],
-    ['/govern/baselines', 'Error baselines'],
-    ['/govern/sessions', 'Sessions'],
-    ['/govern/slack-channels', 'Slack channels'],
-    ['/govern/workflow-defaults', 'Workflow defaults'],
-    ['/govern/platform-settings', 'Platform settings'],
-    ['/govern/config-grants', 'Config grants'],
-    ['/govern/audit', 'Audit log'],
-    ['/govern', 'Govern'],
-    ['/studio/agents', 'Agents'],
-    ['/studio/skills', 'Skills'],
-    ['/studio/mcp', 'MCP'],
-    ['/studio/github-installations', 'GitHub installations'],
-    ['/studio/integrations', 'Integrations'],
-    ['/studio/models', 'Model config'],
-    ['/studio/bundles', 'Bundles'],
-    ['/studio', 'Studio'],
-    ['/settings', 'Settings'],
-    ['/docs', 'Docs'],
-  ];
-  for (const [prefix, title] of prefixes) {
-    if (prefix === '/' ? pathname === '/' : pathname.startsWith(prefix)) {
-      return title;
-    }
-  }
-  return 'auto·swe';
+interface TopBarProps {
+  navOpen: boolean;
+  onOpenNav: () => void;
+  menuButtonRef: RefObject<HTMLButtonElement | null>;
 }
 
-export function TopBar() {
+export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
@@ -78,17 +36,44 @@ export function TopBar() {
   const title = pageTitle(pathname);
 
   return (
-    <header className="sticky top-0 z-20 flex h-[60px] items-center gap-[14px] border-b border-ink-400 bg-ink-950/70 px-[26px] backdrop-blur-md">
+    <header className="sticky top-0 z-20 flex h-[60px] min-w-0 items-center gap-2 border-b border-ink-400 bg-ink-950/70 px-3 backdrop-blur-md sm:gap-[14px] md:px-[26px]">
+      {/* Menu button — opens the sidebar drawer below md */}
+      <button
+        aria-controls={SIDEBAR_ID}
+        aria-expanded={navOpen}
+        aria-label="Open navigation"
+        className="-ml-1 shrink-0 rounded-md p-2 text-paper-300 hover:text-paper-100 md:hidden"
+        onClick={onOpenNav}
+        ref={menuButtonRef}
+        type="button"
+      >
+        <svg
+          aria-hidden="true"
+          fill="none"
+          height={20}
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth={2}
+          viewBox="0 0 24 24"
+          width={20}
+        >
+          <path d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+
       {/* Page title */}
-      <h2 className="m-0 text-[17px] font-[650] tracking-[-0.02em] text-paper-100">{title}</h2>
+      <h2 className="m-0 min-w-0 truncate text-[17px] font-[650] tracking-[-0.02em] text-paper-100">
+        {title}
+      </h2>
 
       {/* Team context selector */}
       <label
-        className="relative ml-2 flex cursor-pointer items-center gap-[6px] rounded-[8px] focus-within:ring-2 focus-within:ring-ember-400"
+        className="relative flex min-w-0 shrink cursor-pointer items-center gap-[6px] rounded-[8px] sm:ml-2 focus-within:ring-2 focus-within:ring-ember-400"
         htmlFor="topbar-team-select"
       >
-        <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-[8px] border border-ink-400 bg-ink-700 px-2.5 py-[5px] text-[12.5px] text-paper-400">
-          team: <span className="font-semibold text-ember-400">{teamLabel}</span>
+        <span className="inline-flex min-w-0 cursor-pointer items-center gap-1.5 rounded-[8px] border border-ink-400 bg-ink-700 px-2.5 py-[5px] text-[12.5px] text-paper-400">
+          <span className="max-sm:hidden">team:</span>
+          <span className="max-w-[9rem] truncate font-semibold text-ember-400">{teamLabel}</span>
           <span className="text-[10px] text-paper-500">▾</span>
         </span>
         <Select
@@ -110,7 +95,7 @@ export function TopBar() {
       {/* Inbox badge */}
       {inboxCount > 0 && (
         <Link
-          className="inline-flex items-center gap-1.5 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-2.5 py-[5px] text-[12.5px] font-semibold text-amber-400 no-underline"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-2.5 py-[5px] text-[12.5px] font-semibold text-amber-400 no-underline max-sm:hidden"
           href="/govern/approvals"
         >
           <span className="inline-block h-[7px] w-[7px] rounded-full bg-amber-400" />
@@ -122,14 +107,14 @@ export function TopBar() {
       <div className="flex-1" />
 
       {/* Right side */}
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3">
         {/* Online dot */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 max-sm:hidden">
           <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
           <span className="label-mono">online</span>
         </div>
 
-        <span className="inline-block h-3.5 w-px bg-ink-400" />
+        <span className="inline-block h-3.5 w-px bg-ink-400 max-sm:hidden" />
 
         <button
           className="cursor-pointer border-none bg-transparent p-0 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500 hover:text-paper-200"

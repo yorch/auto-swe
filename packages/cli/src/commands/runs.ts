@@ -1,25 +1,27 @@
-import type {
-  WorkflowRunDetail,
-  WorkflowRunSummary,
-  WorkflowStepRecord,
+import {
+  isTerminalWorkflowRunStatus,
+  type WorkflowRunDetail,
+  type WorkflowRunSummary,
+  type WorkflowStepRecord,
 } from '@auto-swe/shared/types/api';
 import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { missingValue, parseFlags } from '../lib/flags.js';
 import { pad, parsePositiveInt } from '../lib/format.js';
+import { sleep } from '../lib/time.js';
 
 /**
  * `auto-swe runs` — list and inspect workflow runs from the terminal.
  *
  * The list endpoint accepts `?status`, `?templateId`, `?workRequestId` —
- * we surface the common ones as flags. Tail polls the run detail endpoint
+ * each is surfaced as a flag. Tail polls the run detail endpoint
  * until the run reaches a terminal status (max polls capped so a stuck run
  * doesn't keep the CLI alive forever).
  */
 
 const SUB_HELP = `auto-swe runs — inspect workflow runs
 
-  runs list [--status=STATUS] [--template-id=ID] [--limit=N]
+  runs list [--status=STATUS] [--template-id=ID] [--work-request-id=ID] [--limit=N]
                                         Recent runs (default limit 20)
   runs show <runId>                     Print one run + its steps as JSON
   runs tail <runId> [--interval=SEC] [--max=N]
@@ -109,8 +111,6 @@ async function cmdShow(args: string[], env: CliEnv): Promise<number> {
   return 0;
 }
 
-const TERMINAL_STATUSES = new Set(['SUCCESS', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'SKIPPED']);
-
 async function cmdTail(args: string[], env: CliEnv): Promise<number> {
   const { positional, flags } = parseFlags(args);
   const id = positional[0];
@@ -141,7 +141,7 @@ async function cmdTail(args: string[], env: CliEnv): Promise<number> {
         `[${detail.status}] ${detail.steps.length} steps recorded.${lastLine}\n`
       );
     }
-    if (TERMINAL_STATUSES.has(detail.status)) {
+    if (isTerminalWorkflowRunStatus(detail.status)) {
       return detail.status === 'SUCCESS' ? 0 : 2;
     }
     await sleep(intervalSec * 1000);
@@ -155,10 +155,6 @@ function stepSignature(d: WorkflowRunDetail): string {
   // step row lands, OR (c) the most recent step's status changes.
   const last = d.steps.at(-1);
   return `${d.status}|${d.steps.length}|${last?.nodeId ?? ''}|${last?.status ?? ''}`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 // Re-export for type discovery in callers (unused at runtime).

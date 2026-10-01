@@ -14,21 +14,26 @@ export function PageHeader({
   className?: string;
 }) {
   return (
-    <header className={cn('mb-10 flex items-end justify-between gap-6', className)}>
+    <header
+      className={cn(
+        'mb-10 flex flex-col gap-4 md:flex-row md:items-end md:justify-between md:gap-6',
+        className
+      )}
+    >
       <div className="min-w-0">
         {chapter && (
           <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.24em] text-ember-400">
             {chapter}
           </div>
         )}
-        <h1 className="text-[32px] font-bold leading-tight tracking-tight text-paper-50">
+        <h1 className="break-words text-[26px] font-bold leading-tight tracking-tight text-paper-50 md:text-[32px]">
           {title}
         </h1>
         {subtitle && (
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-paper-400">{subtitle}</p>
         )}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
   );
 }

@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useUserOrgs } from '@/hooks/useAdmin';
+import { navLabel } from '@/lib/navigation';
 
 export default function GovernOrganizationsPage() {
   const { data: orgs, isLoading, isError, error: loadError } = useUserOrgs();
@@ -18,7 +19,7 @@ export default function GovernOrganizationsPage() {
       <PageHeader
         chapter="§ Govern"
         subtitle="Organizations you belong to. Alerts fire when current month spend crosses the configured threshold."
-        title="Organizations"
+        title={navLabel('/govern/organizations')}
       />
 
       {alertCount > 0 && (

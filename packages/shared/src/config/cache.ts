@@ -63,6 +63,27 @@ function enforceCap(): void {
   }
 }
 
+/// A fetch in progress for one key. `stale` is set when the key is
+/// invalidated while the fetch is still running: its result was read before
+/// the write that triggered the invalidation, so it must not be stored.
+interface InFlight {
+  promise: Promise<unknown>;
+  stale: boolean;
+}
+
+const inflight = new Map<string, InFlight>();
+
+function markStale(predicate: (key: string) => boolean): void {
+  for (const [key, entry] of inflight) {
+    if (predicate(key)) {
+      entry.stale = true;
+      // A caller arriving after the invalidation starts a fresh fetch rather
+      // than joining one that read the old state.
+      inflight.delete(key);
+    }
+  }
+}
+
 export async function withCache<T>(
   key: string,
   ttlMs: number,
@@ -82,23 +103,45 @@ export async function withCache<T>(
     store.set(key, hit);
     return hit.value as T;
   }
-  const value = await fetcher();
-  if (!shouldCache || shouldCache(value)) {
-    // Lazy sweep + cap enforcement only when we actually insert — avoids
-    // O(n) work on every read.
-    purgeExpired(now);
-    store.set(key, { expiresAt: now + ttlMs, value });
-    enforceCap();
+  // Concurrent misses on one key share one fetch instead of each hitting the
+  // DB. The first caller's `shouldCache` decides whether the result is stored.
+  const running = inflight.get(key);
+  if (running) {
+    return running.promise as Promise<T>;
   }
-  return value;
+  const entry: InFlight = { promise: Promise.resolve(), stale: false };
+  entry.promise = (async () => {
+    try {
+      const value = await fetcher();
+      // An invalidation that landed while this fetch ran means the value may
+      // predate the write that caused it; returning it to this caller is fine
+      // (it asked before the write), caching it for everyone else is not.
+      if (!entry.stale && (!shouldCache || shouldCache(value))) {
+        // Lazy sweep + cap enforcement only when we actually insert — avoids
+        // O(n) work on every read.
+        purgeExpired(now);
+        store.set(key, { expiresAt: now + ttlMs, value });
+        enforceCap();
+      }
+      return value;
+    } finally {
+      if (inflight.get(key) === entry) {
+        inflight.delete(key);
+      }
+    }
+  })();
+  inflight.set(key, entry);
+  return entry.promise as Promise<T>;
 }
 
 /// Drops a single key from the cache. Used to keep negative results (missing
 /// credentials, cross-scope GLOBAL fallbacks for team lookups) from sticking
 /// around for the full TTL — operators expect DB inserts to take effect
-/// immediately on the next activity call.
+/// immediately on the next activity call. A fetch for the key already in
+/// flight will not store its result.
 export function invalidate(key: string): void {
   store.delete(key);
+  markStale((k) => k === key);
 }
 
 export function configCacheTtlMs(): number {
@@ -117,17 +160,22 @@ export function configCacheTtlMs(): number {
 /// invalidate many of them — a GLOBAL edit changes what every team resolves.
 /// Walking the store is cheap next to leaving an admin's save invisible for a
 /// full TTL.
+///
+/// Fetches already in flight for a matching key are marked stale so they do
+/// not store a value read before the write that triggered this call.
 export function invalidatePrefix(prefix: string): void {
   for (const key of store.keys()) {
     if (key.startsWith(prefix)) {
       store.delete(key);
     }
   }
+  markStale((k) => k.startsWith(prefix));
 }
 
 /// Test-only escape hatch. Drops every entry so the next call goes back to the DB.
 export function _resetConfigCacheForTests(): void {
   store.clear();
+  markStale(() => true);
 }
 
 /// Test-only inspector — exposes cache size so a test can assert the

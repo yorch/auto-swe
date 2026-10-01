@@ -1,5 +1,5 @@
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
-import { apiRequest, runWithExitCodes } from '../lib/api.js';
+import { apiRequest, apiRequestFull, runWithExitCodes } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { missingValue, parseFlags } from '../lib/flags.js';
 
@@ -19,10 +19,49 @@ const SUB_HELP = `auto-swe run — submit a work request
   To start a specific template with an arbitrary payload, use \`workflows run\`.
 `;
 
-/** Shape returned by POST /api/v1/work-requests (201). */
+/**
+ * Shape returned by POST /api/v1/work-requests (201). `workflowIds` are
+ * ActiveWorkflow ids, not WorkflowRun ids — the run row is written once the
+ * worker picks the workflow up, so it is found afterwards by work request.
+ */
 interface WorkRequestResponse {
   workRequestId: string;
   workflowIds: string[];
+}
+
+/** Page size for the repository lookup — the list endpoint's maximum. */
+export const REPO_PAGE_SIZE = 500;
+
+/**
+ * Find a repository by `org/name`, paging through every repository the caller
+ * can see. The list endpoint has no name filter, and a caller with more
+ * repositories than one page holds must still resolve the ones past it.
+ */
+async function findRepoByName(
+  env: CliEnv,
+  org: string,
+  repoName: string
+): Promise<RepositorySummary | null> {
+  const wantOrg = org.toLowerCase();
+  const wantRepo = repoName.toLowerCase();
+  for (let offset = 0; ; offset += REPO_PAGE_SIZE) {
+    const { data, meta } = await apiRequestFull<{
+      data: RepositorySummary[];
+      meta?: { total?: number };
+    }>(env, 'GET', `/api/v1/repositories?limit=${REPO_PAGE_SIZE}&offset=${offset}`);
+    const hit = data.find(
+      (r) =>
+        (r.organizationName ?? '').toLowerCase() === wantOrg &&
+        (r.repoName ?? '').toLowerCase() === wantRepo
+    );
+    if (hit) {
+      return hit;
+    }
+    const total = meta?.total ?? 0;
+    if (data.length < REPO_PAGE_SIZE || offset + REPO_PAGE_SIZE >= total) {
+      return null;
+    }
+  }
 }
 
 export async function runWorkRequestsCommand(args: string[], env: CliEnv): Promise<number> {
@@ -98,12 +137,7 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
       process.stderr.write('--repo must be in "org/name" format (e.g. acme/payments-api)\n');
       return 1;
     }
-    const repos = await apiRequest<RepositorySummary[]>(env, 'GET', '/api/v1/repositories');
-    const repo = repos.find(
-      (r) =>
-        (r.organizationName ?? '').toLowerCase() === org.toLowerCase() &&
-        (r.repoName ?? '').toLowerCase() === repoName.toLowerCase()
-    );
+    const repo = await findRepoByName(env, org, repoName);
     if (!repo) {
       process.stderr.write(
         `Repository "${flags.repo}" not found. Check the /repositories page in the web UI for configured repos.\n`
@@ -122,11 +156,13 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   const result = await apiRequest<WorkRequestResponse>(env, 'POST', '/api/v1/work-requests', body);
 
   process.stdout.write(`Work request submitted.\n`);
-  process.stdout.write(`  Work request: ${result.workRequestId}\n`);
-  process.stdout.write(`  Workflow:     ${result.workflowIds.join(', ')}\n`);
-  process.stdout.write(`  Ticket:       ${flags.ticket}\n`);
+  process.stdout.write(`  Work request:    ${result.workRequestId}\n`);
+  process.stdout.write(`  Active workflow: ${result.workflowIds.join(', ')}\n`);
+  process.stdout.write(`  Ticket:          ${flags.ticket}\n`);
   process.stdout.write(
-    `\nMonitor progress:\n  auto-swe runs list --limit=5\n  auto-swe runs tail <runId>\n`
+    `\nMonitor progress — the run appears once the worker starts it:\n` +
+      `  auto-swe runs list --work-request-id=${result.workRequestId}\n` +
+      `  auto-swe runs tail <run ID from the list above>\n`
   );
   return 0;
 }

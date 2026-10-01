@@ -93,7 +93,7 @@ export default function AutonomyDecisionsPage() {
           placeholder="Run ID (UUID)"
           value={form.runId}
         />
-        <div className="flex gap-2">
+        <div className="flex items-end gap-2">
           <Button type="submit" variant="primary">
             Filter
           </Button>

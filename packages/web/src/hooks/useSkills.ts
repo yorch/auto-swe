@@ -52,6 +52,20 @@ export function useSkills() {
   });
 }
 
+/**
+ * The skills a team's members may pick for TEAM-scope agents:
+ * `GET /teams/:teamId/skills` (GLOBAL rows plus this team's and org's own).
+ * The team agent library uses this rather than the ADMIN-only platform list,
+ * which a team ADMIN who is not a platform ADMIN cannot read.
+ */
+export function useTeamSkills(teamId: string) {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: SkillOption[] }>(`/api/v1/teams/${teamId}/skills`).then((r) => r.data),
+    queryKey: ['skills', 'team', teamId],
+  });
+}
+
 export function useSkillEffectiveness() {
   return useQuery({
     queryFn: () =>
@@ -62,11 +76,27 @@ export function useSkillEffectiveness() {
   });
 }
 
+/**
+ * A saved skill plus the advisory findings of the content scanner. The gateway
+ * saves the skill regardless and returns `scanWarnings` only when there are
+ * some; they are surfaced to the author rather than dropped.
+ */
+export interface SkillSaveResult {
+  skill: Skill;
+  scanWarnings: string[];
+}
+
+function toSaveResult(r: { data: Skill; scanWarnings?: string[] }): SkillSaveResult {
+  return { scanWarnings: r.scanWarnings ?? [], skill: r.data };
+}
+
 export function useCreateSkill() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { name: string; description?: string; promptText: string }) =>
-      api.post<{ data: Skill }>('/api/v1/platform/skills', body).then((r) => r.data),
+      api
+        .post<{ data: Skill; scanWarnings?: string[] }>('/api/v1/platform/skills', body)
+        .then(toSaveResult),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   });
 }
@@ -83,7 +113,10 @@ export function useUpdateSkill() {
       description?: string;
       promptText?: string;
       isActive?: boolean;
-    }) => api.put<{ data: Skill }>(`/api/v1/platform/skills/${id}`, body).then((r) => r.data),
+    }) =>
+      api
+        .put<{ data: Skill; scanWarnings?: string[] }>(`/api/v1/platform/skills/${id}`, body)
+        .then(toSaveResult),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   });
 }

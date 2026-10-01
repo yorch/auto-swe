@@ -3,7 +3,12 @@
 import type {
   AgentTraceRecord,
   WorkflowRunDetail,
+  WorkflowRunStatus,
   WorkflowStepRecord,
+} from '@auto-swe/shared/types/api';
+import {
+  isTerminalWorkflowRunStatus,
+  WORKFLOW_RUN_FAILURE_STATUSES,
 } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
@@ -29,18 +34,13 @@ import { useCancelWorkflowRun, useRetryWorkRequest, useWorkflowRun } from '@/hoo
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
+import { findFailedStep } from '@/lib/runFailure';
 import { cn, formatClock, formatDuration, formatRelativeTime } from '@/lib/utils';
 import { SplitRunPanel } from './SplitRunPanel';
 import { TracesTab } from './TracesTab';
 
 interface PageProps {
   params: Promise<{ id: string }>;
-}
-
-// ── Shared helpers ─────────────────────────────────────────────────────────────
-
-function getFailedStep(steps: WorkflowStepRecord[]): WorkflowStepRecord | null {
-  return steps.find((s) => s.status === 'FAILED') ?? null;
 }
 
 // ── Console mode (◧ Split / ≡ Stream) ──────────────────────────────────────────
@@ -69,7 +69,7 @@ function LayoutA({
   dagOverlay: { byNodeId: Record<string, { status: string; attempt: number }> } | undefined;
   failedStep: WorkflowStepRecord | null;
   onJumpToFailure: () => void;
-  onReRun: () => void;
+  onReRun?: () => void;
   run: WorkflowRunDetail;
   selectedNodeId: string | null;
   setSelectedNodeId: (id: string | null) => void;
@@ -248,7 +248,7 @@ function LayoutB({
   activityToNodeId: Record<string, string>;
   failedStep: WorkflowStepRecord | null;
   onJumpToFailure: () => void;
-  onReRun: () => void;
+  onReRun?: () => void;
   run: WorkflowRunDetail;
   traces: AgentTraceRecord[];
 }) {
@@ -331,7 +331,8 @@ function LayoutB({
               </p>
 
               {/* Failure card inline */}
-              {isFailedStep && (
+              {/* The failure card (with re-run) only on the step that failed the run. */}
+              {step.id === failedStep?.id && (
                 <div className="mb-4">
                   <FailureCard
                     onJumpToFailure={onJumpToFailure}
@@ -450,7 +451,7 @@ function LayoutC({
   dagOverlay: { byNodeId: Record<string, { status: string; attempt: number }> } | undefined;
   failedStep: WorkflowStepRecord | null;
   onJumpToFailure: () => void;
-  onReRun: () => void;
+  onReRun?: () => void;
   run: WorkflowRunDetail;
   spec: WorkflowSpec;
   traces: AgentTraceRecord[];
@@ -796,11 +797,14 @@ export default function RunDetailPage({ params }: PageProps) {
   const handleJumpToFailure = useCallback(() => {
     traceAnchorRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
+  // One re-run per page view: a second click while the first is in flight (or
+  // after it started a run) would launch a duplicate.
+  const reRunLocked = retryRun.isPending || retryRun.isSuccess;
   const handleReRun = useCallback(() => {
-    if (run?.workRequest) {
+    if (run?.workRequest && !reRunLocked) {
       retryRun.mutate(run.workRequest.id);
     }
-  }, [run?.workRequest, retryRun]);
+  }, [run?.workRequest, retryRun, reRunLocked]);
 
   const notFound = (
     <EmptyState action={<ButtonLink href="/runs">Back to runs</ButtonLink>} title="Run not found" />
@@ -826,8 +830,11 @@ export default function RunDetailPage({ params }: PageProps) {
   }
 
   const traces = run.traces ?? [];
-  const failedStep = getFailedStep(run.steps);
+  const failedStep = findFailedStep(run.status, run.steps);
   const tracesTrimmed = traces.some((t) => t.trimmed);
+  // Hidden from the failure card once a re-run is in flight or started; the
+  // header shows its progress.
+  const failureCardReRun = reRunLocked ? undefined : handleReRun;
 
   return (
     <div className="flex h-full flex-col bg-ink-800">
@@ -885,7 +892,7 @@ export default function RunDetailPage({ params }: PageProps) {
               Full payloads failed to load
             </Badge>
           )}
-          {run.status === 'RUNNING' && (
+          {!isTerminalWorkflowRunStatus(run.status) && (
             <Button
               disabled={cancelRun.isPending}
               onClick={() => setShowCancelConfirm(true)}
@@ -895,16 +902,12 @@ export default function RunDetailPage({ params }: PageProps) {
               {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
             </Button>
           )}
-          {['FAILED', 'TIMED_OUT', 'CANCELLED'].includes(run.status) && run.workRequest && (
-            <Button
-              disabled={retryRun.isPending}
-              onClick={handleReRun}
-              size="sm"
-              variant="secondary"
-            >
-              {retryRun.isPending ? 'Re-running…' : 'Re-run'}
-            </Button>
-          )}
+          {WORKFLOW_RUN_FAILURE_STATUSES.has(run.status as WorkflowRunStatus) &&
+            run.workRequest && (
+              <Button disabled={reRunLocked} onClick={handleReRun} size="sm" variant="secondary">
+                {retryRun.isPending ? 'Re-running…' : 'Re-run'}
+              </Button>
+            )}
           {retryRun.isSuccess && (
             <Alert className="px-2 py-1 text-xs" variant="success">
               New run started —{' '}
@@ -936,7 +939,7 @@ export default function RunDetailPage({ params }: PageProps) {
             dagOverlay={dagOverlay}
             failedStep={failedStep}
             onJumpToFailure={handleJumpToFailure}
-            onReRun={handleReRun}
+            onReRun={failureCardReRun}
             pendingSteps={pendingSteps}
             run={run}
             selectedNodeId={selectedNodeId}
@@ -950,7 +953,7 @@ export default function RunDetailPage({ params }: PageProps) {
             activityToNodeId={activityToNodeId}
             failedStep={failedStep}
             onJumpToFailure={handleJumpToFailure}
-            onReRun={handleReRun}
+            onReRun={failureCardReRun}
             run={run}
             traces={traces}
           />
@@ -961,7 +964,7 @@ export default function RunDetailPage({ params }: PageProps) {
             dagOverlay={dagOverlay}
             failedStep={failedStep}
             onJumpToFailure={handleJumpToFailure}
-            onReRun={handleReRun}
+            onReRun={failureCardReRun}
             run={run}
             spec={spec}
             traces={traces}

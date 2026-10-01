@@ -131,7 +131,7 @@ export async function checkSensitiveFilePath(filePath: string): Promise<string |
       `Write blocked: the sensitive-file scan of '${filePath}' could not complete.\n` +
       'A scanner pattern exceeded its execution budget or is quarantined, so the path ' +
       'could not be cleared. Retry; if this persists, an administrator must fix the ' +
-      'offending pattern at /admin/scanner.'
+      'offending pattern at /govern/scanner.'
     );
   }
   return null;

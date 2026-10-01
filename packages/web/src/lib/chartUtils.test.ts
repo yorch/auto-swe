@@ -5,6 +5,7 @@ import {
   groupLessonsByType,
   groupWorkflowsByDate,
   groupWorkflowsByStatus,
+  workflowStatusClass,
 } from './chartUtils.js';
 
 function makeWorkflow(overrides: Partial<WorkflowSummary> = {}): WorkflowSummary {
@@ -166,5 +167,26 @@ describe('groupLessonsByDate', () => {
   it('drops lessons outside the bucket window', () => {
     const result = groupLessonsByDate([{ createdAt: daysAgoIso(365), failureType: 'x' }], 7);
     expect(result.reduce((sum, b) => sum + b.count, 0)).toBe(0);
+  });
+});
+
+describe('workflowStatusClass', () => {
+  it('does not count cancelled or skipped workflows as active', () => {
+    expect(workflowStatusClass('CANCELLED')).toBe('stopped');
+    expect(workflowStatusClass('SKIPPED')).toBe('stopped');
+  });
+  it('classifies terminal outcomes', () => {
+    expect(workflowStatusClass('COMPLETED')).toBe('completed');
+    expect(workflowStatusClass('SUCCESS')).toBe('completed');
+    expect(workflowStatusClass('FAILED')).toBe('failed');
+    expect(workflowStatusClass('TIMED_OUT')).toBe('failed');
+  });
+  it('treats in-flight and unknown statuses as active', () => {
+    expect(workflowStatusClass('IMPLEMENTING')).toBe('active');
+    expect(workflowStatusClass('SOMETHING_NEW')).toBe('active');
+  });
+  it('leaves cancelled workflows out of the date series', () => {
+    const buckets = groupWorkflowsByDate([makeWorkflow({ currentStatus: 'CANCELLED' })], 1);
+    expect(buckets[0]).toMatchObject({ active: 0, completed: 0, failed: 0 });
   });
 });

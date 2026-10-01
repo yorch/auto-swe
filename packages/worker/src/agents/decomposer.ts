@@ -65,11 +65,13 @@ export async function planDecomposition(
       let modelSpec: string | undefined;
       let recorded: LlmAttribution | undefined;
       try {
-        modelSpec = await getModelSpec('planner');
-        const model = await getModel('planner');
+        // The decomposer persona: its own prompt row, and the planner's model
+        // through `inheritsModelFrom` unless the row overrides it.
+        modelSpec = await getModelSpec('decomposer');
+        const model = await getModel('decomposer');
         span.setAttribute('llm.model', modelSpec);
         const basePrompt = await resolveSystemPrompt(
-          'planner',
+          'decomposer',
           DECOMPOSER_AGENT_PROMPT,
           systemPromptOverride
         );
@@ -95,7 +97,7 @@ export async function planDecomposition(
         if (result.usage) {
           attribution = recorded = await recordLlmUsage(
             currentWorkflowId(),
-            'planner',
+            'decomposer',
             result.usage,
             'llm.decomposer'
           );
@@ -111,7 +113,7 @@ export async function planDecomposition(
             error: 'no structured output — used singleton fallback',
             inputJson: { systemPrompt, userMessage: llmUserMessage },
             outputJson: fallback,
-            role: 'planner',
+            role: 'decomposer',
           });
           return fallback;
         }
@@ -136,7 +138,7 @@ export async function planDecomposition(
             subtasks: subtasks.map((s) => ({ id: s.id, title: s.title })),
           },
           outputTokens: attribution.outputTokens,
-          role: 'planner',
+          role: 'decomposer',
         });
 
         return decompositionResult;
@@ -146,7 +148,7 @@ export async function planDecomposition(
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt, userMessage: llmUserMessage },
-          role: 'planner',
+          role: 'decomposer',
         });
         span.recordException(e as Error);
         throw e;

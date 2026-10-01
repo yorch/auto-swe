@@ -28,6 +28,7 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
+import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
 import { resolveAutonomyPolicy } from '../lib/resolveAutonomyPolicy.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -277,6 +278,12 @@ export function assembleScores(
 }
 
 export async function runEvalNode(input: RunEvalNodeInput): Promise<RunEvalNodeResult> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('runEvalNode', runEvalNodeImpl(input));
+}
+
+async function runEvalNodeImpl(input: RunEvalNodeInput): Promise<RunEvalNodeResult> {
   const runId = await currentWorkflowRunId();
   const judgeAdvisory = input.judgeAdvisory ?? true;
 
@@ -292,6 +299,11 @@ export async function runEvalNode(input: RunEvalNodeInput): Promise<RunEvalNodeR
     ? await Promise.all(judges.map((s) => evaluateScorer(s, input.targetValue, runId)))
     : [];
   const scoreInputs = [...baseInputs, ...judgeInputs];
+
+  // `runJudge` and the gate scorer swallow every error into a neutral/failed
+  // score, a cancellation's abort included. Without this a cancelled run would
+  // carry on to record eval results as though the scorers had completed.
+  throwIfActivityCancelled();
 
   // DB-backed judge threshold (workflow_defaults) drives the blocking-judge
   // gate; `assembleScores`/`decideGate` keep 0.5 as the last-resort fallback.

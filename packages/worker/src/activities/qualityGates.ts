@@ -26,11 +26,17 @@ import { heartbeat } from '@temporalio/activity';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
+import { getErrorMessage } from '../lib/errors.js';
 import { recordGateEval } from '../lib/evalCapture.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
-import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
+import {
+  createWorkspace,
+  fetchBranchesSubcommand,
+  shellQuote,
+  type Workspace,
+} from './workspace.js';
 
 export type GateName =
   | 'runLint'
@@ -63,6 +69,12 @@ export interface GateResult {
   exitCode: number;
   /** Optional shell signal if the run was killed (e.g. timeout). */
   signal?: string;
+  /**
+   * The command the gate actually ran, after step → repo → default
+   * resolution. A gate-fix step re-runs exactly this, so a template's
+   * step-level `config.command` is honoured on the re-run too.
+   */
+  command?: string;
 }
 
 export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
@@ -162,14 +174,22 @@ async function provisionGateWorkspace(
 
   // createWorkspace produces a fresh local branch from the default branch.
   // For gates we want the implementer's pushed commits, so fetch + reset.
-  // If the remote branch doesn't exist yet (e.g. gate runs before first
-  // push), the reset will fail and the implementer's local copy stays.
+  //
+  // A failure here fails the gate. It used to fall through and run the gate
+  // against the default branch's HEAD — code the change never touched — so a
+  // missing branch or a transient fetch error reported the change as green.
+  // The error is thrown (and the activity retries) rather than returned as a
+  // failed verdict, because nothing about the change was actually checked.
   try {
-    await workspace.gitAuthed(`fetch origin ${shellQuote(branch)}`);
+    await workspace.gitAuthed(fetchBranchesSubcommand([branch]));
     await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
-  } catch {
-    // Gate runs against the local branch starting at defaultBranch.
-    heartbeat(`gate ${gate}: remote branch not found, using clone HEAD`);
+  } catch (err) {
+    await workspace.destroy();
+    throw new Error(
+      `gate ${gate}: could not check out branch '${branch}' from origin, so the gate ` +
+        `cannot run against the change (refusing to run it against '${repo.defaultBranch}'): ` +
+        getErrorMessage(err).slice(0, 500)
+    );
   }
   return { branch, workspace };
 }
@@ -209,6 +229,7 @@ async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
 
     const gateResult: GateResult = {
       artifactId: artifact?.id,
+      command,
       exitCode: result.exitCode,
       passed,
       ...(result.signal ? { signal: result.signal } : {}),
@@ -297,10 +318,13 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
       ) {
         return `${gateName} not re-runnable (no command resolved)`;
       }
+      // The failed gate reports the command it ran; resolving from scratch
+      // would drop a step-level `config.command` and re-run the repo/default
+      // command instead — a different check from the one that failed.
       const rerunCommand = await resolveCommand(
         gateName as GateName,
         { externalTicketId: '', repoId: repo.id } as RepoWorkRequest,
-        undefined
+        gateOutput.command
       );
       if (!rerunCommand) {
         return `${gateName} not re-runnable (no command resolved)`;

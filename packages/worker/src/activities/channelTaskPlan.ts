@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 import { runAgent } from './runAgent.js';
 
 /** Hard cap on how many parallel branches a general channel task may fan out to. */
@@ -62,6 +63,17 @@ export async function planChannelTask(input: {
   /** Per-node override of the planner prompt (`systemPrompt` step config). */
   systemPrompt?: string;
 }): Promise<PlanChannelTaskResult> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('planChannelTask', planChannelTaskImpl(input));
+}
+
+async function planChannelTaskImpl(input: {
+  task: string;
+  channelId?: string;
+  /** Per-node override of the planner prompt (`systemPrompt` step config). */
+  systemPrompt?: string;
+}): Promise<PlanChannelTaskResult> {
   const whole: ChannelSubtask = { description: input.task, title: 'Task' };
   try {
     const baseCtx = await currentRequestContext();
@@ -111,6 +123,19 @@ export async function planChannelTask(input: {
  * result the thread reply is built from.
  */
 export async function runChannelSubtasks(input: {
+  task: string;
+  subtasks: ChannelSubtask[];
+  channelId?: string;
+  /** Per-node override of the synthesis prompt (`systemPrompt` step config). The
+   *  per-subtask branch runs use the channel agent's own configured prompt. */
+  systemPrompt?: string;
+}): Promise<{ text: string }> {
+  // Heartbeats while the whole activity runs: its LLM call can outlast the
+  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
+  return withHeartbeat('runChannelSubtasks', runChannelSubtasksImpl(input));
+}
+
+async function runChannelSubtasksImpl(input: {
   task: string;
   subtasks: ChannelSubtask[];
   channelId?: string;

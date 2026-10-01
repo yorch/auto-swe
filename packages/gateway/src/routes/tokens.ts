@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { safePatAuditFields } from '../lib/patAuditFields.js';
 import { PAT_PREFIX, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -30,27 +31,6 @@ const TokenIdParam = z.object({ id: z.string().uuid() });
 
 function generateToken(): string {
   return `${PAT_PREFIX}${crypto.randomBytes(PAT_BYTES).toString('base64url')}`;
-}
-
-/// Auditable subset of a personal access token row. Never includes the plaintext
-/// token or the stored sha-256 hash — the audit log only needs identity and
-/// lifecycle metadata.
-function safePatAuditFields(row: {
-  expiresAt?: Date | null;
-  id: string;
-  name: string;
-  prefix: string;
-  revokedAt?: Date | null;
-  userId: string;
-}): Record<string, unknown> {
-  return {
-    expiresAt: row.expiresAt ?? null,
-    id: row.id,
-    name: row.name,
-    prefix: row.prefix,
-    revokedAt: row.revokedAt ?? null,
-    userId: row.userId,
-  };
 }
 
 export const tokenRoutes: FastifyPluginAsync = async (fastify) => {

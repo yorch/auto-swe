@@ -59,7 +59,6 @@ const EXEMPT_WRAPPERS = new Set(['runUnscoped', 'asPlatformAdmin']);
 const HAND_VERIFIED = new Map([
   ['packages/gateway/src/lib/agentLibraryService.ts:agent.findMany', 1],
   ['packages/gateway/src/lib/agentLibraryService.ts:agent.updateMany', 1],
-  ['packages/gateway/src/routes/humanErrorBaselines.ts:humanErrorBaseline.findMany', 1],
   ['packages/gateway/src/routes/skills.ts:skill.findMany', 1],
 ]);
 
