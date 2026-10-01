@@ -415,15 +415,20 @@ async function mergeOneWithResolver(
     );
     const systemPrompt =
       MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : '');
-    const userMessage = JSON.stringify({
-      attempt,
-      conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
-      sourceBranch: source,
-      targetBranch,
-    });
+    // Declared out here so the catch can trace the request. Built inside the
+    // try: reading the payloads can throw, and the MCP client is already open.
+    let userMessage = '';
+    let calledModel = false;
     const start = Date.now();
     try {
+      userMessage = JSON.stringify({
+        attempt,
+        conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
+        sourceBranch: source,
+        targetBranch,
+      });
       await assertBudgetAvailable('decomposition');
+      calledModel = true;
       const result = await agent.generate(
         [
           { content: systemPrompt, role: 'system' },
@@ -450,15 +455,20 @@ async function mergeOneWithResolver(
         model: attribution?.modelSpec,
         outputJson: { text: result.text || undefined },
         outputTokens: attribution?.outputTokens,
-        role: 'mergeConflictResolver',
+        // The resolver is the implementer agent with a different prompt; it is
+        // priced and configured as `implementer`, so it is labelled as one.
+        role: 'implementer',
       });
     } catch (e) {
-      opts.tracer.addLlmResponse({
-        durationMs: Date.now() - start,
-        error: (e as Error).message,
-        inputJson: { systemPrompt, userMessage },
-        role: 'mergeConflictResolver',
-      });
+      // No row when the model was never called (payload read or budget gate).
+      if (calledModel) {
+        opts.tracer.addLlmResponse({
+          durationMs: Date.now() - start,
+          error: (e as Error).message,
+          inputJson: { systemPrompt, userMessage },
+          role: 'implementer',
+        });
+      }
       throw e;
     } finally {
       await closeMcp?.();

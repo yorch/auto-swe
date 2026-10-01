@@ -129,7 +129,8 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
         runId: t.runId,
         startedAt: t.run?.startedAt ?? null,
         toolName: t.toolName,
-        workflowId: t.workflowId,
+        // Rows that predate the column carry their workflow ID on the run.
+        workflowId: t.workflowId ?? t.run?.workflowId ?? null,
         workRequestId: t.run?.workRequest?.id ?? null,
       }));
 

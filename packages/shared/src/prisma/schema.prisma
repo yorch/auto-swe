@@ -1384,11 +1384,13 @@ model AgentTrace {
   id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Null for workflows that keep no WorkflowRun row (workflow authoring, scheduled
   /// evals, lesson consolidation, repo-access sync, epic planning). Their traces
-  /// are still recorded so their LLM spend is visible; `workflowId` identifies them.
+  /// are still recorded so their LLM spend is not lost; `workflowId` identifies them.
   runId        String?      @map("run_id") @db.Uuid
   run          WorkflowRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
-  /// Temporal workflow ID that scheduled the activity. Always set, run or not.
-  workflowId   String       @map("workflow_id")
+  /// Temporal workflow ID that scheduled the activity. Written on every new row;
+  /// null only on rows that predate the column, which all have a `run` to read
+  /// it from instead.
+  workflowId   String?      @map("workflow_id")
   /// Temporal activity type that produced this trace (e.g. "executeImplementation").
   nodeId       String      @map("node_id")
   /// The agent key (identity) that produced this trace, e.g. "implementer".
@@ -1419,7 +1421,6 @@ model AgentTrace {
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([runId, nodeId])
-  @@index([workflowId])
   @@index([createdAt])
   @@map("agent_traces")
 }

@@ -426,7 +426,7 @@ Note: `Agent` (like `ProviderCredential`) uses partial unique indexes per scope 
 
 **File:** `packages/worker/src/lib/agentTracer.ts`
 
-Every LLM-calling activity **must** use `AgentTracer` to record tool calls, LLM responses, and activity events. These are persisted as `AgentTrace` rows and power the `/runs/[id]` viewer. Every row carries its Temporal `workflowId`; `runId` links it to the `WorkflowRun` when one exists. Workflows that keep no run (workflow authoring and explaining, scheduled evals, lesson consolidation, repo-dependency inference, repo-access sync, epic planning) still persist their traces with a null `runId`, so their LLM spend is recorded rather than dropped.
+Every LLM-calling activity **must** use `AgentTracer` to record tool calls, LLM responses, and activity events. These are persisted as `AgentTrace` rows and power the `/runs/[id]` viewer. Every row written since the column was added carries its Temporal `workflowId`; `runId` links it to the `WorkflowRun` when one exists. Workflows that keep no run (workflow authoring and explaining, scheduled evals, lesson consolidation, repo-dependency inference, repo-access sync, epic planning) still persist their traces with a null `runId`, so their LLM spend is recorded rather than dropped.
 
 ### 8.1 Pattern
 
@@ -496,7 +496,7 @@ content) to keep trace sizes manageable.
 | Column | Purpose |
 |---|---|
 | `runId` | FK to `workflow_runs`; null for workflows that keep no run |
-| `workflowId` | Temporal workflow ID — always set |
+| `workflowId` | Temporal workflow ID — set on every new row; older rows read it from their run |
 | `nodeId` | Activity type (e.g. `executeImplementation`) |
 | `agentKey` | Which agent key (identity) produced this trace |
 | `attempt` | Temporal activity attempt number (for retries) |

@@ -6,6 +6,7 @@ import { currentActivityType, currentAttempt, currentWorkflowId } from './activi
 import { resolveEmbeddingConfig } from './config/resolver.js';
 import { calculateCostUsd } from './costTracking.js';
 import { parseProviderModelSpec } from './providerUtils.js';
+import { EMBEDDING_AGENT_KEY } from './traceTotals.js';
 
 /**
  * pgvector column for MemoryItem is `vector(1536)` (see prisma schema). All
@@ -150,7 +151,7 @@ async function recordEmbeddingUsage(
     });
     await prisma.agentTrace.create({
       data: {
-        agentKey: 'embedding',
+        agentKey: EMBEDDING_AGENT_KEY,
         attempt,
         costUsd,
         durationMs,

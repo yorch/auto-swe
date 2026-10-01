@@ -178,7 +178,7 @@ export interface SecurityEvent {
   runId: string | null;
   startedAt: string | null;
   toolName: string | null;
-  workflowId: string;
+  workflowId: string | null;
   workRequestId: string | null;
 }
 

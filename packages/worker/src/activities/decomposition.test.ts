@@ -85,9 +85,11 @@ vi.mock('../lib/scm/index.js', () => ({
 }));
 
 const generateMock = vi.fn();
+const closeMcpMock = vi.fn(async () => {});
 vi.mock('../agents/implementer.js', () => ({
   buildImplementerForActivity: vi.fn(async () => ({
     agent: { generate: generateMock },
+    closeMcp: closeMcpMock,
     promptSuffix: '',
     skills: [],
     toolKeys: null,
@@ -116,6 +118,7 @@ vi.mock('./commitToMemory.js', () => ({
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { mergeBranches, resolveMergeConflict, subtaskBranchName } from './decomposition.js';
 
@@ -136,7 +139,9 @@ afterEach(() => {
   fakeWorkspace.gitAuthed.mockClear();
   (fakeWorkspace.destroy as ReturnType<typeof vi.fn>).mockReset();
   generateMock.mockReset();
+  closeMcpMock.mockClear();
   mockedRecordLesson.mockReset();
+  vi.restoreAllMocks();
 });
 
 describe('subtaskBranchName', () => {
@@ -349,10 +354,9 @@ describe('resolveMergeConflict', () => {
       expect.objectContaining({
         inputJson: expect.objectContaining({ systemPrompt: expect.any(String) }),
         outputJson: { text: 'resolved foo.ts' },
-        role: 'mergeConflictResolver',
+        role: 'implementer',
       })
     );
-    addLlmResponse.mockRestore();
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
     expect(cmds).toContain('git add -A');
     expect(cmds.some((c) => c.includes('push origin'))).toBe(true);
@@ -520,5 +524,61 @@ describe('resolveMergeConflict', () => {
     // No push on failure.
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
     expect(cmds.some((c) => c.includes('push origin'))).toBe(false);
+  });
+
+  function primeConflict() {
+    primeRepo();
+    fakeWorkspace.exec.mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git merge --no-ff')) {
+        const err = new Error('CONFLICT') as Error & { stdout: string; stderr: string };
+        err.stdout = 'CONFLICT';
+        err.stderr = '';
+        throw err;
+      }
+      if (cmd.startsWith('git diff --name-only --diff-filter=U')) {
+        return 'foo.ts\n';
+      }
+      if (cmd.startsWith('cat ')) {
+        return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      }
+      return '';
+    });
+  }
+
+  it('traces a failed resolver call and still closes MCP', async () => {
+    primeConflict();
+    generateMock.mockRejectedValue(new Error('provider 529'));
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+
+    await expect(
+      resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: ['auto/TICK-1/db'],
+        targetBranch: 'auto/TICK-1',
+      })
+    ).rejects.toThrow('provider 529');
+
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'provider 529', role: 'implementer' })
+    );
+    expect(closeMcpMock).toHaveBeenCalled();
+  });
+
+  it('writes no llm row when the budget gate stops the call before it is made', async () => {
+    primeConflict();
+    vi.mocked(assertBudgetAvailable).mockRejectedValueOnce(new Error('BUDGET_EXCEEDED'));
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+
+    await expect(
+      resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: ['auto/TICK-1/db'],
+        targetBranch: 'auto/TICK-1',
+      })
+    ).rejects.toThrow('BUDGET_EXCEEDED');
+
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(addLlmResponse).not.toHaveBeenCalled();
+    expect(closeMcpMock).toHaveBeenCalled();
   });
 });

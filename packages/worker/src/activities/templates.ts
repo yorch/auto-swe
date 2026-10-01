@@ -15,6 +15,7 @@ import {
   notifySlackStepFailure,
   postSlackThreadMessage,
 } from '../lib/slackNotify.js';
+import { sumRunTraceUsage } from '../lib/traceTotals.js';
 import { accrueChannelUsage } from './channelAssistant.js';
 
 /**
@@ -383,13 +384,10 @@ export async function finalizeWorkflowRun(
   // channel-budget ledger so `finalizeChannelTaskRun` doesn't re-aggregate.
   let channelTraceCostUsd: number | undefined;
   if (workflows.length === 0) {
-    const traceTotals = await prisma.agentTrace.aggregate({
-      _sum: { costUsd: true, inputTokens: true, outputTokens: true },
-      where: { runId },
-    });
-    costUsdAccrued = traceTotals._sum.costUsd ?? 0;
-    tokensInputTotal = BigInt(traceTotals._sum.inputTokens ?? 0);
-    tokensOutputTotal = BigInt(traceTotals._sum.outputTokens ?? 0);
+    const traceTotals = await sumRunTraceUsage(runId);
+    costUsdAccrued = traceTotals.costUsd;
+    tokensInputTotal = traceTotals.inputTokens;
+    tokensOutputTotal = traceTotals.outputTokens;
     channelTraceCostUsd = costUsdAccrued;
   }
 

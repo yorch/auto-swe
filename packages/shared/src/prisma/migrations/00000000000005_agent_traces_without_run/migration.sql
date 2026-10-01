@@ -1,20 +1,15 @@
 -- Workflows that keep no workflow_runs row (workflow authoring, scheduled evals,
 -- lesson consolidation, repo-access sync, epic planning) used to have their
 -- traces dropped, because run_id was required. Their LLM spend was recorded
--- nowhere. Traces now carry the Temporal workflow ID instead, and run_id is
--- set only when a run exists.
+-- nowhere. Traces now carry the Temporal workflow ID, and run_id is set only
+-- when a run exists.
+--
+-- Both statements are catalog-only: no table rewrite, no scan. workflow_id is
+-- deliberately left nullable and is not backfilled. Every existing row has a
+-- run_id, so readers fall back to the run's workflow_id; a backfill would
+-- rewrite the largest append-heavy table inside the gateway's boot-time
+-- migrate, and NOT NULL would reject inserts from a worker image that predates
+-- this column for as long as a rolling deploy keeps one running.
 ALTER TABLE "agent_traces" ADD COLUMN "workflow_id" TEXT;
 
-UPDATE "agent_traces" t
-SET "workflow_id" = r."workflow_id"
-FROM "workflow_runs" r
-WHERE t."run_id" = r."id";
-
-ALTER TABLE "agent_traces" ALTER COLUMN "workflow_id" SET NOT NULL;
-
 ALTER TABLE "agent_traces" ALTER COLUMN "run_id" DROP NOT NULL;
-
-CREATE INDEX "agent_traces_workflow_id_idx" ON "agent_traces"("workflow_id");
-
--- Supports the cross-run usage report, which scans a time window.
-CREATE INDEX "agent_traces_created_at_idx" ON "agent_traces"("created_at");
