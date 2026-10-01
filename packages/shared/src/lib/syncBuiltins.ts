@@ -352,7 +352,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     description: 'Writes code in the workspace via the TDD loop.',
     key: 'implementer',
-    modelSpec: 'anthropic/claude-opus-4-8',
+    modelSpec: 'anthropic/claude-opus-5-5',
     name: 'Implementer',
     systemPrompt: IMPLEMENTER_SYSTEM_PROMPT,
     toolKeys: IMPLEMENTER_TOOLS,
@@ -360,35 +360,35 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     description: 'Reviews diffs through the multi-agent review network.',
     key: 'reviewer',
-    modelSpec: 'anthropic/claude-opus-4-8',
+    modelSpec: 'anthropic/claude-opus-5-5',
     name: 'Reviewer',
     systemPrompt: DOMAIN_LOGIC_REVIEWER_PROMPT,
   },
   {
     description: 'Decomposes work into an implementation plan.',
     key: 'planner',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Planner',
     systemPrompt: PLANNER_AGENT_PROMPT,
   },
   {
     description: 'Post-diff security gate — CRITICAL findings fail the activity.',
     key: 'securityReview',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Security Review',
     systemPrompt: SECURITY_REVIEW_PROMPT,
   },
   {
     description: 'Extracts success criteria from the work request.',
     key: 'validateContext',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Context Validator',
     systemPrompt: CONTEXT_VALIDATOR_PROMPT,
   },
   {
     description: 'Commits lessons to semantic memory.',
     key: 'commitToMemory',
-    modelSpec: 'anthropic/claude-opus-4-8',
+    modelSpec: 'anthropic/claude-opus-5-5',
     name: 'Memory Committer',
     systemPrompt: MEMORY_SUMMARIZER_PROMPT,
   },
@@ -398,7 +398,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     // GLOBAL row seeded here is the default the cascade falls back to.
     description: 'Shared per-channel Slack teammate that answers @mentions in-thread.',
     key: 'channelAssistant',
-    modelSpec: 'anthropic/claude-opus-4-8',
+    modelSpec: 'anthropic/claude-opus-5-5',
     name: 'Channel Assistant',
     systemPrompt: CHANNEL_ASSISTANT_PROMPT,
   },
@@ -423,7 +423,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     // demand by the generateWorkflowSpec activity, like evalJudge).
     description: 'Generates a WorkflowSpec from a natural-language description.',
     key: 'workflowAuthor',
-    modelSpec: 'anthropic/claude-opus-4-8',
+    modelSpec: 'anthropic/claude-opus-5-5',
     name: 'Workflow Author',
     systemPrompt: WORKFLOW_AUTHOR_PROMPT,
   },
@@ -433,7 +433,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     // in MODEL_BACKED_AGENT_KEYS, so it never gates worker boot).
     description: 'Explains an existing WorkflowSpec in plain language.',
     key: 'workflowExplainer',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Workflow Explainer',
     systemPrompt: WORKFLOW_EXPLAINER_PROMPT,
   },
@@ -444,7 +444,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     description:
       'Drafts concise prose for a document workspace from source material and instructions.',
     key: 'contentWriter',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Content Writer',
     systemPrompt: CONTENT_WRITER_PROMPT,
   },
@@ -454,7 +454,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
     description: 'Drafts a focused issue description from a brief for Linear or Jira.',
     key: 'issueDrafter',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Issue Drafter',
     systemPrompt: ISSUE_DRAFTER_PROMPT,
   },
@@ -465,7 +465,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     description:
       'Reviews a draft for brand voice, clarity, and accessibility, returning a concise revision.',
     key: 'brandReviewer',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Brand Reviewer',
     systemPrompt: BRAND_REVIEWER_PROMPT,
   },
@@ -475,7 +475,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
     description: 'Drafts empathetic, policy-aware responses to support tickets.',
     key: 'supportResponder',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Support Responder',
     systemPrompt: SUPPORT_RESPONDER_PROMPT,
   },
@@ -485,7 +485,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
     description: 'Analyzes a problem brief and produces structured product thinking.',
     key: 'productAnalyst',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Product Analyst',
     systemPrompt: PRODUCT_ANALYST_PROMPT,
   },
@@ -495,7 +495,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
     description: 'Drafts a focused PRD with testable acceptance criteria from product analysis.',
     key: 'prdWriter',
-    modelSpec: 'anthropic/claude-sonnet-4-6',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'PRD Writer',
     systemPrompt: PRD_WRITER_PROMPT,
   },
@@ -610,10 +610,86 @@ function skillsByAgentKey(): Map<string, Array<{ name: string; sortOrder: number
   return map;
 }
 
+/**
+ * Seeded model defaults this file used to ship, mapped to the default that
+ * replaced them. A GLOBAL built-in Agent whose latest version still carries the
+ * old value — and whose key now defaults to the mapped value — is an untouched
+ * seed, so {@link syncAgents} moves it forward. Any other value is an admin's
+ * choice and is never rewritten.
+ */
+const PREVIOUS_DEFAULT_MODEL_SPECS: Readonly<Record<string, string>> = {
+  'anthropic/claude-opus-4-8': 'anthropic/claude-opus-5-5',
+  'anthropic/claude-sonnet-4-6': 'anthropic/claude-sonnet-5-5',
+};
+
+type AgentRow = NonNullable<Awaited<ReturnType<PrismaClient['agent']['findFirst']>>>;
+
+/**
+ * Move an untouched seeded Agent onto its key's current default model. Cuts a
+ * new version rather than editing in place, exactly as the agent library does
+ * for an admin's model change: a run pins the GLOBAL version it started on
+ * (`WorkflowRun.agentVersions`), so rewriting that version would swap the model
+ * under an in-flight run. Returns the row later syncing should target.
+ */
+async function migrateSeededModelDefault(
+  prisma: PrismaClient,
+  def: SweAgentDef,
+  current: AgentRow
+): Promise<AgentRow> {
+  if (
+    !def.modelSpec ||
+    !current.isActive ||
+    !current.isBuiltIn ||
+    current.modelSpec === null ||
+    PREVIOUS_DEFAULT_MODEL_SPECS[current.modelSpec] !== def.modelSpec
+  ) {
+    return current;
+  }
+  return prisma.$transaction(async (tx) => {
+    const next = await tx.agent.create({
+      data: {
+        channelId: current.channelId,
+        credentialId: current.credentialId,
+        description: current.description,
+        inheritsModelFrom: current.inheritsModelFrom,
+        isActive: true,
+        isBuiltIn: current.isBuiltIn,
+        isVerified: current.isVerified,
+        key: current.key,
+        mcpConnectionId: current.mcpConnectionId,
+        modelSpec: def.modelSpec,
+        name: current.name,
+        orgId: current.orgId,
+        origin: current.origin,
+        scope: current.scope,
+        systemPrompt: current.systemPrompt,
+        teamId: current.teamId,
+        toolKeys: current.toolKeys ?? undefined,
+        version: current.version + 1,
+        workflowTemplateId: current.workflowTemplateId,
+      },
+    });
+    const refs = await tx.agentSkillRef.findMany({
+      orderBy: { sortOrder: 'asc' },
+      select: { skillId: true, sortOrder: true },
+      where: { agentId: current.id },
+    });
+    if (refs.length > 0) {
+      await tx.agentSkillRef.createMany({
+        data: refs.map((ref) => ({ agentId: next.id, ...ref })),
+      });
+    }
+    return next;
+  });
+}
+
 async function syncAgents(prisma: PrismaClient): Promise<void> {
   const skillMap = skillsByAgentKey();
   for (const def of SWE_AGENTS) {
+    // Latest version: older versions stay behind for run pins, and only the
+    // newest one says what the lineage currently runs.
     let agent = await prisma.agent.findFirst({
+      orderBy: { version: 'desc' },
       where: { key: def.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
     });
     if (!agent) {
@@ -633,13 +709,16 @@ async function syncAgents(prisma: PrismaClient): Promise<void> {
           version: 1,
         },
       });
-    } else if (!agent.systemPrompt) {
-      // One-time migration: backfill systemPrompt for existing rows that predate
-      // this change. Skipped once an admin has set a custom value.
-      await prisma.agent.update({
-        data: { systemPrompt: def.systemPrompt },
-        where: { id: agent.id },
-      });
+    } else {
+      if (!agent.systemPrompt) {
+        // One-time migration: backfill systemPrompt for existing rows that predate
+        // this change. Skipped once an admin has set a custom value.
+        agent = await prisma.agent.update({
+          data: { systemPrompt: def.systemPrompt },
+          where: { id: agent.id },
+        });
+      }
+      agent = await migrateSeededModelDefault(prisma, def, agent);
     }
 
     // Sync the agent's skill refs from the built-in assignments (idempotent).
