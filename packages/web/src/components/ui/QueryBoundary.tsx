@@ -9,6 +9,8 @@ interface QueryBoundaryProps {
   error?: unknown;
   /** Caption for the loading indicator. */
   loadingMessage?: string;
+  /** One-line loading indicator, for a section inside a card rather than a whole page. */
+  compact?: boolean;
   /** What was being loaded, for the error alert — "Could not load teams: …". */
   label?: string;
   children?: ReactNode;
@@ -23,6 +25,7 @@ interface QueryBoundaryProps {
  */
 export function QueryBoundary({
   children,
+  compact = false,
   error,
   isError = false,
   isLoading,
@@ -30,7 +33,7 @@ export function QueryBoundary({
   loadingMessage,
 }: QueryBoundaryProps) {
   if (isLoading) {
-    return <LoadingState message={loadingMessage} />;
+    return <LoadingState compact={compact} message={loadingMessage} />;
   }
   if (isError) {
     const detail = errMsg(error, 'request failed');
