@@ -7,9 +7,14 @@
  * side that has the row in hand.
  */
 import type { PrismaClient } from '../index.js';
+import { resolveUserCredential, resolveUserCredentialPolicy } from './connectionCredential.js';
 import { GITHUB_ACCOUNT_API_URL, verifyGithubLoginOwnership } from './githubIdentityCheck.js';
 import { resolveGitHubToken } from './githubInstallation.js';
-import { fetchRepoPermission, type PermissionLookup } from './githubPermission.js';
+import {
+  fetchOwnRepoPermission,
+  fetchRepoPermission,
+  type PermissionLookup,
+} from './githubPermission.js';
 import { resolveGitHubConfig } from './systemConfig.js';
 
 /** The `Connection` columns a permission lookup needs. */
@@ -62,6 +67,60 @@ export async function lookupRepoPermission(
     repoName: repo.repoName,
     token,
     username,
+  });
+}
+
+/**
+ * Ask GitHub what `userId` may do with `repo`, using the token they saved for
+ * it — or null when they have no usable one.
+ *
+ * Preferred over {@link lookupRepoPermission} wherever both apply: when a user
+ * has a credential, that credential is the identity their runs act as, so it is
+ * the identity whose access matters. It needs no stored login, and it answers
+ * on a GitHub Enterprise host, where the github.com login means nothing.
+ *
+ * Null covers every reason {@link resolveUserCredential} gives for a token not
+ * being usable: in each of them the user's runs fall back to the platform
+ * credential, so the caller falls back to the login-based question too. The
+ * two use one resolver, so the identity this decides about is exactly the
+ * identity the run will act as.
+ *
+ * A failure to read or decrypt the row is reported as `unavailable` rather than
+ * thrown. This is a lookup, and every caller already treats an unanswered
+ * lookup correctly — the launch fails closed, the sweep and the webhook refresh
+ * keep the previous answer and move on to the next pair — whereas a throw would
+ * let one bad row stop the sweep for everyone.
+ */
+export async function lookupPermissionViaUserCredential(
+  prisma: PrismaClient,
+  repo: PermissionRepo & { id: string },
+  userId: string
+): Promise<PermissionLookup | null> {
+  if (!(repo.organizationName && repo.repoName)) {
+    return null;
+  }
+  // An unreadable policy falls through to the login-based question, which is
+  // exactly what every caller asked before this feature existed — so a settings
+  // hiccup in the new code cannot refuse a launch for someone who never saved a
+  // token. The gate itself still applies; only this shortcut into it is skipped.
+  const policy = await resolveUserCredentialPolicy().catch(() => null);
+  if (!policy?.enabled) {
+    return null;
+  }
+  let credential: Awaited<ReturnType<typeof resolveUserCredential>>;
+  try {
+    credential = await resolveUserCredential(prisma, { connectionId: repo.id, userId });
+  } catch {
+    return { failure: 'unavailable', ok: false };
+  }
+  if (!credential) {
+    return null;
+  }
+  return fetchOwnRepoPermission({
+    apiUrl: credential.apiUrl,
+    organizationName: repo.organizationName,
+    repoName: repo.repoName,
+    token: credential.token,
   });
 }
 

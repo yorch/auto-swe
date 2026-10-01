@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 63 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 64 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Generated `init` baseline, a hand-written constraints/indexes migration, and appended migrations for later changes |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -396,7 +396,7 @@ instead. Tenant isolation is enforced in the application layer, not by database 
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 63 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 64 models.
 
 ```mermaid
 erDiagram
@@ -445,6 +445,7 @@ erDiagram
 | Auth tokens | `PersonalAccessToken` | `ats_*` bearer tokens; only the hash is stored |
 | Tenancy & RBAC | `Organization`, `Team`, `TeamMembership`, `OrganizationMembership` | `Organization` is the top-level tenant; every `Team` nests under one. `OrgRole` is `ORG_ADMIN` / `ORG_MEMBER` |
 | Connections | `Connection` | Typed binding to an external system. `type` is validated against the runtime registry in `@auto-swe/shared/lib/connectionTypes` (`git_repo`, `issue_tracker`, `notion`, `zendesk`, `hubspot`, `slack_workspace`, `http_api`, `mcp`). `type='git_repo'` carries repo coordinates, default branch, and gate commands; other types store type-specific settings in `config`. Token-based connection types may store an AES-256-GCM encrypted API token (`apiKeyCiphertext`/`Nonce`/`AuthTag`/`Version`). Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
+| Per-user credentials | `ConnectionCredential` | One user's own encrypted GitHub token for one repository, bound to the origins it was verified against and used only for runs that user launched (`WorkflowRun.launchedById`). See [user-github-credentials.md](./user-github-credentials.md) |
 | Work | `RunInput`, `ContextSnapshot` | `RunInput.payload` is the generic request body, validated against the template's `inputSchema`. The in-memory `RunRequest` type is the base for domain-specific requests such as `RepoWorkRequest`; `ContextSnapshot` is an SWE satellite keyed by run |
 | Execution state | `ActiveWorkflow`, `PullRequest` | Temporal ↔ DB state sync |
 | Workflow engine | `WorkflowTemplate`, `WorkflowTemplateVersion`, `WorkflowRun`, `WorkflowStep`, `WorkflowArtifact`, `WorkflowShellAudit` | Versioning, run tracking, artifact storage, shell audit |

@@ -14,6 +14,10 @@
  * for its new URL, and points "Edit this page" at the real source file rather
  * than the generated copy.
  *
+ * It also generates the use-case section from the built-in workflow templates (see
+ * `useCasePages.mjs`), and the data file the landing page draws its use-case rows
+ * from. Those templates are TypeScript, which is why this script runs under `tsx`.
+ *
  * Run: `yarn workspace @auto-swe/site sync` (implied by `dev` and `build`).
  */
 
@@ -31,10 +35,18 @@ import {
   SIDEBAR,
   siteUrl,
 } from './manifest.mjs';
+import {
+  describeUseCases,
+  renderUseCaseIndex,
+  renderUseCasePage,
+  USE_CASE_ROUTE_PREFIX,
+} from './useCasePages.mjs';
 
 const SITE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO_ROOT = join(SITE_ROOT, '..');
 const OUT_ROOT = join(SITE_ROOT, 'src/content/docs');
+/** Generated and gitignored: what the landing page needs about each use case. */
+const USE_CASE_DATA = join(SITE_ROOT, 'src/data/useCases.json');
 
 /**
  * Filenames under `docs/` that become pages. Mirrors the dashboard's rule so
@@ -216,7 +228,56 @@ async function main() {
     await writeFile(out, `${head}${body.trimEnd()}\n`, 'utf8');
   }
 
-  console.log(`Synced ${pages.length} pages into site/src/content/docs/`);
+  const useCaseCount = await writeUseCases();
+  console.log(
+    `Synced ${pages.length} pages and ${useCaseCount} use cases into site/src/content/docs/`
+  );
+}
+
+/** Writes the generated use-case section and the landing page's data file. */
+async function writeUseCases() {
+  const useCases = describeUseCases();
+  const root = join(OUT_ROOT, USE_CASE_ROUTE_PREFIX);
+  await rm(root, { force: true, recursive: true });
+  await mkdir(root, { recursive: true });
+
+  await writeFile(
+    join(root, 'index.md'),
+    `${frontmatter({
+      description:
+        'Workflows that ship with auto-swe, each drawn from its template spec: engineering, ' +
+        'approvals, releases, product, support, and content.',
+      editUrl: `${REPO_URL}/edit/${REPO_REF}/site/scripts/useCases.mjs`,
+      title: 'Use cases',
+    })}${renderUseCaseIndex(useCases)}`,
+    'utf8'
+  );
+
+  for (const useCase of useCases) {
+    const head = frontmatter({
+      description: truncate(useCase.summary, DESCRIPTION_MAX),
+      editUrl: `${REPO_URL}/edit/${REPO_REF}/${useCase.source}`,
+      title: useCase.title,
+    });
+    const body = renderUseCasePage(useCase, { ref: REPO_REF, repoUrl: REPO_URL });
+    await writeFile(join(root, `${useCase.name}.md`), `${head}${body}`, 'utf8');
+  }
+
+  // The landing page is an Astro component and cannot import the TypeScript
+  // templates itself, so it reads this instead of a second hand-kept list.
+  const landing = useCases.map(({ facts, group, maturity, name, slug, summary, title }) => ({
+    group,
+    href: siteUrl(slug),
+    maturity,
+    name,
+    people: facts.people.map(({ kind, title: label }) => ({ kind, label })),
+    summary,
+    title,
+  }));
+  await mkdir(dirname(USE_CASE_DATA), { recursive: true });
+  await writeFile(USE_CASE_DATA, `${JSON.stringify(landing, null, 2)}\n`, 'utf8');
+
+  return useCases.length;
 }
 
 // Importable for tests without running the copy.

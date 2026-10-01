@@ -24,7 +24,7 @@ const TYPE_GLYPH: Record<string, { label: string; color: string; bg: string }> =
   tool_call: { bg: 'oklch(0.66 0 0 / 0.12)', color: 'var(--color-paper-500)', label: 'tool' },
 };
 
-/** Strip provider prefix from a model spec: `anthropic/claude-opus-4-8` → `claude-opus-4-8` */
+/** Strip provider prefix from a model spec: `anthropic/claude-opus-5-5` → `claude-opus-5-5` */
 function modelShortName(model: string): string {
   return model.split('/').at(-1) ?? model;
 }

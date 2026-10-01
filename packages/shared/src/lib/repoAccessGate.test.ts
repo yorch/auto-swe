@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../index.js';
 
 const lookupRepoPermission = vi.fn();
+const lookupPermissionViaUserCredential = vi.fn();
 const githubLoginFor = vi.fn();
 const recordRepoPermission = vi.fn();
 
 vi.mock('./repoPermission.js', () => ({
   githubLoginFor: (...a: unknown[]) => githubLoginFor(...a),
+  lookupPermissionViaUserCredential: (...a: unknown[]) => lookupPermissionViaUserCredential(...a),
   lookupRepoPermission: (...a: unknown[]) => lookupRepoPermission(...a),
   // The launch path resolves a VERIFIED login now: reading the stored one was
   // enough for the sweep to be the only writer that checks ownership, which
@@ -40,6 +42,93 @@ beforeEach(() => {
   vi.clearAllMocks();
   githubLoginFor.mockResolvedValue('octocat');
   recordRepoPermission.mockResolvedValue({ written: true });
+  // No saved credential unless a test says otherwise.
+  lookupPermissionViaUserCredential.mockResolvedValue(null);
+});
+
+describe('decideRepoLaunch for a run that acts as the platform', () => {
+  it('never consults a saved token, by default', async () => {
+    // A Slack or scheduled launch uses the platform credential whatever the
+    // caller saved. Judging it by their token would refuse for a token the run
+    // never touches, or admit someone on an identity the run does not act as.
+    lookupPermissionViaUserCredential.mockResolvedValue({
+      failure: 'credential-rejected',
+      ok: false,
+    });
+    lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+    await expect(decideRepoLaunch(prisma, engineer, REPO, ENFORCE, log)).resolves.toEqual({
+      allowed: true,
+      reason: 'permitted',
+    });
+    expect(lookupPermissionViaUserCredential).not.toHaveBeenCalled();
+    expect(lookupRepoPermission).toHaveBeenCalledWith(REPO, 'octocat');
+  });
+});
+
+describe('decideRepoLaunch with a saved user credential', () => {
+  it("decides on the user's own token and never needs a login", async () => {
+    lookupPermissionViaUserCredential.mockResolvedValue({ ok: true, permission: 'write' });
+    githubLoginFor.mockResolvedValue(null);
+    await expect(decideRepoLaunch(prisma, engineer, REPO, ENFORCE, log, 'caller')).resolves.toEqual(
+      {
+        allowed: true,
+        reason: 'permitted',
+      }
+    );
+    expect(lookupPermissionViaUserCredential).toHaveBeenCalledWith(prisma, REPO, 'user-1');
+    expect(githubLoginFor).not.toHaveBeenCalled();
+    expect(lookupRepoPermission).not.toHaveBeenCalled();
+    expect(recordRepoPermission).toHaveBeenCalledWith(prisma, {
+      connectionId: 'conn-1',
+      lookup: { ok: true, permission: 'write' },
+      userId: 'user-1',
+    });
+  });
+
+  it('refuses read access through the token as it would through the login', async () => {
+    lookupPermissionViaUserCredential.mockResolvedValue({ ok: true, permission: 'read' });
+    await expect(decideRepoLaunch(prisma, engineer, REPO, ENFORCE, log, 'caller')).resolves.toEqual(
+      {
+        allowed: false,
+        reason: 'insufficient-permission',
+      }
+    );
+  });
+
+  it('says the token is the problem when GitHub rejects it or it cannot see the repo', async () => {
+    for (const failure of ['credential-rejected', 'repo-not-found'] as const) {
+      lookupPermissionViaUserCredential.mockResolvedValue({ failure, ok: false });
+      await expect(
+        decideRepoLaunch(prisma, engineer, REPO, ENFORCE, log, 'caller')
+      ).resolves.toEqual({
+        allowed: false,
+        reason: 'user-credential-rejected',
+      });
+    }
+    // Not a silent fallback to the login: the run would use this token and fail.
+    expect(lookupRepoPermission).not.toHaveBeenCalled();
+  });
+
+  it('fails closed, retryably, when GitHub could not be asked', async () => {
+    lookupPermissionViaUserCredential.mockResolvedValue({ failure: 'rate-limited', ok: false });
+    await expect(decideRepoLaunch(prisma, engineer, REPO, ENFORCE, log, 'caller')).resolves.toEqual(
+      {
+        allowed: false,
+        reason: 'lookup-unavailable',
+      }
+    );
+  });
+
+  it('falls back to the login when no credential is usable', async () => {
+    lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+    await expect(decideRepoLaunch(prisma, engineer, REPO, ENFORCE, log, 'caller')).resolves.toEqual(
+      {
+        allowed: true,
+        reason: 'permitted',
+      }
+    );
+    expect(lookupRepoPermission).toHaveBeenCalledWith(REPO, 'octocat');
+  });
 });
 
 describe('decideRepoLaunch', () => {

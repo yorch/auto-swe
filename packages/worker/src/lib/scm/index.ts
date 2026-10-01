@@ -41,6 +41,7 @@ export function getScmProvider(_repo?: RepoRef): ScmProvider {
  * has it. Null is the deliberate "use the instance-wide default" value.
  */
 export function toRepoRef(repo: {
+  id: string;
   organizationName: string | null;
   repoName: string | null;
   githubUrl?: string | null;
@@ -53,6 +54,7 @@ export function toRepoRef(repo: {
   return {
     apiUrl: repo.githubApiUrl ?? null,
     baseUrl: repo.githubUrl ?? null,
+    connectionId: repo.id,
     installationId: repo.installation?.installationId ?? null,
     organizationName: repo.organizationName,
     repoName: repo.repoName,

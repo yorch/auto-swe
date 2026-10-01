@@ -559,13 +559,13 @@ __metadata:
   resolution: "@auto-swe/site@workspace:site"
   dependencies:
     "@astrojs/starlight": "npm:0.42.0"
-    "@fontsource-variable/ibm-plex-sans": "npm:5.3.0"
-    "@fontsource/ibm-plex-mono": "npm:5.3.0"
-    "@fontsource/ibm-plex-sans-condensed": "npm:5.3.0"
+    "@fontsource-variable/overpass": "npm:5.3.0"
+    "@fontsource-variable/overpass-mono": "npm:5.3.0"
     astro: "npm:7.3.2"
     astro-mermaid: "npm:2.1.0"
     mermaid: "npm:11.17.2"
     sharp: "npm:0.35.4"
+    tsx: "npm:4.23.12"
   languageName: unknown
   linkType: soft
 
@@ -1986,24 +1986,17 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@fontsource-variable/ibm-plex-sans@npm:5.3.0":
+"@fontsource-variable/overpass-mono@npm:5.3.0":
   version: 5.3.0
-  resolution: "@fontsource-variable/ibm-plex-sans@npm:5.3.0"
-  checksum: 10c0/3fe44e92a441c956654d08be2fc1310f5527e241961f1386f4dcbe1ecfee4d3a387e1ca8b108afa48184647f3aa9db0d6547c2dd63a0442c2d369401c9a2e306
+  resolution: "@fontsource-variable/overpass-mono@npm:5.3.0"
+  checksum: 10c0/f183c0481df6e222e0df05c13b6313735700480e92cebf3afce749b11410ef2362f11bf7c28af354c62aa64246003e6831f1a579a0cee5454aef878781ab24a4
   languageName: node
   linkType: hard
 
-"@fontsource/ibm-plex-mono@npm:5.3.0":
+"@fontsource-variable/overpass@npm:5.3.0":
   version: 5.3.0
-  resolution: "@fontsource/ibm-plex-mono@npm:5.3.0"
-  checksum: 10c0/4aaf5a3c9efc7c32de4fa46ff3187ac63720904beab825f331ac01800038899761da23270f09d3fb5cff22f7cdc366904834854e2107229ad60833bba71c223d
-  languageName: node
-  linkType: hard
-
-"@fontsource/ibm-plex-sans-condensed@npm:5.3.0":
-  version: 5.3.0
-  resolution: "@fontsource/ibm-plex-sans-condensed@npm:5.3.0"
-  checksum: 10c0/a38bb91f97b47dc19c6e79da07f26afedb730700956f5dce507572bf34e8ffdeaff48234bceef4e04f43d35d72b36ba8e7ad82945cee4a86fc32e462f612179e
+  resolution: "@fontsource-variable/overpass@npm:5.3.0"
+  checksum: 10c0/9a550138882e03d1b4ce6676351606016c4ecbaf498fba1adb11aa01f61772162a487c7817008c5713b5e795fe3f45f047f4be0b06aa780592e749b8b28cc597
   languageName: node
   linkType: hard
 

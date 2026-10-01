@@ -29,6 +29,7 @@ import {
   LAUNCH_REFUSAL_MESSAGE,
   type LaunchRefusal,
   type RepoAccessGate,
+  type RunIdentity,
 } from './repoAccessGate.js';
 
 /**
@@ -152,7 +153,8 @@ export async function decideRepoAccess(
   repo: RepoAccessSubject,
   gate: RepoAccessGate,
   log?: AccessLog,
-  action: RepoAccessAction = 'start-new-work'
+  action: RepoAccessAction = 'start-new-work',
+  runIdentity: RunIdentity = 'platform'
 ): Promise<RepoAccessVerdict> {
   // Membership first, and only for non-admins. Someone outside the team gets
   // the answer that is actionable for them, rather than being told about an
@@ -195,7 +197,7 @@ export async function decideRepoAccess(
   if (!(repo.organizationName && repo.repoName)) {
     return { allowed: true, reason: 'permitted' };
   }
-  return decideRepoLaunch(prisma, user, repo, gate, log);
+  return decideRepoLaunch(prisma, user, repo, gate, log, runIdentity);
 }
 
 /**

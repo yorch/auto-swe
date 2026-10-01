@@ -130,7 +130,7 @@ dynamic catalog + the user's intent go in the user message.
 - **DRAFT, never auto-activate.** The canvas review step reuses all existing
   editor + RBAC machinery; activation is an explicit human action.
 - **`workflowAuthor` is model-backed but not in `MODEL_BACKED_AGENT_KEYS`** —
-  like `evalJudge`, it is seeded with a default model (`anthropic/claude-opus-4-8`)
+  like `evalJudge`, it is seeded with a default model (`anthropic/claude-opus-5-5`)
   and resolved on demand, so it never gates worker boot (`assertConfigReady`).
 - **Cost + tracing** flow through the same `runAgent` path as every other LLM
   activity (OTel span `llm.workflow_author`, `recordLlmUsage`, `AgentTrace`).

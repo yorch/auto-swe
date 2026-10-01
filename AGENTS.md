@@ -80,7 +80,7 @@ Run `ls packages/<name>/src` for the actual layout — only non-obvious rules li
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
 | `packages/cli`     | `auto-swe` CLI                                       | ESM Node 26+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API. `bundle init/validate/sign` is token-free local authoring over `@auto-swe/sdk`; `bundles list/export/install` hits the admin API |
 | `packages/sdk`     | `@auto-swe/sdk` — bundle authoring SDK               | Pure, I/O-free helpers over `@auto-swe/shared/bundle`: `defineAgent`/`defineSkill`/`defineTemplate`/`defineContainerStep`, `defineBundle` (+ content hash), `signBundle` (ed25519), `validateBundle` |
-| `site`             | Public docs site (Astro + Starlight), published to GitHub Pages | **A workspace, not a package** — the only one outside `packages/*`. Owns no content: `site/scripts/syncDocs.mjs` copies `docs/`, the root `README.md`, and `packages/cli/README.md` into `site/src/content/docs/` at build time, and that output is gitignored. `site/scripts/manifest.mjs` is the single source of what is published and where; a doc missing from its `SIDEBAR` fails the build |
+| `site`             | Public docs site (Astro + Starlight), published to GitHub Pages | **A workspace, not a package** — the only one outside `packages/*`. Owns no content: `site/scripts/syncDocs.mjs` copies `docs/`, the root `README.md`, and `packages/cli/README.md` into `site/src/content/docs/` at build time, and that output is gitignored. `site/scripts/manifest.mjs` is the single source of what is published and where; a doc missing from its `SIDEBAR` fails the build. It also generates `/use-cases/` from `BUILTIN_TEMPLATES` (so `sync` runs under `tsx`): **adding or removing a built-in template fails the site build until `site/scripts/useCases.mjs` has a matching entry** |
 
 Top-level files that matter:
 
@@ -160,7 +160,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "63 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "64 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -310,6 +310,21 @@ null = 15 s / 60 s).
 Changing GitHub, Google, or Okta OAuth credentials requires a gateway restart. Okta is registered
 through better-auth's `genericOAuth` plugin, whose `init` fetches the OIDC discovery document once
 at startup — so the issuer is read at boot too, not per sign-in.
+
+**Per-user GitHub credentials** (`ConnectionCredential`, off unless `github.userCredentialsEnabled`)
+let a user's own token stand in for the platform credential on runs **they launched**. Two rules
+keep that true, and both have already been gotten wrong once:
+
+- A run's identity is `WorkflowRun.launchedById` read through `currentRunLauncherId()`
+  (`worker/src/lib/runLauncher.ts`), which also requires the row's `temporalRunId` to be the current
+  execution's. **Never** key a credential on `RunInput.requestedById`: a re-run reuses the request,
+  so the requester is whoever first asked, not whoever is acting now.
+- Resolve a user token only through `resolveUserCredential()` (`shared/lib/connectionCredential.ts`),
+  which loads the repository's URLs itself and applies the host allowlist and the verified-origin
+  binding. A new launch path that should act as its caller sets `launchedById` on the request;
+  leaving it out is the safe default — the run uses the platform credential.
+
+See [`docs/user-github-credentials.md`](./docs/user-github-credentials.md).
 
 ### Setting Registry (operator policy)
 
@@ -580,21 +595,29 @@ Seeded model defaults (applied to the GLOBAL Agents by `syncBuiltins`):
 
 | Agent | Default |
 | ----- | ------- |
-| `implementer`, `reviewer`, `commitToMemory`, `channelAssistant`, `workflowAuthor` | `anthropic/claude-opus-4-8` |
-| `planner`, `securityReview`, `validateContext`, `workflowExplainer` | `anthropic/claude-sonnet-4-6` |
+| `implementer`, `reviewer`, `commitToMemory`, `channelAssistant`, `workflowAuthor` | `anthropic/claude-opus-5-5` |
+| `planner`, `securityReview`, `validateContext`, `workflowExplainer` | `anthropic/claude-sonnet-5-5` |
 | `evalJudge` | `anthropic/claude-haiku-4-5-20251001` |
 | (embedding) | `openai/text-embedding-3-large` |
+
+When a default changes, `syncAgents` moves a GLOBAL built-in Agent forward **only** if its latest
+version still carries the previous default (`PREVIOUS_DEFAULT_MODEL_SPECS`), and it does so by
+cutting a new version — never by editing the old one, which a run may have pinned via
+`WorkflowRun.agentVersions`. Any admin-chosen value is left alone. Add the outgoing default to that
+map whenever you change a `modelSpec` in `SWE_AGENTS`.
 
 Current model IDs — override defaults from the dashboard; pricing for these lives in `MODEL_PRICES`:
 
 | Provider  | Reasoning / heavy            | Balanced                    | Fast / cheap                            |
 | --------- | ---------------------------- | --------------------------- | --------------------------------------- |
-| Anthropic | `claude-opus-4-8`            | `claude-sonnet-4-6`         | `claude-haiku-4-5-20251001`             |
-| OpenAI    | `gpt-5-5-pro`                | `gpt-5-5`                   | `gpt-5`                                 |
-| Google    | `gemini-2.5-pro`             | `gemini-2.5-flash`          | `gemini-3.1-flash-lite-preview` / `gemini-2.5-flash-lite` |
+| Anthropic | `claude-fable-5-1` / `claude-opus-5-5` | `claude-sonnet-5-5` | `claude-haiku-4-5-20251001`             |
+| OpenAI    | `gpt-6-astra`                | `gpt-6.1-sol`               | `gpt-6-luna`                            |
+| Google    | `gemini-3.1-pro-preview`     | `gemini-3.8-flash`          | `gemini-3.5-flash-lite`                 |
 
-> **Deprecation:** `claude-sonnet-4-20250514` retires **2026-06-15**. Any custom override still
-> pinned to that ID must migrate to `claude-sonnet-4-6`.
+`claude-fable-5-1` sits above the Opus tier and is selectable, not a seeded default.
+
+> **Deprecation:** `claude-sonnet-4-20250514` retired on **2026-06-15**. Any custom override still
+> pinned to that ID must migrate to `claude-sonnet-5-5`.
 
 Bootstrap for a fresh deployment is in [`docs/model-configuration.md`](./docs/model-configuration.md)
 and §8 below.

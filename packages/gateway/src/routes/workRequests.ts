@@ -433,7 +433,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         user,
         repo,
         request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-        request.log
+        request.log,
+        'start-new-work',
+        // The run is launched as the caller (`launchedById`), so it may use
+        // their own saved token, and the gate judges that token.
+        'caller'
       );
       if (!decision.allowed) {
         return reply.status(403).send(repoAccessErrorBody(decision.reason));
@@ -549,6 +553,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         budgetTier,
         description,
         externalTicketId,
+        launchedById: user.sub,
         repoId: repo.id,
         requestPayload: JSON.stringify(request.body),
         workRequestId,
@@ -678,7 +683,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         user,
         repo,
         request.repoAccessGate ?? { mode: 'off', staleAfterHours: 0 },
-        request.log
+        request.log,
+        'start-new-work',
+        // The re-run is launched as its caller, like a fresh submission.
+        'caller'
       );
       if (!retryDecision.allowed) {
         return reply.status(403).send(repoAccessErrorBody(retryDecision.reason));
@@ -739,6 +747,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         budgetTier: latest.budgetTier as RepoWorkRequest['budgetTier'],
         description: workRequest.description,
         externalTicketId: workRequest.externalTicketId,
+        // Whoever re-runs it, not whoever first asked: the re-run acts as the
+        // caller, including with their own saved GitHub token, never as the
+        // original requester's.
+        launchedById: user.sub,
         repoId: repo.id,
         requestPayload: workRequest.requestPayload,
         workRequestId: workRequest.id,

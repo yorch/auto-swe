@@ -11,6 +11,7 @@ vi.mock('@temporalio/activity', () => ({
       return err;
     },
   },
+  activityInfo: () => ({ workflowExecution: { runId: 'temporal-run-1', workflowId: 'wf-1' } }),
   Context: {
     current: vi.fn(() => ({ info: { attempt: 1 } })),
   },
@@ -268,6 +269,31 @@ describe('createWorkflowRun', () => {
       implementer: 1,
       reviewer: 2,
     });
+  });
+
+  it('records who launched this execution, and which execution, on create only', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    await createWorkflowRun({
+      launchedById: 'user-1',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-1',
+    });
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    expect(args.create).toMatchObject({
+      launchedById: 'user-1',
+      temporalRunId: 'temporal-run-1',
+    });
+    // Never rewritten: a row left by an earlier execution of a reused workflow
+    // id must keep naming that execution, so its launcher is not inherited.
+    expect(args.update).toEqual({});
+  });
+
+  it('records no launcher for a run started by nobody', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    expect(args.create.launchedById).toBeNull();
   });
 
   it('returns an error when the template version is missing', async () => {

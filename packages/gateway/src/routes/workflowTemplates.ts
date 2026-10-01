@@ -1670,6 +1670,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         connectionId,
         description,
         externalTicketId,
+        launchedById: user.sub,
         payload,
         repoId: connectionId,
         requestPayload: JSON.stringify(request.body),

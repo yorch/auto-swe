@@ -81,6 +81,50 @@ export function useUpdateRepository(id: string) {
   });
 }
 
+export interface MyCredential {
+  connectionId: string;
+  lastFour: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MyCredentials {
+  /** Whether an admin has turned per-user credentials on. */
+  enabled: boolean;
+  /** Hosts a saved token may be sent to. */
+  hosts: string[];
+  credentials: MyCredential[];
+}
+
+/** The caller's own saved GitHub tokens (metadata only) and the policy. */
+export function useMyCredentials() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: MyCredentials }>('/api/v1/repositories/credentials/mine').then((r) => r.data),
+    queryKey: ['my-repo-credentials'],
+  });
+}
+
+export function useSaveMyCredential(connectionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (token: string) =>
+      api.put<{ data: MyCredential & { permission: string } }>(
+        `/api/v1/repositories/${connectionId}/credential`,
+        { token }
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-repo-credentials'] }),
+  });
+}
+
+export function useDeleteMyCredential(connectionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete<void>(`/api/v1/repositories/${connectionId}/credential`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-repo-credentials'] }),
+  });
+}
+
 export function useGitHubAvailableRepos(enabled = false) {
   return useQuery({
     enabled,

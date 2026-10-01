@@ -40,6 +40,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubInstallation.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/connectionCredential',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionCredential.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/githubPermission',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubPermission.ts'),
       },

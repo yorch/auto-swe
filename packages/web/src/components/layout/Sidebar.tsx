@@ -146,7 +146,7 @@ const NAV_GROUPS: NavGroup[] = [
         roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
       {
-        href: '/govern/budgets',
+        href: '/govern/organizations',
         icon: 'teams',
         label: 'Organizations',
         roles: ['ADMIN'],
