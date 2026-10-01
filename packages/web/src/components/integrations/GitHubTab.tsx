@@ -233,15 +233,17 @@ export function GitHubTab() {
               source={sources.authMode}
             >
               <Select
+                aria-label="Auth mode"
                 compact
                 id="gh-auth-mode"
-                onChange={(e) => setAuthMode(e.target.value)}
+                onChange={(v) => setAuthMode(v)}
+                options={[
+                  { label: 'auto (app if configured, else PAT)', value: 'auto' },
+                  { label: 'pat (always use PAT)', value: 'pat' },
+                  { label: 'app (always use App)', value: 'app' },
+                ]}
                 value={authMode ?? 'auto'}
-              >
-                <option value="auto">auto (app if configured, else PAT)</option>
-                <option value="pat">pat (always use PAT)</option>
-                <option value="app">app (always use App)</option>
-              </Select>
+              />
             </ConfigField>
           </div>
         </Card>

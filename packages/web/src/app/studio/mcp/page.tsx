@@ -4,13 +4,13 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type McpConnectionRow,
@@ -132,22 +132,15 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
           type="url"
           value={form.url}
         />
-        <Select
+        <Combobox
           id="mcp-new-team"
           label="Team"
-          onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
+          onChange={(v) => setForm((f) => ({ ...f, teamId: v }))}
+          options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
+          placeholder="Select a team…"
           required
           value={form.teamId}
-        >
-          <option disabled value="">
-            Select a team…
-          </option>
-          {teams?.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </Select>
+        />
         <McpTimeoutFields
           callTimeoutMs={form.callTimeoutMs}
           idPrefix="mcp-new"

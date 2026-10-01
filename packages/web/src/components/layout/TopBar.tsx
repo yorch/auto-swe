@@ -47,7 +47,6 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
     router.push('/login');
   };
 
-  const teamLabel = teams?.find((t) => t.id === selectedTeamId)?.name ?? 'all teams';
   const inboxCount = useApprovalsCount();
   const gatewayStatus = useGatewayStatus();
   const title = pageTitle(pathname);
@@ -84,30 +83,18 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
       </h2>
 
       {/* Team context selector */}
-      <label
-        className="relative flex min-w-0 shrink cursor-pointer items-center gap-[6px] rounded-[8px] sm:ml-2 focus-within:ring-2 focus-within:ring-ember-400"
-        htmlFor="topbar-team-select"
-      >
-        <span className="inline-flex min-w-0 cursor-pointer items-center gap-1.5 rounded-[8px] border border-ink-400 bg-ink-700 px-2.5 py-[5px] text-[12.5px] text-paper-400">
-          <span className="max-sm:hidden">team:</span>
-          <span className="max-w-[9rem] truncate font-semibold text-ember-400">{teamLabel}</span>
-          <span className="text-[10px] text-paper-500">▾</span>
-        </span>
-        <Select
-          aria-label="Select team"
-          className="absolute inset-0 cursor-pointer opacity-0"
-          id="topbar-team-select"
-          onChange={(e) => setSelectedTeamId(e.target.value || null)}
-          value={selectedTeamId ?? ''}
-        >
-          <option value="">all teams</option>
-          {(teams ?? []).map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </Select>
-      </label>
+      <Select
+        appearance="pill"
+        aria-label="Select team"
+        className="shrink sm:ml-2"
+        onChange={(v) => setSelectedTeamId(v || null)}
+        options={[
+          { label: 'all teams', value: '' },
+          ...(teams ?? []).map((t) => ({ label: t.name, value: t.id })),
+        ]}
+        prefix="team:"
+        value={selectedTeamId ?? ''}
+      />
 
       {/* Inbox badge */}
       {inboxCount > 0 && (

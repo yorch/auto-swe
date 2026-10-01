@@ -67,15 +67,10 @@ export default function GovernApprovalsPage() {
         <Select
           aria-label="Sort"
           className="w-40"
-          onChange={(e) => setSort(e.target.value as ApprovalSort)}
+          onChange={(v) => setSort(v as ApprovalSort)}
+          options={SORT_OPTIONS}
           value={sort}
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
+        />
 
         <Checkbox
           checked={overdueOnly}

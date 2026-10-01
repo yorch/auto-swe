@@ -168,8 +168,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                         className="w-auto"
                         compact
                         disabled={updateMember.isPending}
-                        onChange={(e) => {
-                          const role = e.target.value;
+                        onChange={(role) => {
                           const memberId = m.user?.id;
                           if (memberId && isRole(role)) {
                             setMemberError(null);
@@ -180,14 +179,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                               );
                           }
                         }}
+                        options={grantableRoles.map((r) => ({ label: r, value: r }))}
                         value={m.role}
-                      >
-                        {grantableRoles.map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </Select>
+                      />
                     ) : (
                       m.role
                     )}

@@ -69,15 +69,10 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
               compact
               id="window"
               label="Window"
-              onChange={(e) => setWindowDays(Number(e.target.value))}
-              value={windowDays}
-            >
-              {WINDOWS.map((w) => (
-                <option key={w} value={w}>
-                  {w}d
-                </option>
-              ))}
-            </Select>
+              onChange={(v) => setWindowDays(Number(v))}
+              options={WINDOWS.map((w) => ({ label: `${w}d`, value: String(w) }))}
+              value={String(windowDays)}
+            />
           }
           chapter="§ Workflows"
           className="mb-0 mt-4"

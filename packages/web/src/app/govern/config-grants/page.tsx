@@ -109,33 +109,36 @@ export default function GovernConfigGrantsPage() {
               />
               <Select
                 label="Scope"
-                onChange={(e) => setScope(e.target.value as GrantScope)}
+                onChange={(v) => setScope(v as GrantScope)}
+                options={[
+                  { label: 'GLOBAL', value: 'GLOBAL' },
+                  { label: 'ORGANIZATION', value: 'ORGANIZATION' },
+                  { label: 'TEAM', value: 'TEAM' },
+                ]}
                 value={scope}
-              >
-                <option value="GLOBAL">GLOBAL</option>
-                <option value="ORGANIZATION">ORGANIZATION</option>
-                <option value="TEAM">TEAM</option>
-              </Select>
+              />
             </div>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <Select
                 label="Grantee type"
-                onChange={(e) => setGranteeType(e.target.value as 'role' | 'user')}
+                onChange={(v) => setGranteeType(v as 'role' | 'user')}
+                options={[
+                  { label: 'role', value: 'role' },
+                  { label: 'userId', value: 'user' },
+                ]}
                 value={granteeType}
-              >
-                <option value="role">role</option>
-                <option value="user">userId</option>
-              </Select>
+              />
               {granteeType === 'role' ? (
                 <Select
                   label="Role"
-                  onChange={(e) => setRole(e.target.value as GrantRole)}
+                  onChange={(v) => setRole(v as GrantRole)}
+                  options={[
+                    { label: 'ADMIN', value: 'ADMIN' },
+                    { label: 'LEAD', value: 'LEAD' },
+                    { label: 'ENGINEER', value: 'ENGINEER' },
+                  ]}
                   value={role}
-                >
-                  <option value="ADMIN">ADMIN</option>
-                  <option value="LEAD">LEAD</option>
-                  <option value="ENGINEER">ENGINEER</option>
-                </Select>
+                />
               ) : (
                 <Input
                   label="User ID"

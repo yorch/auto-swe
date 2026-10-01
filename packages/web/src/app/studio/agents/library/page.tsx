@@ -11,6 +11,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -274,16 +275,13 @@ export default function AgentLibraryPage() {
           <Select
             aria-label="Filter by scope"
             className="h-9 w-auto px-2 font-mono text-xs"
-            onChange={(e) => setScopeFilter(e.target.value as '' | AgentScope)}
+            onChange={(v) => setScopeFilter(v as '' | AgentScope)}
+            options={[
+              { label: 'All scopes', value: '' },
+              ...SCOPES.map((sc) => ({ label: sc, value: sc })),
+            ]}
             value={scopeFilter}
-          >
-            <option value="">All scopes</option>
-            {SCOPES.map((sc) => (
-              <option key={sc} value={sc}>
-                {sc}
-              </option>
-            ))}
-          </Select>
+          />
         </CardHeader>
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="agents">
           <Table>
@@ -399,8 +397,8 @@ export default function AgentLibraryPage() {
               <Select
                 hint="GLOBAL is visible system-wide; the other scopes pin the override to one organization, team, Slack channel or workflow template"
                 label="Scope"
-                onChange={(e) => {
-                  const scope = e.target.value as CreateAgentBody['scope'];
+                onChange={(v) => {
+                  const scope = v as CreateAgentBody['scope'];
                   setCreateForm({
                     ...createForm,
                     channelId: scope !== 'CHANNEL' ? undefined : createForm.channelId,
@@ -411,14 +409,15 @@ export default function AgentLibraryPage() {
                       scope !== 'WORKFLOW_TEMPLATE' ? undefined : createForm.workflowTemplateId,
                   });
                 }}
+                options={[
+                  { label: 'GLOBAL', value: 'GLOBAL' },
+                  { label: 'ORGANIZATION', value: 'ORGANIZATION' },
+                  { label: 'TEAM', value: 'TEAM' },
+                  { label: 'CHANNEL', value: 'CHANNEL' },
+                  { label: 'WORKFLOW_TEMPLATE', value: 'WORKFLOW_TEMPLATE' },
+                ]}
                 value={createForm.scope}
-              >
-                <option value="GLOBAL">GLOBAL</option>
-                <option value="ORGANIZATION">ORGANIZATION</option>
-                <option value="TEAM">TEAM</option>
-                <option value="CHANNEL">CHANNEL</option>
-                <option value="WORKFLOW_TEMPLATE">WORKFLOW_TEMPLATE</option>
-              </Select>
+              />
               {createForm.scope === 'ORGANIZATION' && (
                 <Input
                   hint="UUID of the owning organization"
@@ -431,56 +430,40 @@ export default function AgentLibraryPage() {
                 />
               )}
               {createForm.scope === 'TEAM' && (
-                <Select
+                <Combobox
                   label="Team"
-                  onChange={(e) =>
-                    setCreateForm({ ...createForm, teamId: e.target.value || undefined })
-                  }
+                  onChange={(v) => setCreateForm({ ...createForm, teamId: v || undefined })}
+                  options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
+                  placeholder="Select a team…"
                   value={createForm.teamId ?? ''}
-                >
-                  <option value="">Select a team…</option>
-                  {(teams ?? []).map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </Select>
+                />
               )}
               {createForm.scope === 'WORKFLOW_TEMPLATE' && (
-                <Select
+                <Combobox
                   label="Workflow template"
-                  onChange={(e) =>
+                  onChange={(v) =>
                     setCreateForm({
                       ...createForm,
-                      workflowTemplateId: e.target.value || undefined,
+                      workflowTemplateId: v || undefined,
                     })
                   }
+                  options={(templates ?? []).map((t) => ({ label: t.name, value: t.id }))}
+                  placeholder="Select a template…"
                   value={createForm.workflowTemplateId ?? ''}
-                >
-                  <option value="">Select a template…</option>
-                  {(templates ?? []).map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </Select>
+                />
               )}
               {createForm.scope === 'CHANNEL' && (
-                <Select
+                <Combobox
                   hint="Slack channel this agent override applies to"
                   label="Channel"
-                  onChange={(e) =>
-                    setCreateForm({ ...createForm, channelId: e.target.value || undefined })
-                  }
+                  onChange={(v) => setCreateForm({ ...createForm, channelId: v || undefined })}
+                  options={(slackChannels ?? []).map((c) => ({
+                    label: c.name ?? c.slackChannelId,
+                    value: c.id,
+                  }))}
+                  placeholder="Select a channel…"
                   value={createForm.channelId ?? ''}
-                >
-                  <option value="">Select a channel…</option>
-                  {(slackChannels ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name ?? c.slackChannelId}
-                    </option>
-                  ))}
-                </Select>
+                />
               )}
             </div>
           }

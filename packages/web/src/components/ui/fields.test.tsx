@@ -13,18 +13,29 @@ describe('required field marker', () => {
     ['Textarea', <Textarea key="t" label="Name" required />],
     [
       'Select',
-      <Select key="s" label="Name" required>
-        <option>a</option>
-      </Select>,
+      <Select
+        key="s"
+        label="Name"
+        onChange={() => {}}
+        options={[{ label: 'a', value: 'a' }]}
+        required
+        value="a"
+      />,
     ],
   ])('%s shows an aria-hidden * and keeps native required', (_n, el) => {
     const { container } = render(el);
-    const mark = container.querySelector('label [aria-hidden="true"]');
-    expect(mark?.textContent?.trim()).toBe('*');
+    // Select's label is a span, not a <label>, so match the marker by its text.
+    const mark = Array.from(container.querySelectorAll('[aria-hidden="true"]')).find(
+      (n) => n.textContent?.trim() === '*'
+    );
+    expect(mark).toBeTruthy();
     // The marker is hidden from the accessible name; native `required` carries the meaning.
-    const control = screen.getByRole(_n === 'Select' ? 'combobox' : 'textbox', {
-      name: 'Name',
-    }) as HTMLInputElement;
+    // Select keeps `required` on the hidden native select React Aria renders for forms.
+    const control = (
+      _n === 'Select'
+        ? container.querySelector('select')
+        : screen.getByRole('textbox', { name: 'Name' })
+    ) as HTMLInputElement;
     expect(control.required).toBe(true);
   });
 

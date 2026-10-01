@@ -277,16 +277,13 @@ function EdgeConnectionsSection({
             id={`edge-${h.id}`}
             key={h.id}
             label={label}
-            onChange={(e) => onSetEdge(h.id, e.target.value || null)}
+            onChange={(v) => onSetEdge(h.id, v || null)}
+            options={[
+              ...(clearable ? [{ label: '— none —', value: '' }] : []),
+              ...otherIds.map((id) => ({ label: id, value: id })),
+            ]}
             value={readNodeEdge(node, h.id) ?? ''}
-          >
-            {clearable && <option value="">— none —</option>}
-            {otherIds.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-          </Select>
+          />
         );
       })}
     </div>

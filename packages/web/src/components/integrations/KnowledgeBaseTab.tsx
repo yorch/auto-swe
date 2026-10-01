@@ -132,21 +132,22 @@ export function KnowledgeBaseTab() {
             source={sources.provider}
           >
             <Select
+              aria-label="Provider"
               compact
               id="kb-provider"
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 if (v === '' || v === 'disabled' || v === 'confluence' || v === 'notion') {
                   setProvider(v);
                 }
               }}
+              options={[
+                { label: '(keep current)', value: '' },
+                { label: 'Disabled', value: 'disabled' },
+                { label: 'Confluence', value: 'confluence' },
+                { label: 'Notion', value: 'notion' },
+              ]}
               value={provider}
-            >
-              <option value="">(keep current)</option>
-              <option value="disabled">Disabled</option>
-              <option value="confluence">Confluence</option>
-              <option value="notion">Notion</option>
-            </Select>
+            />
           </ConfigField>
           <ConfigField
             current={data?.enabled === undefined ? undefined : data.enabled ? 'yes' : 'no'}
@@ -155,18 +156,19 @@ export function KnowledgeBaseTab() {
             source={sources.enabled}
           >
             <Select
+              aria-label="Enabled"
               compact
               id="kb-enabled"
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 setEnabled(v === '' ? undefined : v === 'true');
               }}
+              options={[
+                { label: '(keep current)', value: '' },
+                { label: 'Yes', value: 'true' },
+                { label: 'No', value: 'false' },
+              ]}
               value={enabled === undefined ? '' : String(enabled)}
-            >
-              <option value="">(keep current)</option>
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </Select>
+            />
           </ConfigField>
           <ConfigField
             current={data?.baseUrl || undefined}

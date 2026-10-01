@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -244,47 +245,38 @@ function PolicyModal({
         />
         <Select
           label="Scope"
-          onChange={(e) =>
+          onChange={(v) =>
             setForm((f) => ({
               ...f,
-              scope: e.target.value as Scope,
+              scope: v as Scope,
               teamId: '',
               templateId: '',
             }))
           }
+          options={[
+            { label: 'Global default', value: 'global' },
+            { label: 'Team default', value: 'team' },
+            { label: 'Template override', value: 'template' },
+          ]}
           value={form.scope}
-        >
-          <option value="global">Global default</option>
-          <option value="team">Team default</option>
-          <option value="template">Template override</option>
-        </Select>
+        />
         {form.scope === 'team' && (
-          <Select
+          <Combobox
             label="Team"
-            onChange={(e) => setForm((f) => ({ ...f, teamId: e.target.value }))}
+            onChange={(v) => setForm((f) => ({ ...f, teamId: v }))}
+            options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
+            placeholder="Select a team"
             value={form.teamId}
-          >
-            <option value="">Select a team</option>
-            {(teams ?? []).map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
+          />
         )}
         {form.scope === 'template' && (
-          <Select
+          <Combobox
             label="Template"
-            onChange={(e) => setForm((f) => ({ ...f, templateId: e.target.value }))}
+            onChange={(v) => setForm((f) => ({ ...f, templateId: v }))}
+            options={(templates ?? []).map((t) => ({ label: t.name, value: t.id }))}
+            placeholder="Select a template"
             value={form.templateId}
-          >
-            <option value="">Select a template</option>
-            {(templates ?? []).map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
+          />
         )}
         <Card variant="inset">
           <CardHeader>
@@ -305,12 +297,13 @@ function PolicyModal({
                   aria-label={i === 0 ? undefined : `Action, rule ${i + 1}`}
                   id={`rule-${r.id}-action`}
                   label={i === 0 ? 'Action' : undefined}
-                  onChange={(e) => setRuleField(i, { action: e.target.value as RuleRow['action'] })}
+                  onChange={(v) => setRuleField(i, { action: v as RuleRow['action'] })}
+                  options={[
+                    { label: 'Auto', value: 'auto' },
+                    { label: 'Require approval', value: 'require_approval' },
+                  ]}
                   value={r.action}
-                >
-                  <option value="auto">Auto</option>
-                  <option value="require_approval">Require approval</option>
-                </Select>
+                />
                 <Input
                   aria-label={i === 0 ? undefined : `Approvers, rule ${i + 1}`}
                   disabled={r.action !== 'require_approval'}

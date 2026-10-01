@@ -65,15 +65,10 @@ export function AddMemberModal({
         <Select
           id="role"
           label="Team role"
-          onChange={(e) => setRole(e.target.value as Role)}
+          onChange={(v) => setRole(v as Role)}
+          options={grantableRoles.map((r) => ({ label: r, value: r }))}
           value={role}
-        >
-          {grantableRoles.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </Select>
+        />
         {error && <Alert>{error}</Alert>}
         <ModalFooter
           disabled={!userId}

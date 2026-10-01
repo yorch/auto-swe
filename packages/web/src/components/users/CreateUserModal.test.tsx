@@ -131,7 +131,8 @@ describe('CreateUserModal', () => {
     fireEvent.change(screen.getByLabelText(/email/i), {
       target: { value: 'autogen@example.com' },
     });
-    fireEvent.change(screen.getByLabelText(/^role$/i), { target: { value: 'LEAD' } });
+    fireEvent.click(screen.getByRole('button', { name: /role/i }));
+    fireEvent.click(screen.getByRole('option', { name: 'LEAD' }));
     // Leave password field blank — gateway will auto-generate
     fireEvent.click(screen.getByRole('button', { name: /create user/i }));
 

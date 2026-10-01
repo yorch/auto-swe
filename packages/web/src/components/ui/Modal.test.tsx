@@ -3,6 +3,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { Modal } from './Modal';
+import { Select } from './Select';
 
 // jsdom implements <dialog> without showModal()/close(); stand in for the
 // browser's, including the close event that drives onClose.
@@ -62,5 +63,28 @@ describe('Modal', () => {
     fireEvent.mouseDown(screen.getByRole('textbox', { hidden: true, name: 'Name' }));
     fireEvent.click(dialog);
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('opens a dropdown inside the dialog, not behind it on <body>', () => {
+    // A shown <dialog> is in the top layer; a popover portalled to <body>
+    // would render underneath it, unreachable.
+    render(
+      <Modal onClose={() => {}} open title="Pick">
+        <Select
+          label="Status"
+          onChange={() => {}}
+          options={[{ label: 'Running', value: 'RUNNING' }]}
+          value=""
+        />
+      </Modal>
+    );
+    const dialog = screen.getByRole('dialog', { hidden: true });
+    fireEvent.click(screen.getByRole('button', { hidden: true, name: /status/i }));
+    // The listbox item, not the <option> in React Aria's hidden native select.
+    const option = screen
+      .getAllByRole('option', { hidden: true, name: 'Running' })
+      .find((el) => el.tagName !== 'OPTION');
+    expect(option).toBeDefined();
+    expect(dialog.contains(option as HTMLElement)).toBe(true);
   });
 });

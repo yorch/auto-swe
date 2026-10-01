@@ -294,17 +294,17 @@ export function WorkflowDefaultsForm() {
               hint="`signal` waits for a GitHub webhook. Use `poll` only where no inbound webhook can reach the gateway (local dev, air-gapped)."
               id="ci-wait-mode"
               label="Wait mode"
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 if (v === 'signal' || v === 'poll') {
                   setField('ciWaitMode', v);
                 }
               }}
+              options={[
+                { label: 'signal (webhook)', value: 'signal' },
+                { label: 'poll (query the CI API)', value: 'poll' },
+              ]}
               value={form.ciWaitMode}
-            >
-              <option value="signal">signal (webhook)</option>
-              <option value="poll">poll (query the CI API)</option>
-            </Select>
+            />
             <NumberField
               hint="Seconds between CI polls, at most 60 — the gateway clamps larger values. Only used in poll mode."
               id="ci-poll-interval"

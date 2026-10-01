@@ -140,13 +140,14 @@ export default function UsersPage() {
                 className="w-auto"
                 id="invite-role"
                 label="Role"
-                onChange={(e) => setInviteRole(e.target.value as Role)}
+                onChange={(v) => setInviteRole(v as Role)}
+                options={[
+                  { label: 'ENGINEER', value: 'ENGINEER' },
+                  { label: 'LEAD', value: 'LEAD' },
+                  { label: 'ADMIN', value: 'ADMIN' },
+                ]}
                 value={inviteRole}
-              >
-                <option value="ENGINEER">ENGINEER</option>
-                <option value="LEAD">LEAD</option>
-                <option value="ADMIN">ADMIN</option>
-              </Select>
+              />
             </div>
             <Button disabled={inviteUser.isPending} size="md" type="submit" variant="primary">
               {inviteUser.isPending ? 'Sending…' : 'Send invite'}

@@ -149,10 +149,10 @@ export function IssueTrackerTab() {
             source={sources.provider}
           >
             <Select
+              aria-label="Provider"
               compact
               id="tracker-provider"
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 if (
                   v === '' ||
                   v === 'disabled' ||
@@ -163,14 +163,15 @@ export function IssueTrackerTab() {
                   setProvider(v);
                 }
               }}
+              options={[
+                { label: '(keep current)', value: '' },
+                { label: 'Disabled', value: 'disabled' },
+                { label: 'Jira', value: 'jira' },
+                { label: 'Linear', value: 'linear' },
+                { label: 'GitHub Issues', value: 'github' },
+              ]}
               value={provider}
-            >
-              <option value="">(keep current)</option>
-              <option value="disabled">Disabled</option>
-              <option value="jira">Jira</option>
-              <option value="linear">Linear</option>
-              <option value="github">GitHub Issues</option>
-            </Select>
+            />
             {hints && (
               <p className="text-[11px] text-paper-600">Ticket ID format: {hints.ticket}</p>
             )}

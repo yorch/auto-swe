@@ -4,9 +4,9 @@ import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Select } from '@/components/ui/Select';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   SUGGESTED_MODEL_SPECS,
@@ -94,22 +94,22 @@ export function EmbeddingsTab() {
             ))}
           </datalist>
         </div>
-        <Select
+        <Combobox
           id="embedCred"
           label="Pinned credential (optional)"
-          onChange={(e) => {
-            setCredentialId(e.target.value);
+          onChange={(v) => {
+            setCredentialId(v);
             setDirty(true);
           }}
+          options={[
+            { label: '— Resolve by provider name —', value: '' },
+            ...(credentials ?? []).map((c) => ({
+              label: `${c.scope} · ${c.provider}/****${c.lastFour}`,
+              value: c.id,
+            })),
+          ]}
           value={credentialId}
-        >
-          <option value="">— Resolve by provider name —</option>
-          {(credentials ?? []).map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.scope} · {c.provider}/****{c.lastFour}
-            </option>
-          ))}
-        </Select>
+        />
         {error && <Alert>{error}</Alert>}
         <div className="flex justify-end pt-2">
           <Button disabled={!dirty || update.isPending} type="submit" variant="primary">
