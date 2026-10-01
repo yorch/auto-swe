@@ -343,10 +343,18 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.min(5).max(500),
     unit: 'steps',
   }),
+
+  // ── Agent runs ─────────────────────────────────────────────────────────────
+  // Ad-hoc "run this library agent on this repo" launches. Every one of these is
+  // ADMIN-only: they bound what any ENGINEER can spend or publish from a text
+  // box, so a LEAD who may tune the implementer's step budget must not be able
+  // to raise them. A per-launch cap can only LOWER the ceilings below; the
+  // gateway rejects a cap above one and the worker clamps again, because a
+  // ceiling can drop between launch and start.
   'workspace.agentRunAllowWorkflowChanges': defineSetting({
     defaultValue: false,
     description:
-      'Whether an agent run may publish changes under .github/workflows. A pushed branch triggers its push workflows with repository secrets, and a workflow file can request secrets and permissions that ordinary code cannot, so a run that touches one is refused unless this is on.',
+      'Whether an agent run may publish changes under .github/workflows or .github/actions. A workflow file can request secrets and permissions that ordinary code cannot, so a run that touches one is refused unless this is on. This does NOT make a pushed branch safe: existing push-triggered workflows still run, with repository secrets, on whatever the agent changed elsewhere (package scripts, test files, build scripts).',
     group: 'workspace',
     label: 'Agent run: allow workflow file changes',
     overridableAt: ['TEAM', 'ORGANIZATION'],
@@ -382,13 +390,6 @@ export const SETTING_DEFINITIONS = {
     unit: 'runs',
   }),
 
-  // ── Agent runs ─────────────────────────────────────────────────────────────
-  // Ad-hoc "run this library agent on this repo" launches. Every one of these is
-  // ADMIN-only: they bound what any ENGINEER can spend or publish from a text
-  // box, so a LEAD who may tune the implementer's step budget must not be able
-  // to raise them. A per-launch cap can only LOWER the ceilings below; the
-  // gateway rejects a cap above one and the worker clamps again, because a
-  // ceiling can drop between launch and start.
   'workspace.agentRunMaxSteps': defineSetting({
     defaultValue: 50,
     description:

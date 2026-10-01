@@ -161,8 +161,9 @@ Run in this order, all failing closed and all non-retryable:
    `SENSITIVE_FILE` pattern (deletions included), symlinks, gitlinks and submodules, binary files
    (detected by a NUL byte in the content, which `.gitattributes` cannot argue with), files over 1 MB,
    more than 500 changed files, paths it cannot classify, and anything under `.github/workflows` or
-   `.github/actions` unless `workspace.agentRunAllowWorkflowChanges` allows it (a pushed branch runs its
-   push workflows with repository secrets).
+   `.github/actions` unless `workspace.agentRunAllowWorkflowChanges` allows it. This keeps an agent from
+   adding or editing a workflow; it does not stop a pushed branch running the repository's existing
+   push-triggered workflows (see Limitations).
 2. **Size bound** (`AGENT_RUN_DIFF_TOO_LARGE`). The gate reads the whole diff in one model call, so a
    diff over 300,000 characters is refused rather than truncated: a truncated scan would be a bypass.
 3. **Static code scan.** Advisory, as everywhere: findings are recorded and put in the PR body.
@@ -248,6 +249,22 @@ same run. The run viewer shows them under the run found by `workRequestId`.
 
 ## Limitations
 
+- **A pushed branch runs the repository's existing `on: push` CI, with repository secrets, on
+  agent-edited code.** Blocking changes under `.github/workflows` and `.github/actions` stops an agent
+  adding or rewriting a workflow, not editing what an existing workflow executes (`package.json`
+  scripts, a `Makefile`, test files, a CI shell script, a local action path elsewhere). A repository
+  member with no GitHub write access can therefore get code derived from their prompt run with the
+  repository's secrets, unless the repository's workflows are restricted for pushes from non-protected
+  branches. The platform does not currently require the launcher to hold push permission on the
+  repository when a run delivers (`deliver: branch` or `draft_pr`). `workspace.agentRunAllowWorkflowChanges` narrows this and does
+  not close it. Use `deliver: none` (the default) where that matters, and restrict who may launch.
+- **An agent's MCP connection is reachable across teams.** The connection an agent binds is not checked
+  against the run's team: a GLOBAL (or organization-scope) agent bound to one team's MCP connection is
+  usable, through a text box, by every member of every team that can launch it, with that connection's
+  credentials and reach. Bind MCP only on agents meant for everyone who can launch them.
+- **Usage of the step in flight at a deadline abort is unrecorded.** Each completed model step is
+  debited as it lands, but when the wall-clock deadline or a cancellation aborts a step mid-flight,
+  that step's tokens are not recorded, so spend can exceed the ledger by at most one step.
 - **MCP next to a workspace is an exfiltration channel.** An agent with an MCP connection and a
   readable repository can send source anywhere that connection reaches, steered by text in the
   repository. MCP binds per the agent's own configuration; it is not switched off for agent runs. The
