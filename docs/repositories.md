@@ -57,6 +57,34 @@ in two places:
 
 A repository with no overrides is never checked, so the common case costs nothing.
 
+### Webhook secrets per host
+
+The GitHub integration holds one webhook secret. Each GitHub Enterprise Server host configures its
+own webhooks, so each can have its own secret (`GitHubHostWebhookSecret`, managed by platform admins
+at `/studio/integrations → GitHub` or under `/api/v1/platform/github-webhook-secrets`). The host
+must be the integration's own host or listed in `github.repositoryHosts`; a secret for any other
+host is refused.
+
+GitHub Enterprise Server names the sending host in `X-GitHub-Enterprise-Host`. For every
+`/webhooks/git`, `/webhooks/ci` and `/webhooks/access` delivery:
+
+- If the header names a host that has a secret, the signature is verified with that secret **only**.
+  A payload signed with the instance secret is rejected.
+- If the header is absent, or names a host with no secret, the instance secret is used.
+
+The host is compared lowercase, as `host[:port]`. Secrets are encrypted at rest like every other
+credential, are write-only (the API returns the last four characters), and are re-encrypted by key
+rotation.
+
+### CI status lookups
+
+When a check run succeeds, the gateway asks GitHub for the other check runs on the commit before
+signalling the workflow. That request goes to the tracked repository's own API base, with a token
+for the repository's own installation; a repository with no installation uses the instance's
+installation, on the instance's host. A user's token is never used, since no user launched a
+webhook. A repository whose overrides fail the approved-host check is sent no credential, and the
+run is signalled per check run instead.
+
 ### Importing from GitHub
 
 Importing lists repositories from the instance's own host and onboards them with no override. The
@@ -116,8 +144,10 @@ longer fit.
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an
   origin.
-- **Webhooks still use one secret.** A payload from any host is verified against the platform's
-  webhook secret, and matched by host only when it carries `repository.html_url`.
+- **Only GitHub Enterprise Server hosts can have their own webhook secret.** The choice of secret
+  keys on the `X-GitHub-Enterprise-Host` header (see below), which github.com does not send, so
+  github.com deliveries always use the instance secret. A payload is matched to a repository by
+  host only when it carries `repository.html_url`.
 - **App installations are not host-scoped.** A GitHub App installation id is unique across the
   deployment, so two hosts cannot use the same numeric installation id.
 - **Owner and name are case-sensitive in the unique index.** GitHub treats them case-insensitively;

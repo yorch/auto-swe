@@ -111,6 +111,20 @@ function hostOf(url: string): string | null {
 }
 
 /**
+ * The hosts the platform will talk to about repositories: the GitHub
+ * integration's own web and API hosts, plus `github.repositoryHosts`.
+ */
+export async function approvedRepositoryHosts(): Promise<string[]> {
+  const [ghConfig, extra] = await Promise.all([
+    resolveGitHubConfig(),
+    resolveSetting('github.repositoryHosts'),
+  ]);
+  return [hostOf(ghConfig.baseUrl), hostOf(ghConfig.apiUrl), ...extra].filter(
+    (h): h is string => h !== null
+  );
+}
+
+/**
  * Whether a repository's own URL overrides may receive a GitHub credential.
  *
  * The platform credential — and a user's — is sent to a repository's own web
@@ -136,13 +150,7 @@ export async function repositoryHostsAllowed(repo: {
   if (overrides.length === 0) {
     return { ok: true };
   }
-  const [ghConfig, extra] = await Promise.all([
-    resolveGitHubConfig(),
-    resolveSetting('github.repositoryHosts'),
-  ]);
-  const hosts = [hostOf(ghConfig.baseUrl), hostOf(ghConfig.apiUrl), ...extra].filter(
-    (h): h is string => h !== null
-  );
+  const hosts = await approvedRepositoryHosts();
   for (const url of overrides) {
     if (!credentialHostAllowed(url, hosts)) {
       return { ok: false, url };

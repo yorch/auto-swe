@@ -42,6 +42,7 @@ import { connectionCredentialRoutes } from './routes/connectionCredentials.js';
 import { epicRoutes } from './routes/epics.js';
 import { evalRoutes } from './routes/evals.js';
 import { githubInstallationRoutes } from './routes/githubInstallations.js';
+import { githubWebhookSecretRoutes } from './routes/githubWebhookSecrets.js';
 import { humanErrorBaselineRoutes } from './routes/humanErrorBaselines.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
@@ -408,6 +409,7 @@ async function start() {
   await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/admin' });
   await app.register(githubInstallationRoutes, { prefix: '/api/v1/platform' });
   await app.register(githubInstallationRoutes, { prefix: '/api/v1/admin' });
+  await app.register(githubWebhookSecretRoutes, { prefix: '/api/v1/platform' });
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/admin' });

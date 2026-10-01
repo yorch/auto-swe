@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
+import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import {
   resolveGitHubConfig,
@@ -16,6 +18,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
+import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
@@ -159,7 +162,10 @@ async function verifyWebhookOrReject(
   reply: FastifyReply
 ): Promise<boolean> {
   const signature = request.headers['x-hub-signature-256'] as string;
-  const { webhookSecret: secret } = await resolveGitHubConfig();
+  const secret = await resolveWebhookSecret(
+    request.server.prisma,
+    request.headers['x-github-enterprise-host']
+  );
 
   if (!secret || !signature) {
     reply
@@ -181,6 +187,56 @@ async function verifyWebhookOrReject(
   }
 
   return true;
+}
+
+/**
+ * Where, and with which credential, to ask GitHub about a tracked repository.
+ *
+ * The repository's own API host, and a token minted for its own installation:
+ * the instance credential is for the instance's host, and a repository on
+ * another GitHub Enterprise server must not be sent it. Mirrors the worker's
+ * `installationTarget` — a repository with no installation of its own takes
+ * the singleton's installation, which lives on the singleton's host. Never a
+ * user's token: a webhook has no launcher.
+ *
+ * Null (aggregation unavailable, so the caller signals per run) when the
+ * repository's URL overrides are not on an approved host — no credential is
+ * minted for them — or when no credential can be resolved.
+ */
+async function checkRunTarget(
+  repo:
+    | {
+        githubApiUrl: string | null;
+        githubUrl: string | null;
+        installation: { installationId: string } | null;
+      }
+    | null
+    | undefined,
+  log: FastifyRequest['log']
+): Promise<{ apiUrl: string; token: string } | null> {
+  const ghConfig = await resolveGitHubConfig();
+  const apiUrl = repo?.githubApiUrl ?? ghConfig.apiUrl;
+  if (repo) {
+    const hosts = await repositoryHostsAllowed({
+      githubApiUrl: repo.githubApiUrl,
+      githubUrl: repo.githubUrl,
+    });
+    if (!hosts.ok) {
+      log.warn({ url: hosts.url }, 'repository host is not approved; no credential sent');
+      return null;
+    }
+  }
+  const installationId = repo?.installation?.installationId ?? null;
+  try {
+    const token = await resolveGitHubToken(ghConfig, {
+      apiUrl: installationId ? apiUrl : ghConfig.apiUrl,
+      installationId,
+    });
+    return { apiUrl, token };
+  } catch (err) {
+    log.warn({ err }, 'no GitHub credential for the check-run lookup');
+    return null;
+  }
 }
 
 /** Conclusions that don't fail a check suite. */
@@ -550,6 +606,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Find tracked PRs by commit SHA
       const pullRequests = await fastify.prisma.pullRequest.findMany({
         include: {
+          // What the check-run lookup needs to reach the repository's own host
+          // as its own installation.
+          repository: {
+            select: {
+              githubApiUrl: true,
+              githubUrl: true,
+              installation: { select: { installationId: true } },
+            },
+          },
           workflow: {
             include: {
               workRequest: { select: { externalTicketId: true } },
@@ -573,8 +638,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       if (NON_FAILING_CONCLUSIONS.has(conclusion)) {
         // A passing run says nothing about the other checks on the SHA.
         // Aggregate and only signal once everything has completed.
-        const { apiUrl, token } = await resolveGitHubConfig();
-        const aggregated = await aggregateCheckRuns(apiUrl, token ?? null, org, repoName, headSha);
+        const target = await checkRunTarget(pullRequests[0].repository, request.log);
+        const aggregated = target
+          ? await aggregateCheckRuns(target.apiUrl, target.token, org, repoName, headSha)
+          : null;
         if (aggregated) {
           if (!aggregated.complete) {
             return {

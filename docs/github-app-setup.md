@@ -53,6 +53,14 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
 The same steps apply; navigate to your GHE instance's settings instead of github.com, and set the
 instance's web and API URLs at `/studio/integrations → GitHub`.
 
+**Webhook secret for an additional GHE host.** The webhook secret in the GitHub integration belongs
+to the instance's own host. For a repository on a further GitHub Enterprise Server host, first list
+that host in the `github.repositoryHosts` setting. Then, at `/studio/integrations → GitHub`, add a
+**Per-host webhook secret** with the host exactly as that server sends it in
+`X-GitHub-Enterprise-Host` (lowercase, with `:port` if it is not 443) and the secret configured on
+that server's webhook. Deliveries naming that host are then verified with that secret alone; a
+host without one uses the instance secret. See [repositories.md](./repositories.md).
+
 A repository's own GitHub URL and API URL are **host overrides**, and every credential the
 platform holds for that repository — the PAT, the App JWT, the installation token, the
 authenticated clone URL — is sent to the host they name. They therefore accept only a bare host on

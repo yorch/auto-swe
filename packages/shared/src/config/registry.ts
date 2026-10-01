@@ -26,17 +26,14 @@ function defineSetting<T>(def: SettingDefinition<T>): SettingDefinition<T> {
 const positiveInt = z.number().int().positive();
 
 /// A list of hosts a credential may be sent to, as `host` or `host:port`.
-const hostList = z
-  .array(
-    z
-      .string()
-      .regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'must be a lowercase host or host:port')
-      // A URL never carries the default port once parsed, so `host:443` would
-      // never match anything — refuse it rather than let it look set.
-      .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
-      .max(253)
-  )
-  .max(50);
+export const hostEntry = z
+  .string()
+  .regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'must be a lowercase host or host:port')
+  // A URL never carries the default port once parsed, so `host:443` would
+  // never match anything — refuse it rather than let it look set.
+  .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
+  .max(253);
+const hostList = z.array(hostEntry).max(50);
 const ratio = z.number().min(0).max(1);
 
 /// Parses a positive-integer env var, clamping to `max` rather than rejecting.

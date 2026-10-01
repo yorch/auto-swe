@@ -459,6 +459,31 @@ model ConnectionCredential {
   @@map("connection_credentials")
 }
 
+/// The webhook secret of one GitHub Enterprise Server host.
+///
+/// The `GitHubConfig` singleton carries one webhook secret, which is the right
+/// shape while every repository lives on one GitHub instance. Repositories on
+/// several hosts (`github.repositoryHosts`) each have their own instance
+/// configuring its own webhooks, with its own secret. GitHub Enterprise Server
+/// names the sending host in `X-GitHub-Enterprise-Host`; a delivery naming a
+/// host that has a row here is verified with that row's secret and no other.
+///
+/// Not tenant-scoped: platform infrastructure, like `GitHubInstallation`.
+model GitHubHostWebhookSecret {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Lowercase `host[:port]`, as `X-GitHub-Enterprise-Host` spells it.
+  host             String   @unique
+  secretCiphertext Bytes    @map("secret_ciphertext")
+  secretNonce      Bytes    @map("secret_nonce")
+  secretAuthTag    Bytes    @map("secret_auth_tag")
+  secretKeyVersion Int      @map("secret_key_version")
+  secretLastFour   String   @map("secret_last_four")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("github_host_webhook_secrets")
+}
+
 /// A GitHub App installation on one GitHub account (organization or user).
 ///
 /// The singleton `GitHubConfig` carries the App's own credentials, which are
