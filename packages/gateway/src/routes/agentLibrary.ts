@@ -173,7 +173,12 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         workflowTemplateId: body.workflowTemplateId,
       };
       try {
-        const { agent, scanWarnings } = await createAgent(fastify.prisma, key, body, actor.sub);
+        const { agent, catalogWarnings, scanWarnings } = await createAgent(
+          fastify.prisma,
+          key,
+          body,
+          actor.sub
+        );
         await writeAuditLog(fastify, {
           action: 'CREATE',
           actor,
@@ -181,9 +186,11 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           entityId: agent.id,
           entityType: 'Agent',
         });
-        return reply
-          .status(201)
-          .send({ data: agent, ...(scanWarnings.length > 0 ? { scanWarnings } : {}) });
+        return reply.status(201).send({
+          data: agent,
+          ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
+          ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
           return reply.status(409).send({ error: { code: 'CONFLICT', message: err.message } });
@@ -215,7 +222,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
-      const { agent, scanWarnings } = await updateAgent(
+      const { agent, catalogWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
         current,
         request.body,
@@ -229,7 +236,11 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: agent.id,
         entityType: 'Agent',
       });
-      return reply.send({ data: agent, ...(scanWarnings.length > 0 ? { scanWarnings } : {}) });
+      return reply.send({
+        data: agent,
+        ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
+        ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+      });
     }
   );
 
@@ -313,7 +324,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         teamId: request.params.id,
       };
       try {
-        const { agent, scanWarnings } = await createAgent(
+        const { agent, catalogWarnings, scanWarnings } = await createAgent(
           fastify.prisma,
           key,
           request.body,
@@ -326,9 +337,11 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           entityId: agent.id,
           entityType: 'Agent',
         });
-        return reply
-          .status(201)
-          .send({ data: agent, ...(scanWarnings.length > 0 ? { scanWarnings } : {}) });
+        return reply.status(201).send({
+          data: agent,
+          ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
+          ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
           return reply.status(409).send({ error: { code: 'CONFLICT', message: err.message } });
@@ -372,13 +385,17 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
-      const { agent, scanWarnings } = await updateAgent(
+      const { agent, catalogWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
         current,
         request.body,
         actor.sub
       );
-      return reply.send({ data: agent, ...(scanWarnings.length > 0 ? { scanWarnings } : {}) });
+      return reply.send({
+        data: agent,
+        ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
+        ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+      });
     }
   );
 

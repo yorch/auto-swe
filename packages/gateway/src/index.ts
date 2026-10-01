@@ -52,6 +52,7 @@ import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { mcpConnectionRoutes } from './routes/mcpConnections.js';
 import { meRoutes } from './routes/me.js';
+import { modelCatalogRoutes } from './routes/modelCatalog.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
 import { organizationRoutes } from './routes/organizations.js';
 import { orgBudgetRoutes } from './routes/orgBudget.js';
@@ -402,6 +403,7 @@ async function start() {
   await app.register(modelConfigRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(modelCatalogRoutes, { prefix: '/api/v1/platform' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
