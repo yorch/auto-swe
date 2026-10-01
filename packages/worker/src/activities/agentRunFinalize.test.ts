@@ -10,18 +10,25 @@ vi.mock('../lib/sensitiveFileScanner.js', () => ({
 }));
 
 const { shell } = vi.hoisted(() => ({
-  shell: { archiveBytes: 100, commands: [] as string[] },
+  shell: { archiveBytes: 100, commands: [] as string[], written: [] as string[] },
 }));
 vi.mock('../lib/execUtils.js', () => ({
   execShellAsync: vi.fn(async (cmd: string) => {
     shell.commands.push(cmd);
-    // `docker cp <agent>:... - > '<archive>'` leaves an archive of a chosen size.
-    const m = cmd.match(/> '([^']+)'$/);
-    if (m?.[1]) {
-      await fs.writeFile(m[1], Buffer.alloc(shell.archiveBytes));
-    }
     return '';
   }),
+  // The streaming export: leaves an archive of a chosen size, stopping at the
+  // cap the way the real helper does.
+  spawnToFileCapped: vi.fn(
+    async (file: string, args: string[], dest: string, opts: { maxBytes: number }) => {
+      shell.commands.push(`${file} ${args.join(' ')}`);
+      const exceeded = shell.archiveBytes > opts.maxBytes;
+      const bytes = exceeded ? opts.maxBytes + 1 : shell.archiveBytes;
+      await fs.writeFile(dest, Buffer.alloc(bytes));
+      shell.written.push(dest);
+      return { bytes, exceeded, exitCode: 0, stderr: '' };
+    }
+  ),
   throwIfActivityCancelled: vi.fn(),
 }));
 
@@ -305,7 +312,7 @@ describe('importAgentTree', () => {
     const trusted = fakeWorkspace('trusted-1');
     await importAgentTree(agent.ws, trusted.ws);
     expect(shell.commands[0]).toBe("docker pause 'agent-1'");
-    expect(shell.commands[1]).toContain("docker cp 'agent-1:/workspace/target-repo/.' -");
+    expect(shell.commands[1]).toBe('docker cp agent-1:/workspace/target-repo/. -');
     expect(shell.commands[2]).toContain("docker cp - 'trusted-1:/stage'");
     expect(agent.ws.gitAuthed).not.toHaveBeenCalled();
     // The trusted tree is replaced and the copied .git is dropped.
@@ -321,5 +328,16 @@ describe('importAgentTree', () => {
     expect(f.type).toBe('AGENT_RUN_EXPORT_TOO_LARGE');
     // Nothing was imported into the trusted container.
     expect(shell.commands.some((c) => c.startsWith('docker cp - '))).toBe(false);
+  });
+
+  it('hands the cap to the streaming copy and removes the partial archive', async () => {
+    shell.archiveBytes = 5_000;
+    shell.written = [];
+    const f = await failureOf(
+      importAgentTree(fakeWorkspace('a').ws, fakeWorkspace('t').ws, { maxBytes: 1_000 })
+    );
+    expect(f.type).toBe('AGENT_RUN_EXPORT_TOO_LARGE');
+    expect(shell.written).toHaveLength(1);
+    await expect(fs.stat(shell.written[0] as string)).rejects.toThrow();
   });
 });

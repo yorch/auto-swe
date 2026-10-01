@@ -256,7 +256,7 @@ same run. The run viewer shows them under the run found by `workRequestId`.
   summary and the branch name are not scanned (the summary is redacted, truncated and has mentions
   defused; the branch name and commit message are engine-authored).
 - **The delivered diff must fit the gate.** A change over 300,000 diff characters, 500 files, 1 MB per
-  file, or a 512 MB working tree is refused, not split. Ignored directories (`node_modules`, build
+  file, or a working tree whose archive passes 512 MB (the copy is stopped at the cap while streaming, so a sparse file cannot fill the worker disk) is refused, not split. Ignored directories (`node_modules`, build
   output) are removed from the copy by the agent's own `git clean -fdX` on a best-effort basis; if that
   fails, the size cap decides.
 - **A delivering run clones the repository twice,** once for the agent and once, at the exact base SHA
