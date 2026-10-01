@@ -425,22 +425,22 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     : 'No cap'
                 }
               />
-              <div>
-                <Stat
-                  label={`Spent this month (${budget?.currentMonthUsage?.yearMonth ?? '—'})`}
-                  value={formatCents((budget?.currentMonthUsage?.costUsdAccrued ?? 0) * 100)}
-                />
-                {budget?.currentMonthUsage && (
-                  <p className="mt-1 pl-5 text-[11px] text-paper-500">
-                    {budget.currentMonthUsage.runsCompleted} runs ·{' '}
-                    {formatTokens(
-                      Number(budget.currentMonthUsage.tokensInput) +
-                        Number(budget.currentMonthUsage.tokensOutput)
-                    )}{' '}
-                    tokens
-                  </p>
-                )}
-              </div>
+              <Stat
+                hint={
+                  budget?.currentMonthUsage && (
+                    <>
+                      {budget.currentMonthUsage.runsCompleted} runs ·{' '}
+                      {formatTokens(
+                        Number(budget.currentMonthUsage.tokensInput) +
+                          Number(budget.currentMonthUsage.tokensOutput)
+                      )}{' '}
+                      tokens
+                    </>
+                  )
+                }
+                label={`Spent this month (${budget?.currentMonthUsage?.yearMonth ?? '—'})`}
+                value={formatCents((budget?.currentMonthUsage?.costUsdAccrued ?? 0) * 100)}
+              />
               <Stat
                 label="Alert threshold"
                 value={

@@ -2,7 +2,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Button } from './Button';
+import { Button, ButtonLink } from './Button';
 
 /**
  * The action row every modal ends with: a `ghost` Cancel on the left of the
@@ -25,6 +25,7 @@ export function ModalFooter({
   onCancel,
   onSubmit,
   pendingLabel,
+  submitHref,
   submitLabel,
 }: {
   cancelLabel?: string;
@@ -35,6 +36,12 @@ export function ModalFooter({
   onCancel: () => void;
   onSubmit?: () => void;
   pendingLabel?: string;
+  /**
+   * Renders the primary action as a link to this route rather than a button,
+   * for an action that navigates. `onSubmit` then runs on click; `disabled`
+   * and `isPending` do not apply to a link.
+   */
+  submitHref?: string;
   submitLabel?: string;
 }) {
   return (
@@ -43,7 +50,12 @@ export function ModalFooter({
       <Button onClick={onCancel} type="button" variant={submitLabel ? 'ghost' : 'secondary'}>
         {cancelLabel}
       </Button>
-      {submitLabel && (
+      {submitLabel && submitHref && (
+        <ButtonLink href={submitHref} onClick={onSubmit} variant={dangerous ? 'danger' : 'primary'}>
+          {submitLabel}
+        </ButtonLink>
+      )}
+      {submitLabel && !submitHref && (
         <Button
           disabled={disabled || isPending}
           onClick={onSubmit}

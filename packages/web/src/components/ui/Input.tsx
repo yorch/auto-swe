@@ -17,11 +17,12 @@ export function Input({
   className,
   compact = false,
   id,
+  required,
   ...props
 }: InputProps) {
   const inputId = id ?? props.name ?? label?.toLowerCase().replace(/\s+/g, '-');
   return (
-    <FieldWrapper error={error} hint={hint} id={inputId} label={label}>
+    <FieldWrapper error={error} hint={hint} id={inputId} label={label} required={required}>
       <input
         aria-describedby={fieldDescribedBy(inputId, hint, error)}
         aria-invalid={error ? true : undefined}
@@ -34,6 +35,7 @@ export function Input({
           className
         )}
         id={inputId}
+        required={required}
         {...props}
       />
     </FieldWrapper>

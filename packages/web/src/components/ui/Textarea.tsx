@@ -17,11 +17,12 @@ export function Textarea({
   className,
   compact = false,
   id,
+  required,
   ...props
 }: TextareaProps) {
   const inputId = id ?? props.name ?? label?.toLowerCase().replace(/\s+/g, '-');
   return (
-    <FieldWrapper error={error} hint={hint} id={inputId} label={label}>
+    <FieldWrapper error={error} hint={hint} id={inputId} label={label} required={required}>
       <textarea
         aria-describedby={fieldDescribedBy(inputId, hint, error)}
         aria-invalid={error ? true : undefined}
@@ -34,6 +35,7 @@ export function Textarea({
           className
         )}
         id={inputId}
+        required={required}
         {...props}
       />
     </FieldWrapper>

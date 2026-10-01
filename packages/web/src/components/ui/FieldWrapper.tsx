@@ -5,6 +5,8 @@ interface FieldWrapperProps {
   label?: string;
   hint?: string;
   error?: string;
+  /** Shows the `*` marker. The native `required` attribute stays on the control itself. */
+  required?: boolean;
   children: ReactNode;
 }
 
@@ -28,12 +30,23 @@ export function fieldDescribedBy(
   );
 }
 
-export function FieldWrapper({ id, label, hint, error, children }: FieldWrapperProps) {
+/** The required marker. Hidden from assistive tech, which gets the native `required` instead. */
+export function RequiredMark() {
+  return (
+    <span aria-hidden="true" className="text-brick-400">
+      {' '}
+      *
+    </span>
+  );
+}
+
+export function FieldWrapper({ id, label, hint, error, required, children }: FieldWrapperProps) {
   return (
     <div className="space-y-1.5">
       {label && (
         <label className="label-mono block" htmlFor={id}>
           {label}
+          {required && <RequiredMark />}
         </label>
       )}
       {children}

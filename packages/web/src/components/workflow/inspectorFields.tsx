@@ -50,7 +50,8 @@ function SchemaField({
   onChange: (v: unknown) => void;
 }) {
   const id = `cfg-${field.key}`;
-  const label = `${field.key}${field.required ? ' *' : ''} — ${field.label}`;
+  const label = `${field.key} — ${field.label}`;
+  const required = field.required;
   const hint = field.description;
 
   if (field.type === 'boolean') {
@@ -61,6 +62,7 @@ function SchemaField({
         hint={hint}
         id={id}
         label={label}
+        marked={required}
         onChange={(e) => onChange(e.target.checked)}
       />
     );
@@ -76,6 +78,7 @@ function SchemaField({
           const v = e.target.value;
           onChange(v === '' ? undefined : Number(v));
         }}
+        required={required}
         type="number"
         value={typeof value === 'number' ? value : ''}
       />
@@ -89,6 +92,7 @@ function SchemaField({
         id={id}
         label={label}
         onChange={(e) => onChange(e.target.value || undefined)}
+        required={required}
         value={typeof value === 'string' ? value : ''}
       >
         <option value="">— none —</option>
@@ -119,6 +123,7 @@ function SchemaField({
             onChange(t);
           }
         }}
+        required={required}
         spellCheck={false}
         value={
           value === undefined || value === null
@@ -137,6 +142,7 @@ function SchemaField({
       id={id}
       label={label}
       onChange={(e) => onChange(e.target.value || undefined)}
+      required={required}
       type="text"
       value={typeof value === 'string' ? value : ''}
     />

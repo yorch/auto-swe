@@ -32,6 +32,25 @@ describe('ModalFooter', () => {
     expect(onFormSubmit).not.toHaveBeenCalled();
   });
 
+  it('renders the primary action as a link with submitHref, and onSubmit runs on click', () => {
+    const onSubmit = vi.fn();
+    render(
+      <ModalFooter
+        cancelLabel="Close"
+        onCancel={() => {}}
+        onSubmit={onSubmit}
+        submitHref="/workflows/abc"
+        submitLabel="View"
+      />
+    );
+    const link = screen.getByRole('link', { name: 'View' });
+    expect(link.getAttribute('href')).toBe('/workflows/abc');
+    expect(screen.queryByRole('button', { name: 'View' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
+    fireEvent.click(link);
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
   it('disables the action and shows the pending label while pending', () => {
     render(<ModalFooter isPending onCancel={() => {}} submitLabel="Save" />);
     const action = screen.getByRole('button', { name: 'Save…' });

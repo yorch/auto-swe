@@ -4,6 +4,7 @@ import type { InputSchema, InputSchemaProperty } from '@auto-swe/shared/lib/inpu
 import Link from 'next/link';
 import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { RequiredMark } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useRepositories } from '@/hooks/useRepositories';
@@ -36,7 +37,7 @@ function ConnectionPicker({
       <div className="space-y-1.5">
         <span className="label-mono block">
           {label}
-          {required ? ' *' : ''}
+          {required && <RequiredMark />}
         </span>
         <Alert className="text-xs">
           No {connectionType ? `${connectionType.replace(/_/g, ' ')} ` : ''}connections configured.{' '}
@@ -84,7 +85,6 @@ export function SchemaFieldInput({
   error?: string;
 }) {
   const base = name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
-  const label = required ? `${base} *` : base;
   const hint = prop.description;
 
   if (prop.type === 'connection') {
@@ -93,7 +93,7 @@ export function SchemaFieldInput({
         connectionType={prop.connectionType}
         error={error}
         hint={hint}
-        label={label}
+        label={base}
         onChange={onChange}
         required={required}
         value={typeof value === 'string' ? value : ''}
@@ -109,7 +109,8 @@ export function SchemaFieldInput({
           aria-invalid={error ? true : undefined}
           checked={Boolean(value)}
           hint={hint}
-          label={label}
+          label={base}
+          marked={required}
           onChange={(e) => onChange(e.target.checked)}
         />
         {error && (
@@ -126,7 +127,7 @@ export function SchemaFieldInput({
       <Select
         error={error}
         hint={hint}
-        label={label}
+        label={base}
         onChange={(e) => onChange(e.target.value)}
         required={required}
         value={typeof value === 'string' ? value : ''}
@@ -146,7 +147,7 @@ export function SchemaFieldInput({
       <Input
         error={error}
         hint={hint}
-        label={label}
+        label={base}
         onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
         required={required}
         type="number"
@@ -160,7 +161,7 @@ export function SchemaFieldInput({
     <Input
       error={error}
       hint={prop.format === 'uuid' ? `${hint ?? ''} (UUID)`.trim() : hint}
-      label={label}
+      label={base}
       onChange={(e) => onChange(e.target.value)}
       placeholder={prop.format === 'uuid' ? 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' : undefined}
       required={required}
