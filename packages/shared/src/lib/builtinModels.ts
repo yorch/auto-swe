@@ -1,0 +1,330 @@
+/**
+ * The models this repo ships prices for. One entry per `<provider>/<model-id>`
+ * spec, in USD per million tokens at base (non-cached, non-batch) rates.
+ * Verified against:
+ * - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing  (Sep 2026)
+ * - OpenAI:    https://developers.openai.com/api/docs/pricing  (Sep 2026)
+ * - Google:    https://ai.google.dev/gemini-api/docs/pricing  (Sep 2026)
+ *
+ * A spec missing here is priced at zero and emits `llm.cost_pricing_known=false`,
+ * so USD budgets never see its spend — `builtinModels.test.ts` fails the build
+ * if any model this repo seeds is missing.
+ *
+ * Caveats these prices do NOT account for — set per-model env overrides if any
+ * apply to your deployment:
+ *  - Prompt caching multipliers (0.1x reads, 1.25x/2x writes)
+ *  - Batch API discount (50%)
+ *  - Anthropic data-residency premium (1.1x for `inference_geo: us`)
+ *  - Anthropic fast-mode premium (6x on Opus 4.6)
+ *  - Gemini 2.5 Pro / 3.1 Pro >200K-token surcharge (input doubles)
+ */
+
+export type BuiltinModelKind = 'CHAT' | 'EMBEDDING';
+
+/** RETIRED models are still priced: pinned agent versions and history bill against them. */
+export type BuiltinModelStatus = 'ACTIVE' | 'RETIRED';
+
+export interface BuiltinModel {
+  /** Lowercase, as `parseProviderModelSpec` returns it. */
+  provider: string;
+  modelId: string;
+  kind: BuiltinModelKind;
+  status: BuiltinModelStatus;
+  inputUsdPerMTok: number;
+  /** Zero for embedding models, which bill input only. */
+  outputUsdPerMTok: number;
+}
+
+export function builtinModelSpec(model: Pick<BuiltinModel, 'provider' | 'modelId'>): string {
+  return `${model.provider}/${model.modelId}`;
+}
+
+export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
+  // Anthropic — Fable 5.x, above the Opus tier ($10 / $50, verified Sep 2026)
+  {
+    inputUsdPerMTok: 10,
+    kind: 'CHAT',
+    modelId: 'claude-fable-5',
+    outputUsdPerMTok: 50,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 10,
+    kind: 'CHAT',
+    modelId: 'claude-fable-5-1',
+    outputUsdPerMTok: 50,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  // Anthropic — Haiku
+  {
+    inputUsdPerMTok: 0.8,
+    kind: 'CHAT',
+    modelId: 'claude-haiku-3-5-20241022',
+    outputUsdPerMTok: 4,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 1,
+    kind: 'CHAT',
+    modelId: 'claude-haiku-4-5-20251001',
+    outputUsdPerMTok: 5,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  // Anthropic — Opus 4 / 4.1 legacy pricing ($15 / $75); Opus 4.5+ is $5 / $25
+  {
+    inputUsdPerMTok: 15,
+    kind: 'CHAT',
+    modelId: 'claude-opus-4-1-20250805',
+    outputUsdPerMTok: 75,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 5,
+    kind: 'CHAT',
+    modelId: 'claude-opus-4-5',
+    outputUsdPerMTok: 25,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 5,
+    kind: 'CHAT',
+    modelId: 'claude-opus-4-6',
+    outputUsdPerMTok: 25,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 5,
+    kind: 'CHAT',
+    modelId: 'claude-opus-4-8',
+    outputUsdPerMTok: 25,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 15,
+    kind: 'CHAT',
+    modelId: 'claude-opus-4-20250514',
+    outputUsdPerMTok: 75,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  // Anthropic — Opus 5 ($5 / $25) and Opus 5.5 ($4 / $20), verified Sep 2026
+  {
+    inputUsdPerMTok: 5,
+    kind: 'CHAT',
+    modelId: 'claude-opus-5',
+    outputUsdPerMTok: 25,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 4,
+    kind: 'CHAT',
+    modelId: 'claude-opus-5-5',
+    outputUsdPerMTok: 20,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  // Anthropic — Sonnet 4.x ($3 / $15)
+  {
+    inputUsdPerMTok: 3,
+    kind: 'CHAT',
+    modelId: 'claude-sonnet-4-5',
+    outputUsdPerMTok: 15,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 3,
+    kind: 'CHAT',
+    modelId: 'claude-sonnet-4-6',
+    outputUsdPerMTok: 15,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 3,
+    kind: 'CHAT',
+    modelId: 'claude-sonnet-4-20250514',
+    outputUsdPerMTok: 15,
+    provider: 'anthropic',
+    status: 'RETIRED',
+  },
+  // Anthropic — Sonnet 5.x ($2 / $10, verified Sep 2026)
+  {
+    inputUsdPerMTok: 2,
+    kind: 'CHAT',
+    modelId: 'claude-sonnet-5',
+    outputUsdPerMTok: 10,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 2,
+    kind: 'CHAT',
+    modelId: 'claude-sonnet-5-5',
+    outputUsdPerMTok: 10,
+    provider: 'anthropic',
+    status: 'ACTIVE',
+  },
+  // Google — Gemini 2.5 (base prices; Pro input/output ~doubles above 200K context)
+  {
+    inputUsdPerMTok: 0.3,
+    kind: 'CHAT',
+    modelId: 'gemini-2.5-flash',
+    outputUsdPerMTok: 2.5,
+    provider: 'google',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 0.1,
+    kind: 'CHAT',
+    modelId: 'gemini-2.5-flash-lite',
+    outputUsdPerMTok: 0.4,
+    provider: 'google',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 1.25,
+    kind: 'CHAT',
+    modelId: 'gemini-2.5-pro',
+    outputUsdPerMTok: 10,
+    provider: 'google',
+    status: 'ACTIVE',
+  },
+  // Google — Gemini 3.x. Pro is still `-preview`; 3 Pro Preview and
+  // 3.1 Flash-Lite Preview are shut down (kept for historical runs).
+  {
+    inputUsdPerMTok: 0.5,
+    kind: 'CHAT',
+    modelId: 'gemini-3-flash-preview',
+    outputUsdPerMTok: 3,
+    provider: 'google',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 0.25,
+    kind: 'CHAT',
+    modelId: 'gemini-3.1-flash-lite',
+    outputUsdPerMTok: 1.5,
+    provider: 'google',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 0.25,
+    kind: 'CHAT',
+    modelId: 'gemini-3.1-flash-lite-preview',
+    outputUsdPerMTok: 1.5,
+    provider: 'google',
+    status: 'RETIRED',
+  },
+  {
+    inputUsdPerMTok: 2,
+    kind: 'CHAT',
+    modelId: 'gemini-3.1-pro-preview',
+    outputUsdPerMTok: 12,
+    provider: 'google',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 1.5,
+    kind: 'CHAT',
+    modelId: 'gemini-3.5-flash',
+    outputUsdPerMTok: 9,
+    provider: 'google',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 0.3,
+    kind: 'CHAT',
+    modelId: 'gemini-3.5-flash-lite',
+    outputUsdPerMTok: 2.5,
+    provider: 'google',
+    status: 'ACTIVE',
+  },
+  // Listed at $0.75 / $3.75 through 2026-12-31. This records the $1.50 / $7.50
+  // list price that applies from 2027-01-01, so budgets over-count rather than
+  // under-count once the introductory price lapses.
+  {
+    inputUsdPerMTok: 1.5,
+    kind: 'CHAT',
+    modelId: 'gemini-3.8-flash',
+    outputUsdPerMTok: 7.5,
+    provider: 'google',
+    status: 'ACTIVE',
+  },
+  // OpenAI — GPT-5 line
+  {
+    inputUsdPerMTok: 1.25,
+    kind: 'CHAT',
+    modelId: 'gpt-5',
+    outputUsdPerMTok: 10,
+    provider: 'openai',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 5,
+    kind: 'CHAT',
+    modelId: 'gpt-5.5',
+    outputUsdPerMTok: 30,
+    provider: 'openai',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 30,
+    kind: 'CHAT',
+    modelId: 'gpt-5.5-pro',
+    outputUsdPerMTok: 180,
+    provider: 'openai',
+    status: 'ACTIVE',
+  },
+  // OpenAI — GPT-6 line (verified Sep 2026)
+  {
+    inputUsdPerMTok: 10,
+    kind: 'CHAT',
+    modelId: 'gpt-6-astra',
+    outputUsdPerMTok: 50,
+    provider: 'openai',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 0.1,
+    kind: 'CHAT',
+    modelId: 'gpt-6-luna',
+    outputUsdPerMTok: 0.5,
+    provider: 'openai',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 2,
+    kind: 'CHAT',
+    modelId: 'gpt-6.1-sol',
+    outputUsdPerMTok: 10,
+    provider: 'openai',
+    status: 'ACTIVE',
+  },
+  // OpenAI — embeddings (input only)
+  {
+    inputUsdPerMTok: 0.13,
+    kind: 'EMBEDDING',
+    modelId: 'text-embedding-3-large',
+    outputUsdPerMTok: 0,
+    provider: 'openai',
+    status: 'ACTIVE',
+  },
+  {
+    inputUsdPerMTok: 0.02,
+    kind: 'EMBEDDING',
+    modelId: 'text-embedding-3-small',
+    outputUsdPerMTok: 0,
+    provider: 'openai',
+    status: 'ACTIVE',
+  },
+];

@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import { parseProviderModelSpec } from '../providerUtils.js';
+import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { resolveAgent } from './agentResolver.js';
 import { requiredAgentKeysForDeployment } from './deploymentAgents.js';
 

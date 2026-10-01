@@ -1,12 +1,12 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { prisma } from '@auto-swe/shared/db';
+import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { embed } from 'ai';
 import { currentActivityType, currentAttempt, currentWorkflowId } from './activityContext.js';
 import { resolveEmbeddingConfig } from './config/resolver.js';
 import { calculateCostUsd } from './costTracking.js';
 import { recordLlmCallMetrics } from './metrics.js';
-import { parseProviderModelSpec } from './providerUtils.js';
 import { EMBEDDING_AGENT_KEY } from './traceTotals.js';
 
 /**

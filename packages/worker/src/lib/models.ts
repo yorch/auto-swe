@@ -2,6 +2,7 @@ import { anthropic, createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI, google } from '@ai-sdk/google';
 import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import type { LanguageModel as AiLanguageModel } from 'ai';
 import { resolveAgent } from './config/agentResolver.js';
 import { currentRequestContext } from './config/contextLookup.js';
@@ -10,7 +11,6 @@ import type {
   ModelBackedAgentKey as ConfigModelBackedAgentKey,
   ResolveCtx,
 } from './config/types.js';
-import { parseProviderModelSpec } from './providerUtils.js';
 
 // The provider factories no longer agree on a return type: since
 // @ai-sdk/anthropic 4.0.34 the Anthropic and OpenAI providers return the

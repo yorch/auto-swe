@@ -24,6 +24,8 @@
     "./lib/channelTask": "./dist/lib/channelTask.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/regexSafety": "./dist/lib/regexSafety.js",
+    "./lib/modelSpec": "./dist/lib/modelSpec.js",
+    "./lib/builtinModels": "./dist/lib/builtinModels.js",
     "./lib/regexExec": "./dist/lib/regexExec.js",
     "./lib/connectionGuards": "./dist/lib/connectionGuards.js",
     "./lib/connectionTypes": "./dist/lib/connectionTypes.js",

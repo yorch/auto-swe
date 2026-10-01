@@ -116,6 +116,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/regexSafety.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/modelSpec',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/modelSpec.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/builtinModels',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/builtinModels.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/regexExec',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/regexExec.ts'),
       },

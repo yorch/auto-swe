@@ -1,5 +1,6 @@
 import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
+import { BUILTIN_MODELS, builtinModelSpec } from '@auto-swe/shared/lib/builtinModels';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { type Span, trace } from '@opentelemetry/api';
@@ -20,75 +21,16 @@ export interface ModelPrice {
 }
 
 /**
- * Price table keyed by `<provider>/<model-id>`. USD per million tokens, base
- * (non-cached, non-batch) rates. Verified against:
- * - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing  (Sep 2026)
- * - OpenAI:    https://developers.openai.com/api/docs/pricing  (Sep 2026)
- * - Google:    https://ai.google.dev/gemini-api/docs/pricing  (Sep 2026)
- *
- * Add new models here as they're routed through getModel(). Unknown specs fall
- * back to zero cost and emit `llm.cost_pricing_known=false` on the OTel span
- * so missing entries are visible without breaking workflows.
- *
- * Caveats this table does NOT account for — set per-model env overrides if any
- * apply to your deployment:
- *  - Prompt caching multipliers (0.1x reads, 1.25x/2x writes)
- *  - Batch API discount (50%)
- *  - Anthropic data-residency premium (1.1x for `inference_geo: us`)
- *  - Anthropic fast-mode premium (6x on Opus 4.6)
- *  - Gemini 2.5 Pro / 3.1 Pro >200K-token surcharge (input doubles)
+ * Price table keyed by `<provider>/<model-id>`, USD per million tokens. A view
+ * over `BUILTIN_MODELS` in `@auto-swe/shared/lib/builtinModels` — add or
+ * correct a model's price there.
  */
-export const MODEL_PRICES: Record<string, ModelPrice> = {
-  // Anthropic — Fable 5.x, above the Opus tier ($10 / $50, verified Sep 2026)
-  'anthropic/claude-fable-5': { input: 10, output: 50 },
-  'anthropic/claude-fable-5-1': { input: 10, output: 50 },
-  // Anthropic — Haiku
-  'anthropic/claude-haiku-3-5-20241022': { input: 0.8, output: 4 },
-  'anthropic/claude-haiku-4-5-20251001': { input: 1, output: 5 },
-  // Anthropic — Opus 4 / 4.1 legacy pricing ($15 / $75); Opus 4.5+ is $5 / $25
-  'anthropic/claude-opus-4-1-20250805': { input: 15, output: 75 },
-  'anthropic/claude-opus-4-5': { input: 5, output: 25 },
-  'anthropic/claude-opus-4-6': { input: 5, output: 25 },
-  'anthropic/claude-opus-4-8': { input: 5, output: 25 },
-  'anthropic/claude-opus-4-20250514': { input: 15, output: 75 },
-  // Anthropic — Opus 5 ($5 / $25) and Opus 5.5 ($4 / $20), verified Sep 2026
-  'anthropic/claude-opus-5': { input: 5, output: 25 },
-  'anthropic/claude-opus-5-5': { input: 4, output: 20 },
-  // Anthropic — Sonnet 4.x ($3 / $15)
-  'anthropic/claude-sonnet-4-5': { input: 3, output: 15 },
-  'anthropic/claude-sonnet-4-6': { input: 3, output: 15 },
-  'anthropic/claude-sonnet-4-20250514': { input: 3, output: 15 },
-  // Anthropic — Sonnet 5.x ($2 / $10, verified Sep 2026)
-  'anthropic/claude-sonnet-5': { input: 2, output: 10 },
-  'anthropic/claude-sonnet-5-5': { input: 2, output: 10 },
-  // Google — Gemini 2.5 (base prices; Pro input/output ~doubles above 200K context)
-  'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
-  'google/gemini-2.5-flash-lite': { input: 0.1, output: 0.4 },
-  'google/gemini-2.5-pro': { input: 1.25, output: 10 },
-  // Google — Gemini 3.x. Pro is still `-preview`; 3 Pro Preview and
-  // 3.1 Flash-Lite Preview are shut down (kept for historical runs).
-  'google/gemini-3-flash-preview': { input: 0.5, output: 3 },
-  'google/gemini-3.1-flash-lite': { input: 0.25, output: 1.5 },
-  'google/gemini-3.1-flash-lite-preview': { input: 0.25, output: 1.5 },
-  'google/gemini-3.1-pro-preview': { input: 2, output: 12 },
-  'google/gemini-3.5-flash': { input: 1.5, output: 9 },
-  'google/gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
-  // Listed at $0.75 / $3.75 through 2026-12-31. This records the $1.50 / $7.50
-  // list price that applies from 2027-01-01, so budgets over-count rather than
-  // under-count once the introductory price lapses.
-  'google/gemini-3.8-flash': { input: 1.5, output: 7.5 },
-  // OpenAI — GPT-5 line
-  'openai/gpt-5': { input: 1.25, output: 10 },
-  'openai/gpt-5.5': { input: 5, output: 30 },
-  'openai/gpt-5.5-pro': { input: 30, output: 180 },
-  // OpenAI — GPT-6 line (verified Sep 2026)
-  'openai/gpt-6-astra': { input: 10, output: 50 },
-  'openai/gpt-6-luna': { input: 0.1, output: 0.5 },
-  'openai/gpt-6.1-sol': { input: 2, output: 10 },
-  // OpenAI — embeddings (input only)
-  'openai/text-embedding-3-large': { input: 0.13, output: 0 },
-  'openai/text-embedding-3-small': { input: 0.02, output: 0 },
-};
+export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = Object.fromEntries(
+  BUILTIN_MODELS.map((m) => [
+    builtinModelSpec(m),
+    { input: m.inputUsdPerMTok, output: m.outputUsdPerMTok },
+  ])
+);
 
 const ZERO_PRICE: ModelPrice = { input: 0, output: 0 };
 
@@ -377,7 +319,7 @@ export async function recordLlmUsage(
   const { known } = getModelPrice(modelSpec);
   if (!known) {
     log.warn(
-      'Unknown model pricing — cost will be recorded as $0. Add the model to MODEL_PRICES or set a MODEL_PRICE_<SPEC> env override.',
+      'Unknown model pricing — cost will be recorded as $0. Add the model to BUILTIN_MODELS (@auto-swe/shared/lib/builtinModels) or set a MODEL_PRICE_<SPEC> env override.',
       { modelSpec, role, temporalWorkflowId }
     );
   }

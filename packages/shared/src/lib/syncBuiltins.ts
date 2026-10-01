@@ -599,7 +599,7 @@ function skillsByAgentKey(): Map<string, Array<{ name: string; sortOrder: number
  * seed, so {@link syncAgents} moves it forward. Any other value is an admin's
  * choice and is never rewritten.
  */
-const PREVIOUS_DEFAULT_MODEL_SPECS: Readonly<Record<string, string>> = {
+export const PREVIOUS_DEFAULT_MODEL_SPECS: Readonly<Record<string, string>> = {
   'anthropic/claude-opus-4-8': 'anthropic/claude-opus-5-5',
   'anthropic/claude-sonnet-4-6': 'anthropic/claude-sonnet-5-5',
 };
