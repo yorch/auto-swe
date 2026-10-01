@@ -68,7 +68,7 @@ export interface RunAgentTaskResult {
   costUsd?: number;
 }
 
-const TICKET_RE = /^agent-[0-9a-f]{8}$/;
+const TICKET_RE = /^agent-[0-9a-f]{32}$/;
 
 function refuse(message: string, type: string, details?: unknown): ApplicationFailure {
   return ApplicationFailure.nonRetryable(message, type, ...(details ? [details] : []));

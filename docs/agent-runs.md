@@ -71,7 +71,7 @@ for good error messages, but the template is reachable from other launch paths
 - it runs only for the system template (a dedicated `system:` origin, null team, reserved name);
 - the run's ledger row names the same repository as the request;
 - the payload parses (`AgentRunPayloadSchema`), the agent is not on the non-launchable list, and the
-  ticket id has the `agent-<8 hex>` form, so a run can only publish under its own branch name;
+  ticket id has the `agent-<32 hex>` form, so a run can only publish under its own branch name;
 - the ceilings, the kill switch and the concurrency cap (sections 6 and 7).
 
 The activity makes a single attempt: a retry would re-spend and could re-publish. Its Temporal timeout

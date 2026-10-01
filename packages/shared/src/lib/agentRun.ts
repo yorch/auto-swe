@@ -85,9 +85,13 @@ export function clampToCeiling(requested: number | undefined, ceiling: number): 
   return Math.min(requested ?? ceiling, ceiling);
 }
 
-/** Synthetic ticket id for a run that has no ticket: `agent-<8 hex of the id>`. */
+/**
+ * Synthetic ticket id for a run that has no ticket: `agent-<32 hex>`, the whole
+ * UUID. A truncated id collides at tens of thousands of runs, and a branch
+ * collision fails the non-force push after the full spend.
+ */
 export function agentRunTicketId(workRequestId: string): string {
-  return `agent-${workRequestId.replace(/-/g, '').slice(0, 8)}`;
+  return `agent-${workRequestId.replace(/-/g, '').slice(0, 32)}`;
 }
 
 /**

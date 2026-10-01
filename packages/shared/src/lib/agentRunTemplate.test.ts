@@ -42,7 +42,7 @@ describe('AGENT_RUN_SPEC', () => {
     const ctx: Context = {
       context: {},
       nodes: {},
-      request: { description: 'do it', externalTicketId: 'agent-0a1b2c3d', repoId: 'r' },
+      request: { description: 'do it', externalTicketId: 'agent-0a1b2c3d111122223333444455556666', repoId: 'r' },
       workflow: { id: 'w' },
     };
     const result = await runSpec(parseWorkflowSpec(AGENT_RUN_SPEC), ctx, dispatcher);

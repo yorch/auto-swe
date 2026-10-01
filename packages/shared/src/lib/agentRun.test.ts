@@ -66,7 +66,7 @@ describe('misc', () => {
   });
 
   it('builds a ticket id the branch grammar accepts', () => {
-    expect(agentRunTicketId('0a1b2c3d-1111-2222-3333-444455556666')).toBe('agent-0a1b2c3d');
+    expect(agentRunTicketId('0a1b2c3d-1111-2222-3333-444455556666')).toBe('agent-0a1b2c3d111122223333444455556666');
   });
 });
 

@@ -208,7 +208,7 @@ describe('POST /api/v1/agent-runs', () => {
     expect(events).toEqual(['runInput', 'ledger', 'start']);
     const body = res.json().data;
     expect(body.effective).toEqual({ deliver: 'none', maxSteps: 50, maxWallClockSeconds: 1800 });
-    expect(started[0]?.id).toMatch(/^agent-aaaaaaaa-/);
+    expect(started[0]?.id).toMatch(/^agent-aaaaaaaa-[0-9a-f]{32}$/);
     const req = started[0]?.input.request as Record<string, unknown>;
     expect(req).toMatchObject({
       description: 'fix the typo',
@@ -216,7 +216,7 @@ describe('POST /api/v1/agent-runs', () => {
       payload: { agentRef: 'contentWriter', deliver: 'none' },
       repoId: REPO,
     });
-    expect(req.externalTicketId).toMatch(/^agent-[0-9a-f]{8}$/);
+    expect(req.externalTicketId).toMatch(/^agent-[0-9a-f]{32}$/);
     // The ledger row carries the repo: the worker derives team and org from it.
     expect(ledgers[0]).toMatchObject({ currentStatus: 'IMPLEMENTING', repoId: REPO });
     expect(runInputs[0]).toMatchObject({ requestedById: USER, templateId: TEMPLATE });
@@ -224,7 +224,7 @@ describe('POST /api/v1/agent-runs', () => {
 
   it('assigns a branch only when the run delivers', async () => {
     await post({ deliver: 'branch' });
-    expect(ledgers[0]?.assignedBranch).toMatch(/^auto\/agent-[0-9a-f]{8}$/);
+    expect(ledgers[0]?.assignedBranch).toMatch(/^auto\/agent-[0-9a-f]{32}$/);
     ledgers.length = 0;
     await post({});
     expect(ledgers[0]?.assignedBranch).toBeNull();
@@ -486,7 +486,7 @@ describe('POST /api/v1/agent-runs/:id/rerun', () => {
     expect(res.statusCode).toBe(201);
     const req = started[0]?.input.request as Record<string, unknown>;
     expect(req.workRequestId).not.toBe(PREV_RUN);
-    expect(req.externalTicketId).toMatch(/^agent-[0-9a-f]{8}$/);
+    expect(req.externalTicketId).toMatch(/^agent-[0-9a-f]{32}$/);
     expect(req).toMatchObject({
       description: 'original prompt',
       launchedById: 'user-2',

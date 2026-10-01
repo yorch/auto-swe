@@ -134,7 +134,7 @@ import { createWorkspace } from './workspace.js';
 const request = (over: Record<string, unknown> = {}) =>
   ({
     description: 'fix the typo',
-    externalTicketId: 'agent-0a1b2c3d',
+    externalTicketId: 'agent-0a1b2c3d111122223333444455556666',
     payload: { agentRef: 'contentWriter', deliver: 'none' },
     repoId: 'repo-1',
     requestPayload: '{}',
@@ -381,7 +381,7 @@ describe('delivery: trust boundary and gate-before-push', () => {
     expect(m.push.mock.calls[0]?.[0]).toBe(m.trustedWs);
     // The agent's container is never asked to use the credential.
     expect(m.agentWs.gitAuthed).not.toHaveBeenCalled();
-    expect(r).toMatchObject({ branch: 'auto/agent-0a1b2c3d', gate: 'passed', headSha: GATED.sha });
+    expect(r).toMatchObject({ branch: 'auto/agent-0a1b2c3d111122223333444455556666', gate: 'passed', headSha: GATED.sha });
     expect(r.prUrl).toBeUndefined();
   });
 
@@ -431,7 +431,7 @@ describe('delivery: trust boundary and gate-before-push', () => {
     expect(arg).toMatchObject({
       baseBranch: 'main',
       draft: true,
-      headBranch: 'auto/agent-0a1b2c3d',
+      headBranch: 'auto/agent-0a1b2c3d111122223333444455556666',
     });
     expect(arg.body).not.toMatch(/@octocat/);
     expect(r).toMatchObject({ prNumber: 7, prUrl: 'https://x/pull/7' });
@@ -442,7 +442,7 @@ describe('delivery: trust boundary and gate-before-push', () => {
     const f = await failureOf(runAgentTask({ request: deliver('draft_pr') }));
     expect(f.type).toBe('DRAFT_PR_UNSUPPORTED');
     expect(f.nonRetryable).toBe(true);
-    expect(f.message).toContain('auto/agent-0a1b2c3d');
+    expect(f.message).toContain('auto/agent-0a1b2c3d111122223333444455556666');
     expect(m.push).toHaveBeenCalledTimes(1);
     // Never a ready-for-review fallback.
     expect(m.createPr).toHaveBeenCalledTimes(1);

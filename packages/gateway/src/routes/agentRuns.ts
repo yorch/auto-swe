@@ -285,7 +285,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     const user8 = user.sub.replace(/-/g, '').slice(0, 8);
     const temporalWorkflowId = input.idempotencyKey
       ? workflowIdFromIdempotencyKey('agent', `${repo8}-${user8}`, input.idempotencyKey)
-      : `agent-${repo8}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+      : `agent-${repo8}-${crypto.randomUUID().replace(/-/g, '')}`;
     const { branchPrefix } = await resolveWorkflowDefaults();
     const requestPayload = JSON.stringify({
       agent: input.agent,
