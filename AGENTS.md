@@ -656,6 +656,9 @@ and is not queried again for one window. Add a model to `BUILTIN_MODELS` as agen
 `PREVIOUS_DEFAULT_MODEL_SPECS` pair, or the seeded embedding default has none.
 
 `MODEL_PRICE_*` environment overrides are **not read**; the worker names any it finds at startup.
+Admins set prices through `/api/v1/platform/model-catalog` (`routes/modelCatalog.ts`); saving an
+agent version or the embedding config with an unpriced, deprecated, retired or wrong-kind model
+returns `catalogWarnings` — advisory, never a refusal.
 Pricing logs go through `logWarn`/`logError` (`lib/activityLog.ts`), never `log` directly:
 embedding usage is priced outside an activity too, where `log` throws.
 

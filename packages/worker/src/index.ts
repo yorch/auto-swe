@@ -52,8 +52,8 @@ async function run() {
   if (ignoredPriceOverrides.length > 0) {
     console.warn(
       `Ignoring ${ignoredPriceOverrides.join(', ')}: per-model price overrides are no longer read. ` +
-        'Set the price on the model_catalog_entries row instead, and mark it customized so ' +
-        "startup seeding keeps it: UPDATE model_catalog_entries SET input_usd_per_mtok = <in>, output_usd_per_mtok = <out>, is_customized = true WHERE provider = '<provider>' AND model_id = '<model>';"
+        'Set the price in the model catalog instead: PUT /api/v1/platform/model-catalog/<id> for a ' +
+        'listed model, POST /api/v1/platform/model-catalog for one it lacks.'
     );
   }
 
