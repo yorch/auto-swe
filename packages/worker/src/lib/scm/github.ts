@@ -31,15 +31,27 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
 import { currentRunLauncherId } from '../runLauncher.js';
 import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
-import type {
-  CiStatusResult,
-  CloneCredentials,
-  CreatePullRequestInput,
-  PermissionLookup,
-  PullRequestRef,
-  RepoRef,
-  ScmProvider,
+import {
+  type CiStatusResult,
+  type CloneCredentials,
+  type CreatePullRequestInput,
+  DraftPullRequestUnsupportedError,
+  type PermissionLookup,
+  type PullRequestRef,
+  type RepoRef,
+  type ScmProvider,
 } from './types.js';
+
+/**
+ * GitHub answers a draft request on a repository that cannot have drafts with a
+ * 422 whose message names drafts ("Draft pull requests are not supported in this
+ * repository"). Matched on status AND message so an unrelated 422 (a missing
+ * branch, an existing PR) is not misreported as a draft problem.
+ */
+function isDraftUnsupported(err: unknown): boolean {
+  const e = err as { status?: number; message?: string } | null;
+  return e?.status === 422 && /draft/i.test(e.message ?? '');
+}
 
 /** The web and API bases `repo` actually lives on. */
 function repoHosts(repo: RepoRef, ghConfig: { baseUrl: string; apiUrl: string }) {
@@ -282,18 +294,30 @@ export class GitHubScmProvider implements ScmProvider {
         ).data[0]
       : undefined;
 
-    const pr =
-      priorOpenPr ??
-      (
-        await octokit.pulls.create({
-          base: input.baseBranch,
-          body: input.body,
-          head: input.headBranch,
-          owner: repo.organizationName,
-          repo: repo.repoName,
-          title: input.title,
-        })
-      ).data;
+    let pr = priorOpenPr;
+    if (!pr) {
+      try {
+        pr = (
+          await octokit.pulls.create({
+            base: input.baseBranch,
+            body: input.body,
+            // Only sent when asked for, so every existing caller's request is unchanged.
+            ...(input.draft ? { draft: true } : {}),
+            head: input.headBranch,
+            owner: repo.organizationName,
+            repo: repo.repoName,
+            title: input.title,
+          })
+        ).data;
+      } catch (err) {
+        if (input.draft && isDraftUnsupported(err)) {
+          throw new DraftPullRequestUnsupportedError(
+            `${repo.organizationName}/${repo.repoName} does not support draft pull requests`
+          );
+        }
+        throw err;
+      }
+    }
 
     return { prNumber: pr.number, prUrl: pr.html_url };
   }
