@@ -13,3 +13,10 @@
 **Decision**: A plain `http:` Base URL or API URL is allowed with a logged warning, and the API URL is not required to share the Base URL's host.
 **Reason**: GHE is often internal and sometimes reached over http in development, and instances with subdomain isolation put the API on a different host (`api.ghe.example.com`), so rejecting either would break valid setups. Both are admin-controlled values, and `redirect: 'error'` keeps the bearer token on the host the admin named.
 **Alternatives considered**: Rejecting `http:` outside loopback, or requiring `api.host === base.host`. Both fail real deployments.
+
+## D3 — 2026-10-01 — Task 3: Wire GHE sign-in into the gateway
+
+**Status**: Accepted
+**Decision**: In GHE mode the post-sign-in GitHub login sync uses the API URL that sign-in resolved, not the saved API URL.
+**Reason**: With only a Base URL saved, the stored API URL is still `https://api.github.com`. Sign-in derives `{base}/api/v3`, but the sync hook read the raw value, so it sent the user's GHE access token to api.github.com and never recorded the login.
+**Alternatives considered**: Deriving the URL again inside the hook. Rejected: two copies of the derivation can drift; `resolveGithubSignIn` now exposes the one it used.

@@ -12,7 +12,7 @@ Jira: N/A
 
 - [x] Task 1: Fetch and map a GHE profile into a better-auth user — `aad6076`
 - [x] Task 2: Build the GHE sign-in provider and prove the authorize URL — `c46f900`
-- [ ] Task 3: Wire GHE sign-in into the gateway
+- [x] Task 3: Wire GHE sign-in into the gateway — `1a2a417`
 - [x] Task 4: Document GHE sign-in in the OAuth setup guide — `ecd6c18`
 
 ## Tasks
@@ -65,18 +65,19 @@ throwing (AC 10).
 **What**: In `betterAuth.ts`, keep the resolved `baseUrl` and `apiUrl` beside the client credentials
 in `initAuth`. Replace the inline `socialProviders.github` with `resolveGithubSignIn(...)`: register
 the built-in provider only for `builtin`. Build one `genericOAuth({ config: [...] })` from a list
-holding the `ghe` config and/or Okta's — assembled by a small pure helper `genericOAuthConfigs({ ghe, okta })`
-exported from `githubEnterpriseAuth.ts` so it can be tested — and omit the plugin when the list is empty. Leave
+holding the `ghe` config and/or Okta's, built inline in `buildAuth`, and omit the plugin when the list is empty.
+The post-sign-in GitHub login sync uses the API URL that sign-in resolved (`apiUrl` on the `ghe` result), so a
+GHE access token is never sent to api.github.com. Leave
 `trustedProviders`, the `refreshGithubLogin` hook and `configuredProviders()` semantics unchanged
 (`github` still means a client ID and secret are set). No behaviour change when Base URL is
 github.com or unset.
 **Files**: `packages/gateway/src/lib/betterAuth.ts`, `packages/gateway/src/lib/githubEnterpriseAuth.ts`,
-`packages/gateway/src/lib/githubEnterpriseAuth.test.ts`
+`packages/gateway/src/lib/betterAuth.githubSignIn.test.ts` (new)
 **Depends on**: Task 2
 **Verify**: `yarn typecheck` and `yarn vitest run packages/gateway` pass with no regression; a
-helper-level test shows GHE plus Okta yield a single plugin config list of two entries and Okta
-alone is unchanged (AC 12); `configuredProviders().github` is true in both modes when credentials
-are set (AC 11). `yarn invariants:check` and `yarn biome check` on the CI path set pass.
+wiring test (the real `betterAuth.ts` under mocked config) shows GHE plus Okta yield one
+`generic-oauth` plugin holding both, Okta alone is unchanged (AC 12), and `configuredProviders().github`
+is true in both modes when credentials are set and the Base URL is valid (AC 10, 11). `yarn invariants:check` and `yarn biome check` on the CI path set pass.
 
 ### Task 4: Document GHE sign-in in the OAuth setup guide
 

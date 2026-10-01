@@ -107,8 +107,8 @@ whether a client ID and secret are set, in both modes.
 10. If the Base URL is not an `http:` or `https:` URL, then the system shall register no GitHub
     sign-in provider, log the reason, start normally, and report `github: false` from
     `/api/v1/auth/providers`.
-11. While an OAuth client ID and secret are set, the system shall report `github: true` from
-    `/api/v1/auth/providers` in both modes.
+11. While an OAuth client ID and secret are set and the Base URL is valid, the system shall report
+    `github: true` from `/api/v1/auth/providers` in both modes.
 12. While GHE and Okta are both configured, the system shall register both in a single `genericOAuth`
     plugin and Okta sign-in shall behave as before.
 

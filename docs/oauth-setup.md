@@ -70,6 +70,7 @@ Notes:
 
 - **Primary verified email.** Sign-in is accepted only for an account whose primary email is verified.
 - **Account identity.** The linked account is stored as `{host}:{id}`, so numeric ids from github.com and GHE never collide. Accounts created earlier under a bare numeric id are not migrated.
+- **Switching hosts.** Accounts created while sign-in used github.com stay in the database but cannot sign in once GHE is active. A user signs in again with the same verified email, which links the new GHE account onto their existing user and replaces the stored GitHub username.
 - **One GitHub provider.** GHE sign-in replaces github.com sign-in: both use the single `github` provider id and cannot coexist on one gateway.
 - **Email linking.** A sign-in links onto an existing user with the same verified email, so enable GHE sign-in only for an instance whose email verification you trust.
 - **Invalid Base URL.** A Base URL that is not an `http` or `https` URL registers no GitHub sign-in; the gateway logs the reason and the login page hides the button.
