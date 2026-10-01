@@ -140,6 +140,11 @@ describe('evaluatePushPolicy', () => {
     ]);
   });
 
+  it('rejects a path that was not valid UTF-8 (decoded to U+FFFD)', async () => {
+    const v = await run([change({ path: 'src/caf\uFFFD.ts' })]);
+    expect(v.map((x) => x.rule)).toEqual(['unclassifiable_path']);
+  });
+
   it('rejects an unknown diff status', async () => {
     const v = await run([change({ path: 'a', status: 'U' })]);
     expect(v.map((x) => x.rule)).toEqual(['unexpected_status']);

@@ -211,6 +211,22 @@ async function readChanges(trusted: Workspace, baseSha: string, sha: string): Pr
   return parseRawDiffZ(out);
 }
 
+/**
+ * Reads `<sha> <expected size>` lines and prints the sha of every blob that
+ * contains a NUL byte OR cannot be read back in full. A failed `cat-file` leaves
+ * both counts at 0, which would otherwise read as "no NUL"; comparing against
+ * the size git reported makes an unreadable blob fail closed (treated as binary).
+ */
+export function nulProbeScript(git: string): string {
+  return [
+    'while read -r sha size; do',
+    `  a=$(${git} cat-file blob "$sha" | wc -c)`,
+    `  b=$(${git} cat-file blob "$sha" | tr -d '\\000' | wc -c)`,
+    '  if [ "$a" -ne "$size" ] || [ "$a" -ne "$b" ]; then echo "$sha"; fi',
+    'done',
+  ].join('\n');
+}
+
 /** Blob sizes and which blobs contain a NUL byte, read from the trusted object store. */
 async function inspectBlobs(
   trusted: Workspace,
@@ -241,16 +257,10 @@ async function inspectBlobs(
   }
   // A NUL byte is the same test git itself applies to call a file binary, but
   // made on the content: `.gitattributes` cannot talk it out of it.
-  const script = [
-    'while read -r sha; do',
-    `  a=$(${GIT} cat-file blob "$sha" | wc -c)`,
-    `  b=$(${GIT} cat-file blob "$sha" | tr -d '\\000' | wc -c)`,
-    '  [ "$a" -eq "$b" ] || echo "$sha"',
-    'done',
-  ].join('\n');
   const eligible = shas.filter((s) => (sizes.get(s) ?? 0) <= AGENT_RUN_MAX_FILE_BYTES);
   if (eligible.length > 0) {
-    const out = await trusted.execStdin(`sh -c ${shellQuote(script)}`, `${eligible.join('\n')}\n`);
+    const input = `${eligible.map((s) => `${s} ${sizes.get(s) ?? 0}`).join('\n')}\n`;
+    const out = await trusted.execStdin(`sh -c ${shellQuote(nulProbeScript(GIT))}`, input);
     for (const line of out.split('\n')) {
       if (/^[0-9a-f]+$/.test(line.trim())) {
         binary.add(line.trim());

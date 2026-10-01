@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import { ApplicationFailure } from '@temporalio/activity';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -39,6 +40,7 @@ import {
   type GatedCommit,
   gateTrustedCommit,
   importAgentTree,
+  nulProbeScript,
   pushGatedCommit,
 } from './agentRunFinalize.js';
 import type { Workspace } from './workspace.js';
@@ -339,5 +341,41 @@ describe('importAgentTree', () => {
     expect(f.type).toBe('AGENT_RUN_EXPORT_TOO_LARGE');
     expect(shell.written).toHaveLength(1);
     await expect(fs.stat(shell.written[0] as string)).rejects.toThrow();
+  });
+});
+
+describe('nulProbeScript (run under a real sh, against a real object store)', () => {
+  const run = async (blobs: Buffer[], extra: string[] = []) => {
+    const { execFileSync, spawnSync } = await import('node:child_process');
+    const dir = await fs.mkdtemp(`${os.tmpdir()}/nul-probe-`);
+    try {
+      execFileSync('git', ['init', '-q', dir]);
+      const lines = blobs.map((body) => {
+        const sha = execFileSync('git', ['-C', dir, 'hash-object', '-w', '--stdin'], {
+          encoding: 'utf-8',
+          input: body,
+        }).trim();
+        return `${sha} ${body.length}`;
+      });
+      const r = spawnSync('sh', ['-c', nulProbeScript(`git -C '${dir}'`)], {
+        encoding: 'utf-8',
+        input: `${[...lines, ...extra].join('\n')}\n`,
+      });
+      return { flagged: r.stdout.split('\n').filter(Boolean), lines };
+    } finally {
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  };
+
+  it('reports blobs with a NUL byte, and not text blobs', async () => {
+    const { flagged, lines } = await run([Buffer.from('hello'), Buffer.from('he\0llo')]);
+    expect(flagged).toEqual([lines[1]?.split(' ')[0]]);
+  });
+
+  it('fails closed on a blob that cannot be read back (treated as binary)', async () => {
+    const missing = 'd'.repeat(40);
+    const { flagged } = await run([Buffer.from('hello')], [`${missing} 9`]);
+    // Both counts are 0 for an unreadable blob, which used to read as "no NUL".
+    expect(flagged).toEqual([missing]);
   });
 });

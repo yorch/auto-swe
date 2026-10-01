@@ -121,8 +121,19 @@ export async function evaluatePushPolicy(input: PolicyInputs): Promise<PolicyVio
 
   for (const c of input.changes) {
     // A path git would quote or that could split a line in anything downstream.
-    if (hasControlChar(c.path) || c.path.startsWith('/') || /(^|\/)\.\.(\/|$)/.test(c.path)) {
-      add('unclassifiable_path', JSON.stringify(c.path), 'control characters or path traversal');
+    // U+FFFD means the path was not valid UTF-8: it was decoded lossily, so the
+    // sensitive-file check below would be judging a different string than git has.
+    if (
+      hasControlChar(c.path) ||
+      c.path.includes('\uFFFD') ||
+      c.path.startsWith('/') ||
+      /(^|\/)\.\.(\/|$)/.test(c.path)
+    ) {
+      add(
+        'unclassifiable_path',
+        JSON.stringify(c.path),
+        'control characters, a non-UTF-8 name, or path traversal'
+      );
       continue;
     }
     if (!['A', 'M', 'D', 'T'].includes(c.status)) {
