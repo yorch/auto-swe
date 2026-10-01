@@ -21,9 +21,9 @@ export interface ModelPrice {
 /**
  * Price table keyed by `<provider>/<model-id>`. USD per million tokens, base
  * (non-cached, non-batch) rates. Verified against:
- * - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing  (May 2026)
- * - OpenAI:    https://openai.com/api/pricing
- * - Google:    https://ai.google.dev/gemini-api/docs/pricing
+ * - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing  (Sep 2026)
+ * - OpenAI:    https://developers.openai.com/api/docs/pricing  (Sep 2026)
+ * - Google:    https://ai.google.dev/gemini-api/docs/pricing  (Sep 2026)
  *
  * Add new models here as they're routed through getModel(). Unknown specs fall
  * back to zero cost and emit `llm.cost_pricing_known=false` on the OTel span
@@ -35,38 +35,55 @@ export interface ModelPrice {
  *  - Batch API discount (50%)
  *  - Anthropic data-residency premium (1.1x for `inference_geo: us`)
  *  - Anthropic fast-mode premium (6x on Opus 4.6)
- *  - Gemini 2.5 Pro >200K-token surcharge (input doubles)
+ *  - Gemini 2.5 Pro / 3.1 Pro >200K-token surcharge (input doubles)
  */
 export const MODEL_PRICES: Record<string, ModelPrice> = {
-  'anthropic/claude-haiku-3-5-20241022': { input: 0.8, output: 4 },
+  // Anthropic — Fable 5.x, above the Opus tier ($10 / $50, verified Sep 2026)
+  'anthropic/claude-fable-5': { input: 10, output: 50 },
+  'anthropic/claude-fable-5-1': { input: 10, output: 50 },
   // Anthropic — Haiku
+  'anthropic/claude-haiku-3-5-20241022': { input: 0.8, output: 4 },
   'anthropic/claude-haiku-4-5-20251001': { input: 1, output: 5 },
-  // Anthropic — Opus 4 / 4.1 (legacy pricing $15 / $75)
+  // Anthropic — Opus 4 / 4.1 legacy pricing ($15 / $75); Opus 4.5+ is $5 / $25
   'anthropic/claude-opus-4-1-20250805': { input: 15, output: 75 },
   'anthropic/claude-opus-4-5': { input: 5, output: 25 },
   'anthropic/claude-opus-4-6': { input: 5, output: 25 },
-  // Anthropic — Opus 4.5+ family ($5 / $25)
   'anthropic/claude-opus-4-8': { input: 5, output: 25 },
   'anthropic/claude-opus-4-20250514': { input: 15, output: 75 },
+  // Anthropic — Opus 5 ($5 / $25) and Opus 5.5 ($4 / $20), verified Sep 2026
+  'anthropic/claude-opus-5': { input: 5, output: 25 },
+  'anthropic/claude-opus-5-5': { input: 4, output: 20 },
+  // Anthropic — Sonnet 4.x ($3 / $15)
   'anthropic/claude-sonnet-4-5': { input: 3, output: 15 },
-  // Anthropic — Sonnet 4.x family ($3 / $15)
   'anthropic/claude-sonnet-4-6': { input: 3, output: 15 },
   'anthropic/claude-sonnet-4-20250514': { input: 3, output: 15 },
+  // Anthropic — Sonnet 5.x ($2 / $10, verified Sep 2026)
+  'anthropic/claude-sonnet-5': { input: 2, output: 10 },
+  'anthropic/claude-sonnet-5-5': { input: 2, output: 10 },
+  // Google — Gemini 2.5 (base prices; Pro input/output ~doubles above 200K context)
   'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
   'google/gemini-2.5-flash-lite': { input: 0.1, output: 0.4 },
-  // Google — Gemini 2.5 (base prices; Pro input/output ~doubles above 200K context)
   'google/gemini-2.5-pro': { input: 1.25, output: 10 },
+  // Google — Gemini 3.x. Pro is still `-preview`; 3 Pro Preview and
+  // 3.1 Flash-Lite Preview are shut down (kept for historical runs).
   'google/gemini-3-flash-preview': { input: 0.5, output: 3 },
+  'google/gemini-3.1-flash-lite': { input: 0.25, output: 1.5 },
   'google/gemini-3.1-flash-lite-preview': { input: 0.25, output: 1.5 },
-
-  // Google — Gemini 3.x (current flagship line, all `-preview` as of May 2026)
-  // Note: Gemini 3 Pro Preview was deprecated 2026-03-09 — use 3.1 Pro instead.
   'google/gemini-3.1-pro-preview': { input: 2, output: 12 },
-
-  // OpenAI — base GPT-5 line (verified May 2026)
+  'google/gemini-3.5-flash': { input: 1.5, output: 9 },
+  'google/gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
+  // Listed at $0.75 / $3.75 through 2026-12-31. This records the $1.50 / $7.50
+  // list price that applies from 2027-01-01, so budgets over-count rather than
+  // under-count once the introductory price lapses.
+  'google/gemini-3.8-flash': { input: 1.5, output: 7.5 },
+  // OpenAI — GPT-5 line
   'openai/gpt-5': { input: 1.25, output: 10 },
   'openai/gpt-5-5': { input: 5, output: 30 },
   'openai/gpt-5-5-pro': { input: 30, output: 180 },
+  // OpenAI — GPT-6 line (verified Sep 2026)
+  'openai/gpt-6-astra': { input: 10, output: 50 },
+  'openai/gpt-6-luna': { input: 0.1, output: 0.5 },
+  'openai/gpt-6.1-sol': { input: 2, output: 10 },
 };
 
 const ZERO_PRICE: ModelPrice = { input: 0, output: 0 };

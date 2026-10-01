@@ -168,21 +168,22 @@ export const SUGGESTED_MODEL_SPECS: { provider: string; specs: string[] }[] = [
   {
     provider: 'anthropic',
     specs: [
-      'anthropic/claude-opus-4-8',
-      'anthropic/claude-sonnet-4-6',
+      'anthropic/claude-fable-5-1',
+      'anthropic/claude-opus-5-5',
+      'anthropic/claude-sonnet-5-5',
       'anthropic/claude-haiku-4-5-20251001',
     ],
   },
   {
     provider: 'openai',
-    specs: ['openai/gpt-5-5-pro', 'openai/gpt-5-5', 'openai/gpt-5'],
+    specs: ['openai/gpt-6-astra', 'openai/gpt-6.1-sol', 'openai/gpt-6-luna'],
   },
   {
     provider: 'google',
     specs: [
-      'google/gemini-2.5-pro',
-      'google/gemini-2.5-flash',
-      'google/gemini-3.1-flash-lite-preview',
+      'google/gemini-3.1-pro-preview',
+      'google/gemini-3.8-flash',
+      'google/gemini-3.5-flash-lite',
     ],
   },
 ];
