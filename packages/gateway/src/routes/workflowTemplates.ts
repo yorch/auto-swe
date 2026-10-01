@@ -938,9 +938,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const user = requireUser(request);
       const where: Prisma.WorkflowTemplateWhereInput = {
-        ...teamMembershipFilter(user),
+        // Both fragments are keyed `OR`; spreading them would let the second
+        // overwrite the first and drop the membership scope for non-admins.
+        AND: [teamMembershipFilter(user), EXCLUDE_SYSTEM_TEMPLATES],
         ...(request.query.teamId ? { teamId: request.query.teamId } : {}),
-        ...EXCLUDE_SYSTEM_TEMPLATES,
       };
       // `teamMembershipFilter` is `{}` for a platform admin.
       const templates = await asPlatformAdmin(

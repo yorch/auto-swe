@@ -16,7 +16,7 @@ import {
 } from '../lib/agentRunPolicy.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
-import { execShellAsync, throwIfActivityCancelled } from '../lib/execUtils.js';
+import { execShellAsync, spawnToFileCapped, throwIfActivityCancelled } from '../lib/execUtils.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
 import { parseDiffToFileChanges } from './utils.js';
 import { shellQuote, type Workspace } from './workspace.js';
@@ -113,19 +113,30 @@ export async function importAgentTree(
     } catch {
       /* already stopped, or the runtime cannot pause */
     }
-    // The daemon produces the archive, not the agent's `tar`.
-    await execShellAsync(
-      `docker cp ${shellQuote(`${agent.containerId}:/workspace/target-repo/.`)} - > ${shellQuote(archive)}`,
-      { heartbeatLabel: 'agent run: exporting the working tree', timeoutMs: 600_000 }
+    // The daemon produces the archive, not the agent's `tar`. The size cap is
+    // enforced while the archive streams to disk: a sparse file expands in full
+    // in `docker cp`'s output, so measuring afterwards is too late.
+    const copied = await spawnToFileCapped(
+      'docker',
+      ['cp', `${agent.containerId}:/workspace/target-repo/.`, '-'],
+      archive,
+      {
+        heartbeatLabel: 'agent run: exporting the working tree',
+        maxBytes,
+        timeoutMs: 600_000,
+      }
     );
-    const { size } = await fs.stat(archive);
-    if (size > maxBytes) {
+    if (copied.exceeded) {
       throw ApplicationFailure.nonRetryable(
-        `The working tree is ${size} bytes, over the ${maxBytes} byte export limit. ` +
+        `The working tree is over the ${maxBytes} byte export limit. ` +
           'Keep dependency and build output in ignored paths.',
         'AGENT_RUN_EXPORT_TOO_LARGE'
       );
     }
+    if (copied.exitCode !== 0) {
+      throw new Error(`docker cp failed (exit ${copied.exitCode}): ${copied.stderr}`);
+    }
+    const size = copied.bytes;
     await trusted.exec('rm -rf /stage && mkdir /stage');
     await execShellAsync(
       `docker cp - ${shellQuote(`${trusted.containerId}:/stage`)} < ${shellQuote(archive)}`,

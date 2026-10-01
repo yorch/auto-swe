@@ -265,6 +265,7 @@ function buildApp(state: {
           return tpl ? { ...tpl, _count: { versions: tpl.versions.length } } : null;
         },
         findMany: async ({ where }: { where?: Mutable }) => {
+          (state as { listWheres?: Mutable[] }).listWheres?.push(where ?? {});
           const filtered = state.templates.filter((t) => {
             if (where?.teamId && t.teamId !== where.teamId) {
               return false;
@@ -1812,5 +1813,55 @@ describe('system templates are hidden and locked', () => {
       spec: INTERNAL_STEP_SPEC,
     });
     expect(version.statusCode).toBe(400);
+  });
+});
+
+describe("GET / scopes the template list to the caller's teams (non-admin)", () => {
+  const OTHER_TEAM = 'b2c3d4e5-1234-4567-89ab-cdef01234567';
+  const membershipArm = {
+    OR: [{ teamId: null }, { team: { memberships: { some: { userId: 'user-1' } } } }],
+  };
+
+  const listWhere = async (role: string, query: string) => {
+    const listWheres: Mutable[] = [];
+    const app = buildApp({
+      runs: [],
+      templates: [],
+      userRole: role,
+      versions: new Map(),
+      ...({ listWheres } as object),
+    });
+    await app.ready();
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: `/api/v1/workflow-templates${query}`,
+    });
+    await app.close();
+    expect(res.statusCode).toBe(200);
+    return listWheres[0] as { AND?: Mutable[]; OR?: unknown; teamId?: string };
+  };
+
+  it.each(['ENGINEER', 'LEAD'])('%s keeps the membership arm without ?teamId', async (role) => {
+    const where = await listWhere(role, '');
+    expect(where.AND).toContainEqual(membershipArm);
+    // The system-template exclusion must not overwrite the membership `OR`.
+    expect(where.OR).toBeUndefined();
+  });
+
+  it.each(['ENGINEER', 'LEAD'])(
+    '%s keeps the membership arm with ?teamId of a team they are not in',
+    async (role) => {
+      const where = await listWhere(role, `?teamId=${OTHER_TEAM}`);
+      expect(where.teamId).toBe(OTHER_TEAM);
+      expect(where.AND).toContainEqual(membershipArm);
+      expect(where.OR).toBeUndefined();
+    }
+  );
+
+  it('ADMIN is unscoped by membership but still excludes system templates', async () => {
+    const where = await listWhere('ADMIN', '');
+    expect(where.AND).toContainEqual({});
+    expect(JSON.stringify(where)).toContain('system:');
   });
 });
