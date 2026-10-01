@@ -65,6 +65,7 @@ export function Modal({
   subtitle,
   children,
   size = 'md',
+  closeOnBackdropClick = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -73,6 +74,12 @@ export function Modal({
   subtitle?: React.ReactNode;
   children: React.ReactNode;
   size?: 'md' | 'lg';
+  /**
+   * Turn off for a modal whose content cannot be shown again — a one-time
+   * secret — so a stray click cannot discard it. The close button and Escape
+   * still close it: both are deliberate.
+   */
+  closeOnBackdropClick?: boolean;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   // The dialog is portalled to document.body: callers often own a modal from
@@ -120,7 +127,11 @@ export function Modal({
       aria-labelledby={titleId}
       className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/80`}
       onClick={(e) => {
-        if (pressStartedOnBackdrop.current && e.target === e.currentTarget) {
+        if (
+          closeOnBackdropClick &&
+          pressStartedOnBackdrop.current &&
+          e.target === e.currentTarget
+        ) {
           e.currentTarget.close();
         }
       }}

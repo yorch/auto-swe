@@ -167,6 +167,7 @@ export function AccessTokensSection({ number }: { number?: string }) {
       </Modal>
 
       <Modal
+        closeOnBackdropClick={false}
         eyebrow="§ Copy now — shown only once"
         onClose={() => setRevealed(null)}
         open={revealed !== null}
