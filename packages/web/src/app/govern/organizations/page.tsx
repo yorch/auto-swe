@@ -16,7 +16,7 @@ function fmtCents(n: number | null): string {
   return `$${(n / 100).toFixed(2)}`;
 }
 
-export default function GovernBudgetsPage() {
+export default function GovernOrganizationsPage() {
   const { data: orgs, isLoading, isError, error: loadError } = useUserOrgs();
 
   const alertCount = (orgs ?? []).filter((o) => o.alert.triggered).length;
@@ -74,7 +74,7 @@ export default function GovernBudgetsPage() {
                         <Td className="px-4 py-2">
                           <Link
                             className="text-ember-400 hover:underline"
-                            href={`/govern/budgets/${org.id}`}
+                            href={`/govern/organizations/${org.id}`}
                           >
                             {org.name}
                           </Link>
