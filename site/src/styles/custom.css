@@ -463,6 +463,23 @@ main:has(.landing) .sl-markdown-content {
   margin: 0;
 }
 
+/*
+ * The landing has no edit link, date, or pagination, so Starlight's footer is
+ * an empty box there; only the colophon shows. The panel has no padding, so the
+ * colophon takes the body's column by width rather than by padding — padding
+ * would run its top rule out past the text.
+ */
+main:has(.landing) .sl-container > footer {
+  display: none;
+}
+
+main:has(.landing) .sl-container > .colophon {
+  --gutter: clamp(1.25rem, 5vw, 4rem);
+  width: calc(100% - 2 * var(--gutter));
+  max-width: calc(78rem - 2 * var(--gutter));
+  margin: 2rem auto 2.5rem;
+}
+
 /* ===========================================================================
  * Diagrams
  *

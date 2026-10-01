@@ -73,6 +73,9 @@ export default defineConfig({
       },
     }),
     starlight({
+      // Our footer credits Astro and Starlight in its own colophon, beside the
+      // author and license, so Starlight's separate badge would say it twice.
+      components: { Footer: './src/components/SiteFooter.astro' },
       credits: false,
       customCss: ['./src/styles/custom.css'],
       // The splash page provides its own hero, so Starlight's is unused.

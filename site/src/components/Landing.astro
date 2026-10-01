@@ -181,12 +181,6 @@ const starting = [
           </li>
         ))}
       </ul>
-      <p class="band__note">
-        These docs describe how auto-swe works now, in present tense. Every capability page ends
-        with a <a href={`${BASE}/docs/`}>Limitations</a> section stating what is not built, not
-        proven, or deliberately constrained — and a page that drops one fails the build. The
-        use-case pages say the same of each workflow.
-      </p>
     </section>
   </div>
 </div>
@@ -196,7 +190,7 @@ const starting = [
     max-width: 78rem;
     margin-inline: auto;
     padding-inline: clamp(1.25rem, 5vw, 4rem);
-    padding-bottom: 6rem;
+    padding-bottom: 2rem;
   }
 
   .band {
@@ -336,8 +330,7 @@ const starting = [
     font-weight: 700;
   }
 
-  .landing .band__more a,
-  .landing .band__note a {
+  .landing .band__more a {
     color: var(--ink);
     text-decoration: underline;
     text-decoration-thickness: 2px;
@@ -415,13 +408,6 @@ const starting = [
     color: var(--ink-muted);
   }
 
-  .band__note {
-    max-width: 62ch;
-    margin-top: 2rem;
-    font-size: var(--step-0);
-    line-height: 1.6;
-    color: var(--ink-muted);
-  }
 
   @media (max-width: 60rem) {
     .use {
