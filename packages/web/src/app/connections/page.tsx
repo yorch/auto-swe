@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
+import { MyCredentialModal } from '@/components/repositories/MyCredentialModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -18,7 +19,7 @@ import {
   useTriggerRepoDependencyScan,
 } from '@/hooks/useRepoDependencies';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
-import { useRepositories } from '@/hooks/useRepositories';
+import { useMyCredentials, useRepositories } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { useAuthStore } from '@/stores/authStore';
@@ -27,6 +28,7 @@ type ModalMode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
   | { kind: 'edit'; repo: RepositorySummary }
   | { kind: 'dependencies'; repo: RepositorySummary }
+  | { kind: 'credential'; repo: RepositorySummary }
   | { kind: 'import' }
   | null;
 
@@ -51,6 +53,7 @@ export default function ConnectionsPage() {
   const { data: repos, meta, isLoading, isError, error: loadError } = useRepositories();
   const suggestions = useRepoDependencySuggestions();
   const scan = useTriggerRepoDependencyScan();
+  const myCredentials = useMyCredentials();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const canManage = role === 'ADMIN' || role === 'LEAD';
   const [mode, setMode] = useState<ModalMode>(null);
@@ -82,6 +85,9 @@ export default function ConnectionsPage() {
   }
 
   const formMode = mode?.kind === 'create' || mode?.kind === 'edit' ? mode : null;
+  const credentialsEnabled = myCredentials.data?.enabled ?? false;
+  const credentialFor = (id: string) =>
+    myCredentials.data?.credentials.find((c) => c.connectionId === id);
 
   return (
     <div className="space-y-6">
@@ -105,6 +111,10 @@ export default function ConnectionsPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {(repos ?? []).map((r) => {
           const isGitRepo = !r.type || r.type === 'git_repo';
+          const myCredential = isGitRepo ? credentialFor(r.id) : undefined;
+          // Offered when the feature is on, and kept reachable when it is off
+          // but a token is still saved, so it can always be removed.
+          const showCredential = isGitRepo && (credentialsEnabled || !!myCredential);
           return (
             <Card key={r.id}>
               <div className="flex items-start justify-between gap-2">
@@ -116,6 +126,14 @@ export default function ConnectionsPage() {
                 <p>Team: {r.team?.name ?? 'None'}</p>
                 <p>Workflows: {r._count?.activeWorkflows ?? 0}</p>
                 {isGitRepo && <p>Image: {r.executorImage ?? 'default'}</p>}
+                {showCredential && (
+                  <p>
+                    My token:{' '}
+                    {myCredential
+                      ? `…${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
+                      : 'none — platform credential'}
+                  </p>
+                )}
                 {r.description && <p className="truncate text-xs">{r.description}</p>}
               </div>
               <div className="mt-3 flex items-center justify-between">
@@ -125,6 +143,15 @@ export default function ConnectionsPage() {
                   {r.isActive ? 'Active' : 'Inactive'}
                 </span>
                 <div className="flex items-center gap-1">
+                  {showCredential && (
+                    <Button
+                      onClick={() => setMode({ kind: 'credential', repo: r })}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      My token
+                    </Button>
+                  )}
                   {isGitRepo && (
                     <Button
                       onClick={() => setMode({ kind: 'dependencies', repo: r })}
@@ -211,6 +238,16 @@ export default function ConnectionsPage() {
       />
 
       {formMode && <ConnectionFormModal mode={formMode} onClose={() => setMode(null)} open />}
+
+      {mode?.kind === 'credential' && (
+        <MyCredentialModal
+          credential={credentialFor(mode.repo.id)}
+          enabled={credentialsEnabled}
+          hosts={myCredentials.data?.hosts ?? []}
+          onClose={() => setMode(null)}
+          repo={mode.repo}
+        />
+      )}
 
       {mode?.kind === 'dependencies' && (
         <RepoDependenciesModal

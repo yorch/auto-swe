@@ -38,7 +38,19 @@ const SOURCE_TONE: Record<SettingSource, string> = {
 };
 
 function formatValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.join(', ');
+  }
   return typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value);
+}
+
+/// A list setting is edited as comma-separated text; blanks are dropped so a
+/// trailing comma does not save an empty entry the schema would reject.
+function parseList(draft: string): string[] {
+  return draft
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 export function SettingRow({
@@ -73,9 +85,16 @@ export function SettingRow({
 
   const isBoolean = typeof setting.defaultValue === 'boolean';
   const isNumber = typeof setting.defaultValue === 'number';
+  const isList = Array.isArray(setting.defaultValue);
   const hasOverrideHere = setting.overrideAtScope !== undefined;
 
-  const parsedDraft = isBoolean ? boolDraft : isNumber ? Number(draft) : draft;
+  const parsedDraft = isBoolean
+    ? boolDraft
+    : isNumber
+      ? Number(draft)
+      : isList
+        ? parseList(draft)
+        : draft;
   const invalidNumber = isNumber && !Number.isFinite(Number(draft));
   const dirty = isBoolean ? boolDraft !== setting.value : formatValue(setting.value) !== draft;
 
@@ -119,7 +138,7 @@ export function SettingRow({
             <Input
               disabled={!canWriteHere || busy}
               error={invalidNumber ? 'Must be a number' : undefined}
-              hint={setting.unit}
+              hint={setting.unit ?? (isList ? 'comma-separated' : undefined)}
               inputMode={isNumber ? 'numeric' : undefined}
               onChange={(e) => setDraft(e.target.value)}
               value={draft}
