@@ -3,6 +3,7 @@ import { MeterProvider, MetricReader } from '@opentelemetry/sdk-metrics';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   _resetMetricsForTests,
+  initMetrics,
   recordActivityDuration,
   recordLlmCallMetrics,
   recordRunFinalized,
@@ -34,16 +35,34 @@ afterEach(() => {
 });
 
 describe('worker metrics', () => {
-  it('binds to a MeterProvider registered after the module was imported', async () => {
-    // The module is imported above, before beforeEach registers the provider —
-    // the same order ESM gives the worker. Eager instruments would be no-ops.
+  it('builds no instrument at import, so a provider registered later still receives data', async () => {
+    // The module was imported above, before beforeEach registered a provider —
+    // the order ESM gives the worker. Instruments are built on first use.
     recordRunFinalized('SUCCESS');
 
+    const points = (await collected()).get('workflow.runs.finalized')?.dataPoints ?? [];
+    expect(points.find((d) => d.attributes.status === 'SUCCESS')?.value).toBe(1);
+  });
+
+  it('seeds every status and tier at zero, so increase() sees the first real event', async () => {
+    initMetrics();
+
     const m = await collected();
-    expect(m.get('workflow.runs.finalized')?.dataPoints[0]).toMatchObject({
-      attributes: { status: 'SUCCESS' },
-      value: 1,
-    });
+    expect(
+      (m.get('workflow.runs.finalized')?.dataPoints ?? []).map((d) => [
+        d.attributes.status,
+        d.value,
+      ])
+    ).toEqual([
+      ['SUCCESS', 0],
+      ['FAILED', 0],
+      ['TIMED_OUT', 0],
+      ['SKIPPED', 0],
+      ['CANCELLED', 0],
+    ]);
+    expect(
+      (m.get('workflow.budget_exceeded')?.dataPoints ?? []).map((d) => d.attributes.tier)
+    ).toEqual(['STANDARD', 'LARGE', 'EPIC']);
   });
 
   it('splits tokens by direction and keeps run identity out of attributes', async () => {
@@ -71,7 +90,7 @@ describe('worker metrics', () => {
   it('records activity durations into the histogram', async () => {
     recordActivityDuration('executeImplementation', 'failure', 42);
 
-    const point = (await collected()).get('temporal.activity.duration')?.dataPoints[0];
+    const point = (await collected()).get('activity.duration')?.dataPoints[0];
     expect(point?.attributes).toEqual({ activity: 'executeImplementation', outcome: 'failure' });
     expect((point?.value as { sum: number } | undefined)?.sum).toBe(42);
   });

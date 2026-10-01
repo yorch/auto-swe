@@ -1,9 +1,18 @@
 import { SpanStatusCode, trace } from '@opentelemetry/api';
-import type { Context } from '@temporalio/activity';
+import { CancelledFailure, type Context } from '@temporalio/activity';
 import type { ActivityInterceptors } from '@temporalio/worker';
 import { recordActivityDuration } from './metrics.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
+
+/**
+ * A cancelled attempt (dashboard cancel, heartbeat timeout, reset) is not a
+ * failure of the activity; counting it as one makes every user cancel read as
+ * an outage on the failure-rate panel.
+ */
+function isCancellation(err: unknown): boolean {
+  return err instanceof CancelledFailure || (err as Error | undefined)?.name === 'AbortError';
+}
 
 /**
  * Wraps every activity attempt in an `activity.<type>` span and times it.
@@ -35,13 +44,18 @@ export function activitySpanInterceptor(ctx: Context): ActivityInterceptors {
           },
           async (span) => {
             const start = performance.now();
-            let outcome: 'success' | 'failure' = 'success';
+            let outcome: 'success' | 'failure' | 'cancelled' = 'success';
             try {
               return await next(input);
             } catch (err) {
-              outcome = 'failure';
-              span.recordException(err as Error);
-              span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
+              if (isCancellation(err)) {
+                outcome = 'cancelled';
+                span.setAttribute('temporal.cancelled', true);
+              } else {
+                outcome = 'failure';
+                span.recordException(err as Error);
+                span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
+              }
               throw err;
             } finally {
               span.end();

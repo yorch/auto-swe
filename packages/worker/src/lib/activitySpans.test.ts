@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { span, started, recordDuration } = vi.hoisted(() => ({
   recordDuration: vi.fn(),
-  span: { end: vi.fn(), recordException: vi.fn(), setStatus: vi.fn() },
+  span: { end: vi.fn(), recordException: vi.fn(), setAttribute: vi.fn(), setStatus: vi.fn() },
   started: [] as Array<{ name: string; attributes: Record<string, unknown> }>,
 }));
 
@@ -24,6 +24,7 @@ vi.mock('@opentelemetry/api', () => ({
 
 vi.mock('./metrics.js', () => ({ recordActivityDuration: recordDuration }));
 
+import { CancelledFailure } from '@temporalio/activity';
 import { activitySpanInterceptor } from './activitySpans.js';
 
 const ctx = {
@@ -83,6 +84,24 @@ describe('activitySpanInterceptor', () => {
     expect(recordDuration).toHaveBeenCalledWith(
       'executeImplementation',
       'failure',
+      expect.any(Number)
+    );
+  });
+
+  it('records a cancelled attempt as cancelled, not as a failure', async () => {
+    const cancelled = new CancelledFailure('CANCELLED');
+
+    await expect(
+      activitySpanInterceptor(ctx).inbound?.execute?.(input, async () => {
+        throw cancelled;
+      })
+    ).rejects.toBe(cancelled);
+
+    expect(span.setStatus).not.toHaveBeenCalled();
+    expect(span.setAttribute).toHaveBeenCalledWith('temporal.cancelled', true);
+    expect(recordDuration).toHaveBeenCalledWith(
+      'executeImplementation',
+      'cancelled',
       expect.any(Number)
     );
   });

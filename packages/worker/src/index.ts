@@ -13,6 +13,7 @@ import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
+import { initMetrics } from './lib/metrics.js';
 import { initTemporalClient } from './lib/temporalClient.js';
 
 async function run() {
@@ -20,6 +21,8 @@ async function run() {
   // key; without it the first LLM call fails inside an activity instead of
   // the process refusing to start. Check before anything else is initialised.
   assertEncryptionKeyConfigured();
+  // After initTelemetry() above, so the instruments bind to the real provider.
+  initMetrics();
 
   // Install Temporal runtime with OTel metrics if endpoint is available
   const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
@@ -71,14 +74,14 @@ async function run() {
   const worker = await Worker.create({
     activities,
     connection,
+    // One span + duration sample per activity attempt; see lib/activitySpans.ts.
+    interceptors: { activity: [activitySpanInterceptor] },
     // Most activities hold a Docker workspace (clone + container) — an
     // explicit cap keeps a burst of workflows from exhausting the Docker
     // host. The Temporal default (100) is far past what one host can serve.
     // Read once at boot from the config registry (`workspace.maxConcurrentActivities`,
     // which still falls back to WORKER_MAX_CONCURRENT_ACTIVITIES), so the value
     // is visible in the dashboard rather than only in the process environment.
-    // One span + duration sample per activity attempt; see lib/activitySpans.ts.
-    interceptors: { activity: [activitySpanInterceptor] },
     maxConcurrentActivityTaskExecutions: maxConcurrentActivities,
     namespace: 'default',
     taskQueue: 'engineering-workflow',

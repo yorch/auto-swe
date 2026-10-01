@@ -133,6 +133,17 @@ async function recordEmbeddingUsage(
   chars: number,
   durationMs: number
 ): Promise<void> {
+  const costUsd =
+    tokens === null ? null : Math.round(calculateCostUsd(spec, tokens, 0) * 1e6) / 1e6;
+  // Counted whether or not there is an activity to attribute it to, or usage
+  // to price: the call was made either way.
+  recordLlmCallMetrics({
+    agent: EMBEDDING_AGENT_KEY,
+    costUsd: costUsd ?? 0,
+    inputTokens: tokens ?? 0,
+    model: spec,
+    outputTokens: 0,
+  });
   let workflowId: string;
   let nodeId: string;
   let attempt: number;
@@ -142,17 +153,6 @@ async function recordEmbeddingUsage(
     attempt = currentAttempt();
   } catch {
     return;
-  }
-  const costUsd =
-    tokens === null ? null : Math.round(calculateCostUsd(spec, tokens, 0) * 1e6) / 1e6;
-  if (tokens !== null && costUsd !== null) {
-    recordLlmCallMetrics({
-      agent: EMBEDDING_AGENT_KEY,
-      costUsd,
-      inputTokens: tokens,
-      model: spec,
-      outputTokens: 0,
-    });
   }
   try {
     const run = await prisma.workflowRun.findUnique({

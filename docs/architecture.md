@@ -533,9 +533,9 @@ agent, activity, status, tier — never a run or ticket:
 | Metric (Prometheus name) | Labels | Recorded by |
 |---|---|---|
 | `llm_calls_total`, `llm_tokens_total`, `llm_cost_usd_total` | `model`, `agent` (+ `direction` on tokens) | `recordLlmUsage`, embedding usage |
-| `workflow_runs_finalized_total` | `status` | `finalizeWorkflowRun`, once per run |
-| `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, when it throws `BUDGET_EXCEEDED` |
-| `temporal_activity_duration_seconds` (histogram) | `activity`, `outcome` | the activity interceptor |
+| `workflow_runs_finalized_total` | `status` | `finalizeWorkflowRun`, once per run it finalizes |
+| `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, on each call that ends over the tier |
+| `activity_duration_seconds` (histogram) | `activity`, `outcome` (`success` / `failure` / `cancelled`) | the activity interceptor |
 
 Temporal Core's own runtime metrics export beside them. The bundled `otel-lgtm` container provisions
 an **auto-swe — LLM & workflow overview** dashboard from `infra/grafana/` — spend, calls, and tokens
@@ -693,6 +693,12 @@ Current constraints of the system as built. Deliberate product boundaries are in
   consolidation, repo-access sync, and epic planning keep no `ActiveWorkflow` ledger, so no tier
   limit applies to them and their spend never reaches `OrgMonthlyUsage`. It is recorded on their
   trace rows and shown at `/govern/usage`, but nothing stops it.
+- **Metrics undercount at their edges.** `workflow_runs_finalized_total` counts only runs the worker
+  finalizes: a run cancelled from the dashboard is closed by the gateway, and channel and eval runs
+  by other paths. `llm_calls_total` counts agent calls, not model round trips inside a tool loop.
+  Prometheus `increase()` reads a new series' first sample as its baseline; status and tier series
+  are seeded with a zero at boot, but a model's or agent's first call after a worker restart does
+  not appear in increase-based panels.
 - **Traces start at the activity, not the workflow.** There is no workflow interceptor, so an
   activity span has no parent and the spans of one run are separate traces tied together only by
   their `temporal.workflow_id` attribute. Propagating context from the workflow means running an

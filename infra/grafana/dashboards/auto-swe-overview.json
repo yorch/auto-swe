@@ -361,7 +361,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, activity) (rate(temporal_activity_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, activity) (rate(activity_duration_seconds_bucket[$__rate_interval])))",
           "legendFormat": "{{activity}}",
           "range": true,
           "refId": "A"
@@ -408,7 +408,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(sum by (activity) (rate(temporal_activity_duration_seconds_count{outcome=\"failure\"}[$__rate_interval])) or sum by (activity) (rate(temporal_activity_duration_seconds_count[$__rate_interval])) * 0) / sum by (activity) (rate(temporal_activity_duration_seconds_count[$__rate_interval]))",
+          "expr": "(sum by (activity) (rate(activity_duration_seconds_count{outcome=\"failure\"}[$__rate_interval])) or sum by (activity) (rate(activity_duration_seconds_count[$__rate_interval])) * 0) / sum by (activity) (rate(activity_duration_seconds_count[$__rate_interval]))",
           "legendFormat": "{{activity}}",
           "range": true,
           "refId": "A"
