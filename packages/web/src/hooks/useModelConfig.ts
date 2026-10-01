@@ -27,7 +27,7 @@ export interface ProviderCredentialRow {
 
 export interface ConfigAuditRow {
   id: string;
-  entityType: 'Agent' | 'ProviderCredential' | 'EmbeddingConfig';
+  entityType: 'Agent' | 'ProviderCredential' | 'EmbeddingConfig' | 'ModelCatalogEntry';
   entityId: string;
   action: 'CREATE' | 'UPDATE' | 'DELETE';
   actorId: string | null;
@@ -106,7 +106,7 @@ export function useAdminTestCredential() {
 }
 
 export function useAdminConfigAuditLog(filter?: {
-  entityType?: 'Agent' | 'ProviderCredential' | 'EmbeddingConfig';
+  entityType?: 'Agent' | 'ProviderCredential' | 'EmbeddingConfig' | 'ModelCatalogEntry';
   entityId?: string;
   limit?: number;
 }) {
@@ -152,35 +152,10 @@ export function useUpdateEmbeddingConfig() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { modelSpec: string; credentialId?: string | null }) =>
-      api.put<{ data: EmbeddingConfigRow }>('/api/v1/platform/embedding-config', body),
+      api.put<{ data: EmbeddingConfigRow; catalogWarnings?: string[] }>(
+        '/api/v1/platform/embedding-config',
+        body
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-embedding-config'] }),
   });
 }
-
-// ── Suggested model specs ──
-//
-// Per-provider "known good" model IDs surfaced in the UI as a dropdown. Mirrors
-// the table in AGENTS.md §6. Free-text entry remains supported for everything else.
-export const SUGGESTED_MODEL_SPECS: { provider: string; specs: string[] }[] = [
-  {
-    provider: 'anthropic',
-    specs: [
-      'anthropic/claude-fable-5-1',
-      'anthropic/claude-opus-5-5',
-      'anthropic/claude-sonnet-5-5',
-      'anthropic/claude-haiku-4-5-20251001',
-    ],
-  },
-  {
-    provider: 'openai',
-    specs: ['openai/gpt-6-astra', 'openai/gpt-6.1-sol', 'openai/gpt-6-luna'],
-  },
-  {
-    provider: 'google',
-    specs: [
-      'google/gemini-3.1-pro-preview',
-      'google/gemini-3.8-flash',
-      'google/gemini-3.5-flash-lite',
-    ],
-  },
-];

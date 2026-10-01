@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ProviderCredentialRow } from '@/hooks/useModelConfig';
 import { AgentFormFields } from './AgentFormFields';
 
+// The model field suggests catalog models; the form's own behaviour is under test.
+vi.mock('@/hooks/useModelCatalog', () => ({ useModelCatalog: () => ({ data: [] }) }));
+
 /**
  * One body serves the GLOBAL library and the per-team section, in create and
  * edit mode. The mode- and prop-driven differences are what this file pins.
@@ -26,7 +29,7 @@ describe('AgentFormFields', () => {
     );
 
     expect(screen.getByLabelText('Key')).toBeTruthy();
-    expect(screen.getByLabelText('Model spec (optional)')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Model spec (optional)' })).toBeTruthy();
   });
 
   it('edit mode has no key field and plain labels', () => {
@@ -41,7 +44,7 @@ describe('AgentFormFields', () => {
     );
 
     expect(screen.queryByLabelText('Key')).toBeNull();
-    expect(screen.getByLabelText('Model spec')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Model spec' })).toBeTruthy();
   });
 
   it('renders the credential override only when credentials are passed', () => {

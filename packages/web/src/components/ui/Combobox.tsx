@@ -35,13 +35,20 @@ interface ComboboxProps {
   id?: string;
   'aria-label'?: string;
   className?: string;
+  /**
+   * Accept typed text that matches no option as the value — for a field whose
+   * options are suggestions rather than the whole set, such as a model spec the
+   * catalog does not list yet. The input text then IS the value, so each
+   * option's text must equal its `value`.
+   */
+  allowsCustomValue?: boolean;
 }
 
 /**
  * A searchable single-choice dropdown for long, data-driven lists — users,
  * repositories, templates, teams — where scanning a native list is slow. Typing
  * filters the options by their text (`textValue`, else a string `label`); the
- * value can only ever be one of the options.
+ * value can only ever be one of the options, unless `allowsCustomValue` is set.
  */
 export function Combobox({
   options,
@@ -59,10 +66,12 @@ export function Combobox({
   id,
   'aria-label': ariaLabel,
   className,
+  allowsCustomValue = false,
 }: ComboboxProps) {
   const selected = options.some((o) => o.value === value) ? toKey(value) : null;
   return (
     <AriaComboBox
+      allowsCustomValue={allowsCustomValue}
       allowsEmptyCollection
       aria-label={ariaLabel}
       className={cn('block', className)}
@@ -80,6 +89,7 @@ export function Combobox({
         }
       }}
       value={selected}
+      {...(allowsCustomValue && { inputValue: value, onInputChange: onChange })}
       {...validationProps(error)}
     >
       <FieldLabel label={label} required={required} />

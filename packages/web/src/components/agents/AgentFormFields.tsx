@@ -1,6 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { ModelSpecPicker } from '@/components/modelConfig/ModelSpecPicker';
 import { Combobox } from '@/components/ui/Combobox';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
@@ -118,10 +119,11 @@ export function AgentFormFields({
         </div>
       )}
       <div className="grid grid-cols-2 gap-4">
-        <Input
+        <ModelSpecPicker
           hint={copy.modelSpec?.hint}
+          kind="CHAT"
           label={optional('Model spec')}
-          onChange={(e) => onChange({ modelSpec: e.target.value })}
+          onChange={(modelSpec) => onChange({ modelSpec })}
           placeholder={copy.modelSpec?.placeholder}
           value={value.modelSpec ?? ''}
         />
