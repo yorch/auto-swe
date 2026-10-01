@@ -88,8 +88,9 @@ npm install -g corepack && corepack enable && yarn install
 
 # 2. Configure environment
 cp .env.example .env
-# Fill in: GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, and CONFIG_ENCRYPTION_KEY
-# (generate with `openssl rand -base64 32`).
+# Fill in: CONFIG_ENCRYPTION_KEY (generate with `openssl rand -base64 32`) and
+# SEED_ADMIN_PASSWORD. GITHUB_TOKEN / GITHUB_WEBHOOK_SECRET are optional
+# bootstrap fallbacks for the GitHub settings at /studio/integrations.
 # LLM provider keys and model picks are NOT env vars — add them via the
 # dashboard at /studio/models after starting the gateway+web. See
 # docs/model-configuration.md for the bootstrap flow.
@@ -101,13 +102,20 @@ yarn docker:infra:up
 # 4. Set up the database
 yarn db:migrate && yarn db:generate && yarn db:seed
 
-# 5. Start services (two terminals)
+# 5. Start the gateway and dashboard (two terminals)
 yarn dev:gateway     # Terminal 1 → http://localhost:8080
-yarn dev:worker      # Terminal 2
+yarn dev:web         # Terminal 2 → http://localhost:3000
 
-# 6. Web dashboard (optional)
-yarn dev:web   # → http://localhost:3000
+# 6. Sign in as admin@auto-swe.local and add model credentials at
+#    /studio/models (anthropic for the agents, openai for embeddings).
+#    The worker refuses to start until they exist.
+
+# 7. Start the worker
+yarn dev:worker      # Terminal 3
 ```
+
+The full walkthrough, through connecting a repository and starting a first run, is in
+[`docs/quickstart.md`](./docs/quickstart.md).
 
 Temporal Web UI is available at `http://localhost:8233`.
 

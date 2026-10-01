@@ -616,13 +616,17 @@ for (const file of targets) {
 // uncovered. Every doc under `docs/` is checked unless it is named here, so
 // adding a doc opts it in and skipping one is a deliberate, reviewable edit.
 //
-// Only pure procedure belongs here. A runbook tells you which buttons to press;
-// it makes no claim about what the system can do, so it has no gaps to state.
+// Only pure procedure or pure definition belongs here. A runbook tells you which
+// buttons to press and a glossary says what a word means; neither makes a claim
+// about what the system can do, so neither has gaps of its own to state — each
+// glossary entry links to the doc that does.
 // ---------------------------------------------------------------------------
 
 const GAP_EXEMPT_DOCS = new Set([
   'docs/README.md', // index
+  'docs/concepts.md', // glossary
   'docs/deployment.md', // runbook
+  'docs/quickstart.md', // runbook
   'docs/github-app-setup.md', // runbook
   'docs/oauth-setup.md', // runbook
   'docs/slack-app-setup.md', // runbook
@@ -934,7 +938,7 @@ if (clean) {
   );
   console.log(
     `  ${gapCheckedDocs.length} docs state their limitations ` +
-      `(${GAP_EXEMPT_DOCS.size} runbooks exempt).`
+      `(${GAP_EXEMPT_DOCS.size} exempt: the index, runbooks, and the glossary).`
   );
   console.log(`  no forbidden status prose (${FORBIDDEN_PROSE.length} rules).`);
   console.log(`  every setting key named in prose resolves (${settingKeys.size} registered).`);
