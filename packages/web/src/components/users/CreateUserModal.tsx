@@ -78,13 +78,14 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
           <Select
             id="new-user-role"
             label="Role"
-            onChange={(e) => setRole(e.target.value as Role)}
+            onChange={(v) => setRole(v as Role)}
+            options={[
+              { label: 'ENGINEER', value: 'ENGINEER' },
+              { label: 'LEAD', value: 'LEAD' },
+              { label: 'ADMIN', value: 'ADMIN' },
+            ]}
             value={role}
-          >
-            <option value="ENGINEER">ENGINEER</option>
-            <option value="LEAD">LEAD</option>
-            <option value="ADMIN">ADMIN</option>
-          </Select>
+          />
           <Input
             hint="Min 8 chars. Leave blank to auto-generate one (shown once)."
             label="Password (optional)"
@@ -111,6 +112,7 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
       </Modal>
 
       <Modal
+        closeOnBackdropClick={false}
         eyebrow="§ Copy now — shown only once"
         onClose={handleRevealClose}
         open={revealed !== null}

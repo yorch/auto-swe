@@ -323,12 +323,12 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
               )}
               {step.fields.map((field) => {
                 const fieldId = `human-step-${step.id}-${field.key}`;
-                const fieldLabel = field.required ? `${field.label} *` : field.label;
                 return field.type === 'boolean' ? (
                   <Checkbox
                     checked={Boolean(inputValues[field.key])}
                     key={field.key}
-                    label={fieldLabel}
+                    label={field.label}
+                    marked={field.required}
                     onChange={(e) =>
                       setInputValues((p) => ({ ...p, [field.key]: e.target.checked }))
                     }
@@ -338,23 +338,21 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                     compact
                     id={fieldId}
                     key={field.key}
-                    label={fieldLabel}
-                    onChange={(e) => setInputValues((p) => ({ ...p, [field.key]: e.target.value }))}
+                    label={field.label}
+                    onChange={(v) => setInputValues((p) => ({ ...p, [field.key]: v }))}
+                    options={[
+                      { label: '—', value: '' },
+                      ...(field.options ?? []).map((o) => ({ label: o, value: o })),
+                    ]}
+                    required={field.required}
                     value={String(inputValues[field.key] ?? '')}
-                  >
-                    <option value="">—</option>
-                    {field.options?.map((o) => (
-                      <option key={o} value={o}>
-                        {o}
-                      </option>
-                    ))}
-                  </Select>
+                  />
                 ) : (
                   <Input
                     compact
                     id={fieldId}
                     key={field.key}
-                    label={fieldLabel}
+                    label={field.label}
                     onChange={(e) =>
                       setInputValues((p) => ({
                         ...p,
@@ -366,6 +364,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                             : e.target.value,
                       }))
                     }
+                    required={field.required}
                     type={field.type === 'number' ? 'number' : 'text'}
                     value={String(inputValues[field.key] ?? '')}
                   />
@@ -380,7 +379,10 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                   }
                   const missing = step.fields
                     .filter(
-                      (f) => f.required && (inputValues[f.key] === '' || inputValues[f.key] == null)
+                      (f) =>
+                        f.required &&
+                        f.type !== 'boolean' &&
+                        (inputValues[f.key] === '' || inputValues[f.key] == null)
                     )
                     .map((f) => f.label || f.key);
                   if (missing.length > 0) {
@@ -394,7 +396,8 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                         const num = typeof raw === 'string' && raw !== '' ? Number(raw) : raw;
                         return [f.key, typeof num === 'number' && !Number.isNaN(num) ? num : null];
                       }
-                      return [f.key, raw ?? ''];
+                      // An untouched checkbox is an explicit `false`, not a missing answer.
+                      return [f.key, raw ?? (f.type === 'boolean' ? false : '')];
                     })
                   );
                   handleRespond('submit', value);

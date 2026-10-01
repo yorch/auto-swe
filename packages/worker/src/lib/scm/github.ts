@@ -18,6 +18,12 @@ import {
   resolveUserCredential,
   resolveUserCredentialPolicy,
 } from '@auto-swe/shared/lib/connectionCredential';
+import {
+  hostKey,
+  installationTargetFor,
+  platformCredentialScope as scopeOf,
+} from '@auto-swe/shared/lib/githubHostScope';
+import { PlatformCredentialHostError } from '@auto-swe/shared/lib/githubInstallation';
 import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -35,30 +41,56 @@ import type {
   ScmProvider,
 } from './types.js';
 
-/**
- * Which installation, and at which API host, a repository's credential comes
- * from. A null `installationId` on the ref means the singleton's installation,
- * which is what every repository meant before a deployment could span more than
- * one GitHub organization.
- */
-function installationTarget(
-  repo: RepoRef,
-  ghConfig: { apiUrl: string }
-): { installationId: string | null; apiUrl: string } {
-  // The host has to match the installation, not the repository. A repo with a
-  // GitHub Enterprise `apiUrl` override but no installation of its own takes
-  // its id from the singleton, and the singleton's installation lives on the
-  // singleton's host — sending that id to the enterprise host asks a different
-  // GitHub instance about an installation it has never heard of.
-  if (!repo.installationId) {
-    return { apiUrl: ghConfig.apiUrl, installationId: null };
-  }
-  return { apiUrl: repo.apiUrl ?? ghConfig.apiUrl, installationId: repo.installationId };
-}
-
 /** The web and API bases `repo` actually lives on. */
 function repoHosts(repo: RepoRef, ghConfig: { baseUrl: string; apiUrl: string }) {
   return { apiUrl: repo.apiUrl ?? ghConfig.apiUrl, baseUrl: repo.baseUrl ?? ghConfig.baseUrl };
+}
+
+type PlatformConfig = { baseUrl: string; apiUrl: string } & Partial<
+  Pick<Awaited<ReturnType<typeof resolveGitHubConfig>>, 'authMode' | 'appId' | 'appPrivateKey'>
+>;
+
+/**
+ * Where the platform credential may go for `repo` — the shared rule
+ * (`@auto-swe/shared/lib/githubHostScope`) over this ref's columns. The
+ * gateway, and the shared permission lookup, apply the same function.
+ */
+function platformCredentialScope(repo: RepoRef, ghConfig: PlatformConfig) {
+  return scopeOf(
+    { apiUrl: repo.apiUrl, baseUrl: repo.baseUrl, installationId: repo.installationId },
+    ghConfig
+  );
+}
+
+/** Which installation a repository's credential comes from — always on the instance's host. */
+function installationTarget(repo: RepoRef, ghConfig: { apiUrl: string }) {
+  return installationTargetFor(
+    { apiUrl: repo.apiUrl, baseUrl: repo.baseUrl, installationId: repo.installationId },
+    ghConfig
+  );
+}
+
+/** The failure for a platform credential that has nowhere valid to go. */
+function credentialHostMismatch(repo: RepoRef, ghConfig: PlatformConfig) {
+  const host = hostKey(repo.baseUrl ?? repo.apiUrl ?? ghConfig.baseUrl);
+  const instanceHost = hostKey(ghConfig.baseUrl);
+  return ApplicationFailure.nonRetryable(
+    `The repository is on ${host}, which needs a user's own saved token. The platform's credential is valid only on the instance's own GitHub host (${instanceHost}) and is not sent elsewhere. Or, if the platform's own credential belongs to ${host}, set the GitHub integration's web and API URLs to ${host}.`,
+    'REPO_CREDENTIAL_HOST_MISMATCH'
+  );
+}
+
+/**
+ * A repository whose web host and API host are different hosts: a token minted
+ * for one would be sent to the other (the API's token embedded in a clone URL,
+ * or a GitHub Enterprise token sent to the instance's web host).
+ */
+function hostMisconfigured(repo: RepoRef, ghConfig: PlatformConfig) {
+  const { apiUrl, baseUrl } = repoHosts(repo, ghConfig);
+  return ApplicationFailure.nonRetryable(
+    `The repository's web URL (${baseUrl}) and API URL (${apiUrl}) are on different hosts. Set both overrides to the same host, or neither.`,
+    'REPO_HOST_MISCONFIGURED'
+  );
 }
 
 /**
@@ -139,10 +171,21 @@ async function runToken(
       'REPO_HOST_NOT_ALLOWED'
     );
   }
-  return (
-    (await launcherToken(repo, ghConfig)) ??
-    (await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig)))
-  );
+  // Before any token, the user's included: web and API on different hosts
+  // would send one host's token to the other, and `cloneCredentials` embeds
+  // this token in the web host's clone URL.
+  const scope = platformCredentialScope(repo, ghConfig);
+  if (scope === 'misconfigured') {
+    throw hostMisconfigured(repo, ghConfig);
+  }
+  const own = await launcherToken(repo, ghConfig);
+  if (own) {
+    return own;
+  }
+  if (scope === 'mismatch') {
+    throw credentialHostMismatch(repo, ghConfig);
+  }
+  return requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
 }
 
 /**
@@ -297,6 +340,10 @@ export class GitHubScmProvider implements ScmProvider {
     if (!target.ok) {
       return `Cannot fetch CI logs — refusing to fetch '${logsUrl}': ${target.reason}`;
     }
+    // Web and API on different hosts: no token of any kind is attached.
+    if (repo && platformCredentialScope(repo, ghConfig) === 'misconfigured') {
+      return `Cannot fetch CI logs — the repository's web URL and API URL are on different hosts (${hostMisconfigured(repo, ghConfig).message})`;
+    }
     let githubToken: string | null = null;
     // A launcher's own token goes only to the repository's own hosts, which
     // are the ones checked against the allowlist when it was resolved — not to
@@ -309,7 +356,11 @@ export class GitHubScmProvider implements ScmProvider {
         githubToken = userToken;
       }
     }
-    if (!githubToken && target.trusted) {
+    // The platform credential goes only where it is valid: the instance's
+    // origins, and nowhere for a repository on another host.
+    const scope = repo ? platformCredentialScope(repo, ghConfig) : 'instance';
+    const platformTrusted = scope === 'instance' && target.trusted;
+    if (!githubToken && (platformTrusted || target.trusted)) {
       // The platform credential — an App JWT, when minting an installation token
       // — goes to this repository's own API host. Every other route to a token
       // checks the repository's overrides first; this one reaches the minting
@@ -323,6 +374,8 @@ export class GitHubScmProvider implements ScmProvider {
           return `Cannot fetch CI logs — repository URL ${hosts.url} is not on an allowed GitHub host`;
         }
       }
+    }
+    if (!githubToken && platformTrusted) {
       try {
         // `repo` is optional because a logs URL can arrive without one, but
         // when it is available the token must come from that repository's
@@ -384,21 +437,31 @@ export class GitHubScmProvider implements ScmProvider {
   }
 
   async repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup> {
-    // The platform token goes to the repository's API host; an unapproved one
-    // gets no token, which is "could not ask", never a denial.
+    // An unapproved or non-canonical API override gets no credential: "could
+    // not ask", never a denial — and a standing condition, not a transient one.
     if (!(await repositoryHostsAllowed({ githubApiUrl: repo.apiUrl })).ok) {
-      return { failure: 'credential-rejected', ok: false };
+      return { failure: 'host-mismatch', ok: false };
     }
     const ghConfig = await resolveGitHubConfig();
+    // Not the instance's credential, and not the instance's API: either would
+    // answer for a repository on another host.
+    const scope = platformCredentialScope(repo, ghConfig);
+    if (scope === 'mismatch' || scope === 'misconfigured') {
+      return { failure: 'host-mismatch', ok: false };
+    }
     const target = installationTarget(repo, ghConfig);
     let token: string;
     try {
       token = await resolveGitHubToken(ghConfig, target);
-    } catch {
+    } catch (err) {
       // No usable credential is "could not ask", not "no access". Resolving it
       // to a verdict would write a denial into the projection that GitHub never
       // made, and it would look identical to a real one.
-      return { failure: 'credential-rejected', ok: false };
+      return {
+        failure:
+          err instanceof PlatformCredentialHostError ? 'host-mismatch' : 'credential-rejected',
+        ok: false,
+      };
     }
     return fetchRepoPermission({
       apiUrl: target.apiUrl,

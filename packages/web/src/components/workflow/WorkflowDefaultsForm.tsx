@@ -33,10 +33,6 @@ interface FormState {
   budgetEpicOutputTokens: number;
   maxTddIterations: number;
   maxEvalIterations: number;
-  workspaceMemory: string;
-  workspaceCpus: number;
-  workspacePidsLimit: number;
-  workspaceImage: string;
   lessonRetrievalLimit: number;
   lessonRetrievalThreshold: number;
   evalHealthMaxFlakeRate: number;
@@ -72,10 +68,6 @@ const DEFAULTS: FormState = {
   maxTddIterations: 5,
   prBodyTemplate: '',
   prTitleTemplate: '',
-  workspaceCpus: 2,
-  workspaceImage: 'node:24-alpine',
-  workspaceMemory: '4g',
-  workspacePidsLimit: 512,
 };
 
 // Seed the flat form from the resolved GET payload, flattening budgetTiers and
@@ -105,10 +97,6 @@ function fromResolved(data: WorkflowDefaultsConfig): FormState {
     maxTddIterations: data.maxTddIterations ?? DEFAULTS.maxTddIterations,
     prBodyTemplate: data.prBodyTemplate ?? DEFAULTS.prBodyTemplate,
     prTitleTemplate: data.prTitleTemplate ?? DEFAULTS.prTitleTemplate,
-    workspaceCpus: data.workspaceCpus ?? DEFAULTS.workspaceCpus,
-    workspaceImage: data.workspaceImage ?? DEFAULTS.workspaceImage,
-    workspaceMemory: data.workspaceMemory ?? DEFAULTS.workspaceMemory,
-    workspacePidsLimit: data.workspacePidsLimit ?? DEFAULTS.workspacePidsLimit,
   };
 }
 
@@ -135,8 +123,6 @@ function toBody(form: FormState): WorkflowDefaultsInput {
     lessonRetrievalThreshold: form.lessonRetrievalThreshold,
     maxEvalIterations: form.maxEvalIterations,
     maxTddIterations: form.maxTddIterations,
-    workspaceCpus: form.workspaceCpus,
-    workspacePidsLimit: form.workspacePidsLimit,
   };
   if (form.branchPrefix) {
     body.branchPrefix = form.branchPrefix;
@@ -149,12 +135,6 @@ function toBody(form: FormState): WorkflowDefaultsInput {
   }
   if (form.defaultTeamSlug) {
     body.defaultTeamSlug = form.defaultTeamSlug;
-  }
-  if (form.workspaceMemory) {
-    body.workspaceMemory = form.workspaceMemory;
-  }
-  if (form.workspaceImage) {
-    body.workspaceImage = form.workspaceImage;
   }
   return body;
 }
@@ -314,17 +294,17 @@ export function WorkflowDefaultsForm() {
               hint="`signal` waits for a GitHub webhook. Use `poll` only where no inbound webhook can reach the gateway (local dev, air-gapped)."
               id="ci-wait-mode"
               label="Wait mode"
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 if (v === 'signal' || v === 'poll') {
                   setField('ciWaitMode', v);
                 }
               }}
+              options={[
+                { label: 'signal (webhook)', value: 'signal' },
+                { label: 'poll (query the CI API)', value: 'poll' },
+              ]}
               value={form.ciWaitMode}
-            >
-              <option value="signal">signal (webhook)</option>
-              <option value="poll">poll (query the CI API)</option>
-            </Select>
+            />
             <NumberField
               hint="Seconds between CI polls, at most 60 — the gateway clamps larger values. Only used in poll mode."
               id="ci-poll-interval"
@@ -369,42 +349,6 @@ export function WorkflowDefaultsForm() {
               min={1}
               onChange={num('maxEvalIterations')}
               value={form.maxEvalIterations}
-            />
-          </FieldGroup>
-
-          <FieldGroup label="Ephemeral workspace container">
-            <Input
-              hint="Docker memory limit, e.g. 4g."
-              id="workspace-memory"
-              label="Memory"
-              onChange={(e) => setField('workspaceMemory', e.target.value)}
-              placeholder="4g"
-              value={form.workspaceMemory}
-            />
-            <Input
-              hint="Default base image for workspace containers."
-              id="workspace-image"
-              label="Base image"
-              onChange={(e) => setField('workspaceImage', e.target.value)}
-              placeholder="node:24-alpine"
-              value={form.workspaceImage}
-            />
-            <NumberField
-              hint="CPU quota (cores)."
-              id="workspace-cpus"
-              label="CPUs"
-              min={0.1}
-              onChange={num('workspaceCpus')}
-              step={0.5}
-              value={form.workspaceCpus}
-            />
-            <NumberField
-              hint="Max process count (pids limit)."
-              id="workspace-pids"
-              label="PIDs limit"
-              min={1}
-              onChange={num('workspacePidsLimit')}
-              value={form.workspacePidsLimit}
             />
           </FieldGroup>
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { NodeInspector } from './NodeInspector';
 
@@ -28,6 +28,17 @@ const DECISION: SpecNode = {
 
 const STEP: SpecNode = { next: 'a', step: 'doThing', type: 'step' };
 
+/** Open a dropdown by its label and return the options it offers. */
+function openSelect(label: string) {
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(label, 'i') }));
+  return screen.getAllByRole('option');
+}
+
+function pick(label: string, option: string) {
+  openSelect(label);
+  fireEvent.click(screen.getByRole('option', { name: option }));
+}
+
 function renderInspector(node: SpecNode, nodeId: string, onChangeNode = vi.fn()) {
   render(
     <NodeInspector
@@ -49,7 +60,7 @@ describe('NodeInspector outgoing edges', () => {
   it('retargets a decision option in place, not as a top-level key', () => {
     const onChangeNode = renderInspector(DECISION, 'decide');
 
-    fireEvent.change(screen.getByLabelText('Ship it'), { target: { value: 'b' } });
+    pick('Ship it', 'b');
 
     expect(onChangeNode).toHaveBeenCalledTimes(1);
     const next = onChangeNode.mock.calls[0]?.[0] as SpecNode;
@@ -63,29 +74,30 @@ describe('NodeInspector outgoing edges', () => {
   it('shows an option edge as the port it belongs to, not the whole node', () => {
     renderInspector(DECISION, 'decide');
 
-    expect((screen.getByLabelText('Ship it') as HTMLSelectElement).value).toBe('a');
-    expect((screen.getByLabelText('Hold') as HTMLSelectElement).value).toBe('b');
+    expect(screen.getByRole('button', { name: /Ship it/i }).textContent).toContain('a');
+    expect(screen.getByRole('button', { name: /Hold/i }).textContent).toContain('b');
   });
 
   it('offers no "none" for a schema-required edge', () => {
-    renderInspector(DECISION, 'decide');
-
     // Every `humanDecision` edge is required, so clearing one is not a choice
     // the spec can represent — the dropdown must not offer it.
     for (const label of ['Ship it', 'Hold', 'On timeout']) {
-      const options = [...(screen.getByLabelText(label) as HTMLSelectElement).options].map(
-        (o) => o.value
-      );
+      // A fresh render per dropdown, so only one list is ever open.
+      cleanup();
+      renderInspector(DECISION, 'decide');
+      const options = openSelect(label).map((o) => o.textContent?.replace('✓', ''));
       expect(options).toEqual(['decide', 'a', 'b'].filter((id) => id !== 'decide'));
     }
   });
 
   it('still offers "none" for an optional edge, and clears it', () => {
     const onChangeNode = renderInspector(STEP, 'work');
-    const select = screen.getByLabelText('Next') as HTMLSelectElement;
-    expect([...select.options].map((o) => o.value)).toEqual(['', 'a', 'b']);
-
-    fireEvent.change(select, { target: { value: '' } });
+    expect(openSelect('Next').map((o) => o.textContent?.replace('✓', ''))).toEqual([
+      '— none —',
+      'a',
+      'b',
+    ]);
+    fireEvent.click(screen.getByRole('option', { name: '— none —' }));
 
     expect(onChangeNode).toHaveBeenCalledWith({ step: 'doThing', type: 'step' });
   });

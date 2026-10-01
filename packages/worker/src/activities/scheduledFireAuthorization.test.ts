@@ -44,6 +44,9 @@ const SCHEDULE_ID = 'sched-row-1';
 const OWNER = 'user-owner';
 const FIRE = { workflowId: `sched-${SCHEDULE_ID}-2026-09-24T14:00:00Z`, workRequestId: 'wr-1' };
 
+// A fire of a schedule that runs as `user-acting`: Temporal's stored arguments carry that launcher.
+const ACTING_FIRE = { ...FIRE, launchedById: 'user-acting' };
+
 type Person = { id: string; isActive: boolean; role: string };
 
 function schedule(owner: Person | null = null, actsAsUser: Person | null = null) {
@@ -51,7 +54,9 @@ function schedule(owner: Person | null = null, actsAsUser: Person | null = null)
     actsAsUser,
     createdBy: owner ?? { id: OWNER, isActive: true, role: 'LEAD' },
     id: SCHEDULE_ID,
+    isActive: true,
     repoId: 'repo-1',
+    teamId: 'team-1',
   };
 }
 
@@ -79,6 +84,7 @@ function repo(
       organization: { monthlyBudgetUsdCents: overrides.cap ?? null },
       orgId: 'org-1',
     },
+    teamId: 'team-1',
     type: 'git_repo',
   };
 }
@@ -128,6 +134,35 @@ describe('scheduledFireRefusal', () => {
     ).toMatchObject({ reason: 'schedule-missing', scheduleId: orphanId });
   });
 
+  it('refuses when the schedule team no longer owns or shares the repository', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({
+      ...schedule(),
+      teamId: 'team-unshared',
+    });
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+      reason: 'schedule-team-unclaimed',
+    });
+  });
+
+  it('refuses a schedule whose team was deleted (null teamId)', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({ ...schedule(), teamId: null });
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+      reason: 'schedule-team-unclaimed',
+    });
+  });
+
+  it('lets a schedule owned by a team the repository is currently shared with fire', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({
+      ...schedule(),
+      teamId: 'team-sharer',
+    });
+    db.connection.findUnique.mockResolvedValueOnce({
+      ...repo(),
+      shares: [{ team: { memberships: [{ userId: OWNER }] }, teamId: 'team-sharer' }],
+    });
+    expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
+  });
+
   it('refuses when the owner was deleted or deactivated', async () => {
     db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({ ...schedule(), createdBy: null });
     expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'acting-user-missing' });
@@ -141,12 +176,14 @@ describe('scheduledFireRefusal', () => {
     const actsAs = { id: 'user-acting', isActive: true, role: 'LEAD' };
     // The creator is still a member; the acting user is not.
     db.scheduledWorkRequest.findFirst.mockResolvedValueOnce(schedule(null, actsAs));
-    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'not-a-team-member' });
+    expect(await scheduledFireRefusal(db, ACTING_FIRE)).toMatchObject({
+      reason: 'not-a-team-member',
+    });
 
     db.scheduledWorkRequest.findFirst.mockResolvedValueOnce(schedule(null, actsAs));
     db.connection.findUnique.mockResolvedValueOnce(repo({ members: ['user-acting'] }));
     db.organizationMembership.findUnique.mockResolvedValueOnce({ orgId: 'org-1' });
-    expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
+    expect(await scheduledFireRefusal(db, ACTING_FIRE)).toBeNull();
   });
 
   it('refuses when the acting user was deactivated, even if the creator is fine', async () => {
@@ -154,6 +191,28 @@ describe('scheduledFireRefusal', () => {
       schedule(null, { id: 'user-acting', isActive: false, role: 'LEAD' })
     );
     expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'acting-user-missing' });
+  });
+
+  it('refuses when the Temporal arguments name a different launcher than the row', async () => {
+    const actsAs = { id: 'user-acting', isActive: true, role: 'LEAD' };
+    // Row says user-acting, Temporal still holds the firer of a failed takeover.
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce(schedule(null, actsAs));
+    expect(await scheduledFireRefusal(db, { ...FIRE, launchedById: 'user-firer' })).toMatchObject({
+      reason: 'launcher-out-of-sync',
+      scheduleId: SCHEDULE_ID,
+    });
+    // Row says user-acting, Temporal carries no launcher.
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce(schedule(null, actsAs));
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'launcher-out-of-sync' });
+    // Row has no acting user (legacy), Temporal still names one.
+    expect(await scheduledFireRefusal(db, { ...FIRE, launchedById: 'user-firer' })).toMatchObject({
+      reason: 'launcher-out-of-sync',
+    });
+  });
+
+  it('refuses a fire of a schedule whose row is inactive', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({ ...schedule(), isActive: false });
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'schedule-inactive' });
   });
 
   it('refuses when the owner has left the repository’s team', async () => {

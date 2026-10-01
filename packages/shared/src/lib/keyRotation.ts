@@ -89,19 +89,16 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
   gitHubConfig: [
     fieldsFor('token'),
     fieldsFor('webhookSecret'),
-    fieldsFor('oauthClientSecret'),
     fieldsFor('appClientSecret'),
     fieldsFor('appPrivateKey'),
   ],
-  googleOAuthConfig: [fieldsFor('clientSecret')],
+  gitHubHostWebhookSecret: [fieldsFor('secret')],
   issueTrackerConfig: [fieldsFor('apiToken'), fieldsFor('webhookSecret')],
   knowledgeBaseConfig: [fieldsFor('apiToken')],
-  oktaOAuthConfig: [fieldsFor('clientSecret')],
   // The one irregular row: its version and last-four columns are unprefixed.
   providerCredential: [{ ...fieldsFor('apiKey'), keyVersion: 'keyVersion', lastFour: 'lastFour' }],
   slackConfig: [fieldsFor('clientSecret'), fieldsFor('signingSecret'), fieldsFor('botToken')],
   slackWorkspace: [fieldsFor('botToken')],
-  storageConfig: [fieldsFor('awsSecretAccessKey')],
 };
 
 export interface RotationReport {

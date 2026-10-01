@@ -3,10 +3,10 @@
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
+import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Select } from '@/components/ui/Select';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { useTeamStore } from '@/stores/teamStore';
 
@@ -66,19 +66,15 @@ export function NewRequestModal({
               title="No active templates."
             />
           ) : (
-            <Select
+            <Combobox
+              emptyMessage="No templates match"
               hint={selected?.description || 'Choose the workflow to run'}
               label="Template"
-              onChange={(e) => setTemplateId(e.target.value)}
+              onChange={setTemplateId}
+              options={runnable.map((t) => ({ label: t.name, value: t.id }))}
+              placeholder="Choose a template…"
               value={templateId}
-            >
-              <option value="">Choose a template…</option>
-              {runnable.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
+            />
           )}
         </QueryBoundary>
 

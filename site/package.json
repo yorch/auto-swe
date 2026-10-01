@@ -11,15 +11,15 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "@astrojs/starlight": "0.42.0",
+    "@astrojs/starlight": "0.42.5",
     "@fontsource-variable/overpass": "5.3.0",
     "@fontsource-variable/overpass-mono": "5.3.0",
-    "astro": "7.3.2",
+    "astro": "7.3.5",
     "astro-mermaid": "2.1.0",
     "mermaid": "11.17.2",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5"
   },
   "devDependencies": {
-    "tsx": "4.23.12"
+    "tsx": "4.23.15"
   }
 }

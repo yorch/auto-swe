@@ -5,6 +5,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -275,31 +276,26 @@ function CredentialModal({
             <Select
               id="scope"
               label="Scope"
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 if (v === 'GLOBAL' || v === 'TEAM') {
                   setScope(v);
                 }
               }}
+              options={[
+                { label: 'Global (used by every team unless overridden)', value: 'GLOBAL' },
+                { label: 'Team', value: 'TEAM' },
+              ]}
               value={scope}
-            >
-              <option value="GLOBAL">Global (used by every team unless overridden)</option>
-              <option value="TEAM">Team</option>
-            </Select>
+            />
             {scope === 'TEAM' && (
-              <Select
+              <Combobox
                 id="teamId"
                 label="Team"
-                onChange={(e) => setTeamId(e.target.value)}
+                onChange={(v) => setTeamId(v)}
+                options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
+                placeholder="Choose a team…"
                 value={teamId}
-              >
-                <option value="">Choose a team…</option>
-                {(teams ?? []).map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </Select>
+              />
             )}
           </>
         )}

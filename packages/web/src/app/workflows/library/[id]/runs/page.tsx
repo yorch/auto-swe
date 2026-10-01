@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useMemo, useState } from 'react';
+import { use, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -46,33 +46,25 @@ export default function TemplateRunsPage({ params }: PageProps) {
   const [statusFilter, setStatusFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
 
-  // Status is filtered server-side so pagination and the total reflect it;
-  // the run list endpoint takes the template as a filter too.
+  // Both filters run server-side, so the total and the pagination describe
+  // the filtered set. This reads /workflow-runs (not the template-scoped
+  // endpoint) so a viewer who reaches the runs through a shared repository
+  // still sees them.
   const { data, error, isError, isLoading } = useAllWorkflowRuns({
     limit: PAGE_SIZE,
     offset,
     status: isRunStatus(statusFilter) ? statusFilter : undefined,
     templateId: id ?? undefined,
+    templateVersion: versionFilter ? Number(versionFilter) : undefined,
   });
 
   const rows = data?.data ?? [];
   const total = data?.meta.total ?? 0;
 
-  const versions = useMemo(() => {
-    const seen = new Set<number>();
-    for (const r of rows) {
-      seen.add(r.templateVersion);
-    }
-    return [...seen].sort((a, b) => b - a);
-  }, [rows]);
-
-  const filteredRows = useMemo(
-    () =>
-      // Version stays a filter over the current page: the endpoint has no
-      // version parameter.
-      rows.filter((r) => !versionFilter || r.templateVersion === Number(versionFilter)),
-    [rows, versionFilter]
-  );
+  // Every version the template has, not just those on the loaded page. The
+  // template query can fail for a shared-repository viewer; the dropdown then
+  // has nothing to list and stays hidden, and the runs still load.
+  const versions = (template?.versions ?? []).map((v) => v.version).sort((a, b) => b - a);
 
   const handlePrev = () => setOffset(Math.max(0, offset - PAGE_SIZE));
   const handleNext = () => setOffset(offset + PAGE_SIZE);
@@ -102,37 +94,29 @@ export default function TemplateRunsPage({ params }: PageProps) {
           compact
           id="run-status-filter"
           label="Status"
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
+          onChange={(v) => {
+            setStatusFilter(v);
             setOffset(0);
           }}
+          options={RUN_STATUSES.map((s) => ({ label: s.label, value: s.value }))}
           value={statusFilter}
-        >
-          {RUN_STATUSES.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </Select>
+        />
         {versions.length > 1 && (
           <Select
             className="w-auto"
             compact
             id="run-version-filter"
             label="Template version"
-            onChange={(e) => {
-              setVersionFilter(e.target.value);
+            onChange={(v) => {
+              setVersionFilter(v);
               setOffset(0);
             }}
+            options={[
+              { label: 'All versions', value: '' },
+              ...versions.map((v) => ({ label: `v${v}`, value: String(v) })),
+            ]}
             value={versionFilter}
-          >
-            <option value="">All versions</option>
-            {versions.map((v) => (
-              <option key={v} value={v}>
-                v{v}
-              </option>
-            ))}
-          </Select>
+          />
         )}
         {(statusFilter || versionFilter) && (
           <Button
@@ -146,12 +130,6 @@ export default function TemplateRunsPage({ params }: PageProps) {
           >
             Clear filters
           </Button>
-        )}
-        {versionFilter && (
-          <span className="font-mono text-[11px] text-paper-500">
-            {filteredRows.length} of {rows.length} on this page shown — the version filter applies
-            to the current page only
-          </span>
         )}
       </div>
 
@@ -172,7 +150,7 @@ export default function TemplateRunsPage({ params }: PageProps) {
               <Th align="right">Duration</Th>
             </THead>
             <tbody>
-              {filteredRows.map((r) => (
+              {rows.map((r) => (
                 <TRow className="hover:bg-ink-700/40" hover key={r.id}>
                   <Td className="px-4 py-3">
                     <Link className="text-paper-100 hover:text-ember-400" href={`/runs/${r.id}`}>
@@ -215,13 +193,13 @@ export default function TemplateRunsPage({ params }: PageProps) {
                   </Td>
                 </TRow>
               ))}
-              {filteredRows.length === 0 && (
+              {rows.length === 0 && (
                 <TableStatusRow colSpan={5}>
                   <EmptyState
                     title={
-                      rows.length === 0 && !statusFilter
-                        ? 'No runs yet — start a new request to trigger one.'
-                        : 'No runs on this page match the current filters.'
+                      statusFilter || versionFilter
+                        ? 'No runs match the current filters.'
+                        : 'No runs yet — start a new request to trigger one.'
                     }
                   />
                 </TableStatusRow>

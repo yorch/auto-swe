@@ -14,7 +14,9 @@
  */
 import { prisma } from '@auto-swe/shared/db';
 import { resolveUserCredentialPolicy } from '@auto-swe/shared/lib/connectionCredential';
+import { instanceIsGithubDotCom } from '@auto-swe/shared/lib/githubHostScope';
 import {
+  accountApiToken,
   GITHUB_ACCOUNT_API_URL,
   verifyGithubLoginOwnership,
 } from '@auto-swe/shared/lib/githubIdentityCheck';
@@ -32,7 +34,6 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { log } from '@temporalio/activity';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { resolveGitHubToken } from '../lib/githubAuth.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 
 export interface SyncRepoAccessInput {
@@ -154,8 +155,8 @@ export async function syncRepoAccess(
     // A plain rename is harmless, because GitHub redirects the old name to the
     // same account id.
     const ghConfig = await resolveGitHubConfig();
-    const platformToken = await resolveGitHubToken(ghConfig).catch(() => null);
-    if (!platformToken) {
+    const platformToken = await accountApiToken(ghConfig);
+    if (!platformToken && instanceIsGithubDotCom(ghConfig)) {
       // Without a credential the ownership check degrades to an unauthenticated
       // `GET /users/…`, capped at 60 requests an hour — so on any real
       // deployment it rate-limits, every answer reads as `unverifiable`, and
@@ -182,11 +183,13 @@ export async function syncRepoAccess(
         }
         const ownership = await verifyGithubLoginOwnership(prisma, {
           // A fixed github.com base, not the repository's host and not the
-          // instance's. The stored account id comes from better-auth's built-in
-          // `github` provider, which always talks to github.com, while both of
-          // the other two are admin-settable to a GitHub Enterprise base — and
-          // asking Enterprise about a github.com account id compares different
-          // id spaces, which reads as a mismatch and CLEARS a valid login.
+          // instance's. A stored github.com account id comes from better-auth's
+          // built-in `github` provider, while both of the other two are
+          // admin-settable to a GitHub Enterprise base — and asking Enterprise
+          // about a github.com account id compares different id spaces, which
+          // reads as a mismatch and CLEARS a valid login. Accounts created by
+          // GHE sign-in carry a `{host}:{id}` id and are skipped inside
+          // `verifyGithubLoginOwnership` for the same reason.
           apiUrl: GITHUB_ACCOUNT_API_URL,
           login: user.githubLogin,
           token: platformToken,

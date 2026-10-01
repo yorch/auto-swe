@@ -63,6 +63,60 @@ API keys are AES-256-GCM encrypted with a per-record 12-byte nonce. The master k
 
 The worker keeps a process-local 30-second cache of resolved `Agent`, `ProviderCredential`, and `EmbeddingConfig` rows (`packages/shared/src/config/cache.ts`). Tune the TTL with `CONFIG_CACHE_TTL_MS`. The cache holds decrypted plaintext API keys for its TTL window — if you rotate a credential, expect up to `CONFIG_CACHE_TTL_MS` of lag before workers pick it up.
 
+### Model catalog
+
+`model_catalog_entries` holds one row per `<provider>/<model-id>` spec: its `kind` (`CHAT` or
+`EMBEDDING`), input and output price in USD per million tokens, and a `status` (`ACTIVE`,
+`DEPRECATED`, `RETIRED`) that governs which models are offered, never whether one is priced. The
+catalog is global — prices are facts about a vendor, not per-team policy — and a `0`/`0` row is a
+known, free model such as a self-hosted endpoint, distinct from an unknown one.
+
+`syncModelCatalog` seeds it at gateway startup from `BUILTIN_MODELS`
+(`packages/shared/src/lib/builtinModels.ts`). Code owns a built-in row until an admin edits it:
+
+| Row state | On each startup |
+|---|---|
+| Missing | Created as built-in |
+| Built-in, untouched | Kept in step with code, so a price corrected in code reaches every deployment |
+| Built-in, `isCustomized` | Left as the admin set it |
+| An admin's own row for a model that later ships built-in | Adopted as built-in and customized, keeping the admin's prices |
+
+Nothing is deleted: a model dropped from `BUILTIN_MODELS` stays priced for the runs that used it.
+
+**Pricing reads the catalog.** Each LLM and embedding call is priced from its spec's catalog row,
+falling back to `BUILTIN_MODELS` when the catalog has none — so a model is priced before the gateway
+has seeded the catalog. The lookup is exact: a near-miss such as `gpt-5-5` for `gpt-5.5` is unknown
+and priced at $0, never at its neighbour's rate. A row with a negative or non-finite price is
+skipped. The worker reads the catalog once per config-cache window, so an edit lands within
+`CONFIG_CACHE_TTL_MS`; a call's cost is fixed when it is recorded, so an edit never reprices history.
+If the catalog cannot be read, pricing uses the last good read, else the built-in table, and retries
+after one window — a pricing failure never fails a call.
+
+**Setting a price** — for a negotiated rate, a self-hosted model (`0`/`0`), or a model the built-in
+table lacks — goes through the catalog API under `/api/v1/platform/model-catalog` (recipes in
+[Scripted operations](#scripted-operations)). Any signed-in user can read the catalog; every write
+is ADMIN-only, because a price decides what USD budgets see, and is recorded in the config audit log
+as a `ModelCatalogEntry`.
+
+| Route | Effect |
+|---|---|
+| `GET /model-catalog` | Lists the catalog. `?kind=CHAT\|EMBEDDING`; RETIRED rows only with `?includeRetired=true`. A built-in row carries `builtin`, the values code ships, so a customized row shows what it diverges from |
+| `POST /model-catalog` | Adds a model. A spec already in the catalog is a `409` |
+| `PUT /model-catalog/:id` | Edits prices, `kind`, `status`, `displayName` or `notes` — never `provider` or `modelId`. An edit to a built-in row marks it customized, so startup seeding keeps it |
+| `POST /model-catalog/:id/reset` | Restores a built-in row to the values code ships and clears customized |
+| `DELETE /model-catalog/:id` | Removes a custom row. A built-in row is a `409` — startup would re-create it; set it RETIRED |
+| `GET /model-catalog/unpriced` | Specs in use that nothing prices, each with where it is used and the spec it most likely meant |
+
+**Unpriced models are reported, never refused.** Saving an agent version or the embedding config
+returns `catalogWarnings` beside `scanWarnings` when its model is not priced (with a did-you-mean
+such as `gpt-5-5` → `gpt-5.5`), is DEPRECATED or RETIRED, or is the wrong `kind`. The save still
+succeeds: a model released today, a self-hosted endpoint or a pinned version must not be blocked on a
+price. `/model-catalog/unpriced` collects the same gap across every active agent, the embedding
+config, and the models recorded LLM calls used in the last 30 days.
+
+`MODEL_PRICE_<PROVIDER>_<MODEL>` environment overrides are not read. The worker names any that are
+set at startup.
+
 ### Bootstrap (fresh deployment)
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
@@ -222,6 +276,24 @@ curl -X PUT http://localhost:8080/api/v1/platform/credentials/<credential-id> \
 # Probe a credential (issues a list-models HTTP call).
 curl -X POST http://localhost:8080/api/v1/platform/credentials/<credential-id>/test \
   -H "Authorization: Bearer $TOKEN"
+
+# Price a self-hosted model as free.
+curl -X POST http://localhost:8080/api/v1/platform/model-catalog \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"provider": "ollama", "modelId": "llama-4", "inputUsdPerMTok": 0, "outputUsdPerMTok": 0}'
+
+# Apply a negotiated rate to a built-in model (marks it customized), then undo it.
+curl -X PUT http://localhost:8080/api/v1/platform/model-catalog/<entry-id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"inputUsdPerMTok": 3.5, "outputUsdPerMTok": 17}'
+curl -X POST http://localhost:8080/api/v1/platform/model-catalog/<entry-id>/reset \
+  -H "Authorization: Bearer $TOKEN"
+
+# Which models in use have no price?
+curl http://localhost:8080/api/v1/platform/model-catalog/unpriced \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 Team owners use the parallel team-scoped routes — `/api/v1/teams/<teamId>/agent-library` for agent
@@ -246,6 +318,7 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 | Worker integration | `packages/worker/src/lib/models.ts` | Async `getModel` / `getModelSpec` (per-role chat models) |
 | Embeddings | `packages/worker/src/lib/embeddings.ts` | Reads the singleton `EmbeddingConfig` via `resolveEmbeddingConfig` |
 | Gateway routes | `packages/gateway/src/routes/modelConfig.ts` | Admin + team-scoped credential CRUD, embedding-config CRUD, audit log, credential probe |
+| Gateway routes | `packages/gateway/src/routes/modelCatalog.ts` + `lib/modelCatalogService.ts` | Model catalog CRUD and reset, the unpriced report, and the `catalogWarnings` agent and embedding saves return |
 | Dashboard | `packages/web/src/app/studio/models/page.tsx`, `packages/web/src/components/modelConfig/*` | Tabbed admin UI (Roles / Credentials / Embeddings / Audit log) + team detail integration |
 
 ---
@@ -269,11 +342,19 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 - **The config cache means edits are eventually consistent.** Model config is cached in-process with
   a ~30 s TTL (`CONFIG_CACHE_TTL_MS`) and gateway and worker are separate processes, so the two can
   briefly disagree after an edit. A `generate()` call already in flight keeps the model it bound.
-- **Pricing is keyed on the resolved `provider/model` spec.** A model with no `BUILTIN_MODELS`
-  entry and no `MODEL_PRICE_*` override records usage at **zero cost** rather than failing — the
-  span carries `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
+- **Pricing is keyed on the resolved `provider/model` spec.** A model with no catalog row and no
+  `BUILTIN_MODELS` entry records usage at **zero cost** rather than failing — the span carries
+  `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
   unpriced model is still capped there, but every USD-denominated limit — the organization monthly
   budget, channel budgets and the channel hold estimate — reads its spend as $0 and never stops it.
+- **The model catalog has no admin page.** Prices are managed through the catalog API (see
+  [Model catalog](#model-catalog)); the dashboard's model pickers do not read the catalog.
+- **Unpriced-model detection is exact-match plus a heuristic.** The did-you-mean only proposes a
+  priced spec that differs by `.`/`-` or case, or the single nearest spec from the same provider
+  within two edits; a model it cannot match is reported with no suggestion.
+- **Prices are base rates.** Prompt-caching multipliers, batch discounts, data-residency and
+  fast-mode premiums, and long-context surcharges are not modelled, so a call that used them is
+  recorded at the base rate.
 - **Credential resolution has no fallback past GLOBAL.** The TEAM → ORGANIZATION → GLOBAL cascade
   ends there; a missing GLOBAL row is a `ConfigMissingError`, not a silent skip.
 - **Embeddings are locked to 1536 dimensions.** `memory_items.embedding` is `vector(1536)`, so a

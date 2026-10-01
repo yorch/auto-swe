@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -252,26 +253,20 @@ export function RepoDependenciesModal({
               <section className="border-ink-600 border-t pt-4">
                 <h4 className="mb-2 font-semibold text-sm">Add a dependency</h4>
                 <div className="flex items-end gap-2">
-                  <Select
+                  <Combobox
                     className="flex-1"
                     label="This repo depends on"
-                    onChange={(e) => setToRepoId(e.target.value)}
+                    onChange={setToRepoId}
+                    options={candidates.map((r) => ({ label: connectionLabel(r), value: r.id }))}
+                    placeholder="Select a repository…"
                     value={toRepoId}
-                  >
-                    <option value="">Select a repository…</option>
-                    {candidates.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {connectionLabel(r)}
-                      </option>
-                    ))}
-                  </Select>
-                  <Select label="Kind" onChange={(e) => setKind(e.target.value)} value={kind}>
-                    {EDGE_KINDS.map((k) => (
-                      <option key={k} value={k}>
-                        {k}
-                      </option>
-                    ))}
-                  </Select>
+                  />
+                  <Select
+                    label="Kind"
+                    onChange={setKind}
+                    options={EDGE_KINDS.map((k) => ({ label: k, value: k }))}
+                    value={kind}
+                  />
                   <Button
                     disabled={!toRepoId || create.isPending}
                     onClick={() =>

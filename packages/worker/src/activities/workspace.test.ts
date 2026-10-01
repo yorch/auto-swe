@@ -21,30 +21,20 @@ vi.mock('../lib/execUtils.js', async (importOriginal) => {
   };
 });
 
-// Mock the workflow-defaults resolver so `createWorkspace` doesn't hit a real
-// DB — it now reads container caps + the default base image from here.
+// `createWorkspace` reads container caps, the default base image and the
+// metadata-blocking policy from the environment-backed infra resolver.
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
-  resolveWorkflowDefaults: vi.fn(async () => ({
-    workspaceCpus: 2,
-    workspaceImage: 'node:24-alpine',
-    workspaceMemory: '4g',
-    workspacePidsLimit: 512,
+  resolveWorkspaceInfra: vi.fn(() => ({
+    blockMetadata: true,
+    cpus: 2,
+    image: 'node:24-alpine',
+    memory: '4g',
+    metadataBlockImage: 'alpine:3.20',
+    pidsLimit: 512,
   })),
 }));
 
-// Backs the config registry: no rows means the metadata-blocking settings
-// resolve to their definition defaults (blocking on, alpine:3.20).
-vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { configSetting: { findMany: vi.fn(async () => []) } },
-}));
-
-// `createWorkspace` resolves settings through the activity's request context,
-// which needs a Temporal activity to exist; outside one it returns an empty ctx.
-vi.mock('../lib/config/contextLookup.js', () => ({
-  currentRequestContext: vi.fn(async () => ({})),
-}));
-
-import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { execShellAsync, spawnWithStdinAsync } from '../lib/execUtils.js';
 import {
   authedGitScript,
@@ -156,12 +146,14 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     await ws.destroy();
   });
 
-  it('applies the resolved workspace caps + default image from workflow defaults', async () => {
-    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({
-      workspaceCpus: 6,
-      workspaceImage: 'custom/base:1.2',
-      workspaceMemory: '9g',
-      workspacePidsLimit: 999,
+  it('applies the workspace caps + default image from the environment', async () => {
+    vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
+      blockMetadata: true,
+      cpus: 6,
+      image: 'custom/base:1.2',
+      memory: '9g',
+      metadataBlockImage: 'alpine:3.20',
+      pidsLimit: 999,
     } as never);
 
     const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main');

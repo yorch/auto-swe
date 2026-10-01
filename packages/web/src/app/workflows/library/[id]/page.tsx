@@ -19,6 +19,7 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Slider } from '@/components/ui/Slider';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
@@ -321,33 +322,24 @@ function ExperimentCard({
         <Select
           compact
           label="Experiment version"
-          onChange={(e) => setExpVer(e.target.value ? Number(e.target.value) : null)}
-          value={expVer ?? ''}
-        >
-          <option value="">— none —</option>
-          {nonActive.map((v) => (
-            <option key={v.id} value={v.version}>
-              v{v.version}
-            </option>
-          ))}
-        </Select>
+          onChange={(v) => setExpVer(v ? Number(v) : null)}
+          options={[
+            { label: '— none —', value: '' },
+            ...nonActive.map((v) => ({ label: `v${v.version}`, value: String(v.version) })),
+          ]}
+          value={expVer == null ? '' : String(expVer)}
+        />
         {expVer && (
           <div className="space-y-1">
-            <label className="label-mono block" htmlFor="exp-split">
-              Traffic split (% to experiment)
-            </label>
-            <div className="flex items-center gap-3">
-              <input
-                className="h-1.5 flex-1 cursor-pointer accent-ember-400"
-                id="exp-split"
-                max={50}
-                min={1}
-                onChange={(e) => setSplit(Number(e.target.value))}
-                type="range"
-                value={split}
-              />
-              <span className="w-10 text-right font-mono text-sm text-paper-100">{split}%</span>
-            </div>
+            <Slider
+              formatValue={(v) => `${v}%`}
+              id="exp-split"
+              label="Traffic split (% to experiment)"
+              max={50}
+              min={1}
+              onChange={setSplit}
+              value={split}
+            />
             <div className="font-mono text-[10px] text-paper-500">
               v{activeVersion} gets {100 - split}% · v{expVer} gets {split}%
             </div>

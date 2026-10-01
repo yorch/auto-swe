@@ -46,6 +46,9 @@ export type ScheduledFireRefusalReason =
   | 'schedule-missing'
   | 'acting-user-missing'
   | 'repository-inactive'
+  | 'schedule-team-unclaimed'
+  | 'schedule-inactive'
+  | 'launcher-out-of-sync'
   | 'gate-unreadable'
   | 'not-an-org-member'
   | 'org-budget-exceeded'
@@ -79,7 +82,7 @@ const ADVISORY_LOG: AccessLog = {
  */
 export async function scheduledFireRefusal(
   db: PrismaClient,
-  input: { workflowId: string; workRequestId?: string }
+  input: { workflowId: string; workRequestId?: string; launchedById?: string | null }
 ): Promise<ScheduledFireRefusal | null> {
   if (!input.workRequestId || !input.workflowId.startsWith('sched-')) {
     return null;
@@ -90,7 +93,13 @@ export async function scheduledFireRefusal(
       actsAsUser: { select: { id: true, isActive: true, role: true } },
       createdBy: { select: { id: true, isActive: true, role: true } },
       id: true,
+      // Deactivation (an unshared team, a moved repository) pauses the Temporal
+      // schedule best-effort; the row is what the worker can still trust.
+      isActive: true,
       repoId: true,
+      // The team the schedule belongs to; checked against the repository's
+      // current owner and sharers below.
+      teamId: true,
     },
     where: { workRequestId: input.workRequestId },
   });
@@ -119,6 +128,16 @@ export async function scheduledFireRefusal(
     scheduleId: schedule.id,
   });
 
+  // A deactivated schedule must not fire, whatever Temporal still says. The
+  // gateway pauses the Temporal schedule when it deactivates a row, but that
+  // call can fail; this is the backstop that makes the row authoritative.
+  if (!schedule.isActive) {
+    return refuse(
+      'schedule-inactive',
+      'the schedule is inactive; re-activate it (or delete its Temporal schedule) to resume'
+    );
+  }
+
   // Every fire acts for someone. A schedule runs as the user who last defined
   // what it does (`actsAsUserId`); one from before that was recorded has no such
   // user and runs on the platform credential, so its creator is the person whose
@@ -134,6 +153,19 @@ export async function scheduledFireRefusal(
       'the schedule has no active user to run as; an admin or team lead must re-activate it to take it over'
     );
   }
+  // The identity this execution launched as comes from the Temporal schedule's
+  // stored arguments; the authorization below judges the row's. They are written
+  // together, but a failed sync (a takeover whose rollback could not reach
+  // Temporal, a PATCH whose restore failed) leaves them naming different people,
+  // and then a run would use one person's token on the strength of another's
+  // access. Refuse until the schedule is saved again, which re-syncs both.
+  const launcher = input.launchedById ?? null;
+  if (launcher !== (actsAs?.id ?? null)) {
+    return refuse(
+      'launcher-out-of-sync',
+      "the schedule's stored identity is out of sync with its Temporal schedule; re-save the schedule (edit it or resume it) to repair it"
+    );
+  }
   const actor = { role: owner.role as Role, sub: owner.id };
   // The fire launches as `actsAs` (its `launchedById`), so that user's own saved
   // token is the identity whose access matters. A legacy schedule launches as
@@ -144,13 +176,19 @@ export async function scheduledFireRefusal(
   const repo = await db.connection.findUnique({
     select: {
       githubApiUrl: true,
+      githubUrl: true,
       id: true,
       installation: { select: { installationId: true, isActive: true } },
       isActive: true,
       organizationName: true,
       repoName: true,
       // Shared-team membership satisfies the launch decision, as at every launch.
-      shares: repoMembersSelect({ userId: true }, { userId: owner.id }).shares,
+      shares: {
+        select: {
+          ...repoMembersSelect({ userId: true }, { userId: owner.id }).shares.select,
+          teamId: true,
+        },
+      },
       team: {
         select: {
           memberships: { select: { userId: true }, where: { userId: owner.id } },
@@ -158,12 +196,31 @@ export async function scheduledFireRefusal(
           orgId: true,
         },
       },
+      teamId: true,
       type: true,
     },
     where: { id: schedule.repoId },
   });
   if (!repo?.isActive) {
     return refuse('repository-inactive', 'the repository is no longer active');
+  }
+
+  // The schedule's team must still have a claim on the repository: its owning
+  // team, or a team it is currently shared with. Deactivation on an unshare or
+  // a move is best-effort, and a create can race an unshare, so the row alone
+  // can name a team that no longer has one. A null `teamId` means the team was
+  // deleted (the schedule-team migration backfilled every earlier row, and the
+  // column is only nulled by `onDelete: SetNull`), so there is no team whose
+  // claim could be checked: it is unclaimed too, until an ADMIN or the owning
+  // team's lead re-saves it.
+  const claimed =
+    schedule.teamId != null &&
+    (repo.teamId === schedule.teamId || repo.shares.some((s) => s.teamId === schedule.teamId));
+  if (!claimed) {
+    return refuse(
+      'schedule-team-unclaimed',
+      "the schedule's team no longer owns or shares the repository; an admin or the owning team's lead must re-assign or delete it"
+    );
   }
 
   // Fail closed on an unreadable gate. The gateway can fall back to `off` for
@@ -275,6 +332,7 @@ export async function recordScheduledFireRefusal(
 export async function assertScheduledFireAuthorized(input: {
   workflowId: string;
   workRequestId?: string;
+  launchedById?: string | null;
 }): Promise<void> {
   const refusal = await scheduledFireRefusal(prisma, input);
   if (!refusal) {

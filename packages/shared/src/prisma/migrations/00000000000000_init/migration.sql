@@ -8,6 +8,9 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 CREATE TYPE "Role" AS ENUM ('ADMIN', 'LEAD', 'ENGINEER');
 
 -- CreateEnum
+CREATE TYPE "RepoPermissionLevel" AS ENUM ('NONE', 'READ', 'WRITE', 'ADMIN');
+
+-- CreateEnum
 CREATE TYPE "OrgRole" AS ENUM ('ORG_ADMIN', 'ORG_MEMBER');
 
 -- CreateEnum
@@ -39,6 +42,12 @@ CREATE TYPE "EvalSignalSource" AS ENUM ('GATE', 'ASSERT', 'REVIEW', 'MERGE', 'JU
 
 -- CreateEnum
 CREATE TYPE "channel_open_item_status" AS ENUM ('OPEN', 'RESOLVED', 'DISMISSED');
+
+-- CreateEnum
+CREATE TYPE "ModelKind" AS ENUM ('CHAT', 'EMBEDDING');
+
+-- CreateEnum
+CREATE TYPE "ModelStatus" AS ENUM ('ACTIVE', 'DEPRECATED', 'RETIRED');
 
 -- CreateEnum
 CREATE TYPE "ScannerPatternType" AS ENUM ('INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'CODE_SECURITY', 'SENSITIVE_FILE', 'PII');
@@ -144,6 +153,7 @@ CREATE TABLE "connections" (
     "github_url" TEXT,
     "github_api_url" TEXT,
     "team_id" UUID NOT NULL,
+    "installation_id" UUID,
     "executor_image" TEXT,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "consolidation_enabled" BOOLEAN NOT NULL DEFAULT true,
@@ -157,6 +167,73 @@ CREATE TABLE "connections" (
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "connections_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "repo_access" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "user_id" UUID NOT NULL,
+    "connection_id" UUID NOT NULL,
+    "permission" "RepoPermissionLevel" NOT NULL,
+    "checked_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "repo_access_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "connection_team_shares" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "connection_id" UUID NOT NULL,
+    "team_id" UUID NOT NULL,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "connection_team_shares_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "connection_credentials" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "connection_id" UUID NOT NULL,
+    "user_id" UUID NOT NULL,
+    "token_ciphertext" BYTEA NOT NULL,
+    "token_nonce" BYTEA NOT NULL,
+    "token_auth_tag" BYTEA NOT NULL,
+    "token_key_version" INTEGER NOT NULL,
+    "token_last_four" TEXT NOT NULL,
+    "api_origin" TEXT NOT NULL,
+    "web_origin" TEXT NOT NULL,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "connection_credentials_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "github_host_webhook_secrets" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "host" TEXT NOT NULL,
+    "secret_ciphertext" BYTEA NOT NULL,
+    "secret_nonce" BYTEA NOT NULL,
+    "secret_auth_tag" BYTEA NOT NULL,
+    "secret_key_version" INTEGER NOT NULL,
+    "secret_last_four" TEXT NOT NULL,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "github_host_webhook_secrets_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "github_installations" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "installation_id" TEXT NOT NULL,
+    "account_login" TEXT NOT NULL,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "github_installations_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -384,6 +461,7 @@ CREATE TABLE "users" (
     "email_verified" BOOLEAN NOT NULL DEFAULT false,
     "image" TEXT,
     "slack_id" TEXT,
+    "github_login" TEXT,
     "role" "Role" NOT NULL DEFAULT 'ENGINEER',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -398,7 +476,6 @@ CREATE TABLE "accounts" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "account_id" TEXT NOT NULL,
     "provider_id" TEXT NOT NULL,
-    "issuer" TEXT NOT NULL,
     "user_id" UUID NOT NULL,
     "access_token" TEXT,
     "refresh_token" TEXT,
@@ -471,7 +548,9 @@ CREATE TABLE "scheduled_work_requests" (
     "budget_tier" TEXT NOT NULL DEFAULT 'STANDARD',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_by_id" UUID,
+    "acts_as_user_id" UUID,
     "work_request_id" UUID,
+    "team_id" UUID,
     "last_fired_at" TIMESTAMPTZ,
     "next_fire_at" TIMESTAMPTZ,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -503,12 +582,16 @@ CREATE TABLE "workflow_runs" (
     "template_id" UUID NOT NULL,
     "template_version" INTEGER NOT NULL,
     "work_request_id" UUID,
+    "channel_id" UUID,
+    "connection_id" UUID,
     "spec_snapshot" JSONB NOT NULL,
     "context_snapshot" JSONB,
     "agent_versions" JSONB,
     "pinned_settings" JSONB,
     "is_canary" BOOLEAN NOT NULL DEFAULT false,
     "baseline_sha" TEXT,
+    "launched_by_id" UUID,
+    "temporal_run_id" TEXT,
     "status" "WorkflowRunStatus" NOT NULL DEFAULT 'RUNNING',
     "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "ended_at" TIMESTAMPTZ,
@@ -641,7 +724,8 @@ CREATE TABLE "eval_rubrics" (
 -- CreateTable
 CREATE TABLE "agent_traces" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "run_id" UUID NOT NULL,
+    "run_id" UUID,
+    "workflow_id" TEXT,
     "node_id" TEXT NOT NULL,
     "agent_key" TEXT NOT NULL,
     "attempt" INTEGER NOT NULL DEFAULT 1,
@@ -799,6 +883,25 @@ CREATE TABLE "embedding_configs" (
 );
 
 -- CreateTable
+CREATE TABLE "model_catalog_entries" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "provider" TEXT NOT NULL,
+    "model_id" TEXT NOT NULL,
+    "kind" "ModelKind" NOT NULL DEFAULT 'CHAT',
+    "display_name" TEXT,
+    "input_usd_per_mtok" DOUBLE PRECISION NOT NULL,
+    "output_usd_per_mtok" DOUBLE PRECISION NOT NULL,
+    "status" "ModelStatus" NOT NULL DEFAULT 'ACTIVE',
+    "notes" TEXT,
+    "is_built_in" BOOLEAN NOT NULL DEFAULT false,
+    "is_customized" BOOLEAN NOT NULL DEFAULT false,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "model_catalog_entries_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "github_config" (
     "id" TEXT NOT NULL DEFAULT 'default',
     "token_ciphertext" BYTEA,
@@ -811,12 +914,6 @@ CREATE TABLE "github_config" (
     "webhook_secret_auth_tag" BYTEA,
     "webhook_secret_key_version" INTEGER,
     "webhook_secret_last_four" TEXT,
-    "oauth_client_id" TEXT,
-    "oauth_client_secret_ciphertext" BYTEA,
-    "oauth_client_secret_nonce" BYTEA,
-    "oauth_client_secret_auth_tag" BYTEA,
-    "oauth_client_secret_key_version" INTEGER,
-    "oauth_client_secret_last_four" TEXT,
     "app_id" TEXT,
     "app_client_id" TEXT,
     "app_client_secret_ciphertext" BYTEA,
@@ -863,26 +960,6 @@ CREATE TABLE "slack_config" (
 );
 
 -- CreateTable
-CREATE TABLE "storage_config" (
-    "id" TEXT NOT NULL DEFAULT 'default',
-    "backend" TEXT NOT NULL DEFAULT 'inline',
-    "s3_bucket" TEXT,
-    "s3_region" TEXT,
-    "s3_endpoint" TEXT,
-    "s3_prefix" TEXT,
-    "s3_force_path_style" BOOLEAN NOT NULL DEFAULT false,
-    "aws_access_key_id" TEXT,
-    "aws_secret_access_key_ciphertext" BYTEA,
-    "aws_secret_access_key_nonce" BYTEA,
-    "aws_secret_access_key_auth_tag" BYTEA,
-    "aws_secret_access_key_key_version" INTEGER,
-    "aws_secret_access_key_last_four" TEXT,
-    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "storage_config_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "workflow_defaults" (
     "id" TEXT NOT NULL DEFAULT 'default',
     "branch_prefix" TEXT NOT NULL DEFAULT 'auto',
@@ -913,10 +990,6 @@ CREATE TABLE "workflow_defaults" (
     "budget_epic_output_tokens" INTEGER NOT NULL DEFAULT 5000000,
     "max_tdd_iterations" INTEGER NOT NULL DEFAULT 5,
     "max_eval_iterations" INTEGER NOT NULL DEFAULT 3,
-    "workspace_memory" TEXT NOT NULL DEFAULT '4g',
-    "workspace_cpus" DOUBLE PRECISION NOT NULL DEFAULT 2,
-    "workspace_pids_limit" INTEGER NOT NULL DEFAULT 512,
-    "workspace_image" TEXT NOT NULL DEFAULT 'node:24-alpine',
     "lesson_retrieval_limit" INTEGER NOT NULL DEFAULT 5,
     "lesson_retrieval_threshold" DOUBLE PRECISION NOT NULL DEFAULT 0.7,
     "ci_wait_mode" TEXT,
@@ -930,35 +1003,6 @@ CREATE TABLE "workflow_defaults" (
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "workflow_defaults_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "google_oauth_config" (
-    "id" TEXT NOT NULL DEFAULT 'default',
-    "client_id" TEXT,
-    "client_secret_ciphertext" BYTEA,
-    "client_secret_nonce" BYTEA,
-    "client_secret_auth_tag" BYTEA,
-    "client_secret_key_version" INTEGER,
-    "client_secret_last_four" TEXT,
-    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "google_oauth_config_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "okta_oauth_config" (
-    "id" TEXT NOT NULL DEFAULT 'default',
-    "issuer" TEXT,
-    "client_id" TEXT,
-    "client_secret_ciphertext" BYTEA,
-    "client_secret_nonce" BYTEA,
-    "client_secret_auth_tag" BYTEA,
-    "client_secret_key_version" INTEGER,
-    "client_secret_last_four" TEXT,
-    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "okta_oauth_config_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -1232,6 +1276,39 @@ CREATE INDEX "personal_access_tokens_user_id_idx" ON "personal_access_tokens"("u
 CREATE INDEX "connections_team_id_idx" ON "connections"("team_id");
 
 -- CreateIndex
+CREATE INDEX "connections_installation_id_idx" ON "connections"("installation_id");
+
+-- CreateIndex
+CREATE INDEX "repo_access_connection_id_idx" ON "repo_access"("connection_id");
+
+-- CreateIndex
+CREATE INDEX "repo_access_checked_at_idx" ON "repo_access"("checked_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "repo_access_user_id_connection_id_key" ON "repo_access"("user_id", "connection_id");
+
+-- CreateIndex
+CREATE INDEX "connection_team_shares_team_id_idx" ON "connection_team_shares"("team_id");
+
+-- CreateIndex
+CREATE INDEX "connection_team_shares_created_by_id_idx" ON "connection_team_shares"("created_by_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "connection_team_shares_connection_id_team_id_key" ON "connection_team_shares"("connection_id", "team_id");
+
+-- CreateIndex
+CREATE INDEX "connection_credentials_user_id_idx" ON "connection_credentials"("user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "connection_credentials_connection_id_user_id_key" ON "connection_credentials"("connection_id", "user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "github_host_webhook_secrets_host_key" ON "github_host_webhook_secrets"("host");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "github_installations_installation_id_key" ON "github_installations"("installation_id");
+
+-- CreateIndex
 CREATE INDEX "repo_dependencies_from_repo_id_idx" ON "repo_dependencies"("from_repo_id");
 
 -- CreateIndex
@@ -1319,10 +1396,13 @@ CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 CREATE UNIQUE INDEX "users_slack_id_key" ON "users"("slack_id");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "users_github_login_key" ON "users"("github_login");
+
+-- CreateIndex
 CREATE INDEX "accounts_user_id_idx" ON "accounts"("user_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "accounts_issuer_account_id_key" ON "accounts"("issuer", "account_id");
+CREATE UNIQUE INDEX "accounts_provider_id_account_id_key" ON "accounts"("provider_id", "account_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "sessions_token_key" ON "sessions"("token");
@@ -1352,7 +1432,13 @@ CREATE INDEX "scheduled_work_requests_template_id_idx" ON "scheduled_work_reques
 CREATE INDEX "scheduled_work_requests_created_by_id_idx" ON "scheduled_work_requests"("created_by_id");
 
 -- CreateIndex
+CREATE INDEX "scheduled_work_requests_acts_as_user_id_idx" ON "scheduled_work_requests"("acts_as_user_id");
+
+-- CreateIndex
 CREATE INDEX "scheduled_work_requests_work_request_id_idx" ON "scheduled_work_requests"("work_request_id");
+
+-- CreateIndex
+CREATE INDEX "scheduled_work_requests_team_id_idx" ON "scheduled_work_requests"("team_id");
 
 -- CreateIndex
 CREATE INDEX "workflow_artifacts_run_id_idx" ON "workflow_artifacts"("run_id");
@@ -1365,6 +1451,15 @@ CREATE INDEX "workflow_runs_template_id_idx" ON "workflow_runs"("template_id");
 
 -- CreateIndex
 CREATE INDEX "workflow_runs_work_request_id_idx" ON "workflow_runs"("work_request_id");
+
+-- CreateIndex
+CREATE INDEX "workflow_runs_launched_by_id_idx" ON "workflow_runs"("launched_by_id");
+
+-- CreateIndex
+CREATE INDEX "workflow_runs_channel_id_idx" ON "workflow_runs"("channel_id");
+
+-- CreateIndex
+CREATE INDEX "workflow_runs_connection_id_idx" ON "workflow_runs"("connection_id");
 
 -- CreateIndex
 CREATE INDEX "autonomy_decisions_run_id_idx" ON "autonomy_decisions"("run_id");
@@ -1407,6 +1502,9 @@ CREATE INDEX "eval_rubrics_scope_slug_idx" ON "eval_rubrics"("scope", "slug");
 
 -- CreateIndex
 CREATE INDEX "agent_traces_run_id_node_id_idx" ON "agent_traces"("run_id", "node_id");
+
+-- CreateIndex
+CREATE INDEX "agent_traces_created_at_idx" ON "agent_traces"("created_at");
 
 -- CreateIndex
 CREATE INDEX "workflow_steps_run_id_idx" ON "workflow_steps"("run_id");
@@ -1461,6 +1559,9 @@ CREATE INDEX "provider_credentials_team_id_idx" ON "provider_credentials"("team_
 
 -- CreateIndex
 CREATE INDEX "provider_credentials_org_id_idx" ON "provider_credentials"("org_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "model_catalog_entries_provider_model_id_key" ON "model_catalog_entries"("provider", "model_id");
 
 -- CreateIndex
 CREATE INDEX "config_settings_key_idx" ON "config_settings"("key");
@@ -1598,6 +1699,30 @@ ALTER TABLE "personal_access_tokens" ADD CONSTRAINT "personal_access_tokens_user
 ALTER TABLE "connections" ADD CONSTRAINT "connections_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "connections" ADD CONSTRAINT "connections_installation_id_fkey" FOREIGN KEY ("installation_id") REFERENCES "github_installations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "repo_access" ADD CONSTRAINT "repo_access_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "repo_access" ADD CONSTRAINT "repo_access_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "connection_team_shares" ADD CONSTRAINT "connection_team_shares_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "connection_team_shares" ADD CONSTRAINT "connection_team_shares_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "connection_team_shares" ADD CONSTRAINT "connection_team_shares_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "connection_credentials" ADD CONSTRAINT "connection_credentials_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "connection_credentials" ADD CONSTRAINT "connection_credentials_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "repo_dependencies" ADD CONSTRAINT "repo_dependencies_from_repo_id_fkey" FOREIGN KEY ("from_repo_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -1673,7 +1798,13 @@ ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_te
 ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_acts_as_user_id_fkey" FOREIGN KEY ("acts_as_user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "workflow_artifacts" ADD CONSTRAINT "workflow_artifacts_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1683,6 +1814,15 @@ ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_template_id_fkey" FORE
 
 -- AddForeignKey
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_launched_by_id_fkey" FOREIGN KEY ("launched_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "autonomy_decisions" ADD CONSTRAINT "autonomy_decisions_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1724,7 +1864,7 @@ ALTER TABLE "human_approvals" ADD CONSTRAINT "human_approvals_step_id_fkey" FORE
 ALTER TABLE "human_approvals" ADD CONSTRAINT "human_approvals_resolved_by_fkey" FOREIGN KEY ("resolved_by") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "workflow_templates" ADD CONSTRAINT "workflow_templates_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "workflow_templates" ADD CONSTRAINT "workflow_templates_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "autonomy_policies" ADD CONSTRAINT "autonomy_policies_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1800,4 +1940,3 @@ ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_template
 
 -- AddForeignKey
 ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-

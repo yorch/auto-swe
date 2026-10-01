@@ -26,36 +26,15 @@ function defineSetting<T>(def: SettingDefinition<T>): SettingDefinition<T> {
 const positiveInt = z.number().int().positive();
 
 /// A list of hosts a credential may be sent to, as `host` or `host:port`.
-const hostList = z
-  .array(
-    z
-      .string()
-      .regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'must be a lowercase host or host:port')
-      // A URL never carries the default port once parsed, so `host:443` would
-      // never match anything — refuse it rather than let it look set.
-      .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
-      .max(253)
-  )
-  .max(50);
+export const hostEntry = z
+  .string()
+  .regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'must be a lowercase host or host:port')
+  // A URL never carries the default port once parsed, so `host:443` would
+  // never match anything — refuse it rather than let it look set.
+  .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
+  .max(253);
+const hostList = z.array(hostEntry).max(50);
 const ratio = z.number().min(0).max(1);
-
-/// Parses a positive-integer env var, clamping to `max` rather than rejecting.
-/// A deployment that has always run `WORKER_MAX_CONCURRENT_ACTIVITIES=2000`
-/// must not silently drop to the built-in 10 on upgrade because the schema caps
-/// lower — that is a 200x throughput cut with no error. Clamp and say so.
-function positiveIntEnv(max: number) {
-  return (raw: string): number | undefined => {
-    const parsed = Number(raw);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      return undefined;
-    }
-    if (parsed > max) {
-      console.warn(`[config] clamping env value ${parsed} to the maximum ${max}.`);
-      return max;
-    }
-    return parsed;
-  };
-}
 
 export const SETTING_DEFINITIONS = {
   // ── Channel assistant ──────────────────────────────────────────────────────
@@ -173,7 +152,7 @@ export const SETTING_DEFINITIONS = {
   'github.repositoryHosts': defineSetting({
     defaultValue: [],
     description:
-      "Hosts a repository's web or API URL override may point at, beyond the GitHub hosts configured on the GitHub integration (comma-separated host or host:port; github.com also covers api.github.com). The platform credential is sent to a repository's own hosts, so a team lead may only point a repository at a host listed here — and a repository already pointing elsewhere gets no credential until its host is listed.",
+      "Hosts a repository's web or API URL override may point at, beyond the GitHub hosts configured on the GitHub integration (comma-separated host or host:port; github.com also covers api.github.com). A team lead may only point a repository at an approved host, and a repository already pointing elsewhere is refused outright until its host is listed. Listing a host does not send it the platform credential: that never leaves the instance's own host, so a repository on a listed host is reachable only with a user's own saved token.",
     group: 'github',
     label: 'Additional repository hosts',
     overridableAt: [],
@@ -363,22 +342,11 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.min(5).max(500),
     unit: 'steps',
   }),
-  'workspace.blockMetadata': defineSetting({
-    defaultValue: true,
-    description:
-      'Blackhole the cloud metadata IPs (AWS/GCP/Azure IMDS, ECS task metadata) inside every agent workspace. Leave this on unless it misbehaves on your Docker runtime — turning it off exposes instance credentials to agent-run code.',
-    envVar: 'WORKSPACE_BLOCK_METADATA',
-    group: 'workspace',
-    label: 'Block cloud metadata endpoints',
-    // A security control, so it is deliberately platform-wide and ADMIN-only:
-    // no team should be able to switch off metadata blocking for its own runs.
-    overridableAt: [],
-    parseEnv: (raw) => raw !== 'false',
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: z.boolean(),
-  }),
+
+  // ── Shell-step helper image ────────────────────────────────────────────────
+  // Cascades to TEAM / ORGANIZATION, unlike the rest of the workspace
+  // infrastructure (which is environment-only): a team on an isolated network
+  // may need its own mirror of the image, so this one stays an admin-set value.
   'workspace.gitHelperImage': defineSetting({
     defaultValue: 'alpine/git:latest',
     description:
@@ -390,21 +358,6 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
-  }),
-  'workspace.maxConcurrentActivities': defineSetting({
-    defaultValue: 10,
-    description:
-      'Cap on Temporal activity tasks one worker runs at once. Most activities hold a Docker workspace, so raise it only if the Docker host can serve more in parallel. Takes effect when the worker restarts.',
-    envVar: 'WORKER_MAX_CONCURRENT_ACTIVITIES',
-    group: 'workspace',
-    label: 'Worker activity concurrency',
-    overridableAt: [],
-    parseEnv: positiveIntEnv(1000),
-    requiredRole: 'ADMIN',
-    restartRequired: true,
-    runPinned: false,
-    schema: positiveInt.max(1000),
-    unit: 'activities',
   }),
 
   // ── Agent workspace ────────────────────────────────────────────────────────
@@ -424,36 +377,6 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.min(1_000).max(200_000),
     unit: 'characters',
-  }),
-  'workspace.metadataBlockImage': defineSetting({
-    defaultValue: 'alpine:3.20',
-    description:
-      'Image used for the privileged sidecar that installs the metadata blackhole routes. It needs `ip` from busybox and nothing else.',
-    group: 'workspace',
-    label: 'Metadata blocker image',
-    overridableAt: [],
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
-  }),
-  'workspace.regexScanBudgetMs': defineSetting({
-    defaultValue: 250,
-    description:
-      'Wall-clock budget, in milliseconds, a scanner pattern gets before its pooled worker thread is killed and the pattern quarantined for this process. Every admin- or bundle-supplied scanner pattern runs against agent text under this bound — every `bash` command, every `writeFile` path, every skill save, every TDD iteration. Too low and an ordinary pattern trips it on a loaded host: a blocking scanner (shell command, sensitive file) spuriously blocks the agent, and a pattern that was never actually pathological gets quarantined and silently stops being enforced. Too high and one genuinely catastrophic pattern stalls that scan — and everything waiting behind it in the shared executor queue — for longer before the executor gives up and kills it.',
-    envVar: 'SCANNER_REGEX_BUDGET_MS',
-    group: 'workspace',
-    label: 'Scanner regex execution budget',
-    // A security control, so it is deliberately platform-wide and ADMIN-only:
-    // no team should be able to loosen the bound that keeps a bad admin- or
-    // bundle-supplied pattern from wedging the shared scanner executor.
-    overridableAt: [],
-    parseEnv: positiveIntEnv(60_000),
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: positiveInt.min(10).max(60_000),
-    unit: 'ms',
   }),
 } as const satisfies Record<string, SettingDefinition<unknown>>;
 

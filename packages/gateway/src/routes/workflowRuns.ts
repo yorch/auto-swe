@@ -127,6 +127,7 @@ const ListRunsQuery = RunListPaginationQuery.extend({
   scope: z.enum(['ALL', 'MINE', 'TEAM']).optional(),
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
   templateId: z.string().uuid().optional(),
+  templateVersion: z.coerce.number().int().positive().optional(),
   workRequestId: z.string().uuid().optional(),
 });
 
@@ -142,8 +143,16 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { includeChannel, limit, offset, scope, status, templateId, workRequestId } =
-        request.query;
+      const {
+        includeChannel,
+        limit,
+        offset,
+        scope,
+        status,
+        templateId,
+        templateVersion,
+        workRequestId,
+      } = request.query;
       const teamFilter = buildWorkflowRunVisibilityFilter(user, request.repoAccessGate);
       const visibilityFilter: Prisma.WorkflowRunWhereInput =
         user.role === 'ADMIN' && scope === 'ALL'
@@ -155,6 +164,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         ...visibilityFilter,
         ...(status ? { status } : {}),
         ...(templateId ? { templateId } : {}),
+        ...(templateVersion ? { templateVersion } : {}),
         ...(workRequestId ? { workRequestId } : {}),
         // Hide channel chatter runs unless explicitly opted in. An explicit
         // templateId filter already narrows to one template, so the exclusion

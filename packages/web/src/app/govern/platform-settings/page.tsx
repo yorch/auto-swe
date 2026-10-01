@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { SettingRow } from '@/components/settings/SettingRow';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
@@ -93,21 +94,21 @@ export default function GovernSettingsPage() {
         <div className="flex flex-wrap gap-4">
           <Select
             label="View settings for"
-            onChange={(e) => setScope(e.target.value as ScopeSelection['scope'])}
+            onChange={(v) => setScope(v as ScopeSelection['scope'])}
+            options={[
+              { label: 'Platform-wide', value: 'GLOBAL' },
+              { label: 'A team', value: 'TEAM' },
+            ]}
             value={scope}
-          >
-            <option value="GLOBAL">Platform-wide</option>
-            <option value="TEAM">A team</option>
-          </Select>
+          />
           {scope === 'TEAM' && (
-            <Select label="Team" onChange={(e) => setTeamId(e.target.value)} value={teamId}>
-              <option value="">Choose a team…</option>
-              {(teams.data ?? []).map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.name}
-                </option>
-              ))}
-            </Select>
+            <Combobox
+              label="Team"
+              onChange={setTeamId}
+              options={(teams.data ?? []).map((team) => ({ label: team.name, value: team.id }))}
+              placeholder="Choose a team…"
+              value={teamId}
+            />
           )}
         </div>
         {awaitingTeam && (

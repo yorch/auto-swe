@@ -6,13 +6,25 @@ everything else is data an operator can change without a deploy.**
 
 | Tier | Lives in | Contents | Changed by |
 |---|---|---|---|
-| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*` | The deploy pipeline |
-| Integrations | Singleton config tables | GitHub, Slack, storage, issue tracker, knowledge base, Figma, Google OAuth, Okta SSO, workflow defaults | Admins, at `/studio/integrations` and `/govern/workflow-defaults` |
+| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `AWS_*`); workspace sizing and images (`WORKSPACE_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS` | The deploy pipeline |
+| Integrations | Singleton config tables | GitHub, Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/studio/integrations` and `/govern/workflow-defaults` |
 | Policy | The setting registry | Operator knobs that used to be constants in the worker | Admins and grant holders, at `/govern/platform-settings` |
 
 The bootstrap tier is deliberately not DB-backed. `CONFIG_ENCRYPTION_KEY` decrypts every other
 secret, and `BUNDLE_TRUSTED_KEYS` is the trust anchor for bundle signatures — anyone with database
 write access could otherwise mark a malicious bundle verified.
+
+The bootstrap tier also holds anything an admin edit could never usefully change, or should not be
+able to. Sign-in credentials and the Okta issuer are read once when the gateway boots, so an
+editable copy needs a restart to apply and would only add a second place to look. Storage is a
+deploy-time infrastructure choice, and workspace sizing and sidecar images describe the host the
+worker runs on. The worker validates those variables at boot and refuses to start on one it cannot
+use — a malformed image reference, a non-numeric limit, or `WORKSPACE_BLOCK_METADATA` set to anything
+but `true` or `false`. Past boot the resolvers fall back to defaults instead of throwing, because they
+run on paths (the scanners) that must never abort their caller.
+
+One workspace value stays in the registry: `workspace.gitHelperImage`, which cascades to team and
+organization because a team on an isolated network may need its own mirror.
 
 This doc covers the third tier. For integration credentials see
 [model-configuration.md](./model-configuration.md) and the admin pages themselves; for the
@@ -57,7 +69,6 @@ every row and grant that referenced it.
 | `requiredRole` | A floor. No grant can let an actor below it write the key. |
 | `runPinned` | Frozen into a run's snapshot at start; see §4. |
 | `restartRequired` | Surfaced in the UI. The resolver does not enforce it. |
-| `envVar` / `parseEnv` | Consulted between the cascade and the default, so a deployment already driving the value from the environment keeps working until an admin saves. |
 
 ---
 
@@ -66,7 +77,7 @@ every row and grant that referenced it.
 `resolveSetting(key, ctx)` in `packages/shared/src/config/resolveSetting.ts` is the only read path:
 
 ```
-run pin  →  WORKFLOW_TEMPLATE  →  CHANNEL  →  TEAM  →  ORGANIZATION  →  GLOBAL  →  env var  →  default
+run pin  →  WORKFLOW_TEMPLATE  →  CHANNEL  →  TEAM  →  ORGANIZATION  →  GLOBAL  →  default
 ```
 
 The five scope tiers are the same cascade agents and provider credentials resolve through
@@ -191,7 +202,7 @@ from the definition.
   are separate processes and there is no cross-process invalidation, the same limitation the scanner
   pattern cache carries.
 - **`restartRequired` is advisory.** The UI says a restart is needed; nothing enforces or performs
-  it. `workspace.maxConcurrentActivities` is read once at worker boot.
+  it.
 - **Grants are not scoped below a team.** Authority is expressed at GLOBAL, ORGANIZATION, or TEAM.
   There is no way to grant someone control of one channel's settings without granting the team.
 - **No config export or import.** Bundles cover agents, skills, templates, and container steps;

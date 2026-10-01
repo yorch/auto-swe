@@ -13,7 +13,7 @@
 -- Routine application is `yarn db:migrate` (deploy); `prisma migrate dev`
 -- cannot see HNSW indexes and will try to re-drop this one on the next
 -- unrelated schema change — see the project skill
--- `prisma-7-pgvector-hnsw-migrate-dev-drift` for the workflow.
+-- `prisma-pgvector-hnsw` for the workflow.
 CREATE INDEX IF NOT EXISTS "idx_memory_items_embedding" ON "memory_items"
     USING hnsw ("embedding" vector_cosine_ops)
     WITH (m = 16, ef_construction = 200);
@@ -69,11 +69,15 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── Connections: git_repo identity uniqueness (partial) ─────────────────────
--- org/repo are nullable so non-git connection types (e.g. `mcp`) need not set
--- them; uniqueness applies only to git_repo rows. Prisma can't express a
--- partial `@@unique`, so it lives here.
-CREATE UNIQUE INDEX IF NOT EXISTS "connections_git_repo_org_repo_uidx"
-    ON "connections" ("organization_name", "repo_name")
+-- A git_repo connection is identified by (host, owner, name). org/repo are
+-- nullable so non-git connection types (e.g. `mcp`) need not set them;
+-- uniqueness applies only to git_repo rows. The host is the web base override,
+-- normalised by the application to an origin, with NULL meaning the instance's
+-- own host: `acme/api` on github.com and on a GitHub Enterprise server are
+-- different repositories. GitHub compares owner and name case-insensitively, so
+-- the index does too. Partial and expression-based, so Prisma can't express it.
+CREATE UNIQUE INDEX IF NOT EXISTS "connections_git_repo_host_org_repo_ci_uidx"
+    ON "connections" (COALESCE("github_url", ''), lower("organization_name"), lower("repo_name"))
     WHERE "type" = 'git_repo';
 
 -- ── Agent library: one row per (key, version) at a scope ─────────────────────
@@ -143,14 +147,6 @@ DO $$ BEGIN
     ADD CONSTRAINT "slack_config_singleton" CHECK ("id" = 'default');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
-  ALTER TABLE "storage_config"
-    ADD CONSTRAINT "storage_config_singleton" CHECK ("id" = 'default');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  ALTER TABLE "storage_config"
-    ADD CONSTRAINT "storage_config_backend_check" CHECK ("backend" IN ('inline', 's3'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
   ALTER TABLE "workflow_defaults"
     ADD CONSTRAINT "workflow_defaults_singleton" CHECK ("id" = 'default');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -171,14 +167,6 @@ DO $$ BEGIN
         AND ("ci_poll_grace_sec"    IS NULL OR "ci_poll_grace_sec"    > 0)
         AND ("ci_poll_deadline_sec" IS NULL OR "ci_poll_deadline_sec" > 0)
     );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  ALTER TABLE "google_oauth_config"
-    ADD CONSTRAINT "google_oauth_config_singleton" CHECK ("id" = 'default');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  ALTER TABLE "okta_oauth_config"
-    ADD CONSTRAINT "okta_oauth_config_singleton" CHECK ("id" = 'default');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE "embedding_configs"

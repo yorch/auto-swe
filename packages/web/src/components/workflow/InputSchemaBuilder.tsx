@@ -177,20 +177,14 @@ export function InputSchemaBuilder({
             <Select
               id={`field-type-${i}`}
               label="Type"
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 if (FIELD_TYPES.some((t) => t.value === v)) {
                   updateField(i, { type: v as InputFieldType });
                 }
               }}
+              options={FIELD_TYPES.map(({ label, value: v }) => ({ label, value: v }))}
               value={f.type}
-            >
-              {FIELD_TYPES.map(({ label, value: v }) => (
-                <option key={v} value={v}>
-                  {label}
-                </option>
-              ))}
-            </Select>
+            />
             <Checkbox
               checked={f.required}
               className="pb-2.5"
@@ -217,51 +211,48 @@ export function InputSchemaBuilder({
               <Select
                 id={`field-format-${i}`}
                 label="Format"
-                onChange={(e) => {
-                  const v = e.target.value;
+                onChange={(v) => {
                   if (v === '' || v === 'uuid') {
                     updateField(i, { format: v });
                   }
                 }}
+                options={[
+                  { label: 'None', value: '' },
+                  { label: 'UUID', value: 'uuid' },
+                ]}
                 value={f.format}
-              >
-                <option value="">None</option>
-                <option value="uuid">UUID</option>
-              </Select>
+              />
             </div>
           )}
           {f.type === 'array' && (
             <Select
               id={`item-type-${i}`}
               label="Item type"
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 if (v === 'string' || v === 'number' || v === 'boolean') {
                   updateField(i, { itemType: v });
                 }
               }}
+              options={[
+                { label: 'String', value: 'string' },
+                { label: 'Number', value: 'number' },
+                { label: 'Boolean', value: 'boolean' },
+              ]}
               value={f.itemType}
-            >
-              <option value="string">String</option>
-              <option value="number">Number</option>
-              <option value="boolean">Boolean</option>
-            </Select>
+            />
           )}
           {f.type === 'connection' && (
             <Select
               hint="Only show connections of this type in the run form"
               id={`conn-type-${i}`}
               label="Filter by connection type"
-              onChange={(e) => updateField(i, { connectionType: e.target.value })}
+              onChange={(v) => updateField(i, { connectionType: v })}
+              options={[
+                { label: 'Any type', value: '' },
+                ...selectableConnectionTypes().map(({ label, value }) => ({ label, value })),
+              ]}
               value={f.connectionType}
-            >
-              <option value="">Any type</option>
-              {selectableConnectionTypes().map(({ label, value }) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
+            />
           )}
           <div className="flex justify-end">
             <Button onClick={() => removeField(i)} size="sm" variant="danger">

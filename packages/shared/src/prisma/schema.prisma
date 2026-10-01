@@ -459,6 +459,31 @@ model ConnectionCredential {
   @@map("connection_credentials")
 }
 
+/// The webhook secret of one GitHub Enterprise Server host.
+///
+/// The `GitHubConfig` singleton carries one webhook secret, which is the right
+/// shape while every repository lives on one GitHub instance. Repositories on
+/// several hosts (`github.repositoryHosts`) each have their own instance
+/// configuring its own webhooks, with its own secret. GitHub Enterprise Server
+/// names the sending host in `X-GitHub-Enterprise-Host`; a delivery naming a
+/// host that has a row here is verified with that row's secret and no other.
+///
+/// Not tenant-scoped: platform infrastructure, like `GitHubInstallation`.
+model GitHubHostWebhookSecret {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Lowercase `host[:port]`, as `X-GitHub-Enterprise-Host` spells it.
+  host             String   @unique
+  secretCiphertext Bytes    @map("secret_ciphertext")
+  secretNonce      Bytes    @map("secret_nonce")
+  secretAuthTag    Bytes    @map("secret_auth_tag")
+  secretKeyVersion Int      @map("secret_key_version")
+  secretLastFour   String   @map("secret_last_four")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("github_host_webhook_secrets")
+}
+
 /// A GitHub App installation on one GitHub account (organization or user).
 ///
 /// The singleton `GitHubConfig` carries the App's own credentials, which are
@@ -602,6 +627,8 @@ model Team {
   repositories        Connection[]
   /// Repositories other teams have shared with this one (see `ConnectionTeamShare`).
   sharedRepositories  ConnectionTeamShare[]
+  /// Schedules this team owns (see `ScheduledWorkRequest.teamId`).
+  scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleTeam")
   workflowTemplates   WorkflowTemplate[]
   shellAudits         WorkflowShellAudit[]
   providerCredentials ProviderCredential[]
@@ -1013,11 +1040,6 @@ model Account {
   id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   accountId             String    @map("account_id")
   providerId            String    @map("provider_id")
-  /// Better-auth 1.7 keys an external identity by (issuer, accountId) rather
-  /// than (providerId, accountId). Built-in social providers declare no issuer
-  /// of their own, so they get the synthetic `local:oauth:<providerId>`;
-  /// email+password accounts get `local:credential`.
-  issuer                String
   userId                String    @map("user_id") @db.Uuid
   accessToken           String?   @map("access_token")
   refreshToken          String?   @map("refresh_token")
@@ -1032,7 +1054,7 @@ model Account {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([issuer, accountId])
+  @@unique([providerId, accountId])
   @@index([userId])
   @@map("accounts")
 }
@@ -1159,6 +1181,12 @@ model ScheduledWorkRequest {
   /// Standing WorkRequest that all scheduled fires attach their WorkflowRuns to.
   workRequestId        String?           @map("work_request_id") @db.Uuid
   workRequest          RunInput?         @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
+  /// The team that owns the schedule: the repository's owning team or a team it
+  /// is shared with. Null means the team was deleted (the migration backfilled
+  /// every earlier row): managed only by ADMIN or the owning team's lead, and
+  /// deactivated when the repository moves or a share is removed.
+  teamId               String?           @map("team_id") @db.Uuid
+  team                 Team?             @relation("ScheduleTeam", fields: [teamId], references: [id], onDelete: SetNull)
   /// Best-effort bookkeeping — authoritative fire history lives in Temporal.
   lastFiredAt          DateTime?         @map("last_fired_at") @db.Timestamptz
   nextFireAt           DateTime?         @map("next_fire_at") @db.Timestamptz
@@ -1170,6 +1198,7 @@ model ScheduledWorkRequest {
   @@index([createdById])
   @@index([actsAsUserId])
   @@index([workRequestId])
+  @@index([teamId])
   @@map("scheduled_work_requests")
 }
 
@@ -1777,11 +1806,51 @@ model EmbeddingConfig {
   @@map("embedding_configs")
 }
 
+enum ModelKind {
+  CHAT
+  EMBEDDING
+}
+
+/// Drives the model pickers, never pricing: a RETIRED model is hidden from
+/// pickers but still priced, since pinned agent versions keep billing to it.
+enum ModelStatus {
+  ACTIVE
+  DEPRECATED
+  RETIRED
+}
+
+/// One row per `<provider>/<model-id>` spec: the per-MTok USD prices LLM calls
+/// are costed at. Global — prices are facts about a vendor, not policy. Built-in
+/// rows are seeded from `BUILTIN_MODELS` by `syncModelCatalog`, which keeps an
+/// untouched built-in in step with code and never overwrites a customized one.
+/// A 0/0 row is a known, free model (a self-hosted endpoint), not an unknown one.
+model ModelCatalogEntry {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Lowercase, as `parseProviderModelSpec` returns it.
+  provider         String
+  /// Everything after the first `/` of the spec; may itself contain slashes.
+  modelId          String      @map("model_id")
+  kind             ModelKind   @default(CHAT)
+  displayName      String?     @map("display_name")
+  inputUsdPerMTok  Float       @map("input_usd_per_mtok")
+  outputUsdPerMTok Float       @map("output_usd_per_mtok")
+  status           ModelStatus @default(ACTIVE)
+  notes            String?
+  isBuiltIn        Boolean     @default(false) @map("is_built_in")
+  /// Set by any admin edit to a built-in row; seeding then leaves it alone.
+  isCustomized     Boolean     @default(false) @map("is_customized")
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([provider, modelId])
+  @@map("model_catalog_entries")
+}
+
 /// Singleton GitHub integration config. One row (id = "default").
 /// Encrypted fields follow the same AES-256-GCM envelope used by
 /// ProviderCredential (ciphertext + nonce + authTag per secret).
-/// oauthClientId / oauthClientSecret enable GitHub social sign-in via
-/// BetterAuth; changes require a gateway restart to take effect.
+/// GitHub social sign-in credentials (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET)
+/// are environment-only: they are read once at gateway boot.
 model GitHubConfig {
   id String @id @default("default")
 
@@ -1798,15 +1867,6 @@ model GitHubConfig {
   webhookSecretAuthTag    Bytes?  @map("webhook_secret_auth_tag")
   webhookSecretKeyVersion Int?    @map("webhook_secret_key_version")
   webhookSecretLastFour   String? @map("webhook_secret_last_four")
-
-  /// GitHub OAuth app credentials for browser social sign-in (BetterAuth)
-  oauthClientId String? @map("oauth_client_id")
-
-  oauthClientSecretCiphertext Bytes?  @map("oauth_client_secret_ciphertext")
-  oauthClientSecretNonce      Bytes?  @map("oauth_client_secret_nonce")
-  oauthClientSecretAuthTag    Bytes?  @map("oauth_client_secret_auth_tag")
-  oauthClientSecretKeyVersion Int?    @map("oauth_client_secret_key_version")
-  oauthClientSecretLastFour   String? @map("oauth_client_secret_last_four")
 
   /// GitHub App numeric ID (e.g. "12345678")
   appId String? @map("app_id")
@@ -1876,34 +1936,6 @@ model SlackConfig {
   @@map("slack_config")
 }
 
-/// Singleton artifact storage config. One row (id = "default").
-/// backend="inline" stores blobs in Postgres; backend="s3" uses any
-/// S3-compatible endpoint (the bundled Garage container, AWS S3, R2, B2).
-/// Changes take effect on the
-/// next worker activity call — no restart required.
-model StorageConfig {
-  id      String @id @default("default")
-  backend String @default("inline") // "inline" | "s3"
-
-  s3Bucket         String? @map("s3_bucket")
-  s3Region         String? @map("s3_region")
-  s3Endpoint       String? @map("s3_endpoint")
-  s3Prefix         String? @map("s3_prefix")
-  s3ForcePathStyle Boolean @default(false) @map("s3_force_path_style")
-
-  awsAccessKeyId String? @map("aws_access_key_id")
-
-  awsSecretAccessKeyCiphertext Bytes?  @map("aws_secret_access_key_ciphertext")
-  awsSecretAccessKeyNonce      Bytes?  @map("aws_secret_access_key_nonce")
-  awsSecretAccessKeyAuthTag    Bytes?  @map("aws_secret_access_key_auth_tag")
-  awsSecretAccessKeyKeyVersion Int?    @map("aws_secret_access_key_key_version")
-  awsSecretAccessKeyLastFour   String? @map("aws_secret_access_key_last_four")
-
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  @@map("storage_config")
-}
-
 /// Singleton workflow behaviour defaults. One row (id = "default").
 /// All fields have fallback values so the row is optional — the worker
 /// falls back to the baked-in defaults when no row exists.
@@ -1962,12 +1994,6 @@ model WorkflowDefaults {
   maxTddIterations  Int @default(5) @map("max_tdd_iterations")
   maxEvalIterations Int @default(3) @map("max_eval_iterations")
 
-  // Ephemeral workspace container sizing + default base image.
-  workspaceMemory     String @default("4g") @map("workspace_memory")
-  workspaceCpus       Float  @default(2) @map("workspace_cpus")
-  workspacePidsLimit  Int    @default(512) @map("workspace_pids_limit")
-  workspaceImage      String @default("node:24-alpine") @map("workspace_image")
-
   // Lesson (semantic-memory) retrieval relevance knobs.
   lessonRetrievalLimit     Int   @default(5) @map("lesson_retrieval_limit")
   lessonRetrievalThreshold Float @default(0.7) @map("lesson_retrieval_threshold")
@@ -1989,48 +2015,6 @@ model WorkflowDefaults {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("workflow_defaults")
-}
-
-/// Singleton Google OAuth config for BetterAuth social sign-in.
-/// Changes require a gateway restart to take effect.
-model GoogleOAuthConfig {
-  id       String  @id @default("default")
-  clientId String? @map("client_id")
-
-  clientSecretCiphertext Bytes?  @map("client_secret_ciphertext")
-  clientSecretNonce      Bytes?  @map("client_secret_nonce")
-  clientSecretAuthTag    Bytes?  @map("client_secret_auth_tag")
-  clientSecretKeyVersion Int?    @map("client_secret_key_version")
-  clientSecretLastFour   String? @map("client_secret_last_four")
-
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  @@map("google_oauth_config")
-}
-
-/// Singleton Okta OIDC config for BetterAuth enterprise SSO sign-in.
-/// Wired through better-auth's generic-OAuth plugin, which registers Okta as
-/// an ordinary social provider — so the sign-in, callback, and account-link
-/// routes are the same `/api/auth/**` paths GitHub and Google use.
-/// Changes require a gateway restart to take effect.
-model OktaOAuthConfig {
-  id String @id @default("default")
-
-  /// Authorization-server issuer, e.g. https://dev-12345.okta.com/oauth2/default.
-  /// The OIDC discovery document is fetched from `{issuer}/.well-known/openid-configuration`
-  /// at gateway startup, so this must be reachable from the gateway.
-  issuer   String?
-  clientId String? @map("client_id")
-
-  clientSecretCiphertext Bytes?  @map("client_secret_ciphertext")
-  clientSecretNonce      Bytes?  @map("client_secret_nonce")
-  clientSecretAuthTag    Bytes?  @map("client_secret_auth_tag")
-  clientSecretKeyVersion Int?    @map("client_secret_key_version")
-  clientSecretLastFour   String? @map("client_secret_last_four")
-
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  @@map("okta_oauth_config")
 }
 
 /// Singleton issue-tracker connector config. One row (id = "default").

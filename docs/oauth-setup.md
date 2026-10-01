@@ -2,9 +2,9 @@
 
 Step-by-step for wiring **GitHub**, **Google**, and **Okta** (enterprise SSO) sign-in via better-auth. Magic-link works out of the box and needs no provider registration.
 
-All three providers follow the same shape: register an OAuth app on the provider's developer console, copy the client id + secret into the admin dashboard at `/studio/integrations` (GitHub credentials on the **GitHub tab**, Google and Okta credentials on the **OAuth tab**), restart the gateway, and the buttons appear on `/login` automatically. The login page reads `GET /api/v1/auth/providers` at load time and only renders buttons for providers whose credentials are present (in the DB or env).
+All three providers follow the same shape: register an OAuth app on the provider's developer console, put the client id + secret in the gateway's environment, restart the gateway, and the buttons appear on `/login` automatically. The login page reads `GET /api/v1/auth/providers` at load time and only renders buttons for providers whose credentials are present.
 
-> **Env var fallback.** `GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`, and `OKTA_ISSUER` / `OKTA_CLIENT_ID` / `OKTA_CLIENT_SECRET` are still accepted as environment variables for backwards compatibility, but the admin UI is the preferred path. If both are set, the DB row wins.
+> **Environment only.** Sign-in credentials are read from `GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`, and `OKTA_ISSUER` / `OKTA_CLIENT_ID` / `OKTA_CLIENT_SECRET`. There is no admin-UI form for them: better-auth reads them once at gateway startup, so an editable copy could never take effect without a restart anyway. See [`configuration.md`](./configuration.md) for where the line between environment and admin UI falls.
 
 > **Gateway base URL.** Throughout this doc, `{BETTER_AUTH_URL}` is the URL the gateway is reachable at — typically `http://localhost:8080` in dev and your real domain in production. Set `BETTER_AUTH_URL` in `.env` accordingly; the OAuth callback URLs you register with the providers must match this base.
 
@@ -28,25 +28,51 @@ All three providers follow the same shape: register an OAuth app on the provider
 3. Click **Register application**.
 4. On the next screen, click **Generate a new client secret** and copy both the **Client ID** and the **Client secret**.
 
-### 2. Add credentials via the admin UI
+### 2. Set the credentials
 
-1. Sign in as admin and go to `/studio/integrations → GitHub tab`.
-2. Enter the **OAuth App Client ID** and **OAuth App Client Secret** (in the OAuth section of the GitHub tab — not the GitHub App fields, which are for repo access).
-3. Click **Save**. The tab also displays the exact callback URL to register, with a copy button.
+Set the **OAuth App** client id and secret in the gateway's environment (not the GitHub App fields on `/studio/integrations → GitHub`, which are for repo access):
 
-> **Alternative (env var).** You can still set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.env` — the gateway reads them as a fallback when no DB row exists. The admin UI is preferred for production deployments.
+```sh
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+```
 
 ### 3. Restart the gateway
 
-Because BetterAuth reads OAuth credentials once at startup, a gateway restart is required after saving.
+BetterAuth reads OAuth credentials once at startup, so restart the gateway after changing them.
 
 ```sh
 yarn dev:gateway     # or yarn dev to bounce everything
 ```
 
-The UI shows a yellow "restart required" banner after saving to remind you.
-
 Refresh the login page. The **Continue with GitHub** button should now appear. Click it, authorize on GitHub, and you'll be returned to `/login?bridge=1` with a fresh better-auth session cookie — subsequent API calls authenticate via that session.
+
+### GitHub Enterprise
+
+To sign in against a GitHub Enterprise (GHE) instance instead of github.com:
+
+1. Register the OAuth app on the GHE instance itself (**Settings → Developer settings → OAuth Apps → New OAuth App**), using the same form values as above. The callback URL is unchanged: `{BETTER_AUTH_URL}/api/auth/callback/github`.
+2. On `/studio/integrations → GitHub tab`, set the **Base URL** to the instance (for example `https://ghe.example.com`). Leave the **API URL** blank (or at `https://api.github.com`) and it is derived as `{Base URL}/api/v3`; set it explicitly only if the API lives elsewhere.
+3. Set the GHE app's client ID and secret as `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` in the gateway's environment (not the GitHub App fields).
+4. Restart the gateway. OAuth credentials and URLs are read once at startup.
+
+When the saved Base URL's host is not github.com, **Continue with GitHub** behaves as follows:
+
+| Step           | Endpoint                                              |
+| -------------- | ----------------------------------------------------- |
+| Authorize      | `{Base URL}/login/oauth/authorize`                    |
+| Token exchange | `{Base URL}/login/oauth/access_token`                 |
+| Profile        | `{API URL}/user`                                      |
+| Emails         | `{API URL}/user/emails`                               |
+
+Notes:
+
+- **Primary verified email.** Sign-in is accepted only for an account whose primary email is verified.
+- **Account identity.** The linked account is stored as `{host}:{id}`, so numeric ids from github.com and GHE never collide. Accounts created earlier under a bare numeric id are not migrated.
+- **Switching hosts.** Accounts created while sign-in used github.com stay in the database but cannot sign in once GHE is active. A user signs in again with the same verified email, which links the new GHE account onto their existing user and replaces the stored GitHub username.
+- **One GitHub provider.** GHE sign-in replaces github.com sign-in: both use the single `github` provider id and cannot coexist on one gateway.
+- **Email linking.** A sign-in links onto an existing user with the same verified email, so enable GHE sign-in only for an instance whose email verification you trust.
+- **Invalid Base URL.** A Base URL that is not an `http` or `https` URL registers no GitHub sign-in; the gateway logs the reason and the login page hides the button.
 
 ### Production-only extras
 
@@ -98,13 +124,12 @@ Refresh the login page. The **Continue with GitHub** button should now appear. C
 
 6. Click **Create**. Copy the **Client ID** and **Client secret** from the modal.
 
-### 4. Add credentials via the admin UI
+### 4. Set the credentials
 
-1. Sign in as admin and go to `/studio/integrations → OAuth tab`.
-2. Enter the **Google OAuth Client ID** and **Google OAuth Client Secret**.
-3. Click **Save**. The tab also displays the exact callback URL to register, with a copy button.
-
-> **Alternative (env var).** `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env` still work as a fallback.
+```sh
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+```
 
 ### 5. Restart the gateway
 
@@ -158,17 +183,17 @@ https://dev-12345.okta.com/oauth2/default/.well-known/openid-configuration
 
 > **Org authorization server.** If your tenant uses the org-level server instead of a custom one, the issuer is the bare org URL (`https://dev-12345.okta.com`) and the discovery path is `/.well-known/openid-configuration` off that. Both forms work — paste whichever one the console shows.
 
-### 3. Add credentials via the admin UI
+### 3. Set the credentials
 
-1. Sign in as admin and go to `/studio/integrations → OAuth tab`.
-2. In the **Sign in with Okta** card, enter the **Issuer URL**, **Client ID**, and **Client secret**.
-3. Click **Save**. The card echoes back the discovery URL the gateway will fetch and the callback URL to register, each with a copy button.
+```sh
+OKTA_ISSUER=https://dev-12345.okta.com/oauth2/default
+OKTA_CLIENT_ID=...
+OKTA_CLIENT_SECRET=...
+```
 
-All three fields are required — the login button stays hidden until every one is present, because a partially configured provider would fail at the callback rather than at save time.
+All three are required — the login button stays hidden until every one is present, because a partially configured provider would fail at the callback rather than at startup. A trailing slash on the issuer is stripped.
 
-> **Issuer must be public HTTPS.** The gateway fetches the discovery document server-side, so the issuer goes through the same SSRF guard as every other operator-supplied URL: `http://`, loopback, RFC1918, link-local and cloud-metadata addresses are rejected with a 400.
-
-> **Alternative (env var).** `OKTA_ISSUER`, `OKTA_CLIENT_ID`, and `OKTA_CLIENT_SECRET` in `.env` work as a fallback when no DB row exists.
+> **The issuer must be public HTTPS.** The gateway fetches its discovery document server-side at boot, so it goes through the same SSRF guard as every other operator-supplied URL: `http://`, loopback, RFC1918, link-local and cloud-metadata addresses are refused. A refused issuer disables Okta sign-in and logs `Okta sign-in disabled: OKTA_ISSUER rejected (…)`; the gateway still boots and the other sign-in methods are unaffected.
 
 ### 4. Restart the gateway
 
@@ -197,9 +222,9 @@ Before flipping a deployment from dev to prod, confirm:
 | `BETTER_AUTH_URL` matches the deployed URL | Required — used as the OAuth callback base                               |
 | `BETTER_AUTH_SECRET` set, ≥ 32 chars       | Required — gateway throws at boot otherwise                              |
 | `JWT_SECRET` (or key pair) set             | Required — gateway throws at boot otherwise                              |
-| GitHub OAuth credentials configured        | Optional — button hides when absent. Set via `/studio/integrations → GitHub` or env var. |
-| Google OAuth credentials configured        | Optional — button hides when absent. Set via `/studio/integrations → OAuth` or env var. |
-| Okta issuer + credentials configured       | Optional — button hides unless all three are present. Set via `/studio/integrations → OAuth` or env var. |
+| GitHub OAuth credentials configured        | Optional — button hides when absent. `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`. |
+| Google OAuth credentials configured        | Optional — button hides when absent. `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. |
+| Okta issuer + credentials configured       | Optional — button hides unless all three are present. `OKTA_ISSUER` / `OKTA_CLIENT_ID` / `OKTA_CLIENT_SECRET`. |
 | `RESEND_API_KEY` + `AUTH_FROM_EMAIL`       | Required for magic-link emails outside development (dev prints to stdout) |
 | OAuth callbacks point at the prod URL      | GitHub, Google, and Okta consoles must list the right callback URL       |
 | Okta discovery URL reachable from the gateway | Fetched at boot; an unreachable issuer leaves Okta sign-in broken until the next restart |
@@ -222,13 +247,13 @@ Hit `GET /api/v1/auth/providers` directly:
 curl http://localhost:8080/api/v1/auth/providers
 ```
 
-You should see `{"github":true,"google":true,"magicLink":true,"okta":true}` for the providers whose credentials are configured. If a provider shows `false`, the gateway didn't pick up its credentials — confirm they're saved in `/studio/integrations` (GitHub tab for GitHub, OAuth tab for Google and Okta), then restart `yarn dev:gateway` (a restart is always required for OAuth credential changes to take effect). `okta` reports `false` unless the issuer, client id **and** client secret are all set.
+You should see `{"github":true,"google":true,"magicLink":true,"okta":true}` for the providers whose credentials are configured. If a provider shows `false`, the gateway didn't pick up its credentials — confirm the variables are set in the gateway's environment, then restart `yarn dev:gateway` (a restart is always required for OAuth credential changes to take effect). `okta` reports `false` unless the issuer, client id **and** client secret are all set.
 
 **"Access blocked: this app's request is invalid" (Google)**
 Usually the consent screen is incomplete (missing support email, missing scopes, etc.) — finish the OAuth consent screen flow in step 2 above.
 
-**Okta button missing even though credentials are saved**
-All three Okta fields must be present. Check `GET /api/v1/auth/providers` — if `okta` is `false`, one of issuer / client id / client secret is blank, or the gateway hasn't been restarted since the save.
+**Okta button missing even though credentials are set**
+All three Okta variables must be present. Check `GET /api/v1/auth/providers` — if `okta` is `false`, one of issuer / client id / client secret is blank, or the gateway hasn't been restarted since the change.
 
 **Okta sign-in fails right after a gateway restart**
 Look for a discovery error in the gateway log at boot. The most common causes are a typo'd issuer (use the Issuer URI from **Security → API → Authorization Servers**, not the org URL with a path guessed onto it) and the gateway being unable to reach Okta at startup. Confirm by opening `{issuer}/.well-known/openid-configuration` — it must return JSON.

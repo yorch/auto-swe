@@ -85,18 +85,19 @@ export function FigmaTab() {
             label="Enabled"
           >
             <Select
+              aria-label="Enabled"
               compact
               id="figma-enabled"
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 setEnabled(v === '' ? undefined : v === 'true');
               }}
+              options={[
+                { label: '(keep current)', value: '' },
+                { label: 'Yes', value: 'true' },
+                { label: 'No', value: 'false' },
+              ]}
               value={enabled === undefined ? '' : String(enabled)}
-            >
-              <option value="">(keep current)</option>
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </Select>
+            />
           </ConfigField>
           <SecretInput
             current={data?.apiToken ?? null}

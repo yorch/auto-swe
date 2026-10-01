@@ -377,7 +377,7 @@ export async function isChannelOverBudgetNow(
 /**
  * Fallback hold for one model call when the bound model has no known price.
  *
- * Everything else derives the hold from `MODEL_PRICES` — see
+ * Everything else derives the hold from the model's price — see
  * {@link estimateHoldUsd} — because one flat number is wrong by ~5x in one
  * direction or the other across the models a channel can be configured with.
  */
@@ -416,7 +416,7 @@ async function estimateHoldUsd(
     // Through the ledger's own pricing helper, so the USD-per-MTok convention
     // lives in exactly one place — a hold sized by a second copy of the formula
     // would drift from the cost it is netted against.
-    perCall = calculateCostUsd(resolved.model.spec, HOLD_INPUT_TOKENS, HOLD_OUTPUT_TOKENS);
+    perCall = await calculateCostUsd(resolved.model.spec, HOLD_INPUT_TOKENS, HOLD_OUTPUT_TOKENS);
   } catch {
     // Resolution failed (missing row, decrypt failure). The turn itself will
     // fail on the same lookup a moment later; hold the fallback rather than

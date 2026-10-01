@@ -4,12 +4,28 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { RefObject } from 'react';
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Select } from '@/components/ui/Select';
 import { useApprovalsCount } from '@/hooks/useApprovals';
+import { type GatewayStatus, useGatewayStatus } from '@/hooks/useGatewayStatus';
 import { useTeams } from '@/hooks/useTeams';
 import { pageTitle } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
+
+const GATEWAY_TONE: Record<GatewayStatus, BadgeTone> = {
+  offline: 'brick',
+  online: 'moss',
+  pending: 'neutral',
+  unknown: 'neutral',
+};
+
+const GATEWAY_LABEL: Record<GatewayStatus, string> = {
+  offline: 'offline',
+  online: 'online',
+  pending: 'checking',
+  unknown: 'status unknown',
+};
 
 interface TopBarProps {
   navOpen: boolean;
@@ -31,8 +47,8 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
     router.push('/login');
   };
 
-  const teamLabel = teams?.find((t) => t.id === selectedTeamId)?.name ?? 'all teams';
   const inboxCount = useApprovalsCount();
+  const gatewayStatus = useGatewayStatus();
   const title = pageTitle(pathname);
 
   return (
@@ -67,30 +83,18 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
       </h2>
 
       {/* Team context selector */}
-      <label
-        className="relative flex min-w-0 shrink cursor-pointer items-center gap-[6px] rounded-[8px] sm:ml-2 focus-within:ring-2 focus-within:ring-ember-400"
-        htmlFor="topbar-team-select"
-      >
-        <span className="inline-flex min-w-0 cursor-pointer items-center gap-1.5 rounded-[8px] border border-ink-400 bg-ink-700 px-2.5 py-[5px] text-[12.5px] text-paper-400">
-          <span className="max-sm:hidden">team:</span>
-          <span className="max-w-[9rem] truncate font-semibold text-ember-400">{teamLabel}</span>
-          <span className="text-[10px] text-paper-500">▾</span>
-        </span>
-        <Select
-          aria-label="Select team"
-          className="absolute inset-0 cursor-pointer opacity-0"
-          id="topbar-team-select"
-          onChange={(e) => setSelectedTeamId(e.target.value || null)}
-          value={selectedTeamId ?? ''}
-        >
-          <option value="">all teams</option>
-          {(teams ?? []).map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </Select>
-      </label>
+      <Select
+        appearance="pill"
+        aria-label="Select team"
+        className="shrink sm:ml-2"
+        onChange={(v) => setSelectedTeamId(v || null)}
+        options={[
+          { label: 'all teams', value: '' },
+          ...(teams ?? []).map((t) => ({ label: t.name, value: t.id })),
+        ]}
+        prefix="team:"
+        value={selectedTeamId ?? ''}
+      />
 
       {/* Inbox badge */}
       {inboxCount > 0 && (
@@ -108,11 +112,16 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
 
       {/* Right side */}
       <div className="flex shrink-0 items-center gap-3">
-        {/* Online dot */}
-        <div className="flex items-center gap-2 max-sm:hidden">
-          <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
-          <span className="label-mono">online</span>
-        </div>
+        {/* Gateway reachability — driven by a /health probe, never assumed */}
+        <Badge
+          className="tracking-[0.18em] max-sm:hidden"
+          dot={gatewayStatus === 'online' ? 'pulse' : true}
+          tone={GATEWAY_TONE[gatewayStatus]}
+          uppercase
+          variant="text"
+        >
+          {GATEWAY_LABEL[gatewayStatus]}
+        </Badge>
 
         <span className="inline-block h-3.5 w-px bg-ink-400 max-sm:hidden" />
 

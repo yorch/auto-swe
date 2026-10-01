@@ -50,7 +50,8 @@ function SchemaField({
   onChange: (v: unknown) => void;
 }) {
   const id = `cfg-${field.key}`;
-  const label = `${field.key}${field.required ? ' *' : ''} — ${field.label}`;
+  const label = `${field.key} — ${field.label}`;
+  const required = field.required;
   const hint = field.description;
 
   if (field.type === 'boolean') {
@@ -61,6 +62,7 @@ function SchemaField({
         hint={hint}
         id={id}
         label={label}
+        marked={required}
         onChange={(e) => onChange(e.target.checked)}
       />
     );
@@ -76,6 +78,7 @@ function SchemaField({
           const v = e.target.value;
           onChange(v === '' ? undefined : Number(v));
         }}
+        required={required}
         type="number"
         value={typeof value === 'number' ? value : ''}
       />
@@ -88,16 +91,14 @@ function SchemaField({
         hint={hint}
         id={id}
         label={label}
-        onChange={(e) => onChange(e.target.value || undefined)}
+        onChange={(v) => onChange(v || undefined)}
+        options={[
+          { label: '— none —', value: '' },
+          ...(field.enumValues ?? []).map((v) => ({ label: v, value: v })),
+        ]}
+        required={required}
         value={typeof value === 'string' ? value : ''}
-      >
-        <option value="">— none —</option>
-        {(field.enumValues ?? []).map((v) => (
-          <option key={v} value={v}>
-            {v}
-          </option>
-        ))}
-      </Select>
+      />
     );
   }
   if (field.type === 'json') {
@@ -119,6 +120,7 @@ function SchemaField({
             onChange(t);
           }
         }}
+        required={required}
         spellCheck={false}
         value={
           value === undefined || value === null
@@ -137,6 +139,7 @@ function SchemaField({
       id={id}
       label={label}
       onChange={(e) => onChange(e.target.value || undefined)}
+      required={required}
       type="text"
       value={typeof value === 'string' ? value : ''}
     />
@@ -162,8 +165,7 @@ export function OnFailSection({
         compact
         id="onfail-mode"
         label="On fail"
-        onChange={(e) => {
-          const v = e.target.value;
+        onChange={(v) => {
           if (v === 'block') {
             onChange(undefined);
           } else if (v === 'warn') {
@@ -172,12 +174,13 @@ export function OnFailSection({
             onChange({ retry: retryCount });
           }
         }}
+        options={[
+          { label: 'Block (default) — abort run on failure', value: 'block' },
+          { label: 'Warn — record failure and continue', value: 'warn' },
+          { label: 'Retry', value: 'retry' },
+        ]}
         value={mode}
-      >
-        <option value="block">Block (default) — abort run on failure</option>
-        <option value="warn">Warn — record failure and continue</option>
-        <option value="retry">Retry</option>
-      </Select>
+      />
       {mode === 'retry' && (
         <Input
           compact
@@ -261,18 +264,19 @@ export function InputsBindingsSection({
                 aria-label="Binding type"
                 className="w-auto"
                 compact
-                onChange={(e) => {
-                  if (e.target.value === 'from') {
+                onChange={(v) => {
+                  if (v === 'from') {
                     setEntry(key, { from: displayVal });
                   } else {
                     setEntry(key, displayVal);
                   }
                 }}
+                options={[
+                  { label: 'path', value: 'from' },
+                  { label: 'literal', value: 'literal' },
+                ]}
                 value={isFrom ? 'from' : 'literal'}
-              >
-                <option value="from">path</option>
-                <option value="literal">literal</option>
-              </Select>
+              />
               <Button
                 aria-label="Remove binding"
                 className="px-2"

@@ -4,13 +4,13 @@ import { useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   useCreateHumanErrorBaseline,
@@ -99,18 +99,13 @@ function CreateBaselineModal({
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
         {error && <Alert>{error}</Alert>}
-        <Select
+        <Combobox
           id="baseline-org"
           label="Organization"
-          onChange={(e) => setForm((f) => ({ ...f, orgId: e.target.value }))}
+          onChange={(v) => setForm((f) => ({ ...f, orgId: v }))}
+          options={orgs.map((o) => ({ label: o.name, value: o.id }))}
           value={orgId}
-        >
-          {orgs.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </Select>
+        />
         <Input
           id="baseline-domain"
           label="Domain"
@@ -194,19 +189,14 @@ export default function GovernBaselinesPage() {
       />
 
       <div className="max-w-xs">
-        <Select
+        <Combobox
           disabled={orgsLoading}
           id="org-filter"
           label="Organization"
-          onChange={(e) => setSelectedOrgId(e.target.value)}
+          onChange={setSelectedOrgId}
+          options={orgOptions.map((o) => ({ label: o.name, value: o.id }))}
           value={selectedOrgId}
-        >
-          {orgOptions.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </Select>
+        />
       </div>
 
       <QueryBoundary

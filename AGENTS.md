@@ -50,20 +50,20 @@ applies to one file belongs in a skill, not in the context of every session.
 | Runtime               | Node.js                                | >=26.0.0               |
 | Package Manager       | Yarn 4 (Berry, via corepack from npm)  | 4.18.0                 |
 | Language              | TypeScript                             | 7.0.2                  |
-| HTTP Framework        | Fastify                                | 5.12.1                 |
+| HTTP Framework        | Fastify                                | 5.12.5                 |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.2 + admin-tools 1.31 + ui 2.53.3 |
-| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.22.0                 |
-| Agent Framework       | Mastra                                 | 1.60.0                 |
+| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.24.0                 |
+| Agent Framework       | Mastra                                 | 1.73.0                 |
 | LLM SDK               | Vercel AI SDK + provider adapters      | ai 7.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
-| ORM                   | Prisma                                 | 7.9.1                  |
+| ORM                   | Prisma                                 | 7.10.0                  |
 | Database              | PostgreSQL 18 + pgvector               | pgvector/pgvector:pg18 |
-| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.3.1 / 19.2.8 / 4.3.3 |
-| Public docs site      | Astro + Starlight                      | 7.3.2 / 0.42.0        |
-| Server State          | TanStack Query                         | 5.101.4                |
+| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.3.8 / 19.3.0 / 4.3.3 |
+| Public docs site      | Astro + Starlight                      | 7.3.5 / 0.42.5        |
+| Server State          | TanStack Query                         | 5.104.0                |
 | Client State          | Zustand                                | 5.0.15                 |
-| Validation            | Zod                                    | 4.4.3                  |
+| Validation            | Zod                                    | 4.6.5                  |
 | Testing               | Vitest                                 | 4.1.11                  |
-| Lint / Format         | Biome                                  | 2.5.9                 |
+| Lint / Format         | Biome                                  | 2.5.15                 |
 | Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.33.1 |
 
 ---
@@ -160,7 +160,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "65 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "64 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -179,7 +179,7 @@ install, and every rule in it is there because that bug already shipped past a g
 
 | Invariant | Why a type or a test cannot catch it |
 |---|---|
-| No `createWorkspace(…)` call writes its image argument as a string literal | A literal wins `image ?? cfg.workspaceImage`, so the operator's configured image is silently never read. Both types are `string`; a wrong image is a working image. A named constant is allowed — it forces somewhere to write down why (`EVAL_WORKSPACE_IMAGE`) |
+| No `createWorkspace(…)` call writes its image argument as a string literal | A literal wins `image ?? infra.image`, so the operator's configured image is silently never read. Both types are `string`; a wrong image is a working image. A named constant is allowed — it forces somewhere to write down why (`EVAL_WORKSPACE_IMAGE`) |
 | Every Dockerfile stage that runs `yarn` provisions one first — and no other stage does | `node:26` ships no Corepack and no `yarn`, so the stage exits 127 at build time. Nothing else runs inside an image, so tests, typecheck, lint and the doc check all stay green while no image can be built |
 | The root layout renders per request (`dynamic = 'force-dynamic'`) while it reads `NEXT_PUBLIC_*` | Otherwise Next prerenders it at `next build`, where the variable is unset, and bakes the `localhost` fallback into every page; the env var on the running container is never read. The page renders and the gateway is healthy — sign-in just fails in the browser. Invisible locally, because the fallback is the dev gateway's address |
 
@@ -258,20 +258,27 @@ The project uses `@mastra/core` with the Vercel AI SDK for model binding:
 
 ### System Config (Integrations)
 
-GitHub, Slack, artifact storage, issue-tracker and knowledge-base connectors, Figma, workflow
-defaults, and OAuth credentials are stored encrypted in the DB and managed via the admin UI. Code
-uses `resolveXxxConfig()` from `packages/shared/src/lib/systemConfig.ts` — DB-primary with env-var
-fallback. **Never read these from `process.env` directly in new code.**
+GitHub, Slack, issue-tracker and knowledge-base connectors, Figma, and workflow defaults are
+stored encrypted in the DB and managed via the admin UI. Code uses `resolveXxxConfig()` from
+`packages/shared/src/lib/systemConfig.ts` — DB-primary with env-var fallback. **Never read these
+from `process.env` directly in new code.**
+
+**Environment-only configuration** is the other half of the same file, and it has no admin form on
+purpose: Google, Okta and GitHub OAuth sign-in credentials (`resolveGoogleOAuthConfig()`,
+`resolveOktaOAuthConfig()`, and `oauthClientId`/`oauthClientSecret` on `resolveGitHubConfig()`),
+artifact storage (`resolveStorageConfig()`), and workspace sizing, images and worker/scanner bounds
+(`resolveWorkspaceInfra()`). They are read from `process.env` inside those resolvers — never
+elsewhere — and none of them touches the database. Do not add a column or a form for any of them:
+the rule is that what a process needs at start-up, or what only a deployer should be able to
+change, stays in the environment ([`docs/configuration.md`](./docs/configuration.md)).
 
 | Admin page | Manages | Resolver |
 |---|---|---|
-| `/studio/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds | `resolveGitHubConfig()` |
+| `/studio/integrations → GitHub` | PAT, webhook secret, GHE URLs, GitHub App creds; per-host GHE webhook secrets (`GitHubHostWebhookSecret`) | `resolveGitHubConfig()`; `resolveWebhookSecret()` for a delivery naming a GHE host |
 | `/studio/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
-| `/studio/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
 | `/studio/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveIssueTrackerConfig()` |
 | `/studio/integrations → Knowledge Base` | Confluence / Notion connector | `resolveKnowledgeBaseConfig()` |
 | `/studio/integrations → Figma` | read-only Figma design connector | `resolveFigmaConfig()` |
-| `/studio/integrations → OAuth` | Google OAuth client ID/secret; Okta SSO issuer + client ID/secret | `resolveGoogleOAuthConfig()`, `resolveOktaOAuthConfig()` |
 | `/govern/workflow-defaults` | branch prefix, PR templates, default team slug, consolidation + eval schedules, CI wait strategy, Tier-2 defaults | `resolveWorkflowDefaults()` and friends |
 
 Every config table is a singleton: one row, `id = 'default'`, enforced by a `CHECK` constraint.
@@ -292,7 +299,6 @@ accept a self-hosted base URL on a private or internal address.
 |---|---|---|
 | `budgetTiers` (6 columns → nested `{ tier: { inputTokens, outputTokens } }`) | STANDARD / LARGE / EPIC caps | `costTracking.ts` (`resolveBudgetTiers()`, falls back to `BUDGET_LIMITS`) |
 | `maxTddIterations` / `maxEvalIterations` | 5 / 3 | `executeImplementation.ts` TDD loop / `evalHarness.ts` |
-| `workspaceMemory` / `workspaceCpus` / `workspacePidsLimit` / `workspaceImage` | `4g` / 2 / 512 / `node:24-alpine` | `workspace.ts` container caps + default base image (an explicit `image` arg still wins) |
 | `lessonRetrievalLimit` / `lessonRetrievalThreshold` | 5 / 0.7 | `executeImplementation.ts` `retrieveSimilarLessons` |
 | `evalHealthMaxFlakeRate` / `evalHealthMaxStaleRate` / `evalHealthMinKappa` / `evalJudgeThreshold` | 0.1 / 0.1 / 0.4 / 0.5 | eval health gates / `runEvalNode.ts` judge scorer |
 | `ciWaitMode` / `ciPollIntervalSec` / `ciPollGraceSec` / `ciPollDeadlineSec` | `signal` / 15 / 60 / 14400 | CI wait strategy. **Nullable** — a null column falls back to `CI_WAIT_MODE` / `CI_POLL_*`, so a deployment driving these from the environment keeps working until an admin saves |
@@ -307,7 +313,8 @@ timeouts live on the `mcp` `Connection.config` JSON bag (`listTimeoutMs` / `call
 null = 15 s / 60 s).
 
 **Restart required:** `initAuth()` in `betterAuth.ts` reads OAuth credentials once at startup.
-Changing GitHub, Google, or Okta OAuth credentials requires a gateway restart. Okta is registered
+They are environment variables, so changing GitHub, Google, or Okta OAuth credentials means
+restarting the gateway. Okta is registered
 through better-auth's `genericOAuth` plugin, whose `init` fetches the OIDC discovery document once
 at startup — so the issuer is read at boot too, not per sign-in.
 
@@ -356,7 +363,7 @@ form field.**
 - Where the knob also has a nullable column on its own entity (`SlackChannel.reactiveCooldownMinutes`),
   that column wins and the definition must **not** list that scope in `overridableAt` — otherwise the
   effective-config view reports an override the worker never reads.
-- Resolution is `run pin → WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → env var →
+- Resolution is `run pin → WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL →
   default`, behind the same ~30 s cache as the agent resolver. A stored value that fails its schema
   degrades to the next tier rather than throwing.
 - `runPinned: true` freezes the value into `WorkflowRun.pinnedSettings` at run start. Use it for
@@ -527,10 +534,10 @@ path, every skill save and every TDD iteration. JavaScript's backtracking engine
 budget and a running regex cannot be interrupted from the thread executing it, so containment is
 structural in the runtime sense: `shared/lib/regexExec.ts` owns a single pooled `worker_thread`
 that executes every scanner pattern and is `terminate()`d when a batch overruns its wall-clock
-budget. That budget is the `workspace.regexScanBudgetMs` setting (default 250 ms, ADMIN-only,
-platform-wide — see the Setting Registry section above) resolved once per scan call and passed
-through `runRegexBatch`'s `opts.budgetMs`; a resolution failure falls back to the default rather
-than throwing, since a scan must never abort its caller. The budget is **per target**: each window
+budget. That budget is the `SCANNER_REGEX_BUDGET_MS` environment variable (default 250 ms,
+deployment-wide, clamped to 10 ms – 60 s) resolved once per scan call by `resolveRegexBudgetMs()`
+and passed through `runRegexBatch`'s `opts.budgetMs`. It is a plain environment read, so it cannot
+fail — a scan must never abort its caller. The budget is **per target**: each window
 a blocking scanner passes gets the full budget against every pattern, so a long command is bounded
 by `windows × budget`, not held to one budget for all of them. On an overrun the batch is bisected
 against a fresh thread to attribute the hang to a specific pattern; the well-behaved patterns'
@@ -645,17 +652,22 @@ and §8 below.
 
 ### Cost Tracking
 
-`packages/worker/src/lib/costTracking.ts` prices each call from `BUILTIN_MODELS` in
-`packages/shared/src/lib/builtinModels.ts` (USD per MTok). Unknown models fall back to zero cost and
-emit `llm.cost_pricing_known=false` on the OTel span — usage is still recorded, so runs are never
-lost to a missing price. Add an entry there as agents are routed to new models —
-`builtinModels.test.ts` fails the build when a seeded agent default, either side of a
-`PREVIOUS_DEFAULT_MODEL_SPECS` pair, or the seeded embedding default has none — or set a per-model
-env override:
+`packages/worker/src/lib/costTracking.ts` prices each call (USD per MTok) from the **model
+catalog** (`model_catalog_entries`), falling back to `BUILTIN_MODELS` in
+`packages/shared/src/lib/builtinModels.ts`; the span's `llm.cost_price_source` says which. Unknown
+models fall back to zero cost and emit `llm.cost_pricing_known=false` — usage is still recorded, so
+runs are never lost to a missing price. The catalog is read once per config-cache window, and
+pricing **never throws**: an unreadable catalog serves the last good read, else the built-in table,
+and is not queried again for one window. Add a model to `BUILTIN_MODELS` as agents are routed to it
+— `builtinModels.test.ts` fails the build when a seeded agent default, either side of a
+`PREVIOUS_DEFAULT_MODEL_SPECS` pair, or the seeded embedding default has none.
 
-```
-MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumerics → _
-```
+`MODEL_PRICE_*` environment overrides are **not read**; the worker names any it finds at startup.
+Admins set prices through `/api/v1/platform/model-catalog` (`routes/modelCatalog.ts`); saving an
+agent version or the embedding config with an unpriced, deprecated, retired or wrong-kind model
+returns `catalogWarnings` — advisory, never a refusal.
+Pricing logs go through `logWarn`/`logError` (`lib/activityLog.ts`), never `log` directly:
+embedding usage is priced outside an activity too, where `log` throws.
 
 Pricing keys off the resolved `provider/model` spec only — it is decoupled from agent identity,
 which is retained purely for attribution and telemetry.

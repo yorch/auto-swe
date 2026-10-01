@@ -1,8 +1,9 @@
 'use client';
 
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { UNSAFE_PortalProvider } from 'react-aria';
 import { createPortal } from 'react-dom';
-import { Button } from './Button';
+import { Button, ButtonLink } from './Button';
 
 /**
  * The action row every modal ends with: a `ghost` Cancel on the left of the
@@ -25,6 +26,7 @@ export function ModalFooter({
   onCancel,
   onSubmit,
   pendingLabel,
+  submitHref,
   submitLabel,
 }: {
   cancelLabel?: string;
@@ -35,6 +37,12 @@ export function ModalFooter({
   onCancel: () => void;
   onSubmit?: () => void;
   pendingLabel?: string;
+  /**
+   * Renders the primary action as a link to this route rather than a button,
+   * for an action that navigates. `onSubmit` then runs on click; `disabled`
+   * and `isPending` do not apply to a link.
+   */
+  submitHref?: string;
   submitLabel?: string;
 }) {
   return (
@@ -43,7 +51,12 @@ export function ModalFooter({
       <Button onClick={onCancel} type="button" variant={submitLabel ? 'ghost' : 'secondary'}>
         {cancelLabel}
       </Button>
-      {submitLabel && (
+      {submitLabel && submitHref && (
+        <ButtonLink href={submitHref} onClick={onSubmit} variant={dangerous ? 'danger' : 'primary'}>
+          {submitLabel}
+        </ButtonLink>
+      )}
+      {submitLabel && !submitHref && (
         <Button
           disabled={disabled || isPending}
           onClick={onSubmit}
@@ -65,6 +78,7 @@ export function Modal({
   subtitle,
   children,
   size = 'md',
+  closeOnBackdropClick = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -73,6 +87,12 @@ export function Modal({
   subtitle?: React.ReactNode;
   children: React.ReactNode;
   size?: 'md' | 'lg';
+  /**
+   * Turn off for a modal whose content cannot be shown again — a one-time
+   * secret — so a stray click cannot discard it. The close button and Escape
+   * still close it: both are deliberate.
+   */
+  closeOnBackdropClick?: boolean;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   // The dialog is portalled to document.body: callers often own a modal from
@@ -120,7 +140,11 @@ export function Modal({
       aria-labelledby={titleId}
       className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/80`}
       onClick={(e) => {
-        if (pressStartedOnBackdrop.current && e.target === e.currentTarget) {
+        if (
+          closeOnBackdropClick &&
+          pressStartedOnBackdrop.current &&
+          e.target === e.currentTarget
+        ) {
           e.currentTarget.close();
         }
       }}
@@ -154,7 +178,13 @@ export function Modal({
             ×
           </button>
         </header>
-        {children}
+        {/* A shown <dialog> sits in the browser's top layer, above everything
+            portalled to <body> — so a dropdown opened in here would render
+            behind it. Overlays from React Aria (Select, Combobox) portal into
+            the dialog instead. */}
+        <UNSAFE_PortalProvider getContainer={() => dialogRef.current}>
+          {children}
+        </UNSAFE_PortalProvider>
       </div>
     </dialog>,
     document.body

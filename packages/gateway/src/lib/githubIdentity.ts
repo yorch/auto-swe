@@ -46,6 +46,7 @@ export async function fetchGithubLogin(
         'User-Agent': 'auto-swe/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
       },
+      redirect: 'error',
       signal: AbortSignal.timeout(PROFILE_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) {

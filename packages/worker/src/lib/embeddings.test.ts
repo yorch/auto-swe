@@ -59,7 +59,7 @@ vi.mock('./activityContext.js', () => ({
 }));
 
 vi.mock('./costTracking.js', () => ({
-  calculateCostUsd: (spec: string, input: number) =>
+  calculateCostUsd: async (spec: string, input: number) =>
     spec === 'openai/text-embedding-3-large' ? (input * 0.13) / 1_000_000 : 0,
 }));
 

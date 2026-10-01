@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { catalogWarnings } from './modelCatalogService.js';
 
 /**
  * Agent-library service (P1): create / version / list the first-class Agent
@@ -179,6 +180,17 @@ export async function listAgents(
 }
 
 /**
+ * Catalog warnings for the model an agent version runs. An agent that inherits
+ * its model from a parent names none, so it has nothing to warn about.
+ */
+async function agentCatalogWarnings(
+  prisma: PrismaClient,
+  agent: { modelSpec: string | null }
+): Promise<string[]> {
+  return agent.modelSpec ? catalogWarnings(prisma, agent.modelSpec, 'CHAT') : [];
+}
+
+/**
  * Create the first version of a new Agent lineage. Scans the system prompt
  * (custom content) and starts unverified. Throws if the lineage already exists
  * (the caller should 409) — overriding an existing lineage is {@link updateAgent}.
@@ -188,7 +200,7 @@ export async function createAgent(
   key: AgentScopeKey,
   base: AgentBaseInput & { name: string },
   actorId: string
-): Promise<{ agent: AgentRow; scanWarnings: string[] }> {
+): Promise<{ agent: AgentRow; catalogWarnings: string[]; scanWarnings: string[] }> {
   if ((await maxVersion(prisma, key)) > 0) {
     throw new AgentLineageExistsError(key.key, key.scope);
   }
@@ -234,7 +246,11 @@ export async function createAgent(
       where: { id: agentBase.id },
     });
   });
-  return { agent, scanWarnings: scan.warnings };
+  return {
+    agent,
+    catalogWarnings: await agentCatalogWarnings(prisma, agent),
+    scanWarnings: scan.warnings,
+  };
 }
 
 /**
@@ -247,7 +263,7 @@ export async function updateAgent(
   current: AgentRow,
   base: AgentBaseInput,
   actorId: string
-): Promise<{ agent: AgentRow; scanWarnings: string[] }> {
+): Promise<{ agent: AgentRow; catalogWarnings: string[]; scanWarnings: string[] }> {
   const key: AgentScopeKey = {
     channelId: current.channelId,
     key: current.key,
@@ -322,7 +338,11 @@ export async function updateAgent(
       where: { id: agentBase.id },
     });
   });
-  return { agent, scanWarnings: scan.warnings };
+  return {
+    agent,
+    catalogWarnings: await agentCatalogWarnings(prisma, agent),
+    scanWarnings: scan.warnings,
+  };
 }
 
 /**

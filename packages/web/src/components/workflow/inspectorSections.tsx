@@ -10,6 +10,7 @@
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
 import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -169,17 +170,17 @@ export function FanOutSection({
         compact
         id="fanout-branch-fail"
         label="On branch fail"
-        onChange={(e) => {
-          const v = e.target.value;
+        onChange={(v) => {
           if (v === 'block' || v === 'continue') {
             onChange({ ...node, onBranchFail: v });
           }
         }}
+        options={[
+          { label: 'Block (default) — stop on first failure', value: 'block' },
+          { label: 'Continue — collect all results', value: 'continue' },
+        ]}
         value={node.onBranchFail ?? 'block'}
-      >
-        <option value="block">Block (default) — stop on first failure</option>
-        <option value="continue">Continue — collect all results</option>
-      </Select>
+      />
       <Input
         compact
         id="fanout-concurrency"
@@ -260,17 +261,17 @@ export function ShellSection({
         compact
         id="shell-network"
         label="Network"
-        onChange={(e) => {
-          const v = e.target.value;
+        onChange={(v) => {
           if (v === 'none' || v === 'egress') {
             onChange({ ...node, network: v === 'none' ? undefined : v });
           }
         }}
+        options={[
+          { label: 'None (default) — no outbound access', value: 'none' },
+          { label: 'Egress — outbound via team allowlist', value: 'egress' },
+        ]}
         value={node.network ?? 'none'}
-      >
-        <option value="none">None (default) — no outbound access</option>
-        <option value="egress">Egress — outbound via team allowlist</option>
-      </Select>
+      />
       <div className="grid grid-cols-2 gap-3">
         <Input
           compact
@@ -339,17 +340,17 @@ export function ContainerStepSection({
         compact
         id="container-network"
         label="Network"
-        onChange={(e) => {
-          const v = e.target.value;
+        onChange={(v) => {
           if (v === 'none' || v === 'egress') {
             onChange({ ...node, network: v === 'none' ? undefined : v });
           }
         }}
+        options={[
+          { label: 'None (default) — no outbound access', value: 'none' },
+          { label: 'Egress — outbound via team allowlist', value: 'egress' },
+        ]}
         value={node.network ?? 'none'}
-      >
-        <option value="none">None (default) — no outbound access</option>
-        <option value="egress">Egress — outbound via team allowlist</option>
-      </Select>
+      />
       <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
   );
@@ -371,20 +372,14 @@ export function TerminateSection({
       compact
       id="terminate-status"
       label="Status"
-      onChange={(e) => {
-        const v = e.target.value;
+      onChange={(v) => {
         if ((TERMINATE_STATUSES as readonly string[]).includes(v)) {
           onChange(v as TerminateStatus);
         }
       }}
+      options={TERMINATE_STATUSES.map((s) => ({ label: s, value: s }))}
       value={status}
-    >
-      {TERMINATE_STATUSES.map((s) => (
-        <option key={s} value={s}>
-          {s}
-        </option>
-      ))}
-    </Select>
+    />
   );
 }
 
@@ -510,22 +505,19 @@ export function McpSection({
           {connectionsError && (
             <Alert>{errMsg(connectionsError, 'Failed to load MCP connections')}</Alert>
           )}
-          <Select
+          <Combobox
             compact
+            emptyMessage="No connections match"
             hint="Choose an active MCP connection (managed at /studio/mcp)"
             label="Connection"
-            onChange={(e) => onChange({ ...node, connectionRef: e.target.value })}
+            onChange={(v) => onChange({ ...node, connectionRef: v })}
+            options={(connections ?? []).map((c) => ({
+              label: `${c.name} (${c.team?.name ?? c.teamId})`,
+              value: c.id,
+            }))}
+            placeholder={connectionsLoading ? 'Loading connections…' : 'Select an MCP connection…'}
             value={node.connectionRef}
-          >
-            <option disabled value="">
-              {connectionsLoading ? 'Loading connections…' : 'Select an MCP connection…'}
-            </option>
-            {(connections ?? []).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.team?.name ?? c.teamId})
-              </option>
-            ))}
-          </Select>
+          />
           {!connectionsLoading && !connectionsError && (connections ?? []).length === 0 && (
             <EmptyState className="py-0 text-left text-xs" title="No MCP connections configured." />
           )}

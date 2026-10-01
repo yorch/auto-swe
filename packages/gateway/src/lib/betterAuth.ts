@@ -15,6 +15,7 @@
 
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
   resolveBetterAuthConfig,
   resolveGitHubConfig,
@@ -25,8 +26,9 @@ import {
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { magicLink } from 'better-auth/plugins';
-import { genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
+import { type GenericOAuthConfig, genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import { authEmailAvailable, deliverAuthEmail } from './authEmail.js';
+import { type GithubSignIn, resolveGithubSignIn } from './githubEnterpriseAuth.js';
 import { clearGithubLogin, syncGithubLoginForAccount } from './githubIdentity.js';
 
 // Share the gateway's single Prisma client (one pool, tenant guard attached)
@@ -53,8 +55,7 @@ if (!DEV_SECRET_ALLOWED && RESOLVED_SECRET === DEV_FALLBACK_SECRET) {
 
 // OAuth credentials resolved at initAuth() time (DB-primary, env-fallback).
 // These are set once at startup and not re-read — changing them requires restart.
-let _githubClientId: string | null = null;
-let _githubClientSecret: string | null = null;
+let _githubSignIn: GithubSignIn = { mode: 'none' };
 let _googleClientId: string | null = null;
 let _googleClientSecret: string | null = null;
 let _oktaIssuer: string | null = null;
@@ -160,30 +161,57 @@ function renderMagicLinkHtml({
 type AuthInstance = ReturnType<typeof buildAuth>;
 let _auth: AuthInstance | null = null;
 
-/// Called once at gateway startup. Reads OAuth credentials from DB (with env
-/// fallback) then initialises the BetterAuth singleton. Subsequent calls are
-/// no-ops (the singleton is already built). A restart is required to pick up
-/// changes to OAuth credentials after the server is running.
+/// Called once at gateway startup. Reads the sign-in credentials from the
+/// environment (GitHub's endpoints still come from the GitHub config row), then
+/// initialises the BetterAuth singleton. Subsequent calls are no-ops (the
+/// singleton is already built). A restart is required to pick up changes to
+/// OAuth credentials after the server is running.
 export async function initAuth(): Promise<void> {
   if (_auth) {
     return;
   }
 
-  const [ghConfig, googleConfig, oktaConfig] = await Promise.all([
-    resolveGitHubConfig(),
-    resolveGoogleOAuthConfig(),
-    resolveOktaOAuthConfig(),
-  ]);
+  const ghConfig = await resolveGitHubConfig();
+  const googleConfig = resolveGoogleOAuthConfig();
+  const oktaConfig = resolveOktaOAuthConfig();
 
-  _githubClientId = ghConfig.oauthClientId;
-  _githubClientSecret = ghConfig.oauthClientSecret;
+  _githubSignIn = resolveGithubSignIn({
+    apiUrl: ghConfig.apiUrl,
+    baseUrl: ghConfig.baseUrl,
+    clientId: ghConfig.oauthClientId,
+    clientSecret: ghConfig.oauthClientSecret,
+  });
   _googleClientId = googleConfig.clientId;
   _googleClientSecret = googleConfig.clientSecret;
-  _oktaIssuer = oktaConfig.issuer;
+  const oktaIssuerProblem = oktaConfig.issuer ? checkOktaIssuer(oktaConfig.issuer) : null;
+  if (oktaIssuerProblem) {
+    // Refuse the provider, not the gateway: a bad issuer must not take down
+    // email and the other sign-in methods. Okta stays off until it is fixed.
+    console.error(
+      `[better-auth] Okta sign-in disabled: OKTA_ISSUER rejected (${oktaIssuerProblem}).`
+    );
+  }
+  _oktaIssuer = oktaIssuerProblem ? null : oktaConfig.issuer;
   _oktaClientId = oktaConfig.clientId;
   _oktaClientSecret = oktaConfig.clientSecret;
 
   _auth = buildAuth();
+}
+
+/// The issuer's discovery document is fetched server-side at boot, so it gets
+/// the same SSRF guard as every other operator-supplied URL: public HTTPS only.
+/// The issuer comes from the environment, so only whoever controls the
+/// deployment can set it — this catches a mistake, not an attacker.
+/// Returns why the issuer is unusable, or null when it is fine.
+function checkOktaIssuer(issuer: string): string | null {
+  const safety = isSafeProbeUrl(issuer);
+  if (!safety.ok) {
+    return safety.reason;
+  }
+  if (safety.url.protocol !== 'https:') {
+    return 'must use https';
+  }
+  return null;
 }
 
 /// Returns the initialised BetterAuth instance. Throws if `initAuth()` hasn't
@@ -212,6 +240,18 @@ function oktaConfigured(): boolean {
 }
 
 function buildAuth() {
+  // One `genericOAuth` plugin carries every provider the built-in adapters cannot: GitHub
+  // Enterprise (registered under the `github` id) and Okta.
+  const genericConfigs: GenericOAuthConfig[] = [];
+  if (_githubSignIn.mode === 'ghe') {
+    genericConfigs.push(_githubSignIn.config);
+  }
+  if (_oktaIssuer && _oktaClientId && _oktaClientSecret) {
+    genericConfigs.push(
+      okta({ clientId: _oktaClientId, clientSecret: _oktaClientSecret, issuer: _oktaIssuer })
+    );
+  }
+
   /**
    * Record (or re-record) the GitHub username behind a linked GitHub account.
    *
@@ -229,7 +269,10 @@ function buildAuth() {
       return;
     }
     try {
-      const { apiUrl } = await resolveGitHubConfig();
+      // In GHE mode use the API URL sign-in itself resolved: with only a Base URL saved the saved
+      // API URL is still api.github.com, which would receive the user's GHE access token.
+      const apiUrl =
+        _githubSignIn.mode === 'ghe' ? _githubSignIn.apiUrl : (await resolveGitHubConfig()).apiUrl;
       const result = await syncGithubLoginForAccount(prisma, {
         accessToken: account.accessToken,
         apiUrl,
@@ -384,8 +427,9 @@ function buildAuth() {
         expiresIn: 60 * 10, // 10 minutes
         sendMagicLink: async ({ email, url }) => deliverMagicLink({ email, url }),
       }),
-      // Okta / enterprise SSO. `genericOAuth` registers its providers into the
-      // same `socialProviders` list the built-ins live in, so `okta` is driven
+      // Okta / enterprise SSO, and GitHub Enterprise (see `genericConfigs`).
+      // `genericOAuth` registers its providers into the same `socialProviders`
+      // list the built-ins live in, so `okta` is driven
       // by the ordinary `/api/auth/sign-in/social`, `/api/auth/callback/okta`
       // and `/api/auth/link-social` routes — no client-side plugin needed.
       //
@@ -396,27 +440,18 @@ function buildAuth() {
       // Okta outage cannot stop the gateway from booting — but Okta sign-in
       // stays broken until the gateway is restarted against a reachable
       // issuer.
-      ...(_oktaIssuer && _oktaClientId && _oktaClientSecret
-        ? [
-            genericOAuth({
-              config: [
-                okta({
-                  clientId: _oktaClientId,
-                  clientSecret: _oktaClientSecret,
-                  issuer: _oktaIssuer,
-                }),
-              ],
-            }),
-          ]
-        : []),
+      ...(genericConfigs.length > 0 ? [genericOAuth({ config: genericConfigs })] : []),
     ],
     // Strict origins for browser-initiated calls. The Slack OAuth flow keeps
     // its own server-side redirect handling so it doesn't need to appear here.
     secret: RESOLVED_SECRET,
     socialProviders: {
-      ...(_githubClientId && _githubClientSecret
+      ...(_githubSignIn.mode === 'builtin'
         ? {
-            github: { clientId: _githubClientId, clientSecret: _githubClientSecret },
+            github: {
+              clientId: _githubSignIn.clientId,
+              clientSecret: _githubSignIn.clientSecret,
+            },
           }
         : {}),
       ...(_googleClientId && _googleClientSecret
@@ -458,7 +493,7 @@ export function configuredProviders(): {
   okta: boolean;
 } {
   return {
-    github: Boolean(_githubClientId && _githubClientSecret),
+    github: _githubSignIn.mode !== 'none',
     google: Boolean(_googleClientId && _googleClientSecret),
     magicLink: authEmailAvailable(),
     okta: oktaConfigured(),

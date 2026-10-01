@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { SkillOption } from '@/hooks/useSkills';
 import {
@@ -29,8 +29,12 @@ describe('SkillRefEditor', () => {
     );
 
     expect(screen.getByText('tdd')).toBeTruthy();
+    const input = screen.getByRole('combobox', { name: 'Add skill' }) as HTMLInputElement;
+    expect(input.placeholder).toBe('+ Add skill…');
+    // Focus alone no longer opens the list; the chevron shows every option.
+    fireEvent.click(screen.getByRole('button', { name: /show options/i }));
     const options = screen.getAllByRole('option').map((o) => o.textContent);
-    expect(options).toEqual(['+ Add skill…', 'code-review']);
+    expect(options).toEqual(['code-review']);
   });
 
   it('appends the picked skill with the next sortOrder', () => {
@@ -43,12 +47,29 @@ describe('SkillRefEditor', () => {
       />
     );
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 's2' } });
+    const input = screen.getByRole('combobox', { name: 'Add skill' });
+    act(() => input.focus());
+    fireEvent.change(input, { target: { value: 'code' } });
+    fireEvent.click(screen.getByRole('option', { name: 'code-review' }));
 
     expect(onChange).toHaveBeenCalledWith([
       { skillId: 's1', sortOrder: 0 },
       { skillId: 's2', sortOrder: 1 },
     ]);
+  });
+
+  it('clears the typed filter once a skill is added', () => {
+    const { rerender } = render(<SkillRefEditor onChange={vi.fn()} refs={[]} skills={SKILLS} />);
+    const input = screen.getByRole('combobox', { name: 'Add skill' });
+    act(() => input.focus());
+    fireEvent.change(input, { target: { value: 'code' } });
+    fireEvent.click(screen.getByRole('option', { name: 'code-review' }));
+    rerender(
+      <SkillRefEditor onChange={vi.fn()} refs={[{ skillId: 's2', sortOrder: 0 }]} skills={SKILLS} />
+    );
+    expect((screen.getByRole('combobox', { name: 'Add skill' }) as HTMLInputElement).value).toBe(
+      ''
+    );
   });
 
   it('renumbers sortOrder after a removal', () => {
@@ -105,7 +126,7 @@ describe('SkillRefEditor', () => {
     const { unmount } = render(
       <SkillRefEditor label="Skills" onChange={vi.fn()} refs={[]} skills={SKILLS} />
     );
-    expect(screen.getByLabelText('Skills')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Skills' })).toBeTruthy();
     unmount();
 
     render(
@@ -116,7 +137,7 @@ describe('SkillRefEditor', () => {
         skills={SKILLS}
       />
     );
-    expect(screen.queryByLabelText('Skills')).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Skills' })).toBeNull();
   });
 });
 

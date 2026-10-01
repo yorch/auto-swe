@@ -9,6 +9,7 @@ export {
 } from './permissions.js';
 export {
   getSettingDefinition,
+  hostEntry,
   isSettingKey,
   RUN_PINNED_SETTING_KEYS,
   SETTING_DEFINITIONS,

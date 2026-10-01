@@ -4,6 +4,7 @@ import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Combobox } from '@/components/ui/Combobox';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
@@ -220,21 +221,15 @@ export function ConnectionFormModal({
           <Select
             id="conn-type"
             label="Connection type"
-            onChange={(e) => {
-              const v = e.target.value;
+            onChange={(v) => {
               const match = CONNECTION_TYPE_OPTIONS.find((t) => t.value === v);
               if (match) {
                 setConnType(match.value);
               }
             }}
+            options={CONNECTION_TYPE_OPTIONS.map(({ label, value }) => ({ label, value }))}
             value={connType}
-          >
-            {CONNECTION_TYPE_OPTIONS.map(({ label, value }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </Select>
+          />
         )}
 
         {isGit ? (
@@ -264,22 +259,15 @@ export function ConnectionFormModal({
                 required
                 value={defaultBranch}
               />
-              <Select
+              <Combobox
                 id="team"
                 label="Team"
-                onChange={(e) => setTeamId(e.target.value)}
+                onChange={setTeamId}
+                options={teams.map((t) => ({ label: t.name, value: t.id }))}
+                placeholder="Select a team"
                 required
                 value={teamId}
-              >
-                <option disabled value="">
-                  Select a team
-                </option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </Select>
+              />
             </div>
             <Input
               hint="Docker image the worker spins up per run. Defaults to node:24-alpine if left blank."
@@ -304,22 +292,15 @@ export function ConnectionFormModal({
               required
               value={name}
             />
-            <Select
+            <Combobox
               id="team"
               label="Team"
-              onChange={(e) => setTeamId(e.target.value)}
+              onChange={setTeamId}
+              options={teams.map((t) => ({ label: t.name, value: t.id }))}
+              placeholder="Select a team"
               required
               value={teamId}
-            >
-              <option disabled value="">
-                Select a team
-              </option>
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
+            />
             <Textarea
               compact
               error={configJsonError ?? undefined}

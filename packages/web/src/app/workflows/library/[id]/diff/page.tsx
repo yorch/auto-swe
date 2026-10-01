@@ -335,15 +335,12 @@ function VersionSelect({ label, versions, value, onChange, activeVersion }: Vers
       compact
       id={selectId}
       label={label}
-      onChange={(e) => onChange(Number(e.target.value))}
-      value={value ?? ''}
-    >
-      {versions.map((v) => (
-        <option key={v.id} value={v.version}>
-          v{v.version}
-          {v.version === activeVersion ? ' (active)' : ''}
-        </option>
-      ))}
-    </Select>
+      onChange={(v) => onChange(Number(v))}
+      options={versions.map((v) => ({
+        label: `v${v.version}${v.version === activeVersion ? ' (active)' : ''}`,
+        value: String(v.version),
+      }))}
+      value={value == null ? '' : String(value)}
+    />
   );
 }

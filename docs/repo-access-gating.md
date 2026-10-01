@@ -72,6 +72,13 @@ and fall back to the login-based lookup where it is not. A
 token GitHub rejects, or that cannot see the repository, refuses a launch as
 `user-credential-rejected` rather than falling back — the run would use that token and fail.
 
+A repository on a host the platform's credential is not valid on (another host than the instance's,
+or web and API bases on different hosts) cannot be asked about with it. That lookup fails as
+`host-mismatch`, and a launch is refused with the `host-mismatch` reason, whose message names the
+remedy (set the GitHub integration's web and API URLs to that host, or save your own token) rather
+than suggesting a retry, which could never succeed. Advisory mode logs it and allows, as for every
+other refusal; the projection writes nothing on any lookup failure.
+
 The endpoint answers with a level, not a boolean, so one lookup serves two different questions:
 
 | Level | May view a repository and its runs | May start a run |
@@ -123,6 +130,10 @@ re-register it, so a login recorded months ago can end up naming a different per
 projection would then record that person's access as this user's. The numeric account id cannot
 change, which is what makes the check possible; a plain rename still resolves to the same id and is
 left alone.
+
+The ownership lookup always asks github.com, so the platform's credential is attached only when the
+instance's own API host is github.com. On a GitHub Enterprise instance the call is unauthenticated
+(rate-limited, so answers read as unverifiable and nothing is cleared) and is logged once.
 
 The sweep's candidate set is each repository's owning-team and shared-team members, each once, not
 every user times every repository, so its cost tracks real reachability rather than deployment size.
@@ -334,6 +345,10 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   clears it when it does not. A plain rename is harmless and is deliberately left alone, because
   GitHub redirects the old name to the same account id. The exposure window is one sweep interval,
   and a deployment with the sweep disabled has no detection at all.
+- **A re-registered username on a GitHub Enterprise instance is not detected.** An account created by
+  GHE sign-in has an id of the form `{host}:{id}`, which belongs to that host's id space rather than
+  github.com's, so the sweep cannot compare it and reports the login as unverifiable. Nothing is
+  cleared and no takeover is recorded for it.
 - **Revocation is not instant.** Webhooks make it seconds, but a missed or undelivered webhook
   leaves the previous answer in place until the next sweep, and a paused sweep extends that to
   `repoAccess.viewStaleAfterHours`. The launch path is unaffected, because it asks live.

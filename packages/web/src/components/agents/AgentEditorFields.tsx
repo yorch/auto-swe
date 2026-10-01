@@ -1,8 +1,8 @@
 'use client';
 
 import { Checkbox } from '@/components/ui/Checkbox';
+import { Combobox } from '@/components/ui/Combobox';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
-import { Select } from '@/components/ui/Select';
 import type { SkillRefInput } from '@/hooks/useAgentLibrary';
 import type { SkillOption } from '@/hooks/useSkills';
 
@@ -36,7 +36,7 @@ export function SkillRefEditor({
   refs: SkillRefInput[];
   skills: SkillOption[];
   onChange: (refs: SkillRefInput[]) => void;
-  /** Rendered on the add-skill Select while no skill is attached yet. */
+  /** Rendered on the add-skill Combobox while no skill is attached yet. */
   label?: string;
   /** Rendered when there is nothing attached and nothing left to attach. */
   emptyHint?: string;
@@ -107,22 +107,20 @@ export function SkillRefEditor({
         </ul>
       )}
       {available.length > 0 && (
-        <Select
+        <Combobox
+          aria-label={refs.length === 0 && label ? undefined : 'Add skill'}
+          // Remount after each add so the typed filter text does not linger.
+          key={refs.length}
           label={refs.length === 0 ? label : undefined}
-          onChange={(e) => {
-            if (e.target.value) {
-              add(e.target.value);
+          onChange={(v) => {
+            if (v) {
+              add(v);
             }
           }}
+          options={available.map((s) => ({ label: s.name, value: s.id }))}
+          placeholder="+ Add skill…"
           value=""
-        >
-          <option value="">+ Add skill…</option>
-          {available.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </Select>
+        />
       )}
       {emptyHint && available.length === 0 && refs.length === 0 && (
         <p className="text-xs text-paper-500">{emptyHint}</p>

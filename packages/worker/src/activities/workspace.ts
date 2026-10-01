@@ -1,8 +1,6 @@
 import crypto from 'node:crypto';
-import { resolveSettings } from '@auto-swe/shared/config';
-import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
-import { currentRequestContext } from '../lib/config/contextLookup.js';
 import {
   type CapturedResult,
   execShellAsync,
@@ -383,18 +381,15 @@ export function killTaggedProcessesScript(execId: string): string {
 // Resource caps applied to every workspace container (bound worst-case
 // memory/CPU usage from a runaway agent-driven build/test process, and cap
 // process count to blunt fork-bomb-style failures) and the default base image
-// are resolved per-call from the DB-backed workflow defaults — see
-// `createWorkspace` (defaults: 4g / 2 CPU / 512 pids / node:24-alpine).
+// come from the environment — see `resolveWorkspaceInfra` and `createWorkspace`
+// (defaults: 4g / 2 CPU / 512 pids / node:24-alpine).
 
 // Cloud metadata-IP egress block (deferred follow-up to the `--add-host`
 // hardening below): can be disabled per-deployment if it misbehaves on a given
 // Docker runtime (e.g. `--network container:` unsupported). Default ON.
-//
-// Both this and the sidecar image are now registry settings rather than a
-// module-scope constant and an env var read once at import: a security control
-// an operator cannot see the current value of is one they cannot audit. The
-// `WORKSPACE_BLOCK_METADATA` env var still works as the fallback, so a
-// deployment that sets it keeps its behaviour until an admin saves an override.
+// `WORKSPACE_BLOCK_METADATA=false` is the only value that turns it off, and the
+// sidecar image is `WORKSPACE_METADATA_BLOCK_IMAGE`. Both are deploy-time
+// settings: nothing a run, a team, or an admin session can change.
 
 /**
  * Build the `docker run` invocation for the short-lived metadata-block sidecar.
@@ -567,21 +562,12 @@ export async function createWorkspace(
    */
   existingBranch?: boolean
 ): Promise<Workspace> {
-  // Resolve container caps + default base image from the DB-backed workflow
-  // defaults. A caller-supplied `image` still wins (executor-image override).
-  const cfg = await resolveWorkflowDefaults();
-  const effectiveImage = image ?? cfg.workspaceImage;
-
-  // Metadata-blocking policy for this workspace. Resolved through the run's
-  // scope so a deployment can see and change it from the dashboard; both keys
-  // are platform-wide, so the context only affects caching, not the answer.
-  const {
-    'workspace.blockMetadata': blockMetadata,
-    'workspace.metadataBlockImage': metadataBlockImage,
-  } = await resolveSettings(
-    ['workspace.blockMetadata', 'workspace.metadataBlockImage'],
-    await currentRequestContext()
-  );
+  // Container caps, default base image and metadata-blocking policy all come
+  // from the environment. A caller-supplied `image` still wins (executor-image
+  // override).
+  const infra = resolveWorkspaceInfra();
+  const effectiveImage = image ?? infra.image;
+  const { blockMetadata, metadataBlockImage } = infra;
 
   if (!DOCKER_IMAGE_REF_RE.test(effectiveImage)) {
     throw new Error(`Invalid Docker image name: ${effectiveImage}`);
@@ -656,7 +642,7 @@ export async function createWorkspace(
       // `workspaceMemory` is a DB-backed string, so shell-quote it (the numeric
       // caps can't carry shell metacharacters); defense-in-depth on top of the
       // route-level format validation.
-      `docker run -d --name ${containerName} --init --dns=1.1.1.1 --dns=8.8.8.8 --memory=${shellQuote(cfg.workspaceMemory)} --cpus=${cfg.workspaceCpus} --pids-limit=${cfg.workspacePidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(effectiveImage)} sleep infinity`,
+      `docker run -d --name ${containerName} --init --dns=1.1.1.1 --dns=8.8.8.8 --memory=${shellQuote(infra.memory)} --cpus=${infra.cpus} --pids-limit=${infra.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(effectiveImage)} sleep infinity`,
       { heartbeatLabel: 'workspace: starting container' }
     );
 

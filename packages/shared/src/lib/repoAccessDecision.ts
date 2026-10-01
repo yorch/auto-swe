@@ -51,6 +51,8 @@ export interface RepoAccessSubject {
   organizationName: string | null;
   repoName: string | null;
   githubApiUrl: string | null;
+  /** Required with `githubApiUrl`: together they say whether the platform credential applies. */
+  githubUrl: string | null;
   installation: { installationId: string; isActive: boolean } | null;
   /** Must be filtered to the acting user, or pre-filtered by the query. */
   team: { memberships: Array<{ userId: string }> };

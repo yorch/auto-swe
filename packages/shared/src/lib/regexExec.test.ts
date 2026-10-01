@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const findMany = vi.fn(async (_args?: unknown) => [] as unknown[]);
-vi.mock('../db.js', () => ({ prisma: { configSetting: { findMany } } }));
-
-import { invalidateSettingsCache } from '../config/resolveSetting.js';
 import { BUILTIN_SCANNER_PATTERNS } from '../scannerPatterns/index.js';
 import {
   __evaluateGroupForTests,
@@ -44,9 +40,6 @@ afterEach(() => {
 });
 
 beforeEach(() => {
-  findMany.mockReset();
-  findMany.mockResolvedValue([]);
-  invalidateSettingsCache();
   delete process.env.SCANNER_REGEX_BUDGET_MS;
 });
 
@@ -417,33 +410,26 @@ describe('bisection bookkeeping (scripted executor, no timing)', () => {
   });
 });
 
-describe('resolveRegexBudgetMs — operator-tunable via the setting registry', () => {
-  it('falls back to the default when nothing overrides it', async () => {
-    await expect(resolveRegexBudgetMs()).resolves.toBe(DEFAULT_REGEX_BUDGET_MS);
+describe('resolveRegexBudgetMs — read from SCANNER_REGEX_BUDGET_MS', () => {
+  it('falls back to the default when the variable is unset', () => {
+    expect(resolveRegexBudgetMs()).toBe(DEFAULT_REGEX_BUDGET_MS);
   });
 
-  it('reflects a GLOBAL override, proving the effective budget comes from the setting', async () => {
-    findMany.mockResolvedValue([
-      { key: 'workspace.regexScanBudgetMs', scope: 'GLOBAL', value: 5_000 },
-    ]);
-    await expect(resolveRegexBudgetMs()).resolves.toBe(5_000);
-  });
-
-  it('honours the env var fallback between the cascade and the default', async () => {
+  it('reflects the environment variable', () => {
     process.env.SCANNER_REGEX_BUDGET_MS = '9000';
-    await expect(resolveRegexBudgetMs()).resolves.toBe(9_000);
+    expect(resolveRegexBudgetMs()).toBe(9_000);
   });
 
-  it('falls back to the default, and never throws, when resolution fails', async () => {
-    findMany.mockRejectedValue(new Error('database is unreachable'));
-    await expect(resolveRegexBudgetMs()).resolves.toBe(DEFAULT_REGEX_BUDGET_MS);
+  it('clamps to the 60 s ceiling and ignores a non-numeric value', () => {
+    process.env.SCANNER_REGEX_BUDGET_MS = '999999';
+    expect(resolveRegexBudgetMs()).toBe(60_000);
+    process.env.SCANNER_REGEX_BUDGET_MS = 'lots';
+    expect(resolveRegexBudgetMs()).toBe(DEFAULT_REGEX_BUDGET_MS);
   });
 
   it('an overridden budget actually changes what runRegexBatch enforces', async () => {
-    findMany.mockResolvedValue([
-      { key: 'workspace.regexScanBudgetMs', scope: 'GLOBAL', value: 150 },
-    ]);
-    const budgetMs = await resolveRegexBudgetMs();
+    process.env.SCANNER_REGEX_BUDGET_MS = '150';
+    const budgetMs = resolveRegexBudgetMs();
     const started = Date.now();
     const result = await runRegexBatch([EVIL], [{ key: 't', text: EVIL_INPUT }], { budgetMs });
     expect(Date.now() - started).toBeLessThan(5_000);

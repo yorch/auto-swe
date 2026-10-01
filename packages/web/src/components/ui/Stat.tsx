@@ -1,6 +1,7 @@
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
-type StatTone = 'default' | 'ember' | 'moss' | 'amber' | 'brick' | 'dust';
+type StatTone = 'default' | 'muted' | 'ember' | 'moss' | 'amber' | 'brick' | 'dust';
 
 const TONE: Record<StatTone, string> = {
   amber: 'text-amber-400',
@@ -9,6 +10,7 @@ const TONE: Record<StatTone, string> = {
   dust: 'text-dust-400',
   ember: 'text-ember-400',
   moss: 'text-moss-400',
+  muted: 'text-paper-500',
 };
 
 export function Stat({
@@ -17,6 +19,7 @@ export function Stat({
   unit,
   tone = 'default',
   delta,
+  hint,
   className,
 }: {
   label: string;
@@ -24,6 +27,8 @@ export function Stat({
   unit?: string;
   tone?: StatTone;
   delta?: { value: string; positive?: boolean } | null;
+  /** A quiet secondary line under the value (next run, a usage breakdown). */
+  hint?: ReactNode;
   className?: string;
 }) {
   return (
@@ -51,6 +56,7 @@ export function Stat({
           {delta.positive ? '▲' : '▼'} {delta.value}
         </div>
       )}
+      {hint && <div className="mt-2 font-mono text-[10px] text-paper-500">{hint}</div>}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -14,7 +15,6 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
@@ -181,21 +181,14 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
           placeholder="#engineering-bot"
           value={form.name}
         />
-        <Select
+        <Combobox
           label="Team"
-          onChange={(e) => set('teamId', e.target.value)}
+          onChange={(v) => set('teamId', v)}
+          options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
+          placeholder="Select a team…"
           required
           value={form.teamId}
-        >
-          <option disabled value="">
-            Select a team…
-          </option>
-          {teams?.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </Select>
+        />
         <Input
           hint="Agent role key that handles messages in this channel"
           label="Agent key"
@@ -415,21 +408,14 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         placeholder="#engineering-bot"
         value={form.name}
       />
-      <Select
+      <Combobox
         label="Team"
-        onChange={(e) => set('teamId', e.target.value)}
+        onChange={(v) => set('teamId', v)}
+        options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
+        placeholder="Select a team…"
         required
         value={form.teamId}
-      >
-        <option disabled value="">
-          Select a team…
-        </option>
-        {teams?.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
-          </option>
-        ))}
-      </Select>
+      />
       <Input
         hint="Agent role key that handles messages in this channel"
         label="Agent key"

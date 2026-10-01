@@ -37,7 +37,7 @@ vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
   // The hold is priced through this; leaving it out makes every hold silently
   // take the unknown-model fallback instead of the bound model's rate.
-  calculateCostUsd: (_spec: string, input: number, output: number) =>
+  calculateCostUsd: async (_spec: string, input: number, output: number) =>
     (input * 5 + output * 25) / 1_000_000,
   recordLlmUsage: (...args: unknown[]) => recordLlmUsageMock(...args),
 }));

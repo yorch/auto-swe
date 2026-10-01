@@ -41,7 +41,9 @@ describe('AccessTokensSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /new token/i }));
 
-    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'laptop' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
+      target: { value: 'laptop' },
+    });
     // Default expiresInDays is 90 — leave it
     fireEvent.click(screen.getByRole('button', { name: /create token/i }));
 

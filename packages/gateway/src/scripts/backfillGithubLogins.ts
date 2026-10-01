@@ -15,10 +15,17 @@
  */
 import { prisma } from '@auto-swe/shared/db';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+import { resolveGithubApiUrl } from '../lib/githubEnterpriseAuth.js';
 import { fetchGithubLogin, storeGithubLogin } from '../lib/githubIdentity.js';
 
 async function main(): Promise<void> {
-  const { apiUrl } = await resolveGitHubConfig();
+  const config = await resolveGitHubConfig();
+  // The same API root GHE sign-in uses: with only a Base URL saved, the stored API URL is still
+  // api.github.com, which must never receive a GHE user's access token.
+  const apiUrl = resolveGithubApiUrl(config.baseUrl, config.apiUrl);
+  if (!apiUrl) {
+    throw new Error('The saved GitHub Base URL or API URL is not a valid http(s) URL');
+  }
 
   // Accounts, not users: the GitHub token lives on the account row, and a user
   // with no GitHub account is not a candidate at all.

@@ -67,6 +67,7 @@
     "./workflow/testHelpers": "./dist/workflow/testHelpers.js",
     "./lib/tenantGuard": "./dist/lib/tenantGuard.js",
     "./lib/githubInstallation": "./dist/lib/githubInstallation.js",
+    "./lib/githubHostScope": "./dist/lib/githubHostScope.js",
     "./lib/connectionCredential": "./dist/lib/connectionCredential.js",
     "./lib/githubPermission": "./dist/lib/githubPermission.js",
     "./lib/githubIdentityCheck": "./dist/lib/githubIdentityCheck.js",
@@ -101,21 +102,21 @@
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
-    "@opentelemetry/resources": "2.10.0",
-    "@opentelemetry/sdk-node": "0.221.0",
+    "@opentelemetry/resources": "2.11.0",
+    "@opentelemetry/sdk-node": "0.222.0",
     "@opentelemetry/semantic-conventions": "1.43.0",
-    "@prisma/adapter-pg": "7.9.1",
-    "@prisma/client": "7.9.1",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
     "bcrypt": "6.0.0",
     "dotenv-expand": "13.0.0",
-    "pg": "8.23.0",
-    "zod": "4.4.3"
+    "pg": "8.23.1",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/bcrypt": "6.0.0",
     "@typescript/typescript6": "6.0.2",
-    "prisma": "7.9.1",
-    "tsx": "4.23.12",
+    "prisma": "7.10.0",
+    "tsx": "4.23.15",
     "typescript": "7.0.2"
   },
   "prisma": {

@@ -6,7 +6,6 @@ vi.mock('@auto-swe/shared/db', () => ({
     figmaConfig: { findUnique: vi.fn() },
     gitHubConfig: { findUnique: vi.fn() },
     knowledgeBaseConfig: { findUnique: vi.fn() },
-    storageConfig: { findUnique: vi.fn() },
     workflowDefaults: { findUnique: vi.fn() },
   },
 }));
@@ -14,14 +13,18 @@ vi.mock('@auto-swe/shared/db', () => ({
 import { prisma } from '@auto-swe/shared/db';
 import { encryptSecret } from './crypto.js';
 import {
+  assertWorkspaceInfraEnv,
   resolveGitHubConfig,
+  resolveGoogleOAuthConfig,
   resolveKnowledgeBaseConfig,
+  resolveOktaOAuthConfig,
   resolveStorageConfig,
   resolveWorkflowDefaults,
+  resolveWorkspaceInfra,
+  validateWorkspaceInfraEnv,
 } from './systemConfig.js';
 
 const findGitHub = vi.mocked(prisma.gitHubConfig.findUnique);
-const findStorage = vi.mocked(prisma.storageConfig.findUnique);
 const findWorkflowDefaults = vi.mocked(prisma.workflowDefaults.findUnique);
 const findKnowledgeBase = vi.mocked(prisma.knowledgeBaseConfig.findUnique);
 
@@ -86,7 +89,6 @@ describe('systemConfig resolvers', () => {
       delete process.env[key];
     }
     findGitHub.mockReset();
-    findStorage.mockReset();
     findWorkflowDefaults.mockReset();
     findKnowledgeBase.mockReset();
   });
@@ -116,10 +118,8 @@ describe('systemConfig resolvers', () => {
         appInstallationId: 'install-1',
         authMode: 'app',
         baseUrl: 'https://ghe.example.com',
-        oauthClientId: 'oauth-client-id',
         ...encryptedColumns('token', 'db-pat-token'),
         ...encryptedColumns('webhookSecret', 'db-webhook-secret'),
-        ...encryptedColumns('oauthClientSecret', 'db-oauth-secret'),
         ...encryptedColumns('appClientSecret', 'db-app-secret'),
         ...encryptedColumns('appPrivateKey', 'db-private-key'),
       } as never);
@@ -128,7 +128,6 @@ describe('systemConfig resolvers', () => {
 
       expect(config.token).toBe('db-pat-token');
       expect(config.webhookSecret).toBe('db-webhook-secret');
-      expect(config.oauthClientSecret).toBe('db-oauth-secret');
       expect(config.appClientSecret).toBe('db-app-secret');
       expect(config.appPrivateKey).toBe('db-private-key');
       expect(config.apiUrl).toBe('https://ghe.example.com/api/v3');
@@ -137,7 +136,6 @@ describe('systemConfig resolvers', () => {
       expect(config.appClientId).toBe('app-client-id');
       expect(config.appInstallationId).toBe('install-1');
       expect(config.authMode).toBe('app');
-      expect(config.oauthClientId).toBe('oauth-client-id');
     });
 
     it('falls back to env vars when no DB row exists', async () => {
@@ -177,7 +175,6 @@ describe('systemConfig resolvers', () => {
         appInstallationId: null,
         authMode: null,
         baseUrl: 'https://db-wins.example.com',
-        oauthClientId: null,
         ...encryptedColumns('token', 'db-pat-token'),
         ...encryptedColumns('webhookSecret', 'db-webhook-secret'),
         appClientSecretAuthTag: null,
@@ -188,10 +185,6 @@ describe('systemConfig resolvers', () => {
         appPrivateKeyCiphertext: null,
         appPrivateKeyKeyVersion: null,
         appPrivateKeyNonce: null,
-        oauthClientSecretAuthTag: null,
-        oauthClientSecretCiphertext: null,
-        oauthClientSecretKeyVersion: null,
-        oauthClientSecretNonce: null,
       } as never);
       vi.stubEnv('GITHUB_TOKEN', 'env-pat-token');
       vi.stubEnv('GITHUB_URL', 'https://env-loses.example.com');
@@ -327,72 +320,185 @@ describe('systemConfig resolvers', () => {
   });
 
   describe('resolveStorageConfig', () => {
-    it('decrypts DB values and honors an explicit inline backend', async () => {
-      findStorage.mockResolvedValue({
-        awsAccessKeyId: 'db-access-key',
-        backend: 'inline',
-        s3Bucket: 'db-bucket',
-        s3Endpoint: 'https://s3.example.com',
-        s3ForcePathStyle: true,
-        s3Prefix: 'db-prefix',
-        s3Region: 'us-east-1',
-        ...encryptedColumns('awsSecretAccessKey', 'db-secret-key'),
-      } as never);
-
-      const config = await resolveStorageConfig();
-
-      expect(config.backend).toBe('inline');
-      expect(config.awsAccessKeyId).toBe('db-access-key');
-      expect(config.awsSecretAccessKey).toBe('db-secret-key');
-      expect(config.s3Bucket).toBe('db-bucket');
-      expect(config.s3ForcePathStyle).toBe(true);
-    });
-
-    it('falls back to inline backend when no row and no S3 bucket env var', async () => {
-      findStorage.mockResolvedValue(null);
-
-      const config = await resolveStorageConfig();
+    it('is inline with nothing configured', () => {
+      const config = resolveStorageConfig();
 
       expect(config.backend).toBe('inline');
       expect(config.s3Bucket).toBeNull();
       expect(config.awsSecretAccessKey).toBeNull();
+      expect(config.s3ForcePathStyle).toBe(false);
     });
 
-    it('infers an s3 backend from ARTIFACT_S3_BUCKET when no DB row exists', async () => {
-      findStorage.mockResolvedValue(null);
+    it('is s3, read entirely from the environment, once a bucket is set', () => {
       vi.stubEnv('ARTIFACT_S3_BUCKET', 'env-bucket');
+      vi.stubEnv('ARTIFACT_S3_REGION', 'eu-west-1');
       vi.stubEnv('ARTIFACT_S3_FORCE_PATH_STYLE', 'true');
+      vi.stubEnv('AWS_ACCESS_KEY_ID', 'env-access-key');
+      vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'env-secret-key');
 
-      const config = await resolveStorageConfig();
+      const config = resolveStorageConfig();
 
-      expect(config.backend).toBe('s3');
-      expect(config.s3Bucket).toBe('env-bucket');
-      expect(config.s3ForcePathStyle).toBe(true);
+      expect(config).toMatchObject({
+        awsAccessKeyId: 'env-access-key',
+        awsSecretAccessKey: 'env-secret-key',
+        backend: 's3',
+        s3Bucket: 'env-bucket',
+        s3ForcePathStyle: true,
+        s3Region: 'eu-west-1',
+      });
+    });
+  });
+
+  describe('resolveGoogleOAuthConfig / resolveOktaOAuthConfig', () => {
+    const SIGN_IN_KEYS = [
+      'GOOGLE_CLIENT_ID',
+      'GOOGLE_CLIENT_SECRET',
+      'OKTA_ISSUER',
+      'OKTA_CLIENT_ID',
+      'OKTA_CLIENT_SECRET',
+    ];
+    beforeEach(() => {
+      for (const key of SIGN_IN_KEYS) {
+        delete process.env[key];
+      }
     });
 
-    it('keeps an explicit DB backend of inline even when the bucket env var is set', async () => {
-      // A partial row that only set `backend` explicitly (no bucket) still wins
-      // over the env-derived 's3' backend, since a DB row exists at all.
-      findStorage.mockResolvedValue({
-        awsAccessKeyId: null,
-        awsSecretAccessKeyAuthTag: null,
-        awsSecretAccessKeyCiphertext: null,
-        awsSecretAccessKeyKeyVersion: null,
-        awsSecretAccessKeyNonce: null,
-        backend: 'inline',
-        s3Bucket: null,
-        s3Endpoint: null,
-        s3ForcePathStyle: false,
-        s3Prefix: null,
-        s3Region: null,
-      } as never);
-      vi.stubEnv('ARTIFACT_S3_BUCKET', 'env-bucket');
+    it('read the environment and nothing else', () => {
+      vi.stubEnv('GOOGLE_CLIENT_ID', 'g-id');
+      vi.stubEnv('GOOGLE_CLIENT_SECRET', 'g-secret');
+      vi.stubEnv('OKTA_ISSUER', 'https://dev-1.okta.com/oauth2/default///');
+      vi.stubEnv('OKTA_CLIENT_ID', 'o-id');
+      vi.stubEnv('OKTA_CLIENT_SECRET', 'o-secret');
 
-      const config = await resolveStorageConfig();
+      expect(resolveGoogleOAuthConfig()).toEqual({ clientId: 'g-id', clientSecret: 'g-secret' });
+      expect(resolveOktaOAuthConfig()).toEqual({
+        clientId: 'o-id',
+        clientSecret: 'o-secret',
+        issuer: 'https://dev-1.okta.com/oauth2/default',
+      });
+    });
 
-      expect(config.backend).toBe('inline');
-      // s3Bucket itself still falls back to env per-field since the DB field is null.
-      expect(config.s3Bucket).toBe('env-bucket');
+    it('are null when unset', () => {
+      expect(resolveGoogleOAuthConfig()).toEqual({ clientId: null, clientSecret: null });
+      expect(resolveOktaOAuthConfig().issuer).toBeNull();
+    });
+  });
+
+  describe('resolveWorkspaceInfra', () => {
+    const KEYS = [
+      'WORKSPACE_MEMORY',
+      'WORKSPACE_CPUS',
+      'WORKSPACE_PIDS_LIMIT',
+      'WORKSPACE_IMAGE',
+      'WORKSPACE_METADATA_BLOCK_IMAGE',
+      'WORKSPACE_BLOCK_METADATA',
+      'WORKER_MAX_CONCURRENT_ACTIVITIES',
+      'SCANNER_REGEX_BUDGET_MS',
+    ];
+    beforeEach(() => {
+      for (const key of KEYS) {
+        delete process.env[key];
+      }
+    });
+
+    it('returns the built-in defaults when nothing is set', () => {
+      expect(resolveWorkspaceInfra()).toEqual({
+        blockMetadata: true,
+        cpus: 2,
+        image: 'node:24-alpine',
+        maxConcurrentActivities: 10,
+        memory: '4g',
+        metadataBlockImage: 'alpine:3.20',
+        pidsLimit: 512,
+        regexScanBudgetMs: 250,
+      });
+    });
+
+    it('reads each variable', () => {
+      vi.stubEnv('WORKSPACE_MEMORY', '8g');
+      vi.stubEnv('WORKSPACE_CPUS', '3.5');
+      vi.stubEnv('WORKSPACE_PIDS_LIMIT', '1024');
+      vi.stubEnv('WORKSPACE_IMAGE', 'node:26-alpine');
+
+      expect(resolveWorkspaceInfra()).toMatchObject({
+        cpus: 3.5,
+        image: 'node:26-alpine',
+        memory: '8g',
+        pidsLimit: 1024,
+      });
+    });
+
+    it('only the literal string "false" disables metadata blocking', () => {
+      vi.stubEnv('WORKSPACE_BLOCK_METADATA', 'false');
+      expect(resolveWorkspaceInfra().blockMetadata).toBe(false);
+      vi.stubEnv('WORKSPACE_BLOCK_METADATA', 'no');
+      expect(resolveWorkspaceInfra().blockMetadata).toBe(true);
+    });
+
+    it('clamps an oversized concurrency, and ignores an unparseable one', () => {
+      vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', '2000');
+      expect(resolveWorkspaceInfra().maxConcurrentActivities).toBe(1000);
+      vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', 'lots');
+      expect(resolveWorkspaceInfra().maxConcurrentActivities).toBe(10);
+    });
+
+    it('falls back to the default for an image that is not a valid reference', () => {
+      vi.stubEnv('WORKSPACE_IMAGE', 'my image:latest');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      expect(resolveWorkspaceInfra().image).toBe('node:24-alpine');
+      error.mockRestore();
+    });
+
+    describe('validateWorkspaceInfraEnv — the strict check the worker runs at boot', () => {
+      it('is clean when nothing is set, and when everything is valid', () => {
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+        vi.stubEnv('WORKSPACE_MEMORY', '512m');
+        vi.stubEnv('WORKSPACE_CPUS', '1.5');
+        vi.stubEnv('WORKSPACE_PIDS_LIMIT', '256');
+        vi.stubEnv('WORKSPACE_IMAGE', 'registry.example.com/team/base:1.2');
+        vi.stubEnv('WORKSPACE_BLOCK_METADATA', 'false');
+        vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', '20');
+        vi.stubEnv('SCANNER_REGEX_BUDGET_MS', '500');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
+      it('does not treat an oversized number as a problem — the resolver clamps it', () => {
+        vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', '2000');
+        vi.stubEnv('SCANNER_REGEX_BUDGET_MS', '999999');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
+      it('reports every unusable value at once, naming the variable and what it should be', () => {
+        vi.stubEnv('WORKSPACE_MEMORY', '4g --privileged');
+        vi.stubEnv('WORKSPACE_CPUS', 'two');
+        vi.stubEnv('WORKSPACE_PIDS_LIMIT', '-1');
+        vi.stubEnv('WORKSPACE_IMAGE', 'my image:latest');
+        vi.stubEnv('WORKSPACE_METADATA_BLOCK_IMAGE', 'bad image');
+        vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', 'lots');
+        vi.stubEnv('SCANNER_REGEX_BUDGET_MS', '0');
+        const problems = validateWorkspaceInfraEnv();
+        expect(problems).toHaveLength(7);
+        expect(problems[0]).toContain('WORKSPACE_MEMORY="4g --privileged"');
+        expect(problems.join('\n')).toContain('WORKER_MAX_CONCURRENT_ACTIVITIES="lots"');
+      });
+
+      it('rejects a metadata flag that would read as off but leave blocking on', () => {
+        for (const raw of ['0', 'no', 'False', 'off']) {
+          vi.stubEnv('WORKSPACE_BLOCK_METADATA', raw);
+          expect(validateWorkspaceInfraEnv()).toEqual([
+            `WORKSPACE_BLOCK_METADATA=${JSON.stringify(raw)} is not 'true' or 'false'`,
+          ]);
+        }
+      });
+
+      it('assertWorkspaceInfraEnv throws one error listing every problem, and is silent when valid', () => {
+        expect(() => assertWorkspaceInfraEnv()).not.toThrow();
+        vi.stubEnv('WORKSPACE_CPUS', 'two');
+        vi.stubEnv('WORKSPACE_PIDS_LIMIT', '-1');
+        expect(() => assertWorkspaceInfraEnv()).toThrow(
+          /Invalid workspace configuration[\s\S]*WORKSPACE_CPUS[\s\S]*WORKSPACE_PIDS_LIMIT/
+        );
+      });
     });
   });
 

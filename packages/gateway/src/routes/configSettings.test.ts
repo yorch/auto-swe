@@ -261,13 +261,13 @@ describe('PUT /config/settings/:key', () => {
   });
 
   it('refuses a scope the definition does not allow', async () => {
-    // workspace.blockMetadata is a security control: platform-wide only.
+    // github.userCredentialsEnabled is a security control: platform-wide only.
     const app = await buildApp();
     const res = await app.inject({
-      body: { value: false },
+      body: { value: true },
       headers: auth('ADMIN'),
       method: 'PUT',
-      url: `/api/v1/platform/config/settings/workspace.blockMetadata?scope=TEAM&teamId=${TEAM_ID}`,
+      url: `/api/v1/platform/config/settings/github.userCredentialsEnabled?scope=TEAM&teamId=${TEAM_ID}`,
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('SCOPE_NOT_ALLOWED');
@@ -430,10 +430,10 @@ describe('PUT /config/settings/:key', () => {
     ] as never);
     const app = await buildApp();
     const res = await app.inject({
-      body: { value: 'alpine/git:1.0' },
+      body: { value: true },
       headers: auth('LEAD'),
       method: 'PUT',
-      url: '/api/v1/platform/config/settings/workspace.gitHelperImage',
+      url: '/api/v1/platform/config/settings/github.userCredentialsEnabled',
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('ROLE_TOO_LOW');

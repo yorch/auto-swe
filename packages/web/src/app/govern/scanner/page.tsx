@@ -83,15 +83,10 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
         <Select
           id="scanner-new-type"
           label="Type"
-          onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
+          onChange={(v) => setForm((f) => ({ ...f, type: v as PatternType }))}
+          options={patternTypeOptions}
           value={form.type}
-        >
-          {patternTypeOptions.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
+        />
         <Input
           id="scanner-new-pattern"
           label="Pattern (regex source)"
@@ -198,15 +193,10 @@ function PatternDetailModal({
           <Select
             id="scanner-edit-type"
             label="Type"
-            onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
+            onChange={(v) => setForm((f) => ({ ...f, type: v as PatternType }))}
+            options={patternTypeOptions}
             value={form.type}
-          >
-            {patternTypeOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
+          />
           <Input
             id="scanner-edit-pattern"
             label="Pattern (regex source)"

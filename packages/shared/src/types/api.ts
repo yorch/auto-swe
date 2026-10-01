@@ -197,6 +197,15 @@ export interface CreateWorkRequestResponse {
   workflowIds: string[];
 }
 
+/**
+ * `POST /work-requests/:id/retry`. The run row is created by the worker once
+ * the workflow begins, not by the gateway, so the response names the Temporal
+ * workflow id (`WorkflowRunSummary.workflowId`) to look the new run up by.
+ */
+export interface RetryWorkRequestResponse extends CreateWorkRequestResponse {
+  temporalWorkflowId: string;
+}
+
 // ── Epics (Phase 3) ──
 
 export interface CreateEpicBody {
@@ -692,6 +701,8 @@ export interface ScheduledWorkRequestSummary {
    * credential only.
    */
   actsAs: { id: string; email: string; name: string | null } | null;
+  /** The team that owns the schedule; null means its team was deleted. */
+  team: TeamRef | null;
   lastFiredAt: string | null;
   schedule: ScheduledWorkRequestScheduleStatus;
   createdAt: string;

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { SchemaFieldInput } from './schemaForm';
@@ -34,10 +34,13 @@ describe('SchemaFieldInput', () => {
         value=""
       />
     );
-    const select = screen.getByLabelText(/Connection id/i) as HTMLSelectElement;
-    expect(select).toBeTruthy();
-    expect(select.options.length).toBe(2);
-    expect(select.textContent).toContain('My Notion');
-    expect(select.textContent).not.toContain('acme');
+    const input = screen.getByRole('combobox', { name: /Connection id/i });
+    expect(input).toBeTruthy();
+    // Focus alone no longer opens the list; the chevron shows every option.
+    fireEvent.click(screen.getByRole('button', { name: /show options/i }));
+    const options = screen.getAllByRole('option');
+    expect(options.length).toBe(1);
+    expect(options[0].textContent).toContain('My Notion');
+    expect(screen.queryByText(/acme/)).toBeNull();
   });
 });

@@ -135,7 +135,7 @@ async function evaluateScorer(
       }
       const specs = toRegexSpecs(entries, 'pii:');
       const target: RegexTarget = { key: 'target', text };
-      const budgetMs = await resolveRegexBudgetMs();
+      const budgetMs = resolveRegexBudgetMs();
       const result = await runRegexBatch(specs, [target], { budgetMs, label: 'piiScan' });
       const passed = result.hits.length === 0 && !result.incomplete;
       return { kind: 'pii', passed, scorer: 'pii:pii', value: passed ? 1 : 0 };

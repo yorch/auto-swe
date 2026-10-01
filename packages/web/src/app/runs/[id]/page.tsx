@@ -30,7 +30,12 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useApprovals } from '@/hooks/useApprovals';
-import { useCancelWorkflowRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useRuns';
+import {
+  useCancelWorkflowRun,
+  useRetriedRun,
+  useRetryWorkRequest,
+  useRunDetail,
+} from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -696,26 +701,22 @@ function LayoutC({
 export default function RunDetailPage({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const [fullTraces, setFullTraces] = useState(false);
   const {
     data: run,
     isError,
     isLoading,
     isPlaceholderData,
     error,
-  } = useWorkflowRun(id ?? '', true, fullTraces);
-  const [fullTracesFailed, setFullTracesFailed] = useState(false);
-  // A full-payload response can run to many MB, so it can fail where the
-  // trimmed one did not. Fall back to the trimmed view rather than replacing
-  // the run with an error page.
-  useEffect(() => {
-    if (fullTraces && isError) {
-      setFullTraces(false);
-      setFullTracesFailed(true);
-    }
-  }, [fullTraces, isError]);
+    fullTraces,
+    fullTracesFailed,
+    toggleFullTraces,
+  } = useRunDetail(id ?? '');
   const cancelRun = useCancelWorkflowRun(id ?? '');
   const retryRun = useRetryWorkRequest();
+  const retried = useRetriedRun(
+    retryRun.data?.workRequestId ?? null,
+    retryRun.data?.temporalWorkflowId ?? null
+  );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const { layout, setLayout } = useUserPreferences();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -872,10 +873,7 @@ export default function RunDetailPage({ params }: PageProps) {
           {(tracesTrimmed || fullTraces) && (
             <Button
               disabled={isPlaceholderData}
-              onClick={() => {
-                setFullTracesFailed(false);
-                setFullTraces((v) => !v);
-              }}
+              onClick={toggleFullTraces}
               size="sm"
               title={
                 fullTraces
@@ -911,9 +909,17 @@ export default function RunDetailPage({ params }: PageProps) {
           {retryRun.isSuccess && (
             <Alert className="px-2 py-1 text-xs" variant="success">
               New run started —{' '}
-              <Link className="underline hover:text-moss-600" href="/runs">
-                view runs
-              </Link>
+              {retried.runId ? (
+                <Link className="underline hover:text-moss-600" href={`/runs/${retried.runId}`}>
+                  view run
+                </Link>
+              ) : retried.timedOut ? (
+                <Link className="underline hover:text-moss-600" href="/runs">
+                  view runs
+                </Link>
+              ) : (
+                'locating it…'
+              )}
             </Alert>
           )}
           {retryRun.isError && (

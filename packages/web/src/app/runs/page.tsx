@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -51,35 +52,32 @@ export default function WorkflowRunsPage() {
           <Select
             id="status"
             label="Status"
-            onChange={(e) => {
-              setStatus(e.target.value);
+            onChange={(v) => {
+              setStatus(v);
               setOffset(0);
             }}
+            options={[
+              { label: 'All statuses', value: '' },
+              ...WORKFLOW_RUN_STATUSES.map((s) => ({
+                label: s.replace(/_/g, ' ').toLowerCase(),
+                value: s,
+              })),
+            ]}
             value={status}
-          >
-            <option value="">All statuses</option>
-            {WORKFLOW_RUN_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s.replace(/_/g, ' ').toLowerCase()}
-              </option>
-            ))}
-          </Select>
-          <Select
+          />
+          <Combobox
             id="template"
             label="Template"
-            onChange={(e) => {
-              setTemplateId(e.target.value);
+            onChange={(v) => {
+              setTemplateId(v);
               setOffset(0);
             }}
+            options={[
+              { label: 'All templates', value: '' },
+              ...templates.map((t) => ({ label: t.name, value: t.id })),
+            ]}
             value={templateId}
-          >
-            <option value="">All templates</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
+          />
         </div>
         <Checkbox
           checked={includeChannel}
