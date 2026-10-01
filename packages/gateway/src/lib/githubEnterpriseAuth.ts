@@ -96,7 +96,7 @@ export async function fetchGhesUserInfo(
 export type GithubSignIn =
   | { mode: 'none' }
   | { mode: 'builtin'; clientId: string; clientSecret: string }
-  | { mode: 'ghe'; config: GenericOAuthConfig };
+  | { mode: 'ghe'; config: GenericOAuthConfig; apiUrl: string };
 
 function parseHttpUrl(raw: string): URL | null {
   try {
@@ -159,6 +159,7 @@ export function resolveGithubSignIn(input: {
   const apiRoot = rootOf(api) === GITHUB_COM_API ? `${baseRoot}/api/v3` : rootOf(api);
 
   return {
+    apiUrl: apiRoot,
     config: {
       authorizationUrl: `${baseRoot}/login/oauth/authorize`,
       clientId,

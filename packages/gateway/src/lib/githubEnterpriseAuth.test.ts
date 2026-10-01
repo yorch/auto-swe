@@ -265,6 +265,22 @@ describe('resolveGithubSignIn', () => {
     );
   });
 
+  it('exposes the API URL it resolved, so other callers use the same one', () => {
+    const derived = resolveGithubSignIn({
+      ...CREDS,
+      apiUrl: GITHUB_API,
+      baseUrl: 'https://ghe.example.com/',
+    });
+    const explicit = resolveGithubSignIn({
+      ...CREDS,
+      apiUrl: 'https://api.ghe.example.com/',
+      baseUrl: 'https://ghe.example.com',
+    });
+
+    expect(derived).toMatchObject({ apiUrl: 'https://ghe.example.com/api/v3', mode: 'ghe' });
+    expect(explicit).toMatchObject({ apiUrl: 'https://api.ghe.example.com', mode: 'ghe' });
+  });
+
   it('keeps an explicit API URL and strips its trailing slash', async () => {
     const spy = serve([{ email: 'o@example.com', primary: true, verified: true }]);
     const config = gheConfig({
