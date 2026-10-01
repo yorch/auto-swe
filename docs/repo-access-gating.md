@@ -58,8 +58,17 @@ permission endpoint with the installation credential and a username. Both proces
 worker through a `repoPermission` method on the `ScmProvider` seam, the gateway through
 `lookupRepoPermission`.
 
-Because the platform asks on the user's behalf, there are no per-user GitHub tokens to store,
-refresh, expire, or encrypt.
+Because the platform asks on the user's behalf, the gate itself needs no per-user GitHub token.
+
+The exception is a user who has saved their own token for the repository and may use it (see
+[user-github-credentials.md](./user-github-credentials.md)). On a launch path whose run acts as the
+caller, the run acts as that token, so that is the identity the gate judges: it asks
+`GET /repos/{owner}/{repo}` with the token and reads the owner's `permissions`, and needs no stored
+login. Slack and scheduled launches run with the platform credential and are judged by the login
+whatever the caller saved. The sweep and the webhook refresh prefer the token where it is usable
+and fall back to the login-based lookup where it is not. A
+token GitHub rejects, or that cannot see the repository, refuses a launch as
+`user-credential-rejected` rather than falling back — the run would use that token and fail.
 
 The endpoint answers with a level, not a boolean, so one lookup serves two different questions:
 
@@ -329,11 +338,11 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
 - **Runs already in flight are not re-checked.** The gate is a launch-time and read-time control. A
   run that started legitimately continues to completion even if GitHub access is revoked while it
   is waiting on CI or a human step.
-- **Nothing here changes which identity acts on GitHub.** Clones, pushes, and pull requests are
-  still made with the platform's installation credential, not the user's, so pull requests are not
-  attributed to the requester. Delegating execution to a user identity would need per-user token
-  refresh and a service identity for webhook- and schedule-triggered runs, which have no user at
-  all.
+- **The gate does not change which identity acts on GitHub.** Clones, pushes, and pull requests use
+  the platform's installation credential unless the launching user has saved a usable token of
+  their own, which is a separate, admin-enabled feature — see
+  [user-github-credentials.md](./user-github-credentials.md). Webhook- and schedule-triggered runs
+  have no launcher and always use the platform credential.
 - **Retiring an installation stops new work, not work in flight.** A run already under way keeps
   cloning, pushing and reading CI through a retired installation, and so does the sweep. The mark
   says what may start next; pulling the credential out from under running work would make a

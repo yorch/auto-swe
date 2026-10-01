@@ -160,7 +160,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "63 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "64 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -310,6 +310,21 @@ null = 15 s / 60 s).
 Changing GitHub, Google, or Okta OAuth credentials requires a gateway restart. Okta is registered
 through better-auth's `genericOAuth` plugin, whose `init` fetches the OIDC discovery document once
 at startup — so the issuer is read at boot too, not per sign-in.
+
+**Per-user GitHub credentials** (`ConnectionCredential`, off unless `github.userCredentialsEnabled`)
+let a user's own token stand in for the platform credential on runs **they launched**. Two rules
+keep that true, and both have already been gotten wrong once:
+
+- A run's identity is `WorkflowRun.launchedById` read through `currentRunLauncherId()`
+  (`worker/src/lib/runLauncher.ts`), which also requires the row's `temporalRunId` to be the current
+  execution's. **Never** key a credential on `RunInput.requestedById`: a re-run reuses the request,
+  so the requester is whoever first asked, not whoever is acting now.
+- Resolve a user token only through `resolveUserCredential()` (`shared/lib/connectionCredential.ts`),
+  which loads the repository's URLs itself and applies the host allowlist and the verified-origin
+  binding. A new launch path that should act as its caller sets `launchedById` on the request;
+  leaving it out is the safe default — the run uses the platform credential.
+
+See [`docs/user-github-credentials.md`](./docs/user-github-credentials.md).
 
 ### Setting Registry (operator policy)
 

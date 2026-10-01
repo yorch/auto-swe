@@ -17,6 +17,12 @@ export type { PermissionLookup, RepoPermission } from '@auto-swe/shared/lib/gith
 
 /** Provider-agnostic reference to a remote repository. */
 export interface RepoRef {
+  /**
+   * The `Connection` row this ref was built from. It is what a run's requester
+   * is matched against to find their own saved credential; a ref without one
+   * (a hand-built test fixture) only ever uses the platform credential.
+   */
+  connectionId?: string;
   organizationName: string;
   repoName: string;
   /**

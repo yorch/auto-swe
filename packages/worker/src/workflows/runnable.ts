@@ -244,6 +244,7 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   const runInfo = await stateActivities.createWorkflowRun({
     canaryAgentKey: input.request.canaryAgentKey,
     canaryVersion: input.request.canaryVersion,
+    launchedById: input.request.launchedById,
     templateId: input.templateId,
     templateVersion: input.templateVersion,
     workflowId,

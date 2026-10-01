@@ -13,11 +13,14 @@
  * proportional to real reachability rather than to the size of the deployment.
  */
 import { prisma } from '@auto-swe/shared/db';
+import { resolveUserCredentialPolicy } from '@auto-swe/shared/lib/connectionCredential';
 import {
   GITHUB_ACCOUNT_API_URL,
   verifyGithubLoginOwnership,
 } from '@auto-swe/shared/lib/githubIdentityCheck';
+import type { PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
+import { lookupPermissionViaUserCredential } from '@auto-swe/shared/lib/repoPermission';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { log } from '@temporalio/activity';
@@ -88,6 +91,9 @@ export async function syncRepoAccess(
       () =>
         prisma.connection.findMany({
           select: {
+            // Who has a saved credential here, so the per-pair loop asks with
+            // it only where one exists instead of probing every member.
+            credentials: { select: { userId: true } },
             githubApiUrl: true,
             githubUrl: true,
             id: true,
@@ -188,6 +194,12 @@ export async function syncRepoAccess(
       }
     }
 
+    // Read once for the sweep. Off, saved credentials are inert, and nobody is
+    // asked about through one. An unreadable policy reads as off: the sweep
+    // then asks the login-based question it always asked, rather than failing
+    // for everyone over a feature that may never have been turned on.
+    const credentialsOn = (await resolveUserCredentialPolicy().catch(() => null))?.enabled ?? false;
+
     for (const repo of repos) {
       if (!(repo.organizationName && repo.repoName)) {
         result.skippedRepos++;
@@ -195,24 +207,37 @@ export async function syncRepoAccess(
       }
       const repoRef = toRepoRef(repo);
       const provider = getScmProvider(repoRef);
+      const credentialHolders = new Set(credentialsOn ? repo.credentials.map((c) => c.userId) : []);
 
       for (const membership of repo.team.memberships) {
         const { githubLogin, id: userId } = membership.user;
         if (input.userId && userId !== input.userId) {
           continue;
         }
-        if (!githubLogin) {
-          result.unresolvedUsers++;
-          continue;
-        }
-        // Cleared just above: the login named someone else, so any answer about
-        // it would be that person's access recorded as this user's.
-        if (verified.get(userId) === false) {
-          result.unresolvedUsers++;
-          continue;
-        }
 
-        const lookup = await provider.repoPermission(repoRef, githubLogin);
+        // A member with their own saved token runs as that token, so it is the
+        // identity asked about — with the token itself, which needs no login.
+        // Null (feature off, host not allowed) falls through to the login.
+        const viaCredential = credentialHolders.has(userId)
+          ? await lookupPermissionViaUserCredential(prisma, repo, userId)
+          : null;
+
+        let lookup: PermissionLookup;
+        if (viaCredential) {
+          lookup = viaCredential;
+        } else {
+          if (!githubLogin) {
+            result.unresolvedUsers++;
+            continue;
+          }
+          // Cleared just above: the login named someone else, so any answer
+          // about it would be that person's access recorded as this user's.
+          if (verified.get(userId) === false) {
+            result.unresolvedUsers++;
+            continue;
+          }
+          lookup = await provider.repoPermission(repoRef, githubLogin);
+        }
         if (!lookup.ok) {
           result.failed++;
           log.warn('repo access sync: permission lookup failed; previous answer left in place', {

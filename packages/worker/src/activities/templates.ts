@@ -9,6 +9,7 @@ import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { Context } from '@temporalio/activity';
+import { currentTemporalRunId } from '../lib/activityContext.js';
 import { logError } from '../lib/activityLog.js';
 import {
   notifySlackRunComplete,
@@ -27,6 +28,9 @@ export interface CreateWorkflowRunInput {
   templateId: string;
   templateVersion: number;
   workRequestId?: string;
+  /// Who started this execution (see `RunRequest.launchedById`). Absent for a
+  /// webhook or cron start, which then uses only the platform credential.
+  launchedById?: string;
   /// Evals P2 canary: when set, this agent key is pinned to candidateVersion
   /// for the life of the run, and the run is tagged isCanary=true.
   canaryAgentKey?: string;
@@ -160,17 +164,25 @@ export async function createWorkflowRun(
   // same workflowId should not create duplicate rows. `update: {}` preserves the
   // original spec, agentVersions and pinnedSettings snapshots across Temporal
   // retries.
+  //
+  // The launcher and Temporal run id are written on create only, for the same
+  // reason. If the workflow id was reused by a later execution, this row still
+  // names the earlier one's run id, so `currentRunLauncherId` will not match it
+  // and the later execution gets no user credential — never the earlier
+  // launcher's.
   const run = await prisma.workflowRun.upsert({
     create: {
       agentVersions,
       estimatedHumanTimeSaved: version.template?.estimatedHumanTimeSavedMinutes ?? null,
       isCanary,
+      launchedById: input.launchedById ?? null,
       outcomeDomain: version.template?.workspaceProvider ?? null,
       pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
       specSnapshot: spec as unknown as object,
       status: 'RUNNING',
       templateId: input.templateId,
       templateVersion: input.templateVersion,
+      temporalRunId: currentTemporalRunId(),
       workflowId: input.workflowId,
       workRequestId: input.workRequestId,
     },

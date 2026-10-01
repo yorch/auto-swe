@@ -13,8 +13,24 @@ vi.mock('../githubAuth.js', () => ({
   resolveGitHubToken: vi.fn(async () => 'ghp_tok'),
 }));
 
+vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
+
+vi.mock('@auto-swe/shared/lib/connectionCredential', () => ({
+  resolveUserCredential: vi.fn(async () => null),
+  resolveUserCredentialPolicy: vi.fn(async () => ({ enabled: true, hosts: ['github.com'] })),
+}));
+
+vi.mock('../runLauncher.js', () => ({
+  currentRunLauncherId: vi.fn(async () => null),
+}));
+
+import {
+  resolveUserCredential,
+  resolveUserCredentialPolicy,
+} from '@auto-swe/shared/lib/connectionCredential';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
-import { resolveGitHubToken } from '../githubAuth.js';
+import { requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
+import { currentRunLauncherId } from '../runLauncher.js';
 import { GitHubScmProvider, resolveCiLogsTarget } from './github.js';
 
 const fetchMock = vi.fn(async () => ({
@@ -122,5 +138,98 @@ describe('GitHubScmProvider.fetchCiLogs', () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 404, text: async () => 'nope' });
     const out = await provider.fetchCiLogs('https://github.com/acme/api/runs/1');
     expect(out).toContain('HTTP 404');
+  });
+});
+
+describe("GitHubScmProvider and the run launcher's own credential", () => {
+  const provider = new GitHubScmProvider();
+  const REPO = { connectionId: 'conn-1', organizationName: 'acme', repoName: 'api' };
+  const USABLE = {
+    apiUrl: 'https://api.github.com',
+    baseUrl: 'https://github.com',
+    token: 'ghp_user',
+  };
+
+  beforeEach(() => {
+    vi.mocked(currentRunLauncherId).mockReset().mockResolvedValue(null);
+    vi.mocked(resolveUserCredential).mockReset().mockResolvedValue(null);
+    vi.mocked(resolveUserCredentialPolicy)
+      .mockReset()
+      .mockResolvedValue({ enabled: true, hosts: ['github.com'] });
+    vi.mocked(requireGitHubToken).mockClear();
+  });
+
+  it("clones with the launcher's own token", async () => {
+    vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
+    vi.mocked(resolveUserCredential).mockResolvedValue(USABLE);
+    const creds = await provider.cloneCredentials(REPO);
+    expect(creds.token).toBe('ghp_user');
+    expect(creds.authedCloneUrl).toBe('https://x-access-token:ghp_user@github.com/acme/api.git');
+    expect(resolveUserCredential).toHaveBeenCalledWith(
+      {},
+      { connectionId: 'conn-1', userId: 'user-1' }
+    );
+    expect(requireGitHubToken).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing about the launcher while the feature is off', async () => {
+    // A deployment that never enabled it pays no extra database round trip.
+    vi.mocked(resolveUserCredentialPolicy).mockResolvedValue({ enabled: false, hosts: [] });
+    const creds = await provider.cloneCredentials(REPO);
+    expect(creds.token).toBe('ghp_tok');
+    expect(currentRunLauncherId).not.toHaveBeenCalled();
+    expect(resolveUserCredential).not.toHaveBeenCalled();
+  });
+
+  it('uses the platform credential when the run has no launcher', async () => {
+    // A webhook- or cron-started run acts for nobody, so nobody's token is read.
+    const creds = await provider.cloneCredentials(REPO);
+    expect(creds.token).toBe('ghp_tok');
+    expect(resolveUserCredential).not.toHaveBeenCalled();
+  });
+
+  it('uses the platform credential when the launcher has no usable token', async () => {
+    vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
+    const creds = await provider.cloneCredentials(REPO);
+    expect(creds.token).toBe('ghp_tok');
+    expect(requireGitHubToken).toHaveBeenCalled();
+  });
+
+  it('refuses the token when the ref carries different hosts than the resolver checked', async () => {
+    // A ref loaded before the repository was repointed must not carry the
+    // token to the old host.
+    vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
+    vi.mocked(resolveUserCredential).mockResolvedValue(USABLE);
+    const creds = await provider.cloneCredentials({ ...REPO, baseUrl: 'https://ghe.corp' });
+    expect(creds.token).toBe('ghp_tok');
+  });
+
+  it('never looks for a user token on a ref built without a connection', async () => {
+    vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
+    await provider.cloneCredentials({ organizationName: 'acme', repoName: 'api' });
+    expect(currentRunLauncherId).not.toHaveBeenCalled();
+    expect(resolveUserCredential).not.toHaveBeenCalled();
+  });
+
+  it("sends the launcher's token only to the repository's own hosts for CI logs", async () => {
+    const gheRepo = {
+      ...REPO,
+      apiUrl: 'https://ghe.corp/api/v3',
+      baseUrl: 'https://ghe.corp',
+    };
+    vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
+    vi.mocked(resolveUserCredential).mockResolvedValue({
+      apiUrl: 'https://ghe.corp/api/v3',
+      baseUrl: 'https://ghe.corp',
+      token: 'ghp_user',
+    });
+
+    await provider.fetchCiLogs('https://ghe.corp/acme/api/runs/7', gheRepo);
+    expect(lastFetch().init.headers).toMatchObject({ Authorization: 'Bearer ghp_user' });
+
+    // github.com is the instance's origin, not this repository's: the user's
+    // GHE token must not go there. The platform's own token still may.
+    await provider.fetchCiLogs('https://github.com/acme/api/runs/7', gheRepo);
+    expect(lastFetch().init.headers).toMatchObject({ Authorization: 'Bearer ghp_tok' });
   });
 });

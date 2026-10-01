@@ -8,8 +8,10 @@
  * membership change would lock a team out for up to a sweep interval.
  */
 import type { PrismaClient } from '@auto-swe/shared';
+import { resolveUserCredentialPolicy } from '@auto-swe/shared/lib/connectionCredential';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import {
+  lookupPermissionViaUserCredential,
   lookupRepoPermission,
   PERMISSION_REPO_SELECT,
   verifiedGithubLoginFor,
@@ -29,6 +31,7 @@ export interface RefreshOutcome {
 /** The connection columns a refresh needs, plus its team's members. */
 const REFRESH_SELECT = {
   ...PERMISSION_REPO_SELECT,
+  credentials: { select: { userId: true } },
   id: true,
   team: {
     select: {
@@ -111,11 +114,21 @@ export async function refreshInvalidatedAccess(
     return login;
   }
 
+  // Read once: with the feature off, a saved credential is inert and must not
+  // pull its holder into the event's pair budget. Unreadable reads as off, so
+  // the refresh falls back to the login-based lookup it always made.
+  const credentialsOn = (await resolveUserCredentialPolicy().catch(() => null))?.enabled ?? false;
+
   for (const repo of repos) {
+    const credentialHolders = new Set(repo.credentials.map((c) => c.userId));
     for (const { user } of repo.team.memberships) {
-      if (!user.githubLogin) {
+      const hasCredential = credentialsOn && credentialHolders.has(user.id);
+      if (!(user.githubLogin || hasCredential)) {
         continue;
       }
+      // A `pair` or `user` event names a login, so it can only be about a
+      // member whose stored login it is — a credential holder without one is
+      // covered by `repo` events and the sweep.
       if (targetLogin && user.githubLogin !== targetLogin) {
         continue;
       }
@@ -123,13 +136,21 @@ export async function refreshInvalidatedAccess(
         outcome.skipped = `capped at ${MAX_PAIRS_PER_EVENT} pairs; the scheduled sweep covers the rest`;
         return outcome;
       }
-      const login = await loginFor(user.id);
-      if (!login) {
-        // No identity, or one that has just been cleared for naming somebody
-        // else. Either way there is nothing to ask GitHub about.
-        continue;
+      // A member who saved their own token runs as it, so that is the identity
+      // asked about. Null (feature off, host not allowed) falls back to the
+      // login, exactly as their runs fall back to the platform credential.
+      let lookup = hasCredential
+        ? await lookupPermissionViaUserCredential(prisma, repo, user.id)
+        : null;
+      if (!lookup) {
+        const login = await loginFor(user.id);
+        if (!login) {
+          // No identity, or one that has just been cleared for naming somebody
+          // else. Either way there is nothing to ask GitHub about.
+          continue;
+        }
+        lookup = await lookupRepoPermission(repo, login);
       }
-      const lookup = await lookupRepoPermission(repo, login);
       const write = await recordRepoPermission(prisma, {
         connectionId: repo.id,
         lookup,

@@ -40,6 +40,19 @@ export function currentWorkflowId(): string {
 }
 
 /**
+ * Temporal's run id for the execution the current activity belongs to, or null
+ * outside an activity. Unlike the workflow id, it is unique per execution: a
+ * workflow id can be started again once its earlier execution has closed.
+ */
+export function currentTemporalRunId(): string | null {
+  try {
+    return activityInfo().workflowExecution?.runId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Look up the `WorkflowRun.id` row for the currently executing Temporal
  * workflow so artifacts produced by an activity link back to the run. Returns
  * undefined when no row exists yet (race against `createWorkflowRun`) or when

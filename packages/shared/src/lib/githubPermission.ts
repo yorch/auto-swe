@@ -6,6 +6,10 @@
  * design needs only a GitHub username: no user tokens to store, refresh, expire,
  * or encrypt, and no second copy of anyone's credentials.
  *
+ * The exception is a user who has chosen to save their own token for a
+ * repository (`ConnectionCredential`). That token is their identity, so their
+ * access is asked about with it directly — see {@link fetchOwnRepoPermission}.
+ *
  * The endpoint answers with a level rather than a boolean, which is what lets
  * "may launch a run" and "may look at one" be different questions with one
  * lookup.
@@ -75,10 +79,86 @@ function isRepoPermission(value: unknown): value is RepoPermission {
 export async function fetchRepoPermission(query: RepoPermissionQuery): Promise<PermissionLookup> {
   const { apiUrl, token, organizationName, repoName, username } = query;
   const url =
-    `${apiUrl.replace(/\/$/, '')}/repos/` +
-    `${encodeURIComponent(organizationName)}/${encodeURIComponent(repoName)}` +
+    `${repoApiPath(apiUrl, organizationName, repoName)}` +
     `/collaborators/${encodeURIComponent(username)}/permission`;
+  const result = await getJson(url, token);
+  if (!result.ok) {
+    return result;
+  }
+  const permission = (result.body as { permission?: unknown }).permission;
+  if (!isRepoPermission(permission)) {
+    // An unrecognised level must not silently become `none`, which would read
+    // as a decision GitHub did not make.
+    return { failure: 'unavailable', ok: false };
+  }
+  return { ok: true, permission };
+}
 
+/** The repository coordinates and the token whose own access is being asked about. */
+export type OwnRepoPermissionQuery = Omit<RepoPermissionQuery, 'username'>;
+
+/**
+ * Ask GitHub what the *token's owner* may do with a repository.
+ *
+ * Used for a user's own credential, where the token is the identity: there is
+ * no platform credential to ask with, and no stored login is needed, because
+ * GitHub already knows whose token it is. That also makes it work on a GitHub
+ * Enterprise host, whose usernames the github.com-linked login does not name.
+ *
+ * The answer is the owner's role on the repository, not what the token's scopes
+ * allow — a fine-grained token restricted to read still reports its owner's
+ * `admin`. It answers "who is this", like the collaborator endpoint does; a
+ * token too narrow to push fails at push time, loudly.
+ *
+ * Same failure taxonomy as {@link fetchRepoPermission}: a 404 is
+ * `repo-not-found`, never `none`, because a token without the scope to see a
+ * private repository gets the same 404 as a user without access.
+ */
+export async function fetchOwnRepoPermission(
+  query: OwnRepoPermissionQuery
+): Promise<PermissionLookup> {
+  const result = await getJson(
+    repoApiPath(query.apiUrl, query.organizationName, query.repoName),
+    query.token
+  );
+  if (!result.ok) {
+    return result;
+  }
+  const flags = (result.body as { permissions?: unknown }).permissions;
+  if (typeof flags !== 'object' || flags === null) {
+    // No `permissions` object means GitHub did not answer the question asked —
+    // it is not evidence of `none`.
+    return { failure: 'unavailable', ok: false };
+  }
+  const f = flags as Record<string, unknown>;
+  if (f.admin === true) {
+    return { ok: true, permission: 'admin' };
+  }
+  if (f.maintain === true || f.push === true) {
+    return { ok: true, permission: 'write' };
+  }
+  if (f.triage === true || f.pull === true) {
+    return { ok: true, permission: 'read' };
+  }
+  return { ok: true, permission: 'none' };
+}
+
+function repoApiPath(apiUrl: string, organizationName: string, repoName: string): string {
+  return (
+    `${apiUrl.replace(/\/$/, '')}/repos/` +
+    `${encodeURIComponent(organizationName)}/${encodeURIComponent(repoName)}`
+  );
+}
+
+/**
+ * GET a GitHub REST resource and classify every way it can fail to answer.
+ *
+ * Never throws, for the reason {@link fetchRepoPermission} gives.
+ */
+async function getJson(
+  url: string,
+  token: string
+): Promise<{ ok: true; body: unknown } | { ok: false; failure: PermissionLookupFailure }> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -114,17 +194,9 @@ export async function fetchRepoPermission(query: RepoPermissionQuery): Promise<P
     return { failure: 'unavailable', ok: false };
   }
 
-  let body: unknown;
   try {
-    body = await res.json();
+    return { body: await res.json(), ok: true };
   } catch {
     return { failure: 'unavailable', ok: false };
   }
-  const permission = (body as { permission?: unknown }).permission;
-  if (!isRepoPermission(permission)) {
-    // An unrecognised level must not silently become `none`, which would read
-    // as a decision GitHub did not make.
-    return { failure: 'unavailable', ok: false };
-  }
-  return { ok: true, permission };
 }

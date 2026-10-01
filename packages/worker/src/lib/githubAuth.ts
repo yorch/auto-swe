@@ -35,7 +35,7 @@ export async function requireGitHubToken(
   } catch (err) {
     if (err instanceof GitHubTokenMissingError) {
       throw ApplicationFailure.nonRetryable(
-        `GitHub token not configured. Set it at /admin/integrations.`,
+        `GitHub token not configured. Set it at /studio/integrations, or — where per-user credentials are enabled — whoever launches the run can save their own token for this repository on the Connections page.`,
         'CONFIG_MISSING'
       );
     }

@@ -26,6 +26,7 @@ import type { AccessActor, AccessLog } from './accessActor.js';
 import { permissionMeets } from './githubPermission.js';
 import { recordRepoPermission } from './repoAccessProjection.js';
 import {
+  lookupPermissionViaUserCredential,
   lookupRepoPermission,
   type PermissionRepo,
   verifiedGithubLoginFor,
@@ -176,12 +177,28 @@ export async function resolveRepoAccessGateOrLastKnown(): Promise<RepoAccessGate
   }
 }
 
+/**
+ * Which GitHub identity the launched run will act as.
+ *
+ * `'caller'` only on a path that records the caller as the run's launcher
+ * (`RunRequest.launchedById`), so the run may use the caller's own saved token
+ * and the gate judges that token. `'platform'` everywhere else — Slack,
+ * schedules — where the run uses the platform credential whatever the caller
+ * saved. The default is `'platform'`, the pre-existing login-based check, so a
+ * call site that does not think about this keeps behaving as it always did.
+ */
+export type RunIdentity = 'caller' | 'platform';
+
 /** The verdict a launch attempt produced. */
 export type LaunchDecision =
   | { allowed: true; reason: 'gate-off' | 'admin' | 'permitted' | 'advisory-would-refuse' }
   | { allowed: false; reason: LaunchRefusal };
 
-export type LaunchRefusal = 'no-github-identity' | 'insufficient-permission' | 'lookup-unavailable';
+export type LaunchRefusal =
+  | 'no-github-identity'
+  | 'insufficient-permission'
+  | 'lookup-unavailable'
+  | 'user-credential-rejected';
 
 /** Human-readable refusal text, for the API response. */
 export const LAUNCH_REFUSAL_MESSAGE: Record<LaunchRefusal, string> = {
@@ -190,6 +207,10 @@ export const LAUNCH_REFUSAL_MESSAGE: Record<LaunchRefusal, string> = {
     'Your GitHub access to this repository could not be confirmed right now. Try again shortly.',
   'no-github-identity':
     'Link your GitHub account before starting a run — the platform has no GitHub identity to check against.',
+  // Distinct from `lookup-unavailable`: retrying does not help, and the fix is
+  // in the user's own hands rather than GitHub's.
+  'user-credential-rejected':
+    'GitHub rejected the token you saved for this repository, or it cannot see the repository. Replace or remove it on the Connections page.',
 };
 
 /**
@@ -211,7 +232,8 @@ export async function decideRepoLaunch(
   user: AccessActor,
   repo: PermissionRepo & { id: string },
   gate: RepoAccessGate,
-  log?: AccessLog
+  log?: AccessLog,
+  runIdentity: RunIdentity = 'platform'
 ): Promise<LaunchDecision> {
   if (gate.mode === 'off') {
     return { allowed: true, reason: 'gate-off' };
@@ -221,7 +243,7 @@ export async function decideRepoLaunch(
     return { allowed: true, reason: 'admin' };
   }
 
-  const refusal = await launchRefusal(prisma, user, repo);
+  const refusal = await launchRefusal(prisma, user, repo, runIdentity);
   if (!refusal) {
     return { allowed: true, reason: 'permitted' };
   }
@@ -240,8 +262,37 @@ export async function decideRepoLaunch(
 async function launchRefusal(
   prisma: PrismaClient,
   user: AccessActor,
-  repo: PermissionRepo & { id: string }
+  repo: PermissionRepo & { id: string },
+  runIdentity: RunIdentity
 ): Promise<LaunchRefusal | null> {
+  // When the run will act as the caller, a caller who saved their own token for
+  // this repository runs as that token, so that is the identity whose access
+  // decides — asked with the token itself, which needs no stored login.
+  // Otherwise the run uses the platform credential whatever the caller saved,
+  // and judging it by their token would both refuse for a token the run never
+  // touches and admit someone on an identity the run does not act as.
+  const viaCredential =
+    runIdentity === 'caller'
+      ? await lookupPermissionViaUserCredential(prisma, repo, user.sub)
+      : null;
+  if (viaCredential) {
+    await recordRepoPermission(prisma, {
+      connectionId: repo.id,
+      lookup: viaCredential,
+      userId: user.sub,
+    });
+    if (!viaCredential.ok) {
+      // A 404 here is the token failing to see the repository — the user's run
+      // would fail to clone for the same reason — so it is the credential's
+      // problem, not GitHub's.
+      return viaCredential.failure === 'credential-rejected' ||
+        viaCredential.failure === 'repo-not-found'
+        ? 'user-credential-rejected'
+        : 'lookup-unavailable';
+    }
+    return permissionMeets(viaCredential.permission, 'write') ? null : 'insufficient-permission';
+  }
+
   // Verified, not merely read. This is the highest-stakes moment the gate has,
   // and it is the same argument that justified asking GitHub live here rather
   // than reading the projection: one extra round-trip on a low-volume path.

@@ -346,6 +346,8 @@ model Connection {
   dependenciesTo        RepoDependency[]       @relation("RepoDependencyTo")
   /// Cached host permission answers for this repository (see `RepoAccess`).
   repoAccess            RepoAccess[]
+  /// Per-user GitHub tokens for this repository (see `ConnectionCredential`).
+  credentials           ConnectionCredential[]
 
   @@index([teamId])
   @@index([installationId])
@@ -385,6 +387,47 @@ model RepoAccess {
   @@index([connectionId])
   @@index([checkedAt])
   @@map("repo_access")
+}
+
+/// One user's own GitHub token for one repository.
+///
+/// **Used only for that user's runs.** A run resolves the credential of the
+/// user who launched it (`WorkflowRun.launchedById`); a run launched by anyone
+/// else, or by no one (a webhook, a cron fire), never reads this row. That is what keeps a token
+/// someone pasted from becoming a shared team credential.
+///
+/// Inert unless `github.userCredentialsEnabled` is on and the repository's host
+/// is in `github.userCredentialHosts`. Turning the switch off keeps the rows and
+/// stops using them, so turning it back on needs no re-entry.
+///
+/// Not tenant-scoped in `tenantGuard`'s sense: every query is narrowed by
+/// `userId` or `connectionId`, which are stronger than a team.
+model ConnectionCredential {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  connectionId String     @map("connection_id") @db.Uuid
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId       String     @map("user_id") @db.Uuid
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenCiphertext Bytes  @map("token_ciphertext")
+  tokenNonce      Bytes  @map("token_nonce")
+  tokenAuthTag    Bytes  @map("token_auth_tag")
+  tokenKeyVersion Int    @map("token_key_version")
+  tokenLastFour   String @map("token_last_four")
+
+  /// The origins (`https://host[:port]`) the token was verified against when it
+  /// was saved. A team lead can repoint a repository's URLs afterwards; a token
+  /// is never sent anywhere but where its owner confirmed it, so a mismatch makes
+  /// the row unusable until it is saved again.
+  apiOrigin String @map("api_origin")
+  webOrigin String @map("web_origin")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([connectionId, userId])
+  @@index([userId])
+  @@map("connection_credentials")
 }
 
 /// A GitHub App installation on one GitHub account (organization or user).
@@ -923,6 +966,8 @@ model User {
   scheduledWorkRequests ScheduledWorkRequest[]
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
+  connectionCredentials ConnectionCredential[]
+  launchedRuns          WorkflowRun[]          @relation("WorkflowRunLauncher")
 
   @@map("users")
 }
@@ -1142,6 +1187,17 @@ model WorkflowRun {
   /// against the original repo state. Null for runs created before this field existed
   /// or when capture failed.
   baselineSha       String?           @map("baseline_sha")
+  /// The platform user who started this execution, from the workflow's own
+  /// input — distinct from `workRequest.requestedById`, because a re-run of
+  /// someone else's request is launched by whoever re-ran it. Decides whose
+  /// saved GitHub credential the run may use; null (webhook, cron) means none.
+  launchedById      String?           @map("launched_by_id") @db.Uuid
+  launchedBy        User?             @relation("WorkflowRunLauncher", fields: [launchedById], references: [id], onDelete: SetNull)
+  /// Temporal's run id for the execution that created this row. A workflow id
+  /// can be started again once its previous execution closes, and this row is
+  /// upserted by workflow id and never rewritten — so `launchedById` is only
+  /// trusted by an activity whose own run id matches this one.
+  temporalRunId     String?           @map("temporal_run_id")
   status            WorkflowRunStatus @default(RUNNING)
   startedAt         DateTime          @default(now()) @map("started_at") @db.Timestamptz
   endedAt           DateTime?         @map("ended_at") @db.Timestamptz
@@ -1180,6 +1236,7 @@ model WorkflowRun {
 
   @@index([templateId])
   @@index([workRequestId])
+  @@index([launchedById])
   @@map("workflow_runs")
 }
 

@@ -11,10 +11,16 @@
  * `../githubAuth.ts` — it is a GitHub-internal concern behind this provider.
  */
 
+import { prisma } from '@auto-swe/shared/db';
+import {
+  resolveUserCredential,
+  resolveUserCredentialPolicy,
+} from '@auto-swe/shared/lib/connectionCredential';
 import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
+import { currentRunLauncherId } from '../runLauncher.js';
 import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
 import type {
   CiStatusResult,
@@ -47,6 +53,70 @@ function installationTarget(
   return { apiUrl: repo.apiUrl ?? ghConfig.apiUrl, installationId: repo.installationId };
 }
 
+/** The web and API bases `repo` actually lives on. */
+function repoHosts(repo: RepoRef, ghConfig: { baseUrl: string; apiUrl: string }) {
+  return { apiUrl: repo.apiUrl ?? ghConfig.apiUrl, baseUrl: repo.baseUrl ?? ghConfig.baseUrl };
+}
+
+/**
+ * The token the current execution's launcher saved for `repo`, when they have
+ * a usable one.
+ *
+ * Keyed on the execution's own launcher, never on the repository alone — a run
+ * launched by someone else, or by nobody, gets null here and falls back to the
+ * platform credential. `resolveUserCredential` applies the allowlist and the
+ * verified-origin binding to the repository's current URLs; this also requires
+ * those to be the URLs this ref carries, so a ref loaded before the repository
+ * was repointed cannot send the token to the old host.
+ *
+ * The policy is read first: it is a cached settings read, and on a deployment
+ * that never enabled the feature it spares every GitHub call a database round
+ * trip and a new way to fail.
+ */
+async function launcherToken(
+  repo: RepoRef,
+  ghConfig: { baseUrl: string; apiUrl: string }
+): Promise<string | null> {
+  if (!repo.connectionId) {
+    return null;
+  }
+  if (!(await resolveUserCredentialPolicy()).enabled) {
+    return null;
+  }
+  const launcherId = await currentRunLauncherId();
+  if (!launcherId) {
+    return null;
+  }
+  const credential = await resolveUserCredential(prisma, {
+    connectionId: repo.connectionId,
+    userId: launcherId,
+  });
+  if (!credential) {
+    return null;
+  }
+  const { apiUrl, baseUrl } = repoHosts(repo, ghConfig);
+  if (credential.apiUrl !== apiUrl || credential.baseUrl !== baseUrl) {
+    return null;
+  }
+  return credential.token;
+}
+
+/**
+ * The token a run uses for `repo`: its launcher's own, else the platform's.
+ *
+ * Throws a non-retryable failure when neither exists, like every other
+ * missing-configuration condition.
+ */
+async function runToken(
+  repo: RepoRef,
+  ghConfig: Awaited<ReturnType<typeof resolveGitHubConfig>>
+): Promise<string> {
+  return (
+    (await launcherToken(repo, ghConfig)) ??
+    (await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig)))
+  );
+}
+
 /**
  * Build an authenticated Octokit for `repo`.
  *
@@ -58,7 +128,7 @@ function installationTarget(
 async function octokitFor(repo: RepoRef) {
   const { Octokit } = await import('@octokit/rest');
   const ghConfig = await resolveGitHubConfig();
-  const token = await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
+  const token = await runToken(repo, ghConfig);
   const apiUrl =
     repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
   return new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
@@ -110,7 +180,7 @@ export class GitHubScmProvider implements ScmProvider {
     const ghConfig = await resolveGitHubConfig();
     const baseUrl = repo.baseUrl ?? ghConfig.baseUrl;
     const cloneUrl = `${baseUrl}/${repo.organizationName}/${repo.repoName}.git`;
-    const token = await requireGitHubToken(ghConfig, installationTarget(repo, ghConfig));
+    const token = await runToken(repo, ghConfig);
     return {
       authedCloneUrl: cloneUrl.replace('https://', `https://x-access-token:${token}@`),
       cloneUrl,
@@ -200,7 +270,18 @@ export class GitHubScmProvider implements ScmProvider {
       return `Cannot fetch CI logs — refusing to fetch '${logsUrl}': ${target.reason}`;
     }
     let githubToken: string | null = null;
-    if (target.trusted) {
+    // A launcher's own token goes only to the repository's own hosts, which
+    // are the ones checked against the allowlist when it was resolved — not to
+    // the instance-wide origins `trusted` is computed from, which a repository
+    // on a GitHub Enterprise override does not share.
+    const userToken = repo ? await launcherToken(repo, ghConfig) : null;
+    if (userToken && repo) {
+      const own = resolveCiLogsTarget(logsUrl, trustedGitHubOrigins(repoHosts(repo, ghConfig)));
+      if (own.ok && own.trusted) {
+        githubToken = userToken;
+      }
+    }
+    if (!githubToken && target.trusted) {
       try {
         // `repo` is optional because a logs URL can arrive without one, but
         // when it is available the token must come from that repository's
