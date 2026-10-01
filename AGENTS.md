@@ -160,7 +160,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "64 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "65 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -325,6 +325,18 @@ keep that true, and both have already been gotten wrong once:
   leaving it out is the safe default — the run uses the platform credential.
 
 See [`docs/user-github-credentials.md`](./docs/user-github-credentials.md).
+
+**Repository membership and URLs** ([`docs/repositories.md`](./docs/repositories.md)):
+
+- "May this user reach this repository" means a member of the owning team **or of a team it is
+  shared with** (`ConnectionTeamShare`). Ask it through `@auto-swe/shared/lib/repoMembership`
+  (`repoMembersSelect`, `isRepoMember`, `repoMemberWhere`) or `reachableConnections`, never by
+  reading `repo.team.memberships` alone — that silently locks shared-team members out of one path.
+  Management (edit, share, schedules, dependency edges) stays owning-team only.
+- A repository's `githubUrl`/`githubApiUrl` are base URLs and every credential is sent to them. Any
+  path that writes them goes through `normaliseRepositoryUrls` in `routes/repositories.ts`, which
+  enforces `github.repositoryHosts`; any path that sends a credential to them checks
+  `repositoryHostsAllowed` first.
 
 ### Setting Registry (operator policy)
 

@@ -104,6 +104,7 @@ export const SIDEBAR = [
       'docs/figma-integration',
       'docs/repo-dependency-graph',
       'docs/repo-access-gating',
+      'docs/repositories',
       'docs/user-github-credentials',
       'docs/bundles',
     ],

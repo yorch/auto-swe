@@ -19,8 +19,9 @@ second.
 
 ## 1. Why the gate exists
 
-A `Connection` (repository) belongs to exactly one `Team`, and a user reaches it by holding a
-`TeamMembership` in that team. Nothing in that chain consults GitHub. The platform clones and pushes
+A `Connection` (repository) belongs to exactly one `Team` and may be shared with further teams in
+the same organization (see [repositories.md](./repositories.md)); a user reaches it by holding a
+`TeamMembership` in the owning team or a shared one. Nothing in that chain consults GitHub. The platform clones and pushes
 with one installation credential per GitHub organization, so a user in the right team can drive an
 agent against a repository they personally cannot open on github.com.
 
@@ -64,8 +65,9 @@ The exception is a user who has saved their own token for the repository and may
 [user-github-credentials.md](./user-github-credentials.md)). On a launch path whose run acts as the
 caller, the run acts as that token, so that is the identity the gate judges: it asks
 `GET /repos/{owner}/{repo}` with the token and reads the owner's `permissions`, and needs no stored
-login. Slack and scheduled launches run with the platform credential and are judged by the login
-whatever the caller saved. The sweep and the webhook refresh prefer the token where it is usable
+login. Firing a schedule by hand (the run acts as the schedule's author) and steering a Slack
+thread (the run was launched by someone else) are judged by the login whatever the caller saved.
+The sweep and the webhook refresh prefer the token where it is usable
 and fall back to the login-based lookup where it is not. A
 token GitHub rejects, or that cannot see the repository, refuses a launch as
 `user-credential-rejected` rather than falling back — the run would use that token and fail.
@@ -122,8 +124,9 @@ projection would then record that person's access as this user's. The numeric ac
 change, which is what makes the check possible; a plain rename still resolves to the same id and is
 left alone.
 
-The sweep's candidate set is each repository's own team members, not every user times every
-repository, so its cost tracks real reachability rather than deployment size.
+The sweep's candidate set is each repository's owning-team and shared-team members, each once, not
+every user times every repository, so its cost tracks real reachability rather than deployment size.
+The webhook refresh walks the same set.
 
 A failed lookup writes nothing at all — the existing row keeps its answer and its `checked_at`, so
 it ages out through the staleness window instead of being overwritten.
@@ -348,7 +351,8 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   says what may start next; pulling the credential out from under running work would make a
   bookkeeping toggle into an outage.
 - **Team membership remains the outer bound.** The gate can only remove access. A user with GitHub
-  admin rights on a repository still sees nothing unless they are a member of the owning team.
+  admin rights on a repository still sees nothing unless they are a member of the owning team or a
+  team it is shared with.
 - **Non-git connections are exempt, necessarily.** A `Connection` is also how an MCP server and
   other non-git integrations are stored, and none of them can ever have a permission row — the
   sweep, the webhook refresh and the lookup all restrict to `git_repo`. They are therefore matched

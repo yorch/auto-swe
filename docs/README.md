@@ -30,6 +30,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [repo-dependency-graph.md](./repo-dependency-graph.md) | Directed dependency edges between git repos — the `RepoDependency` model, the cross-team edge API and management UI, and the neighbour resolver |
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
 | [repo-access-gating.md](./repo-access-gating.md) | Making repository access agree with GitHub — the permission projection, the sweep and webhook refresh, and the advisory-then-enforce rollout |
+| [repositories.md](./repositories.md) | What identifies a repository (host, owner, name), which hosts its URLs may point at, and sharing it with other teams |
 | [user-github-credentials.md](./user-github-credentials.md) | A user's own GitHub or GitHub Enterprise token for a repository — used only for runs they launch, the host allowlist, and how the access gate judges it |
 
 ## Configuration & operations
