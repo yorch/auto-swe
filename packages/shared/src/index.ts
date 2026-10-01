@@ -81,6 +81,8 @@ export type {
   ResolvedSlackConfig,
   ResolvedStorageConfig,
   ResolvedWorkflowDefaults,
+  ScheduledSweepsConfig,
+  SweepSchedule,
   WorkspaceInfraConfig,
 } from './lib/systemConfig.js';
 export {
@@ -89,6 +91,7 @@ export {
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
   resolveOktaOAuthConfig,
+  resolveScheduledSweeps,
   resolveSlackConfig,
   resolveStorageConfig,
   resolveWorkflowDefaults,

@@ -9,29 +9,17 @@ export interface TestResult {
   detail: string;
 }
 
-/**
- * Some config mutations return `{ data: { …, requiresRestart? } }` (GitHub /
- * Slack / OAuth — creds read once at gateway boot). Read it defensively so the
- * same helper works for the mutations that don't carry the flag (it stays
- * `false`, and those tabs never render the restart banner anyway).
- */
-function extractRequiresRestart(result: unknown): boolean {
-  return !!(result as { data?: { requiresRestart?: boolean } } | null)?.data?.requiresRestart;
-}
-
 export interface UseIntegrationConfigFormResult {
   saved: boolean;
   /** True while `submit()`'s runner is in flight — disable the save button on it. */
   saving: boolean;
   error: string | null;
-  requiresRestart: boolean;
   testing: boolean;
   testResult: TestResult | null;
   /**
    * Run a save. Resets the status flags, awaits `run()` (the caller's
-   * `update.mutateAsync(body)`), then sets `saved` + captures `requiresRestart`
-   * from the result and calls `onSuccess` (where the tab clears its secret
-   * inputs). A throw is surfaced via `error`.
+   * `update.mutateAsync(body)`), then sets `saved` and calls `onSuccess` (where
+   * the tab clears its secret inputs). A throw is surfaced via `error`.
    */
   submit: <T>(run: () => Promise<T>, onSuccess?: (result: T) => void) => Promise<void>;
   /**
@@ -42,32 +30,29 @@ export interface UseIntegrationConfigFormResult {
 }
 
 /**
- * Shared state + runners for the integration admin tabs (GitHub, Slack, Storage,
- * Tracker, Knowledge Base, Figma, OAuth). These forms are **write-only for
+ * Shared state + runners for the integration admin tabs (GitHub, Slack,
+ * Tracker, Knowledge Base, Figma). These forms are **write-only for
  * secrets** — the read returns masked values, so the inputs stay
  * caller-owned (blank = "keep current") and are NOT seeded here; this hook only
  * factors out the identical save/test lifecycle (`saved`/`error`/`testing`/
- * `testResult`/`requiresRestart` + the two try/catch runners) that each tab
+ * `testResult` + the two try/catch runners) that each tab
  * previously hand-rolled. Body-building and secret-clearing stay in the tab.
  */
 export function useIntegrationConfigForm(): UseIntegrationConfigFormResult {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [requiresRestart, setRequiresRestart] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
   const submit = async <T>(run: () => Promise<T>, onSuccess?: (result: T) => void) => {
     setError(null);
     setSaved(false);
-    setRequiresRestart(false);
     setTestResult(null);
     setSaving(true);
     try {
       const result = await run();
       setSaved(true);
-      setRequiresRestart(extractRequiresRestart(result));
       onSuccess?.(result);
     } catch (err) {
       setError(errMsg(err, 'Failed to save'));
@@ -88,5 +73,5 @@ export function useIntegrationConfigForm(): UseIntegrationConfigFormResult {
     }
   };
 
-  return { error, requiresRestart, runTest, saved, saving, submit, testing, testResult };
+  return { error, runTest, saved, saving, submit, testing, testResult };
 }

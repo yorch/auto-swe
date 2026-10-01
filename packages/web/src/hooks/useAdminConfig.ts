@@ -90,7 +90,6 @@ export interface GitHubConfig {
   appPrivateKey: MaskedField | null;
   appInstallationId: string | null;
   authMode: string | null;
-  requiresRestart?: boolean;
 }
 
 export interface GitHubConfigInput {
@@ -119,7 +118,6 @@ export interface SlackConfig {
   clientId: string | null;
   clientSecret: MaskedField | null;
   signingSecret: MaskedField | null;
-  requiresRestart?: boolean;
 }
 
 export interface SlackConfigInput {

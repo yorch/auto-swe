@@ -40,8 +40,7 @@ export function GitHubTab() {
   const [appInstallationId, setAppInstallationId] = usePrefilledField(data?.appInstallationId);
   const [authMode, setAuthMode] = useState<string | null>(null);
 
-  const { saved, error, requiresRestart, testing, testResult, submit, runTest } =
-    useIntegrationConfigForm();
+  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
 
   const webhookUrl = `${API_BASE}/api/v1/webhooks/git`;
   const ciWebhookUrl = `${API_BASE}/api/v1/webhooks/ci`;
@@ -285,12 +284,7 @@ export function GitHubTab() {
           </div>
         </Card>
 
-        <IntegrationFormFooter
-          error={error}
-          isPending={update.isPending}
-          requiresRestart={requiresRestart}
-          saved={saved}
-        />
+        <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
       </form>
       <GitHubHostSecretsCard />
     </div>

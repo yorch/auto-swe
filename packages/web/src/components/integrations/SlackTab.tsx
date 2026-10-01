@@ -41,8 +41,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
   const [clientSecret, setClientSecret] = useState('');
   const [signingSecret, setSigningSecret] = useState('');
 
-  const { saved, requiresRestart, error, testing, testResult, submit, runTest } =
-    useIntegrationConfigForm();
+  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
 
   const slackRedirectUri = `${API_BASE}/api/auth/slack/callback`;
   const slackEventUrl = `${API_BASE}/api/v1/webhooks/slack/events`;
@@ -96,8 +95,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
           <CardTitle eyebrow="Slack">App credentials</CardTitle>
         </CardHeader>
         <p className="mb-4 text-xs text-paper-500">
-          Client ID and Client Secret changes require a gateway restart. Bot token and signing
-          secret apply immediately.
+          Changes apply immediately — these are read on every request, not at startup.
         </p>
         <div className="space-y-4">
           <ConfigField
@@ -172,12 +170,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
         </div>
       </Card>
 
-      <IntegrationFormFooter
-        error={error}
-        isPending={update.isPending}
-        requiresRestart={requiresRestart}
-        saved={saved}
-      />
+      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
     </form>
   );
 }

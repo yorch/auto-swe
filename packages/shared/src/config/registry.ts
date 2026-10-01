@@ -207,7 +207,9 @@ export const SETTING_DEFINITIONS = {
   // Team membership says which repositories a user may reach; these decide
   // whether the source-control host has to agree. Deployment-wide, because a
   // per-team override would let one team opt out of the check that keeps the
-  // platform's idea of access aligned with GitHub's.
+  // platform's idea of access aligned with GitHub's. The sweep that refreshes
+  // the cached answers is scheduled from the environment, not from here: see
+  // `resolveScheduledSweeps`.
   'repoAccess.mode': defineSetting({
     defaultValue: 'off',
     description:
@@ -219,30 +221,6 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.enum(['off', 'advisory', 'enforce']),
-  }),
-  'repoAccess.syncCron': defineSetting({
-    defaultValue: '23 * * * *',
-    description:
-      'Cron expression (UTC) for the sweep that refreshes cached GitHub permission answers. Webhooks handle revocation in seconds; this bounds how long a missed webhook can hide one.',
-    group: 'repoAccess',
-    label: 'Permission sync schedule',
-    overridableAt: [],
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: z.string().min(9),
-  }),
-  'repoAccess.syncEnabled': defineSetting({
-    defaultValue: false,
-    description:
-      'Whether the scheduled permission sweep runs. Off by default: it needs a GitHub App or PAT that can see every configured repository, and it spends API quota proportional to team members times repositories.',
-    group: 'repoAccess',
-    label: 'Run the permission sync on a schedule',
-    overridableAt: [],
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: z.boolean(),
   }),
   'repoAccess.viewStaleAfterHours': defineSetting({
     defaultValue: 72,
@@ -268,34 +246,6 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: ratio,
     unit: '0–1',
-  }),
-
-  // ── Repo dependency graph ──────────────────────────────────────────────────
-  'repoDependency.scanCron': defineSetting({
-    defaultValue: '0 4 * * *',
-    description:
-      'Cron expression (UTC) for the deterministic manifest/git-signal sweep that refreshes the repo dependency graph.',
-    group: 'repoDependency',
-    label: 'Dependency scan schedule',
-    // Deployment-wide: the sweep spans every team's repos, so a per-team
-    // override would have nothing to act on.
-    overridableAt: [],
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: z.string().min(9),
-  }),
-  'repoDependency.scanEnabled': defineSetting({
-    defaultValue: true,
-    description:
-      'Whether the scheduled repo-dependency sweep runs. Turning this off leaves the graph to manual edits and on-demand scans.',
-    group: 'repoDependency',
-    label: 'Run the dependency scan on a schedule',
-    overridableAt: [],
-    requiredRole: 'ADMIN',
-    restartRequired: false,
-    runPinned: false,
-    schema: z.boolean(),
   }),
 
   // ── Workflow interpreter ───────────────────────────────────────────────────
