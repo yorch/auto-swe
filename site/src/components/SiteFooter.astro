@@ -1,0 +1,66 @@
+---
+/**
+ * Starlight's footer — edit link, last updated, pagination — with a colophon
+ * beneath it, on every page including the landing page.
+ *
+ * Wraps the default rather than replacing it, so the parts Starlight owns keep
+ * working through upgrades and only the colophon is ours.
+ */
+
+import Default from '@astrojs/starlight/components/Footer.astro';
+import { REPO_URL } from '../../scripts/manifest.mjs';
+
+const year = new Date().getFullYear();
+---
+
+<Default />
+
+<div class="colophon">
+  <p>
+    © {year} <a href="https://yorch.github.io">Jorge Barnaby</a>
+  </p>
+  <p>
+    Source-available under <a href={`${REPO_URL}/blob/main/LICENSE`}>FSL-1.1-MIT</a>
+  </p>
+  <p>
+    <a href={REPO_URL}>Source on GitHub</a>
+  </p>
+  <p>
+    Built with <a href="https://astro.build">Astro</a>{' and '}<a
+      href="https://starlight.astro.build">Starlight</a
+    >
+  </p>
+</div>
+
+<style>
+  /*
+   * Separate items on one wrapping line rather than a string joined with dots,
+   * so each wraps whole on a narrow screen instead of breaking mid-phrase.
+   */
+  .colophon {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 2rem;
+    margin-top: 2.5rem;
+    padding-top: 1.25rem;
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+    border-top: 1px solid var(--rule);
+  }
+
+  .colophon p {
+    margin: 0;
+  }
+
+  .colophon a {
+    color: var(--ink-muted);
+    text-decoration: underline;
+    text-decoration-color: var(--rule-strong);
+    text-underline-offset: 0.2em;
+  }
+
+  .colophon a:hover {
+    color: var(--ink);
+    text-decoration-color: var(--gate);
+  }
+</style>

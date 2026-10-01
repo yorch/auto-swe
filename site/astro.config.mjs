@@ -4,6 +4,17 @@ import starlight from '@astrojs/starlight';
 import { defineConfig } from 'astro/config';
 import mermaid from 'astro-mermaid';
 import { BASE, REPO_URL, SIDEBAR } from './scripts/manifest.mjs';
+import { useCaseSidebar } from './scripts/useCases.mjs';
+
+/**
+ * The docs groups, with the generated use-case section after "Start here": a reader
+ * deciding whether this fits their team wants examples before configuration.
+ */
+const sidebar = SIDEBAR.map((group) => ({
+  items: group.slugs.map((slug) => ({ slug })),
+  label: group.label,
+}));
+sidebar.splice(1, 0, { items: useCaseSidebar(), label: 'Use cases' });
 
 /**
  * Adds the diagram viewer to every page's bundle.
@@ -62,6 +73,9 @@ export default defineConfig({
       },
     }),
     starlight({
+      // Our footer credits Astro and Starlight in its own colophon, beside the
+      // author and license, so Starlight's separate badge would say it twice.
+      components: { Footer: './src/components/SiteFooter.astro' },
       credits: false,
       customCss: ['./src/styles/custom.css'],
       // The splash page provides its own hero, so Starlight's is unused.
@@ -75,10 +89,7 @@ export default defineConfig({
         baseUrl: `${REPO_URL}/edit/main/site/`,
       },
       lastUpdated: true,
-      sidebar: SIDEBAR.map((group) => ({
-        items: group.slugs.map((slug) => ({ slug })),
-        label: group.label,
-      })),
+      sidebar,
       social: [{ href: REPO_URL, icon: 'github', label: 'GitHub' }],
       title: 'auto-swe',
     }),

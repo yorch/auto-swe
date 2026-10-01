@@ -1,0 +1,770 @@
+---
+/**
+ * The hero: a signal-box panel with a run on it.
+ *
+ * Every platform in this space opens by claiming autonomy. This one's argument is
+ * that a run stops where a team says it must, so the hero shows a run advancing
+ * along its track and halting at a signal — and then hands the visitor the lever.
+ * Clearing the signal is the one thing on the page that only a person can do, which
+ * is also the one thing the product never does for you.
+ *
+ * Each route is a built-in template, simplified for a panel: bookkeeping steps are
+ * folded into the station they serve, but no step and no gate is invented, and the
+ * timeouts are the specs' own. The generated use-case pages draw the full graphs.
+ */
+
+const BASE = '/auto-swe';
+
+interface Station {
+  label: string;
+  detail: string;
+  /** Present on a gate: what the panel says while held, and what clearing it means. */
+  gate?: { held: string; action: string };
+}
+
+interface Route {
+  id: string;
+  tab: string;
+  template: string;
+  stations: Station[];
+  done: string;
+  note: string;
+}
+
+const routes: Route[] = [
+  {
+    done: 'Run complete. What it learned is stored for the next run on this repository.',
+    id: 'ticket',
+    note: 'On GitHub, this signal is the merge webhook: a person merges there, and the run hears it.',
+    stations: [
+      { detail: 'From the dashboard, Slack, the CLI, or the REST API', label: 'Work request' },
+      { detail: 'Checks the ticket and recalls lessons from this repository', label: 'Context' },
+      { detail: 'In an isolated Docker sandbox, until the tests pass', label: 'Implement' },
+      { detail: 'Security, domain-logic, and performance reviewers', label: 'Review network' },
+      { detail: 'Opened on a branch of your repository', label: 'Pull request' },
+      { detail: 'Failures are read from the logs and fixed', label: 'CI' },
+      {
+        detail: 'Up to 7 days',
+        gate: {
+          action: 'Merge the pull request',
+          held: 'Held at the signal. A person merges — the agent never does.',
+        },
+        label: 'Merge',
+      },
+      { detail: 'Embedded for the next run', label: 'Lesson stored' },
+    ],
+    tab: 'Ticket to pull request',
+    template: 'default-engineering',
+  },
+  {
+    done: 'Run complete. The reply is on the ticket, and the approval is in the audit log.',
+    id: 'support',
+    note: 'A seeded template: the connector and agents exist, but only the engineering flow is exercised end to end.',
+    stations: [
+      { detail: 'From Zendesk', label: 'Ticket read' },
+      { detail: 'By the support responder agent', label: 'Reply drafted' },
+      { detail: "Your team's autonomy policy decides", label: 'Policy check' },
+      {
+        detail: 'Up to 24 hours',
+        gate: {
+          action: 'Approve the reply',
+          held: 'Held at the signal. Under the default policy, a public reply needs a person.',
+        },
+        label: 'Approval',
+      },
+      { detail: 'Written back to the ticket', label: 'Reply posted' },
+    ],
+    tab: 'Support reply',
+    template: 'zendesk-ticket-reply',
+  },
+  {
+    done: 'Run complete. Two people signed off before anyone on GitHub saw the change.',
+    id: 'four-eyes',
+    note: 'Two approvals in sequence, each with its own 24-hour window, before the pull request exists.',
+    stations: [
+      { detail: 'From the dashboard, Slack, the CLI, or the REST API', label: 'Work request' },
+      { detail: 'In an isolated Docker sandbox, until the tests pass', label: 'Implement' },
+      { detail: 'Agent review loop, up to three attempts', label: 'Review network' },
+      {
+        detail: 'Author or team lead',
+        gate: {
+          action: 'Sign off as team lead',
+          held: 'Held at the first signal. The author or a team lead signs off.',
+        },
+        label: 'First sign-off',
+      },
+      {
+        detail: 'Someone independent',
+        gate: {
+          action: 'Sign off as second reviewer',
+          held: 'Held at the second signal. An independent reviewer signs off.',
+        },
+        label: 'Second sign-off',
+      },
+      { detail: 'Opened only now, then CI', label: 'Pull request' },
+    ],
+    tab: 'Four-eyes change',
+    template: 'four-eyes',
+  },
+];
+
+/**
+ * The state each station is rendered in before the script runs — and the state a
+ * visitor without JavaScript keeps: the first route, held at its first gate.
+ */
+function initialState(route: Route, index: number): string {
+  const firstGate = route.stations.findIndex((s) => s.gate);
+  if (index < firstGate) {
+    return 'passed';
+  }
+  return index === firstGate ? 'held' : 'ahead';
+}
+
+const first = routes[0];
+const firstGate = first.stations.find((s) => s.gate);
+---
+
+<section class="signal" aria-labelledby="signal-title">
+  <div class="signal__head">
+    <h1 id="signal-title" class="signal__title">
+      <span>Agents do the work.</span>
+      <span>People clear the signal.</span>
+    </h1>
+    <p class="signal__lede">
+      auto-swe runs multi-agent work as versioned workflows on Temporal — tickets to pull
+      requests, support replies, product briefs. Agents work in isolated Docker sandboxes, every
+      run stops at the gates your team places, and merging is never the agent's call.
+    </p>
+    <p class="signal__actions">
+      <a class="lever lever--primary" href={`${BASE}/introduction/`}>Read the introduction</a>
+      <a class="lever" href={`${BASE}/use-cases/`}>Browse use cases</a>
+      <a class="lever" href="https://github.com/yorch/auto-swe">Source on GitHub</a>
+    </p>
+  </div>
+
+  <div class="board" data-board>
+    <div class="board__routes" role="tablist" aria-label="Workflow">
+      {routes.map((route, i) => (
+        <button
+          class="board__route"
+          role="tab"
+          type="button"
+          id={`route-tab-${route.id}`}
+          aria-controls={`route-${route.id}`}
+          aria-selected={i === 0 ? 'true' : 'false'}
+          tabindex={i === 0 ? 0 : -1}
+          data-route={route.id}
+        >
+          {route.tab}
+        </button>
+      ))}
+    </div>
+
+    {routes.map((route, i) => (
+      <div
+        class="board__line"
+        role="tabpanel"
+        id={`route-${route.id}`}
+        aria-labelledby={`route-tab-${route.id}`}
+        hidden={i !== 0}
+        data-line={route.id}
+        data-done={route.done}
+      >
+        <ol class="track">
+          {route.stations.map((station, s) => (
+            <li
+              class:list={['station', station.gate && 'station--gate']}
+              data-state={i === 0 ? initialState(route, s) : 'ahead'}
+              data-held={station.gate?.held}
+              data-action={station.gate?.action}
+            >
+              <span class="station__mark" aria-hidden="true">
+                {station.gate && <span class="station__lamp" />}
+              </span>
+              <span class="station__label">{station.label}</span>
+              <span class="station__detail">{station.detail}</span>
+            </li>
+          ))}
+        </ol>
+        <p class="board__note">
+          <a href={`${BASE}/use-cases/${route.template}/`}>
+            <code>{route.template}</code>
+          </a>{' '}
+          {route.note}
+        </p>
+      </div>
+    ))}
+
+    <div class="board__status">
+      <p class="board__message" aria-live="polite" data-message>{firstGate?.gate?.held}</p>
+      <button class="lever lever--clear" type="button" data-clear>
+        {firstGate?.gate?.action}
+      </button>
+    </div>
+
+    <ul class="board__key" aria-label="Lamp key">
+      <li><span class="key key--lit" aria-hidden="true"></span>Run has passed</li>
+      <li><span class="key key--held" aria-hidden="true"></span>Held for a person</li>
+      <li><span class="key key--clear" aria-hidden="true"></span>Cleared by a person</li>
+    </ul>
+  </div>
+</section>
+
+<style>
+  .signal {
+    margin: clamp(0.75rem, 2vw, 1.5rem);
+    padding: clamp(1.75rem, 4vw, 3.25rem) clamp(1.25rem, 5vw, 4.5rem) clamp(1.5rem, 3vw, 2.5rem);
+    color: var(--panel-ink);
+    background: var(--panel);
+    border-radius: 14px;
+    /* A mounted object, not a band: an inset bevel on the face of the panel. */
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 6%),
+      inset 0 0 0 1px var(--panel-line);
+  }
+
+  /*
+   * Headline left, lede and levers right, bottoms aligned. Stacked, the head
+   * pushed the track — the reason the panel exists — below the first screen.
+   */
+  .signal__head {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    grid-template-areas:
+      'title lede'
+      'title actions';
+    gap: 1.5rem clamp(2rem, 5vw, 4.5rem);
+    align-items: end;
+  }
+
+  .signal__title {
+    grid-area: title;
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(2.6rem, 1rem + 4.6vw, 5.25rem);
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+    color: var(--panel-ink);
+  }
+
+  .signal__title span {
+    display: block;
+    text-wrap: balance;
+  }
+
+  .signal__lede {
+    grid-area: lede;
+    max-width: 36rem;
+    margin: 0;
+    font-size: var(--step-1);
+    line-height: 1.5;
+    color: var(--panel-muted);
+  }
+
+  .signal__actions {
+    grid-area: actions;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    margin: 0;
+  }
+
+  @media (max-width: 64rem) {
+    .signal__head {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: 'title' 'lede' 'actions';
+    }
+  }
+
+  /*
+   * Buttons are levers: a solid face with a heavier bottom edge, the way a
+   * physical control on a panel catches the light. Scoped under `.signal` to
+   * outrank Starlight's markdown link rule, which would otherwise underline them.
+   */
+  .signal .lever {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: 0.55rem 1.1rem 0.45rem;
+    font: inherit;
+    font-size: var(--step-0);
+    font-weight: 600;
+    color: var(--panel-ink);
+    text-decoration: none;
+    cursor: pointer;
+    background: var(--panel-raised);
+    border: 1px solid var(--panel-line);
+    border-bottom-width: 3px;
+    border-radius: 6px;
+    transition:
+      background-color 0.12s ease,
+      border-color 0.12s ease,
+      transform 0.06s ease;
+  }
+
+  .signal .lever:hover {
+    border-color: var(--panel-muted);
+  }
+
+  .signal .lever:active {
+    transform: translateY(1px);
+  }
+
+  .signal .lever--primary {
+    color: var(--panel);
+    background: var(--track-lit);
+    border-color: #c9c4b3;
+  }
+
+  .signal .lever--primary:hover {
+    border-color: var(--lamp-caution);
+  }
+
+  .signal .lever:focus-visible {
+    outline: 2px solid var(--lamp-caution);
+    outline-offset: 2px;
+  }
+
+  /* --- The board ------------------------------------------------------- */
+
+  .board {
+    margin-top: clamp(2rem, 4vw, 3rem);
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--panel-line);
+  }
+
+  .board__routes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .board__route {
+    padding: 0.4rem 0.85rem 0.3rem;
+    font: inherit;
+    font-size: var(--step--1);
+    font-weight: 600;
+    color: var(--panel-muted);
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid var(--panel-line);
+    border-radius: 999px;
+  }
+
+  .board__route:hover {
+    color: var(--panel-ink);
+  }
+
+  .board__route[aria-selected='true'] {
+    color: var(--panel);
+    background: var(--panel-ink);
+    border-color: var(--panel-ink);
+  }
+
+  .board__route:focus-visible {
+    outline: 2px solid var(--lamp-caution);
+    outline-offset: 2px;
+  }
+
+  .board__line {
+    margin-top: 1.75rem;
+  }
+
+  /*
+   * The track. One column per station; each station draws the section of track
+   * that leaves it, so a section lights up exactly when the run has passed it.
+   */
+  .track {
+    display: grid;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .station {
+    position: relative;
+    padding: 2.4rem 1rem 0 0;
+  }
+
+  .station::before {
+    position: absolute;
+    top: 0.62rem;
+    left: 0;
+    right: 0;
+    height: 4px;
+    content: '';
+    background: var(--track);
+    border-radius: 2px;
+    transition: background-color 0.3s ease;
+  }
+
+  .station:last-child::before {
+    right: auto;
+    width: 1.1rem;
+  }
+
+  .station[data-state='passed']::before,
+  .station[data-state='cleared']::before {
+    background: var(--track-lit);
+  }
+
+  .station__mark {
+    position: absolute;
+    top: 0.2rem;
+    left: 0;
+    z-index: 1;
+    width: 1.1rem;
+    height: 1.1rem;
+    background: var(--panel);
+    border: 3px solid var(--track);
+    border-radius: 50%;
+    transition:
+      background-color 0.3s ease,
+      border-color 0.3s ease,
+      box-shadow 0.3s ease;
+  }
+
+  .station[data-state='passed'] .station__mark {
+    background: var(--track-lit);
+    border-color: var(--track-lit);
+  }
+
+  /* The run itself: the station it occupies glows. */
+  .station[data-state='occupied'] .station__mark {
+    background: var(--track-lit);
+    border-color: var(--track-lit);
+    box-shadow: 0 0 0 5px rgb(242 239 227 / 18%);
+  }
+
+  /*
+   * A gate is a signal head, not a station dot: a dark housing with one lamp.
+   * Unlit ahead of the run, amber while held for a person, green once cleared.
+   */
+  .station--gate .station__mark {
+    top: -0.35rem;
+    width: 1.35rem;
+    height: 2.2rem;
+    background: #0e1512;
+    border: 2px solid var(--panel-line);
+    border-radius: 8px;
+  }
+
+  .station--gate[data-state='passed'] .station__mark,
+  .station--gate[data-state='occupied'] .station__mark {
+    background: #0e1512;
+    border-color: var(--panel-line);
+  }
+
+  .station__lamp {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0.72rem;
+    height: 0.72rem;
+    background: #3a2a22;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition:
+      background-color 0.25s ease,
+      box-shadow 0.25s ease;
+  }
+
+  .station[data-state='held'] .station__lamp {
+    background: var(--lamp-caution);
+    box-shadow: 0 0 14px 3px rgb(255 181 46 / 55%);
+  }
+
+  .station[data-state='cleared'] .station__lamp {
+    background: var(--lamp-clear);
+    box-shadow: 0 0 14px 3px rgb(95 214 138 / 45%);
+  }
+
+  .station__label {
+    display: block;
+    font-size: var(--step-0);
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--panel-ink);
+  }
+
+  .station[data-state='ahead'] .station__label {
+    color: var(--panel-muted);
+  }
+
+  .station[data-state='held'] .station__label {
+    color: var(--lamp-caution);
+  }
+
+  .station__detail {
+    display: block;
+    margin-top: 0.3rem;
+    font-size: var(--step--1);
+    line-height: 1.45;
+    color: var(--panel-muted);
+  }
+
+  .board__note {
+    margin: 1.75rem 0 0;
+    font-size: var(--step--1);
+    color: var(--panel-muted);
+  }
+
+  .signal .board__note a {
+    color: var(--panel-ink);
+    text-decoration: none;
+  }
+
+  .board__note code {
+    padding: 0.1em 0.4em;
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+    color: var(--panel-ink);
+    background: var(--panel-raised);
+    border: 1px solid var(--panel-line);
+    border-radius: 4px;
+  }
+
+  .signal .board__note a:hover code {
+    border-color: var(--lamp-caution);
+  }
+
+  /* --- Status strip ---------------------------------------------------- */
+
+  .board__status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 1.5rem;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1.5rem;
+    padding: 1rem 1.15rem;
+    background: rgb(0 0 0 / 22%);
+    border: 1px solid var(--panel-line);
+    border-radius: 10px;
+  }
+
+  .board__message {
+    flex: 1 1 22rem;
+    margin: 0;
+    font-size: var(--step-1);
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--panel-ink);
+  }
+
+  .board__status[data-phase='held'] .board__message {
+    color: var(--lamp-caution);
+  }
+
+  .board__status[data-phase='running'] .lever--clear {
+    visibility: hidden;
+  }
+
+  .signal .lever--clear {
+    color: #1d1404;
+    background: var(--lamp-caution);
+    border-color: #b97b0d;
+  }
+
+  .signal .lever--clear:hover {
+    border-color: #6f4800;
+  }
+
+  .board__status[data-phase='done'] .lever--clear {
+    color: var(--panel-ink);
+    background: var(--panel-raised);
+    border-color: var(--panel-line);
+  }
+
+  .board__key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    margin: 1.1rem 0 0;
+    padding: 0;
+    font-size: var(--step--1);
+    color: var(--panel-muted);
+    list-style: none;
+  }
+
+  .board__key li {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .key {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+  }
+
+  .key--lit {
+    background: var(--track-lit);
+  }
+
+  .key--held {
+    background: var(--lamp-caution);
+  }
+
+  .key--clear {
+    background: var(--lamp-clear);
+  }
+
+  /*
+   * Narrow: the track turns vertical, because eight stations side by side at
+   * phone width would each get a label column two words wide.
+   */
+  @media (max-width: 52rem) {
+    .track {
+      grid-auto-flow: row;
+    }
+
+    .station {
+      padding: 0 0 1.4rem 2.4rem;
+    }
+
+    .station::before {
+      top: 0.3rem;
+      bottom: 0;
+      left: 0.43rem;
+      right: auto;
+      width: 4px;
+      height: auto;
+    }
+
+    .station:last-child::before {
+      display: none;
+    }
+
+    .station__mark {
+      top: 0.05rem;
+    }
+
+    .station--gate .station__mark {
+      top: -0.5rem;
+      left: -0.1rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .station::before,
+    .station__mark,
+    .station__lamp {
+      transition: none;
+    }
+  }
+</style>
+
+<script>
+  const STEP_MS = 520;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  for (const board of document.querySelectorAll<HTMLElement>('[data-board]')) {
+    const tabs = [...board.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    const status = board.querySelector<HTMLElement>('.board__status');
+    const message = board.querySelector<HTMLElement>('[data-message]');
+    const clear = board.querySelector<HTMLButtonElement>('[data-clear]');
+    if (!status || !message || !clear) {
+      continue;
+    }
+
+    let line: HTMLElement | null = null;
+    let stations: HTMLElement[] = [];
+    let position = 0;
+    let timer: number | undefined;
+
+    const setPhase = (phase: 'running' | 'held' | 'done') => {
+      status.dataset.phase = phase;
+    };
+
+    /** Advances the run until it reaches a gate or the end of the line. */
+    const advance = () => {
+      window.clearTimeout(timer);
+      const tick = () => {
+        if (position >= stations.length) {
+          stations.at(-1)?.setAttribute('data-state', 'passed');
+          message.textContent = line?.dataset.done ?? 'Run complete.';
+          clear.textContent = 'Run it again';
+          setPhase('done');
+          return;
+        }
+        const station = stations[position];
+        if (position > 0 && stations[position - 1].dataset.state === 'occupied') {
+          stations[position - 1].dataset.state = 'passed';
+        }
+        if (station.dataset.held) {
+          station.dataset.state = 'held';
+          message.textContent = station.dataset.held;
+          clear.textContent = station.dataset.action ?? 'Clear the signal';
+          setPhase('held');
+          return;
+        }
+        station.dataset.state = 'occupied';
+        position += 1;
+        if (reduceMotion) {
+          tick();
+        } else {
+          timer = window.setTimeout(tick, STEP_MS);
+        }
+      };
+      setPhase('running');
+      message.textContent = 'Running…';
+      tick();
+    };
+
+    const start = (id: string) => {
+      line = board.querySelector<HTMLElement>(`[data-line="${id}"]`);
+      for (const other of board.querySelectorAll<HTMLElement>('[data-line]')) {
+        other.hidden = other !== line;
+      }
+      stations = [...(line?.querySelectorAll<HTMLElement>('.station') ?? [])];
+      for (const station of stations) {
+        station.dataset.state = 'ahead';
+      }
+      position = 0;
+      advance();
+    };
+
+    clear.addEventListener('click', () => {
+      if (status.dataset.phase === 'done') {
+        start(line?.dataset.line ?? 'ticket');
+        return;
+      }
+      const gate = stations[position];
+      if (gate) {
+        gate.dataset.state = 'cleared';
+        position += 1;
+        advance();
+      }
+    });
+
+    const select = (tab: HTMLButtonElement) => {
+      for (const t of tabs) {
+        const selected = t === tab;
+        t.setAttribute('aria-selected', String(selected));
+        t.tabIndex = selected ? 0 : -1;
+      }
+      start(tab.dataset.route ?? 'ticket');
+    };
+
+    for (const [i, tab] of tabs.entries()) {
+      tab.addEventListener('click', () => select(tab));
+      tab.addEventListener('keydown', (event) => {
+        const delta = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
+        if (delta) {
+          const next = tabs[(i + delta + tabs.length) % tabs.length];
+          next.focus();
+          select(next);
+        }
+      });
+    }
+
+    // The single orchestrated moment on the page: the run draws itself up to
+    // the first signal on load, and stops there for the visitor.
+    start('ticket');
+  }
+</script>

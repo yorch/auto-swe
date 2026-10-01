@@ -2,37 +2,60 @@
 /**
  * The landing page.
  *
- * The hero is a run, because a run is the thing this product makes. Every
- * other platform in this space opens by claiming autonomy; this one's actual
- * argument is that it stops — so the page opens with a run that advances,
- * reaches a gate, and visibly holds there waiting for a person. That halt is
- * the single bold moment on the page and everything around it stays quiet.
- *
- * The steps are the flagship template's real steps, not an illustration.
+ * The signal panel at the top is the one bold thing on the page; everything below
+ * it is set quietly on the enamel, so the panel keeps its weight. The use-case rows
+ * are read from the data file the sync script generates from the built-in templates,
+ * so the people listed against each row are the gates its spec actually has.
  */
 
+import useCases from '../data/useCases.json';
+import ProductFrames from './ProductFrames.astro';
+import SignalPanel from './SignalPanel.astro';
 import SystemDiagram from './SystemDiagram.astro';
 
 const BASE = '/auto-swe';
 
-const run = [
-  { detail: 'A ticket from Jira, Linear, or GitHub Issues', label: 'Work request submitted' },
-  {
-    detail:
-      'Clones into an isolated Docker sandbox; writes code and tests until the suite is green',
-    label: 'Agent implements',
-  },
-  {
-    detail: 'Security, domain logic, and performance agents inspect the diff in parallel',
-    label: 'Review network runs',
-  },
-  {
-    detail: 'The diff is scanned; a critical finding fails the run outright',
-    label: 'Security gate',
-  },
-  { detail: 'Pushed to a branch on the target repository', label: 'Pull request opened' },
-  { detail: 'If checks fail, the agent reads the logs and pushes a fix', label: 'CI self-heals' },
+/**
+ * Which use cases the landing page shows, one or two per team, in this order. Every
+ * other template is one click away on the index; this list only chooses the
+ * examples that best show the range.
+ */
+const FEATURED = [
+  'default-engineering',
+  'dependency-update',
+  'migration',
+  'four-eyes',
+  'security-triage',
+  'canary-rollout',
+  'prd-decomposition',
+  'zendesk-ticket-reply',
+  'notion-content-brand-review',
 ];
+
+const GROUP_LABEL: Record<string, string> = {
+  content: 'Content and comms',
+  engineering: 'Ship code changes',
+  people: 'People in the loop',
+  product: 'Product',
+  release: 'Gate a release',
+  support: 'Support',
+};
+
+const PERSON_KIND: Record<string, string> = {
+  approval: 'Approves',
+  decision: 'Decides',
+  input: 'Fills in',
+  merge: 'Merges',
+  review: 'Reviews',
+};
+
+const featured = FEATURED.map((name) => {
+  const useCase = useCases.find((u) => u.name === name);
+  if (!useCase) {
+    throw new Error(`Landing page features "${name}", which is not a built-in template.`);
+  }
+  return useCase;
+});
 
 const reasons = [
   {
@@ -59,7 +82,7 @@ const reasons = [
 
 const starting = [
   {
-    blurb: 'The shortest complete picture of the system',
+    blurb: 'The shortest complete picture of the system, and how to run it locally',
     href: `${BASE}/introduction/`,
     title: 'Introduction',
   },
@@ -81,434 +104,298 @@ const starting = [
 ];
 ---
 
-<div class="landing">
-  <section class="hero">
-    <div class="hero__lead">
-      <h1 class="hero__title">
-        <span>Ticket in.</span>
-        <span>Reviewed pull request out.</span>
-        <span class="hero__title-halt">Then it waits for you.</span>
-      </h1>
-      <p class="hero__lede">
-        auto-swe runs multi-agent work as versioned workflows on Temporal. Agents work inside
-        isolated Docker sandboxes, behind approval gates, layered security scanning, and a budget on
-        every run. Merging is the one decision it never takes.
-      </p>
-      <p class="hero__actions">
-        <a class="btn btn--primary" href={`${BASE}/introduction/`}>Read the introduction</a>
-        <a class="btn" href="https://github.com/yorch/auto-swe">Source on GitHub</a>
-      </p>
-    </div>
+<div class="landing not-content">
+  <SignalPanel />
 
-    <div class="hero__run">
-      <p class="run__caption">The default engineering workflow, step by step</p>
-      <ol class="run">
-        {run.map((step) => (
-          <li class="run__step">
-            <span class="run__mark" aria-hidden="true"></span>
-            <span class="run__body">
-              <span class="run__label">{step.label}</span>
-              <span class="run__detail">{step.detail}</span>
+  <div class="landing__body">
+    <ProductFrames />
+
+    <section class="band" aria-labelledby="uses-title">
+      <h2 id="uses-title" class="band__title">What teams run on it</h2>
+      <p class="band__lede">
+        One engine, {useCases.length} workflows shipped as templates. Each row lists the places a
+        person acts in that run, read from the template's own spec.
+      </p>
+
+      <ol class="uses">
+        {featured.map((useCase, i) => (
+          <li class="use">
+            <span class="use__group">
+              {(i === 0 || featured[i - 1].group !== useCase.group) && GROUP_LABEL[useCase.group]}
+            </span>
+            <span class="use__main">
+              <a class="use__title" href={useCase.href}>{useCase.title}</a>
+              <span class="use__summary">{useCase.summary}</span>
+            </span>
+            <span class="use__people">
+              {useCase.people.length === 0 ? (
+                <span class="use__none">No person inside the run</span>
+              ) : (
+                useCase.people.map((person) => (
+                  <span class="use__person">
+                    <span class="use__kind">{PERSON_KIND[person.kind] ?? person.kind}</span>
+                    {person.label}
+                  </span>
+                ))
+              )}
+              {useCase.maturity === 'seeded' && (
+                <span class="use__maturity">Seeded, not yet proven</span>
+              )}
             </span>
           </li>
         ))}
-        <li class="run__step run__step--gate">
-          <span class="run__mark" aria-hidden="true"></span>
-          <span class="run__body">
-            <span class="run__label">A person merges</span>
-            <span class="run__detail">
-              The run holds here for up to seven days. No activity in the platform calls the merge
-              API, and no shipped template merges anything.
-            </span>
-          </span>
-        </li>
       </ol>
-    </div>
-  </section>
+      <p class="band__more">
+        <a href={`${BASE}/use-cases/`}>All {useCases.length} use cases, with their workflow graphs</a>
+      </p>
+    </section>
 
-  <section class="band">
-    <h2 class="band__title">How it fits together</h2>
-    <p class="band__lede">
-      Your team works where it already works. auto-swe runs the workflow durably in between, and
-      touches your systems on the far side.
-    </p>
-    <SystemDiagram />
-  </section>
+    <section class="band" aria-labelledby="fit-title">
+      <h2 id="fit-title" class="band__title">How it fits together</h2>
+      <p class="band__lede">
+        Your team works where it already works. auto-swe runs the workflow durably in between, and
+        touches your systems on the far side.
+      </p>
+      <SystemDiagram />
+    </section>
 
-  <section class="band">
-    <h2 class="band__title">Why it is built this way</h2>
-    <dl class="reasons">
-      {reasons.map((reason) => (
-        <div class="reason">
-          <dt class="reason__claim">{reason.claim}</dt>
-          <dd class="reason__body">{reason.body}</dd>
-        </div>
-      ))}
-    </dl>
-  </section>
+    <section class="band" aria-labelledby="why-title">
+      <h2 id="why-title" class="band__title">Why it is built this way</h2>
+      <dl class="reasons">
+        {reasons.map((reason) => (
+          <div class="reason">
+            <dt class="reason__claim">{reason.claim}</dt>
+            <dd class="reason__body">{reason.body}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
 
-  <section class="band">
-    <h2 class="band__title">Start reading</h2>
-    <ul class="starting">
-      {starting.map((doc) => (
-        <li class="starting__item">
-          <a class="starting__link" href={doc.href}>{doc.title}</a>
-          <span class="starting__blurb">{doc.blurb}</span>
-        </li>
-      ))}
-    </ul>
-    <p class="band__note">
-      These docs describe how auto-swe works now, in present tense. There is no roadmap here and no
-      status column: what shipped when lives in git history. Every capability page ends with
-      a <a href={`${BASE}/docs/`}>Limitations</a> section stating what is not built, not proven, or
-      deliberately constrained, and a page that drops one fails the build.
-    </p>
-  </section>
+    <section class="band" aria-labelledby="read-title">
+      <h2 id="read-title" class="band__title">Start reading</h2>
+      <ul class="starting">
+        {starting.map((doc) => (
+          <li class="starting__item">
+            <a class="starting__link" href={doc.href}>{doc.title}</a>
+            <span class="starting__blurb">{doc.blurb}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  </div>
 </div>
 
 <style>
-  .landing {
+  .landing__body {
     max-width: 78rem;
     margin-inline: auto;
     padding-inline: clamp(1.25rem, 5vw, 4rem);
-    padding-block: clamp(3rem, 7vw, 6rem) 6rem;
+    padding-bottom: 2rem;
   }
 
-  /* --- Hero ------------------------------------------------------------ */
-
-  .hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-    gap: clamp(2.5rem, 5vw, 5rem);
-    align-items: start;
+  .band {
+    margin-top: clamp(4rem, 8vw, 6.5rem);
   }
 
-  .hero__title {
-    margin: 0;
+  .band__title {
+    margin: 0 0 1.25rem;
     font-family: var(--font-display);
-    font-weight: 700;
-    font-size: var(--step-6);
-    line-height: 0.98;
-    letter-spacing: -0.015em;
+    font-weight: 800;
+    font-size: var(--step-4);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
     color: var(--ink);
   }
 
-  /*
-   * Each sentence is its own block and balances its own wrap. Hard-coded line
-   * breaks would set the rag once, at one viewport, and then be wrong at every
-   * other one.
-   */
-  .hero__title span {
-    display: block;
-    text-wrap: balance;
-  }
-
-  /*
-   * The third line is the claim the rest of the page has to earn, so it is the
-   * only place on the landing page where the gate colour appears in type.
-   */
-  .hero__title-halt {
-    color: var(--gate);
-  }
-
-  .hero__lede {
-    max-width: 34rem;
-    margin-top: 1.75rem;
+  .band__lede {
+    max-width: 58ch;
+    margin: 0 0 2.25rem;
     font-size: var(--step-1);
     line-height: 1.55;
     color: var(--ink-muted);
   }
 
-  .hero__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-top: 2rem;
-  }
+  /* --- Use cases ------------------------------------------------------- */
 
   /*
-   * Scoped under `.landing` to outrank the global markdown link rule, which is
-   * three classes deep and otherwise repaints these as underlined body links —
-   * putting ink-coloured text on an ink-coloured button.
+   * Rows, not cards. The group sits in its own column and is printed only on the
+   * first row of each group, so the column reads as a table of contents down the
+   * left edge rather than a label repeated on every line.
    */
-  .landing .btn {
-    display: inline-block;
-    padding: 0.6rem 1.1rem;
-    font-size: var(--step-0);
-    font-weight: 500;
+  .uses {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-top: 2px solid var(--ink);
+  }
+
+  .use {
+    display: grid;
+    grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) minmax(0, 17rem);
+    gap: 0.5rem 2.5rem;
+    padding-block: 1.35rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .use__group {
+    font-size: var(--step--1);
+    font-weight: 700;
+    line-height: 1.6;
+    color: var(--ink-faint);
+  }
+
+  .use__main {
+    display: block;
+  }
+
+  .landing .use__title {
+    font-size: var(--step-1);
+    font-weight: 700;
+    line-height: 1.3;
     color: var(--ink);
-    text-decoration: none;
-    background: var(--paper-raised);
-    border: 1px solid var(--rule-strong);
-    transition: border-color 0.12s ease, background-color 0.12s ease;
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--rule-strong);
+    text-underline-offset: 0.22em;
   }
 
-  .landing .btn:hover {
-    border-color: var(--gate);
-    background: var(--paper);
+  .landing .use__title:hover {
+    text-decoration-color: var(--gate);
   }
 
-  .landing .btn--primary {
-    color: var(--paper);
-    background: var(--ink);
-    border-color: var(--ink);
+  .use__summary {
+    display: block;
+    max-width: 62ch;
+    margin-top: 0.45rem;
+    font-size: var(--step-0);
+    line-height: 1.55;
+    color: var(--ink-muted);
   }
 
-  /*
-   * `--gate-text`, not `--gate`. The signal value behind a button label
-   * measures 3.69:1, which is fine for a mark and not for words.
-   */
-  .landing .btn--primary:hover {
-    color: var(--on-gate);
-    background: var(--gate-text);
-    border-color: var(--gate-text);
-  }
-
-  /* --- The run rail ---------------------------------------------------- */
-
-  .hero__run {
-    padding: 1.5rem 1.5rem 1.75rem;
-    background: var(--paper-raised);
-    border: 1px solid var(--rule);
+  .use__people {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding-top: 0.2rem;
   }
 
   /*
-   * Not monospaced. A mono face on a small label is the reflex here and it
-   * says nothing true — nothing in this box is code. The rail already carries
-   * the machine reading.
+   * Each place a person acts, marked with the gate colour — the same amber that
+   * lights the held signal in the panel and the gate nodes in the diagrams.
    */
-  .run__caption {
-    margin: 0 0 1.25rem;
+  .use__person {
+    position: relative;
+    padding-inline-start: 1.05rem;
+    font-size: var(--step--1);
+    line-height: 1.4;
+    color: var(--ink);
+  }
+
+  .use__person::before {
+    position: absolute;
+    top: 0.3em;
+    left: 0;
+    width: 0.55rem;
+    height: 0.55rem;
+    content: '';
+    background: var(--gate);
+    border-radius: 2px;
+  }
+
+  .use__kind {
+    display: block;
+    font-weight: 700;
+    color: var(--gate-text);
+  }
+
+  .use__none {
     font-size: var(--step--1);
     color: var(--ink-faint);
   }
 
-  .run {
-    position: relative;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .run__step {
-    position: relative;
-    padding-inline-start: 1.9rem;
-    padding-block: 0 1.15rem;
-  }
-
-  /*
-   * The rail is drawn per step rather than as one line behind the list, so the
-   * dash below the gate can differ from the solid line above it without a
-   * second element or a gradient.
-   */
-  .run__step::before {
-    content: '';
-    position: absolute;
-    inset-inline-start: 4px;
-    top: 0.55rem;
-    bottom: -0.15rem;
-    width: 2px;
-    background: var(--rule-strong);
-  }
-
-  .run__step:last-child::before {
-    display: none;
-  }
-
-  .run__mark {
-    position: absolute;
-    inset-inline-start: 0;
-    top: 0.3rem;
-    width: 10px;
-    height: 10px;
-    background: var(--steel);
-    border-radius: 50%;
-  }
-
-  .run__body {
-    display: block;
-  }
-
-  .run__label {
-    display: block;
-    font-weight: 600;
-    font-size: var(--step-0);
-    line-height: 1.35;
-    color: var(--ink);
-  }
-
-  .run__detail {
-    display: block;
+  .use__maturity {
+    align-self: flex-start;
     margin-top: 0.2rem;
-    font-size: var(--step--1);
-    line-height: 1.5;
+    padding: 0.1rem 0.5rem 0;
+    font-size: 0.75rem;
+    font-weight: 600;
     color: var(--ink-muted);
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
   }
 
-  /*
-   * The halt. A square rather than a circle, in the gate colour, sitting below
-   * a dashed rail — the run has not flowed into this step and will not until
-   * somebody acts.
-   */
-  .run__step--gate {
-    padding-bottom: 0;
-  }
-
-  .run__step--gate .run__mark {
-    top: 0.25rem;
-    width: 12px;
-    height: 12px;
-    margin-inline-start: -1px;
-    background: var(--gate);
-    border-radius: 0;
-  }
-
-  /* Running text, so the text-safe gate value rather than the signal one. */
-  .run__step--gate .run__label {
-    color: var(--gate-text);
-  }
-
-  .run__step:nth-last-child(2)::before {
-    background: repeating-linear-gradient(
-      to bottom,
-      var(--gate) 0 4px,
-      transparent 4px 8px
-    );
-  }
-
-  /*
-   * One orchestrated moment on the whole site: the rail draws itself down to
-   * the gate on load and stops there. It runs once, it is short, and it says
-   * the same thing the page says.
-   */
-  @media (prefers-reduced-motion: no-preference) {
-    .run__step::before {
-      transform-origin: top;
-      animation: rail-fill 0.5s ease-out backwards;
-      animation-delay: calc(var(--i, 0) * 0.11s);
-    }
-
-    .run__step {
-      animation: step-in 0.4s ease-out backwards;
-      animation-delay: calc(var(--i, 0) * 0.11s);
-    }
-
-    .run__step--gate .run__mark {
-      animation: gate-hold 0.5s ease-out backwards;
-      animation-delay: 0.85s;
-    }
-  }
-
-  @keyframes rail-fill {
-    from {
-      transform: scaleY(0);
-    }
-  }
-
-  @keyframes step-in {
-    from {
-      opacity: 0;
-    }
-  }
-
-  @keyframes gate-hold {
-    from {
-      transform: scale(0.4);
-      opacity: 0;
-    }
-  }
-
-  /* --- Bands ----------------------------------------------------------- */
-
-  .band {
-    margin-top: clamp(4rem, 8vw, 7rem);
-  }
-
-  .band__lede {
-    max-width: 58ch;
-    margin: -1rem 0 2rem;
-    font-size: var(--step-0);
-    line-height: 1.6;
-    color: var(--ink-muted);
-  }
-
-  .band__title {
-    margin: 0 0 2rem;
-    padding-top: 1.25rem;
-    font-family: var(--font-display);
+  .band__more {
+    margin: 1.5rem 0 0;
+    font-size: var(--step-1);
     font-weight: 700;
-    font-size: var(--step-3);
-    line-height: 1.1;
-    color: var(--ink);
-    border-top: 1px solid var(--rule-strong);
   }
+
+  .landing .band__more a {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--gate);
+    text-underline-offset: 0.22em;
+  }
+
+  /* --- Reasons --------------------------------------------------------- */
 
   .reasons {
-    display: grid;
-    gap: 0;
     margin: 0;
+    border-top: 2px solid var(--ink);
   }
 
-  /*
-   * A definition list on rules, not a grid of identical cards. These entries
-   * are different lengths and different weights of claim, and boxing them all
-   * to the same size would say they are interchangeable.
-   */
   .reason {
     display: grid;
-    grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
-    gap: 0 3rem;
+    grid-template-columns: minmax(0, 17rem) minmax(0, 1fr);
+    gap: 0.5rem 2.5rem;
     padding-block: 1.5rem;
-    border-top: 1px solid var(--rule);
-  }
-
-  .reason:last-child {
     border-bottom: 1px solid var(--rule);
   }
 
   .reason__claim {
-    font-family: var(--font-display);
-    font-weight: 600;
     font-size: var(--step-1);
-    line-height: 1.2;
+    font-weight: 700;
+    line-height: 1.3;
     color: var(--ink);
   }
 
   .reason__body {
-    max-width: 60ch;
+    max-width: 62ch;
     margin: 0;
     font-size: var(--step-0);
     line-height: 1.6;
     color: var(--ink-muted);
   }
 
+  /* --- Start reading --------------------------------------------------- */
+
   .starting {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    gap: 0;
     margin: 0;
     padding: 0;
     list-style: none;
+    border-top: 2px solid var(--ink);
   }
 
   .starting__item {
-    display: grid;
-    grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
-    gap: 0 3rem;
-    padding-block: 0.9rem;
-    border-top: 1px solid var(--rule);
-  }
-
-  .starting__item:last-child {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 1.25rem 1.5rem 1.4rem 0;
     border-bottom: 1px solid var(--rule);
   }
 
   .landing .starting__link {
-    font-family: var(--font-display);
-    font-weight: 600;
     font-size: var(--step-1);
+    font-weight: 700;
     color: var(--ink);
     text-decoration: underline;
+    text-decoration-thickness: 2px;
     text-decoration-color: var(--gate);
-    text-decoration-thickness: 1.5px;
-    text-underline-offset: 0.2em;
+    text-underline-offset: 0.22em;
   }
 
   .landing .starting__link:hover {
@@ -516,50 +403,23 @@ const starting = [
   }
 
   .starting__blurb {
-    align-self: center;
-    font-size: var(--step-0);
+    font-size: var(--step--1);
+    line-height: 1.5;
     color: var(--ink-muted);
   }
 
-  .band__note {
-    max-width: 62ch;
-    margin-top: 2rem;
-    font-size: var(--step-0);
-    line-height: 1.6;
-    color: var(--ink-muted);
-  }
-
-  .band__note a {
-    color: var(--ink);
-    text-decoration: underline;
-    text-decoration-color: var(--gate);
-    text-underline-offset: 0.2em;
-  }
-
-  /* --- Narrow ---------------------------------------------------------- */
 
   @media (max-width: 60rem) {
-    .hero {
+    .use {
       grid-template-columns: minmax(0, 1fr);
     }
 
-    .reason,
-    .starting__item {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0.4rem;
+    .use__group:empty {
+      display: none;
     }
 
-    .starting__blurb {
-      font-size: var(--step--1);
+    .reason {
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 </style>
-
-<script>
-  // Stagger index for the rail animation. Set here rather than inline so the
-  // markup stays free of presentation, and so a page with the animation
-  // disabled carries no unused attributes.
-  for (const [i, step] of document.querySelectorAll('.run__step').entries()) {
-    (step as HTMLElement).style.setProperty('--i', String(i));
-  }
-</script>
