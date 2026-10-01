@@ -137,14 +137,14 @@ export const USE_CASES = {
       'review agents and no people inside the run: for low-risk, well-tested codebases.',
     title: 'Code and CI only',
   },
-  'review-and-merge': {
+  'agent-reviewed-pr': {
     group: 'engineering',
     maturity: 'composed',
-    source: 'packages/shared/src/workflow/templates/reviewAndMerge.ts',
+    source: 'packages/shared/src/workflow/templates/agentReviewedPr.ts',
     summary:
       'The agent review loop, up to three attempts, then a pull request and a CI wait. ' +
-      'Despite the template name it merges nothing: the run ends when CI is green, and the ' +
-      'pull request waits for a person like every other.',
+      'No person acts inside the run; it ends when CI is green, and the pull request waits ' +
+      'for a person to merge like every other.',
     title: 'Agent-reviewed pull request',
   },
   'consensus-review': {

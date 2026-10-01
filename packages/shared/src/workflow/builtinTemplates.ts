@@ -3,6 +3,7 @@
  * This file is kept for backwards-compatibility with existing imports.
  */
 export {
+  AGENT_REVIEWED_PR_SPEC,
   BUILTIN_TEMPLATES,
   type BuiltinTemplate,
   CANARY_ROLLOUT_SPEC,
@@ -17,7 +18,6 @@ export {
   MIGRATION_SPEC,
   PARALLEL_FAN_OUT_SPEC,
   PR_APPROVAL_GATE_SPEC,
-  REVIEW_AND_MERGE_SPEC,
   SCOPE_CLARIFICATION_SPEC,
   SECURITY_TRIAGE_SPEC,
   SIGNAL_GATED_ROLLOUT_SPEC,

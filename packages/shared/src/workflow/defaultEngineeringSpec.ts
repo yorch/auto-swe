@@ -10,7 +10,10 @@ import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from './spec.js';
  *   wait-for-human-merge → commit-to-memory → done
  */
 export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
-  description: 'Default engineering workflow (parity with hardcoded EngineeringWorkflow).',
+  description:
+    'Implement a ticket in an isolated sandbox until the tests pass, run the security, ' +
+    'domain-logic, and performance reviewers, open a pull request, fix CI failures from ' +
+    'the logs, then wait for a person to merge. The lesson is stored for the next run.',
   entry: 'setValidating',
   name: 'default-engineering',
   nodes: {
