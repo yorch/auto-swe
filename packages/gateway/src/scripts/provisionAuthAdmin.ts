@@ -37,12 +37,6 @@ const auth = getAuth();
 
 const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@auto-swe.local';
 
-// `createLocalAccountIssuer('credential')` from @better-auth/core/db. Inlined
-// rather than imported because that entry point is internal to better-auth, so
-// importing it would couple this script to an unstable path. The same value is
-// documented on `Account.issuer` in schema.prisma; keep the two in step.
-const CREDENTIAL_ISSUER = 'local:credential';
-
 async function main() {
   // The same SEED_ADMIN_PASSWORD the shared seed hashed with bcrypt, so the
   // legacy and better-auth credentials agree. Both scripts require it rather
@@ -74,15 +68,13 @@ async function main() {
     );
   }
 
-  // Idempotent upsert into the Account table. Since better-auth 1.7 an account
-  // is keyed by (issuer, accountId); credential accounts carry the synthetic
-  // `local:credential` issuer that `createLocalAccountIssuer('credential')`
-  // produces, and sign-in matches on it exactly.
+  // Idempotent upsert into the Account table, keyed by (providerId, accountId).
+  // A credential account's id is the user's own id.
   // biome-ignore lint/suspicious/noExplicitAny: betterAuth lazy singleton requires any for type deferral
   const existing = await (ctx.adapter.findOne as any)({
     model: 'account',
     where: [
-      { field: 'issuer', operator: 'eq', value: CREDENTIAL_ISSUER },
+      { field: 'providerId', operator: 'eq', value: 'credential' },
       { connector: 'AND', field: 'accountId', operator: 'eq', value: user.id },
     ],
   });
@@ -99,7 +91,6 @@ async function main() {
       data: {
         accountId: user.id,
         createdAt: new Date(),
-        issuer: CREDENTIAL_ISSUER,
         password: hash,
         providerId: 'credential',
         updatedAt: new Date(),

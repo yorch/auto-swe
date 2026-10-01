@@ -5,6 +5,7 @@
 **Status**: Accepted
 **Decision**: The account id is `{host}:{numeric id}`, with the host lower-cased and any non-default port kept.
 **Reason**: Accounts are keyed unique on `(issuer, accountId)`, not `(providerId, accountId)`. A generic-OAuth provider that declares no `accountIssuer` gets `local:oauth:<providerId>`, which for `github` is the same issuer the built-in github.com provider uses, so a bare numeric id from GHE could match a github.com account and sign the wrong person in.
+**Update (better-auth 1.7.3)**: accounts are again keyed on `(providerId, accountId)` and `accounts.issuer` is gone. The decision stands: GHE and github.com sign-in share the `github` provider id, so a bare numeric id from GHE would still match a github.com account.
 **Alternatives considered**: Setting `accountIssuer` to the GHE origin would namespace the key natively and keep the id bare. Not taken: the column is `NOT NULL` and shared with every provider, the behaviour of an issuer that changes when an admin edits the Base URL is untested here, and the id prefix needs no schema or adapter assumptions.
 
 ## D2 — 2026-10-01 — Task 2: Build the GHE sign-in provider

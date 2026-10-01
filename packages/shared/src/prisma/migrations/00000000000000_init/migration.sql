@@ -476,7 +476,6 @@ CREATE TABLE "accounts" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "account_id" TEXT NOT NULL,
     "provider_id" TEXT NOT NULL,
-    "issuer" TEXT NOT NULL,
     "user_id" UUID NOT NULL,
     "access_token" TEXT,
     "refresh_token" TEXT,
@@ -915,12 +914,6 @@ CREATE TABLE "github_config" (
     "webhook_secret_auth_tag" BYTEA,
     "webhook_secret_key_version" INTEGER,
     "webhook_secret_last_four" TEXT,
-    "oauth_client_id" TEXT,
-    "oauth_client_secret_ciphertext" BYTEA,
-    "oauth_client_secret_nonce" BYTEA,
-    "oauth_client_secret_auth_tag" BYTEA,
-    "oauth_client_secret_key_version" INTEGER,
-    "oauth_client_secret_last_four" TEXT,
     "app_id" TEXT,
     "app_client_id" TEXT,
     "app_client_secret_ciphertext" BYTEA,
@@ -967,26 +960,6 @@ CREATE TABLE "slack_config" (
 );
 
 -- CreateTable
-CREATE TABLE "storage_config" (
-    "id" TEXT NOT NULL DEFAULT 'default',
-    "backend" TEXT NOT NULL DEFAULT 'inline',
-    "s3_bucket" TEXT,
-    "s3_region" TEXT,
-    "s3_endpoint" TEXT,
-    "s3_prefix" TEXT,
-    "s3_force_path_style" BOOLEAN NOT NULL DEFAULT false,
-    "aws_access_key_id" TEXT,
-    "aws_secret_access_key_ciphertext" BYTEA,
-    "aws_secret_access_key_nonce" BYTEA,
-    "aws_secret_access_key_auth_tag" BYTEA,
-    "aws_secret_access_key_key_version" INTEGER,
-    "aws_secret_access_key_last_four" TEXT,
-    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "storage_config_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "workflow_defaults" (
     "id" TEXT NOT NULL DEFAULT 'default',
     "branch_prefix" TEXT NOT NULL DEFAULT 'auto',
@@ -1017,10 +990,6 @@ CREATE TABLE "workflow_defaults" (
     "budget_epic_output_tokens" INTEGER NOT NULL DEFAULT 5000000,
     "max_tdd_iterations" INTEGER NOT NULL DEFAULT 5,
     "max_eval_iterations" INTEGER NOT NULL DEFAULT 3,
-    "workspace_memory" TEXT NOT NULL DEFAULT '4g',
-    "workspace_cpus" DOUBLE PRECISION NOT NULL DEFAULT 2,
-    "workspace_pids_limit" INTEGER NOT NULL DEFAULT 512,
-    "workspace_image" TEXT NOT NULL DEFAULT 'node:24-alpine',
     "lesson_retrieval_limit" INTEGER NOT NULL DEFAULT 5,
     "lesson_retrieval_threshold" DOUBLE PRECISION NOT NULL DEFAULT 0.7,
     "ci_wait_mode" TEXT,
@@ -1034,35 +1003,6 @@ CREATE TABLE "workflow_defaults" (
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "workflow_defaults_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "google_oauth_config" (
-    "id" TEXT NOT NULL DEFAULT 'default',
-    "client_id" TEXT,
-    "client_secret_ciphertext" BYTEA,
-    "client_secret_nonce" BYTEA,
-    "client_secret_auth_tag" BYTEA,
-    "client_secret_key_version" INTEGER,
-    "client_secret_last_four" TEXT,
-    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "google_oauth_config_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "okta_oauth_config" (
-    "id" TEXT NOT NULL DEFAULT 'default',
-    "issuer" TEXT,
-    "client_id" TEXT,
-    "client_secret_ciphertext" BYTEA,
-    "client_secret_nonce" BYTEA,
-    "client_secret_auth_tag" BYTEA,
-    "client_secret_key_version" INTEGER,
-    "client_secret_last_four" TEXT,
-    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "okta_oauth_config_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -1462,7 +1402,7 @@ CREATE UNIQUE INDEX "users_github_login_key" ON "users"("github_login");
 CREATE INDEX "accounts_user_id_idx" ON "accounts"("user_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "accounts_issuer_account_id_key" ON "accounts"("issuer", "account_id");
+CREATE UNIQUE INDEX "accounts_provider_id_account_id_key" ON "accounts"("provider_id", "account_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "sessions_token_key" ON "sessions"("token");
@@ -2000,4 +1940,3 @@ ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_template
 
 -- AddForeignKey
 ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
