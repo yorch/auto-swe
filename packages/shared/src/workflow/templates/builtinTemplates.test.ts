@@ -13,7 +13,13 @@ describe.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
     it('validates with no errors and no unreachable nodes', () => {
       const report = validateSpec(spec);
       expect(report.errors).toEqual([]);
-      expect(report.warnings.filter((i) => i.code === 'UNREACHABLE')).toEqual([]);
+      expect(
+        report.warnings.filter((i) =>
+          ['UNREACHABLE', 'FANOUT_LEAK', 'TERMINAL_IN_SUBGRAPH_ONLY', 'IGNORED_FIELD'].includes(
+            i.code
+          )
+        )
+      ).toEqual([]);
     });
 
     it('never routes publishOutcome straight into writeOutcome', () => {
