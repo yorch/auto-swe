@@ -92,9 +92,18 @@ skipped. The worker reads the catalog once per config-cache window, so an edit l
 If the catalog cannot be read, pricing uses the last good read, else the built-in table, and retries
 after one window — a pricing failure never fails a call.
 
+**In the dashboard**, `/studio/models` → **Catalog** lists every model with its price, status and
+source — *built-in*, *customized* (an admin's edit, which startup keeps), or *custom* — and, on a
+customized row whose shipped values have since changed, what code now ships beside a **Reset**.
+Above it, *Unpriced in use* lists the models configured or called in the last 30 days that nothing
+prices, each with its likely intended spec and an **Add to catalog** that prefills it. The agent
+and embedding model-spec fields are pickers over the catalog — chat models for agents, embedding
+models for the embedding config — showing each model's price; a deprecated one is labelled and a
+retired one is not offered.
+
 **Setting a price** — for a negotiated rate, a self-hosted model (`0`/`0`), or a model the built-in
-table lacks — goes through the catalog API under `/api/v1/platform/model-catalog` (recipes in
-[Scripted operations](#scripted-operations)). Any signed-in user can read the catalog; every write
+table lacks — is a Catalog tab edit, or a call to the catalog API under
+`/api/v1/platform/model-catalog` (recipes in [Scripted operations](#scripted-operations)). Any signed-in user can read the catalog; every write
 is ADMIN-only, because a price decides what USD budgets see, and is recorded in the config audit log
 as a `ModelCatalogEntry`.
 
@@ -347,8 +356,9 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
   unpriced model is still capped there, but every USD-denominated limit — the organization monthly
   budget, channel budgets and the channel hold estimate — reads its spend as $0 and never stops it.
-- **The model catalog has no admin page.** Prices are managed through the catalog API (see
-  [Model catalog](#model-catalog)); the dashboard's model pickers do not read the catalog.
+- **The model pickers suggest; they do not restrict.** A spec the catalog lacks can be typed and
+  saved, and is recorded at $0 until it is added — the save's `catalogWarnings` and the unpriced
+  panel say so, but nothing blocks it.
 - **Unpriced-model detection is exact-match plus a heuristic.** The did-you-mean only proposes a
   priced spec that differs by `.`/`-` or case, or the single nearest spec from the same provider
   within two edits; a model it cannot match is reported with no suggestion.
