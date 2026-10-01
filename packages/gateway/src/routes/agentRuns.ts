@@ -1,14 +1,17 @@
 import crypto from 'node:crypto';
+import { Role } from '@auto-swe/shared';
 import { resolveSettings } from '@auto-swe/shared/config';
 import {
   AGENT_REF_RE,
   AGENT_RUN_DELIVERIES,
+  AGENT_RUN_MAX_WALL_CLOCK_SECONDS,
   AGENT_RUN_TEMPLATE_NAME,
   AGENT_RUN_TEMPLATE_ORIGIN,
   type AgentRunPayload,
   AgentRunPayloadSchema,
   agentRunTicketId,
   isLaunchableAgentKey,
+  NON_LAUNCHABLE_AGENT_KEYS,
 } from '@auto-swe/shared/lib/agentRun';
 import { loadAgentRunSlots, wouldAdmitNewRun } from '@auto-swe/shared/lib/agentRunAdmission';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
@@ -21,7 +24,9 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
+import { reachableConnections } from '../lib/tenantScope.js';
 import { MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -49,6 +54,23 @@ const CreateAgentRunBody = z.object({
   repoId: z.string().uuid(),
 });
 type CreateAgentRunBody = z.infer<typeof CreateAgentRunBody>;
+
+const MIN_WALL_CLOCK_SECONDS = 60;
+const MAX_STEPS_HARD = 500;
+
+const RepoContextQuery = z.object({ repoId: z.string().uuid().optional() });
+
+/**
+ * The agent rows an agent run may resolve: GLOBAL, and the repository's
+ * ORGANIZATION. One definition for the launch check and the picker, so the
+ * list never offers an agent the launch would then refuse to find.
+ */
+function agentScopeBranches(orgId: string | null) {
+  return [
+    { channelId: null, scope: 'GLOBAL' as const, teamId: null, workflowTemplateId: null },
+    { orgId, scope: 'ORGANIZATION' as const },
+  ];
+}
 
 const RerunParams = z.object({ workRequestId: z.string().uuid() });
 
@@ -156,14 +178,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       () =>
         fastify.prisma.agent.findMany({
           select: { scope: true, version: true },
-          where: {
-            isActive: true,
-            key,
-            OR: [
-              { channelId: null, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
-              { orgId, scope: 'ORGANIZATION' },
-            ],
-          },
+          where: { isActive: true, key, OR: agentScopeBranches(orgId) },
         })
     );
     const found =
@@ -364,6 +379,147 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
   }
+
+  /**
+   * The repository a form-support read is scoped to, or null (after replying 404)
+   * when the caller cannot reach it. Same reach rule as the repository listing
+   * and the launch: owning or shared team, under the repo-access gate; a
+   * platform ADMIN reaches every active git repository. A repository the caller
+   * cannot reach answers exactly as one that does not exist.
+   */
+  async function reachableRepo(
+    request: Parameters<typeof requireUser>[0],
+    reply: FastifyReply,
+    repoId: string
+  ) {
+    const user = requireUser(request);
+    const reach =
+      user.role === Role.ADMIN ? null : reachableConnections(user, request.repoAccessGate);
+    const repo = await asPlatformAdmin(
+      user,
+      'an admin may launch on any repository',
+      ['Connection'],
+      () =>
+        fastify.prisma.connection.findFirst({
+          select: { id: true, team: { select: { orgId: true } }, teamId: true },
+          where: {
+            AND: [...(reach ? [reach] : []), { id: repoId, isActive: true, type: 'git_repo' }],
+          },
+        })
+    );
+    if (!repo) {
+      error(reply, 404, 'CONNECTION_NOT_FOUND', 'Connection not found or inactive');
+      return null;
+    }
+    return { orgId: repo.team.orgId, repoId: repo.id, teamId: repo.teamId };
+  }
+
+  // The launchable agents, as the launch will resolve them: GLOBAL, plus the
+  // repository's ORGANIZATION when `repoId` is given. Never TEAM scope: a
+  // shared-team member must not be offered (or reach) the owning team's agents.
+  app.get(
+    '/agents',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: RepoContextQuery },
+    },
+    async (request, reply) => {
+      let orgId: string | null = null;
+      if (request.query.repoId) {
+        const repo = await reachableRepo(request, reply, request.query.repoId);
+        if (!repo) {
+          return;
+        }
+        orgId = repo.orgId;
+      }
+      const rows = await runUnscoped(
+        'an agent run resolves its agent at GLOBAL and ORGANIZATION scope only',
+        ['Agent'],
+        () =>
+          fastify.prisma.agent.findMany({
+            orderBy: [{ key: 'asc' }, { version: 'desc' }],
+            select: { description: true, key: true, name: true, scope: true, version: true },
+            where: {
+              isActive: true,
+              key: { notIn: [...NON_LAUNCHABLE_AGENT_KEYS] },
+              // With no repository there is no organization to match.
+              OR: orgId ? agentScopeBranches(orgId) : agentScopeBranches(orgId).slice(0, 1),
+            },
+          })
+      );
+      const byKey = new Map<string, typeof rows>();
+      for (const r of rows) {
+        byKey.set(r.key, [...(byKey.get(r.key) ?? []), r]);
+      }
+      const data = [...byKey.entries()].map(([key, versions]) => {
+        // Rows arrive newest version first. The worker resolves ORGANIZATION
+        // before GLOBAL, so an org override is what an unpinned launch runs.
+        const org = versions.find((v) => v.scope === 'ORGANIZATION');
+        const effective = org ?? (versions[0] as (typeof versions)[number]);
+        return {
+          description: effective.description,
+          key,
+          name: effective.name,
+          // Versions a `key@version` pin can select; none while an org override shadows the key.
+          pinnableVersions: org
+            ? []
+            : versions.filter((v) => v.scope === 'GLOBAL').map((v) => v.version),
+          scope: effective.scope,
+          version: effective.version,
+        };
+      });
+      return { data };
+    }
+  );
+
+  // The ceilings and the kill switch, for the launch form. Resolved at the
+  // repository's scope when `repoId` is given (the ceilings cascade to team and
+  // organization), otherwise globally. Numbers only; no secrets.
+  app.get(
+    '/limits',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: RepoContextQuery },
+    },
+    async (request, reply) => {
+      let ctx: { orgId?: string; teamId?: string } = {};
+      if (request.query.repoId) {
+        const repo = await reachableRepo(request, reply, request.query.repoId);
+        if (!repo) {
+          return;
+        }
+        ctx = { orgId: repo.orgId ?? undefined, teamId: repo.teamId };
+      }
+      const settings = await resolveSettings(
+        [
+          'workspace.agentRunMaxSteps',
+          'workspace.agentRunMaxWallClockSeconds',
+          'workspace.agentRunMaxConcurrentGlobal',
+          'workspace.agentRunMaxConcurrentPerTeam',
+        ],
+        ctx
+      );
+      const global = settings['workspace.agentRunMaxConcurrentGlobal'];
+      const perTeam = settings['workspace.agentRunMaxConcurrentPerTeam'];
+      return {
+        data: {
+          // 0 disables agent runs, platform-wide or for the repository's team.
+          concurrency: { global, perTeam },
+          enabled: global > 0 && (request.query.repoId ? perTeam > 0 : true),
+          maxSteps: {
+            ceiling: settings['workspace.agentRunMaxSteps'],
+            max: MAX_STEPS_HARD,
+            min: 1,
+          },
+          maxWallClockSeconds: {
+            ceiling: settings['workspace.agentRunMaxWallClockSeconds'],
+            max: AGENT_RUN_MAX_WALL_CLOCK_SECONDS,
+            min: MIN_WALL_CLOCK_SECONDS,
+          },
+        },
+      };
+    }
+  );
 
   app.post(
     '/',
