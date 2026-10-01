@@ -44,8 +44,8 @@ describe('auto-swe agent', () => {
         data: {
           effective: { deliver: 'none', maxSteps: 50, maxWallClockSeconds: 1800 },
           temporalWorkflowId: 'agent-x',
-          workRequestId: WR,
           workflowId: 'aw-1',
+          workRequestId: WR,
         },
       },
       status: 201,
@@ -136,8 +136,8 @@ describe('auto-swe agent', () => {
               data: {
                 effective: { deliver: 'none', maxSteps: 1, maxWallClockSeconds: 60 },
                 temporalWorkflowId: 't',
-                workRequestId: WR,
                 workflowId: 'aw',
+                workRequestId: WR,
               },
             },
             status: 201,
@@ -145,7 +145,10 @@ describe('auto-swe agent', () => {
         : c.url.includes('/workflow-runs?')
           ? { body: { data: [{ id: 'run-1' }] } }
           : { body: { data: { result: { text: 'hi' }, status: 'SUCCESS', steps: [] } } };
-    const code = await runAgentCommand(['run', '--wait', 'contentWriter', 'p', `--repo-id=${REPO_ID}`], ENV);
+    const code = await runAgentCommand(
+      ['run', '--wait', 'contentWriter', 'p', `--repo-id=${REPO_ID}`],
+      ENV
+    );
     expect(code).toBe(0);
     expect(calls[0]?.body?.agent).toBe('contentWriter');
   });
@@ -184,8 +187,8 @@ describe('auto-swe agent', () => {
               data: {
                 effective: { deliver: 'branch', maxSteps: 5, maxWallClockSeconds: 60 },
                 temporalWorkflowId: 't',
-                workRequestId: WR,
                 workflowId: 'aw',
+                workRequestId: WR,
               },
             },
             status: 201,
@@ -227,7 +230,9 @@ describe('auto-swe agent', () => {
     it('exits 2 and prints the failing step message when the run fails', async () => {
       responder = pollingResponder({
         status: 'FAILED',
-        steps: [{ error: 'Security scan failed with critical findings:\n[CRITICAL] x', nodeId: 'run' }],
+        steps: [
+          { error: 'Security scan failed with critical findings:\n[CRITICAL] x', nodeId: 'run' },
+        ],
       });
       const code = await runAgentCommand(['run', 'a', 'p', `--repo-id=${REPO_ID}`, '--wait'], ENV);
       expect(code).toBe(2);
@@ -247,7 +252,10 @@ describe('auto-swe agent', () => {
   it('re-runs by work request id', async () => {
     const code = await runAgentCommand(['rerun', WR, '--idempotency-key=k'], ENV);
     expect(code).toBe(0);
-    expect(calls[0]).toMatchObject({ method: 'POST', url: `http://gw/api/v1/agent-runs/${WR}/rerun` });
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      url: `http://gw/api/v1/agent-runs/${WR}/rerun`,
+    });
     expect(calls[0]?.headers['Idempotency-Key']).toBe('k');
     expect(await runAgentCommand(['rerun', 'not-a-uuid'], ENV)).toBe(1);
   });
