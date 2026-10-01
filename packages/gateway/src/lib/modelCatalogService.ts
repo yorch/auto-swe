@@ -85,7 +85,7 @@ function kindPhrase(kind: ModelKind): string {
 }
 
 /** Every spec the worker can price: catalog rows plus the built-in table. */
-async function pricedSpecs(prisma: PrismaClient): Promise<Set<string>> {
+export async function pricedSpecs(prisma: PrismaClient): Promise<Set<string>> {
   const rows = await prisma.modelCatalogEntry.findMany({
     select: { modelId: true, provider: true },
   });

@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { builtinModelFor, findUnpricedSpecs } from '../lib/modelCatalogService.js';
+import { discoverProviderModels } from '../lib/modelDiscovery.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -106,6 +107,12 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get('/model-catalog/unpriced', { onRequest: adminOnly }, async () => ({
     data: await findUnpricedSpecs(fastify.prisma),
+  }));
+
+  // POST, not GET: it calls every provider with a decrypted key, so it must not
+  // be cacheable or triggered by following a link. It writes nothing.
+  app.post('/model-catalog/discover', { onRequest: adminOnly }, async () => ({
+    data: await discoverProviderModels(fastify.prisma),
   }));
 
   app.post(

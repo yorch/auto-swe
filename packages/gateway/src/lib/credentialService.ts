@@ -55,6 +55,56 @@ export function redactCredential(row: {
 
 const PROBE_TIMEOUT_MS = 5_000;
 
+/// A provider's list-models request: URL plus auth. `query` adds parameters
+/// (page size, cursor). Shared by the credential probe and model discovery, so
+/// both hit the same endpoint with the same auth behind the same SSRF guard.
+/// Returns why the request cannot be made instead, for an OpenAI-compatible
+/// provider without a usable `apiBase`.
+export function modelListRequest(args: {
+  provider: string;
+  apiKey: string;
+  apiBase?: string | null;
+  query?: Record<string, string>;
+}): { url: string; init: RequestInit } | { error: string } {
+  const { provider, apiKey, apiBase, query = {} } = args;
+  const withQuery = (base: string, extra: Record<string, string> = {}) => {
+    const params = new URLSearchParams({ ...extra, ...query });
+    return params.size ? `${base}?${params}` : base;
+  };
+  if (provider === 'anthropic') {
+    return {
+      init: { headers: { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey } },
+      url: withQuery('https://api.anthropic.com/v1/models'),
+    };
+  }
+  if (provider === 'openai') {
+    return {
+      init: { headers: { Authorization: `Bearer ${apiKey}` } },
+      url: withQuery('https://api.openai.com/v1/models'),
+    };
+  }
+  if (provider === 'google') {
+    return {
+      init: {},
+      url: withQuery('https://generativelanguage.googleapis.com/v1beta/models', { key: apiKey }),
+    };
+  }
+  // OpenAI-compatible: `<base>/models`. SSRF guards run here.
+  if (!apiBase) {
+    return { error: 'apiBase required to list models from an OpenAI-compatible provider' };
+  }
+  const safety = isSafeProbeUrl(apiBase);
+  if (!safety.ok) {
+    return { error: `apiBase rejected: ${safety.reason}` };
+  }
+  const base = safety.url.toString().replace(/\/+$/, '');
+  return {
+    // The guard checked `apiBase`, not wherever it redirects to.
+    init: { headers: { Authorization: `Bearer ${apiKey}` }, redirect: 'manual' },
+    url: withQuery(`${base}/models`),
+  };
+}
+
 /// Issues a minimal HTTP probe against the configured provider to verify the
 /// credential works. Returns `{ ok, status, error? }`. Best-effort — not all
 /// providers expose a cheap "list models" endpoint, so failures here are not
@@ -64,44 +114,14 @@ export async function probeCredential(args: {
   apiKey: string;
   apiBase?: string | null;
 }): Promise<{ ok: boolean; status?: number; error?: string }> {
-  const { provider, apiKey, apiBase } = args;
-  const signal = AbortSignal.timeout(PROBE_TIMEOUT_MS);
+  const request = modelListRequest(args);
+  if ('error' in request) {
+    return { error: request.error, ok: false };
+  }
   try {
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/models', {
-        headers: { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey },
-        signal,
-      });
-      return { ok: res.ok, status: res.status };
-    }
-    if (provider === 'openai') {
-      const res = await fetch('https://api.openai.com/v1/models', {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal,
-      });
-      return { ok: res.ok, status: res.status };
-    }
-    if (provider === 'google') {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
-        { signal }
-      );
-      return { ok: res.ok, status: res.status };
-    }
-    // OpenAI-compatible: probe `<base>/models`. SSRF guards run here.
-    if (!apiBase) {
-      return { error: 'apiBase required to probe OpenAI-compatible providers', ok: false };
-    }
-    const safety = isSafeProbeUrl(apiBase);
-    if (!safety.ok) {
-      return { error: `apiBase rejected: ${safety.reason}`, ok: false };
-    }
-    const base = safety.url.toString().replace(/\/+$/, '');
-    const res = await fetch(`${base}/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      // The guard checked `apiBase`, not wherever it redirects to.
-      redirect: 'manual',
-      signal,
+    const res = await fetch(request.url, {
+      ...request.init,
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
     return { ok: res.ok, status: res.status };
   } catch (err) {
