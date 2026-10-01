@@ -59,6 +59,7 @@ import { slackChannelRoutes } from './routes/slackChannels.js';
 import { systemConfigRoutes } from './routes/systemConfig.js';
 import { teamRoutes } from './routes/teams.js';
 import { tokenRoutes } from './routes/tokens.js';
+import { usageRoutes } from './routes/usage.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { stepRegistryRoutes, workflowRunRoutes } from './routes/workflowRuns.js';
@@ -401,6 +402,7 @@ async function start() {
   await app.register(securityEventRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
+  await app.register(usageRoutes, { prefix: '/api/v1/platform' });
   await app.register(orgMembersRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.
   await app.register(orgMembersRoutes, { prefix: '/api/v1/admin/organizations' });

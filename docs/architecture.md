@@ -541,6 +541,14 @@ falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
 mandatory `finally` — is in [AGENTS.md §6](../AGENTS.md#agent-observability-agenttracer).
 
+**Platform usage.** Every LLM and embedding call writes one `llm_response` row carrying its model,
+tokens, and cost — including calls from workflows that keep no `WorkflowRun` — so those rows are the
+one complete record of spend. `GET /api/v1/platform/usage?window=7|30|90` (ADMIN) aggregates them
+into totals, a per-UTC-day series, breakdowns by model, agent, and activity (calls, tokens, average
+latency, error rate, cost), the spend from workflows without a run, and the ten costliest runs. The
+dashboard renders it at `/govern/usage`. It is ADMIN-only because rows without a run carry no team to
+scope them by.
+
 ### Workspace hardening
 
 The agent workspace container executes LLM-generated commands, so its posture matters more than
@@ -663,6 +671,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   quarantined per process for 10 min: the blocking scanners then block on it outright until an
   admin fixes the row, the advisory ones run without it. See
   [agents.md §11](./agents.md#11-limitations).
+- **Workflows without a run have no budget.** Workflow authoring, scheduled evals, lesson
+  consolidation, repo-access sync, and epic planning keep no `ActiveWorkflow` ledger, so no tier
+  limit applies to them and their spend never reaches `OrgMonthlyUsage`. It is recorded on their
+  trace rows and shown at `/govern/usage`, but nothing stops it.
+- **The usage report is platform-wide only.** It has no per-team, per-org, or per-repository
+  breakdown: a trace reaches its team only through run → request → connection, which Prisma cannot
+  group by. Its daily series is one aggregate per UTC day, so a 90-day window costs 90 small queries.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a

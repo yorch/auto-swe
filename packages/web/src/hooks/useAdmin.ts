@@ -207,6 +207,57 @@ export function useSecurityEvents(params?: {
   });
 }
 
+// ── Platform LLM usage ──
+
+export interface UsageBucket {
+  avgDurationMs: number | null;
+  calls: number;
+  costUsd: number;
+  errors: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface PlatformUsage {
+  byActivity: (UsageBucket & { nodeId: string })[];
+  byAgent: (UsageBucket & { agentKey: string })[];
+  byModel: (UsageBucket & { model: string | null })[];
+  daily: {
+    calls: number;
+    costUsd: number;
+    date: string;
+    inputTokens: number;
+    outputTokens: number;
+  }[];
+  since: string;
+  topRuns: {
+    costUsd: number;
+    externalTicketId: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    runId: string;
+    startedAt: string;
+    status: string;
+    templateName: string;
+  }[];
+  totals: UsageBucket;
+  /** Spend from workflows that keep no run (authoring, evals, consolidation, …). */
+  unattributed: { calls: number; costUsd: number };
+  windowDays: number;
+}
+
+export function usePlatformUsage(windowDays: number) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: PlatformUsage }>(`/api/v1/platform/usage?window=${windowDays}`)
+        .then((r) => r.data),
+    queryKey: ['platform-usage', windowDays],
+    // One aggregate per day of the window — not worth polling faster than spend moves.
+    refetchInterval: 60_000,
+  });
+}
+
 // ── Evals (P3 drift dashboard) ──
 
 export function useEvalDatasets() {
