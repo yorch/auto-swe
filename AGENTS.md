@@ -64,7 +64,7 @@ applies to one file belongs in a skill, not in the context of every session.
 | Validation            | Zod                                    | 4.6.5                  |
 | Testing               | Vitest                                 | 4.1.11                  |
 | Lint / Format         | Biome                                  | 2.5.15                 |
-| Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.33.1 |
+| Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.34.0 |
 
 ---
 
