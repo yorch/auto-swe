@@ -81,6 +81,36 @@ export function useUpdateRepository(id: string) {
   });
 }
 
+export interface ShareTeam {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+/** Teams a repository could be shared with — its organization's, minus the owner. */
+export function useShareCandidates(repoId: string, enabled: boolean) {
+  return useQuery({
+    enabled,
+    queryFn: () =>
+      api
+        .get<{ data: ShareTeam[] }>(`/api/v1/repositories/${repoId}/share-candidates`)
+        .then((r) => r.data),
+    queryKey: ['repo-share-candidates', repoId],
+  });
+}
+
+/** Replace the set of teams a repository is shared with. */
+export function useSetRepoShares(repoId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (teamIds: string[]) =>
+      api.put<{ data: Array<{ team: ShareTeam }> }>(`/api/v1/repositories/${repoId}/shares`, {
+        teamIds,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
+  });
+}
+
 export interface MyCredential {
   connectionId: string;
   lastFour: string;
@@ -91,8 +121,8 @@ export interface MyCredential {
 export interface MyCredentials {
   /** Whether an admin has turned per-user credentials on. */
   enabled: boolean;
-  /** Hosts a saved token may be sent to. */
-  hosts: string[];
+  /** Hosts a saved token may be sent to — returned to platform admins only. */
+  hosts?: string[];
   credentials: MyCredential[];
 }
 

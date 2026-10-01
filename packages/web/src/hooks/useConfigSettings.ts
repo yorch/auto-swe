@@ -24,6 +24,9 @@ export interface SettingView {
   restartRequired: boolean;
   runPinned: boolean;
   unit?: string;
+  /// The value is withheld: the setting is sensitive and the viewer is below
+  /// its required role.
+  redacted?: boolean;
 }
 
 export interface ScopeSelection {

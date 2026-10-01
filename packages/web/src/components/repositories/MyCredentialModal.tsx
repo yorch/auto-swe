@@ -28,7 +28,8 @@ export function MyCredentialModal({
   repo: RepositorySummary;
   credential: MyCredential | undefined;
   enabled: boolean;
-  hosts: string[];
+  /** Present for platform admins only. */
+  hosts?: string[];
   onClose: () => void;
 }) {
   const [token, setToken] = useState('');
@@ -69,7 +70,7 @@ export function MyCredentialModal({
           <Input
             autoComplete="off"
             disabled={busy}
-            hint={`A fine-grained token scoped to this repository, with Contents and Pull requests write access, is the narrowest that works. Allowed hosts: ${hosts.join(', ') || 'none'}.`}
+            hint={`A fine-grained token scoped to this repository, with Contents and Pull requests write access, is the narrowest that works.${hosts ? ` Allowed hosts: ${hosts.join(', ') || 'none'}.` : ''}`}
             id="my-credential-token"
             label={credential ? 'Replace token' : 'Personal access token'}
             onChange={(e) => setToken(e.target.value)}

@@ -8,6 +8,7 @@ import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHu
 import { MyCredentialModal } from '@/components/repositories/MyCredentialModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
+import { ShareRepoModal } from '@/components/repositories/ShareRepoModal';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -29,6 +30,7 @@ type ModalMode =
   | { kind: 'edit'; repo: RepositorySummary }
   | { kind: 'dependencies'; repo: RepositorySummary }
   | { kind: 'credential'; repo: RepositorySummary }
+  | { kind: 'share'; repo: RepositorySummary }
   | { kind: 'import' }
   | null;
 
@@ -75,8 +77,10 @@ export default function ConnectionsPage() {
       prefill: {
         defaultBranch: repo.defaultBranch,
         description: repo.description ?? undefined,
-        githubApiUrl: repo.apiUrl,
-        githubUrl: repo.htmlUrl,
+        // No URL overrides: the import list comes from the instance's own
+        // GitHub host, which is what an unset override already means. The
+        // repo-level `htmlUrl`/`apiUrl` are not bases — stored as overrides
+        // they made every clone and API call land on a path that does not exist.
         language: repo.language ?? undefined,
         organizationName: repo.org,
         repoName: repo.name,
@@ -124,6 +128,11 @@ export default function ConnectionsPage() {
               <div className="mt-2 space-y-1 text-sm text-paper-400">
                 {isGitRepo && <p>Branch: {r.defaultBranch}</p>}
                 <p>Team: {r.team?.name ?? 'None'}</p>
+                {(r.shares?.length ?? 0) > 0 && (
+                  <p className="truncate">
+                    Shared with: {(r.shares ?? []).map((s) => s.team.name).join(', ')}
+                  </p>
+                )}
                 <p>Workflows: {r._count?.activeWorkflows ?? 0}</p>
                 {isGitRepo && <p>Image: {r.executorImage ?? 'default'}</p>}
                 {showCredential && (
@@ -159,6 +168,17 @@ export default function ConnectionsPage() {
                       variant="ghost"
                     >
                       Dependencies
+                    </Button>
+                  )}
+                  {canManage && isGitRepo && (
+                    // The server decides: only the owning team's leads (and
+                    // platform admins) may change sharing.
+                    <Button
+                      onClick={() => setMode({ kind: 'share', repo: r })}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Share
                     </Button>
                   )}
                   {canManage && (
@@ -239,11 +259,13 @@ export default function ConnectionsPage() {
 
       {formMode && <ConnectionFormModal mode={formMode} onClose={() => setMode(null)} open />}
 
+      {mode?.kind === 'share' && <ShareRepoModal onClose={() => setMode(null)} repo={mode.repo} />}
+
       {mode?.kind === 'credential' && (
         <MyCredentialModal
           credential={credentialFor(mode.repo.id)}
           enabled={credentialsEnabled}
-          hosts={myCredentials.data?.hosts ?? []}
+          hosts={myCredentials.data?.hosts}
           onClose={() => setMode(null)}
           repo={mode.repo}
         />

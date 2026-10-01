@@ -136,12 +136,14 @@ export function SettingRow({
             />
           ) : (
             <Input
-              disabled={!canWriteHere || busy}
+              disabled={!canWriteHere || busy || setting.redacted}
               error={invalidNumber ? 'Must be a number' : undefined}
               hint={setting.unit ?? (isList ? 'comma-separated' : undefined)}
               inputMode={isNumber ? 'numeric' : undefined}
               onChange={(e) => setDraft(e.target.value)}
-              value={draft}
+              // Withheld by the server for anyone below the setting's role.
+              placeholder={setting.redacted ? `hidden — ${setting.requiredRole} only` : undefined}
+              value={setting.redacted ? '' : draft}
             />
           )}
           <div className="flex gap-2">
