@@ -24,7 +24,6 @@ function pageTitle(pathname: string): string {
     ['/govern/evals', 'Evals'],
     ['/govern/schedules', 'Schedules'],
     ['/govern/budget-alerts', 'Budget alerts'],
-    ['/govern/budgets', 'Budgets'],
     ['/govern/teams', 'Teams'],
     ['/govern/organizations', 'Organizations'],
     ['/govern/users', 'Users'],
