@@ -110,6 +110,19 @@ describe('getModelPrice', () => {
     expect(r.price).toEqual({ input: 5, output: 25 });
   });
 
+  it('keys OpenAI models by their dotted IDs, the form the OpenAI API serves', () => {
+    expect(getModelPrice('openai/gpt-5.5')).toEqual({
+      known: true,
+      price: { input: 5, output: 30 },
+    });
+    expect(getModelPrice('openai/gpt-5.5-pro')).toEqual({
+      known: true,
+      price: { input: 30, output: 180 },
+    });
+    // The dashed form is not a real OpenAI ID; pricing it would hide a broken spec.
+    expect(getModelPrice('openai/gpt-5-5').known).toBe(false);
+  });
+
   it('returns zero with known=false for unknown specs', () => {
     const r = getModelPrice('mystery/unreleased-model');
     expect(r.known).toBe(false);
