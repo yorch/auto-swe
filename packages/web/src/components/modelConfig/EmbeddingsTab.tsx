@@ -5,15 +5,14 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
-import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
-  SUGGESTED_MODEL_SPECS,
   useAdminCredentials,
   useEmbeddingConfig,
   useUpdateEmbeddingConfig,
 } from '@/hooks/useModelConfig';
+import { ModelSpecPicker } from './ModelSpecPicker';
 
 /// Singleton embedding-model selector. Output must be 1536-dimensional or
 /// `generateEmbedding` throws (pgvector column is fixed-width); the UI doesn't
@@ -26,6 +25,7 @@ export function EmbeddingsTab() {
   const [modelSpec, setModelSpec] = useState<string>('');
   const [credentialId, setCredentialId] = useState<string>('');
   const [dirty, setDirty] = useState(false);
+  const [catalogWarnings, setCatalogWarnings] = useState<string[]>([]);
   const { error, submit } = useIntegrationConfigForm();
 
   // Sync form state to the query result. Re-keys on the row's updatedAt so a
@@ -52,12 +52,14 @@ export function EmbeddingsTab() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     void submit(
-      () => update.mutateAsync({ credentialId: credentialId || null, modelSpec }),
+      async () => {
+        const res = await update.mutateAsync({ credentialId: credentialId || null, modelSpec });
+        setCatalogWarnings(res.catalogWarnings ?? []);
+        return res;
+      },
       () => setDirty(false)
     );
   };
-
-  const suggestions = SUGGESTED_MODEL_SPECS.flatMap((p) => p.specs);
 
   return (
     <Card>
@@ -70,30 +72,18 @@ export function EmbeddingsTab() {
         pgvector column is fixed-width).
       </p>
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <div>
-          <Input
-            className="font-mono text-xs"
-            id="embedSpec"
-            label="Model spec"
-            list="embed-suggestions"
-            onChange={(e) => {
-              setModelSpec(e.target.value);
-              setDirty(true);
-            }}
-            pattern="[^/\s]+/.+"
-            placeholder="openai/text-embedding-3-large"
-            required
-            title="Must be <provider>/<model-id> with no whitespace"
-            value={modelSpec}
-          />
-          <datalist id="embed-suggestions">
-            <option value="openai/text-embedding-3-large" />
-            <option value="openai/text-embedding-3-small" />
-            {suggestions.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
-        </div>
+        <ModelSpecPicker
+          id="embedSpec"
+          kind="EMBEDDING"
+          label="Model spec"
+          onChange={(spec) => {
+            setModelSpec(spec);
+            setDirty(true);
+          }}
+          placeholder="openai/text-embedding-3-large"
+          required
+          value={modelSpec}
+        />
         <Combobox
           id="embedCred"
           label="Pinned credential (optional)"
@@ -111,6 +101,9 @@ export function EmbeddingsTab() {
           value={credentialId}
         />
         {error && <Alert>{error}</Alert>}
+        {catalogWarnings.length > 0 && (
+          <Alert variant="warning">Model catalog: {catalogWarnings.join(' ')}</Alert>
+        )}
         <div className="flex justify-end pt-2">
           <Button disabled={!dirty || update.isPending} type="submit" variant="primary">
             {update.isPending ? 'Saving…' : 'Save changes'}

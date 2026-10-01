@@ -153,17 +153,20 @@ export default function AgentLibraryPage() {
   const [editingOriginal, setEditingOriginal] = useState<AgentRow | null>(null);
   const [deleting, setDeleting] = useState<AgentRow | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [catalogWarnings, setCatalogWarnings] = useState<string[]>([]);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
 
   async function submitCreate() {
     setCreateError(null);
     setWarnings([]);
+    setCatalogWarnings([]);
     try {
       const res = await createAgent.mutateAsync(
         cleanAgentPayload({ ...createForm }) as CreateAgentBody
       );
       setWarnings(res.scanWarnings ?? []);
+      setCatalogWarnings(res.catalogWarnings ?? []);
       setCreateOpen(false);
       setCreateForm(EMPTY_CREATE);
     } catch (e) {
@@ -177,6 +180,7 @@ export default function AgentLibraryPage() {
     }
     setEditError(null);
     setWarnings([]);
+    setCatalogWarnings([]);
     if (!editing.name.trim()) {
       setEditError('Name is required');
       return;
@@ -189,6 +193,7 @@ export default function AgentLibraryPage() {
     try {
       const res = await updateAgent.mutateAsync({ body, id: editing.id });
       setWarnings(res.scanWarnings ?? []);
+      setCatalogWarnings(res.catalogWarnings ?? []);
       closeEdit();
     } catch (e) {
       setEditError(errMsg(e, 'Update failed'));
@@ -265,6 +270,9 @@ export default function AgentLibraryPage() {
 
       {warnings.length > 0 ? (
         <Alert variant="warning">Content scan warnings: {warnings.join('; ')}</Alert>
+      ) : null}
+      {catalogWarnings.length > 0 ? (
+        <Alert variant="warning">Model catalog: {catalogWarnings.join(' ')}</Alert>
       ) : null}
 
       <Card>

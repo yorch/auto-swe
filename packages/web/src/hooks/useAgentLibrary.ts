@@ -85,7 +85,10 @@ export function useCreateAgent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateAgentBody) =>
-      api.post<{ data: AgentRow; scanWarnings?: string[] }>('/api/v1/platform/agent-library', body),
+      api.post<{ data: AgentRow; scanWarnings?: string[]; catalogWarnings?: string[] }>(
+        '/api/v1/platform/agent-library',
+        body
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -94,7 +97,7 @@ export function useUpdateAgent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateAgentBody }) =>
-      api.put<{ data: AgentRow; scanWarnings?: string[] }>(
+      api.put<{ data: AgentRow; scanWarnings?: string[]; catalogWarnings?: string[] }>(
         `/api/v1/platform/agent-library/${id}`,
         body
       ),
@@ -130,7 +133,7 @@ export function useCreateTeamAgent(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateTeamAgentBody) =>
-      api.post<{ data: AgentRow; scanWarnings?: string[] }>(
+      api.post<{ data: AgentRow; scanWarnings?: string[]; catalogWarnings?: string[] }>(
         `/api/v1/teams/${teamId}/agent-library`,
         body
       ),
@@ -146,7 +149,7 @@ export function useUpdateTeamAgent(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateAgentBody }) =>
-      api.put<{ data: AgentRow; scanWarnings?: string[] }>(
+      api.put<{ data: AgentRow; scanWarnings?: string[]; catalogWarnings?: string[] }>(
         `/api/v1/teams/${teamId}/agent-library/${id}`,
         body
       ),

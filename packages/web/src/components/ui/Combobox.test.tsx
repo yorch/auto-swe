@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { Combobox } from './Combobox';
 
@@ -91,5 +92,61 @@ describe('Combobox', () => {
       </form>
     );
     expect((container.querySelector('form') as HTMLFormElement).checkValidity()).toBe(true);
+  });
+
+  describe('allowsCustomValue', () => {
+    const MODELS = [
+      { label: 'anthropic/claude-opus-5-5', value: 'anthropic/claude-opus-5-5' },
+      { label: 'openai/gpt-5.5', value: 'openai/gpt-5.5' },
+    ];
+
+    /** Holds the value the way a caller does — the input is controlled by it. */
+    function ModelPicker({ onChange }: { onChange: (v: string) => void }) {
+      const [value, setValue] = useState('');
+      return (
+        <Combobox
+          allowsCustomValue
+          label="Model"
+          onChange={(v) => {
+            setValue(v);
+            onChange(v);
+          }}
+          options={MODELS}
+          value={value}
+        />
+      );
+    }
+
+    it('reports typed text that matches no option as the value', () => {
+      const onChange = vi.fn();
+      render(<ModelPicker onChange={onChange} />);
+      type(screen.getByRole('combobox', { name: /model/i }), 'ollama/llama-4');
+      expect(onChange).toHaveBeenLastCalledWith('ollama/llama-4');
+    });
+
+    it('still reports a picked option, and still filters by typed text', () => {
+      const onChange = vi.fn();
+      render(<ModelPicker onChange={onChange} />);
+      type(screen.getByRole('combobox', { name: /model/i }), 'gpt');
+      expect(screen.getAllByRole('option')).toHaveLength(1);
+      fireEvent.click(screen.getByRole('option', { name: /gpt-5\.5/ }));
+      expect(onChange).toHaveBeenLastCalledWith('openai/gpt-5.5');
+    });
+
+    it('shows a value no option has, instead of an empty box', () => {
+      render(
+        <Combobox
+          allowsCustomValue
+          label="Model"
+          onChange={() => {}}
+          options={MODELS}
+          value="vllm/qwen-3"
+        />
+      );
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveProperty(
+        'value',
+        'vllm/qwen-3'
+      );
+    });
   });
 });
