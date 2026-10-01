@@ -109,7 +109,11 @@ export default function AutonomyDecisionsPage() {
                     {row.actorId ?? 'system'}
                   </td>
                   <td className="px-4 py-2 font-mono text-xs">
-                    <Link className="text-ember-400 hover:underline" href={`/runs/${row.runId}`}>
+                    <Link
+                      className="text-ember-400 hover:underline"
+                      href={`/runs/${row.runId}`}
+                      title={row.runId}
+                    >
                       {row.runId.slice(0, 8)}
                     </Link>
                   </td>

@@ -136,13 +136,19 @@ export default function WorkflowRunsPage() {
                 <Td className="px-4 py-3 font-mono text-xs text-paper-400">
                   {r.endedAt
                     ? formatDuration(
-                        new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime()
+                        // Clamped: start and end are stamped by different processes.
+                        Math.max(0, new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime())
                       )
                     : '—'}
                 </Td>
-                {/* Denormalized when the run finalizes; a running run has not been totalled yet. */}
+                {/* Denormalized when the run finalizes; a running run has not been totalled
+                    yet. formatCost renders 0 as '—', which here would read the same way. */}
                 <Td className="px-4 py-3 font-mono text-xs text-paper-400">
-                  {r.status === 'RUNNING' ? '—' : formatCost(r.costUsdAccrued)}
+                  {r.status === 'RUNNING'
+                    ? '—'
+                    : r.costUsdAccrued === 0
+                      ? '$0.00'
+                      : formatCost(r.costUsdAccrued)}
                 </Td>
               </TRow>
             ))}

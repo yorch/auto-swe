@@ -851,6 +851,16 @@ export default function RunDetailPage({ params }: PageProps) {
     isPlaceholderData,
     error,
   } = useWorkflowRun(id ?? '', true, fullTraces);
+  const [fullTracesFailed, setFullTracesFailed] = useState(false);
+  // A full-payload response can run to many MB, so it can fail where the
+  // trimmed one did not. Fall back to the trimmed view rather than replacing
+  // the run with an error page.
+  useEffect(() => {
+    if (fullTraces && isError) {
+      setFullTraces(false);
+      setFullTracesFailed(true);
+    }
+  }, [fullTraces, isError]);
   const cancelRun = useCancelWorkflowRun(id ?? '');
   const retryRun = useRetryWorkRequest();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -1031,13 +1041,28 @@ export default function RunDetailPage({ params }: PageProps) {
           {(tracesTrimmed || fullTraces) && (
             <Button
               disabled={isPlaceholderData}
-              onClick={() => setFullTraces((v) => !v)}
+              onClick={() => {
+                setFullTracesFailed(false);
+                setFullTraces((v) => !v);
+              }}
               size="sm"
-              title="Trace payloads are trimmed to 4,000 characters per field while the page polls"
+              title={
+                fullTraces
+                  ? 'Full payloads are fetched once and not refreshed; trim them to resume live updates'
+                  : 'Trace payloads are trimmed to 4,000 characters per field while the page polls'
+              }
               variant="secondary"
             >
               {isPlaceholderData ? 'Loading…' : fullTraces ? 'Trim payloads' : 'Load full payloads'}
             </Button>
+          )}
+          {fullTracesFailed && (
+            <span
+              className="text-brick-400"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+            >
+              Full payloads failed to load
+            </span>
           )}
           {run.status === 'RUNNING' && (
             <Button

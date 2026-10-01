@@ -32,7 +32,9 @@ export function useWorkflow(id: string) {
 
 /**
  * `fullTraces` skips the server's 4 000-char trim of trace payloads. It is
- * opt-in because the run page polls, and full prompts run to tens of KB each.
+ * opt-in, and fetched once rather than polled: full prompts run to tens of KB
+ * each, and re-downloading all of them every few seconds is the cost the trim
+ * exists to avoid.
  */
 export function useWorkflowRun(id: string, includeTraces = true, fullTraces = false) {
   const query = fullTraces ? '?fullTraces=true' : includeTraces ? '?includeTraces=true' : '';
@@ -47,6 +49,9 @@ export function useWorkflowRun(id: string, includeTraces = true, fullTraces = fa
         .then((r) => r.data),
     queryKey: ['workflow-run', id, includeTraces, fullTraces],
     refetchInterval: (q) => {
+      if (fullTraces) {
+        return false;
+      }
       const data = q.state.data;
       return data?.status === 'RUNNING' ? 3_000 : 30_000;
     },
