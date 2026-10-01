@@ -181,12 +181,18 @@ function InnerDag({
 
       switch (e.key) {
         case 'ArrowRight':
-        case 'ArrowDown':
           move('next');
           break;
         case 'ArrowLeft':
-        case 'ArrowUp':
           move('prev');
+          break;
+        // Up/Down walk the other branches of a cond / fan-out / human gate;
+        // Right only ever reaches the topmost one.
+        case 'ArrowDown':
+          move('nextSibling');
+          break;
+        case 'ArrowUp':
+          move('prevSibling');
           break;
         case 'Home':
           move('first');
@@ -205,7 +211,7 @@ function InnerDag({
 
   return (
     <div
-      aria-label="Workflow graph. Use arrow keys to move between steps, Enter to open a step, Home to jump to the start."
+      aria-label="Workflow graph. Left and right arrows follow the flow, up and down arrows switch between branches, Enter opens a step, Home jumps to the start."
       // `role="application"` is intentional here — arrow-key navigation needs
       // raw key events rather than the browser's default roving-tabindex
       // behavior a `role="group"`/list would impose. Individual nodes carry

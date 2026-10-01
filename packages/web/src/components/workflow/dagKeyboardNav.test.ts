@@ -63,3 +63,20 @@ describe('adjacentNodeId', () => {
     expect(adjacentNodeId('a', 'prev', nodes, edges)).toBeNull();
   });
 });
+
+describe('adjacentNodeId siblings', () => {
+  it('steps between the branches of a multi-output node', () => {
+    expect(adjacentNodeId('b', 'nextSibling', nodes, edges)).toBe('c');
+    expect(adjacentNodeId('c', 'prevSibling', nodes, edges)).toBe('b');
+  });
+
+  it('stops at the first and last branch', () => {
+    expect(adjacentNodeId('b', 'prevSibling', nodes, edges)).toBeNull();
+    expect(adjacentNodeId('c', 'nextSibling', nodes, edges)).toBeNull();
+  });
+
+  it('has no siblings for a node with a single parent branch', () => {
+    expect(adjacentNodeId('a', 'nextSibling', nodes, edges)).toBeNull();
+    expect(adjacentNodeId('d', 'nextSibling', nodes, edges)).toBeNull();
+  });
+});

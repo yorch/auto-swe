@@ -16,7 +16,13 @@
  */
 
 import type { Node as SpecNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
-import { readNodeEdge, setNodeEdge } from '@auto-swe/shared/workflow';
+import {
+  formatValidationIssue,
+  nodeEdges,
+  readNodeEdge,
+  setNodeEdge,
+  validateSpec,
+} from '@auto-swe/shared/workflow';
 import {
   type Connection,
   type EdgeChange,
@@ -89,17 +95,48 @@ function EditorInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
 
   // Resync when the parent spec changes (e.g. after Save, version switch,
-  // starter template load). We compare ids cheaply by serializing them — for
+  // starter template load, an inspector edit). We compare by serializing — for
   // <100 nodes the cost is negligible and avoids deep-equality library noise.
   const specSig = useMemo(
     () => `${Object.keys(spec.nodes).join('|')}::${spec.entry}::${JSON.stringify(spec.nodes)}`,
     [spec]
   );
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate — reseed flow state only when the structural spec changes, not on every node-drag.
+  // The graph's *shape*: which nodes exist, their types, and where every edge
+  // goes. Editing a field inside a node leaves it unchanged; adding, removing,
+  // retyping or rewiring a node does not.
+  const structureSig = useMemo(
+    () =>
+      JSON.stringify([
+        spec.entry,
+        Object.entries(spec.nodes).map(([id, n]) => [id, n.type, nodeEdges(n)]),
+      ]),
+    [spec]
+  );
+  const seededStructure = useRef(structureSig);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate — reseed flow state only when the spec changes, not on every node-drag.
   useEffect(() => {
-    setNodes(initial.nodes);
+    if (seededStructure.current === structureSig) {
+      // Same shape: refresh what each node shows but keep where the author put
+      // it. Re-running the layout on every keystroke in the inspector threw away
+      // every manual drag.
+      const fresh = new Map(initial.nodes.map((n) => [n.id, n]));
+      setNodes((prev) =>
+        prev.map((n) => {
+          const next = fresh.get(n.id);
+          return next ? { ...n, ariaLabel: next.ariaLabel, data: next.data } : n;
+        })
+      );
+    } else {
+      seededStructure.current = structureSig;
+      setNodes(initial.nodes);
+    }
     setEdges(initial.edges);
   }, [specSig]);
+
+  // Live lint. The save path is advisory and the run-start path hard-gates, so
+  // an author only found out a spec was broken after saving it. Pure and cheap.
+  const lint = useMemo(() => validateSpec(spec), [spec]);
+  const issues = useMemo(() => [...lint.errors, ...lint.warnings], [lint]);
 
   const nodesWithSelection = useMemo(
     () => nodes.map((n) => ({ ...n, selected: n.id === selectedNodeId })),
@@ -313,12 +350,18 @@ function EditorInner({
       };
       switch (e.key) {
         case 'ArrowRight':
-        case 'ArrowDown':
           move('next');
           break;
         case 'ArrowLeft':
-        case 'ArrowUp':
           move('prev');
+          break;
+        // Up/Down walk the other branches of a cond / fan-out / human gate;
+        // Right only ever reaches the topmost one.
+        case 'ArrowDown':
+          move('nextSibling');
+          break;
+        case 'ArrowUp':
+          move('prevSibling');
           break;
         case 'Home':
           move('first');
@@ -387,13 +430,50 @@ function EditorInner({
         </Alert>
       )}
 
+      {issues.length > 0 && (
+        <details className="border-b border-ink-600/40 bg-ink-800/60 px-4 py-1.5 font-mono text-[11px]">
+          <summary className="cursor-pointer select-none text-paper-400">
+            {lint.errors.length > 0 && (
+              <span className="text-brick-400">
+                {lint.errors.length} error{lint.errors.length === 1 ? '' : 's'}
+              </span>
+            )}
+            {lint.errors.length > 0 && lint.warnings.length > 0 && ' · '}
+            {lint.warnings.length > 0 && (
+              <span className="text-amber-400">
+                {lint.warnings.length} warning{lint.warnings.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </summary>
+          <ul className="mt-1.5 max-h-32 space-y-0.5 overflow-y-auto">
+            {issues.map((issue) => (
+              <li key={`${issue.code}:${issue.nodeId ?? ''}:${issue.field ?? ''}:${issue.message}`}>
+                <button
+                  className="text-left text-paper-300 hover:text-paper-100"
+                  disabled={!issue.nodeId || !spec.nodes[issue.nodeId]}
+                  onClick={() => issue.nodeId && onSelect(issue.nodeId)}
+                  type="button"
+                >
+                  <span
+                    className={issue.severity === 'error' ? 'text-brick-400' : 'text-amber-400'}
+                  >
+                    {issue.code}
+                  </span>{' '}
+                  {formatValidationIssue(issue)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       <div className="flex flex-1 overflow-hidden" ref={wrapperRef}>
         <NodePalette onAdd={handlePaletteAdd} steps={stepRegistry} />
 
         {/* Canvas — this wrapper is the HTML5 drag-and-drop target; the React Flow
             canvas inside it is the interactive surface. */}
         <div
-          aria-label="Workflow editor canvas. Use arrow keys to move between nodes, Enter to open a node, Home to jump to the start, Delete to remove the selected node."
+          aria-label="Workflow editor canvas. Left and right arrows follow the flow, up and down arrows switch between branches, Enter opens a node, Home jumps to the start, Delete removes the selected node."
           className="relative flex-1 bg-ink-900"
           onDragOver={handleDragOver}
           onDrop={handleDrop}

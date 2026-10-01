@@ -8,7 +8,7 @@
  */
 import type { Edge, Node } from '@xyflow/react';
 
-export type NavDirection = 'next' | 'prev' | 'first';
+export type NavDirection = 'next' | 'prev' | 'first' | 'nextSibling' | 'prevSibling';
 
 type NavNode = Pick<Node, 'id'> & { position?: { x: number; y: number } };
 type NavEdge = Pick<Edge, 'source' | 'target'>;
@@ -45,6 +45,10 @@ export function entryNodeId(nodes: NavNode[], edges: NavEdge[]): string | null {
  *   `selectedId`.
  * - `prev`: follow the first incoming edge back to its source.
  * - `first`: the entry node.
+ * - `nextSibling` / `prevSibling`: step to the node below / above in the group
+ *   of nodes that share a parent with `selectedId` — the other branches of a
+ *   `cond`, `fanOut` or human gate. `next` alone only ever reaches the topmost
+ *   target, which left every other branch unreachable from the keyboard.
  *
  * Returns `null` when there is nowhere to go (caller keeps the current
  * selection). With nothing selected, `next`/`prev` both seed at the entry node.
@@ -57,6 +61,20 @@ export function adjacentNodeId(
 ): string | null {
   if (direction === 'first' || selectedId === null) {
     return entryNodeId(nodes, edges);
+  }
+  if (direction === 'nextSibling' || direction === 'prevSibling') {
+    const parents = new Set(edges.filter((e) => e.target === selectedId).map((e) => e.source));
+    const siblings = orderByPosition(
+      [
+        ...new Set(
+          edges.filter((e) => parents.has(e.source) && e.target !== selectedId).map((e) => e.target)
+        ),
+        selectedId,
+      ],
+      nodes
+    );
+    const at = siblings.indexOf(selectedId);
+    return siblings[direction === 'nextSibling' ? at + 1 : at - 1] ?? null;
   }
   const candidates =
     direction === 'next'
