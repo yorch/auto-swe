@@ -49,6 +49,13 @@ describe('fetchGithubLogin', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok');
   });
 
+  it('never follows a redirect, so the token stays on the configured host', async () => {
+    const spy = mockFetch(() => json({ login: 'octocat' }));
+    await fetchGithubLogin('tok', API);
+    const [, init] = spy.mock.calls[0] as [string, RequestInit];
+    expect(init.redirect).toBe('error');
+  });
+
   it('tolerates a GHE base URL with a trailing slash', async () => {
     // The configured apiUrl is operator-entered, so it may or may not end in a
     // slash; a doubled one would 404 and silently lose the login.

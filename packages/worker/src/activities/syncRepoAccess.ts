@@ -182,11 +182,13 @@ export async function syncRepoAccess(
         }
         const ownership = await verifyGithubLoginOwnership(prisma, {
           // A fixed github.com base, not the repository's host and not the
-          // instance's. The stored account id comes from better-auth's built-in
-          // `github` provider, which always talks to github.com, while both of
-          // the other two are admin-settable to a GitHub Enterprise base — and
-          // asking Enterprise about a github.com account id compares different
-          // id spaces, which reads as a mismatch and CLEARS a valid login.
+          // instance's. A stored github.com account id comes from better-auth's
+          // built-in `github` provider, while both of the other two are
+          // admin-settable to a GitHub Enterprise base — and asking Enterprise
+          // about a github.com account id compares different id spaces, which
+          // reads as a mismatch and CLEARS a valid login. Accounts created by
+          // GHE sign-in carry a `{host}:{id}` id and are skipped inside
+          // `verifyGithubLoginOwnership` for the same reason.
           apiUrl: GITHUB_ACCOUNT_API_URL,
           login: user.githubLogin,
           token: platformToken,

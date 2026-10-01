@@ -88,6 +88,21 @@ describe('verifyGithubLoginOwnership', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('does not check a GitHub Enterprise account against github.com, and clears nothing', async () => {
+    // A GHE account id is `{host}:{id}`: that host's id space, not github.com's. Asking github.com
+    // would read as a mismatch and clear a valid login, plus write a false takeover audit row.
+    findFirst.mockResolvedValue({ accountId: 'ghe.example.com:42' });
+    const spy = stub(() => json({ id: 42 }));
+
+    await expect(verifyGithubLoginOwnership(prisma(), args)).resolves.toMatchObject({
+      status: 'unverifiable',
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(auditCreate).not.toHaveBeenCalled();
+  });
+
   it('accepts a plain rename, because the account id is unchanged', async () => {
     // GitHub redirects an old username to the same account, so a rename alone
     // is harmless and must not revoke anyone. Only re-registration is dangerous.
