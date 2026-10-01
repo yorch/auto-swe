@@ -155,7 +155,8 @@ describe.skipIf(!enabled)('agent run finalize against real containers', () => {
 
   it('pushes exactly the gated SHA for a clean change, and the diff shows content despite -diff', async () => {
     // A fresh clean change on a fresh agent state.
-    // The first import moved the agent's .git aside (to keep it out of the archive).
+    // The first import froze the agent container and moved its .git aside.
+    sh(`docker unpause ${AGENT}`);
     dexec(
       AGENT,
       'mv ../.agent-git-moved .git; apk fix --reinstall git >/dev/null 2>&1; rm -f link .env bin.dat src/new.txt .gitattributes'

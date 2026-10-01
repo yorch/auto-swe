@@ -136,8 +136,9 @@ finishes, a delivering run:
 
 1. creates a **fresh** container from the same image, cloned at the exact base SHA the agent started
    from, in which no agent code ever ran;
-2. has the Docker daemon copy the agent's working tree (never `.git`) into it, measured against a size
-   cap on the host, and replaces the checkout's tree with it;
+2. freezes the agent's container (so one snapshot is taken, not a tree still being written), has the
+   Docker daemon copy its working tree (never `.git`) into the fresh one, measured against a size cap on
+   the host, and replaces that checkout's tree with it;
 3. commits the tree there as one engine-authored commit on the base (so a secret the agent committed and
    then deleted never reaches the remote), with hooks off;
 4. reads the change back there with `--text --no-textconv --no-ext-diff` and `GIT_NO_REPLACE_OBJECTS=1`;

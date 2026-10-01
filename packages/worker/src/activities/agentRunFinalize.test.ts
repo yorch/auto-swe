@@ -304,8 +304,9 @@ describe('importAgentTree', () => {
     const agent = fakeWorkspace('agent-1');
     const trusted = fakeWorkspace('trusted-1');
     await importAgentTree(agent.ws, trusted.ws);
-    expect(shell.commands[0]).toContain("docker cp 'agent-1:/workspace/target-repo/.' -");
-    expect(shell.commands[1]).toContain("docker cp - 'trusted-1:/stage'");
+    expect(shell.commands[0]).toBe("docker pause 'agent-1'");
+    expect(shell.commands[1]).toContain("docker cp 'agent-1:/workspace/target-repo/.' -");
+    expect(shell.commands[2]).toContain("docker cp - 'trusted-1:/stage'");
     expect(agent.ws.gitAuthed).not.toHaveBeenCalled();
     // The trusted tree is replaced and the copied .git is dropped.
     const replace = trusted.log.find((c) => c.includes('cp -a /stage/. .')) as string;

@@ -101,6 +101,18 @@ export async function importAgentTree(
       'git clean -fdXq >/dev/null 2>&1; mv .git ../.agent-git-moved >/dev/null 2>&1; true',
       { timeoutMs: 300_000 }
     );
+    // Freeze whatever the agent left running (`nohup … &`) so the copy is one
+    // consistent snapshot rather than a tree still being written to. Best-effort:
+    // the copy below is what is scanned and pushed either way, so a process that
+    // survives only costs consistency, never correctness.
+    try {
+      await execShellAsync(`docker pause ${shellQuote(agent.containerId)}`, {
+        heartbeatLabel: 'agent run: freezing the agent container',
+        timeoutMs: 30_000,
+      });
+    } catch {
+      /* already stopped, or the runtime cannot pause */
+    }
     // The daemon produces the archive, not the agent's `tar`.
     await execShellAsync(
       `docker cp ${shellQuote(`${agent.containerId}:/workspace/target-repo/.`)} - > ${shellQuote(archive)}`,
