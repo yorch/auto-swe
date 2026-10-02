@@ -1,3 +1,4 @@
+import type { Prisma } from '@auto-swe/shared';
 import {
   chooseWorkflowId,
   type WorkflowIdAllocation,
@@ -96,13 +97,26 @@ export type LaunchWorkflowResult =
        * accounts for. Callers that do not care ignore it.
        */
       source: 'ledger' | 'temporal';
-    };
+    }
+  /**
+   * The caller's `guard` refused the launch. Nothing was written. Only a launch that passes a
+   * `guard` can see this.
+   */
+  | { ok: false; reason: 'GUARD_REFUSED'; refusal: string };
+
+/**
+ * A check that must hold at the moment the ledger rows are written, run inside the same database
+ * transaction that writes them. Returns a refusal reason, or null to let the launch proceed. It
+ * runs before any ledger write, so a check-then-insert that has to be atomic (a per-user cap,
+ * under a lock the guard takes itself) is atomic.
+ */
+export type LaunchGuard = (tx: Prisma.TransactionClient) => Promise<string | null>;
 
 export async function launchTrackedWorkflow(
   prisma: FastifyInstance['prisma'],
   rows: WorkflowLedgerRows,
   start: () => Promise<unknown>,
-  opts?: { log?: { error: (obj: unknown, msg?: string) => void } }
+  opts?: { log?: { error: (obj: unknown, msg?: string) => void }; guard?: LaunchGuard }
 ): Promise<LaunchWorkflowResult> {
   const { runInput } = rows;
   // Read `rows.activeWorkflow` rather than a destructured local: destructuring
@@ -115,16 +129,41 @@ export async function launchTrackedWorkflow(
   // 1. Ledger first, atomically. A P2002 here is the dedup gate firing.
   let activeWorkflowId: string | null;
   try {
-    const writes = [
-      ...(runInput
-        ? [prisma.runInput.create({ data: runInput as never })]
-        : ([] as ReturnType<typeof prisma.runInput.create>[])),
-      ...(activeWorkflow
-        ? [prisma.activeWorkflow.create({ data: activeWorkflow as never })]
-        : ([] as ReturnType<typeof prisma.activeWorkflow.create>[])),
-    ];
-    const results = (await prisma.$transaction(writes)) as Array<{ id: string }>;
-    activeWorkflowId = activeWorkflow ? results[results.length - 1].id : null;
+    if (opts?.guard) {
+      // The guard and the writes share one interactive transaction, so what the guard counted
+      // is what the writes are added to. Without a guard the batch form below is used, unchanged.
+      const { guard } = opts;
+      const outcome = await prisma.$transaction(
+        async (tx): Promise<{ refusal: string } | { activeWorkflowId: string | null }> => {
+          const refusal = await guard(tx);
+          if (refusal !== null) {
+            return { refusal };
+          }
+          if (runInput) {
+            await tx.runInput.create({ data: runInput as never });
+          }
+          const created = activeWorkflow
+            ? await tx.activeWorkflow.create({ data: activeWorkflow as never })
+            : null;
+          return { activeWorkflowId: created ? (created as { id: string }).id : null };
+        }
+      );
+      if ('refusal' in outcome) {
+        return { ok: false, reason: 'GUARD_REFUSED', refusal: outcome.refusal };
+      }
+      activeWorkflowId = outcome.activeWorkflowId;
+    } else {
+      const writes = [
+        ...(runInput
+          ? [prisma.runInput.create({ data: runInput as never })]
+          : ([] as ReturnType<typeof prisma.runInput.create>[])),
+        ...(activeWorkflow
+          ? [prisma.activeWorkflow.create({ data: activeWorkflow as never })]
+          : ([] as ReturnType<typeof prisma.activeWorkflow.create>[])),
+      ];
+      const results = (await prisma.$transaction(writes)) as Array<{ id: string }>;
+      activeWorkflowId = activeWorkflow ? results[results.length - 1].id : null;
+    }
   } catch (err) {
     if (isUniqueConstraintError(err)) {
       return { ok: false, reason: 'DUPLICATE', source: 'ledger' };

@@ -15,6 +15,7 @@ export type AuditEntityType =
   | 'GitHubHostWebhookSecret'
   | 'GoogleOAuthConfig'
   | 'McpGrant'
+  | 'McpToolCall'
   | 'MemoryItem'
   | 'ModelCatalogEntry'
   | 'OktaOAuthConfig'
