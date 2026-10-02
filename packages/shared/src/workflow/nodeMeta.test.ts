@@ -43,7 +43,7 @@ describe('node group/title metadata', () => {
     // The only key the parse adds is the `onError` default the schema always applied.
     expect(JSON.parse(JSON.stringify(parsed.nodes))).toEqual({
       ...legacy.nodes,
-      implement: { ...legacy.nodes.implement, onError: 'fail' },
+      implement: { ...(legacy.nodes.implement as object), onError: 'fail' },
     });
   });
 
