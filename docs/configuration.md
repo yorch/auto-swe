@@ -38,6 +38,11 @@ The `mcp` group holds the switches and bounds of the MCP server: `mcp.enabled`,
 per request, so they take effect within the settings cache's ~30 s with no restart; see
 [mcp-server.md](./mcp-server.md#settings).
 
+The `models` group holds `models.discoveryInterval` (`off`, `daily` or `weekly`), the cadence of the
+scheduled provider model discovery described in [model-configuration.md](./model-configuration.md).
+It is ADMIN-only and GLOBAL-only, and it is the one registry setting that needs a restart: the gateway
+applies it to its Temporal Schedule once, at startup, like the two environment sweeps above.
+
 This doc covers the third tier. For integration credentials see
 [model-configuration.md](./model-configuration.md) and the admin pages themselves; for the
 environment see [deployment.md](./deployment.md).
