@@ -176,9 +176,16 @@ the batch size.
 **The hold is priced, not guessed at.** `estimateHoldUsd` resolves the agent the channel is bound to
 and prices a nominal turn envelope (8K in / 1.5K out) through `calculateCostUsd`, the same helper the
 run ledger prices real calls with — so an Opus channel holds ~$0.078 per call and a Haiku channel
-~$0.016, rather than sharing one number that is ~5x wrong for one of them, and the hold cannot drift
-from the cost it is netted against. `CHANNEL_TURN_RESERVATION_USD` ($0.05) survives only as the
-fallback for a model with no known price, since a zero hold would bound nothing.
+~$0.016, rather than sharing one number that is ~5x wrong for one of them. `CHANNEL_TURN_RESERVATION_USD`
+($0.05) survives only as the fallback for a model with no known price, since a zero hold would bound
+nothing.
+
+The settled cost is priced at the model the call was **bound to**: `runAgent` passes its resolved
+`modelSpec` to `recordLlmUsage`, so a CHANNEL-scope override is charged at the override's rate. A
+caller that does not pass one has its role re-resolved from the ambient Temporal context, which has no
+`channelId`, and is priced at the model that context resolves instead — the channel-memory passes
+(`passiveIngestChannelMemory`, `consolidateChannelMemory`, `sweepChannelOpenItems`) are in that
+position (see Limitations).
 
 Every channel pass resolves its agent at the **CHANNEL tier** — `{ channelId, orgId, teamId }`
 threaded explicitly into `resolveAgent`, `getModel` and `loadAgentSkills`. The ambient Temporal
@@ -292,6 +299,10 @@ unproven on real traffic, and turn them on one channel at a time.
   admits. `finalizeChannelTaskRun` spends on the ledger with no hold at all. A hold lost to a worker
   crash over-counts the channel until the sweep reclaims it — which only happens once the channel
   reaches its cap, or an admin calls `/:id/budget/reset` (API-only; there is no UI control).
+- **The channel-memory passes are priced at the ambient model.** `passiveIngestChannelMemory`,
+  `consolidateChannelMemory` and `sweepChannelOpenItems` bind `commitToMemory` at the CHANNEL tier
+  but call `recordLlmUsage` without that spec, so a CHANNEL-scope override of `commitToMemory` is
+  used for the call and charged at the model the ambient context resolves.
 - **A channel's turn runs are visible to its owning team, not to everyone in the Slack channel.**
   A turn run links its channel (`WorkflowRun.channelId`), and run visibility admits members of the
   channel's owning team — the same people who can open the channel's settings and audit feed.

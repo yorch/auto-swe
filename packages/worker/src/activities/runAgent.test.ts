@@ -112,8 +112,21 @@ describe('runAgent', () => {
       'wf-1',
       'validateContext',
       { inputTokens: 1, outputTokens: 2 },
-      'llm.context_validation'
+      'llm.context_validation',
+      // Priced at the model the call was bound to, not re-resolved from ambient context.
+      'anthropic/claude-x'
     );
+  });
+
+  it('prices at the bound model even when the spec was resolved at another scope', async () => {
+    generateMock.mockResolvedValue({
+      object: { ok: true },
+      usage: { inputTokens: 1, outputTokens: 2 },
+    });
+
+    await runAgent(makeSpec({ modelSpec: 'anthropic/claude-opus-5-5' }), 'M');
+
+    expect(mockedRecordUsage.mock.calls[0]?.[4]).toBe('anthropic/claude-opus-5-5');
   });
 
   it('skips usage recording when the provider reports none', async () => {

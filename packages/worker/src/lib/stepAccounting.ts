@@ -40,7 +40,8 @@ export interface StepLike {
 export function createStepAccounting(
   agentKey: string,
   spanName: string,
-  deadline?: AbortSignal
+  deadline?: AbortSignal,
+  modelSpec?: string
 ): StepAccounting {
   const budgetStop = new AbortController();
   const cancel = activityCancellationSignal();
@@ -70,7 +71,8 @@ export function createStepAccounting(
             currentWorkflowId(),
             agentKey,
             { inputTokens: step.usage.inputTokens, outputTokens: step.usage.outputTokens },
-            spanName
+            spanName,
+            modelSpec
           );
           totals.costUsd += a.costUsd;
           totals.inputTokens += a.inputTokens;
