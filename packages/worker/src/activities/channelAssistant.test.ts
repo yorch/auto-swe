@@ -970,9 +970,8 @@ describe('runChannelAssistantTurn', () => {
 
     expect(result.reply).toContain('yarn release');
     expect(writeChannelMemoryMock).toHaveBeenCalledTimes(1);
-    expect((writeChannelMemoryMock.mock.calls[0]?.[0] as { summary: string }).summary).toContain(
-      'yarn release'
-    );
+    const written = writeChannelMemoryMock.mock.calls[0]?.[0] as { summary: string } | undefined;
+    expect(written?.summary).toContain('yarn release');
   });
 
   it('writes the DISTILLED SUMMARY (not the raw reply) as memory after a non-trivial turn', async () => {
