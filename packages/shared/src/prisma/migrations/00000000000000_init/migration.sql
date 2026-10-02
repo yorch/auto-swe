@@ -531,6 +531,7 @@ CREATE TABLE "run_inputs" (
     "template_version" INTEGER,
     "requested_by_id" UUID,
     "idempotency_key" TEXT,
+    "started_active_workflow_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "run_inputs_pkey" PRIMARY KEY ("id")
