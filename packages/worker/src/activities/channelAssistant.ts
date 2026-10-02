@@ -1095,6 +1095,7 @@ async function summarizeAndStoreChannelMemory(
 ): Promise<number> {
   let costUsd = 0;
   try {
+    const ctx = { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId };
     const spec = await resolveAgentSpec(
       {
         agentKey: 'commitToMemory' as ModelBackedAgentKey,
@@ -1102,11 +1103,16 @@ async function summarizeAndStoreChannelMemory(
         // Override the role's default prompt with the channel-exchange framing.
         promptOverride: CHANNEL_MEMORY_SUMMARIZER_PROMPT,
       },
-      { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
+      ctx
     );
 
     const exchange = JSON.stringify({ assistantReply: reply, userMessage: input.userText });
+    // The channel scope rides along so the USD-cap guard in `runAgent` sees this
+    // channel: without it the call looks like an uncapped one, and a
+    // `commitToMemory` override with no price would spend at $0 on every mention.
+    // A refusal lands in the catch below and stores the raw exchange instead.
     const result = await runAgent<z.infer<typeof ChannelMemorySummarySchema>>(spec, exchange, {
+      ctx: { ...(await currentRequestContext()), ...ctx },
       spanName: 'llm.channel_memory_summary',
     });
 

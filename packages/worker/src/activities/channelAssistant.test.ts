@@ -13,6 +13,8 @@ vi.mock('@auto-swe/shared/db', () => {
     // Backs the config registry: no rows means every setting resolves to its
     // definition default, i.e. the constant it replaced.
     configSetting: { findMany: vi.fn(async () => []) },
+    // An empty readable catalog: prices come from the built-in table.
+    modelCatalogEntry: { findMany: vi.fn(async () => []) },
     slackChannel: { findUnique: vi.fn() },
   };
   return { prisma: prismaMock };
@@ -922,6 +924,55 @@ describe('runChannelAssistantTurn', () => {
 
     expect(result.reply).toBe('hi there');
     expect(runAgentMock.mock.calls[0]?.[1]).toBe('hello');
+  });
+
+  it('runs the summarizer with the channel scope, so a channel USD cap can see its model', async () => {
+    // Without a ctx the guard in runAgent falls back to the ambient context,
+    // which has no channelId: an unpriced commitToMemory override would spend
+    // at $0 on every mention of a capped channel.
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnReply({
+      text: 'To deploy, run `yarn release` from the repo root after the CI checks pass.',
+    });
+
+    await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    const summaryCall = runAgentMock.mock.calls.find(
+      (c) => (c[2] as { spanName?: string } | undefined)?.spanName === 'llm.channel_memory_summary'
+    );
+    expect(summaryCall?.[2]).toMatchObject({
+      ctx: { channelId: 'chan-1', orgId: 'org-1', teamId: 'team-1' },
+    });
+  });
+
+  it('falls back to the raw exchange, spending nothing, when the summarizer model is refused', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: 10000,
+    } as never);
+    findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never);
+    runAgentMock.mockImplementation(
+      async (_spec: unknown, _msg: unknown, opts: { spanName?: string } = {}) => {
+        if (opts.spanName === 'llm.channel_memory_summary') {
+          throw Object.assign(new Error('no price'), { type: 'MODEL_UNPRICED' });
+        }
+        return {
+          costUsd: 0.02,
+          text: 'To deploy, run `yarn release` from the repo root after the CI checks pass.',
+        };
+      }
+    );
+
+    const result = await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    expect(result.reply).toContain('yarn release');
+    expect(writeChannelMemoryMock).toHaveBeenCalledTimes(1);
+    expect((writeChannelMemoryMock.mock.calls[0]?.[0] as { summary: string }).summary).toContain(
+      'yarn release'
+    );
   });
 
   it('writes the DISTILLED SUMMARY (not the raw reply) as memory after a non-trivial turn', async () => {

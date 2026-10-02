@@ -133,8 +133,9 @@ export async function runAgent<T = unknown>(
         // An unpriced model measures as $0 and a USD cap would count nothing, so
         // on a capped path the call is refused before it is made. Uncapped paths
         // proceed and record $0 with `llm.cost_pricing_known=false`.
-        const scopeCtx = options.ctx ?? (await currentRequestContext());
-        await assertModelPricedForUsdCap(spec.modelSpec, { channelId: scopeCtx.channelId });
+        // The ambient activity context never carries a channelId, so only an
+        // explicit ctx can name a channel; no lookup is needed to find out.
+        await assertModelPricedForUsdCap(spec.modelSpec, { channelId: options.ctx?.channelId });
         await assertBudgetAvailable(`agent.${spec.agentKey}`);
         // Every caller is an activity with a heartbeat timeout, and a single
         // generate (with a tool loop) can outlast it — pump heartbeats while
