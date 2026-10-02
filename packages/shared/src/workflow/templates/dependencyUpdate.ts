@@ -2,6 +2,7 @@ import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
   ciWaitEntry,
+  mergeNodes,
   openPullRequest,
   prResult,
   qualityGate,
@@ -23,29 +24,29 @@ export const DEPENDENCY_UPDATE_SPEC: WorkflowSpec = {
     'Skips the review network — tests and CI are the quality gate for mechanical dep bumps.',
   entry: 'setValidating',
   name: 'dependency-update',
-  nodes: {
-    ...validatePhase({ next: 'setImplementing', successCriteria: false }),
-
-    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
-    implement: {
-      group: 'implement',
-      next: 'storeCodeResult',
-      step: 'executeImplementation',
-      title: 'Implement the ticket',
-      type: 'step',
+  nodes: mergeNodes(
+    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'storeCodeResult',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
+      },
+      storeCodeResult: storeCodeResult('runTests', { group: 'implement' }),
+      runTests: qualityGate('runTests', 'openPR', { group: 'verify' }),
     },
-    storeCodeResult: storeCodeResult('runTests', { group: 'implement' }),
-
-    runTests: qualityGate('runTests', 'openPR', { group: 'verify' }),
-
     // This template has no initCounters, so recording the PR also zeroes the CI counter.
-    ...openPullRequest({ next: ciWaitEntry(), resetCiRetries: true }),
-    ...ciLoop({
+    openPullRequest({ next: ciWaitEntry(), resetCiRetries: true }),
+    ciLoop({
       fix: { handoff: { repush: 'repushAfterFix' } },
       passed: 'done',
     }),
-
-    done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
-  },
+    {
+      done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

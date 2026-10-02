@@ -1,5 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
+  mergeNodes,
   openPullRequest,
   prResult,
   qualityGate,
@@ -22,24 +23,25 @@ export const HOTFIX_SPEC: WorkflowSpec = {
     'Intended for P0 production incidents only.',
   entry: 'setValidating',
   name: 'hotfix',
-  nodes: {
-    ...validatePhase({ next: 'setImplementing', successCriteria: false }),
-
-    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
-    implement: {
-      group: 'implement',
-      next: 'storeCodeResult',
-      step: 'executeImplementation',
-      title: 'Implement the ticket',
-      type: 'step',
+  nodes: mergeNodes(
+    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'storeCodeResult',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
+      },
+      storeCodeResult: storeCodeResult('runLint', { group: 'implement' }),
+      runLint: qualityGate('runLint', 'runTypecheck', { group: 'verify' }),
+      runTypecheck: qualityGate('runTypecheck', 'openPR', { group: 'verify' }),
     },
-    storeCodeResult: storeCodeResult('runLint', { group: 'implement' }),
-
-    runLint: qualityGate('runLint', 'runTypecheck', { group: 'verify' }),
-    runTypecheck: qualityGate('runTypecheck', 'openPR', { group: 'verify' }),
-
-    ...openPullRequest({ next: 'done' }),
-    done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
-  },
+    openPullRequest({ next: 'done' }),
+    {
+      done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

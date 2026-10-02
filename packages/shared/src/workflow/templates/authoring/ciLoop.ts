@@ -1,4 +1,4 @@
-import { type NodeMap, prResult, terminate } from './common.js';
+import { mergeNodes, type NodeMap, prResult, terminate } from './common.js';
 
 /** How the run waits for CI: the webhook signal alone, or routed to polling by config. */
 export type CiWaitMode = 'signal' | 'pollOrSignal';
@@ -126,8 +126,7 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
   const loop = 'CI loop';
   const wait = opts.wait ?? 'signal';
   const fix = opts.fix;
-  const nodes: NodeMap = {
-    ...waitForCi(wait),
+  const nodes: NodeMap = mergeNodes(waitForCi(wait), {
     checkCI: {
       expr: 'context.ciResultPayload.passed == true',
       group: loop,
@@ -137,62 +136,64 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
       type: 'cond',
     },
     terminateCIFailed: terminate('FAILED', { group: loop, result: prResult(), title: 'CI failed' }),
-  };
+  });
   if (!fix) {
     return nodes;
   }
   const handoff = fix.handoff;
-  return {
-    ...nodes,
-    checkCILimit: {
-      expr: `context.ciRetries >= ${fix.limit ?? 3}`,
-      group: loop,
-      onFalse: 'fetchLogs',
-      onTrue: 'terminateCIFailed',
-      title: 'Out of attempts?',
-      type: 'cond',
-    },
-    ciFix: {
-      group: loop,
-      inputs: {
-        failureContext: { from: 'context.lastCILogs' },
-        previousCodeResult: { from: 'context.currentCodeResult' },
+  return mergeNodes(
+    nodes,
+    {
+      checkCILimit: {
+        expr: `context.ciRetries >= ${fix.limit ?? 3}`,
+        group: loop,
+        onFalse: 'fetchLogs',
+        onTrue: 'terminateCIFailed',
+        title: 'Out of attempts?',
+        type: 'cond',
       },
-      next: 'updateCodeAfterCIFix',
-      step: 'executeCIFixImplementation',
-      title: 'Fix the CI failure',
-      type: 'step',
+      ciFix: {
+        group: loop,
+        inputs: {
+          failureContext: { from: 'context.lastCILogs' },
+          previousCodeResult: { from: 'context.currentCodeResult' },
+        },
+        next: 'updateCodeAfterCIFix',
+        step: 'executeCIFixImplementation',
+        title: 'Fix the CI failure',
+        type: 'step',
+      },
+      fetchLogs: {
+        group: loop,
+        inputs: { logsUrl: { from: 'context.ciResultPayload.logsUrl' } },
+        next: 'storeLogs',
+        step: 'fetchCILogs',
+        title: 'Fetch the CI logs',
+        type: 'step',
+      },
+      incCIRetries: {
+        group: loop,
+        next: 'checkCILimit',
+        title: 'Count the attempt',
+        type: 'set',
+        values: { 'context.ciRetries': { expr: 'context.ciRetries + 1' } },
+      },
+      storeLogs: {
+        group: loop,
+        next: 'ciFix',
+        title: 'Keep the logs',
+        type: 'set',
+        values: { 'context.lastCILogs': { from: 'nodes.fetchLogs.output' } },
+      },
+      updateCodeAfterCIFix: {
+        group: loop,
+        next: 'repush' in handoff ? handoff.repush : 'clearCiResult',
+        title: 'Keep the fixed code',
+        type: 'set',
+        values: { 'context.currentCodeResult': { from: 'nodes.ciFix.output' } },
+      },
     },
-    fetchLogs: {
-      group: loop,
-      inputs: { logsUrl: { from: 'context.ciResultPayload.logsUrl' } },
-      next: 'storeLogs',
-      step: 'fetchCILogs',
-      title: 'Fetch the CI logs',
-      type: 'step',
-    },
-    incCIRetries: {
-      group: loop,
-      next: 'checkCILimit',
-      title: 'Count the attempt',
-      type: 'set',
-      values: { 'context.ciRetries': { expr: 'context.ciRetries + 1' } },
-    },
-    storeLogs: {
-      group: loop,
-      next: 'ciFix',
-      title: 'Keep the logs',
-      type: 'set',
-      values: { 'context.lastCILogs': { from: 'nodes.fetchLogs.output' } },
-    },
-    updateCodeAfterCIFix: {
-      group: loop,
-      next: 'repush' in handoff ? handoff.repush : 'clearCiResult',
-      title: 'Keep the fixed code',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.ciFix.output' } },
-    },
-    ...('repush' in handoff
+    'repush' in handoff
       ? {
           [handoff.repush]: {
             group: loop,
@@ -213,6 +214,6 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
             type: 'set',
             values: { 'context.ciResultPayload': { literal: null } },
           },
-        }),
-  };
+        }
+  );
 }

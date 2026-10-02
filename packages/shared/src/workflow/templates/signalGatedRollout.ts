@@ -3,6 +3,7 @@ import {
   ciLoop,
   ciWaitEntry,
   initCounters,
+  mergeNodes,
   openPullRequest,
   prResult,
   reviewLoop,
@@ -24,29 +25,29 @@ export const SIGNAL_GATED_ROLLOUT_SPEC: WorkflowSpec = {
     'The gate signal carries an approval flag; rejection or timeout terminates the run.',
   entry: 'setValidating',
   name: 'signal-gated-rollout',
-  nodes: {
-    ...validatePhase({ next: 'setImplementing' }),
-
-    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
-    implement: {
-      group: 'implement',
-      next: 'initCounters',
-      step: 'executeImplementation',
-      title: 'Implement the ticket',
-      type: 'step',
+  nodes: mergeNodes(
+    validatePhase({ next: 'setImplementing' }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'initCounters',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
+      },
+      initCounters: initCounters('setReviewing', { group: 'implement' }),
     },
-    initCounters: initCounters('setReviewing', { group: 'implement' }),
-
-    ...reviewLoop({ approved: 'setAwaitingCi' }),
-
-    setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
-    ...openPullRequest({ next: ciWaitEntry() }),
-    ...ciLoop({
+    reviewLoop({ approved: 'setAwaitingCi' }),
+    {
+      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
+    },
+    openPullRequest({ next: ciWaitEntry() }),
+    ciLoop({
       fix: { handoff: { repush: 'repushAfterCIFix' } },
       passed: 'waitForDeployGate',
     }),
-
-    ...signalGate({
+    signalGate({
       expr: 'context.deployPayload.approved == true',
       ids: {
         check: 'checkDeployGate',
@@ -60,8 +61,9 @@ export const SIGNAL_GATED_ROLLOUT_SPEC: WorkflowSpec = {
       storeAs: 'context.deployPayload',
       timeout: '48h',
     }),
-
-    done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
-  },
+    {
+      done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

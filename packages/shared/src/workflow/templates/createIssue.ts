@@ -1,5 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { policyGatedWrite, terminate } from './authoring/index.js';
+import { mergeNodes, policyGatedWrite, terminate } from './authoring/index.js';
 
 /**
  * Create an issue in Linear or Jira from a title and description.
@@ -12,8 +12,8 @@ export const CREATE_ISSUE_SPEC: WorkflowSpec = {
     'Create a Linear or Jira issue from a title and description. External writes require human approval under the default autonomy policy.',
   entry: 'publishOutcome',
   name: 'create-issue',
-  nodes: {
-    ...policyGatedWrite({
+  nodes: mergeNodes(
+    policyGatedWrite({
       action: 'external_write',
       approval: {
         contextFrom: 'request.payload.title',
@@ -38,15 +38,17 @@ export const CREATE_ISSUE_SPEC: WorkflowSpec = {
       },
       writes: 'split',
     }),
-    done: terminate('SUCCESS', {
-      result: {
-        description: { from: 'request.payload.description' },
-        issueUrl: { from: 'nodes.writeOutcome.output.reference' },
-        projectKey: { from: 'request.payload.projectKey' },
-        title: { from: 'request.payload.title' },
-      },
-      title: 'Issue created',
-    }),
-  },
+    {
+      done: terminate('SUCCESS', {
+        result: {
+          description: { from: 'request.payload.description' },
+          issueUrl: { from: 'nodes.writeOutcome.output.reference' },
+          projectKey: { from: 'request.payload.projectKey' },
+          title: { from: 'request.payload.title' },
+        },
+        title: 'Issue created',
+      }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

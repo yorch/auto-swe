@@ -129,6 +129,27 @@ export function initCounters(
 }
 
 /**
+ * Combine node maps into one, throwing if two parts define the same id. Object
+ * spread would let the later one silently replace the earlier node, and every
+ * helper emits fixed ids (`waitForCI`, `checkCI`, …) that a template could
+ * collide with. The error names the id and where it came from.
+ */
+export function mergeNodes(...parts: Array<NodeMap | undefined>): NodeMap {
+  const out: NodeMap = {};
+  parts.forEach((part, index) => {
+    for (const [id, node] of Object.entries(part ?? {})) {
+      if (Object.hasOwn(out, id)) {
+        throw new Error(
+          `duplicate node id '${id}': defined by more than one part (part ${index + 1}) of the same spec`
+        );
+      }
+      out[id] = node;
+    }
+  });
+  return out;
+}
+
+/**
  * Stamp a group on every node of a map that has none, leaving the rest alone.
  * For the hand-authored nodes that sit between the helpers' output.
  */

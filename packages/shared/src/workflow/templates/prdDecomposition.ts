@@ -1,5 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { statusStamp, terminate } from './authoring/index.js';
+import { mergeNodes, statusStamp, terminate } from './authoring/index.js';
 
 /**
  * PRD Decomposition workflow: a PM submits a PRD document, the system
@@ -15,7 +15,7 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
     'as an implementation work request automatically.',
   entry: 'setAnalyzing',
   name: 'prd-decomposition',
-  nodes: {
+  nodes: mergeNodes({
     // Each phase has its own status vocabulary, so these stamps stay explicit.
     setAnalyzing: statusStamp('ANALYZING', 'analyzePrd', { group: 'analyze' }),
     analyzePrd: {
@@ -34,7 +34,6 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
         'context.analysis': { from: 'nodes.analyzePrd.output' },
       },
     },
-
     pmReview: {
       contentFrom: 'context.analysis',
       description:
@@ -57,7 +56,6 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
         'context.pmFeedbackReceived': { literal: true },
       },
     },
-
     setDecomposing: statusStamp('DECOMPOSING', 'decomposePrd', { group: 'decompose' }),
     decomposePrd: {
       group: 'decompose',
@@ -79,7 +77,6 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
         'context.decomposition': { from: 'nodes.decomposePrd.output' },
       },
     },
-
     engReview: {
       contentFrom: 'context.decomposition',
       description:
@@ -106,7 +103,6 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
       group: 'engineering review',
       title: 'Review timed out',
     }),
-
     setCreatingTickets: statusStamp('CREATING_TICKETS', 'createTrackerItems', {
       group: 'tickets',
     }),
@@ -130,7 +126,6 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
         'context.trackerItems': { from: 'nodes.createTrackerItems.output' },
       },
     },
-
     setSubmitting: statusStamp('SUBMITTING', 'submitPrdWorkRequests', { group: 'submit' }),
     submitPrdWorkRequests: {
       group: 'submit',
@@ -150,6 +145,6 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
       },
       title: 'Done',
     }),
-  },
+  }),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

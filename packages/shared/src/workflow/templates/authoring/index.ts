@@ -9,6 +9,7 @@ export {
 export {
   inGroup,
   initCounters,
+  mergeNodes,
   type NodeMap,
   type Presentation,
   prResult,

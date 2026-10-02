@@ -3,6 +3,7 @@ import {
   ciLoop,
   ciWaitEntry,
   initCounters,
+  mergeNodes,
   openPullRequest,
   prResult,
   statusStamp,
@@ -26,140 +27,141 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
     'Demonstrates fanOut for parallel quality gates rather than parallel work.',
   entry: 'setValidating',
   name: 'consensus-review',
-  nodes: {
-    // ── Branch nodes (run inside fanOut) ─────────────────────────────────
-    branchApproved: terminate('SUCCESS', { group: 'reviewer branch', title: 'Branch approved' }),
-    branchRejected: terminate('FAILED', { group: 'reviewer branch', title: 'Branch rejected' }),
-    checkBranchApproval: {
-      expr: 'nodes.runBranchReview.output.approved == true',
-      group: 'reviewer branch',
-      onFalse: 'storeBranchRejection',
-      onTrue: 'branchApproved',
-      title: 'Approved?',
-      type: 'cond',
-    },
-    runBranchReview: {
-      group: 'reviewer branch',
-      inputs: {
-        codeResult: { from: 'context.currentCodeResult' },
-        successCriteria: { from: 'context.successCriteria' },
+  nodes: mergeNodes(
+    {
+      // ── Branch nodes (run inside fanOut) ─────────────────────────────────
+      branchApproved: terminate('SUCCESS', { group: 'reviewer branch', title: 'Branch approved' }),
+      branchRejected: terminate('FAILED', { group: 'reviewer branch', title: 'Branch rejected' }),
+      checkBranchApproval: {
+        expr: 'nodes.runBranchReview.output.approved == true',
+        group: 'reviewer branch',
+        onFalse: 'storeBranchRejection',
+        onTrue: 'branchApproved',
+        title: 'Approved?',
+        type: 'cond',
       },
-      next: 'checkBranchApproval',
-      step: 'runReviewNetwork',
-      title: 'Review network (one reviewer slot)',
-      type: 'step',
-    },
-    storeBranchRejection: {
-      group: 'reviewer branch',
-      next: 'branchRejected',
-      title: 'Record why it was rejected',
-      type: 'set',
-      values: {
-        'context.branchRejectionSummary': {
-          default: '',
-          from: 'nodes.runBranchReview.output.rejectionSummary',
+      runBranchReview: {
+        group: 'reviewer branch',
+        inputs: {
+          codeResult: { from: 'context.currentCodeResult' },
+          successCriteria: { from: 'context.successCriteria' },
+        },
+        next: 'checkBranchApproval',
+        step: 'runReviewNetwork',
+        title: 'Review network (one reviewer slot)',
+        type: 'step',
+      },
+      storeBranchRejection: {
+        group: 'reviewer branch',
+        next: 'branchRejected',
+        title: 'Record why it was rejected',
+        type: 'set',
+        values: {
+          'context.branchRejectionSummary': {
+            default: '',
+            from: 'nodes.runBranchReview.output.rejectionSummary',
+          },
         },
       },
     },
-
     // ── Main graph ────────────────────────────────────────────────────────
-    ...validatePhase({ next: 'setImplementing' }),
-
-    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
-    implement: {
-      group: 'implement',
-      next: 'initCounters',
-      step: 'executeImplementation',
-      title: 'Implement the ticket',
-      type: 'step',
-    },
-    initCounters: initCounters('fanOutReview', { ci: false, group: 'implement' }),
-
-    // The consensus review: two reviewer slots, both must approve.
-    fanOutReview: {
-      // Two reviewer slots — each branch runs runBranchReview independently.
-      concurrency: 2,
-      exports: ['context.branchRejectionSummary'],
-      group: 'consensus review',
-      itemKey: 'reviewerSlot',
-      join: 'storeConsensusResult',
-      onBranchFail: 'continue',
-      over: { literal: [{ id: 1 }, { id: 2 }] },
-      subgraph: 'runBranchReview',
-      title: 'Run both reviewers',
-      type: 'fanOut',
-    },
-    storeConsensusResult: {
-      group: 'consensus review',
-      next: 'checkConsensus',
-      title: 'Keep the verdicts',
-      type: 'set',
-      values: { 'context.fanOutReview': { from: 'nodes.fanOutReview.output' } },
-    },
-    checkConsensus: {
-      expr: 'nodes.fanOutReview.output.failed == 0',
-      group: 'consensus review',
-      onFalse: 'incReviewRetries',
-      onTrue: 'setAwaitingCi',
-      title: 'Both approved?',
-      type: 'cond',
-    },
-    incReviewRetries: {
-      group: 'consensus review',
-      next: 'storeLastRejection',
-      title: 'Count the attempt',
-      type: 'set',
-      values: { 'context.reviewRetries': { expr: 'context.reviewRetries + 1' } },
-    },
-    storeLastRejection: {
-      group: 'consensus review',
-      next: 'checkReviewLimit',
-      title: 'Record why it was rejected',
-      type: 'set',
-      values: {
-        'context.lastRejectionSummary': {
-          default: 'One or more reviewers rejected the implementation.',
-          from: 'context.fanOutReview.results',
+    validatePhase({ next: 'setImplementing' }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'initCounters',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
+      },
+      initCounters: initCounters('fanOutReview', { ci: false, group: 'implement' }),
+      // The consensus review: two reviewer slots, both must approve.
+      fanOutReview: {
+        // Two reviewer slots — each branch runs runBranchReview independently.
+        concurrency: 2,
+        exports: ['context.branchRejectionSummary'],
+        group: 'consensus review',
+        itemKey: 'reviewerSlot',
+        join: 'storeConsensusResult',
+        onBranchFail: 'continue',
+        over: { literal: [{ id: 1 }, { id: 2 }] },
+        subgraph: 'runBranchReview',
+        title: 'Run both reviewers',
+        type: 'fanOut',
+      },
+      storeConsensusResult: {
+        group: 'consensus review',
+        next: 'checkConsensus',
+        title: 'Keep the verdicts',
+        type: 'set',
+        values: { 'context.fanOutReview': { from: 'nodes.fanOutReview.output' } },
+      },
+      checkConsensus: {
+        expr: 'nodes.fanOutReview.output.failed == 0',
+        group: 'consensus review',
+        onFalse: 'incReviewRetries',
+        onTrue: 'setAwaitingCi',
+        title: 'Both approved?',
+        type: 'cond',
+      },
+      incReviewRetries: {
+        group: 'consensus review',
+        next: 'storeLastRejection',
+        title: 'Count the attempt',
+        type: 'set',
+        values: { 'context.reviewRetries': { expr: 'context.reviewRetries + 1' } },
+      },
+      storeLastRejection: {
+        group: 'consensus review',
+        next: 'checkReviewLimit',
+        title: 'Record why it was rejected',
+        type: 'set',
+        values: {
+          'context.lastRejectionSummary': {
+            default: 'One or more reviewers rejected the implementation.',
+            from: 'context.fanOutReview.results',
+          },
         },
       },
-    },
-    checkReviewLimit: {
-      expr: 'context.reviewRetries >= 3',
-      group: 'consensus review',
-      onFalse: 'consensusFix',
-      onTrue: 'terminateReviewFailed',
-      title: 'Out of attempts?',
-      type: 'cond',
-    },
-    consensusFix: {
-      group: 'consensus review',
-      inputs: {
-        previousCodeResult: { from: 'context.currentCodeResult' },
-        rejectionSummary: { from: 'context.lastRejectionSummary' },
+      checkReviewLimit: {
+        expr: 'context.reviewRetries >= 3',
+        group: 'consensus review',
+        onFalse: 'consensusFix',
+        onTrue: 'terminateReviewFailed',
+        title: 'Out of attempts?',
+        type: 'cond',
       },
-      next: 'updateCodeAfterFix',
-      step: 'executeReviewFixImplementation',
-      title: 'Fix the review findings',
-      type: 'step',
+      consensusFix: {
+        group: 'consensus review',
+        inputs: {
+          previousCodeResult: { from: 'context.currentCodeResult' },
+          rejectionSummary: { from: 'context.lastRejectionSummary' },
+        },
+        next: 'updateCodeAfterFix',
+        step: 'executeReviewFixImplementation',
+        title: 'Fix the review findings',
+        type: 'step',
+      },
+      updateCodeAfterFix: {
+        group: 'consensus review',
+        next: 'fanOutReview',
+        title: 'Keep the fixed code',
+        type: 'set',
+        values: { 'context.currentCodeResult': { from: 'nodes.consensusFix.output' } },
+      },
+      terminateReviewFailed: terminate('FAILED', {
+        group: 'consensus review',
+        title: 'Review failed',
+      }),
+      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     },
-    updateCodeAfterFix: {
-      group: 'consensus review',
-      next: 'fanOutReview',
-      title: 'Keep the fixed code',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.consensusFix.output' } },
-    },
-    terminateReviewFailed: terminate('FAILED', {
-      group: 'consensus review',
-      title: 'Review failed',
-    }),
-
-    setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
-    ...openPullRequest({ next: ciWaitEntry() }),
+    openPullRequest({ next: ciWaitEntry() }),
     // A bare CI gate: this template does not loop on CI failures.
-    ...ciLoop({ fix: false, passed: 'done' }),
-
-    done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
-  },
+    ciLoop({ fix: false, passed: 'done' }),
+    {
+      done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

@@ -1,5 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { policyGatedWrite, sourceHead, terminate } from './authoring/index.js';
+import { mergeNodes, policyGatedWrite, sourceHead, terminate } from './authoring/index.js';
 
 /**
  * Zendesk ticket reply workflow with Phase 3 governance.
@@ -14,25 +14,27 @@ export const ZENDESK_TICKET_REPLY_SPEC: WorkflowSpec = {
     'Fetch a Zendesk ticket, draft a response with the support responder, and post it back. Public replies and other external-communication actions pause for human approval under the default autonomy policy.',
   entry: 'resolveWorkspace',
   name: 'zendesk-ticket-reply',
-  nodes: {
-    ...sourceHead({
+  nodes: mergeNodes(
+    sourceHead({
       next: 'draftResponse',
       provider: 'record',
       read: { ticketId: { from: 'request.payload.ticketId' } },
     }),
-    draftResponse: {
-      agentRef: 'supportResponder',
-      group: 'draft',
-      inputs: {
-        instructions: { default: '', from: 'request.payload.instructions' },
-        ticket: { from: 'nodes.readSource.output.data' },
+    {
+      draftResponse: {
+        agentRef: 'supportResponder',
+        group: 'draft',
+        inputs: {
+          instructions: { default: '', from: 'request.payload.instructions' },
+          ticket: { from: 'nodes.readSource.output.data' },
+        },
+        next: 'publishOutcome',
+        spanName: 'llm.zendesk_response',
+        title: 'Draft the reply',
+        type: 'agent',
       },
-      next: 'publishOutcome',
-      spanName: 'llm.zendesk_response',
-      title: 'Draft the reply',
-      type: 'agent',
     },
-    ...policyGatedWrite({
+    policyGatedWrite({
       action: 'external_communication',
       approval: {
         contextFrom: 'nodes.draftResponse.output.text',
@@ -57,14 +59,16 @@ export const ZENDESK_TICKET_REPLY_SPEC: WorkflowSpec = {
       },
       writes: 'split',
     }),
-    done: terminate('SUCCESS', {
-      result: {
-        published: { literal: true },
-        text: { from: 'nodes.draftResponse.output.text' },
-        ticketId: { from: 'request.payload.ticketId' },
-      },
-      title: 'Published',
-    }),
-  },
+    {
+      done: terminate('SUCCESS', {
+        result: {
+          published: { literal: true },
+          text: { from: 'nodes.draftResponse.output.text' },
+          ticketId: { from: 'request.payload.ticketId' },
+        },
+        title: 'Published',
+      }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

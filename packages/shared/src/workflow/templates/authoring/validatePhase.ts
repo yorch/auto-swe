@@ -1,4 +1,4 @@
-import { type NodeMap, statusStamp } from './common.js';
+import { mergeNodes, type NodeMap, statusStamp } from './common.js';
 
 export interface ValidatePhaseOptions {
   /** Node the phase hands over to once it is done (normally `setImplementing`). */
@@ -28,19 +28,21 @@ export function validatePhase(opts: ValidatePhaseOptions): NodeMap {
   const group = 'validate';
   const withCriteria = opts.successCriteria ?? true;
   const criteriaId = opts.successCriteriaId ?? 'setSuccessCriteria';
-  return {
-    ...(opts.stamp === false
+  return mergeNodes(
+    opts.stamp === false
       ? {}
-      : { setValidating: statusStamp('VALIDATING_CONTEXT', 'validate', { group }) }),
-    validate: {
-      group,
-      next: withCriteria ? criteriaId : opts.next,
-      onError: 'continue',
-      step: 'validateContext',
-      title: 'Validate the ticket context',
-      type: 'step',
+      : { setValidating: statusStamp('VALIDATING_CONTEXT', 'validate', { group }) },
+    {
+      validate: {
+        group,
+        next: withCriteria ? criteriaId : opts.next,
+        onError: 'continue',
+        step: 'validateContext',
+        title: 'Validate the ticket context',
+        type: 'step',
+      },
     },
-    ...(withCriteria
+    withCriteria
       ? {
           [criteriaId]: {
             group,
@@ -55,6 +57,6 @@ export function validatePhase(opts: ValidatePhaseOptions): NodeMap {
             },
           },
         }
-      : {}),
-  };
+      : {}
+  );
 }

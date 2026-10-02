@@ -1,5 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { policyGatedWrite, sourceHead, terminate } from './authoring/index.js';
+import { mergeNodes, policyGatedWrite, sourceHead, terminate } from './authoring/index.js';
 
 /**
  * Product PRD draft workflow.
@@ -13,48 +13,50 @@ export const PRODUCT_PRD_DRAFT_SPEC: WorkflowSpec = {
     'Analyze a product brief and draft a focused PRD with acceptance criteria, then append it to a Notion page.',
   entry: 'resolveWorkspace',
   name: 'product-prd-draft',
-  nodes: {
-    ...sourceHead({
+  nodes: mergeNodes(
+    sourceHead({
       afterResolve: 'checkSource',
       next: 'analyzeBrief',
       provider: 'document',
       read: { pageId: { from: 'request.payload.sourcePageId' } },
     }),
-    // The source page is optional: with none, the brief alone is analysed.
-    checkSource: {
-      expr: 'request.payload.sourcePageId == null',
-      group: 'read source',
-      onFalse: 'readSource',
-      onTrue: 'analyzeBrief',
-      title: 'Has a source page?',
-      type: 'cond',
-    },
-    analyzeBrief: {
-      agentRef: 'productAnalyst',
-      group: 'draft',
-      inputs: {
-        brief: { from: 'request.payload.brief' },
-        instructions: { default: '', from: 'request.payload.instructions' },
-        sourceMaterial: { default: '', from: 'nodes.readSource.output.data' },
+    {
+      // The source page is optional: with none, the brief alone is analysed.
+      checkSource: {
+        expr: 'request.payload.sourcePageId == null',
+        group: 'read source',
+        onFalse: 'readSource',
+        onTrue: 'analyzeBrief',
+        title: 'Has a source page?',
+        type: 'cond',
       },
-      next: 'draftPrd',
-      spanName: 'llm.product_analysis',
-      title: 'Analyse the brief',
-      type: 'agent',
-    },
-    draftPrd: {
-      agentRef: 'prdWriter',
-      group: 'draft',
-      inputs: {
-        analysis: { from: 'nodes.analyzeBrief.output.text' },
-        instructions: { default: '', from: 'request.payload.instructions' },
+      analyzeBrief: {
+        agentRef: 'productAnalyst',
+        group: 'draft',
+        inputs: {
+          brief: { from: 'request.payload.brief' },
+          instructions: { default: '', from: 'request.payload.instructions' },
+          sourceMaterial: { default: '', from: 'nodes.readSource.output.data' },
+        },
+        next: 'draftPrd',
+        spanName: 'llm.product_analysis',
+        title: 'Analyse the brief',
+        type: 'agent',
       },
-      next: 'publishOutcome',
-      spanName: 'llm.prd_draft',
-      title: 'Draft the PRD',
-      type: 'agent',
+      draftPrd: {
+        agentRef: 'prdWriter',
+        group: 'draft',
+        inputs: {
+          analysis: { from: 'nodes.analyzeBrief.output.text' },
+          instructions: { default: '', from: 'request.payload.instructions' },
+        },
+        next: 'publishOutcome',
+        spanName: 'llm.prd_draft',
+        title: 'Draft the PRD',
+        type: 'agent',
+      },
     },
-    ...policyGatedWrite({
+    policyGatedWrite({
       action: 'internal_write',
       approval: {
         contextFrom: 'nodes.draftPrd.output.text',
@@ -77,13 +79,15 @@ export const PRODUCT_PRD_DRAFT_SPEC: WorkflowSpec = {
       },
       writes: 'single',
     }),
-    done: terminate('SUCCESS', {
-      result: {
-        targetPageId: { from: 'request.payload.targetPageId' },
-        text: { from: 'nodes.draftPrd.output.text' },
-      },
-      title: 'Done',
-    }),
-  },
+    {
+      done: terminate('SUCCESS', {
+        result: {
+          targetPageId: { from: 'request.payload.targetPageId' },
+          text: { from: 'nodes.draftPrd.output.text' },
+        },
+        title: 'Done',
+      }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

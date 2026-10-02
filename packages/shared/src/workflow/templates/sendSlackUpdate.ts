@@ -1,5 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { policyGatedWrite, terminate } from './authoring/index.js';
+import { mergeNodes, policyGatedWrite, terminate } from './authoring/index.js';
 
 /**
  * Send a Slack update workflow.
@@ -13,8 +13,8 @@ export const SEND_SLACK_UPDATE_SPEC: WorkflowSpec = {
     'Send a Slack message to a channel. Public/external Slack posts require human approval under the default autonomy policy.',
   entry: 'publishOutcome',
   name: 'send-slack-update',
-  nodes: {
-    ...policyGatedWrite({
+  nodes: mergeNodes(
+    policyGatedWrite({
       action: 'external_communication',
       approval: {
         contextFrom: 'request.payload.message',
@@ -37,14 +37,16 @@ export const SEND_SLACK_UPDATE_SPEC: WorkflowSpec = {
       },
       writes: 'split',
     }),
-    done: terminate('SUCCESS', {
-      result: {
-        channelId: { from: 'request.payload.channelId' },
-        posted: { literal: true },
-        text: { from: 'request.payload.message' },
-      },
-      title: 'Posted',
-    }),
-  },
+    {
+      done: terminate('SUCCESS', {
+        result: {
+          channelId: { from: 'request.payload.channelId' },
+          posted: { literal: true },
+          text: { from: 'request.payload.message' },
+        },
+        title: 'Posted',
+      }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

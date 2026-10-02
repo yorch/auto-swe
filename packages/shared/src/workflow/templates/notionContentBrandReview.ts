@@ -1,5 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { policyGatedWrite, sourceHead, terminate } from './authoring/index.js';
+import { mergeNodes, policyGatedWrite, sourceHead, terminate } from './authoring/index.js';
 
 /**
  * Notion content draft with brand review workflow.
@@ -13,37 +13,39 @@ export const NOTION_CONTENT_BRAND_REVIEW_SPEC: WorkflowSpec = {
     'Read a Notion page, draft an update, review it for brand voice and clarity, and append the result to a target Notion page.',
   entry: 'resolveWorkspace',
   name: 'notion-content-brand-review',
-  nodes: {
-    ...sourceHead({
+  nodes: mergeNodes(
+    sourceHead({
       next: 'draftContent',
       provider: 'document',
       read: { pageId: { from: 'request.payload.sourcePageId' } },
     }),
-    draftContent: {
-      agentRef: 'contentWriter',
-      group: 'draft',
-      inputs: {
-        instructions: { default: '', from: 'request.payload.instructions' },
-        source: { from: 'nodes.readSource.output.data' },
+    {
+      draftContent: {
+        agentRef: 'contentWriter',
+        group: 'draft',
+        inputs: {
+          instructions: { default: '', from: 'request.payload.instructions' },
+          source: { from: 'nodes.readSource.output.data' },
+        },
+        next: 'brandReview',
+        spanName: 'llm.content_draft',
+        title: 'Draft the update',
+        type: 'agent',
       },
-      next: 'brandReview',
-      spanName: 'llm.content_draft',
-      title: 'Draft the update',
-      type: 'agent',
-    },
-    brandReview: {
-      agentRef: 'brandReviewer',
-      group: 'draft',
-      inputs: {
-        draft: { from: 'nodes.draftContent.output.text' },
-        instructions: { default: '', from: 'request.payload.instructions' },
+      brandReview: {
+        agentRef: 'brandReviewer',
+        group: 'draft',
+        inputs: {
+          draft: { from: 'nodes.draftContent.output.text' },
+          instructions: { default: '', from: 'request.payload.instructions' },
+        },
+        next: 'publishOutcome',
+        spanName: 'llm.brand_review',
+        title: 'Review for brand voice',
+        type: 'agent',
       },
-      next: 'publishOutcome',
-      spanName: 'llm.brand_review',
-      title: 'Review for brand voice',
-      type: 'agent',
     },
-    ...policyGatedWrite({
+    policyGatedWrite({
       action: 'internal_write',
       approval: {
         contextFrom: 'nodes.brandReview.output.text',
@@ -67,13 +69,15 @@ export const NOTION_CONTENT_BRAND_REVIEW_SPEC: WorkflowSpec = {
       },
       writes: 'single',
     }),
-    done: terminate('SUCCESS', {
-      result: {
-        targetPageId: { from: 'request.payload.targetPageId' },
-        text: { from: 'nodes.brandReview.output.text' },
-      },
-      title: 'Done',
-    }),
-  },
+    {
+      done: terminate('SUCCESS', {
+        result: {
+          targetPageId: { from: 'request.payload.targetPageId' },
+          text: { from: 'nodes.brandReview.output.text' },
+        },
+        title: 'Done',
+      }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

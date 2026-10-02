@@ -3,6 +3,7 @@ import {
   ciLoop,
   ciWaitEntry,
   initCounters,
+  mergeNodes,
   openPullRequest,
   prResult,
   reviewLoop,
@@ -28,29 +29,31 @@ export const AGENT_REVIEWED_PR_SPEC: WorkflowSpec = {
     'agent review loop is a sufficient quality gate before a PR.',
   entry: 'setValidating',
   name: 'agent-reviewed-pr',
-  nodes: {
-    ...validatePhase({ next: 'setImplementing' }),
-
-    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
-    implement: {
-      group: 'implement',
-      next: 'initCounters',
-      step: 'executeImplementation',
-      title: 'Implement the ticket',
-      type: 'step',
+  nodes: mergeNodes(
+    validatePhase({ next: 'setImplementing' }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'initCounters',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
+      },
+      initCounters: initCounters('setReviewing', { group: 'implement' }),
     },
-    initCounters: initCounters('setReviewing', { group: 'implement' }),
-
-    ...reviewLoop({ approved: 'setAwaitingCi' }),
-
-    setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
-    ...openPullRequest({ next: ciWaitEntry() }),
-    ...ciLoop({
+    reviewLoop({ approved: 'setAwaitingCi' }),
+    {
+      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
+    },
+    openPullRequest({ next: ciWaitEntry() }),
+    ciLoop({
       fix: { handoff: { repush: 'repushAfterCIFix' } },
       passed: 'done',
     }),
-
-    done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
-  },
+    {
+      done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

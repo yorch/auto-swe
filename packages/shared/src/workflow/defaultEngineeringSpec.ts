@@ -3,6 +3,7 @@ import {
   ciLoop,
   ciWaitEntry,
   initCounters,
+  mergeNodes,
   openPullRequest,
   prResult,
   reviewLoop,
@@ -30,60 +31,62 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
     'the logs, then wait for a person to merge. The lesson is stored for the next run.',
   entry: 'setValidating',
   name: 'default-engineering',
-  nodes: {
-    ...validatePhase({ next: 'setImplementing' }),
-
-    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
-    implement: {
-      group: 'implement',
-      next: 'initCounters',
-      step: 'executeImplementation',
-      title: 'Implement the ticket',
-      type: 'step',
+  nodes: mergeNodes(
+    validatePhase({ next: 'setImplementing' }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'initCounters',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
+      },
+      initCounters: initCounters('clearCiResult', { group: 'implement' }),
     },
-    initCounters: initCounters('clearCiResult', { group: 'implement' }),
-
     // ── Review loop, then CI loop; a CI fix re-enters the review via clearCiResult ──
-    ...reviewLoop({ afterFix: 'clearCiResult', approved: 'setAwaitingCi' }),
-
-    setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
+    reviewLoop({ afterFix: 'clearCiResult', approved: 'setAwaitingCi' }),
+    {
+      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
+    },
     // CI wait: signal (webhook, default) vs poll (active GitHub query)
-    ...openPullRequest({ next: ciWaitEntry('pollOrSignal') }),
-    ...ciLoop({
+    openPullRequest({ next: ciWaitEntry('pollOrSignal') }),
+    ciLoop({
       fix: { handoff: { rereview: 'setReviewing' } },
       passed: 'setAwaitingHumanMerge',
       wait: 'pollOrSignal',
     }),
-
-    // ── Wait for human merge, then memory + completion ──
-    setAwaitingHumanMerge: statusStamp('AWAITING_HUMAN_MERGE', 'waitForHumanMerge', {
-      group: 'human merge',
-    }),
-    waitForHumanMerge: {
-      group: 'human merge',
-      name: 'humanMergeSignal',
-      onReceive: 'commitLesson',
-      onTimeout: 'terminateMergeTimedOut',
-      timeout: '7d',
-      title: 'Wait for a person to merge',
-      type: 'signal',
-    },
-    terminateMergeTimedOut: terminate('TIMED_OUT', {
-      group: 'human merge',
-      result: {},
-      title: 'Merge timed out',
-    }),
-    commitLesson: {
-      group: 'human merge',
-      next: 'done',
-      onError: 'continue',
-      step: 'commitToMemory',
-      title: 'Store the lesson',
-      type: 'step',
-    },
-    // No COMPLETED status stamp ahead of `done`: finalizeWorkflowRun writes it when the run
-    // ends SUCCESS.
-    done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
-  },
+    {
+      // ── Wait for human merge, then memory + completion ──
+      setAwaitingHumanMerge: statusStamp('AWAITING_HUMAN_MERGE', 'waitForHumanMerge', {
+        group: 'human merge',
+      }),
+      waitForHumanMerge: {
+        group: 'human merge',
+        name: 'humanMergeSignal',
+        onReceive: 'commitLesson',
+        onTimeout: 'terminateMergeTimedOut',
+        timeout: '7d',
+        title: 'Wait for a person to merge',
+        type: 'signal',
+      },
+      terminateMergeTimedOut: terminate('TIMED_OUT', {
+        group: 'human merge',
+        result: {},
+        title: 'Merge timed out',
+      }),
+      commitLesson: {
+        group: 'human merge',
+        next: 'done',
+        onError: 'continue',
+        step: 'commitToMemory',
+        title: 'Store the lesson',
+        type: 'step',
+      },
+      // No COMPLETED status stamp ahead of `done`: finalizeWorkflowRun writes it when the run
+      // ends SUCCESS.
+      done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

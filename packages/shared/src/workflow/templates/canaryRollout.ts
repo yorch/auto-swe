@@ -3,6 +3,7 @@ import {
   ciLoop,
   ciWaitEntry,
   initCounters,
+  mergeNodes,
   openPullRequest,
   prResult,
   reviewLoop,
@@ -29,29 +30,29 @@ export const CANARY_ROLLOUT_SPEC: WorkflowSpec = {
     'explicitly confirmed by an external system before proceeding.',
   entry: 'setValidating',
   name: 'canary-rollout',
-  nodes: {
-    ...validatePhase({ next: 'setImplementing' }),
-
-    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
-    implement: {
-      group: 'implement',
-      next: 'initCounters',
-      step: 'executeImplementation',
-      title: 'Implement the ticket',
-      type: 'step',
+  nodes: mergeNodes(
+    validatePhase({ next: 'setImplementing' }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'initCounters',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
+      },
+      initCounters: initCounters('setReviewing', { group: 'implement' }),
     },
-    initCounters: initCounters('setReviewing', { group: 'implement' }),
-
-    ...reviewLoop({ approved: 'setAwaitingCi' }),
-
-    setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
-    ...openPullRequest({ next: ciWaitEntry() }),
-    ...ciLoop({
+    reviewLoop({ approved: 'setAwaitingCi' }),
+    {
+      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
+    },
+    openPullRequest({ next: ciWaitEntry() }),
+    ciLoop({
       fix: { handoff: { repush: 'repushAfterCIFix' } },
       passed: 'waitForStaging',
     }),
-
-    ...signalGate({
+    signalGate({
       expr: 'context.stagingPayload.deployed == true',
       ids: {
         check: 'checkStaging',
@@ -65,7 +66,7 @@ export const CANARY_ROLLOUT_SPEC: WorkflowSpec = {
       storeAs: 'context.stagingPayload',
       timeout: '1h',
     }),
-    ...signalGate({
+    signalGate({
       expr: 'context.monitorPayload.healthy == true',
       ids: {
         check: 'checkMonitoring',
@@ -79,8 +80,9 @@ export const CANARY_ROLLOUT_SPEC: WorkflowSpec = {
       storeAs: 'context.monitorPayload',
       timeout: '2h',
     }),
-
-    done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
-  },
+    {
+      done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };
