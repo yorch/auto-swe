@@ -18,7 +18,7 @@ import {
 } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { experimentBucket } from '../lib/experimentBucket.js';
@@ -398,6 +398,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // A row only replays as success once `startedActiveWorkflowId` is stamped,
       // i.e. after the Temporal start succeeded. Until then the ledger rows exist
       // but the run may yet be compensated away, so the answer is "in progress".
+      //
+      // It returns the reply wrapped in an object, never the reply itself: a Fastify reply is a
+      // thenable, so `await`ing an async function that returns one resolves to `undefined` once
+      // it has been sent, and the handler would carry on past the answer it just gave.
+      const sent = (sentReply: FastifyReply) => ({ reply: sentReply });
       const replayForKey = async () => {
         if (!idempotencyKey) {
           return null;
@@ -423,34 +428,40 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           prior.connectionId !== repoIds[0] ||
           priorBudget !== budgetTier
         ) {
-          return reply.status(422).send({
-            error: {
-              code: 'IDEMPOTENCY_KEY_MISMATCH',
-              message:
-                'This Idempotency-Key was already used for a different request. Use a new key for a different ticket, repository, description or budget tier.',
-            },
-          });
+          return sent(
+            reply.status(422).send({
+              error: {
+                code: 'IDEMPOTENCY_KEY_MISMATCH',
+                message:
+                  'This Idempotency-Key was already used for a different request. Use a new key for a different ticket, repository, description or budget tier.',
+              },
+            })
+          );
         }
         if (!prior.startedActiveWorkflowId) {
-          return reply
-            .status(409)
-            .header('retry-after', '2')
-            .send({
-              error: {
-                code: 'IDEMPOTENCY_KEY_IN_PROGRESS',
-                message:
-                  'A request with this Idempotency-Key has not finished starting. Retry shortly with the same key.',
-              },
-            });
+          return sent(
+            reply
+              .status(409)
+              .header('retry-after', '2')
+              .send({
+                error: {
+                  code: 'IDEMPOTENCY_KEY_IN_PROGRESS',
+                  message:
+                    'A request with this Idempotency-Key has not finished starting. Retry shortly with the same key.',
+                },
+              })
+          );
         }
         // The run exists, but only someone who could launch it now may be told its
         // ids: re-check repository access and org membership. The org's monthly
         // cap is deliberately not re-applied -- a replay starts and spends nothing.
         const priorRepo = await loadRepo(prior.connectionId as string);
         if (!priorRepo?.isActive) {
-          return reply.status(404).send({
-            error: { code: 'REPO_NOT_FOUND', message: 'Repository not found or inactive' },
-          });
+          return sent(
+            reply.status(404).send({
+              error: { code: 'REPO_NOT_FOUND', message: 'Repository not found or inactive' },
+            })
+          );
         }
         const authorization = await authorizeLaunch(fastify.prisma, user, {
           gate: request.repoAccessGate,
@@ -459,19 +470,21 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           runIdentity: 'caller',
         });
         if (!authorization.ok && authorization.refusal.kind !== 'org-budget') {
-          return sendLaunchRefusal(reply, authorization.refusal);
+          return sent(sendLaunchRefusal(reply, authorization.refusal));
         }
-        return reply.status(200).send({
-          data: {
-            deduplicated: true,
-            workflowIds: [prior.startedActiveWorkflowId],
-            workRequestId: prior.id,
-          },
-        });
+        return sent(
+          reply.status(200).send({
+            data: {
+              deduplicated: true,
+              workflowIds: [prior.startedActiveWorkflowId],
+              workRequestId: prior.id,
+            },
+          })
+        );
       };
       const replayed = await replayForKey();
       if (replayed) {
-        return replayed;
+        return replayed.reply;
       }
 
       const repo = await loadRepo(repoIds[0]);
@@ -559,7 +572,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         // conflict may be; a different key (or none) is a real second submission.
         const raced = await replayForKey();
         if (raced) {
-          return raced;
+          return raced.reply;
         }
         return refuseConflict(
           `Workflow already running for ${externalTicketId} (${allocated.conflictWorkflowId})`
@@ -675,7 +688,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         // so nothing is found and this is the ordinary 409.
         const raced = await replayForKey();
         if (raced) {
-          return raced;
+          return raced.reply;
         }
         // A Temporal-side duplicate is a live execution no row accounts for: it is running,
         // so keyed and unkeyed requests alike get the ordinary conflict, not "retry".
