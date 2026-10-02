@@ -360,6 +360,7 @@ function LayoutB({
                     linker={linker}
                     onClearFilter={() => {}}
                     traces={stepTraces}
+                    untaggedAmbiguous={step.nodeId !== specNodeIdOfRecording(step.nodeId, linker)}
                   />
                 </div>
               )}

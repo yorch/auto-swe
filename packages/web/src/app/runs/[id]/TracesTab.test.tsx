@@ -184,6 +184,27 @@ describe('TracesTab node linkage', () => {
     expect(screen.getByText('ambiguous')).toBeTruthy();
   });
 
+  it('describes the ambiguity in visible text the badge points at', () => {
+    show('lintA', [makeTrace('runLint', 'old')]);
+    const badge = screen.getByText('ambiguous');
+    const note = document.getElementById(badge.getAttribute('aria-describedby') ?? '');
+    expect(note?.textContent).toMatch(/matched by\s+activity name/);
+  });
+
+  it('flags untagged traces on a branch step row when the caller says so', () => {
+    render(
+      <TracesTab
+        compact
+        filterNodeId={null}
+        linker={linker}
+        onClearFilter={() => {}}
+        traces={[makeTrace('executeImplementation', 'old-impl')]}
+        untaggedAmbiguous
+      />
+    );
+    expect(screen.getByText('ambiguous')).toBeTruthy();
+  });
+
   it('shows no branch headers for traces outside any fan-out', () => {
     show(null, [rec('a', 'runLint', 'lintA', 'lintA')]);
     expect(screen.queryByTestId('trace-branch')).toBeNull();

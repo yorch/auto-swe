@@ -1,7 +1,7 @@
 'use client';
 
 import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
-import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useId, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -515,13 +515,17 @@ export function TracesTab({
   linker,
   onClearFilter,
   compact = false,
+  untaggedAmbiguous = false,
 }: {
   traces: AgentTraceRecord[];
   filterNodeId: string | null;
   linker: TraceLinker;
   onClearFilter: () => void;
   compact?: boolean;
+  /** The traces were picked for one branch execution, which an untagged trace cannot confirm. */
+  untaggedAmbiguous?: boolean;
 }) {
+  const noteId = useId();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const handleToggle = useCallback(
     (id: string) => setExpandedId((prev) => (prev === id ? null : id)),
@@ -548,7 +552,8 @@ export function TracesTab({
         group = {
           activityName: t.nodeId,
           ambiguous:
-            at.ambiguous || (!at.exact && selectionNamesBranch && at.candidates.length > 0),
+            at.ambiguous ||
+            (!at.exact && (selectionNamesBranch || untaggedAmbiguous) && at.candidates.length > 0),
           attempt: t.attempt,
           branch: at.branch,
           nodeLabels: at.recordingId ? [at.recordingId] : [...at.candidates],
@@ -571,9 +576,10 @@ export function TracesTab({
       section.groups.push(group);
     }
     return [...bySection.values()];
-  }, [filtered, linker, selectionNamesBranch]);
+  }, [filtered, linker, selectionNamesBranch, untaggedAmbiguous]);
 
   const showBranchHeaders = sections.some((s) => s.branch !== null);
+  const anyAmbiguous = sections.some((sec) => sec.groups.some((g) => g.ambiguous));
 
   if (traces.length === 0) {
     return <EmptyState className="py-12" title="No trace events recorded for this run." />;
@@ -597,6 +603,13 @@ export function TracesTab({
             Show all
           </button>
         </div>
+      )}
+
+      {anyAmbiguous && (
+        <p className="border-ink-600/40 border-b px-4 py-2 text-[11px] text-amber-400" id={noteId}>
+          Traces marked ambiguous were recorded before traces named their node. They are matched by
+          activity name, so they may belong to another node or fan-out branch.
+        </p>
       )}
 
       {filtered.length === 0 ? (
@@ -652,8 +665,8 @@ export function TracesTab({
                         )}
                       {group.ambiguous && (
                         <span
+                          aria-describedby={noteId}
                           className="rounded-[5px] bg-amber-400/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-400"
-                          title="This trace was recorded before traces named their node. It was matched by activity name, so it may belong to another node or branch."
                         >
                           ambiguous
                         </span>
