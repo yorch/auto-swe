@@ -35,6 +35,7 @@ import {
   SIDEBAR,
   siteUrl,
 } from './manifest.mjs';
+import { writePlatformExplorer } from './platformExplorer.mjs';
 import {
   describeUseCases,
   renderUseCaseIndex,
@@ -249,6 +250,7 @@ async function main() {
   }
 
   const useCaseCount = await writeUseCases();
+  await writePlatformExplorer();
   console.log(
     `Synced ${pages.length} pages and ${useCaseCount} use cases into site/src/content/docs/`
   );

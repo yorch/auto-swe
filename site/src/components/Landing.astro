@@ -8,12 +8,11 @@
  * so the people listed against each row are the gates its spec actually has.
  */
 
+import { BASE, PLATFORM_EXPLORER, siteUrl } from '../../scripts/manifest.mjs';
 import useCases from '../data/useCases.json';
 import ProductFrames from './ProductFrames.astro';
 import SignalPanel from './SignalPanel.astro';
 import SystemDiagram from './SystemDiagram.astro';
-
-const BASE = '/auto-swe';
 
 /**
  * Which use cases the landing page shows, one or two per team, in this order. Every
@@ -81,6 +80,11 @@ const reasons = [
 ];
 
 const starting = [
+  {
+    blurb: 'An interactive code-grounded map: architecture, workflows, data models, and limits',
+    href: siteUrl(PLATFORM_EXPLORER.slug),
+    title: PLATFORM_EXPLORER.label,
+  },
   {
     blurb: 'The shortest complete picture of the system, and how to run it locally',
     href: `${BASE}/introduction/`,
