@@ -238,6 +238,15 @@ in flight, the oldest N (by launch time, then workflow id) are admitted and a ne
 `AGENT_RUN_CONCURRENCY_EXCEEDED` before it creates a container. Two simultaneous launches at a limit of
 one cannot both proceed.
 
+**A ledger row holds a slot only while its workflow is running in Temporal.** Both the gateway and
+the worker reconcile the non-terminal rows against Temporal during an admission call. A row whose
+workflow is finished or does not exist is closed (`currentStatus` set to `FAILED`, only if still
+non-terminal) and stops counting. The reconciliation is lazy (it happens inside admission, with no
+timer or schema), bounded (at most 8 Temporal lookups per call, oldest launch first), skips the
+calling run and any row launched in the last five minutes (the gateway writes the ledger row before it
+starts the workflow), and fails safe: when Temporal cannot be asked, the row keeps its slot and a
+warning is logged.
+
 ---
 
 ## 8. Observability
@@ -390,8 +399,10 @@ hidden template's own link is not shown.
   stops; it does not wait for CI or iterate on review. The PR is not recorded as a tracked
   `PullRequest`, so CI webhooks do not signal the run.
 - **One repository per run,** and the repository must be a `git_repo` connection.
-- **A run killed without finalising can hold a concurrency slot.** Admission counts non-terminal ledger
-  rows; a worker crash that leaves one non-terminal holds its slot until the row is closed.
+- **A dead run can still hold a slot briefly.** Reconciliation (section 7) frees a slot only for a
+  workflow Temporal reports finished or missing, at most 8 rows per admission call, and not for a row
+  launched in the last five minutes; while Temporal is unreachable the slot is kept. The reconciled row's
+  `WorkflowRun` is not touched: only the ledger row that admission counts is closed.
 - **Platform agents are excluded by a code list,** not a column, so adding a platform-internal agent
   means adding its key to `NON_LAUNCHABLE_AGENT_KEYS`.
 - **The real-Docker check is opt-in.** The trusted-container shell is exercised against real containers

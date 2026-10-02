@@ -42,6 +42,9 @@ interface State {
   agents: Array<{ scope: string; version: number }>;
   templateInstalled: boolean;
   inFlight: Array<{ teamId: string; workflowId: string }>;
+  /** Per workflow id: `finished` or `down`; anything else is running. */
+  temporal: Record<string, 'finished' | 'down'>;
+  closed: string[][];
   startFails: boolean;
   type: string;
   prevRun: unknown;
@@ -66,6 +69,7 @@ describe('POST /api/v1/agent-runs', () => {
     cfg.settings['workspace.agentRunMaxWallClockSeconds'] = 1800;
     s = {
       agents: [{ scope: 'GLOBAL', version: 3 }],
+      closed: [],
       inFlight: [],
       installationActive: true,
       orgOverBudget: false,
@@ -76,6 +80,7 @@ describe('POST /api/v1/agent-runs', () => {
       sharedMembers: [],
       startFails: false,
       templateInstalled: true,
+      temporal: {},
       type: 'git_repo',
     };
     events = [];
@@ -113,6 +118,10 @@ describe('POST /api/v1/agent-runs', () => {
             temporalWorkflowId: r.workflowId,
             workRequest: { createdAt: new Date(1) },
           })),
+        updateMany: async (args: { where: { temporalWorkflowId: { in: string[] } } }) => {
+          s.closed.push(args.where.temporalWorkflowId.in);
+          return { count: args.where.temporalWorkflowId.in.length };
+        },
       },
       agent: {
         findMany: async (args: Record<string, unknown>) => {
@@ -180,6 +189,12 @@ describe('POST /api/v1/agent-runs', () => {
       }) as unknown as never
     );
     app.decorate('temporal', {
+      isWorkflowRunning: async (id: string) => {
+        if (s.temporal[id] === 'down') {
+          throw new Error('temporal unreachable');
+        }
+        return s.temporal[id] !== 'finished';
+      },
       startRunnableWorkflow: async (id: string, input: Record<string, unknown>) => {
         events.push('start');
         if (s.startFails) {
@@ -358,6 +373,36 @@ describe('POST /api/v1/agent-runs', () => {
       expect(res.statusCode).toBe(429);
       expect(res.json().error.code).toBe('AGENT_RUN_CONCURRENCY_EXCEEDED');
       expect(events).toEqual([]);
+    });
+
+    it('admits a launch once the runs holding the slots are gone from Temporal, and closes them', async () => {
+      s.inFlight = [
+        { teamId: 'team-1', workflowId: 'w1' },
+        { teamId: 'team-1', workflowId: 'w2' },
+      ];
+      s.temporal = { w1: 'finished', w2: 'finished' };
+      const res = await post({});
+      expect(res.statusCode).toBe(201);
+      expect(s.closed).toEqual([['w1', 'w2']]);
+    });
+
+    it('keeps counting runs that are still running in Temporal', async () => {
+      s.inFlight = [
+        { teamId: 'team-1', workflowId: 'w1' },
+        { teamId: 'team-1', workflowId: 'w2' },
+      ];
+      expect((await post({})).statusCode).toBe(429);
+      expect(s.closed).toEqual([]);
+    });
+
+    it('does not free a slot when Temporal cannot be reached', async () => {
+      s.inFlight = [
+        { teamId: 'team-1', workflowId: 'w1' },
+        { teamId: 'team-1', workflowId: 'w2' },
+      ];
+      s.temporal = { w1: 'down', w2: 'down' };
+      expect((await post({})).statusCode).toBe(429);
+      expect(s.closed).toEqual([]);
     });
 
     it('429s a launch past the platform limit even when the team has room', async () => {

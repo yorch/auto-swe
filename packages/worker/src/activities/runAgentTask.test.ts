@@ -13,6 +13,7 @@ const m = vi.hoisted(() => ({
     })),
     gitAuthed: vi.fn(async () => ''),
   },
+  closeRows: vi.fn(async (_args: unknown) => ({ count: 1 })),
   commit: vi.fn(),
   createPr: vi.fn(),
   gate: vi.fn(),
@@ -35,6 +36,8 @@ const m = vi.hoisted(() => ({
     'workspace.maxToolOutputChars': 20000,
   } as Record<string, unknown>,
   slots: [] as Array<{ workflowId: string; teamId: string | null; launchedAt: Date }>,
+  /** Per workflow id: `finished` or `down`; anything else is running. */
+  temporal: {} as Record<string, 'finished' | 'down'>,
   toolKeys: null as string[] | null,
   trustedWs: {
     containerId: 'trusted-ws',
@@ -45,7 +48,7 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    activeWorkflow: { findFirst: vi.fn(async () => m.ledger) },
+    activeWorkflow: { findFirst: vi.fn(async () => m.ledger), updateMany: m.closeRows },
     connection: {
       findUniqueOrThrow: vi.fn(async () => ({
         defaultBranch: 'main',
@@ -56,6 +59,20 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     workflowRun: { findUnique: vi.fn(async () => m.run) },
   },
+}));
+vi.mock('../lib/temporalClient.js', () => ({
+  getTemporalClient: () => ({
+    workflow: {
+      getHandle: (id: string) => ({
+        describe: async () => {
+          if (m.temporal[id] === 'down') {
+            throw new Error('temporal unreachable');
+          }
+          return { status: { name: m.temporal[id] === 'finished' ? 'TERMINATED' : 'RUNNING' } };
+        },
+      }),
+    },
+  }),
 }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: vi.fn(async () => m.settings) }));
 vi.mock('@auto-swe/shared/lib/agentRunAdmission', async (orig) => ({
@@ -172,6 +189,7 @@ beforeEach(() => {
   };
   m.ledger = { repoId: 'repo-1' };
   m.slots = [{ launchedAt: new Date(1), teamId: 'team-1', workflowId: 'wf-1' }];
+  m.temporal = {};
   m.toolKeys = null;
   m.settings['workspace.agentRunMaxConcurrentGlobal'] = 4;
   m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 2;
@@ -251,6 +269,46 @@ describe('concurrency and kill switch', () => {
     expect((await failureOf(runAgentTask({ request: request() }))).type).toBe(
       'AGENT_RUNS_DISABLED'
     );
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('is admitted once a row whose workflow Temporal reports finished is closed', async () => {
+    // A crashed older run holds the only per-team slot in the ledger.
+    m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 1;
+    m.slots = [
+      { launchedAt: new Date(1), teamId: 'team-1', workflowId: 'crashed' },
+      { launchedAt: new Date(2), teamId: 'team-1', workflowId: 'wf-1' },
+    ];
+    m.temporal = { crashed: 'finished' };
+    await runAgentTask({ request: request() });
+    expect(m.closeRows).toHaveBeenCalledTimes(1);
+    expect(m.closeRows.mock.calls[0]?.[0]).toMatchObject({
+      data: { currentStatus: 'FAILED' },
+      where: { temporalWorkflowId: { in: ['crashed'] } },
+    });
+  });
+
+  it('keeps counting a row whose workflow is still running', async () => {
+    m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 1;
+    m.slots = [
+      { launchedAt: new Date(1), teamId: 'team-1', workflowId: 'running' },
+      { launchedAt: new Date(2), teamId: 'team-1', workflowId: 'wf-1' },
+    ];
+    const f = await failureOf(runAgentTask({ request: request() }));
+    expect(f.type).toBe('AGENT_RUN_CONCURRENCY_EXCEEDED');
+    expect(m.closeRows).not.toHaveBeenCalled();
+  });
+
+  it('does not free the slot when Temporal cannot be reached', async () => {
+    m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 1;
+    m.slots = [
+      { launchedAt: new Date(1), teamId: 'team-1', workflowId: 'unknown' },
+      { launchedAt: new Date(2), teamId: 'team-1', workflowId: 'wf-1' },
+    ];
+    m.temporal = { unknown: 'down' };
+    const f = await failureOf(runAgentTask({ request: request() }));
+    expect(f.type).toBe('AGENT_RUN_CONCURRENCY_EXCEEDED');
+    expect(m.closeRows).not.toHaveBeenCalled();
     expect(createWorkspace).not.toHaveBeenCalled();
   });
 

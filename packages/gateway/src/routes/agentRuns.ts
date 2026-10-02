@@ -14,7 +14,12 @@ import {
   isLaunchableAgentKey,
   NON_LAUNCHABLE_AGENT_KEYS,
 } from '@auto-swe/shared/lib/agentRun';
-import { loadAgentRunSlots, wouldAdmitNewRun } from '@auto-swe/shared/lib/agentRunAdmission';
+import {
+  closeAgentRunLedgerRows,
+  loadAgentRunSlots,
+  reconcileAgentRunSlots,
+  wouldAdmitNewRun,
+} from '@auto-swe/shared/lib/agentRunAdmission';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
@@ -265,14 +270,30 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     // Concurrency. Friendly early refusal; the worker admits by rank and is the authority.
-    const admission = wouldAdmitNewRun(
+    // A ledger row only holds a slot while its workflow is still running in
+    // Temporal; one whose workflow is gone is closed here (bounded, and kept
+    // counting when Temporal cannot be asked).
+    const liveSlots = await reconcileAgentRunSlots(
       await loadAgentRunSlots(fastify.prisma, template.id),
-      repo.teamId,
       {
-        global: settings['workspace.agentRunMaxConcurrentGlobal'],
-        perTeam: settings['workspace.agentRunMaxConcurrentPerTeam'],
+        close: closeAgentRunLedgerRows(fastify.prisma),
+        isRunning: (workflowId) => fastify.temporal.isWorkflowRunning(workflowId),
+        onClosed: (workflowIds) =>
+          fastify.log.warn(
+            { workflowIds },
+            'closed agent run ledger rows whose workflow is no longer running'
+          ),
+        onUnreachable: (workflowId, err) =>
+          fastify.log.warn(
+            { err, workflowId },
+            'could not confirm an agent run is finished; it keeps its concurrency slot'
+          ),
       }
     );
+    const admission = wouldAdmitNewRun(liveSlots, repo.teamId, {
+      global: settings['workspace.agentRunMaxConcurrentGlobal'],
+      perTeam: settings['workspace.agentRunMaxConcurrentPerTeam'],
+    });
     if (!admission.admitted) {
       return admission.reason === 'disabled'
         ? error(reply, 403, 'AGENT_RUNS_DISABLED', 'Agent runs are disabled for this team')
