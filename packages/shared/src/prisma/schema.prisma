@@ -1542,7 +1542,20 @@ model AgentTrace {
   /// it from instead.
   workflowId   String?      @map("workflow_id")
   /// Temporal activity type that produced this trace (e.g. "executeImplementation").
+  /// This is NOT a workflow-spec node id; `specNodeId` / `recordingId` are.
   nodeId       String      @map("node_id")
+  /// The workflow-spec node (key in `spec.nodes`) the activity ran for. Null when
+  /// the activity was not dispatched by the interpreter (non-runnable workflows,
+  /// human gates) and on rows that predate the column.
+  specNodeId   String?     @map("spec_node_id")
+  /// The interpreter's recording id for that node: the spec key, prefixed with the
+  /// fan-out branch path inside a branch (`fan[0]/impl`, `fan[0]/inner[1]/impl`).
+  /// It matches `WorkflowStep.nodeId`. Null in the same cases as `specNodeId`.
+  recordingId  String?     @map("recording_id")
+  /// The interpreter's 1-based attempt at that node (`onFail.retry` re-dispatches
+  /// the activity); `attempt` below is Temporal's own retry of one dispatch. Null
+  /// in the same cases as `specNodeId`.
+  stepAttempt  Int?        @map("step_attempt")
   /// The agent key (identity) that produced this trace, e.g. "implementer".
   agentKey     String      @map("agent_key")
   /// Temporal activity attempt number (1-based). Lets the UI group traces by retry attempt.
@@ -1571,6 +1584,7 @@ model AgentTrace {
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([runId, nodeId])
+  @@index([runId, recordingId])
   @@index([createdAt])
   @@map("agent_traces")
 }
