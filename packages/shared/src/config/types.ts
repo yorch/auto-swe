@@ -24,6 +24,7 @@ export type OverridableScope = Exclude<SettingScope, 'GLOBAL'>;
 export const SETTING_GROUPS = [
   'channel',
   'github',
+  'mcp',
   'memory',
   'repoAccess',
   'repoDependency',
