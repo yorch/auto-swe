@@ -65,9 +65,8 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
     setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     ...openPullRequest({ next: ciWaitEntry() }),
     // A bare CI gate: this template does not loop on CI failures.
-    ...ciLoop({ fix: false, passed: 'setCompleted' }),
+    ...ciLoop({ fix: false, passed: 'done' }),
 
-    setCompleted: statusStamp('COMPLETED', 'done', { group: 'finish' }),
     done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,

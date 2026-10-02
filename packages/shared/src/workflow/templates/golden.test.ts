@@ -74,7 +74,26 @@ function removePassThrough(spec: WorkflowSpec, id: string): WorkflowSpec {
 const INTENDED_CHANGES: Record<
   string,
   { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec }
-> = {};
+> = Object.fromEntries(
+  // Seven templates stamped COMPLETED just before their SUCCESS terminate. The finalizer
+  // (`finalizeWorkflowRun`) already writes COMPLETED on a SUCCESS run, so the node was a
+  // second write of the same fact. Removing it retargets what pointed at it to `done`.
+  [
+    'agent-reviewed-pr',
+    'code-and-ci',
+    'consensus-review',
+    'default-engineering',
+    'dependency-update',
+    'four-eyes',
+    'pr-approval-gate',
+  ].map((name) => [
+    name,
+    {
+      apply: (g: WorkflowSpec) => removePassThrough(g, 'setCompleted'),
+      reason: 'the finalizer already writes COMPLETED on SUCCESS',
+    },
+  ])
+);
 
 describe('built-in templates match their pre-helper golden specs', () => {
   it('has a golden file for every built-in template, and no stray ones', () => {

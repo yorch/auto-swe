@@ -1492,7 +1492,9 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
     expect(result.status).toBe('SUCCESS');
     expect(result.result.prNumber).toBe(42);
     expect(result.result.prUrl).toBe('https://x/pr/42');
-    // Verify ordered domain-state transitions match the hardcoded workflow.
+    // Verify ordered domain-state transitions match the hardcoded workflow. The final
+    // COMPLETED is not one of them: the spec has no stamp for it because
+    // `finalizeWorkflowRun` writes COMPLETED when the run ends SUCCESS.
     const statuses = calls
       .filter((c) => c.step === 'updateDomainState')
       .map((c) => c.inputs.status);
@@ -1502,7 +1504,6 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
       'IN_REVIEW',
       'AWAITING_CI',
       'AWAITING_HUMAN_MERGE',
-      'COMPLETED',
     ]);
   });
 

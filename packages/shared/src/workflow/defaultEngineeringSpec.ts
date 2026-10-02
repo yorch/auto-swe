@@ -75,14 +75,15 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
     }),
     commitLesson: {
       group: 'human merge',
-      next: 'setCompleted',
+      next: 'done',
       onError: 'continue',
       step: 'commitToMemory',
       title: 'Store the lesson',
       type: 'step',
     },
-    setCompleted: statusStamp('COMPLETED', 'done', { group: 'human merge' }),
-    done: terminate('SUCCESS', { result: prResult() }),
+    // No COMPLETED status stamp ahead of `done`: finalizeWorkflowRun writes it when the run
+    // ends SUCCESS.
+    done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

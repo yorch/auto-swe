@@ -26,6 +26,23 @@ describe.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
       ).toEqual([]);
     });
 
+    it('does not stamp COMPLETED itself: the finalizer writes it when the run ends SUCCESS', () => {
+      for (const [id, node] of Object.entries(spec.nodes)) {
+        const stampsCompleted =
+          node.type === 'step' &&
+          node.step === 'updateDomainState' &&
+          node.config?.status === 'COMPLETED';
+        expect(stampsCompleted, id).toBe(false);
+      }
+    });
+
+    it('gives every node a group, so the outline has no loose nodes', () => {
+      const loose = Object.entries(spec.nodes)
+        .filter(([id, node]) => !node.group && !(id === 'done' || node.type === 'terminate'))
+        .map(([id]) => id);
+      expect(loose).toEqual([]);
+    });
+
     it('never routes publishOutcome straight into writeOutcome', () => {
       // publishOutcome records an autonomy decision; a write that follows it directly
       // ignores that decision, so the audit log would say "approval required" while

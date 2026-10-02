@@ -43,10 +43,9 @@ export const CODE_AND_CI_SPEC: WorkflowSpec = {
     ...openPullRequest({ next: ciWaitEntry(), resetCiRetries: true }),
     ...ciLoop({
       fix: { handoff: { repush: 'repushAfterFix' } },
-      passed: 'setCompleted',
+      passed: 'done',
     }),
 
-    setCompleted: statusStamp('COMPLETED', 'done', { group: 'finish' }),
     done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,

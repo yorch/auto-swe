@@ -57,13 +57,12 @@ export const PR_APPROVAL_GATE_SPEC: WorkflowSpec = {
     checkCI: {
       expr: 'context.ciResultPayload.passed == true',
       group: 'CI wait',
-      onFalse: 'setCompleted',
-      onTrue: 'setCompleted',
+      onFalse: 'done',
+      onTrue: 'done',
       title: 'CI passed?',
       type: 'cond',
     },
 
-    setCompleted: statusStamp('COMPLETED', 'done', { group: 'finish' }),
     done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,
