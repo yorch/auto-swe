@@ -202,6 +202,32 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  'mcp.maxConcurrentRuns': defineSetting({
+    defaultValue: 2,
+    description:
+      'The most runs one user may have in flight before MCP refuses another submit_work_request. Every run counts, including ones the user started from the dashboard or the CLI, so it bounds what an agent acting for that user can have running in total. Checked under a per-user lock when a run is recorded, so parallel MCP submissions cannot exceed it; a run started from the dashboard at the same instant can still exceed it by one. A run left non-terminal by a crash or an external terminate keeps counting until its row is set to a terminal status. Read on every call, so a change applies within the ~30 s settings cache and needs no restart.',
+    group: 'mcp',
+    label: 'MCP concurrent runs per user',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(50),
+    unit: 'runs',
+  }),
+  'mcp.writeCallsPerMinute': defineSetting({
+    defaultValue: 10,
+    description:
+      'The most write tool calls (submit_work_request and cancel_run) one user may make through MCP in a minute, counting refused ones. Counted per gateway process, so with several replicas a user can reach this many per replica. Read on every call, so a change applies within the ~30 s settings cache and needs no restart.',
+    group: 'mcp',
+    label: 'MCP write calls per minute',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(600),
+    unit: 'calls/min',
+  }),
   'mcp.writeToolsEnabled': defineSetting({
     defaultValue: false,
     description:
