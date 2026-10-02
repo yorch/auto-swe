@@ -29,6 +29,11 @@ export const AGENT_RUN_TEMPLATE_ORIGIN = 'system:agent-run';
 /** The internal step that owns the workspace, gate and push. System template only. */
 export const AGENT_RUN_STEP = 'runAgentTask';
 
+/** Case-insensitive: the seed matches by name and a near-miss must not slip through. */
+export function isReservedTemplateName(name: string): boolean {
+  return name.trim().toLowerCase() === AGENT_RUN_TEMPLATE_NAME.toLowerCase();
+}
+
 /** `true` for an origin no bundle or API write may set. */
 export function isReservedTemplateOrigin(origin: string | null | undefined): boolean {
   return typeof origin === 'string' && origin.startsWith('system:');

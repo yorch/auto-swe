@@ -74,12 +74,12 @@ describe('AgentRunOutcomeCard', () => {
     expect(container.querySelector('img')).toBeNull();
   });
 
-  it('is what the generic outcome card renders for the Agent Run template only', () => {
+  it('is what the generic outcome card renders for a run the gateway flags, never by name', () => {
     const { container, rerender } = render(
-      <RunOutcomeCard result={DELIVERED} templateName="Agent Run" />
+      <RunOutcomeCard isAgentRun result={DELIVERED} templateName="Agent Run" />
     );
     expect(container.textContent).toContain('Agent run outcome');
-    rerender(<RunOutcomeCard result={DELIVERED} templateName="custom" />);
+    rerender(<RunOutcomeCard result={DELIVERED} templateName="Agent Run" />);
     expect(container.firstChild).toBeNull();
   });
 });

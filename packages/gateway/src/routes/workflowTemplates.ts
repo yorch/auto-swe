@@ -821,6 +821,16 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (nameOverride) {
         parsedSpec.name = nameOverride;
       }
+      if (nameOverride && isReservedTemplateName(nameOverride)) {
+        return reply.status(400).send({
+          error: { code: 'RESERVED_TEMPLATE_NAME', message: 'That template name is reserved' },
+        });
+      }
+      // A model-chosen name is not the caller's to refuse: keep it from colliding with the
+      // reserved system template by renaming it.
+      if (isReservedTemplateName(parsedSpec.name)) {
+        parsedSpec.name = `${parsedSpec.name} (generated)`;
+      }
       const name = parsedSpec.name;
 
       const shellNodes = collectShellNodes(parsedSpec);

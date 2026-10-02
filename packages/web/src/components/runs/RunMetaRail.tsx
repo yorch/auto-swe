@@ -3,7 +3,7 @@
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
-import { classifyAgentRunFailure, isAgentRunTemplate } from '@/lib/agentRun';
+import { classifyAgentRunFailure } from '@/lib/agentRun';
 import { cn, formatCost, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
 import { AgentRunFailureNote } from './AgentRunOutcomeCard';
 import { AutonomyDecisionsPanel } from './AutonomyDecisionsPanel';
@@ -45,7 +45,7 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
       ? new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()
       : null;
 
-  const isAgentRun = isAgentRunTemplate(run.templateName);
+  const isAgentRun = run.isAgentRun === true;
   const agentFailure = isAgentRun ? classifyAgentRunFailure(failedStep?.error) : null;
   const totalTraces = run.traces?.length ?? 0;
   const cost = run.costUsdAccrued;
@@ -155,7 +155,11 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
         }
         return (
           <RailSection>
-            <RunOutcomeCard result={run.result} templateName={run.templateName} />
+            <RunOutcomeCard
+              isAgentRun={isAgentRun}
+              result={run.result}
+              templateName={run.templateName}
+            />
           </RailSection>
         );
       })()}

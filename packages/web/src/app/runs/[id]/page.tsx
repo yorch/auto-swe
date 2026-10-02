@@ -38,7 +38,6 @@ import {
   useRunDetail,
 } from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
-import { isAgentRunTemplate } from '@/lib/agentRun';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -719,7 +718,7 @@ export default function RunDetailPage({ params }: PageProps) {
   const agentRerun = useRerunAgentRun();
   // An agent run is re-run through its own endpoint: the generic retry rebuilds
   // the request without its payload and answers 409 USE_AGENT_RUN_RERUN.
-  const isAgentRun = isAgentRunTemplate(run?.templateName);
+  const isAgentRun = run?.isAgentRun === true;
   const retryRun = isAgentRun ? agentRerun : genericRetry;
   const retried = useRetriedRun(
     retryRun.data?.workRequestId ?? null,

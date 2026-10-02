@@ -52,6 +52,16 @@ describe('persistDraftTemplate', () => {
     expect(result?.name.endsWith(' (2)')).toBe(true);
   });
 
+  it.each(['Agent Run', ' agent run '])(
+    'never gives a draft the reserved name %j',
+    async (name) => {
+      tplCreate.mockResolvedValue({ id: 'tpl-r' });
+      const result = await persistDraftTemplate({ name, spec: { ...SPEC }, teamId: 'team-1' });
+      expect(result?.name).toBe(`${name.trim()} (generated)`);
+      expect(tplCreate.mock.calls[0][0].data.name).not.toMatch(/^agent run$/i);
+    }
+  );
+
   it('accepts a null team (global draft)', async () => {
     tplCreate.mockResolvedValue({ id: 'tpl-g' });
     await persistDraftTemplate({ spec: { ...SPEC }, teamId: null });

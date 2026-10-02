@@ -558,6 +558,8 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   steps: WorkflowStepRecord[];
   traces: AgentTraceRecord[];
   templateName: string;
+  /** A run of the hidden Agent Run system template (keyed on its origin, not its name). */
+  isAgentRun?: boolean;
   humanSteps?: HumanStepSummary[];
 }
 

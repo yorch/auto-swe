@@ -1,5 +1,7 @@
 import type { Prisma } from '@auto-swe/shared';
-import { AGENT_RUN_TEMPLATE_NAME, isReservedTemplateOrigin } from '@auto-swe/shared/lib/agentRun';
+import { isReservedTemplateOrigin } from '@auto-swe/shared/lib/agentRun';
+
+export { isReservedTemplateName } from '@auto-swe/shared/lib/agentRun';
 
 /**
  * The hidden system templates (today: "Agent Run"). They are platform
@@ -9,11 +11,6 @@ import { AGENT_RUN_TEMPLATE_NAME, isReservedTemplateOrigin } from '@auto-swe/sha
 
 export function isSystemTemplate(t: { origin?: string | null; teamId: string | null }): boolean {
   return t.teamId === null && isReservedTemplateOrigin(t.origin);
-}
-
-/** Case-insensitive: the seed matches by name and a near-miss must not slip through. */
-export function isReservedTemplateName(name: string): boolean {
-  return name.trim().toLowerCase() === AGENT_RUN_TEMPLATE_NAME.toLowerCase();
 }
 
 /**
