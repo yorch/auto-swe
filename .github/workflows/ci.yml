@@ -213,3 +213,10 @@ jobs:
         env:
           MCP_OAUTH_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/mcp.pg.test.ts
+
+      # `Idempotency-Key` on POST /work-requests: the unique index and the lost-race
+      # path are the mechanism, so this needs the real schema, not a mocked Prisma.
+      - name: Work-request idempotency (database-backed tests)
+        env:
+          WORK_REQUEST_PG_TEST: '1'
+        run: yarn test packages/gateway/src/routes/workRequests.idempotency.pg.test.ts

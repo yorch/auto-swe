@@ -110,7 +110,7 @@ packages/
 | `src/plugins/prisma.ts`, `src/plugins/temporal.ts` | Decorate `fastify.prisma` / `fastify.temporal` |
 | `src/lib/betterAuth.ts` | better-auth instance — email+password, GitHub/Google OAuth, Okta SSO (OIDC), magic-link, cookie sessions |
 | `src/lib/workflowLaunch.ts` | `launchTrackedWorkflow` — the single launch path; every route that starts a run goes through it. Writes the `RunInput` (+ `ActiveWorkflow`, when the launch keeps one) in one transaction, **then** starts the Temporal workflow, deleting the rows if the start fails. The unique index on `ActiveWorkflow.temporalWorkflowId` is the atomic dedup gate, so a run cannot execute without a ledger row to attribute its spend and PRs to. |
-| `src/lib/idempotency.ts` | `Idempotency-Key` support for the two generic triggers — hashes the caller's key into a deterministic workflow ID so the dedup gate above has something stable to fire on |
+| `src/lib/idempotency.ts` | `Idempotency-Key` support for the two generic triggers — hashes the caller's key into a deterministic workflow ID so the dedup gate above has something stable to fire on. `POST /work-requests` reuses only its header schema: it keeps its ticket-derived workflow ID and stores the key on `RunInput` (unique per submitter) instead — see [product overview](./product-overview.md) |
 | `src/lib/github.ts` | GitHub webhook HMAC verification + the paginated repository listing behind repo import (plain `fetch`; the gateway carries no Octokit) |
 | `src/lib/slack.ts` | Slack request-signature verification + Web API helpers (post a message, publish App Home, open a view) |
 | `src/routes/slack.ts` | Slack slash-command, events, and interactive handlers (mounted at `/api/v1/auth/slack`) |
@@ -699,6 +699,22 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **`Idempotency-Key` on `POST /work-requests` has an in-progress window and never expires.** The
+  ledger rows are written before the Temporal start, so a same-key request that arrives while the
+  start is in flight gets `409 IDEMPOTENCY_KEY_IN_PROGRESS` (`Retry-After`), not success: the key only
+  replays once `RunInput.startedActiveWorkflowId` is stamped after a successful start. If the start
+  fails the rows are deleted and the key is free. Two failures can leave the key `IN_PROGRESS`
+  indefinitely, and they need opposite remedies; an operator tells them apart by asking Temporal
+  whether the workflow id of the `ActiveWorkflow` row exists (Temporal UI, or `temporal workflow
+  describe`). (1) The stamp write failed after a successful start (the gateway logs `could not confirm
+  idempotent launch`, or it died between the start and the stamp): a run **is** live. Set
+  `run_inputs.started_active_workflow_id` to that run's `active_workflows.id`; the key then replays
+  normally. (2) Compensation failed after a failed start: no run exists (Temporal has no such
+  execution). Delete the leftover `ActiveWorkflow` row and then its `RunInput` row; the key is free. In
+  neither case does the key turn into a false success. Keys are never expired or swept, so a key is permanently bound to its first ticket,
+  repository, description and budget tier. A concurrent same-key loser whose winner then failed to start
+  gets `409 IDEMPOTENCY_KEY_RETRY`. Only this route honours the key on `RunInput`; the generic triggers
+  hash it into a workflow ID instead.
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
   the database will catch. The shared Prisma singleton carries a `tenantGuard` extension — applied

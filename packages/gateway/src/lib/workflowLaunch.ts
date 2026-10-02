@@ -86,7 +86,17 @@ export type LaunchWorkflowResult =
    * the unique-index race or Temporal reported the execution already started.
    * Callers map this to their own conflict response (409 / `duplicate: true`).
    */
-  | { ok: false; reason: 'DUPLICATE' };
+  | {
+      ok: false;
+      reason: 'DUPLICATE';
+      /**
+       * Where the duplicate was detected. `ledger`: the row insert hit a unique index, so
+       * the owner is in the database. `temporal`: the ledger write succeeded (and was
+       * compensated) but Temporal already had an execution under this id, one no row
+       * accounts for. Callers that do not care ignore it.
+       */
+      source: 'ledger' | 'temporal';
+    };
 
 export async function launchTrackedWorkflow(
   prisma: FastifyInstance['prisma'],
@@ -117,7 +127,7 @@ export async function launchTrackedWorkflow(
     activeWorkflowId = activeWorkflow ? results[results.length - 1].id : null;
   } catch (err) {
     if (isUniqueConstraintError(err)) {
-      return { ok: false, reason: 'DUPLICATE' };
+      return { ok: false, reason: 'DUPLICATE', source: 'ledger' };
     }
     throw err;
   }
@@ -135,7 +145,7 @@ export async function launchTrackedWorkflow(
       }
     );
     if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-      return { ok: false, reason: 'DUPLICATE' };
+      return { ok: false, reason: 'DUPLICATE', source: 'temporal' };
     }
     throw err;
   }

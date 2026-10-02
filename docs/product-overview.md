@@ -236,6 +236,18 @@ original run (`409`) instead of starting a second one. Without one, each request
 idempotency is opt-in, because a schedule or a manual retry often *wants* to run the same payload
 again.
 
+`POST /api/v1/work-requests` takes the same header but does not derive its workflow ID from it: a work request
+already has a ticket-derived ID, and the in-flight guard on it (one running execution per ticket and repository,
+`409`) must keep holding whatever key arrives. The key is stored on the `RunInput` and is unique per submitter, so
+a retry with the same key, ticket, repository, description and budget tier, made after the run started,
+answers `200` with the `workRequestId` and the single `workflowIds` entry the original `201` returned (never a later
+re-run's) and `deduplicated: true`. The caller must still be able to launch against the repository: a replay by
+someone since removed from the team is refused like a fresh submission. The org's monthly cap is not re-applied,
+because a replay starts nothing. The same key with different values is `422 IDEMPOTENCY_KEY_MISMATCH`; while the
+original request is still starting its run the key answers `409 IDEMPOTENCY_KEY_IN_PROGRESS` with `Retry-After`; and
+a key whose launch failed to start is free to reuse. Two *different* keys for one ticket that is still running get the
+ordinary `409`.
+
 **What is still SWE-shaped is the plumbing behind them, not the door.** Both marshal the payload into
 a `RepoWorkRequest` — the ticket→PR struct — passing `repoId: ''` when there is no connection, and
 `RunInput.externalTicketId` remains non-nullable in the schema (auto-filled rather than demanded of

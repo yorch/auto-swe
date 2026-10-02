@@ -127,6 +127,38 @@ describe('runWorkRequestsCommand', () => {
     expect(out).not.toContain('runs tail <runId>');
   });
 
+  it('rejects an empty --idempotency-key instead of silently dropping it', async () => {
+    const code = await runWorkRequestsCommand(
+      ['--ticket=T-1', '--description=foo', '--repo=org/repo', '--idempotency-key='],
+      ENV
+    );
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('--idempotency-key');
+  });
+
+  it('sends --idempotency-key as a header and reports a replay', async () => {
+    const seen: Array<{ url: string; headers: Record<string, string> }> = [];
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: { headers: Record<string, string> }) => {
+        seen.push({ headers: init?.headers ?? {}, url });
+        const body = url.includes('/work-requests')
+          ? { data: { deduplicated: true, workflowIds: ['wf-1'], workRequestId: 'wr-1' } }
+          : { data: [{ id: 'repo-1', organizationName: 'org', repoName: 'repo' }] };
+        return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify(body) });
+      }) as unknown as typeof fetch;
+
+    const code = await runWorkRequestsCommand(
+      ['--ticket=T-1', '--description=foo', '--repo=org/repo', '--idempotency-key=abc'],
+      ENV
+    );
+    expect(code).toBe(0);
+    const post = seen.find((c) => c.url.includes('/work-requests'));
+    expect(post?.headers['Idempotency-Key']).toBe('abc');
+    expect(stdoutWrites.join('')).toContain('already submitted');
+    expect(stdoutWrites.join('')).toContain('wr-1');
+  });
+
   it('pages through /repositories until it finds the repo', async () => {
     const filler = Array.from({ length: REPO_PAGE_SIZE }, (_, i) => ({
       id: `r-${i}`,

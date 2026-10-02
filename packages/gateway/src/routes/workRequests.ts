@@ -22,6 +22,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { experimentBucket } from '../lib/experimentBucket.js';
+import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { paginationQuery } from '../lib/pagination.js';
@@ -355,35 +356,125 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         body: CreateWorkRequestSchema,
+        headers: IdempotencyHeaderSchema,
       },
     },
     async (request, reply) => {
       const { externalTicketId, description, repoIds, budgetTier } = request.body;
       const user = requireUser(request);
+      const idempotencyKey = request.headers['idempotency-key'];
 
       // Verify repository exists and is accessible to the requesting user.
       // Include team membership + org info so non-admins can only trigger work
       // on their own team's repos and the org budget cap can be checked.
-      const repo = await fastify.prisma.connection.findUnique({
-        include: {
-          installation: { select: { installationId: true, isActive: true } },
-          // A member of a team the repository is shared with may launch too.
-          shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
-          team: {
-            select: {
-              memberships: {
-                select: { userId: true },
-                where: { userId: user.sub },
+      const loadRepo = (id: string) =>
+        fastify.prisma.connection.findUnique({
+          include: {
+            installation: { select: { installationId: true, isActive: true } },
+            // A member of a team the repository is shared with may launch too.
+            shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
+            team: {
+              select: {
+                memberships: {
+                  select: { userId: true },
+                  where: { userId: user.sub },
+                },
+                organization: {
+                  select: { id: true, monthlyBudgetUsdCents: true },
+                },
+                orgId: true,
               },
-              organization: {
-                select: { id: true, monthlyBudgetUsdCents: true },
-              },
-              orgId: true,
             },
           },
-        },
-        where: { id: repoIds[0] },
-      });
+          where: { id },
+        });
+
+      // `Idempotency-Key`: a retry of a submission this user already made answers
+      // with the run it started rather than a second one. Checked before anything
+      // else so a replay never allocates an id, and looked up again wherever a
+      // concurrent same-key request could have won the race. The key is scoped to
+      // the authenticated user; nothing here reads a client-supplied owner.
+      //
+      // A row only replays as success once `startedActiveWorkflowId` is stamped,
+      // i.e. after the Temporal start succeeded. Until then the ledger rows exist
+      // but the run may yet be compensated away, so the answer is "in progress".
+      const replayForKey = async () => {
+        if (!idempotencyKey) {
+          return null;
+        }
+        const prior = await fastify.prisma.runInput.findUnique({
+          select: {
+            connectionId: true,
+            description: true,
+            externalTicketId: true,
+            id: true,
+            payload: true,
+            startedActiveWorkflowId: true,
+          },
+          where: { requestedById_idempotencyKey: { idempotencyKey, requestedById: user.sub } },
+        });
+        if (!prior) {
+          return null;
+        }
+        const priorBudget = (prior.payload as { budget?: unknown } | null)?.budget;
+        if (
+          prior.externalTicketId !== externalTicketId ||
+          prior.description !== description ||
+          prior.connectionId !== repoIds[0] ||
+          priorBudget !== budgetTier
+        ) {
+          return reply.status(422).send({
+            error: {
+              code: 'IDEMPOTENCY_KEY_MISMATCH',
+              message:
+                'This Idempotency-Key was already used for a different request. Use a new key for a different ticket, repository, description or budget tier.',
+            },
+          });
+        }
+        if (!prior.startedActiveWorkflowId) {
+          return reply
+            .status(409)
+            .header('retry-after', '2')
+            .send({
+              error: {
+                code: 'IDEMPOTENCY_KEY_IN_PROGRESS',
+                message:
+                  'A request with this Idempotency-Key has not finished starting. Retry shortly with the same key.',
+              },
+            });
+        }
+        // The run exists, but only someone who could launch it now may be told its
+        // ids: re-check repository access and org membership. The org's monthly
+        // cap is deliberately not re-applied -- a replay starts and spends nothing.
+        const priorRepo = await loadRepo(prior.connectionId as string);
+        if (!priorRepo?.isActive) {
+          return reply.status(404).send({
+            error: { code: 'REPO_NOT_FOUND', message: 'Repository not found or inactive' },
+          });
+        }
+        const authorization = await authorizeLaunch(fastify.prisma, user, {
+          gate: request.repoAccessGate,
+          log: request.log,
+          repos: [priorRepo],
+          runIdentity: 'caller',
+        });
+        if (!authorization.ok && authorization.refusal.kind !== 'org-budget') {
+          return sendLaunchRefusal(reply, authorization.refusal);
+        }
+        return reply.status(200).send({
+          data: {
+            deduplicated: true,
+            workflowIds: [prior.startedActiveWorkflowId],
+            workRequestId: prior.id,
+          },
+        });
+      };
+      const replayed = await replayForKey();
+      if (replayed) {
+        return replayed;
+      }
+
+      const repo = await loadRepo(repoIds[0]);
       if (!repo?.isActive) {
         return reply.status(404).send({
           error: {
@@ -431,19 +522,48 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // The id this ticket had before repository ids carried their host: an
       // execution still running under it blocks a duplicate exactly as one under
       // the new id does.
-      const allocated = await allocateWorkflowId(
-        fastify.prisma,
-        baseWorkflowId,
-        { externalTicketId, repoId: repo.id },
-        generateWorkflowId(externalTicketId, repo.organizationName, repo.repoName)
-      );
+      const allocate = () =>
+        allocateWorkflowId(
+          fastify.prisma,
+          baseWorkflowId,
+          { externalTicketId, repoId: repo.id },
+          generateWorkflowId(externalTicketId, repo.organizationName, repo.repoName)
+        );
+      const allocated = await allocate();
+
+      // The ticket is held by a run that is not this key's. With a key, the holder
+      // may have been a same-key request that has since compensated (its Temporal
+      // start failed), in which case nothing runs and the honest answer is "retry",
+      // not "already running".
+      const refuseConflict = async (message: string, source: 'ledger' | 'temporal' = 'ledger') => {
+        if (
+          idempotencyKey &&
+          source === 'ledger' &&
+          !('conflictWorkflowId' in (await allocate()))
+        ) {
+          return reply
+            .status(409)
+            .header('retry-after', '1')
+            .send({
+              error: {
+                code: 'IDEMPOTENCY_KEY_RETRY',
+                message:
+                  'A concurrent request with this Idempotency-Key did not start a run. Retry with the same key.',
+              },
+            });
+        }
+        return reply.status(409).send({ error: { code: 'WORKFLOW_ALREADY_EXISTS', message } });
+      };
       if ('conflictWorkflowId' in allocated) {
-        return reply.status(409).send({
-          error: {
-            code: 'WORKFLOW_ALREADY_EXISTS',
-            message: `Workflow already running for ${externalTicketId} (${allocated.conflictWorkflowId})`,
-          },
-        });
+        // A same-key request that committed after the lookup above is what this
+        // conflict may be; a different key (or none) is a real second submission.
+        const raced = await replayForKey();
+        if (raced) {
+          return raced;
+        }
+        return refuseConflict(
+          `Workflow already running for ${externalTicketId} (${allocated.conflictWorkflowId})`
+        );
       }
       const temporalWorkflowId = allocated.workflowId;
       const { branchPrefix } = await resolveWorkflowDefaults();
@@ -533,6 +653,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             description,
             externalTicketId,
             id: workRequestId,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
             payload,
             requestedById: user.sub,
             requestPayload: JSON.stringify(request.body),
@@ -549,12 +670,39 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         { log: fastify.log }
       );
       if (!launch.ok) {
-        return reply.status(409).send({
-          error: {
-            code: 'WORKFLOW_ALREADY_EXISTS',
-            message: `Workflow already running for ${externalTicketId}`,
-          },
-        });
+        // Losing the unique-index race to a same-key request is a replay, not a
+        // conflict. If the winner's start failed it compensated and freed the key,
+        // so nothing is found and this is the ordinary 409.
+        const raced = await replayForKey();
+        if (raced) {
+          return raced;
+        }
+        // A Temporal-side duplicate is a live execution no row accounts for: it is running,
+        // so keyed and unkeyed requests alike get the ordinary conflict, not "retry".
+        return refuseConflict(`Workflow already running for ${externalTicketId}`, launch.source);
+      }
+      // Confirm the start so a replay of this key answers with the run. If this write
+      // fails the run is already going; the key then stays "in progress" (409) rather
+      // than ever reporting a run that did not start, and the submission still succeeds.
+      if (idempotencyKey && launch.activeWorkflowId) {
+        const startedActiveWorkflowId = launch.activeWorkflowId;
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await fastify.prisma.runInput.update({
+              data: { startedActiveWorkflowId },
+              where: { id: workRequestId },
+            });
+            break;
+          } catch (err) {
+            if (attempt === 3) {
+              fastify.log.error(
+                { err, startedActiveWorkflowId, workRequestId },
+                'could not confirm idempotent launch; key will report in-progress'
+              );
+              break;
+            }
+          }
+        }
       }
       // Best-effort enrichment runs after the response: the ticket and
       // knowledge-base fetches are network calls to third parties, and nothing

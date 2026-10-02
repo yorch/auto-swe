@@ -1132,6 +1132,15 @@ model RunInput {
   /// webhook-originated requests without a platform user.
   requestedById    String?     @map("requested_by_id") @db.Uuid
   requestedBy      User?       @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  /// Caller-supplied `Idempotency-Key` on `POST /work-requests`. Unique per
+  /// submitter; null (every key-less launch) never collides, since Postgres
+  /// treats nulls as distinct in a unique index.
+  idempotencyKey   String?     @map("idempotency_key")
+  /// The `ActiveWorkflow` id the original 201 returned, stamped once the Temporal
+  /// start succeeded. Null on a keyed row means the launch is still starting (or
+  /// its cleanup failed): a replay answers "in progress" rather than success.
+  /// Always null on key-less rows.
+  startedActiveWorkflowId String? @map("started_active_workflow_id") @db.Uuid
   createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   contextSnapshot       ContextSnapshot?
@@ -1142,6 +1151,7 @@ model RunInput {
   @@index([connectionId])
   @@index([requestedById])
   @@index([externalTicketId])
+  @@unique([requestedById, idempotencyKey])
   @@map("run_inputs")
 }
 

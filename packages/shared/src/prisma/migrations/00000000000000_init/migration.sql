@@ -530,6 +530,8 @@ CREATE TABLE "run_inputs" (
     "template_id" UUID,
     "template_version" INTEGER,
     "requested_by_id" UUID,
+    "idempotency_key" TEXT,
+    "started_active_workflow_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "run_inputs_pkey" PRIMARY KEY ("id")
@@ -1576,6 +1578,9 @@ CREATE INDEX "run_inputs_requested_by_id_idx" ON "run_inputs"("requested_by_id")
 
 -- CreateIndex
 CREATE INDEX "run_inputs_external_ticket_id_idx" ON "run_inputs"("external_ticket_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "run_inputs_requested_by_id_idempotency_key_key" ON "run_inputs"("requested_by_id", "idempotency_key");
 
 -- CreateIndex
 CREATE INDEX "scheduled_work_requests_repo_id_idx" ON "scheduled_work_requests"("repo_id");

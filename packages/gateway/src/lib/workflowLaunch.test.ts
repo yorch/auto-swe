@@ -97,7 +97,7 @@ describe('launchTrackedWorkflow', () => {
 
     const res = await launchTrackedWorkflow(prisma as never, ROWS, start);
 
-    expect(res).toEqual({ ok: false, reason: 'DUPLICATE' });
+    expect(res).toEqual({ ok: false, reason: 'DUPLICATE', source: 'ledger' });
     expect(start).not.toHaveBeenCalled();
   });
 
@@ -108,7 +108,7 @@ describe('launchTrackedWorkflow', () => {
       throw alreadyStarted();
     });
 
-    expect(res).toEqual({ ok: false, reason: 'DUPLICATE' });
+    expect(res).toEqual({ ok: false, reason: 'DUPLICATE', source: 'temporal' });
     // Compensation: neither row is left behind to wedge the ticket.
     expect(state.activeWorkflowDeletes).toEqual([{ where: { id: 'aw-1' } }]);
     expect(state.runInputDeletes).toEqual([{ where: { id: 'ri-1' } }]);
