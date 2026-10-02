@@ -92,6 +92,8 @@ export type {
 export {
   BindingSchema,
   MAX_FANOUT_CONCURRENCY,
+  MAX_NODE_GROUP_LENGTH,
+  MAX_NODE_TITLE_LENGTH,
   NodeSchema,
   nodeEdges,
   parseWorkflowSpec,
@@ -122,5 +124,6 @@ export {
   findInternalSteps,
   formatValidationErrors,
   formatValidationIssue,
+  splitGroups,
   validateSpec,
 } from './validateSpec.js';

@@ -53,6 +53,32 @@ export type Binding = z.infer<typeof BindingSchema>;
 
 const InputMapSchema = z.record(z.string(), BindingSchema);
 
+/**
+ * Presentation-only node metadata, shared by every node schema so the 15 of
+ * them do not each repeat it. Neither field is read by the interpreter, the
+ * worker, the cost estimator or analytics: they exist for the canvas, the
+ * outline and the run viewer.
+ *
+ *   - `group`: a short phase label ("review loop", "CI loop"). Nodes sharing a
+ *     label are drawn and listed together, and a view may fold them into one card.
+ *   - `title`: a human-readable name shown in place of the node id.
+ *
+ * Both are optional and absent on every spec stored before they existed, so an
+ * old spec parses and hashes exactly as it did. The human nodes already carry a
+ * REQUIRED `title` (the approver's inbox heading) with its own, longer bound;
+ * they take only the group field, and the canvas reads their `title` as the
+ * display name.
+ */
+export const MAX_NODE_GROUP_LENGTH = 40;
+export const MAX_NODE_TITLE_LENGTH = 80;
+const NodeGroupFields = {
+  group: z.string().min(1).max(MAX_NODE_GROUP_LENGTH).optional(),
+};
+const NodeMetaFields = {
+  ...NodeGroupFields,
+  title: z.string().min(1).max(MAX_NODE_TITLE_LENGTH).optional(),
+};
+
 const RetryPolicySchema = z
   .object({
     backoffCoefficient: z.number().min(1).max(10).default(2),
@@ -85,6 +111,7 @@ const OnFailSchema = z.union([
 export type OnFailMode = z.infer<typeof OnFailSchema>;
 
 const StepNodeSchema = z.object({
+  ...NodeMetaFields,
   config: z.record(z.string(), z.unknown()).optional(),
   heartbeatTimeout: z.string().optional(),
   inputs: InputMapSchema.optional(),
@@ -106,6 +133,7 @@ const StepNodeSchema = z.object({
  * uses the resolved `inputs` (JSON) as the message.
  */
 const AgentNodeSchema = z.object({
+  ...NodeMetaFields,
   agentRef: z.string().min(1),
   heartbeatTimeout: z.string().optional(),
   inputs: InputMapSchema.optional(),
@@ -128,6 +156,7 @@ const AgentNodeSchema = z.object({
  * is recorded at `nodes.<id>.output.result` like any step output.
  */
 const McpNodeSchema = z.object({
+  ...NodeMetaFields,
   /** Id of an `mcp`-type Connection (its `config.url` is the server). */
   connectionRef: z.string().min(1),
   heartbeatTimeout: z.string().optional(),
@@ -165,6 +194,7 @@ const EvalScorerSchema = z.discriminatedUnion('kind', [
 ]);
 
 const EvalNodeSchema = z.object({
+  ...NodeMetaFields,
   heartbeatTimeout: z.string().optional(),
   inputs: InputMapSchema.optional(),
   /** When false, a calibrated judge axis may block the gate (RFC §9). Default: advisory. */
@@ -182,12 +212,14 @@ const EvalNodeSchema = z.object({
 });
 
 const SetNodeSchema = z.object({
+  ...NodeMetaFields,
   next: NodeIdSchema.optional(),
   type: z.literal('set'),
   values: z.record(z.string(), BindingSchema),
 });
 
 const CondNodeSchema = z.object({
+  ...NodeMetaFields,
   expr: z.string().min(1).max(MAX_EXPR_LENGTH),
   onFalse: NodeIdSchema,
   onTrue: NodeIdSchema,
@@ -195,6 +227,7 @@ const CondNodeSchema = z.object({
 });
 
 const SignalNodeSchema = z.object({
+  ...NodeMetaFields,
   name: z.string().min(1),
   onReceive: NodeIdSchema,
   onTimeout: NodeIdSchema,
@@ -204,6 +237,7 @@ const SignalNodeSchema = z.object({
 });
 
 const TerminateNodeSchema = z.object({
+  ...NodeMetaFields,
   result: InputMapSchema.optional(),
   // CANCELLED is intentionally omitted: it's set out-of-band by Temporal on a
   // cancellation signal, never reachable by a terminate node, so the spec can't
@@ -245,6 +279,7 @@ const TerminateNodeSchema = z.object({
 export const MAX_FANOUT_CONCURRENCY = 20;
 
 const FanOutNodeSchema = z.object({
+  ...NodeMetaFields,
   /**
    * Max number of branches to run concurrently (default 4 in the interpreter,
    * capped at {@link MAX_FANOUT_CONCURRENCY}). Enforced by the interpreter's
@@ -296,6 +331,7 @@ const FanOutNodeSchema = z.object({
  * configured failure mode without throwing.
  */
 const ShellNodeSchema = z.object({
+  ...NodeMetaFields,
   /** Shell command run inside the container. Required; no defaults. */
   command: z.string().min(1).max(8000),
   /**
@@ -344,6 +380,7 @@ const ShellNodeSchema = z.object({
  * + authoring RBAC + audit as `shell`.
  */
 const ContainerStepNodeSchema = z.object({
+  ...NodeMetaFields,
   /** Optional command override (`sh -c`); defaults to the image entrypoint. */
   command: z.string().max(8000).optional(),
   cpus: z.number().min(0.1).max(8).optional(),
@@ -389,6 +426,7 @@ const ContainerStepNodeSchema = z.object({
  * The Temporal signal name is `hitl_${nodeId}`.
  */
 const HumanApprovalNodeSchema = z.object({
+  ...NodeGroupFields,
   approverCount: BindingSchema.optional(),
   contextFrom: z.string().optional(),
   description: z.string().max(2000).optional(),
@@ -410,6 +448,7 @@ const HumanDecisionOptionSchema = z.object({
  * HITL — `humanDecision`: pause the workflow for a human to pick from N options (2–10).
  */
 const HumanDecisionNodeSchema = z.object({
+  ...NodeGroupFields,
   contextFrom: z.string().optional(),
   description: z.string().max(2000).optional(),
   onTimeout: NodeIdSchema,
@@ -432,6 +471,7 @@ const HumanInputFieldSchema = z.object({
  * HITL — `humanInput`: pause the workflow and collect structured form data from a human.
  */
 const HumanInputNodeSchema = z.object({
+  ...NodeGroupFields,
   description: z.string().max(2000).optional(),
   fields: z.array(HumanInputFieldSchema).min(1).max(20),
   onSubmit: NodeIdSchema,
@@ -446,6 +486,7 @@ const HumanInputNodeSchema = z.object({
  * HITL — `humanReview`: show content for a human to read and optionally edit before continuing.
  */
 const HumanReviewNodeSchema = z.object({
+  ...NodeGroupFields,
   contentFrom: z.string().min(1),
   description: z.string().max(2000).optional(),
   onSubmit: NodeIdSchema,
