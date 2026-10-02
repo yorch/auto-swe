@@ -496,7 +496,7 @@ tracer.addActivityEvent({
 await persistActivityTrace(tracer, 'implementer');
 ```
 
-**`persistActivityTrace(tracer, role)`** in `packages/worker/src/lib/activityContext.ts` auto-resolves the workflow ID, `runId`, and `attempt` from Temporal context and calls `tracer.persist({ runId, workflowId }, nodeId, role, attempt)`. It attaches the OTel span active at that moment unless the caller already attached a more specific one with `tracer.setSpanContext()` — `runAgent` does, because it persists after its LLM span has ended. **Never omit this call** in new LLM-calling activities — the run viewer depends on it.
+**`persistActivityTrace(tracer, role)`** in `packages/worker/src/lib/activityContext.ts` auto-resolves the workflow ID, `runId`, and `attempt` from Temporal context and calls `tracer.persist({ runId, workflowId }, nodeId, role, attempt, nodeTag)` (the tag is §8.4's). It attaches the OTel span active at that moment unless the caller already attached a more specific one with `tracer.setSpanContext()` — `runAgent` does, because it persists after its LLM span has ended. **Never omit this call** in new LLM-calling activities — the run viewer depends on it.
 
 **`inputJson` convention for `addLlmResponse`:** always pass `{ systemPrompt, userMessage }` so the `/runs/[id]` viewer can show exactly what was sent to the model. Declare prompt variables as `let` before the `try` block (not `const` inside it) so the error `catch` path can reference them too — otherwise failed LLM calls produce traces with no request context.
 
@@ -528,7 +528,8 @@ content) to keep trace sizes manageable.
 |---|---|
 | `runId` | FK to `workflow_runs`; null for workflows that keep no run |
 | `workflowId` | Temporal workflow ID — set on every new row; older rows read it from their run |
-| `nodeId` | Activity type (e.g. `executeImplementation`) |
+| `nodeId` | Activity type (e.g. `executeImplementation`) — not a workflow node id |
+| `specNodeId` / `recordingId` / `stepAttempt` | The workflow-spec node the activity ran for, its recording id (branch-prefixed inside a fan-out: `fan[0]/impl`, equal to `WorkflowStep.nodeId`), and the interpreter's attempt at it. Null when the interpreter did not dispatch the activity, and on rows older than the columns — see §8.4 |
 | `agentKey` | Which agent key (identity) produced this trace |
 | `attempt` | Temporal activity attempt number (for retries) |
 | `seq` | Insertion order within the activity attempt |
@@ -538,6 +539,32 @@ content) to keep trace sizes manageable.
 | `durationMs` | Wall-clock duration of the call |
 | `model` / `inputTokens` / `outputTokens` / `costUsd` | Per-call attribution on `llm_response` rows |
 | `otelTraceId` / `otelSpanId` | Correlation with the matching Tempo span |
+
+### 8.4 Node attribution
+
+`attempt` is Temporal's retry of one activity dispatch; `stepAttempt` is the interpreter's attempt at
+the node (`onFail.retry` dispatches a fresh activity each time), so a retried node reads
+`stepAttempt` 1, 2, … each with `attempt` 1.
+
+An activity learns which node it runs for from a Temporal **header**, not an argument. In
+`runnable.ts` the dispatcher wraps each `dispatchStep` / `dispatchShell` in `runWithNodeTag` (an
+`AsyncLocalStorage` over `{ specNodeId, recordingId, stepAttempt }`, which the interpreter now
+passes on every dispatch). A workflow interceptor (`workflows/nodeTagInterceptor.ts`, registered via
+`interceptors.workflowModules`) copies the store into an `x-auto-swe-node` header on `scheduleActivity`;
+a worker activity interceptor (`lib/activityNodeTag.ts`) decodes it, and `persistActivityTrace` plus
+the embedding usage row write it. Async-local storage rather than a variable matters: fan-out
+branches run concurrently, and each awaits between choosing its node and scheduling its activity.
+The interceptor adds a header only, so the command stream is unchanged and recorded histories
+replay (`runnable.nodeTag.replay.test.ts` replays every fixture with it registered).
+
+Every dispatch kind goes through the two dispatch methods — `step`, `agent`, `mcp`, `eval`,
+`containerStep` through `dispatchStep`, `shell` through `dispatchShell` — so all are attributed.
+Rejected: threading the id through each activity's inputs (dozens of positional signatures and
+every in-flight payload), and reading the run's `RUNNING` step row (a fan-out has several at once,
+so it cannot say which belongs to a given activity).
+
+The run viewer (`web/src/lib/traceLinkage.ts`) filters on these fields: a node selects all its
+branches, a fan-out selects everything inside it, a step row selects exactly its execution.
 
 **Embeddings** are recorded too: each `generateEmbedding` call inside an activity writes one
 `llm_response` row with `agentKey: 'embedding'`, its tokens, and its cost, and adds the cost (not the
@@ -606,6 +633,13 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
+- **Node attribution needs the worker's workflow interceptor.** A worker started without
+  `workflowModules: [nodeTagInterceptor]` (every test harness that builds its own `Worker`) writes
+  traces with null `specNodeId`, and so does any activity not dispatched through the interpreter —
+  the non-runnable workflows, and the human-gate nodes, which dispatch no traced activity. Traces
+  written before the columns existed stay null; the run viewer falls back to the activity name,
+  lists such a trace under every node that runs that activity, and labels it ambiguous. It cannot
+  place one in a fan-out branch. Nothing backfills old rows.
 - **`STEP_REQUIRED_AGENTS` drift is caught late in one direction.** A stale key — naming a step
   that no longer exists — fails `stepRequiredAgents.coverage.test.ts` in CI. A *missing* key, the
   damaging direction, cannot be inferred statically: one activity module hosts several activities,

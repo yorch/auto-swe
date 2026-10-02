@@ -148,6 +148,7 @@ packages/
 | `src/lib/embeddings.ts` | `generateEmbedding` — resolves `EmbeddingConfig`, enforces 1536 dimensions |
 | `src/lib/costTracking.ts` | `recordLlmUsage` — per-call USD metering, OTel span attributes, budget enforcement |
 | `src/lib/agentTracer.ts`, `activityContext.ts` | `AgentTracer` + `persistActivityTrace` |
+| `src/lib/activityNodeTag.ts`, `src/workflows/nodeTag*.ts` | Spec-node attribution: workflow interceptor stamps a header, activity interceptor reads it |
 | `src/lib/scannerPatternLoader.ts` | `makePatternLoader(type)` — 60 s TTL cache factory shared by three scanners |
 | `src/lib/shellCommandScanner.ts`, `sensitiveFileScanner.ts`, `codeSecurityScanner.ts` | Runtime scanners (see [AGENTS.md §6](../AGENTS.md#runtime-security-scanners)) |
 | `src/agents/` | Mastra agents — implementer, review network, planner, decomposer, pre-write security check, MCP tool loading |
@@ -157,7 +158,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/app/page.tsx` | Dashboard home — KPIs, "needs attention" queue, recent activity |
-| `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status; bottom panel toggles between three layouts (split console, transcript, flight recorder), persisted per user via `/api/v1/me/preferences` |
+| `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status; bottom panel toggles between three layouts (split console, transcript, flight recorder), persisted per user via `/api/v1/me/preferences`; traces link to graph nodes and fan-out branches through `src/lib/traceLinkage.ts` |
 | `src/app/workflows/library/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
 | `src/app/govern/approvals/` | HITL approvals — pending human steps with respond forms |
 | `src/app/govern/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
@@ -322,8 +323,8 @@ arrives, or the timeout routes to `onTimeout`. See [hitl-workflows.md](./hitl-wo
 
 ```
 interface Dispatcher {
-  dispatchStep({ nodeId, step, config, inputs, ctx, cancellation? }) → Promise<unknown>
-  dispatchShell?({ nodeId, node, inputs, ctx, cancellation? })       → Promise<unknown>
+  dispatchStep({ nodeId, specNodeId?, stepAttempt?, step, config, inputs, ctx, cancellation? }) → Promise<unknown>
+  dispatchShell?({ nodeId, specNodeId?, stepAttempt?, node, inputs, ctx, cancellation? })       → Promise<unknown>
   waitSignal(name, timeout)                                          → Promise<unknown | undefined>
   recordStep({ nodeId, status, inputs?, outputs?, error?, attempt? }) → Promise<void>
   notifyHumanStep?({ ... })                                          → Promise<void>
@@ -334,7 +335,9 @@ interface Dispatcher {
 `RunnableWorkflow` implements this by wrapping activity proxies. The dispatch nodes — `step`,
 `agent`, `mcp`, `eval`, `containerStep`, and `shell` — cross the activity boundary, and the human
 nodes call `notifyHumanStep` / `resolveHumanStep` for their bookkeeping. `set`, `cond`, `signal`,
-`terminate`, and `fanOut` are handled internally. Because the interpreter has no Temporal imports, it runs in tests against a mock
+`terminate`, and `fanOut` are handled internally. Each dispatch carries the node's spec key and the
+interpreter's attempt next to the (branch-prefixed) recording id; the dispatcher stamps them on the
+activity so every `AgentTrace` it writes names its node (see [agents.md §8.4](./agents.md)). Because the interpreter has no Temporal imports, it runs in tests against a mock
 dispatcher, and the gateway can import the step catalog without a worker dependency.
 
 ### Versioning and reproducibility
