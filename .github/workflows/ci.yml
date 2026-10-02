@@ -196,3 +196,11 @@ jobs:
         env:
           MCP_OAUTH_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/mcpOAuthServer.pg.test.ts
+
+      # Consent, the login hand-off and durable revocation, against the same
+      # schema. A separate step, not a second file in the one above: both suites
+      # clear the OAuth tables, so they must not run side by side.
+      - name: MCP grants and revocation (database-backed tests)
+        env:
+          MCP_OAUTH_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/mcpGrants.pg.test.ts

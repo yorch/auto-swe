@@ -24,8 +24,9 @@ import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from './lib/betterAuthHandler.js';
 import { registerFormBodyParser } from './lib/formBody.js';
+import { mcpConsentAudit } from './lib/mcpConsentAudit.js';
 import { mcpOAuthGate } from './lib/mcpOAuthGate.js';
-import { mcpOAuthGateOptions } from './lib/mcpOAuthGateOptions.js';
+import { mcpConsentAuditOptions, mcpOAuthGateOptions } from './lib/mcpOAuthGateOptions.js';
 import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
@@ -202,6 +203,7 @@ async function start() {
   // already understands. ──
   // The OAuth gate's hooks apply to routes registered after it, so it goes first.
   await app.register(mcpOAuthGate, mcpOAuthGateOptions());
+  await app.register(mcpConsentAudit, mcpConsentAuditOptions());
   registerBetterAuthRoutes(app, createBetterAuthHandler());
 
   // Public: which social providers are configured? The login page reads

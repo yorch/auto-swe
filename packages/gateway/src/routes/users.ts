@@ -7,6 +7,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
+import { revokeMcpGrants } from '../lib/mcpGrants.js';
 import { invalidateUserAuthCache, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateUserSchema = z.object({
@@ -374,6 +375,11 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           (request.body.isActive !== undefined && request.body.isActive !== user.isActive);
         if (privilegeChanged) {
           invalidateUserAuthCache(updated.id);
+        }
+        // A deactivated account keeps no MCP access: its refresh tokens would otherwise stay
+        // valid in the database, ready for the day the account is reactivated.
+        if (request.body.isActive === false && user.isActive !== false) {
+          await revokeMcpGrants(fastify.prisma, { actorId: actor.sub, userId: updated.id });
         }
         await writeAuditLog(fastify, {
           action: 'UPDATE',
