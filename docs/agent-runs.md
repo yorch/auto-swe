@@ -397,9 +397,11 @@ hidden template's own link is not shown.
 - **The real-Docker check is opt-in.** The trusted-container shell is exercised against real containers
   by `agentRunFinalize.docker.test.ts` only when `AGENT_RUN_DOCKER_TEST=1`; the default suite exercises
   the same code against a fake workspace.
-- **A model with no known price is recorded at $0.** The tier ledger counts tokens, so the token
-  budgets still bind, but the organization USD cap does not see an unpriced model's spend. Add the
-  model to the model catalog.
+- **A model with no known price is refused only under a USD cap.** When the run's organization has a
+  monthly USD budget and the agent's model has no catalog price, the run fails before it starts (before
+  the container is created) with `MODEL_UNPRICED`, naming the model and the model catalog; the run
+  viewer explains it. With no organization cap the run proceeds and records $0
+  (`llm.cost_pricing_known=false`): the token tier budgets still bind, since they count tokens.
 - **There is no Slack entry point.** An agent run is launched from the dashboard, CLI or REST API only;
   the channel assistant cannot start one and a delegated channel task is a different workflow (§9).
 - **Cost estimates are absent.** The workflow cost estimator has no hint for `runAgentTask`, so an

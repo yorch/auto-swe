@@ -205,6 +205,7 @@ describe('classifyAgentRunFailure', () => {
     'AGENT_RUN_CONCURRENCY_EXCEEDED',
     'AGENT_RUNS_DISABLED',
     'BUDGET_EXCEEDED',
+    'MODEL_UNPRICED',
   ])('recognises the %s type the interpreter records', (code) => {
     expect(classifyAgentRunFailure(`${code}: whatever the message says`)?.code).toBe(code);
   });

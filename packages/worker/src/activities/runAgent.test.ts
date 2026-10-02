@@ -44,6 +44,9 @@ vi.mock('../lib/costTracking.js', () => ({
     .mockResolvedValue({ costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 }),
 }));
 
+const { assertPricedMock } = vi.hoisted(() => ({ assertPricedMock: vi.fn(async () => {}) }));
+vi.mock('../lib/usdCapGuard.js', () => ({ assertModelPricedForUsdCap: assertPricedMock }));
+
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -73,6 +76,19 @@ beforeEach(() => {
 });
 
 describe('runAgent', () => {
+  it('refuses to call the model when it is unpriced under a USD cap', async () => {
+    assertPricedMock.mockRejectedValueOnce(new Error('MODEL_UNPRICED'));
+    await expect(runAgent(makeSpec(), 'USER_MSG')).rejects.toThrow('MODEL_UNPRICED');
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(mockedRecordUsage).not.toHaveBeenCalled();
+  });
+
+  it('checks the bound model against the channel scope it was given', async () => {
+    generateMock.mockResolvedValue({ text: 'ok', usage: { inputTokens: 1, outputTokens: 1 } });
+    await runAgent(makeSpec(), 'USER_MSG', { ctx: { channelId: 'chan-1' } });
+    expect(assertPricedMock).toHaveBeenCalledWith('anthropic/claude-x', { channelId: 'chan-1' });
+  });
+
   it('builds the agent from the spec and returns structured output', async () => {
     const schema = z.object({ successCriteria: z.array(z.string()) });
     generateMock.mockResolvedValue({

@@ -28,6 +28,7 @@ import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
+import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
   commitTrustedTree,
   gateTrustedCommit,
@@ -187,6 +188,9 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     orgId: baseCtx.orgId,
   };
   const resolved = await resolveAgent(key, agentCtx);
+  // Before any container exists: an unpriced model under a USD cap is refused
+  // here rather than after a clone (runAgent checks again before the call).
+  await assertModelPricedForUsdCap(resolved.model.spec);
 
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { installationId: true } } },

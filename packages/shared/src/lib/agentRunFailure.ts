@@ -55,6 +55,11 @@ const FAILURES: Record<string, Omit<AgentRunFailureView, 'code'>> = {
       'The branch was pushed, but this repository cannot hold draft pull requests, so none was opened (a ready-for-review one is never opened instead). Open a pull request from the branch yourself, or re-run with "Push a branch".',
     title: 'Draft pull requests are not supported here',
   },
+  MODEL_UNPRICED: {
+    explanation:
+      "The model this agent is bound to has no price in the model catalog, and a monthly USD budget applies, so its spend could not be counted. Nothing ran. Add the model's price in the model catalog (or bind a priced model), then re-run.",
+    title: 'Model has no price',
+  },
   PR_CREATE_FAILED: {
     explanation:
       'The branch was pushed, but opening the pull request failed. The branch is still there.',

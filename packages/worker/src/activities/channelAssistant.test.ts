@@ -98,7 +98,6 @@ import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow'
 import { AgentTracer } from '../lib/agentTracer.js';
 import {
   CHANNEL_PLACEHOLDER_TEXT,
-  CHANNEL_TURN_RESERVATION_USD,
   formatMemoryContext,
   formatThreadContext,
   isChannelOverBudget,
@@ -365,12 +364,38 @@ describe('reserveChannelTurn', () => {
     expect(HAIKU_HOLD).toBeLessThan(OPUS_HOLD);
   });
 
-  it('falls back to a flat hold when the model has no known price', async () => {
+  it('refuses to hold for a capped channel bound to a model with no known price', async () => {
+    // A hold on an unpriced model settles at $0, so the cap would count nothing.
+    // The call is refused up front, typed so the failure classifies.
     resolveAgentMock.mockResolvedValue({ model: { spec: 'someone/unpriced-model' } });
     const ledger = fakeLedger(1);
-    await reserveChannelTurn('chan-1', 100_000, RESERVE);
-    // A zero hold would bound nothing.
-    expect(ledger.total()).toBeCloseTo(1 + CHANNEL_TURN_RESERVATION_USD, 6);
+    const err = await reserveChannelTurn('chan-1', 100_000, RESERVE).then(
+      () => undefined,
+      (e: unknown) => e as { type?: string; nonRetryable?: boolean; message: string }
+    );
+    expect(err?.type).toBe('MODEL_UNPRICED');
+    expect(err?.nonRetryable).toBe(true);
+    expect(err?.message).toContain('someone/unpriced-model');
+    expect(ledger.total(), 'nothing was held').toBeCloseTo(1, 6);
+    expect(ledger.holds.size).toBe(0);
+  });
+
+  it('lets an uncapped channel run on an unpriced model, holding nothing', async () => {
+    resolveAgentMock.mockResolvedValue({ model: { spec: 'someone/unpriced-model' } });
+    const ledger = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', null, RESERVE);
+    expect(hold.overBudget).toBe(false);
+    expect(ledger.total()).toBeCloseTo(1, 6);
+  });
+
+  it('keeps the reservation floor as a second line when a priced model turns unpriced mid-turn', async () => {
+    // Priced at reserve, reported unpriced at settle (a catalog edit in between):
+    // the floor still stops the settle netting the hold to $0.
+    const ledger = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    hold.markPricingUnknown();
+    await hold.settle(0);
+    expect(ledger.total()).toBeCloseTo(1 + OPUS_HOLD, 6);
   });
 
   it('holds while the turn runs, then settles to exactly the real cost', async () => {
@@ -644,6 +669,22 @@ describe('runChannelAssistantTurn', () => {
     expect(result.reply).toContain('monthly assistant budget');
     expect(runAgentMock).not.toHaveBeenCalled();
     expect(resolveAgentSpecMock).not.toHaveBeenCalled();
+    expect(upsertUsage).not.toHaveBeenCalled();
+  });
+
+  it('replies with the unpriced-model explanation instead of failing the turn', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: 10000,
+    } as never);
+    findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never);
+    resolveAgentMock.mockResolvedValue({ model: { spec: 'someone/unpriced-model' } });
+
+    const result = await runChannelAssistantTurn(makeInput());
+
+    expect(result.reply).toContain('someone/unpriced-model');
+    expect(result.reply).toContain('model catalog');
+    expect(runAgentMock).not.toHaveBeenCalled();
     expect(upsertUsage).not.toHaveBeenCalled();
   });
 

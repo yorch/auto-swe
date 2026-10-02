@@ -120,6 +120,8 @@ vi.mock('./workspace.js', () => ({
   shellQuote: (s: string) => `'${s}'`,
 }));
 vi.mock('./runAgent.js', () => ({ runAgent: m.runAgent }));
+const { assertPricedMock } = vi.hoisted(() => ({ assertPricedMock: vi.fn(async () => {}) }));
+vi.mock('../lib/usdCapGuard.js', () => ({ assertModelPricedForUsdCap: assertPricedMock }));
 vi.mock('./agentRunFinalize.js', () => ({
   commitTrustedTree: m.commit,
   gateTrustedCommit: m.gate,
@@ -533,6 +535,21 @@ describe('delivery: trust boundary and gate-before-push', () => {
     expect(r.stoppedReason).toBe('wall_clock');
     expect(m.gate).toHaveBeenCalledTimes(1);
     expect(m.push).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses before any container exists when the model is unpriced under a USD cap', async () => {
+    assertPricedMock.mockRejectedValueOnce(
+      ApplicationFailure.nonRetryable('no price for the model', 'MODEL_UNPRICED')
+    );
+    const f = await failureOf(runAgentTask({ request: request() }));
+    expect(f.type).toBe('MODEL_UNPRICED');
+    expect(createWorkspace).not.toHaveBeenCalled();
+    expect(m.runAgent).not.toHaveBeenCalled();
+  });
+
+  it('checks the price of the model it will actually run (org/pinned scope)', async () => {
+    await runAgentTask({ request: request() });
+    expect(assertPricedMock).toHaveBeenCalledWith(expect.stringContaining('/'));
   });
 
   it('an agent failure (e.g. budget) publishes nothing and still cleans up', async () => {

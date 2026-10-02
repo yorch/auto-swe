@@ -38,9 +38,7 @@ vi.mock('@mastra/core/agent', () => ({
 }));
 
 vi.mock('../lib/models.js', () => ({
-  getBoundModel: vi
-    .fn()
-    .mockResolvedValue({ model: {}, spec: 'openrouter/channel-override' }),
+  getBoundModel: vi.fn().mockResolvedValue({ model: {}, spec: 'openrouter/channel-override' }),
 }));
 vi.mock('../lib/config/agentSkills.js', () => ({ loadAgentSkills: vi.fn().mockResolvedValue([]) }));
 vi.mock('../lib/activityContext.js', () => ({
@@ -62,6 +60,7 @@ vi.mock('../lib/costTracking.js', () => ({
   // unknown-model fallback. Opus rates, matching the spec the resolver returns.
   calculateCostUsd: async (_spec: string, input: number, output: number) =>
     (input * 5 + output * 25) / 1_000_000,
+  getModelPrice: vi.fn(async () => ({ known: true, price: {}, source: 'catalog' })),
   recordLlmUsage: vi.fn().mockResolvedValue({
     costUsd: 0.02,
     inputTokens: 10,

@@ -11,6 +11,7 @@ import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../l
 import { withHeartbeat } from '../lib/execUtils.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { createStepAccounting } from '../lib/stepAccounting.js';
+import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
 
@@ -129,6 +130,11 @@ export async function runAgent<T = unknown>(
           tools: spec.tools,
         });
 
+        // An unpriced model measures as $0 and a USD cap would count nothing, so
+        // on a capped path the call is refused before it is made. Uncapped paths
+        // proceed and record $0 with `llm.cost_pricing_known=false`.
+        const scopeCtx = options.ctx ?? (await currentRequestContext());
+        await assertModelPricedForUsdCap(spec.modelSpec, { channelId: scopeCtx.channelId });
         await assertBudgetAvailable(`agent.${spec.agentKey}`);
         // Every caller is an activity with a heartbeat timeout, and a single
         // generate (with a tool loop) can outlast it — pump heartbeats while
