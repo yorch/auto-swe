@@ -27,6 +27,7 @@ import { registerFormBodyParser } from './lib/formBody.js';
 import { mcpConsentAudit } from './lib/mcpConsentAudit.js';
 import { mcpOAuthGate } from './lib/mcpOAuthGate.js';
 import { mcpConsentAuditOptions, mcpOAuthGateOptions } from './lib/mcpOAuthGateOptions.js';
+import { mcpRouteOptions } from './lib/mcpRouteOptions.js';
 import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
@@ -54,6 +55,7 @@ import { githubWebhookSecretRoutes } from './routes/githubWebhookSecrets.js';
 import { humanErrorBaselineRoutes } from './routes/humanErrorBaselines.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
+import { mcpRoutes } from './routes/mcp.js';
 import { mcpConnectionRoutes } from './routes/mcpConnections.js';
 import { meRoutes } from './routes/me.js';
 import { modelCatalogRoutes } from './routes/modelCatalog.js';
@@ -205,6 +207,10 @@ async function start() {
   await app.register(mcpOAuthGate, mcpOAuthGateOptions());
   await app.register(mcpConsentAudit, mcpConsentAuditOptions());
   registerBetterAuthRoutes(app, createBetterAuthHandler());
+
+  // The MCP endpoint and its protected-resource metadata. Registered unconditionally: `mcp.enabled`
+  // is read per request and a disabled deployment answers 404, so the switch needs no restart.
+  await app.register(mcpRoutes, mcpRouteOptions());
 
   // Public: which social providers are configured? The login page reads
   // this to know whether to show GitHub / Google buttons (they're hidden

@@ -204,3 +204,12 @@ jobs:
         env:
           MCP_OAUTH_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/mcpGrants.pg.test.ts
+
+      # The MCP resource server, against tokens that server issued: its consent,
+      # client and user checks and its read of the signing keys. A separate step
+      # because both suites wipe the same OAuth tables and settings, so they must
+      # not run side by side.
+      - name: MCP endpoint (database-backed tests)
+        env:
+          MCP_OAUTH_PG_TEST: '1'
+        run: yarn test packages/gateway/src/routes/mcp.pg.test.ts
