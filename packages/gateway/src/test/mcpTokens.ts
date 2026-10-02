@@ -65,6 +65,8 @@ export function fakeVerifierDeps(
     user?: { isActive: boolean; role: string } | null;
     writeToolsEnabled?: boolean;
     jwksFetches?: { count: number };
+    /** Every `(userId, clientId)` the verifier asked the consent lookup about. */
+    grantLookups?: Array<[string, string]>;
   } = {}
 ): McpVerifierDeps & { state: typeof state; setKeys: (next: TestKey[]) => void } {
   let current = keys;
@@ -81,6 +83,7 @@ export function fakeVerifierDeps(
   state.user = state.user === undefined ? { isActive: true, role: 'ENGINEER' } : state.user;
   state.writeToolsEnabled ??= false;
   state.jwksFetches ??= { count: 0 };
+  state.grantLookups ??= [];
   return {
     fetchJwks: async (): Promise<JSONWebKeySet> => {
       (state.jwksFetches as { count: number }).count++;
@@ -88,7 +91,10 @@ export function fakeVerifierDeps(
     },
     getWriteToolsEnabled: async () => state.writeToolsEnabled as boolean,
     issuer: TEST_ISSUER,
-    loadGrant: async () => state.grant ?? null,
+    loadGrant: async (userId, clientId) => {
+      state.grantLookups?.push([userId, clientId]);
+      return state.grant ?? null;
+    },
     loadUser: async () => state.user ?? null,
     resource: TEST_RESOURCE,
     setKeys: (next) => {

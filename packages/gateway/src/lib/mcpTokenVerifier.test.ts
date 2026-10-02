@@ -1,11 +1,12 @@
 import type { OAuthTokenVerifier } from '@modelcontextprotocol/server';
-import { SignJWT } from 'jose';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import {
   fakeVerifierDeps,
   makeSigningKey,
   mintToken,
   TEST_CLIENT,
+  TEST_ISSUER,
   TEST_RESOURCE,
   TEST_USER,
 } from '../test/mcpTokens.js';
@@ -110,10 +111,44 @@ describe('mcp token verifier', () => {
       expect((await run(token)).reason).toBe('bad-signature');
     });
 
-    it('rejects an unsigned token', async () => {
+    it('rejects an unsigned token as a bad signature', async () => {
       const part = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
       const token = `${part({ alg: 'none', kid: key.kid, typ: 'at+jwt' })}.${part({ aud: TEST_RESOURCE, sub: 'u' })}.`;
-      expect((await run(token)).error).toBeDefined();
+      expect((await run(token)).reason).toBe('bad-signature');
+    });
+
+    it('accepts only EdDSA, even when the published keys would verify another algorithm', async () => {
+      // An RSA key in the published set verifies an RS256 token unless the algorithm is pinned.
+      const rsa = await generateKeyPair('RS256', { extractable: true });
+      const deps = fakeVerifierDeps([key]);
+      deps.fetchJwks = async () => ({
+        keys: [
+          key.jwk,
+          { ...(await exportJWK(rsa.publicKey)), alg: 'RS256', kid: 'rsa', use: 'sig' },
+        ],
+      });
+      const token = await new SignJWT({
+        aud: TEST_RESOURCE,
+        azp: TEST_CLIENT,
+        scope: 'mcp:read',
+        sub: TEST_USER,
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: 'rsa', typ: 'at+jwt' })
+        .setIssuer(TEST_ISSUER)
+        .setIssuedAt()
+        .setExpirationTime('10m')
+        .sign(rsa.privateKey);
+      expect((await run(token, deps)).reason).toBe('bad-signature');
+    });
+
+    it("asks the consent lookup about exactly the token's user and client", async () => {
+      const deps = fakeVerifierDeps([key]);
+      const token = await mintToken({
+        claims: { azp: 'client-xyz', client_id: 'client-xyz', sub: 'user-xyz' },
+        key,
+      });
+      expect((await run(token, deps)).info).toBeDefined();
+      expect(deps.state.grantLookups).toEqual([['user-xyz', 'client-xyz']]);
     });
 
     it.each([

@@ -316,6 +316,37 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
       expect(res.headers['www-authenticate']).toContain('resource_metadata=');
     });
 
+    it('keys the consent on the user and the client together', async () => {
+      // One user, two clients: revoking one app leaves the other.
+      const user = await makeUser();
+      const clientA = await registerClient();
+      const clientB = await registerClient();
+      const tokenA = await issueToken(user.cookie, clientA, 'mcp:read offline_access');
+      const tokenB = await issueToken(user.cookie, clientB, 'mcp:read offline_access');
+      expect([(await mcp(tokenA)).statusCode, (await mcp(tokenB)).statusCode]).toEqual([200, 200]);
+      await prisma.oauthConsent.deleteMany({ where: { clientId: clientA, userId: user.id } });
+      expect([(await mcp(tokenA)).statusCode, (await mcp(tokenB)).statusCode]).toEqual([401, 200]);
+
+      // Two users, one client: revoking one user's grant leaves the other's.
+      const user1 = await makeUser();
+      const user2 = await makeUser();
+      const shared = await registerClient();
+      const token1 = await issueToken(user1.cookie, shared, 'mcp:read offline_access');
+      const token2 = await issueToken(user2.cookie, shared, 'mcp:read offline_access');
+      expect([(await mcp(token1)).statusCode, (await mcp(token2)).statusCode]).toEqual([200, 200]);
+      await prisma.oauthConsent.deleteMany({ where: { clientId: shared, userId: user1.id } });
+      expect([(await mcp(token1)).statusCode, (await mcp(token2)).statusCode]).toEqual([401, 200]);
+
+      // Cross pair: a token for (user 2, client B) is not carried by user 2's consent for the
+      // shared client, nor by another user's consent for B.
+      const tokenX = await issueToken(user2.cookie, clientB, 'mcp:read offline_access');
+      expect((await mcp(tokenX)).statusCode).toBe(200);
+      await prisma.oauthConsent.deleteMany({ where: { clientId: clientB, userId: user2.id } });
+      expect((await mcp(tokenX)).statusCode).toBe(401);
+      expect((await mcp(token2)).statusCode).toBe(200);
+      expect((await mcp(tokenB)).statusCode).toBe(200);
+    });
+
     it('refuses a token older than the last consent, and accepts one issued after it', async () => {
       await setSettings({ writeToolsEnabled: true });
       const { clientId, token, user } = await connect();
@@ -328,7 +359,7 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
       expect((await mcp(fresh)).statusCode).toBe(200);
     }, 30_000);
 
-    it('refuses a token minted before a consent that was deleted and recreated, and takes the new consent at once', async () => {
+    it('refuses a token minted before a consent that was deleted and recreated, and takes a token issued after it', async () => {
       const { clientId, token, user } = await connect();
       expect((await mcp(token)).statusCode).toBe(200);
       const old = await prisma.oauthConsent.findFirstOrThrow({
@@ -345,6 +376,9 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
       expect(recreated.createdAt.getTime()).toBeGreaterThan(old.createdAt.getTime());
       // Same user, client and scopes, but the token predates the current consent.
       expect((await mcp(token)).statusCode).toBe(401);
+      // A token issued under the recreated consent is accepted at once.
+      const fresh = await issueToken(user.cookie, clientId, 'mcp:read offline_access');
+      expect((await mcp(fresh)).statusCode).toBe(200);
     }, 30_000);
 
     it('keeps a token valid when the user is not asked to consent again', async () => {
