@@ -8,8 +8,11 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENT_RUN_SPEC } from '@auto-swe/shared/lib/agentRun';
+import { classifyAgentRunFailure } from '@auto-swe/shared/lib/agentRunFailure';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import { ApplicationFailure } from '@temporalio/activity';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, type TestContext } from 'vitest';
@@ -38,6 +41,7 @@ const calls: {
   runTool: unknown[];
   implementationRequests: Array<{ description: string }>;
   implementations: unknown[];
+  recordedSteps: Array<{ error?: string; nodeId: string; status: string }>;
 } = {
   cancelledHumanSteps: [],
   contextOverflowBatches: 0,
@@ -48,6 +52,7 @@ const calls: {
   implementationRequests: [],
   implementations: [],
   readSource: [],
+  recordedSteps: [],
   resolveWorkspace: [],
   runTool: [],
   writeOutcome: [],
@@ -107,7 +112,9 @@ const fakeActivities = {
     calls.readSource.push(input);
     return { connectionType: 'notion', data: { ok: true }, ok: true };
   },
-  recordWorkflowStep: async () => {},
+  recordWorkflowStep: async (args: { error?: string; nodeId: string; status: string }) => {
+    calls.recordedSteps.push(args);
+  },
   resolveHumanStep: async () => {},
   resolveWorkspace: async (input: { connectionId?: string | null; workspaceProvider?: string }) => {
     calls.resolveWorkspace.push(input);
@@ -115,6 +122,12 @@ const fakeActivities = {
       connectionId: input.connectionId ?? 'conn-default',
       provider: input.workspaceProvider ?? 'document',
     };
+  },
+  runAgentTask: async () => {
+    throw ApplicationFailure.nonRetryable(
+      'Push policy refused this change:\n- SECURITY_GATE_FAILURE.md: sensitive file',
+      'AGENT_RUN_PUSH_POLICY'
+    );
   },
   runTool: async (input: unknown) => {
     calls.runTool.push(input);
@@ -383,6 +396,51 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
       expect(calls.finalize.length).toBeGreaterThan(before);
       expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
       expect(calls.cancelledHumanSteps).toContain('run-test-1');
+    } finally {
+      updateDomainStateImpl = async (_wf, status) => {
+        calls.domainStates.push(status);
+      };
+    }
+  }, 120_000);
+
+  it('records the real activity failure type and message on a failed step, and the dashboard classifier reads it', async () => {
+    calls.recordedSteps.length = 0;
+    currentSpec = AGENT_RUN_SPEC as unknown as Record<string, unknown>;
+    await expect(
+      env.client.workflow.execute('RunnableWorkflow', startArgs('wf-agent-run-fail'))
+    ).rejects.toThrow();
+    const failed = calls.recordedSteps.filter((r) => r.status === 'FAILED');
+    expect(failed).toHaveLength(1);
+    // Not the SDK wrapper's "Activity task failed".
+    expect(failed[0]?.error).toMatch(/^AGENT_RUN_PUSH_POLICY: Push policy refused this change/);
+    // The path the agent chose, quoted in the message, does not steer the verdict.
+    expect(classifyAgentRunFailure(failed[0]?.error)?.code).toBe('AGENT_RUN_PUSH_POLICY');
+  }, 120_000);
+
+  it('records an untyped activity failure by its own message, not the wrapper', async () => {
+    calls.recordedSteps.length = 0;
+    updateDomainStateImpl = async () => {
+      throw new Error('state write exploded');
+    };
+    try {
+      currentSpec = makeSpec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          explode: {
+            config: { status: 'IMPLEMENTING' },
+            next: 'done',
+            step: 'updateDomainState',
+            type: 'step',
+          },
+        },
+        'explode'
+      );
+      await expect(
+        env.client.workflow.execute('RunnableWorkflow', startArgs('wf-plain-fail'))
+      ).rejects.toThrow();
+      const failed = calls.recordedSteps.filter((r) => r.status === 'FAILED');
+      expect(failed.length).toBeGreaterThan(0);
+      expect(failed[0]?.error).toBe('state write exploded');
     } finally {
       updateDomainStateImpl = async (_wf, status) => {
         calls.domainStates.push(status);

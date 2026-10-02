@@ -35,7 +35,11 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Start',
   },
   {
-    items: [{ href: '/workflows', icon: 'canvas', label: 'Request queue', minRole: 'ENGINEER' }],
+    items: [
+      { href: '/workflows', icon: 'canvas', label: 'Request queue', minRole: 'ENGINEER' },
+      // POST /agent-runs is an ENGINEER route; the repository's team membership is checked per launch.
+      { href: '/agent-runs', icon: 'agents', label: 'Run an agent', minRole: 'ENGINEER' },
+    ],
     label: 'Requests',
   },
   {

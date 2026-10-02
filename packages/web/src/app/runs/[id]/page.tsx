@@ -30,12 +30,8 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useApprovals } from '@/hooks/useApprovals';
-import {
-  useCancelWorkflowRun,
-  useRetriedRun,
-  useRetryWorkRequest,
-  useRunDetail,
-} from '@/hooks/useRuns';
+import { useRunReRun } from '@/hooks/useRunReRun';
+import { useCancelWorkflowRun, useRetriedRun, useRunDetail } from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
@@ -713,7 +709,10 @@ export default function RunDetailPage({ params }: PageProps) {
     toggleFullTraces,
   } = useRunDetail(id ?? '');
   const cancelRun = useCancelWorkflowRun(id ?? '');
-  const retryRun = useRetryWorkRequest();
+  // An agent run is re-run through its own endpoint, after a confirmation when it
+  // delivers; see `useRunReRun`.
+  const retryRun = useRunReRun(run);
+  const isAgentRun = retryRun.isAgentRun;
   const retried = useRetriedRun(
     retryRun.data?.workRequestId ?? null,
     retryRun.data?.temporalWorkflowId ?? null
@@ -789,14 +788,8 @@ export default function RunDetailPage({ params }: PageProps) {
   const handleJumpToFailure = useCallback(() => {
     traceAnchorRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
-  // One re-run per page view: a second click while the first is in flight (or
-  // after it started a run) would launch a duplicate.
-  const reRunLocked = retryRun.isPending || retryRun.isSuccess;
-  const handleReRun = useCallback(() => {
-    if (run?.workRequest && !reRunLocked) {
-      retryRun.mutate(run.workRequest.id);
-    }
-  }, [run?.workRequest, retryRun, reRunLocked]);
+  const reRunLocked = retryRun.locked;
+  const handleReRun = retryRun.request;
 
   const notFound = (
     <EmptyState action={<ButtonLink href="/runs">Back to runs</ButtonLink>} title="Run not found" />
@@ -891,7 +884,8 @@ export default function RunDetailPage({ params }: PageProps) {
               {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
             </Button>
           )}
-          {WORKFLOW_RUN_FAILURE_STATUSES.has(run.status as WorkflowRunStatus) &&
+          {(WORKFLOW_RUN_FAILURE_STATUSES.has(run.status as WorkflowRunStatus) ||
+            (isAgentRun && isTerminalWorkflowRunStatus(run.status))) &&
             run.workRequest && (
               <Button disabled={reRunLocked} onClick={handleReRun} size="sm" variant="secondary">
                 {retryRun.isPending ? 'Re-running…' : 'Re-run'}
@@ -913,17 +907,21 @@ export default function RunDetailPage({ params }: PageProps) {
               )}
             </Alert>
           )}
-          {retryRun.isError && (
+          {retryRun.errorView && (
             <Alert className="px-2 py-1 text-xs">
-              Re-run failed: {errMsg(retryRun.error, 'unknown error')}
+              Re-run failed: {retryRun.errorView.title}. {retryRun.errorView.message}
+              {retryRun.errorView.hint ? ` ${retryRun.errorView.hint}` : ''}
             </Alert>
           )}
-          <Link
-            className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400"
-            href={`/workflows/library/${run.templateId}`}
-          >
-            View template →
-          </Link>
+          {/* The Agent Run template is hidden: its detail route answers 404 for everyone. */}
+          {!isAgentRun && (
+            <Link
+              className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400"
+              href={`/workflows/library/${run.templateId}`}
+            >
+              View template →
+            </Link>
+          )}
           <LayoutToggle onChange={setLayout} value={layout} />
         </div>
       </div>
@@ -968,6 +966,15 @@ export default function RunDetailPage({ params }: PageProps) {
           />
         )}
       </div>
+
+      <ConfirmModal
+        confirmLabel="Re-run"
+        message={retryRun.confirmMessage ?? ''}
+        onClose={retryRun.cancel}
+        onConfirm={retryRun.confirm}
+        open={retryRun.confirming}
+        title="Re-run this agent run?"
+      />
 
       <ConfirmModal
         closeOnConfirm={false}

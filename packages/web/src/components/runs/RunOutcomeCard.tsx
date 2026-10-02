@@ -4,10 +4,13 @@ import Link from 'next/link';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { isRecord } from '@/lib/utils';
+import { AgentRunOutcomeCard } from './AgentRunOutcomeCard';
 
 interface RunOutcomeCardProps {
   result: unknown;
   templateName: string;
+  /** A run of the hidden Agent Run template, as the gateway reports it (not inferred from the name). */
+  isAgentRun?: boolean;
 }
 
 function truncate(value: unknown, maxChars = 240): string {
@@ -47,12 +50,16 @@ function OutcomeLink({ href, label }: { href: string; label: string }) {
   );
 }
 
-export function RunOutcomeCard({ result, templateName }: RunOutcomeCardProps) {
+export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeCardProps) {
   if (!isRecord(result)) {
     return null;
   }
 
   const name = templateName;
+
+  if (isAgentRun) {
+    return <AgentRunOutcomeCard result={result} />;
+  }
 
   if (
     name === 'notion-content-draft' ||

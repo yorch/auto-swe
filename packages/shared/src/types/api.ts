@@ -206,6 +206,41 @@ export interface RetryWorkRequestResponse extends CreateWorkRequestResponse {
   temporalWorkflowId: string;
 }
 
+// ── Agent runs ──
+
+/** One launchable library agent, as `GET /api/v1/agent-runs/agents` offers it. */
+export interface AgentRunAgent {
+  key: string;
+  name: string;
+  description: string | null;
+  /** The scope an unpinned launch resolves at: an org override wins over GLOBAL. */
+  scope: 'GLOBAL' | 'ORGANIZATION';
+  /** Latest active version at `scope`. */
+  version: number;
+  /** GLOBAL versions a `key@version` pin can select; empty while an org override shadows the key. */
+  pinnableVersions: number[];
+}
+
+/** `GET /api/v1/agent-runs/limits`: ceilings, hard bounds and the kill switch. */
+export interface AgentRunLimits {
+  enabled: boolean;
+  concurrency: { global: number; perTeam: number };
+  maxSteps: { ceiling: number; min: number; max: number };
+  maxWallClockSeconds: { ceiling: number; min: number; max: number };
+}
+
+/** `POST /api/v1/agent-runs` and its `/rerun` answer. */
+export interface AgentRunLaunchResponse {
+  workRequestId: string;
+  temporalWorkflowId: string;
+  workflowId: string;
+  effective: {
+    deliver: 'none' | 'branch' | 'draft_pr';
+    maxSteps: number;
+    maxWallClockSeconds: number;
+  };
+}
+
 // ── Epics (Phase 3) ──
 
 export interface CreateEpicBody {
@@ -523,6 +558,8 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   steps: WorkflowStepRecord[];
   traces: AgentTraceRecord[];
   templateName: string;
+  /** A run of the hidden Agent Run system template (keyed on its origin, not its name). */
+  isAgentRun?: boolean;
   humanSteps?: HumanStepSummary[];
 }
 

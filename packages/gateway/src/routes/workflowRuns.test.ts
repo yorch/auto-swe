@@ -171,6 +171,30 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'the system Agent Run template (reserved origin, no team)',
+      'Agent Run',
+      'system:agent-run',
+      null,
+      true,
+    ],
+    ['a team template merely NAMED Agent Run', 'Agent Run', null, 'team-1', false],
+    ['a global template named Agent Run with no system origin', 'Agent Run', null, null, false],
+    ['an ordinary template', 'Some Template', null, null, false],
+  ])('isAgentRun for %s', async (_label, name, origin, teamId, expected) => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    const row = await prisma.workflowRun.findFirst();
+    prisma.workflowRun.findFirst.mockResolvedValue({ ...row, template: { name, origin, teamId } });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}`,
+    });
+    expect(res.json().data.isAgentRun).toBe(expected);
+  });
+
   it('omits traces when includeTraces=false is explicit', async () => {
     const { app, prisma } = await buildApp();
     mockRun(prisma);

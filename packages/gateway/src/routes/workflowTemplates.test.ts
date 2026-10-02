@@ -556,6 +556,40 @@ describe('workflow-templates routes', () => {
     expect(res.json().data.name).toBe('My Custom Name');
   });
 
+  it('refuses the reserved system template name as a generate override', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        name: 'agent run',
+        prompt: 'do something',
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates/generate',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('RESERVED_TEMPLATE_NAME');
+  });
+
+  it('renames a model-chosen reserved name instead of persisting it', async () => {
+    (state as { generatedSpec?: unknown }).generatedSpec = {
+      ...(VALID_SPEC as object),
+      name: 'Agent Run',
+    };
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'POST',
+        payload: { prompt: 'do something', teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567' },
+        url: '/api/v1/workflow-templates/generate',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().data.name).toBe('Agent Run (generated)');
+    } finally {
+      (state as { generatedSpec?: unknown }).generatedSpec = undefined;
+    }
+  });
+
   it('returns 422 when generation fails', async () => {
     (state as { generateError?: boolean }).generateError = true;
     const res = await app.inject({

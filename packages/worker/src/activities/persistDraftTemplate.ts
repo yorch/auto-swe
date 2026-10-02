@@ -13,6 +13,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { isReservedTemplateName } from '@auto-swe/shared/lib/agentRun';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 
 export interface PersistDraftTemplateInput {
@@ -47,7 +48,10 @@ export async function persistDraftTemplate(
     return null;
   }
 
-  const baseName = input.name?.trim() || spec.name;
+  // The reserved system template's name is never given to a generated draft: the
+  // seed matches that template by name.
+  const chosenName = input.name?.trim() || spec.name;
+  const baseName = isReservedTemplateName(chosenName) ? `${chosenName} (generated)` : chosenName;
 
   for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
     // Keep the suffixed name within the WorkflowSpec 120-char `name` cap so the

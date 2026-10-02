@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
@@ -342,7 +343,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const run = await fastify.prisma.workflowRun.findFirst({
         include: {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
-          template: { select: { name: true } },
+          template: { select: { name: true, origin: true, teamId: true } },
           workRequest: {
             select: { description: true, externalTicketId: true, id: true },
           },
@@ -369,6 +370,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           costUsdAccrued: run.costUsdAccrued,
           endedAt: run.endedAt,
           id: run.id,
+          // Keyed on the template's reserved origin, never its display name: a team
+          // template can carry any name, but not this origin.
+          isAgentRun:
+            run.template.teamId === null && run.template.origin === AGENT_RUN_TEMPLATE_ORIGIN,
           result: (run.contextSnapshot as { result?: unknown })?.result ?? null,
           specSnapshot: run.specSnapshot,
           startedAt: run.startedAt,
