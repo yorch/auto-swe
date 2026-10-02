@@ -2,14 +2,19 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('../lib/modelDiscovery.js', () => ({
-  discoverProviderModels: vi.fn(async () => [
-    {
-      models: [{ displayName: null, kind: 'CHAT', modelId: 'gpt-6.2', spec: 'openai/gpt-6.2' }],
-      ok: true,
-      provider: 'openai',
-    },
-  ]),
+vi.mock('@auto-swe/shared/lib/modelSuggestions', () => ({
+  runModelDiscovery: vi.fn(async () => ({
+    results: [
+      {
+        complete: true,
+        models: [{ displayName: null, kind: 'CHAT', modelId: 'gpt-6.2', spec: 'openai/gpt-6.2' }],
+        ok: true,
+        provider: 'openai',
+        retirementCandidates: [],
+      },
+    ],
+    summary: { providers: [] },
+  })),
 }));
 
 import { modelCatalogRoutes } from './modelCatalog.js';
@@ -56,14 +61,62 @@ function seedRows(): Row[] {
   ];
 }
 
+const SUGGESTION_ID = '00000000-0000-4000-a000-0000000000e1';
+
+function seedSuggestions() {
+  const base = {
+    dismissedAt: null,
+    displayName: null,
+    firstSeenAt: new Date('2026-10-01T00:00:00Z'),
+    kind: 'CHAT',
+    lastSeenAt: new Date('2026-10-02T00:00:00Z'),
+  };
+  return [
+    { ...base, id: SUGGESTION_ID, modelId: 'gpt-6.2', provider: 'openai', type: 'NEW' },
+    // Priced since the last run: the list must not show it as new.
+    { ...base, id: 'b', modelId: 'claude-opus-5-5', provider: 'anthropic', type: 'NEW' },
+    {
+      ...base,
+      id: 'c',
+      modelId: 'old-1',
+      provider: 'openai',
+      type: 'NEW',
+      dismissedAt: new Date(),
+    },
+  ];
+}
+
 async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   const rows = seedRows();
+  const suggestions = seedSuggestions();
   const audit = vi.fn().mockResolvedValue({});
   const prisma = {
     agent: { findMany: vi.fn().mockResolvedValue([]) },
     agentTrace: { findMany: vi.fn().mockResolvedValue([{ model: 'openai/gpt-5-5' }]) },
     configAuditLog: { create: audit },
     embeddingConfig: { findUnique: vi.fn().mockResolvedValue(null) },
+    modelDiscoveryProviderStatus: {
+      findMany: vi
+        .fn()
+        .mockResolvedValue([
+          { checkedAt: new Date(), error: 'HTTP 401', lastSuccessAt: null, provider: 'anthropic' },
+        ]),
+    },
+    modelSuggestion: {
+      findMany: vi.fn(async ({ where }: { where: { dismissedAt?: null } }) =>
+        suggestions.filter((r) => !('dismissedAt' in where) || r.dismissedAt === null)
+      ),
+      update: vi.fn(
+        async ({ data, where }: { data: { dismissedAt: Date | null }; where: { id: string } }) => {
+          const row = suggestions.find((r) => r.id === where.id);
+          if (!row) {
+            throw Object.assign(new Error('not found'), { code: 'P2025' });
+          }
+          row.dismissedAt = data.dismissedAt;
+          return { ...row };
+        }
+      ),
+    },
     modelCatalogEntry: {
       create: vi.fn(
         async ({ data }: { data: Omit<Row, 'id' | 'kind' | 'status'> & Partial<Row> }) => {
@@ -297,6 +350,46 @@ describe('POST /model-catalog/discover', () => {
     const res = await call('POST', '/model-catalog/discover');
     expect(res.statusCode).toBe(200);
     expect(res.json().data[0]).toMatchObject({ ok: true, provider: 'openai' });
+  });
+});
+
+describe('model suggestions', () => {
+  it('are ADMIN-only to read and to dismiss', async () => {
+    const { call } = await buildApp('ENGINEER');
+    expect((await call('GET', '/model-catalog/suggestions')).statusCode).toBe(403);
+    expect(
+      (await call('POST', `/model-catalog/suggestions/${SUGGESTION_ID}/dismiss`)).statusCode
+    ).toBe(403);
+  });
+
+  it('lists undismissed ones with last-run status, and drops a NEW one that is priced now', async () => {
+    const { call } = await buildApp();
+    const res = await call('GET', '/model-catalog/suggestions');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.suggestions.map((s: { spec: string }) => s.spec)).toEqual([
+      'openai/gpt-6.2',
+    ]);
+    expect(res.json().data.providers[0]).toMatchObject({
+      error: 'HTTP 401',
+      provider: 'anthropic',
+    });
+  });
+
+  it('dismisses and undismisses one, and 404s on an unknown id', async () => {
+    const { call } = await buildApp();
+    const dismissed = await call('POST', `/model-catalog/suggestions/${SUGGESTION_ID}/dismiss`);
+    expect(dismissed.statusCode).toBe(200);
+    expect(dismissed.json().data.dismissedAt).not.toBeNull();
+    expect((await call('GET', '/model-catalog/suggestions')).json().data.suggestions).toEqual([]);
+    const all = await call('GET', '/model-catalog/suggestions?includeDismissed=true');
+    expect(all.json().data.suggestions).toHaveLength(2);
+    const undone = await call('POST', `/model-catalog/suggestions/${SUGGESTION_ID}/undismiss`);
+    expect(undone.json().data.dismissedAt).toBeNull();
+    const missing = await call(
+      'POST',
+      '/model-catalog/suggestions/00000000-0000-4000-a000-0000000000ff/dismiss'
+    );
+    expect(missing.statusCode).toBe(404);
   });
 });
 

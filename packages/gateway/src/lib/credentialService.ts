@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
-import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { modelListRequest } from '@auto-swe/shared/lib/modelDiscovery';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 // Re-exported for back-compat: existing tests (and any other importers) reach
@@ -9,6 +9,8 @@ import { isUniqueConstraintError } from './prismaErrors.js';
 // (mcp Connections, connector base URLs, bundle install-from-URL, worker MCP
 // refs) shares one definition.
 export { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+// The list-models request builder lives with discovery, which the worker also runs.
+export { modelListRequest };
 
 /**
  * Provider-credential service: redaction, SSRF-guarded probing, and the
@@ -54,56 +56,6 @@ export function redactCredential(row: {
 }
 
 const PROBE_TIMEOUT_MS = 5_000;
-
-/// A provider's list-models request: URL plus auth. `query` adds parameters
-/// (page size, cursor). Shared by the credential probe and model discovery, so
-/// both hit the same endpoint with the same auth behind the same SSRF guard.
-/// Returns why the request cannot be made instead, for an OpenAI-compatible
-/// provider without a usable `apiBase`.
-export function modelListRequest(args: {
-  provider: string;
-  apiKey: string;
-  apiBase?: string | null;
-  query?: Record<string, string>;
-}): { url: string; init: RequestInit } | { error: string } {
-  const { provider, apiKey, apiBase, query = {} } = args;
-  const withQuery = (base: string, extra: Record<string, string> = {}) => {
-    const params = new URLSearchParams({ ...extra, ...query });
-    return params.size ? `${base}?${params}` : base;
-  };
-  if (provider === 'anthropic') {
-    return {
-      init: { headers: { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey } },
-      url: withQuery('https://api.anthropic.com/v1/models'),
-    };
-  }
-  if (provider === 'openai') {
-    return {
-      init: { headers: { Authorization: `Bearer ${apiKey}` } },
-      url: withQuery('https://api.openai.com/v1/models'),
-    };
-  }
-  if (provider === 'google') {
-    return {
-      init: {},
-      url: withQuery('https://generativelanguage.googleapis.com/v1beta/models', { key: apiKey }),
-    };
-  }
-  // OpenAI-compatible: `<base>/models`. SSRF guards run here.
-  if (!apiBase) {
-    return { error: 'apiBase required to list models from an OpenAI-compatible provider' };
-  }
-  const safety = isSafeProbeUrl(apiBase);
-  if (!safety.ok) {
-    return { error: `apiBase rejected: ${safety.reason}` };
-  }
-  const base = safety.url.toString().replace(/\/+$/, '');
-  return {
-    // The guard checked `apiBase`, not wherever it redirects to.
-    init: { headers: { Authorization: `Bearer ${apiKey}` }, redirect: 'manual' },
-    url: withQuery(`${base}/models`),
-  };
-}
 
 /// Issues a minimal HTTP probe against the configured provider to verify the
 /// credential works. Returns `{ ok, status, error? }`. Best-effort — not all

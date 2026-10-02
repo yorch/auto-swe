@@ -1,0 +1,361 @@
+import type { PrismaClient } from '../index.js';
+import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
+import { isSafeProbeUrl } from './ssrfGuard.js';
+import { runUnscoped } from './tenantGuard.js';
+
+/**
+ * Discovery of provider models the catalog lacks, and of catalog models a
+ * provider no longer lists. Lists models through each GLOBAL provider credential
+ * and returns the unpriced ones as suggestions — discovery never writes the
+ * catalog, so it can never make a model "known" at $0. An admin supplies each
+ * price. One copy serves the gateway (the on-demand route, the credential probe)
+ * and the worker (the scheduled run).
+ */
+
+export type ModelKind = 'CHAT' | 'EMBEDDING';
+
+/**
+ * A provider's list-models request: URL plus auth. `query` adds parameters (page
+ * size, cursor). Shared by the credential probe and model discovery, so both hit
+ * the same endpoint with the same auth behind the same SSRF guard. Returns why
+ * the request cannot be made instead, for an OpenAI-compatible provider without a
+ * usable `apiBase`.
+ */
+export function modelListRequest(args: {
+  provider: string;
+  apiKey: string;
+  apiBase?: string | null;
+  query?: Record<string, string>;
+}): { url: string; init: RequestInit } | { error: string } {
+  const { provider, apiKey, apiBase, query = {} } = args;
+  const withQuery = (base: string, extra: Record<string, string> = {}) => {
+    const params = new URLSearchParams({ ...extra, ...query });
+    return params.size ? `${base}?${params}` : base;
+  };
+  if (provider === 'anthropic') {
+    return {
+      init: { headers: { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey } },
+      url: withQuery('https://api.anthropic.com/v1/models'),
+    };
+  }
+  if (provider === 'openai') {
+    return {
+      init: { headers: { Authorization: `Bearer ${apiKey}` } },
+      url: withQuery('https://api.openai.com/v1/models'),
+    };
+  }
+  if (provider === 'google') {
+    return {
+      init: {},
+      url: withQuery('https://generativelanguage.googleapis.com/v1beta/models', { key: apiKey }),
+    };
+  }
+  // OpenAI-compatible: `<base>/models`. SSRF guards run here.
+  if (!apiBase) {
+    return { error: 'apiBase required to list models from an OpenAI-compatible provider' };
+  }
+  const safety = isSafeProbeUrl(apiBase);
+  if (!safety.ok) {
+    return { error: `apiBase rejected: ${safety.reason}` };
+  }
+  const base = safety.url.toString().replace(/\/+$/, '');
+  return {
+    // The guard checked `apiBase`, not wherever it redirects to.
+    init: { headers: { Authorization: `Bearer ${apiKey}` }, redirect: 'manual' },
+    url: withQuery(`${base}/models`),
+  };
+}
+
+/** What nothing may ever hold a price for: the catalog's rows plus the built-in table. */
+export interface KnownModel {
+  provider: string;
+  modelId: string;
+  kind: ModelKind;
+  displayName: string | null;
+  /** Retired models are still priced, but the provider is not expected to list them. */
+  retired: boolean;
+}
+
+/** Every model the worker can price, by spec. A catalog row overrides its built-in. */
+export async function knownModels(prisma: PrismaClient): Promise<Map<string, KnownModel>> {
+  const rows = await prisma.modelCatalogEntry.findMany({
+    select: { displayName: true, kind: true, modelId: true, provider: true, status: true },
+  });
+  const known = new Map<string, KnownModel>();
+  for (const m of BUILTIN_MODELS) {
+    known.set(builtinModelSpec(m), {
+      displayName: null,
+      kind: m.kind,
+      modelId: m.modelId,
+      provider: m.provider,
+      retired: m.status === 'RETIRED',
+    });
+  }
+  for (const r of rows) {
+    known.set(`${r.provider}/${r.modelId}`, {
+      displayName: r.displayName ?? null,
+      kind: r.kind ?? 'CHAT',
+      modelId: r.modelId,
+      provider: r.provider,
+      retired: r.status === 'RETIRED',
+    });
+  }
+  return known;
+}
+
+/** Every spec the worker can price: catalog rows plus the built-in table. */
+export async function pricedSpecs(prisma: PrismaClient): Promise<Set<string>> {
+  return new Set((await knownModels(prisma)).keys());
+}
+
+export interface DiscoveredModel {
+  modelId: string;
+  /** A guess: Google says which methods a model serves; elsewhere the id is read. */
+  kind: ModelKind;
+  displayName: string | null;
+}
+
+export type DiscoveredSpec = DiscoveredModel & { spec: string };
+
+export interface ProviderDiscovery {
+  provider: string;
+  ok: boolean;
+  error?: string;
+  /** Models the provider lists that the catalog and built-in table both lack. */
+  models: DiscoveredSpec[];
+  /**
+   * Priced, not retired, and absent from a listing that succeeded — flagged for
+   * an admin to look at, never retired. Empty when the listing failed or was cut
+   * short, because a model missing from a partial list proves nothing.
+   */
+  retirementCandidates: DiscoveredSpec[];
+  /** False when paging stopped at {@link MAX_PAGES} with more left to read. */
+  complete: boolean;
+}
+
+const DISCOVERY_TIMEOUT_MS = 10_000;
+/** Pages followed per provider; at the page sizes requested one page is the norm. */
+const MAX_PAGES = 5;
+
+/**
+ * Models no text agent runs — speech, transcription, image and video generation,
+ * moderation. Providers list them beside their chat models (OpenAI's list is
+ * mostly these), and suggesting them would bury the useful entries.
+ */
+const NON_TEXT_MODEL =
+  /(^|[-_./])(tts|whisper|dall-e|image|imagen|veo|sora|moderation|transcribe|audio|realtime|speech|lyria)([-_./]|$)/i;
+
+function embeddingByName(id: string): ModelKind {
+  return /embed/i.test(id) ? 'EMBEDDING' : 'CHAT';
+}
+
+interface Page {
+  models: DiscoveredModel[];
+  /** Every id the page lists, whether or not it is a model a text agent could run. */
+  ids: string[];
+  /** Query parameters for the next page, or null when this was the last. */
+  next: Record<string, string> | null;
+}
+
+/** Parses one page of a provider's list-models response. Unknown shapes yield no models. */
+export function parseModelListPage(provider: string, body: unknown): Page {
+  const b = (body ?? {}) as Record<string, unknown>;
+  if (provider === 'google') {
+    const models = Array.isArray(b.models) ? (b.models as Array<Record<string, unknown>>) : [];
+    return {
+      ids: models.flatMap((m) =>
+        typeof m.name === 'string' && m.name ? [m.name.replace(/^models\//, '')] : []
+      ),
+      models: models.flatMap((m) => {
+        const methods = Array.isArray(m.supportedGenerationMethods)
+          ? (m.supportedGenerationMethods as string[])
+          : [];
+        const chat = methods.includes('generateContent');
+        const embed = methods.includes('embedContent');
+        const name = typeof m.name === 'string' ? m.name.replace(/^models\//, '') : '';
+        if (!name || !(chat || embed)) {
+          return [];
+        }
+        return [
+          {
+            displayName: typeof m.displayName === 'string' ? m.displayName : null,
+            kind: (chat ? 'CHAT' : 'EMBEDDING') as ModelKind,
+            modelId: name,
+          },
+        ];
+      }),
+      next:
+        typeof b.nextPageToken === 'string' && b.nextPageToken
+          ? { pageToken: b.nextPageToken }
+          : null,
+    };
+  }
+  const data = Array.isArray(b.data) ? (b.data as Array<Record<string, unknown>>) : [];
+  const models = data.flatMap((m) =>
+    typeof m.id === 'string' && m.id
+      ? [
+          {
+            displayName: typeof m.display_name === 'string' ? m.display_name : null,
+            kind: embeddingByName(m.id),
+            modelId: m.id,
+          },
+        ]
+      : []
+  );
+  // Anthropic pages by cursor; OpenAI and OpenAI-compatible lists are not paged.
+  const next =
+    provider === 'anthropic' && b.has_more === true && typeof b.last_id === 'string'
+      ? { after_id: b.last_id }
+      : null;
+  return {
+    ids: data.flatMap((m) => (typeof m.id === 'string' && m.id ? [m.id] : [])),
+    models,
+    next,
+  };
+}
+
+/** The first page asks for as much as each provider allows in one response. */
+function firstPageQuery(provider: string): Record<string, string> {
+  if (provider === 'anthropic') {
+    return { limit: '1000' };
+  }
+  return provider === 'google' ? { pageSize: '1000' } : {};
+}
+
+/** One credential's provider listing, following pages up to {@link MAX_PAGES}. */
+export type ProviderListing =
+  | {
+      ok: true;
+      /** Models a text agent could run — what a suggestion may name. */
+      models: DiscoveredModel[];
+      /** Every id listed, speech and image models included — what "still listed" means. */
+      listedIds: Set<string>;
+      /**
+       * False when paging stopped with more left to read, or when the provider
+       * answered with nothing recognisable. Only a complete listing can say a
+       * model is gone.
+       */
+      complete: boolean;
+    }
+  | { ok: false; error: string };
+
+export async function listProviderModels(args: {
+  provider: string;
+  apiKey: string;
+  apiBase?: string | null;
+}): Promise<ProviderListing> {
+  const models: DiscoveredModel[] = [];
+  const listedIds = new Set<string>();
+  let query: Record<string, string> | null = firstPageQuery(args.provider);
+  for (let page = 0; query && page < MAX_PAGES; page++) {
+    const request = modelListRequest({ ...args, query });
+    if ('error' in request) {
+      return { error: request.error, ok: false };
+    }
+    let res: Response;
+    try {
+      res = await fetch(request.url, {
+        ...request.init,
+        signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+      });
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err), ok: false };
+    }
+    if (!res.ok) {
+      return { error: `HTTP ${res.status}`, ok: false };
+    }
+    const parsed = parseModelListPage(args.provider, await res.json().catch(() => null));
+    models.push(...parsed.models);
+    for (const id of parsed.ids) {
+      listedIds.add(id);
+    }
+    query = parsed.next;
+  }
+  return {
+    complete: query === null && listedIds.size > 0,
+    listedIds,
+    models: models.filter((m) => !NON_TEXT_MODEL.test(m.modelId)),
+    ok: true,
+  };
+}
+
+/**
+ * Lists models through every GLOBAL credential, in parallel, and keeps the ones
+ * nothing prices — plus, per provider, the priced ones it no longer lists. One
+ * provider failing — a bad key, a timeout — is reported on its own entry and
+ * never stops the others, and never yields a retirement candidate.
+ */
+export async function discoverProviderModels(prisma: PrismaClient): Promise<ProviderDiscovery[]> {
+  const [credentials, known] = await Promise.all([
+    // Only the platform-wide credentials, which no tenant owns; the tenant guard
+    // cannot read a scope filter as a tenant boundary, so the read says so.
+    runUnscoped(
+      'admin lists models through the GLOBAL provider credentials',
+      ['ProviderCredential'],
+      () =>
+        prisma.providerCredential.findMany({
+          orderBy: { provider: 'asc' },
+          where: { scope: 'GLOBAL' },
+        })
+    ),
+    knownModels(prisma),
+  ]);
+  const { decryptSecret } = await import('./crypto.js');
+  return Promise.all(
+    credentials.map(async (cred): Promise<ProviderDiscovery> => {
+      const failed = (error: string): ProviderDiscovery => ({
+        complete: false,
+        error,
+        models: [],
+        ok: false,
+        provider: cred.provider,
+        retirementCandidates: [],
+      });
+      let apiKey: string;
+      try {
+        apiKey = decryptSecret({
+          authTag: cred.apiKeyAuthTag,
+          ciphertext: cred.apiKeyCiphertext,
+          keyVersion: cred.keyVersion,
+          nonce: cred.apiKeyNonce,
+        });
+      } catch {
+        return failed('credential could not be decrypted');
+      }
+      const listed = await listProviderModels({
+        apiBase: cred.apiBase,
+        apiKey,
+        provider: cred.provider,
+      });
+      if (!listed.ok) {
+        return failed(listed.error);
+      }
+      const seen = new Set<string>();
+      const models = listed.models
+        .map((m) => ({ ...m, spec: `${cred.provider}/${m.modelId}` }))
+        .filter((m) => !known.has(m.spec) && !seen.has(m.spec) && seen.add(m.spec))
+        .sort((a, b) => a.spec.localeCompare(b.spec));
+      const retirementCandidates = listed.complete
+        ? [...known.entries()]
+            .filter(
+              ([, k]) =>
+                k.provider === cred.provider && !k.retired && !listed.listedIds.has(k.modelId)
+            )
+            .map(([spec, k]) => ({
+              displayName: k.displayName,
+              kind: k.kind,
+              modelId: k.modelId,
+              spec,
+            }))
+            .sort((a, b) => a.spec.localeCompare(b.spec))
+        : [];
+      return {
+        complete: listed.complete,
+        models,
+        ok: true,
+        provider: cred.provider,
+        retirementCandidates,
+      };
+    })
+  );
+}

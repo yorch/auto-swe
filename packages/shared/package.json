@@ -40,6 +40,8 @@
     "./lib/repoDependencyMatch": "./dist/lib/repoDependencyMatch.js",
     "./lib/repoDependencyResolver": "./dist/lib/repoDependencyResolver.js",
     "./lib/ssrfGuard": "./dist/lib/ssrfGuard.js",
+    "./lib/modelDiscovery": "./dist/lib/modelDiscovery.js",
+    "./lib/modelSuggestions": "./dist/lib/modelSuggestions.js",
     "./lib/inputSchema": "./dist/lib/inputSchema.js",
     "./lib/triggerMapping": "./dist/lib/triggerMapping.js",
     "./lib/syncBuiltins": "./dist/lib/syncBuiltins.js",

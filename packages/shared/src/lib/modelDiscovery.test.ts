@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // The crypto helper reads the key lazily; set it before anything encrypts.
 process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
 
+import { BUILTIN_MODELS } from '@auto-swe/shared/lib/builtinModels';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
   discoverProviderModels,
@@ -32,6 +33,7 @@ describe('parseModelListPage', () => {
         last_id: 'claude-opus-6',
       })
     ).toEqual({
+      ids: ['claude-opus-6'],
       models: [{ displayName: 'Claude Opus 6', kind: 'CHAT', modelId: 'claude-opus-6' }],
       next: { after_id: 'claude-opus-6' },
     });
@@ -50,6 +52,8 @@ describe('parseModelListPage', () => {
       ],
       nextPageToken: 'tok',
     });
+    // `aqa` serves neither chat nor embeddings, but it is still listed.
+    expect(page.ids).toEqual(['gemini-4-pro', 'gemini-embedding-002', 'aqa']);
     expect(page.models).toEqual([
       { displayName: 'Gemini 4 Pro', kind: 'CHAT', modelId: 'gemini-4-pro' },
       { displayName: null, kind: 'EMBEDDING', modelId: 'gemini-embedding-002' },
@@ -64,6 +68,7 @@ describe('parseModelListPage', () => {
         object: 'list',
       })
     ).toEqual({
+      ids: ['gpt-6.2', 'text-embedding-4'],
       models: [
         { displayName: null, kind: 'CHAT', modelId: 'gpt-6.2' },
         { displayName: null, kind: 'EMBEDDING', modelId: 'text-embedding-4' },
@@ -73,8 +78,12 @@ describe('parseModelListPage', () => {
   });
 
   it('yields nothing for a shape it does not recognise', () => {
-    expect(parseModelListPage('openai', { unexpected: true })).toEqual({ models: [], next: null });
-    expect(parseModelListPage('google', null)).toEqual({ models: [], next: null });
+    expect(parseModelListPage('openai', { unexpected: true })).toEqual({
+      ids: [],
+      models: [],
+      next: null,
+    });
+    expect(parseModelListPage('google', null)).toEqual({ ids: [], models: [], next: null });
   });
 });
 
@@ -153,7 +162,7 @@ describe('discoverProviderModels', () => {
 
   function fakePrisma(
     credentials: unknown[],
-    catalog: Array<{ provider: string; modelId: string }>
+    catalog: Array<{ provider: string; modelId: string; status?: string }>
   ) {
     return {
       modelCatalogEntry: { findMany: vi.fn().mockResolvedValue(catalog) },
@@ -175,12 +184,21 @@ describe('discoverProviderModels', () => {
       [{ modelId: 'acme-ft', provider: 'openai' }]
     );
     expect(await discoverProviderModels(prisma)).toEqual([
-      { error: 'HTTP 401', models: [], ok: false, provider: 'anthropic' },
       {
+        complete: false,
+        error: 'HTTP 401',
+        models: [],
+        ok: false,
+        provider: 'anthropic',
+        retirementCandidates: [],
+      },
+      {
+        complete: true,
         // gpt-5.5 is built in and acme-ft is cataloged: only gpt-6.2 is new.
         models: [{ displayName: null, kind: 'CHAT', modelId: 'gpt-6.2', spec: 'openai/gpt-6.2' }],
         ok: true,
         provider: 'openai',
+        retirementCandidates: expect.any(Array),
       },
     ]);
   });
@@ -191,5 +209,60 @@ describe('discoverProviderModels', () => {
     await discoverProviderModels(fakePrisma([credential('openai')], []));
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer sk-openai');
+  });
+
+  describe('retirement candidates', () => {
+    const builtinOpenAi = BUILTIN_MODELS.filter(
+      (m) => m.provider === 'openai' && m.status === 'ACTIVE'
+    );
+
+    it('flags a priced model the provider no longer lists, never a retired or still-listed one', async () => {
+      const [stillListed, ...gone] = builtinOpenAi;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => jsonResponse({ data: [{ id: stillListed?.modelId }, { id: 'tts-1' }] }))
+      );
+      const prisma = fakePrisma(
+        [credential('openai')],
+        [
+          { modelId: 'acme-ft', provider: 'openai' },
+          { modelId: 'acme-old', provider: 'openai', status: 'RETIRED' },
+        ]
+      );
+      const [result] = await discoverProviderModels(prisma);
+      const flagged = result?.retirementCandidates.map((c) => c.modelId);
+      expect(flagged).toContain('acme-ft');
+      expect(flagged).not.toContain('acme-old');
+      expect(flagged).not.toContain(stillListed?.modelId);
+      expect(gone.every((m) => flagged?.includes(m.modelId))).toBe(true);
+    });
+
+    it('counts a non-text id the provider lists as still listed', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => jsonResponse({ data: [{ id: 'whisper-1' }] }))
+      );
+      const [result] = await discoverProviderModels(
+        fakePrisma([credential('openai')], [{ modelId: 'whisper-1', provider: 'openai' }])
+      );
+      expect(result?.retirementCandidates.map((c) => c.modelId)).not.toContain('whisper-1');
+    });
+
+    it('flags nothing when the listing is empty or cut short — absence proves nothing', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => jsonResponse({ unexpected: true }))
+      );
+      const [empty] = await discoverProviderModels(fakePrisma([credential('openai')], []));
+      expect(empty).toMatchObject({ complete: false, ok: true, retirementCandidates: [] });
+
+      // An Anthropic list that still says has_more after the page cap.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => jsonResponse({ data: [{ id: 'a' }], has_more: true, last_id: 'a' }))
+      );
+      const [partial] = await discoverProviderModels(fakePrisma([credential('anthropic')], []));
+      expect(partial).toMatchObject({ complete: false, ok: true, retirementCandidates: [] });
+    });
   });
 });
