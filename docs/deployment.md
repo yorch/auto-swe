@@ -37,7 +37,7 @@ Two things to know about the service images themselves. Their Node major is a **
 
 Before touching infrastructure, gather these:
 
-- **Domain + TLS.** Reverse-proxy in front of the gateway (`https://api.example.com`) and the web app (`https://app.example.com`). Both must serve HTTPS; better-auth refuses to issue secure cookies otherwise.
+- **Domain + TLS.** Reverse-proxy in front of the gateway (`https://api.example.com`) and the web app (`https://app.example.com`). Both must serve HTTPS; better-auth refuses to issue secure cookies otherwise. The proxy must pass the gateway's `/api/auth/*`, `/api/v1/*` and `/.well-known/*` paths through unchanged (the OAuth authorization server for MCP clients is discovered at `/.well-known/oauth-authorization-server/api/auth`).
 - **GitHub PAT** with `repo` scope, or a GitHub App (short-lived installation tokens; see [`github-app-setup.md`](./github-app-setup.md)).
 - **GitHub webhook secret** — any strong random string; you'll add it to GitHub repo webhooks pointing at `https://api.example.com/api/v1/webhooks/git`.
 - **LLM provider key(s)** — configured via the admin UI (`/studio/models`) after first boot. There is no env-var fallback for LLM credentials: model + credential config is fully DB-driven (see [`model-configuration.md`](./model-configuration.md)).
@@ -214,6 +214,14 @@ Until the schema is deployed somewhere, a change goes into the baseline by regen
 command above rather than by appending a third migration — the split is by *kind* of DDL, not by
 when it was written. Once deployed, new changes append normal Prisma migrations after these;
 `prisma migrate deploy` applies whatever is pending.
+
+The `oauth_*` and `jwks` tables must exist before MCP clients can use the gateway, so deploy the migration
+first. The gateway does boot without them: it seeds the MCP resource into `oauth_resources` while
+initialising authentication, and tolerates a missing table by deferring that seed to the first use of the
+resource. Until the migration is applied the OAuth endpoints fail, and sign-in is unaffected. The OAuth provider distinguishes a
+`NULL` array column from an empty one, so only the array columns it requires are `NOT NULL`
+(`oauth_clients.redirect_uris` and `scopes` on the access-token, refresh-token and consent tables); every
+other array there stays nullable on purpose.
 
 ```bash
 # 1. Create the database with the pgvector extension
@@ -437,7 +445,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 
 ## 10. Hardening checklist
 
-- [ ] `BETTER_AUTH_URL` and `CORS_ORIGIN` point at your real HTTPS domain (gateway refuses to issue secure cookies otherwise).
+- [ ] `BETTER_AUTH_URL` and `CORS_ORIGIN` point at your real HTTPS domain (gateway refuses to issue secure cookies otherwise). `BETTER_AUTH_URL` is also the issuer and audience of the OAuth tokens MCP clients receive (see [`oauth-setup.md`](./oauth-setup.md#the-platform-as-an-oauth-server-for-mcp-clients)), so it must be the public URL clients reach and must not change once clients are connected.
 - [ ] `BETTER_AUTH_SECRET` is ≥32 chars and matches across all gateway replicas.
 - [ ] `JWT_SECRET` (or RSA key pair) is set, and is *not* the `.env.example` placeholder.
 - [ ] `SEED_ADMIN_PASSWORD` is rotated or the seed admin is deleted after first sign-in.

@@ -189,6 +189,32 @@ export const SETTING_DEFINITIONS = {
     schema: z.boolean(),
   }),
 
+  // ── MCP server ─────────────────────────────────────────────────────────────
+  'mcp.enabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether the platform acts as an OAuth authorization server for MCP clients. Off, the authorization server's endpoints and its discovery document return 404. Read through a ~30 s cache, so turning it off takes up to that long to apply on every replica.",
+    group: 'mcp',
+    label: 'Enable MCP access',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'mcp.writeToolsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether MCP clients may be granted write access. Off, the mcp:write scope is refused at authorization and no access token that carries it is issued, on either the authorization-code or the refresh grant. A token already issued keeps the scope until it expires. Reads stay available while this is off.',
+    group: 'mcp',
+    label: 'Allow MCP write access',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+
   // ── Semantic memory ────────────────────────────────────────────────────────
   'memory.orgSimilarityThreshold': defineSetting({
     defaultValue: 0.7,

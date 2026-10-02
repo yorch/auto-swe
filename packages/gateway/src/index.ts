@@ -17,12 +17,15 @@ import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { fromNodeHeaders } from 'better-auth/node';
-import Fastify, { type FastifyError, type RouteHandlerMethod } from 'fastify';
+import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
-import { isCanonicalRequestPath } from './lib/canonicalPath.js';
+import { createBetterAuthHandler, registerBetterAuthRoutes } from './lib/betterAuthHandler.js';
+import { registerFormBodyParser } from './lib/formBody.js';
+import { mcpOAuthGate } from './lib/mcpOAuthGate.js';
+import { mcpOAuthGateOptions } from './lib/mcpOAuthGateOptions.js';
 import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
@@ -30,9 +33,6 @@ import {
 import { parseTrustProxy } from './lib/trustProxy.js';
 import authPlugin, {
   ACCESS_TOKEN_TTL_SECONDS,
-  extractSessionCookieValue,
-  invalidateSessionCache,
-  ipRateLimitKey,
   rateLimitKey,
   requireAuth,
   requireUser,
@@ -119,25 +119,7 @@ async function start() {
   // Raw body for HMAC webhook verification (opt-in per route)
   await app.register(fastifyRawBody, { encoding: 'utf8', global: false, runFirst: true });
 
-  // Accept HTML form posts (application/x-www-form-urlencoded) everywhere —
-  // without this Fastify 415s them before any handler runs, which is how the
-  // better-auth social sign-in buttons silently broke. The Slack routes
-  // (slash commands, interactivity) rely on this parser too.
-  app.addContentTypeParser(
-    'application/x-www-form-urlencoded',
-    { parseAs: 'string' },
-    (_req, body, done) => {
-      try {
-        const out: Record<string, string> = {};
-        for (const [k, v] of new URLSearchParams(body as string)) {
-          out[k] = v;
-        }
-        done(null, out);
-      } catch (err) {
-        done(err as Error);
-      }
-    }
-  );
+  registerFormBodyParser(app);
 
   await app.register(cookie);
 
@@ -218,98 +200,9 @@ async function start() {
   // the /api/v1/auth/session-token bridge below exchanges a valid
   // better-auth session for a short-lived JWT the rest of the API
   // already understands. ──
-  const betterAuthHandler: RouteHandlerMethod = async (request, reply) => {
-    // The URL below is resolved before better-auth dispatches on it, but the
-    // route that matched — and the rate limit it carries — was chosen on the
-    // raw path. Serve only a path that resolves to itself.
-    if (!isCanonicalRequestPath(request.url)) {
-      return reply.status(400).send({
-        error: { code: 'NON_CANONICAL_PATH', message: 'Request path is not in canonical form' },
-      });
-    }
-    try {
-      const url = new URL(request.url, `http://${request.headers.host}`);
-      const headers = fromNodeHeaders(request.headers);
-      // Snapshot the session-cookie value BEFORE better-auth runs — on a
-      // successful /sign-out it'll clear the cookie in the response, and
-      // we want to invalidate our in-memory cache for that token regardless.
-      const sessionCookieBefore = extractSessionCookieValue(request.headers);
-      // Fastify has already parsed the body (JSON or, via the app-level
-      // parser, an urlencoded form) into an object — re-serialize it as
-      // JSON and label it as such so better-auth sees one canonical shape
-      // no matter how the browser sent it. A text/plain body arrives as a
-      // string and passes through untouched. content-length is a forbidden
-      // fetch header — the Request constructor recomputes it from the body.
-      let body: string | undefined;
-      if (request.body !== undefined && request.body !== null) {
-        if (typeof request.body === 'string') {
-          body = request.body;
-        } else {
-          body = JSON.stringify(request.body);
-          headers.set('content-type', 'application/json');
-        }
-      }
-      const req = new Request(url.toString(), {
-        ...(body !== undefined ? { body } : {}),
-        headers,
-        method: request.method,
-      });
-      const response = await getAuth().handler(req);
-      // Invalidate the cache for sign-out / revoke-session calls so the
-      // logged-out user is locked out immediately instead of waiting up
-      // to 60s for the cached entry to expire.
-      if (
-        response.status < 400 &&
-        sessionCookieBefore &&
-        (url.pathname.endsWith('/sign-out') || url.pathname.endsWith('/revoke-session'))
-      ) {
-        invalidateSessionCache(sessionCookieBefore);
-      }
-      reply.status(response.status);
-      response.headers.forEach((value: string, key: string) => {
-        reply.header(key, value);
-      });
-      return reply.send(response.body ? await response.text() : null);
-    } catch (error) {
-      app.log.error({ err: error }, 'better-auth handler failed');
-      return reply.status(500).send({
-        error: { code: 'AUTH_HANDLER_ERROR', message: 'Internal authentication error' },
-      });
-    }
-  };
-  // Tighter rate-limit on the credential endpoints only. The global limit
-  // is 200/min — too permissive for sign-in / sign-up / reset / magic-link,
-  // where credential-stuffing or link spam should be capped — but the same
-  // 20/min on the whole wildcard also throttled /get-session, which the
-  // dashboard calls on every full page load, so a user paging through the
-  // admin area was rate-limited and bounced to the login page.
-  const CREDENTIAL_AUTH_PATHS = [
-    '/api/auth/sign-in/email',
-    '/api/auth/sign-in/magic-link',
-    '/api/auth/sign-up/email',
-    '/api/auth/forget-password',
-    '/api/auth/request-password-reset',
-    '/api/auth/reset-password',
-    '/api/auth/change-password',
-    '/api/auth/send-verification-email',
-  ];
-  //
-  // Keyed on the client IP alone, never the per-user key the global limit
-  // uses: these are the brute-force targets, and a per-user key would give an
-  // attacker one fresh bucket per self-registered account they sign in as.
-  for (const url of CREDENTIAL_AUTH_PATHS) {
-    app.route({
-      config: { rateLimit: { keyGenerator: ipRateLimitKey, max: 20, timeWindow: '1 minute' } },
-      handler: betterAuthHandler,
-      method: 'POST',
-      url,
-    });
-  }
-  app.route({
-    handler: betterAuthHandler,
-    method: ['GET', 'POST'],
-    url: '/api/auth/*',
-  });
+  // The OAuth gate's hooks apply to routes registered after it, so it goes first.
+  await app.register(mcpOAuthGate, mcpOAuthGateOptions());
+  registerBetterAuthRoutes(app, createBetterAuthHandler());
 
   // Public: which social providers are configured? The login page reads
   // this to know whether to show GitHub / Google buttons (they're hidden

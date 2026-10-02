@@ -14,6 +14,7 @@
  */
 
 import crypto from 'node:crypto';
+import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
@@ -23,13 +24,25 @@ import {
   resolveOktaOAuthConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
+import { oauthProvider } from '@better-auth/oauth-provider';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
-import { magicLink } from 'better-auth/plugins';
+import { APIError } from 'better-auth/api';
+import { jwt, magicLink } from 'better-auth/plugins';
 import { type GenericOAuthConfig, genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import { authEmailAvailable, deliverAuthEmail } from './authEmail.js';
 import { type GithubSignIn, resolveGithubSignIn } from './githubEnterpriseAuth.js';
 import { clearGithubLogin, syncGithubLoginForAccount } from './githubIdentity.js';
+import {
+  MCP_ACCESS_TOKEN_TTL_SECONDS,
+  MCP_JWKS_GRACE_SECONDS,
+  MCP_JWKS_ROTATION_SECONDS,
+  MCP_REFRESH_TOKEN_TTL_SECONDS,
+  MCP_SCOPES,
+  mcpIssuanceRefusal,
+  mcpIssuerFor,
+  mcpResourceFor,
+} from './mcpOAuth.js';
 
 // Share the gateway's single Prisma client (one pool, tenant guard attached)
 // instead of opening a second, unguarded connection pool for auth.
@@ -37,6 +50,10 @@ import { clearGithubLogin, syncGithubLoginForAccount } from './githubIdentity.js
 const betterAuthBootstrap = resolveBetterAuthConfig();
 const BASE_URL = betterAuthBootstrap.baseUrl;
 const CLIENT_ORIGIN = betterAuthBootstrap.clientOrigin;
+
+/// The MCP resource server's identifier (RFC 8707): the `aud` of every access token this
+/// authorization server issues for MCP clients.
+export const MCP_RESOURCE = mcpResourceFor(BASE_URL);
 
 // Guard: never let the in-source dev fallback ship. The fallback is allowed
 // only when NODE_ENV explicitly opts into development/test — an unset NODE_ENV
@@ -441,6 +458,69 @@ function buildAuth() {
       // stays broken until the gateway is restarted against a reachable
       // issuer.
       ...(genericConfigs.length > 0 ? [genericOAuth({ config: genericConfigs })] : []),
+      // OAuth 2.1 authorization server for MCP clients. Everything below derives from
+      // BASE_URL / CORS_ORIGIN, so it is configured once here; the operator switches
+      // (`mcp.enabled`, `mcp.writeToolsEnabled`) and every request-level policy live in the
+      // Fastify gate (`mcpOAuthGate.ts`), which reads settings per request.
+      //
+      // `disableSettingJwtHeader`: without it the plugin signs the full session user (email,
+      // role, `isActive`, `slackId`) into a `set-auth-jwt` header on every `/get-session`.
+      jwt({
+        disableSettingJwtHeader: true,
+        jwks: { gracePeriod: MCP_JWKS_GRACE_SECONDS, rotationInterval: MCP_JWKS_ROTATION_SECONDS },
+        jwt: { issuer: mcpIssuerFor(BASE_URL) },
+      }),
+      oauthProvider({
+        accessTokenExpiresIn: MCP_ACCESS_TOKEN_TTL_SECONDS,
+        allowDynamicClientRegistration: true,
+        allowUnauthenticatedClientRegistration: true,
+        // The plugin's default lets any signed-in session create, update, delete and rotate
+        // clients; new sign-ups exist (inactive) and magic-link sign-up is on. There is no
+        // client-management UI, so deny, for clients and for resources alike.
+        clientPrivileges: () => false,
+        // A DCR client may ask for these and nothing else.
+        clientRegistrationAllowedScopes: [...MCP_SCOPES],
+        // `enforcePerClientResources` defaults to true, and a DCR client is otherwise linked to
+        // no resource, so its authorize request fails with `invalid_target`. Do not turn the
+        // enforcement off instead.
+        clientRegistrationDefaultResources: [MCP_RESOURCE],
+        consentPage: `${CLIENT_ORIGIN}/oauth/consent`,
+        // Runs on every JWT access-token mint, for the code and the refresh grant, before any
+        // refresh token is stored or rotated, so a throw here issues nothing. This is the one
+        // place every path crosses, including an authorization resumed after sign-in. The
+        // plugin's opaque, audience-less token path skips it; the gate makes that path
+        // unreachable by requiring `resource` at authorize and at the token endpoint.
+        customAccessTokenClaims: async ({ scopes, user }) => {
+          const settings = await resolveSettings(['mcp.enabled', 'mcp.writeToolsEnabled']);
+          const refusal = mcpIssuanceRefusal(user, scopes, {
+            enabled: settings['mcp.enabled'],
+            writeToolsEnabled: settings['mcp.writeToolsEnabled'],
+          });
+          if (refusal) {
+            throw new APIError('BAD_REQUEST', {
+              error: 'invalid_grant',
+              error_description: refusal,
+            });
+          }
+          return {};
+        },
+        // Public clients only, so the default `client_credentials` grant goes.
+        grantTypes: ['authorization_code', 'refresh_token'],
+        loginPage: `${CLIENT_ORIGIN}/login`,
+        refreshTokenExpiresIn: MCP_REFRESH_TOKEN_TTL_SECONDS,
+        resourcePrivileges: () => false,
+        // The plugin intersects requested scopes with the resource's list, so
+        // `offline_access` must be listed here or the refresh-token scope is filtered back out.
+        // An absent list means "unrestricted" and an empty one "nothing allowed".
+        // The configuration is the only source of truth (no admin editing of resources), so a
+        // change to the scopes must reach a row that already exists.
+        resourceSeedMode: 'overwrite',
+        resources: [
+          { allowedScopes: [...MCP_SCOPES], identifier: MCP_RESOURCE, name: 'auto-swe MCP' },
+        ],
+        // `offline_access` is what makes the plugin issue a refresh token.
+        scopes: [...MCP_SCOPES],
+      }),
     ],
     // Strict origins for browser-initiated calls. The Slack OAuth flow keeps
     // its own server-side redirect handling so it doesn't need to appear here.

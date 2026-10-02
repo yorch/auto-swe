@@ -301,6 +301,29 @@ UPDATE "knowledge_base_config" SET "spaces" = ARRAY[]::TEXT[] WHERE "spaces" IS 
 ALTER TABLE "knowledge_base_config"
   ALTER COLUMN "spaces" SET NOT NULL;
 
+-- OAuth provider (better-auth `@better-auth/oauth-provider`). Only the arrays the
+-- plugin itself requires are NOT NULL: redirect URIs on a client and granted
+-- scopes on a token or consent. Every other array column stays nullable on
+-- purpose — the plugin distinguishes NULL from an empty array (a resource's
+-- `allowed_scopes` NULL means unrestricted, `{}` means nothing allowed), so a
+-- blanket NOT NULL would break the boot-time resource seed or silently turn the
+-- resource into deny-all.
+UPDATE "oauth_clients" SET "redirect_uris" = ARRAY[]::TEXT[] WHERE "redirect_uris" IS NULL;
+ALTER TABLE "oauth_clients"
+  ALTER COLUMN "redirect_uris" SET NOT NULL;
+
+UPDATE "oauth_access_tokens" SET "scopes" = ARRAY[]::TEXT[] WHERE "scopes" IS NULL;
+ALTER TABLE "oauth_access_tokens"
+  ALTER COLUMN "scopes" SET NOT NULL;
+
+UPDATE "oauth_refresh_tokens" SET "scopes" = ARRAY[]::TEXT[] WHERE "scopes" IS NULL;
+ALTER TABLE "oauth_refresh_tokens"
+  ALTER COLUMN "scopes" SET NOT NULL;
+
+UPDATE "oauth_consents" SET "scopes" = ARRAY[]::TEXT[] WHERE "scopes" IS NULL;
+ALTER TABLE "oauth_consents"
+  ALTER COLUMN "scopes" SET NOT NULL;
+
 -- ── Repo dependency graph ────────────────────────────────────────────────────
 -- The repo_dependencies edge table and connections.package_names live in the
 -- generated baseline; only these constructs need hand-written SQL.
