@@ -697,9 +697,10 @@ export async function runChannelAgentTurn(
   const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
 
   // CHANNEL tier fires because `channelId` is set; team/org tiers cascade after it.
+  const ctx = { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId };
   const spec = await resolveAgentSpec(
     { agentKey: agentKey as ModelBackedAgentKey, basePrompt: '' },
-    { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId }
+    ctx
   );
 
   // Persona: prepend before any other additions so callers' promptNote and tool
@@ -716,7 +717,8 @@ export async function runChannelAgentTurn(
     spec.systemPrompt = `${spec.systemPrompt}${extras.promptNote}`;
   }
 
-  const result = await runAgent(spec, userMessage, { spanName });
+  // The same scope the spec resolved at, so `workspace.agentMaxSteps` does too.
+  const result = await runAgent(spec, userMessage, { ctx, spanName });
 
   return { costUsd: result.costUsd ?? 0, reply: (result.text ?? '').trim() };
 }

@@ -91,6 +91,11 @@ routes:
   bounded-concurrency subtask fan-in plus synthesis inside one activity. `finalizeChannelTaskRun`
   reads `nodes.composite.output.text ?? nodes.task.output.text`.
 
+The general route is repo-less, so its run has no `ActiveWorkflow` row for the ambient context to
+derive a team from. Its agent nodes, planner and fan-out therefore take the channel's own team and
+org (`withChannelScope`), which puts a TEAM or ORGANIZATION override of `channelAssistant` in force
+for the delegated task exactly as it is for the reply. This is resolution only: it grants nothing.
+
 > The fan-in lives inside one activity rather than using a `fanOut` node because the interpreter
 > cannot surface a branch agent's text back to a join.
 

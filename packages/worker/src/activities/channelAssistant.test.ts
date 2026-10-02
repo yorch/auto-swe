@@ -718,6 +718,21 @@ describe('runChannelAssistantTurn', () => {
     expect(passedMessage).toContain('User: how do I deploy?');
   });
 
+  it('runs the turn at the same channel/team/org scope its agent resolved at', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+      orgId: 'org-1',
+      teamId: 'team-1',
+    } as never);
+
+    await runChannelAssistantTurn(makeInput({ userText: 'hello' }));
+
+    const scope = { channelId: 'chan-1', orgId: 'org-1', teamId: 'team-1' };
+    expect(resolveAgentSpecMock.mock.calls[0]?.[1]).toEqual(scope);
+    expect(runAgentMock.mock.calls[0]?.[2]).toMatchObject({ ctx: scope });
+  });
+
   it('passes the raw user text when there is no relevant memory or thread context', async () => {
     findChannel.mockResolvedValue({
       agentKey: 'channelAssistant',

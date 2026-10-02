@@ -4,6 +4,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { withChannelScope } from '../lib/config/channelContext.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
@@ -63,8 +64,9 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
   const baseCtx = await currentRequestContext();
   // Phase A: a channel-task run carries its originating channelId on the request
   // (not derivable from `currentRequestContext`, which keys on ActiveWorkflow).
-  // Thread it in so the CHANNEL config tier fires for per-channel tools/MCP/model.
-  const ctx = input.channelId ? { ...baseCtx, channelId: input.channelId } : baseCtx;
+  // Thread it in so the CHANNEL config tier fires for per-channel tools/MCP/model;
+  // the channel's team and org come with it, since a repo-less run has no ledger row.
+  const ctx = await withChannelScope(baseCtx, input.channelId);
   const { key, version } = parseAgentRef(input.agentRef);
 
   // An explicit `@version` pin overrides the run-start snapshot for this key.

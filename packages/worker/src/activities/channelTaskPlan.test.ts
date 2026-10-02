@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { findChannel } = vi.hoisted(() => ({ findChannel: vi.fn() }));
+vi.mock('@auto-swe/shared/db', () => ({ prisma: { slackChannel: { findUnique: findChannel } } }));
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn().mockResolvedValue({ teamId: 'team-1' }),
@@ -9,6 +11,8 @@ vi.mock('../lib/config/agentSpec.js', () => ({
 }));
 vi.mock('./runAgent.js', () => ({ runAgent: vi.fn() }));
 
+import { resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { planChannelTask, runChannelSubtasks } from './channelTaskPlan.js';
 import { runAgent } from './runAgent.js';
 
@@ -158,5 +162,41 @@ describe('runChannelSubtasks', () => {
       task: 't',
     });
     expect(result.text).toBe('ANSWER(a)\n\nANSWER(b)');
+  });
+});
+
+describe('channel scope', () => {
+  const scope = { channelId: 'chan-1', orgId: 'org-9', teamId: 'team-9' };
+
+  beforeEach(() => {
+    // A repo-less run: no ledger row, so the ambient context has no team or org.
+    vi.mocked(currentRequestContext).mockResolvedValue({});
+    findChannel.mockResolvedValue({ orgId: 'org-9', teamId: 'team-9' });
+    vi.mocked(resolveAgentSpec).mockClear();
+  });
+
+  it("plans at the channel's team and org", async () => {
+    mockedRunAgent.mockResolvedValue({ object: { subtasks: [] } } as never);
+    await planChannelTask({ channelId: 'chan-1', task: 't' });
+    expect(vi.mocked(resolveAgentSpec).mock.calls[0]?.[1]).toEqual(scope);
+    expect(mockedRunAgent.mock.calls[0]?.[2]).toMatchObject({ ctx: scope });
+  });
+
+  it("fans out and synthesizes at the channel's team and org", async () => {
+    mockedRunAgent.mockResolvedValue({ text: 'answer' } as never);
+    await runChannelSubtasks({
+      channelId: 'chan-1',
+      subtasks: [
+        { description: 'a', title: 'A' },
+        { description: 'b', title: 'B' },
+      ],
+      task: 't',
+    });
+    // The branch spec is resolved once and shared; the synthesis resolves its own.
+    expect(vi.mocked(resolveAgentSpec).mock.calls.map((c) => c[1])).toEqual([scope, scope]);
+    expect(mockedRunAgent.mock.calls).toHaveLength(3);
+    for (const call of mockedRunAgent.mock.calls) {
+      expect(call[2]).toMatchObject({ ctx: scope });
+    }
   });
 });

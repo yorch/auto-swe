@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
+const { findChannel } = vi.hoisted(() => ({ findChannel: vi.fn() }));
+vi.mock('@auto-swe/shared/db', () => ({ prisma: { slackChannel: { findUnique: findChannel } } }));
 
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn().mockResolvedValue({ teamId: 'team-1' }),
@@ -27,6 +28,7 @@ vi.mock('../lib/activityContext.js', () => ({
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { runAgent } from './runAgent.js';
 import { runAgentNode } from './runAgentNode.js';
@@ -51,6 +53,22 @@ describe('runAgentNode', () => {
       spanName: 'llm.agent_node',
     });
     expect(result).toEqual({ object: undefined, text: 'verdict' });
+  });
+
+  it("resolves a repo-less channel task at the channel's team and org, not the channel alone", async () => {
+    // A general channel task has no ActiveWorkflow row, so the ambient context
+    // carries neither team nor org.
+    vi.mocked(currentRequestContext).mockResolvedValueOnce({});
+    findChannel.mockResolvedValueOnce({ orgId: 'org-9', teamId: 'team-9' });
+
+    await runAgentNode({ agentRef: 'channelAssistant', channelId: 'chan-1', userMessage: 'go' });
+
+    const scope = { channelId: 'chan-1', orgId: 'org-9', teamId: 'team-9' };
+    expect(mockedResolveSpec).toHaveBeenCalledWith(expect.anything(), scope);
+    expect(mockedRunAgent).toHaveBeenCalledWith(expect.anything(), 'go', {
+      ctx: scope,
+      spanName: 'llm.agent_node',
+    });
   });
 
   it('pins the version from an "@version" agentRef on top of the run snapshot', async () => {
