@@ -12,9 +12,16 @@ const signed = (scope: string, redirect = 'http://127.0.0.1:33333/cb') =>
 
 const assign = vi.fn();
 
+const SESSION = {
+  session: { expiresAt: '2099-01-01T00:00:00.000Z', id: 's1' },
+  user: { email: 'a@b.c', id: 'u1', isActive: true, role: 'ENGINEER' },
+};
+
 function mockGateway(opts: { writeToolsEnabled?: boolean; enabled?: boolean; name?: string } = {}) {
   return setupFetchMock({
+    '/api/auth/get-session': () => SESSION,
     '/api/auth/oauth2/public-client': () => ({ client_name: opts.name ?? 'Claude Code' }),
+    '/api/v1/auth/session-token': () => ({ data: { accessToken: 'jwt-1' } }),
     'GET /api/v1/me/mcp-grants': () => ({
       data: [],
       mcp: { enabled: opts.enabled ?? true, writeToolsEnabled: opts.writeToolsEnabled ?? false },
@@ -148,13 +155,13 @@ describe('ConsentScreen', () => {
     expect((approve() as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('says so, and decides nothing, when opened without a request', () => {
+  it('says so, and decides nothing, when opened without a request', async () => {
     const spy = mockGateway();
     render(withQuery(<ConsentScreen search="" />));
 
-    expect(screen.getByText(/nothing to approve/i)).toBeTruthy();
+    expect(await screen.findByText(/nothing to approve/i)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /approve/i })).toBeNull();
-    expect(spy.mock.calls.filter(([url]) => String(url).includes('/api/auth/'))).toEqual([]);
+    expect(spy.mock.calls.filter(([url]) => String(url).includes('/api/auth/oauth2/'))).toEqual([]);
   });
 
   it('shows the server’s reason when the decision is refused, and stays put', async () => {
@@ -162,6 +169,12 @@ describe('ConsentScreen', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        if (url.includes('/get-session')) {
+          return new Response(JSON.stringify(SESSION), { status: 200 });
+        }
+        if (url.includes('/session-token')) {
+          return new Response(JSON.stringify({ data: { accessToken: 'jwt-1' } }), { status: 200 });
+        }
         if (url.includes('/consent')) {
           return new Response(
             JSON.stringify({
@@ -184,5 +197,42 @@ describe('ConsentScreen', () => {
     fireEvent.click(approve());
     expect(await screen.findByText(/write access is not enabled/i)).toBeTruthy();
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('establishes the session itself, so a browser sent here without the marker can decide', async () => {
+    const spy = mockGateway();
+    render(withQuery(<ConsentScreen search={signed('mcp:read')} />));
+
+    await screen.findByText('127.0.0.1:33333');
+    expect(spy.mock.calls.some(([u]) => String(u).endsWith('/api/auth/get-session'))).toBe(true);
+  });
+
+  it('asks a signed-out visitor to sign in, carrying the signed request, and decides nothing', async () => {
+    const spy = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/get-session')) {
+        return new Response('{}', { status: 401 });
+      }
+      throw new Error(`unexpected ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', spy);
+    const search = signed('mcp:read');
+    render(withQuery(<ConsentScreen search={search.slice(1)} />));
+
+    const link = (await screen.findByRole('link', { name: /sign in/i })) as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe(`/login?${search.slice(1)}`);
+    expect(screen.queryByRole('button', { name: /approve/i })).toBeNull();
+  });
+
+  it('offers a retry, not a sign-in, when the gateway cannot be reached', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      })
+    );
+    render(withQuery(<ConsentScreen search={signed('mcp:read')} />));
+
+    expect(await screen.findByRole('button', { name: /try again/i })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /sign in/i })).toBeNull();
   });
 });

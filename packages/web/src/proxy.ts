@@ -7,7 +7,14 @@ import {
   SEARCH_HEADER,
 } from '@/lib/config';
 
-const PUBLIC_PATHS = ['/login', '/api', '/reset-password', '/health'];
+// `/oauth/consent` is public to the proxy because the browser arrives there straight from the
+// authorization server (after a social sign-in, say) before this app has set the session marker
+// below. The page establishes the session itself and every call it makes is authenticated by the
+// gateway, so nothing is exposed by letting the page load.
+const PUBLIC_PATHS = ['/login', '/api', '/reset-password', '/health', '/oauth/consent'];
+
+/** Pages that take a credential or a security decision, and so must never be framed. */
+const FRAME_PROTECTED_PATHS = ['/login', '/oauth/consent'];
 
 /**
  * Two cookies can signal an authenticated session to this proxy:
@@ -33,7 +40,13 @@ function nextWithPathname(request: NextRequest, pathname: string) {
   const headers = new Headers(request.headers);
   headers.set(PATHNAME_HEADER, pathname);
   headers.set(SEARCH_HEADER, request.nextUrl.search);
-  return NextResponse.next({ request: { headers } });
+  const response = NextResponse.next({ request: { headers } });
+  if (FRAME_PROTECTED_PATHS.some((p) => pathname.startsWith(p))) {
+    // Clickjacking: a page that asks "approve this app?" or "sign in" cannot sit in a frame.
+    response.headers.set('Content-Security-Policy', "frame-ancestors 'none'");
+    response.headers.set('X-Frame-Options', 'DENY');
+  }
+  return response;
 }
 
 export function proxy(request: NextRequest) {

@@ -318,6 +318,25 @@ describe.skipIf(!enabled)('MCP grants against Postgres', () => {
       expect(tokens.statusCode, tokens.body).toBe(200);
     });
 
+    it('resumes from the consent address too, for a browser that reached the page signed out', async () => {
+      const user = await makeUser();
+      const clientId = await registerClient();
+      // The consent address the plugin issues (here via a signed-in authorize)...
+      const auth = await call('GET', authorizeUrl(clientId, pkce().challenge, 'mcp:read'), {
+        cookie: user.cookie,
+      });
+      const consentSearch = new URL(String(auth.headers.location)).search;
+      // ...is what the page's "Sign in" link hands to /login, which signs in with it.
+      const oauthQuery = await pluginOAuthQuery(consentSearch);
+      expect(oauthQuery).toBeTruthy();
+      const signedIn = await call('POST', '/api/auth/sign-in/email', {
+        json: { email: user.email, oauth_query: oauthQuery, password: PASSWORD },
+      });
+      expect(signedIn.statusCode, signedIn.body).toBe(200);
+      const next = new URL(signedIn.json().url);
+      expect(next.origin + next.pathname).toBe(`${ORIGIN}/oauth/consent`);
+    });
+
     it('sends a user who is already signed in straight to the consent page', async () => {
       const user = await makeUser();
       const clientId = await registerClient();

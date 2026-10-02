@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AuthHeading, AuthLayout } from '@/components/layout/AuthLayout';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { useMcpGrants } from '@/hooks/useMcpGrants';
@@ -19,6 +19,7 @@ import {
   MCP_SCOPE_WRITE,
   parseConsentRequest,
 } from '@/lib/mcpConsent';
+import { type SessionProbeStatus, useAuthStore } from '@/stores/authStore';
 
 /**
  * The page an MCP client sends the user to once they are signed in: who is asking, where the
@@ -29,6 +30,58 @@ import {
  * The redirect host is what the user can actually check, so it is shown prominently.
  */
 export function ConsentScreen({ search }: { search: string }) {
+  const hydrate = useAuthStore((s) => s.hydrateFromSession);
+  const [session, setSession] = useState<SessionProbeStatus | 'checking'>('checking');
+  const [attempt, setAttempt] = useState(0);
+
+  // The browser can arrive here straight from the authorization server, for instance after a
+  // social sign-in, without ever passing the login page that sets this app's session marker.
+  // The page therefore establishes the session itself, and shows nothing that depends on one
+  // until it has.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the retry trigger.
+  useEffect(() => {
+    let cancelled = false;
+    setSession('checking');
+    hydrate().then((status) => {
+      if (!cancelled) {
+        setSession(status);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrate, attempt]);
+
+  if (session === 'checking') {
+    return null;
+  }
+  if (session !== 'authenticated') {
+    return (
+      <AuthLayout>
+        <AuthHeading kicker="¶ § oauth/consent" title="Sign in to continue.">
+          <p className="mb-6 text-sm leading-relaxed text-paper-400">
+            {session === 'unknown'
+              ? 'The gateway did not answer, so your session could not be checked.'
+              : 'An app is waiting for you to approve it, but you are not signed in here.'}
+          </p>
+        </AuthHeading>
+        {session === 'unknown' ? (
+          <Button onClick={() => setAttempt((n) => n + 1)} variant="secondary">
+            Try again
+          </Button>
+        ) : (
+          // The consent address carries the signed request, which the login page resumes.
+          <ButtonLink href={`/login?${search}`} size="lg" variant="primary">
+            Sign in
+          </ButtonLink>
+        )}
+      </AuthLayout>
+    );
+  }
+  return <ConsentDecision search={search} />;
+}
+
+function ConsentDecision({ search }: { search: string }) {
   const request = parseConsentRequest(search);
   const grants = useMcpGrants();
   const client = useOAuthClientName(request?.clientId);
