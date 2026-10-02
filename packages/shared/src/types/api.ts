@@ -465,6 +465,8 @@ export interface SpecDiffResponse {
     removedNodes: string[];
     changedNodes: string[];
     unchangedNodes: string[];
+    /** Nodes whose only difference is group/title. Optional: an older gateway omits it. */
+    presentationOnlyNodes?: string[];
     metaChanges: Array<{ field: string; before: unknown; after: unknown }>;
   };
 }

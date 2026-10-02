@@ -222,6 +222,14 @@ export default function TemplateDiffPage({ params }: PageProps) {
                 <li className="font-mono text-[11px] uppercase tracking-wider text-paper-500">
                   Unchanged: {diffPayload.diff.unchangedNodes.length}
                 </li>
+                {(diffPayload.diff.presentationOnlyNodes?.length ?? 0) > 0 && (
+                  <li
+                    className="font-mono text-[11px] uppercase tracking-wider text-paper-500"
+                    title={(diffPayload.diff.presentationOnlyNodes ?? []).join(', ')}
+                  >
+                    Group / title only: {diffPayload.diff.presentationOnlyNodes?.length}
+                  </li>
+                )}
                 {diffPayload.diff.metaChanges.length > 0 && (
                   <li className="mt-3 border-t border-ink-600 pt-3">
                     <div className="label-mono mb-2">Metadata changes</div>
