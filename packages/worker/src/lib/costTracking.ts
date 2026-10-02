@@ -184,7 +184,7 @@ function costFromPrice(price: ModelPrice, inputTokens: number, outputTokens: num
   return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }
 
-interface TokenUsage {
+export interface TokenUsage {
   inputTokens: number | undefined;
   outputTokens: number | undefined;
 }

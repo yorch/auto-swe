@@ -18,6 +18,7 @@ import type {
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
 import { buildImplementerForActivity } from '../agents/implementer.js';
+import { mastraRuntime, runImplementerTurn } from '../agents/implementerRuntime.js';
 import { MERGE_CONFLICT_RESOLVER_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import {
@@ -27,14 +28,13 @@ import {
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
-import { abortSignalOption, throwIfActivityCancelled } from '../lib/cancellation.js';
+import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
-import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -547,42 +547,14 @@ async function mergeOneWithResolver(
       await assertRolePricedForUsdCap('mergeConflictResolver');
       await assertBudgetAvailable('decomposition');
       calledModel = true;
-      const result = await agent.generate(
-        [
-          { content: fullSystemPrompt, role: 'system' },
-          { content: userMessage, role: 'user' },
-        ],
-        { maxSteps, toolChoice: 'auto', ...abortSignalOption() }
-      );
-
-      const attribution = result.usage
-        ? await recordLlmUsage(
-            currentWorkflowId(),
-            'mergeConflictResolver',
-            result.usage,
-            `llm.resolve_conflict.${source}.attempt_${attempt}`
-          )
-        : undefined;
-
-      // LLM output scanner — advisory, non-blocking (the helper never throws).
-      await recordSuspiciousLlmOutput(opts.tracer, result.text ?? '', {
-        inputJson: { attempt, source },
-      });
-
-      // Recorded even when the model only made tool calls: the tool calls are
-      // already on the tracer, and this is the row that carries the prompt,
-      // the cost, and the attempt they belong to.
-      opts.tracer.addLlmResponse({
-        costUsd: attribution?.costUsd,
-        durationMs: Date.now() - start,
-        inputJson: { attempt, source, systemPrompt: fullSystemPrompt, userMessage },
-        inputTokens: attribution?.inputTokens,
-        model: attribution?.modelSpec,
-        outputJson: result.text
-          ? { text: result.text }
-          : { toolCallCount: result.steps?.length ?? 0 },
-        outputTokens: attribution?.outputTokens,
+      await runImplementerTurn({
+        context: { attempt, source },
         role: 'mergeConflictResolver',
+        runtime: mastraRuntime(agent, maxSteps),
+        system: fullSystemPrompt,
+        tracer: opts.tracer,
+        usageEvent: `llm.resolve_conflict.${source}.attempt_${attempt}`,
+        user: userMessage,
       });
     } catch (err) {
       // No row when the model was never called (payload read or budget gate).
