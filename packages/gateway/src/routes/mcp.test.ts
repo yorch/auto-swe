@@ -9,6 +9,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { SignJWT } from 'jose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { mcpBridgePlugin } from '../lib/mcp/bridge.js';
 import { createMcpTokenVerifier, type McpTokenRejection } from '../lib/mcpTokenVerifier.js';
 import {
   fakeVerifierDeps,
@@ -34,6 +35,15 @@ const initializeLegacy = {
     protocolVersion: '2025-06-18',
   },
 };
+const READ_TOOLS = [
+  'get_run',
+  'list_pending_human_steps',
+  'list_repositories',
+  'list_runs',
+  'list_work_requests',
+];
+const toolNames = (result: { tools: Array<{ name: string }> }) =>
+  result.tools.map((t) => t.name).sort();
 const listToolsLegacy = { id: 2, jsonrpc: '2.0', method: 'tools/list', params: {} };
 const modernMeta = {
   [CLIENT_CAPABILITIES_META_KEY]: {},
@@ -74,8 +84,15 @@ describe('MCP endpoint', () => {
       });
     });
     await app.register(rateLimit, { max: 10_000, timeWindow: '1 minute' });
+    const verifier = createMcpTokenVerifier({
+      ...verifierDeps,
+      getWriteToolsEnabled: async () => settings.writeToolsEnabled,
+      onReject: (reason) => rejections.push(reason),
+    });
+    await app.register(mcpBridgePlugin, { verifier });
     await app.register(mcpRoutes, {
       allowedOriginHostnames: ['localhost'],
+      dashboardOrigin: 'http://localhost:3000',
       getSettings: async () => {
         if (settingsFail) {
           throw new Error('registry unavailable');
@@ -85,11 +102,7 @@ describe('MCP endpoint', () => {
       issuer: TEST_ISSUER,
       resource: TEST_RESOURCE,
       serverVersion: '1.0.0',
-      verifier: createMcpTokenVerifier({
-        ...verifierDeps,
-        getWriteToolsEnabled: async () => settings.writeToolsEnabled,
-        onReject: (reason) => rejections.push(reason),
-      }),
+      verifier,
     });
     await app.ready();
   });
@@ -258,17 +271,20 @@ describe('MCP endpoint', () => {
 
     it('answers a server fault while verifying 500, not 401', async () => {
       const broken = Fastify();
+      const verifier = {
+        verifyAccessToken: async () => {
+          throw new Error('database down');
+        },
+      };
+      await broken.register(mcpBridgePlugin, { verifier });
       await broken.register(mcpRoutes, {
         allowedOriginHostnames: [],
+        dashboardOrigin: 'http://localhost:3000',
         getSettings: async () => ({ enabled: true, writeToolsEnabled: false }),
         issuer: TEST_ISSUER,
         resource: TEST_RESOURCE,
         serverVersion: '1.0.0',
-        verifier: {
-          verifyAccessToken: async () => {
-            throw new Error('database down');
-          },
-        },
+        verifier,
       });
       const res = await broken.inject({
         headers: { authorization: 'Bearer anything' },
@@ -283,7 +299,7 @@ describe('MCP endpoint', () => {
   });
 
   describe('the transport', () => {
-    it('serves a legacy-era client: initialize, then an empty tools/list, as one SSE frame', async () => {
+    it('serves a legacy-era client: initialize, then the read tools, as one SSE frame', async () => {
       const init = await post(initializeLegacy);
       expect(init.statusCode).toBe(200);
       expect(String(init.headers['content-type'])).toMatch(/^text\/event-stream/);
@@ -296,7 +312,7 @@ describe('MCP endpoint', () => {
 
       const list = await post(listToolsLegacy, { 'mcp-protocol-version': '2025-06-18' });
       expect(list.statusCode).toBe(200);
-      expect(rpc(list).result).toEqual({ tools: [] });
+      expect(toolNames(rpc(list).result)).toEqual(READ_TOOLS);
     });
 
     it('serves a modern-envelope client a plain JSON body', async () => {
@@ -306,7 +322,7 @@ describe('MCP endpoint', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(String(res.headers['content-type'])).toMatch(/^application\/json/);
-      expect(rpc(res).result.tools).toEqual([]);
+      expect(toolNames(rpc(res).result)).toEqual(READ_TOOLS);
     });
 
     it('answers GET and DELETE 405 once authenticated, and 401 before', async () => {

@@ -4,7 +4,7 @@ import type { JSONWebKeySet } from 'jose';
 import { loadTokenUser } from '../plugins/auth.js';
 import type { McpRouteOptions } from '../routes/mcp.js';
 import { getAuth, MCP_ISSUER, MCP_RESOURCE } from './betterAuth.js';
-import { getCorsOrigins } from './env.js';
+import { getCorsOrigins, getDefaultClientOrigin } from './env.js';
 import { createMcpTokenVerifier } from './mcpTokenVerifier.js';
 
 /** What a client sees as the server's version in `initialize`; bump when the tool surface changes. */
@@ -31,6 +31,7 @@ export function mcpRouteOptions(): McpRouteOptions {
     allowedOriginHostnames: [...getCorsOrigins(), MCP_RESOURCE]
       .map(hostnameOf)
       .filter((host): host is string => host !== null),
+    dashboardOrigin: getDefaultClientOrigin(),
     getSettings,
     issuer: MCP_ISSUER,
     resource: MCP_RESOURCE,

@@ -5,7 +5,6 @@ import {
   buildOAuthProtectedResourceMetadata,
   createMcpHandler,
   getOAuthProtectedResourceMetadataUrl,
-  McpServer,
   OAuthError,
   type OAuthMetadata,
   type OAuthTokenVerifier,
@@ -16,14 +15,17 @@ import {
 } from '@modelcontextprotocol/server';
 import { fromNodeHeaders } from 'better-auth/node';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { withClientIp } from '../lib/mcp/bridge.js';
+import { createMcpToolServer } from '../lib/mcp/tools.js';
 import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 
 /**
  * The MCP endpoint: a stateless Streamable HTTP server that is an OAuth 2.1 resource server.
  *
  * Mounted unconditionally; `mcp.enabled` is read per request and a disabled deployment answers 404
- * from every route here, so the switch needs no restart. This PR registers no tools, so an
- * authenticated client can `initialize` and list an empty tool set and nothing else.
+ * from every route here, so the switch needs no restart. The tools (`lib/mcp/tools.ts`) reach data
+ * only through the REST routes, by the bridge (`lib/mcp/bridge.ts`), which `mcpBridgePlugin` must
+ * have registered on the root instance first. This file imports no database access.
  */
 
 type McpSettings = { enabled: boolean; writeToolsEnabled: boolean };
@@ -40,6 +42,8 @@ export interface McpRouteOptions {
   /** Hostnames a browser `Origin` may carry (DNS-rebinding and CSRF defence). No `Origin` passes. */
   allowedOriginHostnames: string[];
   serverVersion: string;
+  /** The dashboard's public origin, for the links tool results carry. */
+  dashboardOrigin: string;
 }
 
 /** The scopes this server will accept now: write is advertised only while writes are enabled. */
@@ -90,22 +94,31 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resourceUrl);
   const resourcePath = resourceUrl.pathname;
 
-  // The factory runs once per HTTP request. Nothing is registered: `tools/list` is empty.
-  const handler = createMcpHandler(
-    () =>
-      new McpServer(
-        { name: 'auto-swe', version: options.serverVersion },
-        { capabilities: { tools: {} } }
-      ),
-    {
-      // No subscription capability is advertised, and `subscriptions/listen` is an SSE stream the
-      // gateway would have to hold open per client: refuse every one.
-      maxSubscriptions: 0,
-      onerror: (err) => logSdkError(app.log, err),
-      // The default (2025-era) stateless fallback stays on: GET and DELETE are 405 there.
-      responseMode: 'json',
-    }
-  );
+  const bridge = app.mcpBridge;
+  if (!bridge) {
+    throw new Error('mcpBridgePlugin must be registered on the root instance before mcpRoutes');
+  }
+  const toolDeps = {
+    app,
+    bridge,
+    dashboardOrigin: options.dashboardOrigin,
+    serverVersion: options.serverVersion,
+  };
+
+  // The factory runs once per HTTP request, with the verified token, so the tool list is decided
+  // per request.
+  const handler = createMcpHandler((ctx) => createMcpToolServer(toolDeps, ctx.authInfo), {
+    // No subscription capability is advertised, and `subscriptions/listen` is an SSE stream the
+    // gateway would have to hold open per client: refuse every one.
+    maxSubscriptions: 0,
+    onerror: (err) => logSdkError(app.log, err),
+    // The default (2025-era) stateless fallback stays on: GET and DELETE are 405 there.
+    // `auto` answers a single JSON body unless a handler emits a related message (progress,
+    // logging) before its result, and then streams it. The read tools emit none, so a modern
+    // client gets JSON either way; `json` would instead drop such a message without a word, and
+    // warns at boot that it does.
+    responseMode: 'auto',
+  });
   app.addHook('onClose', async () => {
     await handler.close();
   });
@@ -222,7 +235,11 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
       return sendWebResponse(reply, bearerAuthChallengeResponse(err, challenge));
     }
 
-    return sendWebResponse(reply, await handler.fetch(webRequest, { authInfo }));
+    // The client's address rides along so a tool's inner call is rate limited as the client is.
+    return sendWebResponse(
+      reply,
+      await handler.fetch(webRequest, { authInfo: withClientIp(authInfo, request.ip) })
+    );
   };
   app.route({
     handler: serve,
