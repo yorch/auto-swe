@@ -22,6 +22,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { experimentBucket } from '../lib/experimentBucket.js';
+import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { paginationQuery } from '../lib/pagination.js';
@@ -355,11 +356,63 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         body: CreateWorkRequestSchema,
+        headers: IdempotencyHeaderSchema,
       },
     },
     async (request, reply) => {
       const { externalTicketId, description, repoIds, budgetTier } = request.body;
       const user = requireUser(request);
+      const idempotencyKey = request.headers['idempotency-key'];
+
+      // `Idempotency-Key`: a retry of a submission this user already made answers
+      // with the run it started rather than a second one. Checked before anything
+      // else so a replay never re-runs authorization or allocates an id. Looked up
+      // again below wherever a concurrent same-key request could have won the race.
+      const replayForKey = async () => {
+        if (!idempotencyKey) {
+          return null;
+        }
+        const prior = await fastify.prisma.runInput.findUnique({
+          select: {
+            activeWorkflows: { select: { id: true } },
+            connectionId: true,
+            description: true,
+            externalTicketId: true,
+            id: true,
+            payload: true,
+          },
+          where: { requestedById_idempotencyKey: { idempotencyKey, requestedById: user.sub } },
+        });
+        if (!prior) {
+          return null;
+        }
+        const priorBudget = (prior.payload as { budget?: unknown } | null)?.budget;
+        if (
+          prior.externalTicketId !== externalTicketId ||
+          prior.description !== description ||
+          prior.connectionId !== repoIds[0] ||
+          priorBudget !== budgetTier
+        ) {
+          return reply.status(422).send({
+            error: {
+              code: 'IDEMPOTENCY_KEY_MISMATCH',
+              message:
+                'This Idempotency-Key was already used for a different request. Use a new key for a different ticket, repository, description or budget tier.',
+            },
+          });
+        }
+        return reply.status(200).send({
+          data: {
+            deduplicated: true,
+            workflowIds: prior.activeWorkflows.map((w) => w.id),
+            workRequestId: prior.id,
+          },
+        });
+      };
+      const replayed = await replayForKey();
+      if (replayed) {
+        return replayed;
+      }
 
       // Verify repository exists and is accessible to the requesting user.
       // Include team membership + org info so non-admins can only trigger work
@@ -438,6 +491,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         generateWorkflowId(externalTicketId, repo.organizationName, repo.repoName)
       );
       if ('conflictWorkflowId' in allocated) {
+        // A same-key request that committed after the lookup above is what this
+        // conflict may be; a different key (or none) is a real second submission.
+        const raced = await replayForKey();
+        if (raced) {
+          return raced;
+        }
         return reply.status(409).send({
           error: {
             code: 'WORKFLOW_ALREADY_EXISTS',
@@ -533,6 +592,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             description,
             externalTicketId,
             id: workRequestId,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
             payload,
             requestedById: user.sub,
             requestPayload: JSON.stringify(request.body),
@@ -549,6 +609,13 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         { log: fastify.log }
       );
       if (!launch.ok) {
+        // Losing the unique-index race to a same-key request is a replay, not a
+        // conflict. If the winner's start failed it compensated and freed the key,
+        // so nothing is found and this is the ordinary 409.
+        const raced = await replayForKey();
+        if (raced) {
+          return raced;
+        }
         return reply.status(409).send({
           error: {
             code: 'WORKFLOW_ALREADY_EXISTS',
