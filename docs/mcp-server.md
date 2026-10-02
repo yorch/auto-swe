@@ -7,12 +7,14 @@ and talks to the endpoint over Streamable HTTP. The server is a resource server 
 accepts only access tokens that the authorization server issued for it, and it re-checks on every
 request that the grant behind the token still stands.
 
-The server exposes five read-only tools (below) and no resources or prompts. A tool is a call to the
-same REST route a dashboard or CLI user would call, made in-process as the signed-in user, so what a tool
-returns is what that user is allowed to see, reduced to a short allowlist of fields. Nothing can be
-changed through it.
+The server exposes five read-only tools and, only when an admin has turned writes on and the user has
+consented to them, two write tools (below), and no resources or prompts. A tool is a call to the same REST
+route a dashboard or CLI user would call, made in-process as the signed-in user, so what a tool returns is
+what that user is allowed to see, reduced to a short allowlist of fields. The write tools can start a run
+and cancel one; nothing here can approve, merge or answer a human step.
 
-It is off until an admin turns on `mcp.enabled`.
+It is off until an admin turns on `mcp.enabled`, and read-only until an admin also turns on
+`mcp.writeToolsEnabled`.
 
 ## Endpoints
 
@@ -88,8 +90,9 @@ a user stops that token on its next request instead of when it expires. The user
 
 ## Tools
 
-Five tools, all read-only (`readOnlyHint`), all needing the `mcp:read` scope. Every input is a strict
-object: an argument the tool does not declare is refused, not ignored.
+Five read tools, all read-only (`readOnlyHint`), needing the `mcp:read` scope, and two write tools needing
+`mcp:write` ([below](#write-tools)). Every input is a strict object: an argument the tool does not declare
+is refused, not ignored.
 
 | Tool | Calls | Returns |
 |---|---|---|
@@ -112,17 +115,83 @@ A ticket id that is outside the characters the submit route accepts is returned 
 a team member authors (a template, a workflow node, a human step's title) are clipped and stripped of
 control characters, and are still text a person wrote. Characters a person cannot see but a model reads (zero-width and bidirectional-override characters, the Unicode tag block, private-use characters, unpaired surrogates) are removed, and names are clipped by code point.
 
-Not exposed: answering or approving a human step, merging, retrying, any write, templates, traces, and
-every administrative surface. `list_pending_human_steps` shows that a person is needed and where to go;
+Not exposed: answering or approving a human step, merging, retrying, any write other than the two below,
+templates, traces, and every administrative surface. `list_pending_human_steps` shows that a person is needed and where to go;
 the answer is given in the dashboard.
 
 A route's refusal reaches the agent as a fixed message per status (not found, not permitted, rate
 limited, unavailable), never the route's own text. A run the caller cannot see is answered exactly as one
 that does not exist.
 
+### Write tools
+
+Two tools, each needing the `mcp:write` scope. They exist only for a token that holds it, and a token
+holds it only while `mcp.writeToolsEnabled` is on and the user consented to write: with writes off, or
+for a read-only grant, `tools/list` does not show them. A read-only token that calls one anyway, while
+writes are on, is answered 403 `insufficient_scope` with `scope="mcp:write"` in the challenge, so a client
+can ask the user for the wider grant (step-up); with writes off there is no such challenge, because the
+scope cannot be granted.
+
+| Tool | Calls | Does |
+|---|---|---|
+| `submit_work_request` | `POST /api/v1/work-requests` | Starts a run for a ticket in a repository. Inputs: `externalTicketId`, `description`, `repoId`, and `idempotencyKey` (required, 8 to 128 characters of `A-Z a-z 0-9 . _ : ~ -`, sent as the `Idempotency-Key` header). There is no budget tier input: a run is always `STANDARD`. Returns `status` (`started`, `already_submitted` for a retry of a key that already launched a run, or `already_running` when the ticket already has a run in flight and nothing was launched), and `workRequestId`, which identifies the submission: pass it to `cancel_run`, or to `list_runs` and `get_run` (via `list_runs`) to follow it. The run itself is created by the worker a moment after the submit, so a `list_runs` for the work request can be empty at first. |
+| `cancel_run` | `POST /api/v1/workflow-runs/:id/cancel` | Cancels a run that is still running, if the caller may control it: the same rule as the dashboard, so a member of a team the repository is only shared with can see a run but not cancel it. Input: `runId`, or the `workRequestId` that `submit_work_request` returned (exactly one). A `workRequestId` cancels every running run of that work request that the caller launched, and only those, listing again until a pass finds none left to try (a run that finishes mid-way cannot make one be skipped): a run someone else launched, or that no user launched (a schedule or webhook), is left running and listed in `notCancelled`, and is cancelled only with its own `runId` (which the route's control filter still has to allow). If the worker has not created the run yet, the tool says so and nothing is cancelled. Returns `runIds` (cancelled), `notCancelled` (each with a fixed reason) and `status`: `CANCELLED`, or `PARTIAL` when some run was not cancelled. The result is an error only when nothing was cancelled. A refusal for one run (not found, not running, the platform could not cancel) does not stop the rest; a refusal that applies to every call (writes switched off, the burst limit, a revoked token, a lost scope) does, and the runs not reached are reported as not cancelled. |
+
+**A run launches under the caller's identity**, not a service account. It is recorded as launched by the
+user (`launchedById`, run identity `caller`), and where `github.userCredentialsEnabled` is on and the user
+has saved a GitHub token for the repository, the run pushes branches and opens pull requests with that
+token, as the user. The tool description says so, and so does the consent screen. The `description` is
+also read by the platform's own agents as their instructions. Nothing a write tool does merges a pull
+request or answers a human step: the run opens a pull request and waits for a person.
+
+A tool never relays the route's own error text. Refusals reach the agent as a fixed message per case:
+write access off, no permission, repository or run not found, the organization's monthly budget used up
+(402), a key still starting (409, retry with the same key), a key reused for a different request (422), the
+concurrency cap, and the burst limit. A ticket that already has a run in flight is a result
+(`already_running`), not an error.
+
+**The guards are in the route, not in the tool.** The tool is not the control: both routes declare
+`config: { mcpScope: 'write' }` (exactly these two), and when a
+request is bridged they call `assertMcpWriteAllowed` before anything else, so a leaked bridge secret plus
+a valid write token gets exactly what the tool gets. In order, on `POST /work-requests`:
+
+1. `mcp.writeToolsEnabled` is on (else 403 `MCP_WRITE_DISABLED`).
+2. The per-user burst limit `mcp.writeCallsPerMinute` (else 429 `MCP_WRITE_RATE_LIMITED`). It counts route calls, not tool calls: `cancel_run` with a `workRequestId` spends one per own run it attempts to cancel, refused attempts included, and refused calls count.
+3. The budget tier is `STANDARD` (else 422 `MCP_BUDGET_TIER_NOT_ALLOWED`).
+4. An `Idempotency-Key` is present (else 422 `MCP_IDEMPOTENCY_KEY_REQUIRED`).
+5. The route's ordinary flow: the idempotency replay (so a retry of a started run answers with it, even at
+   the cap), repository access, org membership and monthly budget (`authorizeLaunch`), and the ticket's
+   in-flight check.
+6. The concurrency cap, inside the transaction that writes the ledger rows (below), else 429
+   `MCP_RUN_CAP_REACHED`.
+
+`cancel_run` takes steps 1 and 2 only, and then the route's own control filter. A request that is not
+bridged (the dashboard, the CLI) skips all of it.
+
+**The concurrency cap** `mcp.maxConcurrentRuns` counts the user's in-flight runs of every origin, the
+dashboard's included: the user's `ActiveWorkflow` rows with a non-terminal status, which are written
+synchronously when a run is submitted (a `WorkflowRun`, which the worker creates a moment later, would
+miss a run that has only just been accepted). The count and the insert of the new rows share one
+transaction, and that transaction first takes a per-user `pg_advisory_xact_lock`, so parallel submissions
+for one user are serialised and the cap cannot be exceeded by racing them, on one gateway process or
+several. `launchTrackedWorkflow` takes the check as an optional `guard`; without one, which is every REST
+and CLI launch, its behaviour is unchanged.
+
+**Audit.** Every bridged write that reaches the route writes a `McpToolCall` row to the config audit log,
+from a hook on the two routes: the actor, the consent id (`entityId`), the OAuth client id and its name, the
+tool, a SHA-256 digest of the raw input (never the description or any other input text), the HTTP status,
+the refusal code if any, the work request id, and for `cancel_run` the run id it targeted (also on a
+refusal). Refusals after authentication are audited too, including a body that fails validation. Not
+audited: a request refused before the route knows who is writing (a bad bridge credential, an invalid
+token, a token without `mcp:write`, the gateway's global rate limit) and a body that is not valid JSON.
+The client's user agent is not recorded, because the inner request is built without any header the
+client sent. A failure to write the row is logged and never changes the response, so a run that launched
+is not reported to the agent as an error it would retry.
+
 ### How a tool is authorized
 
-A tool never reads the database. It makes one in-process `GET` to the REST route above, so that route's
+A tool never reads the database. It makes one in-process `GET` (or, for a write tool, `POST`) to the REST
+route above, so that route's
 role check, visibility filter, tenant guard, rate limit and audit apply to it unchanged, for a team
 member, an outsider and an ADMIN alike. Two properties keep that from becoming a way around REST's own
 rules:
@@ -136,8 +205,9 @@ rules:
    it in `X-Auto-Swe-Mcp-Bridge` on its inner calls. The inner request's headers are built from nothing:
    no header the client sent is forwarded, and the only thing taken from the outer request is the
    client's address, so the call is rate limited as the client is. A route accepts a bridged MCP token
-   only if it declares `config: { mcpScope: 'read' | 'write' }`, and exactly the five routes in the table
-   above do (six paths, counting the `/api/v1/inbox` alias of the human-steps route), all `read`.
+   only if it declares `config: { mcpScope: 'read' | 'write' }`, and exactly the five read routes in the
+   table above do (six paths, counting the `/api/v1/inbox` alias of the human-steps route), all `read`,
+   plus the two `write` routes of the write tools.
 
 `requireAuth` applies these rules, in this order, to any request that carries the bridge header (its
 presence, in whatever form, is enough to take this path, so no other credential is tried after it):
@@ -181,28 +251,53 @@ response back.
 
 ## Settings
 
-Both are ADMIN-only, GLOBAL-only registry settings ([configuration.md](./configuration.md)) read per
+All four are ADMIN-only, GLOBAL-only registry settings ([configuration.md](./configuration.md)) read per
 request through the ~30 s settings cache, so a change applies on every replica within about 30 seconds
-and needs no restart.
+and needs no restart. None is read only at startup.
 
 | Setting | Default | Effect here |
 |---|---|---|
 | `mcp.enabled` | `false` | Off, the endpoint and both protected resource metadata documents answer 404 (as the authorization server's endpoints do). If the setting cannot be read they answer 503: the server does not guess. |
-| `mcp.writeToolsEnabled` | `false` | Off, `mcp:write` is dropped from every token's effective scopes and left out of the protected resource metadata. |
+| `mcp.writeToolsEnabled` | `false` | Off, `mcp:write` is dropped from every token's effective scopes, left out of the protected resource metadata and refused at consent, the write tools are not listed, and the write routes refuse a bridged call. |
+| `mcp.writeCallsPerMinute` | `10` | The most write calls one user may make in a minute, counting refused ones. Counted per gateway process. |
+| `mcp.maxConcurrentRuns` | `2` | The most runs one user may have in flight before `submit_work_request` is refused. Counts runs started from the dashboard and the CLI too. |
 
 ## Operations
 
 - **Behind a proxy**, the gateway must receive `/api/v1/mcp` and `/.well-known/*`, and
   `BETTER_AUTH_URL` must be the public HTTPS URL. The protected resource metadata is refused with a 500
   (and a log line) when the issuer is neither HTTPS nor `localhost`.
-- **Rate limit.** The gateway's global per-IP limit applies to the endpoint.
-- **Cutting off one client or user** is a database fact, not a deploy: delete the consent, set the
-  client's `disabled`, or deactivate the user. Each takes effect on the next request (a deactivation
-  within 30 seconds on other replicas).
+- **Rate limit.** The gateway's global per-IP limit applies to the endpoint, and write tools have their own
+  per-user burst limit (`mcp.writeCallsPerMinute`).
+- **A user stuck at the cap.** A run whose `ActiveWorkflow` row was left non-terminal by a crash, by a
+  Temporal terminate done outside the platform, or by a workflow that failed before its run row was
+  created (nothing to cancel in the dashboard either) counts against `mcp.maxConcurrentRuns` until the row is
+  fixed: set its `currentStatus` to a terminal value (`CANCELLED`, `FAILED`, `COMPLETED` or `TIMED_OUT`).
+  Raising `mcp.maxConcurrentRuns` frees the user meanwhile.
 
 ## Limitations
 
-- The tools are read-only: a client cannot submit a work request, cancel a run or answer a human step.
+- A client can never approve, reject or answer a human step, or merge: the write tools only start and
+  cancel runs.
+- **A write is an action by the user, taken by an agent.** `submit_work_request` launches a run under the
+  caller's identity on any repository the caller can reach, and with per-user GitHub credentials on it may
+  push and open pull requests with the user's own token. If the user's agent obeys an instruction that
+  came from somewhere else (a web page, a document, another tool), it can submit work as the user. What
+  bounds that: writes are off until an admin turns them on, a client holds write only after the user's
+  step-up consent, grants expire and can be revoked, an idempotency key is required, the budget tier is
+  fixed, the burst limit and the concurrency cap apply, and a person reviews and merges every pull
+  request. Users should not set an MCP client to approve write tools automatically.
+- The concurrency cap is checked under a lock that only MCP submissions take, so a run started from the
+  dashboard or the CLI at the same instant as an MCP submission can exceed the cap, by as many as are
+  launched concurrently.
+- A run whose workflow fails before the worker has created its run row leaves its `ActiveWorkflow` row
+  non-terminal with no run, so it keeps counting against the cap and `cancel_run` cannot reach it; see
+  Operations.
+- The burst limit is counted per gateway process, so with several replicas a user can reach the limit on
+  each. Disabling writes, and a user's deactivation, take up to 30 seconds to reach every replica.
+- A cap refusal comes after the idempotency replay, so a retry of a run that already started is answered
+  with it even at the cap, and a retry that raced its own first submit is answered with the replay or
+  "still starting", not the cap; a new key for a ticket already in flight is answered "already running".
 - Resources and prompts are not exposed.
 - Consent is read or write, not per repository or per tool: a token reads everything its user can read.
 - `list_repositories` filters out the connections that are not git repositories after the route has

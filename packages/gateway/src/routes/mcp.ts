@@ -6,6 +6,7 @@ import {
   createMcpHandler,
   getOAuthProtectedResourceMetadataUrl,
   OAuthError,
+  OAuthErrorCode,
   type OAuthMetadata,
   type OAuthTokenVerifier,
   originValidationResponse,
@@ -16,7 +17,7 @@ import {
 import { fromNodeHeaders } from 'better-auth/node';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { withClientIp } from '../lib/mcp/bridge.js';
-import { createMcpToolServer } from '../lib/mcp/tools.js';
+import { createMcpToolServer, WRITE_TOOL_NAMES } from '../lib/mcp/tools.js';
 import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 
 /**
@@ -51,6 +52,19 @@ export interface McpRouteOptions {
 /** The scopes this server will accept now: write is advertised only while writes are enabled. */
 function supportedScopes(writeToolsEnabled: boolean): string[] {
   return writeToolsEnabled ? [MCP_SCOPE_READ, MCP_SCOPE_WRITE] : [MCP_SCOPE_READ];
+}
+
+/** Whether a JSON-RPC body (one message or a batch) calls a tool that needs `mcp:write`. */
+function callsWriteTool(body: unknown): boolean {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages.some((m) => {
+    const message = m as { method?: unknown; params?: { name?: unknown } } | null;
+    return (
+      message?.method === 'tools/call' &&
+      typeof message.params?.name === 'string' &&
+      WRITE_TOOL_NAMES.has(message.params.name)
+    );
+  });
 }
 
 function notFound(reply: FastifyReply) {
@@ -236,6 +250,25 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
         request.log.error({ err }, 'mcp: token verification failed');
       }
       return sendWebResponse(reply, bearerAuthChallengeResponse(err, challenge));
+    }
+
+    // Step-up: a token without `mcp:write` that calls a write tool is told which scope to ask
+    // for (RFC 6750 section 3.1), instead of the tool being reported as unknown. Only while
+    // writes are enabled: with them off, `mcp:write` cannot be granted, so the tool does not
+    // exist and asking for the scope would send the user round a consent that is refused.
+    const settings = settingsByRequest.get(request) as McpSettings;
+    if (
+      settings.writeToolsEnabled &&
+      !authInfo.scopes.includes(MCP_SCOPE_WRITE) &&
+      callsWriteTool(request.body)
+    ) {
+      return sendWebResponse(
+        reply,
+        bearerAuthChallengeResponse(
+          new OAuthError(OAuthErrorCode.InsufficientScope, 'Insufficient scope'),
+          { requiredScopes: [MCP_SCOPE_WRITE], resourceMetadataUrl }
+        )
+      );
     }
 
     // The client's address rides along so a tool's inner call is rate limited as the client is.

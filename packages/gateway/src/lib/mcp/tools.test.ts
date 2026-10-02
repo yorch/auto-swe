@@ -827,7 +827,7 @@ describe('the read tools', () => {
 });
 
 describe('which routes an MCP token may reach', () => {
-  it('registers mcpScope on the five read routes of the real route table and nowhere else', async () => {
+  it('registers mcpScope on the five read routes and the two write routes of the real route table and nowhere else', async () => {
     // Every plugin `index.ts` registers. Each `.register(` call is cut out whole by matching its
     // parentheses, so a call split over several lines reads like any other; one that is neither a
     // route plugin with a literal prefix nor known infrastructure fails the test rather than being
@@ -921,6 +921,9 @@ describe('which routes an MCP token may reach', () => {
       'HEAD /api/v1/work-requests read',
       'HEAD /api/v1/workflow-runs read',
       'HEAD /api/v1/workflow-runs/:id read',
+      // The two write tools' routes, and only those.
+      'POST /api/v1/work-requests write',
+      'POST /api/v1/workflow-runs/:id/cancel write',
     ]);
   });
 });

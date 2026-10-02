@@ -25,6 +25,12 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import {
+  assertMcpWriteAllowed,
+  mcpWriteAuditHook,
+  mcpWriteBegin,
+  sendRunCapRefusal,
+} from '../lib/mcpWriteGuard.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { isSystemTemplate } from '../lib/systemTemplate.js';
 import { reachableConnections } from '../lib/tenantScope.js';
@@ -354,7 +360,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
+      // An MCP write tool reaches this route through the bridge; `assertMcpWriteAllowed` below
+      // is what bounds it, and the hook writes its audit row.
+      config: { mcpScope: 'write' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onSend: mcpWriteAuditHook,
+      preValidation: mcpWriteBegin('submit_work_request'),
       schema: {
         body: CreateWorkRequestSchema,
         headers: IdempotencyHeaderSchema,
@@ -364,6 +375,17 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const { externalTicketId, description, repoIds, budgetTier } = request.body;
       const user = requireUser(request);
       const idempotencyKey = request.headers['idempotency-key'];
+
+      // A bridged MCP call is bounded here, ahead of everything else and in particular ahead of
+      // the idempotency replay below, so the write switch, the burst limit, the tier and the key
+      // rule apply to a replay as to a first submission. REST callers pass straight through.
+      const mcpWrite = await assertMcpWriteAllowed(request, reply, {
+        submit: { budgetTier, idempotencyKey },
+        tool: 'submit_work_request',
+      });
+      if (mcpWrite.refused) {
+        return mcpWrite.refused;
+      }
 
       // Verify repository exists and is accessible to the requesting user.
       // Include team membership + org info so non-admins can only trigger work
@@ -681,8 +703,17 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: resolvedTemplate.templateId,
             templateVersion: resolvedTemplate.version,
           }),
-        { log: fastify.log }
+        { guard: mcpWrite.launchGuard, log: fastify.log }
       );
+      if (!launch.ok && launch.reason === 'GUARD_REFUSED') {
+        // A retry of this key whose first submit committed while this one waited for the lock is
+        // a replay, not a request the cap should turn away.
+        const raced = await replayForKey();
+        if (raced) {
+          return raced.reply;
+        }
+        return sendRunCapRefusal(reply);
+      }
       if (!launch.ok) {
         // Losing the unique-index race to a same-key request is a replay, not a
         // conflict. If the winner's start failed it compensated and freed the key,

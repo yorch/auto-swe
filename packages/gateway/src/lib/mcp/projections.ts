@@ -98,6 +98,8 @@ export const restRuns = z.object({
       costUsdAccrued: money,
       endedAt: nullableTimestamp,
       id: z.string().uuid(),
+      /** Read by `cancel_run` to cancel only runs the caller launched; never returned by a tool. */
+      isMine: z.boolean().optional(),
       startedAt: timestamp,
       status,
       templateName: shortName(200).nullable(),
@@ -287,3 +289,46 @@ export type WorkRequestsOutput = z.infer<typeof workRequestsOutput>;
 export type RunsOutput = z.infer<typeof runsOutput>;
 export type RunOutput = z.infer<typeof runOutput>;
 export type HumanStepsOutput = z.infer<typeof humanStepsOutput>;
+
+// ── Write tools ──
+
+/** `POST /work-requests`: 201 on a start, 200 with `deduplicated` on a replay of the same key. */
+export const restSubmitted = z.object({
+  data: z.object({
+    deduplicated: z.boolean().optional(),
+    workflowIds: z.array(z.string().uuid().nullable()),
+    workRequestId: z.string().uuid(),
+  }),
+});
+
+export const submitOutput = z.object({
+  status: z
+    .enum(['started', 'already_submitted', 'already_running'])
+    .describe(
+      'started: a run was launched. already_submitted: this idempotency key had already launched a run, which is returned. already_running: this ticket already has a run in flight, and nothing was launched.'
+    ),
+  workRequestId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Identifies the submission. Pass it to cancel_run to stop its run, or to list_runs (workRequestId) to find the run id, which appears a moment after the submit.'
+    ),
+});
+
+/** `POST /workflow-runs/:id/cancel`. */
+export const restCancelled = z.object({
+  data: z.object({ id: z.string().uuid(), status: z.literal('CANCELLED') }),
+});
+
+export const cancelOutput = z.object({
+  notCancelled: z
+    .array(z.object({ reason: z.string(), runId: z.string().uuid() }))
+    .describe('Runs found for the work request that were not cancelled, each with the reason.'),
+  runIds: z.array(z.string().uuid()).describe('The runs that were cancelled.'),
+  status: z
+    .enum(['CANCELLED', 'PARTIAL'])
+    .describe(
+      'CANCELLED: every run asked about was cancelled. PARTIAL: some were not; see notCancelled.'
+    ),
+});

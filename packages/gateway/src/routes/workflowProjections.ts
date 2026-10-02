@@ -39,6 +39,7 @@ export interface RunWithWorkRequest {
   startedAt: Date;
   endedAt: Date | null;
   costUsdAccrued: number;
+  launchedById?: string | null;
   outcomeDomain: string | null;
   outcomeType: string | null;
   template?: { name: string; workspaceProvider: string | null } | null;
@@ -49,12 +50,14 @@ export interface RunWithWorkRequest {
   } | null;
 }
 
-export function projectRunSummary(r: RunWithWorkRequest) {
+/** `viewerId` makes the summary caller-relative: `isMine` is whether the viewer launched the run. */
+export function projectRunSummary(r: RunWithWorkRequest, viewerId?: string) {
   return {
     costUsdAccrued: r.costUsdAccrued,
     domain: r.template?.workspaceProvider ?? null,
     endedAt: r.endedAt,
     id: r.id,
+    isMine: viewerId !== undefined && r.launchedById != null && r.launchedById === viewerId,
     outcomeDomain: r.outcomeDomain,
     outcomeType: r.outcomeType,
     startedAt: r.startedAt,

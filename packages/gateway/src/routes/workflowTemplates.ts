@@ -1946,7 +1946,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       ]);
       return {
-        data: rows.map(projectRunSummary),
+        data: rows.map((r) => projectRunSummary(r)),
         meta: { limit, offset, total },
       };
     }

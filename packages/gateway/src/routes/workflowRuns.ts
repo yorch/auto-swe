@@ -12,6 +12,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
+import { assertMcpWriteAllowed, mcpWriteAuditHook, mcpWriteBegin } from '../lib/mcpWriteGuard.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import {
@@ -191,7 +192,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.workflowRun.count({ where }),
       ]);
       return {
-        data: rows.map(projectRunSummary),
+        data: rows.map((r) => projectRunSummary(r, user.sub)),
         meta: { limit, offset, total },
       };
     }
@@ -201,7 +202,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/cancel',
     {
+      // An MCP write tool reaches this route through the bridge; `assertMcpWriteAllowed` below
+      // is what bounds it, and the hook writes its audit row.
+      config: { mcpScope: 'write' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onSend: mcpWriteAuditHook,
+      preValidation: mcpWriteBegin('cancel_run'),
       schema: {
         params: RunIdParam,
         response: {
@@ -214,6 +220,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
+      const mcpWrite = await assertMcpWriteAllowed(request, reply, {
+        tool: 'cancel_run',
+      });
+      if (mcpWrite.refused) {
+        return mcpWrite.refused;
+      }
       const run = await fastify.prisma.workflowRun.findFirst({
         where: {
           id: request.params.id,
