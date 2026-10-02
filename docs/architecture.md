@@ -703,10 +703,15 @@ Current constraints of the system as built. Deliberate product boundaries are in
   ledger rows are written before the Temporal start, so a same-key request that arrives while the
   start is in flight gets `409 IDEMPOTENCY_KEY_IN_PROGRESS` (`Retry-After`), not success: the key only
   replays once `RunInput.startedActiveWorkflowId` is stamped after a successful start. If the start
-  fails the rows are deleted and the key is free. If that cleanup itself fails, or the gateway dies
-  between the start and the stamp, the key stays `IN_PROGRESS` indefinitely and its `RunInput` has to be
-  removed (or the ticket's `ActiveWorkflow` marked terminal) by an operator; it never turns into a false
-  success. Keys are never expired or swept, so a key is permanently bound to its first ticket,
+  fails the rows are deleted and the key is free. Two failures can leave the key `IN_PROGRESS`
+  indefinitely, and they need opposite remedies; an operator tells them apart by asking Temporal
+  whether the workflow id of the `ActiveWorkflow` row exists (Temporal UI, or `temporal workflow
+  describe`). (1) The stamp write failed after a successful start (the gateway logs `could not confirm
+  idempotent launch`, or it died between the start and the stamp): a run **is** live. Set
+  `run_inputs.started_active_workflow_id` to that run's `active_workflows.id`; the key then replays
+  normally. (2) Compensation failed after a failed start: no run exists (Temporal has no such
+  execution). Delete the leftover `ActiveWorkflow` row and then its `RunInput` row; the key is free. In
+  neither case does the key turn into a false success. Keys are never expired or swept, so a key is permanently bound to its first ticket,
   repository, description and budget tier. A concurrent same-key loser whose winner then failed to start
   gets `409 IDEMPOTENCY_KEY_RETRY`. Only this route honours the key on `RunInput`; the generic triggers
   hash it into a workflow ID instead.

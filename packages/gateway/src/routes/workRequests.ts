@@ -535,8 +535,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // may have been a same-key request that has since compensated (its Temporal
       // start failed), in which case nothing runs and the honest answer is "retry",
       // not "already running".
-      const refuseConflict = async (message: string) => {
-        if (idempotencyKey && !('conflictWorkflowId' in (await allocate()))) {
+      const refuseConflict = async (message: string, source: 'ledger' | 'temporal' = 'ledger') => {
+        if (
+          idempotencyKey &&
+          source === 'ledger' &&
+          !('conflictWorkflowId' in (await allocate()))
+        ) {
           return reply
             .status(409)
             .header('retry-after', '1')
@@ -673,23 +677,32 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         if (raced) {
           return raced;
         }
-        return refuseConflict(`Workflow already running for ${externalTicketId}`);
+        // A Temporal-side duplicate is a live execution no row accounts for: it is running,
+        // so keyed and unkeyed requests alike get the ordinary conflict, not "retry".
+        return refuseConflict(`Workflow already running for ${externalTicketId}`, launch.source);
       }
       // Confirm the start so a replay of this key answers with the run. If this write
       // fails the run is already going; the key then stays "in progress" (409) rather
       // than ever reporting a run that did not start, and the submission still succeeds.
       if (idempotencyKey && launch.activeWorkflowId) {
-        await fastify.prisma.runInput
-          .update({
-            data: { startedActiveWorkflowId: launch.activeWorkflowId },
-            where: { id: workRequestId },
-          })
-          .catch((err: unknown) => {
-            fastify.log.error(
-              { err, workRequestId },
-              'could not confirm idempotent launch; key will report in-progress'
-            );
-          });
+        const startedActiveWorkflowId = launch.activeWorkflowId;
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await fastify.prisma.runInput.update({
+              data: { startedActiveWorkflowId },
+              where: { id: workRequestId },
+            });
+            break;
+          } catch (err) {
+            if (attempt === 3) {
+              fastify.log.error(
+                { err, startedActiveWorkflowId, workRequestId },
+                'could not confirm idempotent launch; key will report in-progress'
+              );
+              break;
+            }
+          }
+        }
       }
       // Best-effort enrichment runs after the response: the ticket and
       // knowledge-base fetches are network calls to third parties, and nothing

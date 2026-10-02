@@ -43,6 +43,7 @@ describe.skipIf(!enabled)('POST /work-requests Idempotency-Key against Postgres'
   let templateId: string;
   const started: string[] = [];
   let failStart = false;
+  let startError: Error | null = null;
   let startDelayMs = 0;
   let seq = 0;
 
@@ -146,6 +147,9 @@ describe.skipIf(!enabled)('POST /work-requests Idempotency-Key against Postgres'
         if (startDelayMs) {
           await new Promise((r) => setTimeout(r, startDelayMs));
         }
+        if (startError) {
+          throw startError;
+        }
         if (failStart) {
           throw new Error('temporal unavailable');
         }
@@ -158,6 +162,7 @@ describe.skipIf(!enabled)('POST /work-requests Idempotency-Key against Postgres'
 
   beforeEach(() => {
     failStart = false;
+    startError = null;
     startDelayMs = 0;
     started.length = 0;
     seq++;
@@ -289,6 +294,17 @@ describe.skipIf(!enabled)('POST /work-requests Idempotency-Key against Postgres'
     }
     expect(started).toHaveLength(0);
     expect((await submit({ key: 'lost', ticket })).statusCode).toBe(201);
+  });
+
+  it('keeps the ordinary conflict, not retry, when Temporal already runs an execution no row accounts for', async () => {
+    const ticket = `ORPHANED-EXEC-${seq}`;
+    startError = Object.assign(new Error('already started'), {
+      name: 'WorkflowExecutionAlreadyStartedError',
+    });
+    const res = await submit({ key: 'orphaned-exec', ticket });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json().error.code).toBe('WORKFLOW_ALREADY_EXISTS');
+    expect(await runInputs(ticket)).toHaveLength(0);
   });
 
   it('does not leave a replayable row when compensation itself fails', async () => {
