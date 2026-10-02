@@ -57,6 +57,22 @@ export async function getModel(
 }
 
 /**
+ * Resolves a role once and returns the bound model together with the
+ * `<provider>/<model>` spec it was built from. Callers that price their own
+ * spend pass `spec` to `recordLlmUsage` so the call is charged at the model
+ * that was bound here — re-resolving the role from the ambient activity context
+ * cannot see the CHANNEL tier and would price a different model.
+ */
+export async function getBoundModel(
+  role: AnySkillRole,
+  ctx?: Partial<ResolveCtx>
+): Promise<{ model: LanguageModel; spec: string }> {
+  const resolveCtx = { ...(await currentRequestContext()), ...ctx };
+  const { model } = await resolveAgent(role, resolveCtx);
+  return { model: buildModel(model.spec, model.apiKey, model.apiBase), spec: model.spec };
+}
+
+/**
  * Builds a Vercel AI SDK LanguageModel from a `<provider>/<model>` spec and an
  * explicit API key. No env-default fallbacks — the caller MUST supply the
  * apiKey from the resolver. Exported for tests and ad-hoc CLI scripts that

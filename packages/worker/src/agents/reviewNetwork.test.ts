@@ -19,6 +19,13 @@ vi.mock('../lib/codeSecurityScanner.js', () => ({
   formatCodeSecurityFindings: vi.fn(() => ''),
 }));
 
+const { assertRolePricedMock } = vi.hoisted(() => ({
+  assertRolePricedMock: vi.fn(async (_role: string) => {}),
+}));
+vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: assertRolePricedMock }));
+const unpriced = () =>
+  Object.assign(new Error('Model has no price in the model catalog'), { type: 'MODEL_UNPRICED' });
+
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
   recordLlmUsage: vi
@@ -64,6 +71,24 @@ beforeEach(() => {
     object: { approved: true, findings: [], reviewer: 'SECURITY', severity: 'PASS' },
     usage: { inputTokens: 1, outputTokens: 1 },
   }));
+});
+
+describe('runReviewNetwork USD-cap guard', () => {
+  it('refuses an unpriced reviewer model before any reviewer runs', async () => {
+    assertRolePricedMock.mockRejectedValueOnce(unpriced());
+    await expect(runReviewNetwork(CODE_RESULT)).rejects.toMatchObject({ type: 'MODEL_UNPRICED' });
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  it('checks each reviewer persona once, and proceeds when priced', async () => {
+    await runReviewNetwork(CODE_RESULT);
+    expect(assertRolePricedMock.mock.calls.map((c) => c[0]).sort()).toEqual([
+      'domainLogicReviewer',
+      'performanceReviewer',
+      'securityReviewer',
+    ]);
+    expect(generateMock).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('runReviewNetwork cross-repo context', () => {

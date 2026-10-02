@@ -14,6 +14,7 @@ import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
+import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult };
 
@@ -151,6 +152,7 @@ export async function consolidateLessons(
         .join('\n\n');
 
       const start = Date.now();
+      await assertRolePricedForUsdCap('commitToMemory');
       const result = await agent.generate([{ content: prompt, role: 'user' }], {
         structuredOutput: { schema: ConsolidatorOutputSchema },
       });

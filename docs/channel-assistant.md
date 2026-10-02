@@ -190,21 +190,36 @@ the batch size.
 and prices a nominal turn envelope (8K in / 1.5K out) through `calculateCostUsd`, the same helper the
 run ledger prices real calls with — so an Opus channel holds ~$0.078 per call and a Haiku channel
 ~$0.016, rather than sharing one number that is ~5x wrong for one of them. `CHANNEL_TURN_RESERVATION_USD`
-($0.05) survives only as the fallback for a model with no known price, since a zero hold would bound
-nothing.
+($0.05) survives only as the fallback hold for a model whose agent cannot be resolved, or whose catalog
+price is zero, since a zero hold would bound nothing.
 
 The settled cost is priced at the model the call was **bound to**: `runAgent` passes its resolved
 `modelSpec` to `recordLlmUsage`, so a CHANNEL-scope override is charged at the override's rate. The
-three channel-memory passes are the exception (see Limitations).
+three channel-memory passes do the same: each binds `commitToMemory` once through `getBoundModel`
+and settles at that bound spec.
 
-A bound model with no known price measures as $0. Settling that would net the whole hold back off the
-ledger and leave the cap with nothing to count, so a turn whose pricing is unknown settles at no less
-than its reservation (`llm.cost_pricing_known=false` is still recorded). The floor applies to
-held turns; the run-level tier ledger and an agent run's organization USD cap have no reservation to
-fall back on and record the $0.
+**A capped channel refuses a model with no catalog price.** An unpriced model measures as $0, which
+would net the whole hold back off the ledger and leave the cap with nothing to count. So when a
+channel has a monthly budget and its bound model has no price, `reserveChannelTurn` refuses before
+anything is held or spent, with a non-retryable `MODEL_UNPRICED` failure naming the model and the
+model catalog. A mention turn replies in the thread with that message instead of the generic error
+text. A background pass (digest, memory, open items, flagging) catches its own error and no-ops, so
+the refusal appears only as a logged line (`[<pass>] ... no price in the model catalog`) and the
+feature quietly stops until the model is priced; check the worker log when ambient output, memory or
+flagging goes missing on a capped channel. The memory summarizer inside a mention turn runs under
+the channel scope, so it is guarded too; a refusal there stores the raw exchange instead and spends
+nothing. The same check runs in `runAgent`, so a delegated channel task refuses too (the failure
+surfaces from the task's branch rather than as an empty answer, and the thread's failure line carries the reason). An uncapped channel proceeds and
+records $0 with `llm.cost_pricing_known=false`. While the catalog itself cannot be read the refusal
+is a retryable `MODEL_PRICE_UNAVAILABLE` instead, so a database blip never tells an admin to add a
+price that exists.
+
+The settle-time floor remains as a second line of defence: should a held turn still measure as
+unpriced (the catalog changed between reserve and settle), it settles at no less than its
+reservation rather than netting the hold to zero.
 
 Every channel pass resolves its agent at the **CHANNEL tier** — `{ channelId, orgId, teamId }`
-threaded explicitly into `resolveAgent`, `getModel` and `loadAgentSkills`. The ambient Temporal
+threaded explicitly into `resolveAgent`, `getModel` / `getBoundModel` and `loadAgentSkills`. The ambient Temporal
 context carries no `channelId`, so a pass that priced its hold at that tier and bound its model
 without it would charge for a channel-scoped override it never used.
 
@@ -315,16 +330,10 @@ unproven on real traffic, and turn them on one channel at a time.
   admits. `finalizeChannelTaskRun` spends on the ledger with no hold at all. A hold lost to a worker
   crash over-counts the channel until the sweep reclaims it — which only happens once the channel
   reaches its cap, or an admin calls `/:id/budget/reset` (API-only; there is no UI control).
-- **The channel-memory passes settle at the ambient model's price.** `passiveIngestChannelMemory`,
-  `consolidateChannelMemory` and `sweepChannelOpenItems` bind `commitToMemory` at the CHANNEL tier and
-  size their hold at that tier, but call `recordLlmUsage` without the bound spec. The call runs on the
-  channel's override; the cost they settle is priced at the model the ambient Temporal context
-  resolves, which has no `channelId`. For a channel whose `commitToMemory` override is dearer than the
-  ambient model they under-charge, and the hold-versus-settle drift §7 describes as closed for turns
-  remains for these passes.
-- **A model with no known price is not charged to the run-level ledger.** A held channel turn keeps
-  its reservation (§7), but the run's tier ledger and an agent run's organization USD cap record $0
-  for an unpriced model. Add the model to the model catalog.
+- **An unpriced model is only refused where a USD cap applies.** A channel with no monthly budget
+  records $0 for a model with no catalog price (`llm.cost_pricing_known=false`), and the run's token
+  tiers still bind. Embedding calls are priced and accrued separately and are not covered by the
+  refusal.
 - **A channel's turn runs are visible to its owning team, not to everyone in the Slack channel.**
   A turn run links its channel (`WorkflowRun.channelId`), and run visibility admits members of the
   channel's owning team — the same people who can open the channel's settings and audit feed.

@@ -9,7 +9,7 @@ import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
-import { getModel } from '../lib/models.js';
+import { getBoundModel } from '../lib/models.js';
 import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -195,10 +195,11 @@ export async function consolidateChannelMemory(
     ? `${CHANNEL_MEMORY_CONSOLIDATOR_PROMPT}\n\n${skillSuffix}`
     : CHANNEL_MEMORY_CONSOLIDATOR_PROMPT;
 
+  const bound = await getBoundModel('commitToMemory', agentCtx);
   const agent = new Agent({
     id: 'channel-memory-consolidator',
     instructions: consolidatorPrompt,
-    model: await getModel('commitToMemory', agentCtx),
+    model: bound.model,
     name: 'channel-memory-consolidator',
   });
 
@@ -240,7 +241,8 @@ export async function consolidateChannelMemory(
             'consolidateChannelMemory',
             'commitToMemory',
             result.usage,
-            'llm.consolidate_channel_memory'
+            'llm.consolidate_channel_memory',
+            bound.spec
           );
         }
         totalCostUsd += attribution.costUsd;

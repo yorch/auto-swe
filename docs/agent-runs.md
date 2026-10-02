@@ -238,6 +238,19 @@ in flight, the oldest N (by launch time, then workflow id) are admitted and a ne
 `AGENT_RUN_CONCURRENCY_EXCEEDED` before it creates a container. Two simultaneous launches at a limit of
 one cannot both proceed.
 
+**A ledger row holds a slot only while its workflow is running in Temporal.** Both the gateway and
+the worker reconcile the non-terminal rows against Temporal during an admission call. A row whose
+workflow is finished or does not exist is closed (`currentStatus` set to `FAILED`, only if still
+non-terminal) and stops counting. The reconciliation is lazy (it happens inside admission, with no
+timer or schema), bounded (at most 8 Temporal lookups per call, each abandoned after 3 s, oldest
+launch first, and a row confirmed running is not asked about again for a minute so a few long-running
+runs cannot hide stale rows behind them), counts as gone only a definitively finished status
+(`COMPLETED`, `FAILED`, `CANCELLED`, `TERMINATED`, `TIMED_OUT`) or a missing workflow, the same
+rule on the gateway and the worker, skips the
+calling run and any row launched in the last five minutes (the gateway writes the ledger row before it
+starts the workflow), and fails safe: when Temporal cannot be asked, the row keeps its slot and a
+warning is logged.
+
 ---
 
 ## 8. Observability
@@ -390,16 +403,21 @@ hidden template's own link is not shown.
   stops; it does not wait for CI or iterate on review. The PR is not recorded as a tracked
   `PullRequest`, so CI webhooks do not signal the run.
 - **One repository per run,** and the repository must be a `git_repo` connection.
-- **A run killed without finalising can hold a concurrency slot.** Admission counts non-terminal ledger
-  rows; a worker crash that leaves one non-terminal holds its slot until the row is closed.
+- **A dead run can still hold a slot briefly.** Reconciliation (section 7) frees a slot only for a
+  workflow Temporal reports finished or missing, at most 8 rows per admission call (a stale row behind
+  more than 8 live ones is reached over successive calls), and not for a row
+  launched in the last five minutes; while Temporal is unreachable the slot is kept. The reconciled row's
+  `WorkflowRun` is not touched: only the ledger row that admission counts is closed.
 - **Platform agents are excluded by a code list,** not a column, so adding a platform-internal agent
   means adding its key to `NON_LAUNCHABLE_AGENT_KEYS`.
 - **The real-Docker check is opt-in.** The trusted-container shell is exercised against real containers
   by `agentRunFinalize.docker.test.ts` only when `AGENT_RUN_DOCKER_TEST=1`; the default suite exercises
   the same code against a fake workspace.
-- **A model with no known price is recorded at $0.** The tier ledger counts tokens, so the token
-  budgets still bind, but the organization USD cap does not see an unpriced model's spend. Add the
-  model to the model catalog.
+- **A model with no known price is refused only under a USD cap.** When the run's organization has a
+  monthly USD budget and the agent's model has no catalog price, the run fails before it starts (before
+  the container is created) with `MODEL_UNPRICED`, naming the model and the model catalog; the run
+  viewer explains it. The same refusal applies to any `agent` node in a workflow template and to the engineering steps under an organization cap. With no organization cap the run proceeds and records $0
+  (`llm.cost_pricing_known=false`): the token tier budgets still bind, since they count tokens.
 - **There is no Slack entry point.** An agent run is launched from the dashboard, CLI or REST API only;
   the channel assistant cannot start one and a delegated channel task is a different workflow (§9).
 - **Cost estimates are absent.** The workflow cost estimator has no hint for `runAgentTask`, so an

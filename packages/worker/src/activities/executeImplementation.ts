@@ -35,6 +35,7 @@ import {
 } from '../lib/repoDependencyContext.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
   detectTestCommand,
   parseDiffToFileChanges,
@@ -102,6 +103,10 @@ export async function executeImplementation(
   systemPromptOverride?: string,
   crossRepoOptions?: CrossRepoStepOptions
 ): Promise<CodeResult> {
+  // First, before a clone or a container exists: an unpriced model under a USD
+  // cap is refused here, not after the workspace has been built.
+  await assertRolePricedForUsdCap('implementer');
+
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { installationId: true } } },
     where: { id: requireRepoId(request, 'executeImplementation') },

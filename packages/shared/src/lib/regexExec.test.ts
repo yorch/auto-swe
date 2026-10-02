@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILTIN_SCANNER_PATTERNS } from '../scannerPatterns/index.js';
 import {
   __evaluateGroupForTests,
+  __evaluatePerTargetForTests,
   DEFAULT_REGEX_BUDGET_MS,
   isRegexQuarantined,
   probeRegexBacktracking,
@@ -283,7 +284,12 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
   });
 
   it('drops a confirmed offender for the remaining targets and keeps the other patterns running', async () => {
-    const started = Date.now();
+    // Outcome only, on a real thread. This used to also bound wall-clock time,
+    // but the path pays three thread spawns and three terminations on top of
+    // three budgets, and a CPU-starved host stretches the spawns without any
+    // change to the logic — a run took 2.3 s against a 900 ms bound while every
+    // outcome below held. That the offender costs nothing after the first target
+    // is pinned structurally in the next test instead.
     const result = await runRegexBatch(
       [EVIL, { flags: '', key: 'ok', source: 'hello' }],
       [
@@ -291,14 +297,57 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
         { key: 't2', text: `hello ${EVIL_INPUT}` },
         { key: 't3', text: `hello ${EVIL_INPUT}` },
       ],
-      { budgetMs: 150 }
+      { budgetMs: 300 }
     );
     expect(result.timedOutPatternKeys).toEqual(['evil']);
     expect(result.incomplete).toBe(true);
     expect(result.hits.map((h) => `${h.patternKey}@${h.targetKey}`)).toEqual(['ok@t2', 'ok@t3']);
-    // t1 pays the bisection + confirmation; t2/t3 must not pay a budget each
-    // for a pattern that has already been blamed.
-    expect(Date.now() - started).toBeLessThan(6 * 150);
+  });
+
+  it('pays for a confirmed offender on the first target only, never on the remaining ones', async () => {
+    // The budget a blamed pattern would burn per target (two each: the overrun
+    // and its confirmation) is what dropping it saves. Counted on a scripted
+    // executor, so the assertion does not depend on the host's speed.
+    const ok = { flags: '', key: 'ok', source: 'hello' };
+    const calls: Array<{ patterns: string[]; targets: string[] }> = [];
+    const result = await __evaluatePerTargetForTests(
+      [EVIL, ok],
+      [
+        { key: 't1', text: 'x' },
+        { key: 't2', text: 'hello' },
+        { key: 't3', text: 'hello' },
+      ],
+      150,
+      async (patterns, targets) => {
+        calls.push({ patterns: patterns.map((p) => p.key), targets: targets.map((t) => t.key) });
+        // `evil` hangs whenever it is in the batch; `ok` alone completes.
+        if (patterns.some((p) => p.key === 'evil')) {
+          return { ok: false, reason: 'timeout' };
+        }
+        return {
+          hits: targets.flatMap((t) =>
+            t.text === 'hello' ? [{ match: 'hello', patternKey: 'ok', targetKey: t.key }] : []
+          ),
+          ok: true,
+        };
+      }
+    );
+
+    expect(result.timedOutPatternKeys).toEqual(['evil']);
+    expect(result.incomplete).toBe(true);
+    expect(result.hits.map((h) => `${h.patternKey}@${h.targetKey}`)).toEqual(['ok@t2', 'ok@t3']);
+    // t1: whole group, evil alone, evil again (the confirmation), then ok alone.
+    expect(calls.filter((c) => c.targets[0] === 't1').map((c) => c.patterns)).toEqual([
+      ['evil', 'ok'],
+      ['evil'],
+      ['evil'],
+      ['ok'],
+    ]);
+    // t2 and t3: evil never runs, ok runs once each.
+    expect(calls.filter((c) => c.targets[0] !== 't1')).toEqual([
+      { patterns: ['ok'], targets: ['t2'] },
+      { patterns: ['ok'], targets: ['t3'] },
+    ]);
   });
 
   it('H1: runs every built-in pattern over a 20k adversarial window well inside the default budget', async () => {

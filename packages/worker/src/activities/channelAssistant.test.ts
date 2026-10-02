@@ -13,6 +13,8 @@ vi.mock('@auto-swe/shared/db', () => {
     // Backs the config registry: no rows means every setting resolves to its
     // definition default, i.e. the constant it replaced.
     configSetting: { findMany: vi.fn(async () => []) },
+    // An empty readable catalog: prices come from the built-in table.
+    modelCatalogEntry: { findMany: vi.fn(async () => []) },
     slackChannel: { findUnique: vi.fn() },
   };
   return { prisma: prismaMock };
@@ -98,7 +100,6 @@ import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow'
 import { AgentTracer } from '../lib/agentTracer.js';
 import {
   CHANNEL_PLACEHOLDER_TEXT,
-  CHANNEL_TURN_RESERVATION_USD,
   formatMemoryContext,
   formatThreadContext,
   isChannelOverBudget,
@@ -365,12 +366,38 @@ describe('reserveChannelTurn', () => {
     expect(HAIKU_HOLD).toBeLessThan(OPUS_HOLD);
   });
 
-  it('falls back to a flat hold when the model has no known price', async () => {
+  it('refuses to hold for a capped channel bound to a model with no known price', async () => {
+    // A hold on an unpriced model settles at $0, so the cap would count nothing.
+    // The call is refused up front, typed so the failure classifies.
     resolveAgentMock.mockResolvedValue({ model: { spec: 'someone/unpriced-model' } });
     const ledger = fakeLedger(1);
-    await reserveChannelTurn('chan-1', 100_000, RESERVE);
-    // A zero hold would bound nothing.
-    expect(ledger.total()).toBeCloseTo(1 + CHANNEL_TURN_RESERVATION_USD, 6);
+    const err = await reserveChannelTurn('chan-1', 100_000, RESERVE).then(
+      () => undefined,
+      (e: unknown) => e as { type?: string; nonRetryable?: boolean; message: string }
+    );
+    expect(err?.type).toBe('MODEL_UNPRICED');
+    expect(err?.nonRetryable).toBe(true);
+    expect(err?.message).toContain('someone/unpriced-model');
+    expect(ledger.total(), 'nothing was held').toBeCloseTo(1, 6);
+    expect(ledger.holds.size).toBe(0);
+  });
+
+  it('lets an uncapped channel run on an unpriced model, holding nothing', async () => {
+    resolveAgentMock.mockResolvedValue({ model: { spec: 'someone/unpriced-model' } });
+    const ledger = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', null, RESERVE);
+    expect(hold.overBudget).toBe(false);
+    expect(ledger.total()).toBeCloseTo(1, 6);
+  });
+
+  it('keeps the reservation floor as a second line when a priced model turns unpriced mid-turn', async () => {
+    // Priced at reserve, reported unpriced at settle (a catalog edit in between):
+    // the floor still stops the settle netting the hold to $0.
+    const ledger = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    hold.markPricingUnknown();
+    await hold.settle(0);
+    expect(ledger.total()).toBeCloseTo(1 + OPUS_HOLD, 6);
   });
 
   it('holds while the turn runs, then settles to exactly the real cost', async () => {
@@ -647,6 +674,22 @@ describe('runChannelAssistantTurn', () => {
     expect(upsertUsage).not.toHaveBeenCalled();
   });
 
+  it('replies with the unpriced-model explanation instead of failing the turn', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: 10000,
+    } as never);
+    findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never);
+    resolveAgentMock.mockResolvedValue({ model: { spec: 'someone/unpriced-model' } });
+
+    const result = await runChannelAssistantTurn(makeInput());
+
+    expect(result.reply).toContain('someone/unpriced-model');
+    expect(result.reply).toContain('model catalog');
+    expect(runAgentMock).not.toHaveBeenCalled();
+    expect(upsertUsage).not.toHaveBeenCalled();
+  });
+
   it('holds budget for the turn, then settles the hold at the real cost', async () => {
     findChannel.mockResolvedValue({
       agentKey: 'channelAssistant',
@@ -881,6 +924,54 @@ describe('runChannelAssistantTurn', () => {
 
     expect(result.reply).toBe('hi there');
     expect(runAgentMock.mock.calls[0]?.[1]).toBe('hello');
+  });
+
+  it('runs the summarizer with the channel scope, so a channel USD cap can see its model', async () => {
+    // Without a ctx the guard in runAgent falls back to the ambient context,
+    // which has no channelId: an unpriced commitToMemory override would spend
+    // at $0 on every mention of a capped channel.
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnReply({
+      text: 'To deploy, run `yarn release` from the repo root after the CI checks pass.',
+    });
+
+    await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    const summaryCall = runAgentMock.mock.calls.find(
+      (c) => (c[2] as { spanName?: string } | undefined)?.spanName === 'llm.channel_memory_summary'
+    );
+    expect(summaryCall?.[2]).toMatchObject({
+      ctx: { channelId: 'chan-1', orgId: 'org-1', teamId: 'team-1' },
+    });
+  });
+
+  it('falls back to the raw exchange, spending nothing, when the summarizer model is refused', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: 10000,
+    } as never);
+    findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never);
+    runAgentMock.mockImplementation(
+      async (_spec: unknown, _msg: unknown, opts: { spanName?: string } = {}) => {
+        if (opts.spanName === 'llm.channel_memory_summary') {
+          throw Object.assign(new Error('no price'), { type: 'MODEL_UNPRICED' });
+        }
+        return {
+          costUsd: 0.02,
+          text: 'To deploy, run `yarn release` from the repo root after the CI checks pass.',
+        };
+      }
+    );
+
+    const result = await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    expect(result.reply).toContain('yarn release');
+    expect(writeChannelMemoryMock).toHaveBeenCalledTimes(1);
+    const written = writeChannelMemoryMock.mock.calls[0]?.[0] as { summary: string } | undefined;
+    expect(written?.summary).toContain('yarn release');
   });
 
   it('writes the DISTILLED SUMMARY (not the raw reply) as memory after a non-trivial turn', async () => {

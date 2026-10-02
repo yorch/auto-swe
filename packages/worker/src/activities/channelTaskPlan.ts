@@ -9,6 +9,7 @@ import { withChannelScope } from '../lib/config/channelContext.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { withHeartbeat } from '../lib/execUtils.js';
+import { isUnpricedModelRefusal } from '../lib/usdCapGuard.js';
 import { runAgent } from './runAgent.js';
 
 /** Hard cap on how many parallel branches a general channel task may fan out to. */
@@ -179,7 +180,12 @@ async function runChannelSubtasksImpl(input: {
           spanName: 'llm.channel_task.branch',
         });
         answers[i] = (r.text ?? '').trim();
-      } catch {
+      } catch (err) {
+        // A refusal is the answer to the whole task, not one branch's blank:
+        // swallowing it would turn "this model has no price" into silence.
+        if (isUnpricedModelRefusal(err)) {
+          throw err;
+        }
         answers[i] = '';
       }
     }

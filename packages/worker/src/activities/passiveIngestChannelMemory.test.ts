@@ -20,9 +20,9 @@ vi.mock('@mastra/core/agent', () => ({
   }),
 }));
 
-const getModelMock = vi.fn();
+const getBoundModelMock = vi.fn();
 vi.mock('../lib/models.js', () => ({
-  getModel: (...args: unknown[]) => getModelMock(...args),
+  getBoundModel: (...args: unknown[]) => getBoundModelMock(...args),
 }));
 
 const recordLlmUsageMock = vi.fn();
@@ -99,12 +99,14 @@ function makeMsg(text: string, ts: string, isBot = false) {
   return { isBot, text, ts, user: isBot ? undefined : 'U123' };
 }
 
+const CHANNEL_OVERRIDE_SPEC = 'openrouter/channel-override';
+
 beforeEach(() => {
   vi.clearAllMocks();
   prismaMock.slackChannel.findUnique.mockResolvedValue(CHANNEL_ROW);
   prismaMock.slackChannel.update.mockResolvedValue({});
   isChannelOverBudgetNowMock.mockResolvedValue(false);
-  getModelMock.mockResolvedValue({});
+  getBoundModelMock.mockResolvedValue({ model: {}, spec: CHANNEL_OVERRIDE_SPEC });
   recordLlmUsageMock.mockResolvedValue({
     costUsd: 0.01,
     inputTokens: 100,
@@ -225,6 +227,28 @@ describe('passiveIngestChannelMemory', () => {
     expect(insertMemoryItemMock).not.toHaveBeenCalled();
   });
 
+  it('prices the call at the model bound at the channel tier', async () => {
+    fetchChannelHistoryMock.mockResolvedValue([makeMsg('team uses postgres', '1700000001.000')]);
+    agentGenerateMock.mockResolvedValue({
+      object: { facts: [] },
+      usage: { completionTokens: 50, promptTokens: 100 },
+    });
+
+    await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
+
+    expect(getBoundModelMock).toHaveBeenCalledWith(
+      'commitToMemory',
+      expect.objectContaining({ channelId: CHANNEL_ID })
+    );
+    expect(recordLlmUsageMock).toHaveBeenCalledWith(
+      'passiveIngestChannelMemory',
+      'commitToMemory',
+      expect.anything(),
+      'llm.passive_ingest',
+      CHANNEL_OVERRIDE_SPEC
+    );
+  });
+
   it('accrues cost when LLM usage is returned', async () => {
     fetchChannelHistoryMock.mockResolvedValue([makeMsg('team uses postgres', '1700000001.000')]);
     agentGenerateMock.mockResolvedValue({
@@ -249,6 +273,25 @@ describe('passiveIngestChannelMemory', () => {
     const result = await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
     expect(result).toEqual({ factsExtracted: 0, factsWritten: 0, messagesRead: 0 });
     expect(persistActivityTraceMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs why when the pass is refused or fails, instead of no-oping silently', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchChannelHistoryMock.mockResolvedValue([makeMsg('hello', '1700000001.000')]);
+    reserveChannelTurnMock.mockRejectedValueOnce(
+      Object.assign(new Error('Model "x" has no price in the model catalog'), {
+        type: 'MODEL_UNPRICED',
+      })
+    );
+
+    const result = await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
+
+    expect(result).toEqual({ factsExtracted: 0, factsWritten: 0, messagesRead: 0 });
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(CHANNEL_ID),
+      expect.stringContaining('no price in the model catalog')
+    );
+    errorSpy.mockRestore();
   });
 
   it('uses cursor from DB when fetching history', async () => {

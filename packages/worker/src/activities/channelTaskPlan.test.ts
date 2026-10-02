@@ -143,6 +143,15 @@ describe('runChannelSubtasks', () => {
     expect(result.text).toContain('SYNTH(');
   });
 
+  it('does not swallow an unpriced-model refusal into an empty answer', async () => {
+    mockedRunAgent.mockRejectedValue(
+      Object.assign(new Error('no price for the model'), { type: 'MODEL_UNPRICED' })
+    );
+    await expect(
+      runChannelSubtasks({ subtasks: [{ description: 'a', title: 'A' }], task: 't' })
+    ).rejects.toMatchObject({ type: 'MODEL_UNPRICED' });
+  });
+
   it('falls back to joined parts when synthesis itself fails', async () => {
     mockedRunAgent.mockImplementation((async (
       _spec: unknown,

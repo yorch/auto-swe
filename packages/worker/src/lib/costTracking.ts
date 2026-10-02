@@ -101,18 +101,28 @@ export function _resetModelPricesForTests(): void {
  * table, else zero with `known=false`. The lookup is exact — a near-miss such as
  * `gpt-5-5` for `gpt-5.5` is unknown, never silently priced as its neighbour.
  */
-export async function getModelPrice(
-  spec: string
-): Promise<{ price: ModelPrice; known: boolean; source: PriceSource }> {
-  const fromCatalog = (await catalogPrices())?.get(spec);
+export async function getModelPrice(spec: string): Promise<{
+  price: ModelPrice;
+  known: boolean;
+  source: PriceSource;
+  /**
+   * False when the catalog could not be read and none was ever read, so an
+   * unknown price may only mean "not looked up yet" (a cold worker during a
+   * database blip) rather than "nobody priced it".
+   */
+  catalogAvailable: boolean;
+}> {
+  const catalog = await catalogPrices();
+  const catalogAvailable = catalog !== null;
+  const fromCatalog = catalog?.get(spec);
   if (fromCatalog) {
-    return { known: true, price: fromCatalog, source: 'catalog' };
+    return { catalogAvailable, known: true, price: fromCatalog, source: 'catalog' };
   }
   const builtin = MODEL_PRICES[spec];
   if (builtin) {
-    return { known: true, price: builtin, source: 'builtin' };
+    return { catalogAvailable, known: true, price: builtin, source: 'builtin' };
   }
-  return { known: false, price: ZERO_PRICE, source: 'unknown' };
+  return { catalogAvailable, known: false, price: ZERO_PRICE, source: 'unknown' };
 }
 
 /**

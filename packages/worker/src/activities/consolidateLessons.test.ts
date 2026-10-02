@@ -27,6 +27,13 @@ vi.mock('../lib/models.js', () => ({
   getModel: vi.fn(),
   resolveSystemPrompt: vi.fn().mockResolvedValue(''),
 }));
+const { assertRolePricedMock } = vi.hoisted(() => ({
+  assertRolePricedMock: vi.fn(async (_role: string) => {}),
+}));
+vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: assertRolePricedMock }));
+const unpriced = () =>
+  Object.assign(new Error('Model has no price in the model catalog'), { type: 'MODEL_UNPRICED' });
+
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
   recordLlmUsage: vi.fn(),
@@ -146,6 +153,24 @@ describe('consolidateLessons', () => {
     expect(result.clustersConsolidated).toBe(0);
     expect(result.lessonsConsolidated).toBe(0);
     expect(MockAgent).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unpriced consolidator model before the call is made', async () => {
+    mockQueryRaw.mockResolvedValue([
+      makeLessonRow('a', 'one', 0, 'CI_FAILURE'),
+      makeLessonRow('b', 'two', 0, 'CI_FAILURE'),
+      makeLessonRow('c', 'three', 0, 'CI_FAILURE'),
+    ]);
+    makeSuccessGenerate();
+    assertRolePricedMock.mockRejectedValue(unpriced());
+    try {
+      await consolidateLessons({ minClusterSize: 3, repoId: 'repo-1', similarityThreshold: 0.85 });
+    } catch {
+      // The refusal may surface or be absorbed per cluster; either way no call was made.
+    }
+    expect(assertRolePricedMock).toHaveBeenCalledWith('commitToMemory');
+    expect(mockGenerate).not.toHaveBeenCalled();
+    assertRolePricedMock.mockResolvedValue(undefined);
   });
 
   it('consolidates a cluster of identical-embedding lessons', async () => {

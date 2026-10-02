@@ -138,3 +138,198 @@ export async function loadAgentRunSlots(
     workflowId: r.temporalWorkflowId,
   }));
 }
+
+/**
+ * A row's launch is given this long to reach Temporal before "no such workflow"
+ * can mean anything. The gateway writes the ledger rows first and starts the
+ * workflow second, so a brand-new row legitimately has no execution yet.
+ */
+export const RECONCILE_GRACE_MS = 5 * 60_000;
+
+/** Most Temporal lookups one admission call may make. */
+export const RECONCILE_MAX_CHECKS = 8;
+
+/** One lookup is abandoned after this long, and its row keeps counting. */
+export const RECONCILE_LOOKUP_TIMEOUT_MS = 3_000;
+
+/**
+ * A row positively confirmed running is not asked about again for this long.
+ * Without it the oldest rows (the long-running live ones) are re-described by
+ * every admission and the stale rows behind them are never reached.
+ */
+export const RECONCILE_RECHECK_MS = 60_000;
+
+const confirmedRunning = new Map<string, number>();
+
+/** Test seam: forget which rows were recently confirmed running. */
+export function __resetReconcileCacheForTests(): void {
+  confirmedRunning.clear();
+}
+
+/** Temporal execution states from which a workflow never runs again. */
+const FINISHED_WORKFLOW_STATUSES: ReadonlySet<string> = new Set([
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED',
+  'TERMINATED',
+  'TIMED_OUT',
+]);
+
+/**
+ * The single definition of "this workflow is gone" for admission, shared by the
+ * gateway and the worker. Only a definitively finished status counts;
+ * `CONTINUED_AS_NEW`, `UNSPECIFIED`, an absent status and any status a future
+ * Temporal adds all keep the slot. (A workflow that does not exist at all is
+ * the caller's `WorkflowNotFoundError`, which each side maps to gone itself.)
+ */
+export function isWorkflowStatusFinished(statusName: string | undefined): boolean {
+  return statusName !== undefined && FINISHED_WORKFLOW_STATUSES.has(statusName);
+}
+
+export interface ReconcileOptions {
+  /**
+   * Whether the run's workflow is still executing in Temporal: `true` while it
+   * runs, `false` once it is terminal or does not exist. It must THROW when
+   * Temporal cannot be asked — an unanswered question is not "closed".
+   */
+  isRunning: (workflowId: string) => Promise<boolean>;
+  /** Marks these ledger rows terminal so they stop being loaded as in flight. */
+  close: (workflowIds: string[]) => Promise<void>;
+  /** The calling run, which is running by definition and is never looked up. */
+  self?: string;
+  now?: Date;
+  graceMs?: number;
+  maxChecks?: number;
+  lookupTimeoutMs?: number;
+  recheckMs?: number;
+  /** A lookup that could not be answered; the row keeps counting. */
+  onUnreachable?: (workflowId: string, err: unknown) => void;
+  /** Rows whose workflow is gone; they have been closed. */
+  onClosed?: (workflowIds: string[]) => void;
+}
+
+/**
+ * Drops from `slots` every run whose workflow Temporal says is no longer
+ * running, and closes its ledger row.
+ *
+ * A workflow terminated, or timed out, outside its own finalizer leaves a
+ * non-terminal `ActiveWorkflow` row that would otherwise hold a concurrency slot
+ * indefinitely. The ledger status is a claim; Temporal is the authority on
+ * whether the run exists.
+ *
+ * Lazy and bounded: it runs only inside an admission call, looks at no more than
+ * `maxChecks` rows (oldest launch first, since those are the likeliest to be
+ * stale), skips `self` and anything launched within the grace window, and adds
+ * nothing to the schema.
+ *
+ * Fail-safe: a lookup that throws leaves its row counted. Admission may then be
+ * stricter than the truth, never looser.
+ *
+ * The rank-based decision stays race-free because closing is idempotent and
+ * driven by one shared truth: two admissions reconciling concurrently drop the
+ * same rows. If a Temporal hiccup makes their views differ, the view that kept
+ * a row sees a larger queue, so the worst case is a refusal both would not have
+ * issued, never two admissions at a limit of one.
+ */
+export async function reconcileAgentRunSlots(
+  slots: readonly AgentRunSlot[],
+  opts: ReconcileOptions
+): Promise<AgentRunSlot[]> {
+  const now = (opts.now ?? new Date()).getTime();
+  const graceMs = opts.graceMs ?? RECONCILE_GRACE_MS;
+  const timeoutMs = opts.lookupTimeoutMs ?? RECONCILE_LOOKUP_TIMEOUT_MS;
+  const recheckMs = opts.recheckMs ?? RECONCILE_RECHECK_MS;
+  const live = new Set(slots.map((s) => s.workflowId));
+  for (const [id, until] of confirmedRunning) {
+    if (until <= now || !live.has(id)) {
+      confirmedRunning.delete(id);
+    }
+  }
+  const candidates = [...slots]
+    .filter(
+      (s) =>
+        s.workflowId !== opts.self &&
+        now - s.launchedAt.getTime() >= graceMs &&
+        !confirmedRunning.has(s.workflowId)
+    )
+    .sort(order)
+    .slice(0, Math.max(0, opts.maxChecks ?? RECONCILE_MAX_CHECKS));
+  if (candidates.length === 0) {
+    return [...slots];
+  }
+
+  const withDeadline = (workflowId: string): Promise<boolean> =>
+    new Promise<boolean>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Temporal lookup timed out after ${timeoutMs}ms`)),
+        timeoutMs
+      );
+      opts.isRunning(workflowId).then(
+        (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        },
+        (e: unknown) => {
+          clearTimeout(timer);
+          reject(e);
+        }
+      );
+    });
+  const answers = await Promise.allSettled(candidates.map((c) => withDeadline(c.workflowId)));
+  const gone = new Set<string>();
+  answers.forEach((answer, i) => {
+    const id = (candidates[i] as AgentRunSlot).workflowId;
+    if (answer.status === 'rejected') {
+      opts.onUnreachable?.(id, answer.reason);
+    } else if (answer.value === false) {
+      gone.add(id);
+    } else {
+      confirmedRunning.set(id, now + recheckMs);
+    }
+  });
+  if (gone.size === 0) {
+    return [...slots];
+  }
+
+  try {
+    await opts.close([...gone]);
+    opts.onClosed?.([...gone]);
+  } catch (err) {
+    // The decision below is still right (Temporal says these are not running);
+    // only the cleanup failed, and the next admission will try again.
+    for (const id of gone) {
+      opts.onUnreachable?.(id, err);
+    }
+  }
+  return slots.filter((s) => !gone.has(s.workflowId));
+}
+
+/** The slice of a Prisma client that closes ledger rows. */
+interface ActiveWorkflowCloser {
+  activeWorkflow: {
+    updateMany: (args: {
+      data: { currentStatus: 'FAILED' };
+      where: { currentStatus: { notIn: string[] }; temporalWorkflowId: { in: string[] } };
+    }) => Promise<unknown>;
+  };
+}
+
+/**
+ * Marks ledger rows terminal. `FAILED` is the honest default: the row was
+ * non-terminal while its workflow no longer exists, so it never finalised.
+ * Conditional on still being non-terminal, so it cannot overwrite a status a
+ * finalizer wrote in the meantime.
+ */
+export function closeAgentRunLedgerRows(
+  db: ActiveWorkflowCloser
+): (workflowIds: string[]) => Promise<void> {
+  return async (workflowIds) => {
+    await db.activeWorkflow.updateMany({
+      data: { currentStatus: 'FAILED' },
+      where: {
+        currentStatus: { notIn: [...ACTIVE_WORKFLOW_TERMINAL_STATUSES] },
+        temporalWorkflowId: { in: workflowIds },
+      },
+    });
+  };
+}

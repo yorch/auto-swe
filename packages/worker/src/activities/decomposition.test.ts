@@ -141,6 +141,13 @@ const recordLlmUsageMock = vi.fn(async (..._args: unknown[]) => ({
   modelSpec: 'anthropic/claude-x',
   outputTokens: 5,
 }));
+const { assertRolePricedMock } = vi.hoisted(() => ({
+  assertRolePricedMock: vi.fn(async (_role: string) => {}),
+}));
+vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: assertRolePricedMock }));
+const unpriced = () =>
+  Object.assign(new Error('Model has no price in the model catalog'), { type: 'MODEL_UNPRICED' });
+
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
   recordLlmUsage: (...args: unknown[]) => recordLlmUsageMock(...args),
@@ -503,6 +510,23 @@ describe('resolveMergeConflict', () => {
       })
     );
     expect(closeMcpMock).toHaveBeenCalled();
+  });
+
+  it('refuses an unpriced resolver model before the call, as the mergeConflictResolver role', async () => {
+    primeRepo();
+    installFakeGit(conflictingGit());
+    assertRolePricedMock.mockRejectedValueOnce(unpriced());
+
+    await expect(
+      resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: ['auto/TICK-1/db'],
+        targetBranch: 'auto/TICK-1',
+      })
+    ).rejects.toMatchObject({ type: 'MODEL_UNPRICED' });
+
+    expect(assertRolePricedMock).toHaveBeenCalledWith('mergeConflictResolver');
+    expect(generateMock).not.toHaveBeenCalled();
   });
 
   it('writes no llm row when the budget gate stops the call before it is made', async () => {

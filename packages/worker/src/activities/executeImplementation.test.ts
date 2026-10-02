@@ -74,6 +74,13 @@ vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({ orgId: 'org-1', teamId: 'team-1' })),
 }));
 
+const { assertRolePricedMock } = vi.hoisted(() => ({
+  assertRolePricedMock: vi.fn(async (_role: string) => {}),
+}));
+vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: assertRolePricedMock }));
+const unpriced = () =>
+  Object.assign(new Error('Model has no price in the model catalog'), { type: 'MODEL_UNPRICED' });
+
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
   recordLlmUsage: vi
@@ -138,6 +145,21 @@ beforeEach(() => {
   prismaMock.contextSnapshot.findUnique.mockResolvedValue(null);
   prismaMock.workflowRun.update.mockResolvedValue({});
   workspaceMock.exec.mockResolvedValue('');
+});
+
+describe('USD-cap guard', () => {
+  it('refuses an unpriced model before any workspace exists, and spends nothing', async () => {
+    assertRolePricedMock.mockRejectedValueOnce(unpriced());
+    await expect(executeImplementation(REQUEST)).rejects.toMatchObject({ type: 'MODEL_UNPRICED' });
+    expect(assertRolePricedMock).toHaveBeenCalledWith('implementer');
+    expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when the guard passes (an uncapped organization)', async () => {
+    await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalled();
+  });
 });
 
 describe('executeImplementation agent turn', () => {

@@ -439,7 +439,8 @@ export const __evaluateGroupForTests = (
 async function evaluatePerTarget(
   patterns: RegexSpec[],
   targets: RegexTarget[],
-  budgetMs: number
+  budgetMs: number,
+  run: RunFn = runOnce
 ): Promise<RegexBatchResult> {
   const result: RegexBatchResult = {
     hits: [],
@@ -452,7 +453,7 @@ async function evaluatePerTarget(
     if (live.length === 0) {
       break;
     }
-    const r = await evaluateGroup(live, [target], budgetMs);
+    const r = await evaluateGroup(live, [target], budgetMs, run);
     result.hits.push(...r.hits);
     result.incomplete = result.incomplete || r.incomplete;
     if (r.timedOutPatternKeys.length > 0) {
@@ -463,6 +464,18 @@ async function evaluatePerTarget(
   }
   return result;
 }
+
+/**
+ * Test seam: {@link evaluatePerTarget} against a scripted `run`, so which
+ * patterns reach which targets can be pinned by counting calls instead of by
+ * timing a real thread. Internal API — not stable.
+ */
+export const __evaluatePerTargetForTests = (
+  patterns: RegexSpec[],
+  targets: RegexTarget[],
+  budgetMs: number,
+  run: RunFn
+): Promise<RegexBatchResult> => evaluatePerTarget(patterns, targets, budgetMs, run);
 
 /**
  * Run `patterns` against `targets` under a wall-clock budget.

@@ -28,6 +28,7 @@ const { ledger } = vi.hoisted(() => ({
     stopAfterBudgetChecks: Number.POSITIVE_INFINITY,
   },
 }));
+// A priced model, so the USD-cap guard is a no-op here.
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {
     ledger.budgetCalls += 1;
@@ -35,6 +36,7 @@ vi.mock('../lib/costTracking.js', () => ({
       throw ApplicationFailure.nonRetryable('Budget already exhausted', 'BUDGET_EXCEEDED');
     }
   }),
+  getModelPrice: vi.fn(async () => ({ known: true, price: {}, source: 'catalog' })),
   recordLlmUsage: vi.fn(
     async (
       _wf: string,

@@ -179,7 +179,8 @@ describe('runCaseDefault iteration cap', () => {
       'eval-wf-1',
       'implementer',
       { inputTokens: 10, outputTokens: 5 },
-      'llm.eval.implementer.iteration_0'
+      'llm.eval.implementer.iteration_0',
+      'anthropic/x'
     );
     expect(persistActivityTrace).toHaveBeenCalledWith(expect.anything(), 'implementer');
   });

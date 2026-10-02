@@ -9,7 +9,7 @@ import {
   clampToCeiling,
   isLaunchableAgentKey,
 } from '@auto-swe/shared/lib/agentRun';
-import { decideAdmission, loadAgentRunSlots } from '@auto-swe/shared/lib/agentRunAdmission';
+import { decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { FileChange, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -17,6 +17,7 @@ import { selectAgentRunTools } from '../agents/agentRunTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import { loadLiveAgentRunSlots } from '../lib/agentRunSlots.js';
 import { AgentTracer, redactString } from '../lib/agentTracer.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
@@ -28,6 +29,7 @@ import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
+import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
   commitTrustedTree,
   gateTrustedCommit,
@@ -153,7 +155,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     settingsCtx
   );
   const admission = decideAdmission(
-    await loadAgentRunSlots(prisma, run.templateId),
+    await loadLiveAgentRunSlots(run.templateId, workflowId),
     { teamId: baseCtx.teamId ?? null, workflowId },
     {
       global: settings['workspace.agentRunMaxConcurrentGlobal'],
@@ -187,6 +189,9 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     orgId: baseCtx.orgId,
   };
   const resolved = await resolveAgent(key, agentCtx);
+  // Before any container exists: an unpriced model under a USD cap is refused
+  // here rather than after a clone (runAgent checks again before the call).
+  await assertModelPricedForUsdCap(resolved.model.spec);
 
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { installationId: true } } },

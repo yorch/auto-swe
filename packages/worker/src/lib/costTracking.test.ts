@@ -131,6 +131,7 @@ afterEach(() => {
 describe('getModelPrice', () => {
   it('prices a built-in model from the built-in table when the catalog has no row', async () => {
     expect(await getModelPrice('anthropic/claude-opus-4-6')).toEqual({
+      catalogAvailable: true,
       known: true,
       price: { input: 5, output: 25 },
       source: 'builtin',
@@ -140,6 +141,7 @@ describe('getModelPrice', () => {
   it('prices from the catalog first — an admin edit beats the built-in price', async () => {
     catalogFindMany.mockResolvedValue([catalogRow('anthropic/claude-opus-4-6', 1, 2)]);
     expect(await getModelPrice('anthropic/claude-opus-4-6')).toEqual({
+      catalogAvailable: true,
       known: true,
       price: { input: 1, output: 2 },
       source: 'catalog',
@@ -156,6 +158,7 @@ describe('getModelPrice', () => {
       price: { input: 4.4, output: 22 },
     });
     expect(await getModelPrice('ollama/llama-4')).toEqual({
+      catalogAvailable: true,
       known: true,
       price: { input: 0, output: 0 },
       source: 'catalog',
@@ -189,6 +192,7 @@ describe('getModelPrice', () => {
 
   it('returns zero with known=false for unknown specs', async () => {
     expect(await getModelPrice('mystery/unreleased-model')).toEqual({
+      catalogAvailable: true,
       known: false,
       price: { input: 0, output: 0 },
       source: 'unknown',
@@ -199,6 +203,19 @@ describe('getModelPrice', () => {
     await getModelPrice('anthropic/claude-opus-4-6');
     await getModelPrice('openai/gpt-5.5');
     expect(catalogFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the catalog unavailable on a cold worker whose first read fails', async () => {
+    catalogFindMany.mockRejectedValue(new Error('connection refused'));
+    expect(await getModelPrice('ollama/llama-4')).toMatchObject({
+      catalogAvailable: false,
+      known: false,
+    });
+    // A built-in price is still known, catalog or not.
+    expect(await getModelPrice('anthropic/claude-opus-4-6')).toMatchObject({
+      catalogAvailable: false,
+      known: true,
+    });
   });
 
   it('never throws when the catalog is unreadable, and prices from the built-in table', async () => {
@@ -226,6 +243,7 @@ describe('getModelPrice', () => {
     _resetConfigCacheForTests(); // the cached read expires
     catalogFindMany.mockRejectedValue(new Error('connection refused'));
     expect(await getModelPrice('anthropic/claude-opus-4-6')).toEqual({
+      catalogAvailable: true,
       known: true,
       price: { input: 1, output: 2 },
       source: 'catalog',

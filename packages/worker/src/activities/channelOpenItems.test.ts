@@ -27,9 +27,9 @@ vi.mock('@mastra/core/agent', () => ({
   }),
 }));
 
-const getModelMock = vi.fn();
+const getBoundModelMock = vi.fn();
 vi.mock('../lib/models.js', () => ({
-  getModel: (...args: unknown[]) => getModelMock(...args),
+  getBoundModel: (...args: unknown[]) => getBoundModelMock(...args),
 }));
 
 const recordLlmUsageMock = vi.fn();
@@ -102,11 +102,13 @@ function makeMessages(count = 2) {
   }));
 }
 
+const CHANNEL_OVERRIDE_SPEC = 'openrouter/channel-override';
+
 beforeEach(() => {
   vi.clearAllMocks();
   settleMock.mockResolvedValue(undefined);
   reserveChannelTurnMock.mockResolvedValue({ overBudget: false, settle: settleMock });
-  getModelMock.mockResolvedValue({});
+  getBoundModelMock.mockResolvedValue({ model: {}, spec: CHANNEL_OVERRIDE_SPEC });
   persistActivityTraceMock.mockResolvedValue(undefined);
   recordLlmUsageMock.mockResolvedValue({
     costUsd: 0.001,
@@ -192,6 +194,31 @@ describe('sweepChannelOpenItems', () => {
         }),
       ],
     });
+  });
+
+  it('prices the sweep at the model bound at the channel tier', async () => {
+    findChannel.mockResolvedValue(makeChannel() as never);
+    fetchChannelHistoryMock.mockResolvedValue(makeMessages(3));
+    findOpenItems.mockResolvedValue([] as never);
+    agentGenerateMock.mockResolvedValue({
+      object: { newItems: [], resolvedIds: [] },
+      usage: { completionTokens: 50, promptTokens: 100 },
+    });
+
+    await sweepChannelOpenItems({ channelId: 'chan-1' });
+
+    expect(getBoundModelMock).toHaveBeenCalledWith('commitToMemory', {
+      channelId: 'chan-1',
+      orgId: 'org-1',
+      teamId: 'team-1',
+    });
+    expect(recordLlmUsageMock).toHaveBeenCalledWith(
+      'sweepChannelOpenItems',
+      'commitToMemory',
+      expect.anything(),
+      'llm.channel_open_items_sweep',
+      CHANNEL_OVERRIDE_SPEC
+    );
   });
 
   it('marks existing items resolved when LLM reports them', async () => {

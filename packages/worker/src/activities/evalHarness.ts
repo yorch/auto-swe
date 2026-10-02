@@ -217,7 +217,8 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
           currentWorkflowId(),
           parsed.key,
           genResult.usage,
-          usageEvent
+          usageEvent,
+          resolved.model.spec
         );
       }
       await recordSuspiciousLlmOutput(tracer, genResult.text ?? '', {

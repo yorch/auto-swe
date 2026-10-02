@@ -1,3 +1,4 @@
+import { isWorkflowStatusFinished } from '@auto-swe/shared/lib/agentRunAdmission';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import type {
   ChannelAssistantTurnInput,
@@ -222,6 +223,12 @@ declare module 'fastify' {
       ) => Promise<void>;
       signalWorkflow: (workflowId: string, signalName: string, args?: unknown[]) => Promise<void>;
       isWorkflowRunning: (workflowId: string) => Promise<boolean>;
+      /**
+       * True only when the execution is definitively finished or does not exist
+       * (`isWorkflowStatusFinished`, shared with the worker). Anything uncertain
+       * is `false`; an unreachable Temporal throws.
+       */
+      isWorkflowGone: (workflowId: string) => Promise<boolean>;
       cancelWorkflow: (workflowId: string) => Promise<void>;
       syncConsolidationSchedule: (config: ConsolidationScheduleConfig) => Promise<void>;
       getConsolidationScheduleStatus: () => Promise<ConsolidationScheduleStatus>;
@@ -672,6 +679,18 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
      * and any other error propagates, because "the server did not answer" must
      * not be read as "there is nothing running".
      */
+    async isWorkflowGone(workflowId: string): Promise<boolean> {
+      try {
+        const description = await client.workflow.getHandle(workflowId).describe();
+        return isWorkflowStatusFinished(description.status.name);
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowNotFoundError') {
+          return true;
+        }
+        throw err;
+      }
+    },
+
     async isWorkflowRunning(workflowId: string): Promise<boolean> {
       try {
         const description = await client.workflow.getHandle(workflowId).describe();

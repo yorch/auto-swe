@@ -9,7 +9,7 @@ import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { insertMemoryItem, searchMemoryItemsByVector } from '../lib/memoryStore.js';
-import { getModel } from '../lib/models.js';
+import { getBoundModel } from '../lib/models.js';
 import { fetchChannelHistory } from '../lib/slackNotify.js';
 import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 
@@ -175,10 +175,11 @@ export async function passiveIngestChannelMemory(
         ? `${CHANNEL_PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
         : CHANNEL_PASSIVE_INGEST_PROMPT;
 
+      const bound = await getBoundModel('commitToMemory', agentCtx);
       const agent = new Agent({
         id: 'channel-passive-ingestor',
         instructions,
-        model: await getModel('commitToMemory', agentCtx),
+        model: bound.model,
         name: 'channel-passive-ingestor',
       });
 
@@ -193,7 +194,8 @@ export async function passiveIngestChannelMemory(
           'passiveIngestChannelMemory',
           'commitToMemory',
           result.usage,
-          'llm.passive_ingest'
+          'llm.passive_ingest',
+          bound.spec
         );
       }
       totalCostUsd += attribution.costUsd;
@@ -262,7 +264,14 @@ export async function passiveIngestChannelMemory(
       // Unconditional: an ingest that spent nothing still has to give its hold back.
       await hold.settle(totalCostUsd, { countRun: false });
     }
-  } catch {
+  } catch (err) {
+    // Best-effort, so the pass no-ops — but never silently: a refused model (no
+    // price under the channel's USD cap) would otherwise stop memory ingest with
+    // nothing anywhere saying why.
+    console.error(
+      `[passiveIngestChannelMemory] pass skipped for ${channelId}:`,
+      err instanceof Error ? err.message : err
+    );
     return EMPTY;
   }
 }

@@ -35,6 +35,7 @@ import {
   type SlackThreadMessage,
   updateSlackMessage,
 } from '../lib/slackNotify.js';
+import { assertModelPricedForUsdCap, findUnpricedModelRefusal } from '../lib/usdCapGuard.js';
 import { SKIP_SENTINEL } from './channelConstants.js';
 import { runAgent } from './runAgent.js';
 
@@ -45,6 +46,11 @@ export const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
 /** Friendly reply returned when a channel has hit its monthly assistant budget. */
 const BUDGET_EXCEEDED_REPLY =
   ':moneybag: This channel has reached its monthly assistant budget. An admin can raise it in the dashboard.';
+
+/** Reply when the channel's model has no price and the channel has a USD cap. */
+function unpricedModelReply(refusal: Error): string {
+  return `:warning: I can't answer on this channel's current model. ${refusal.message}`;
+}
 
 /** Placeholder posted immediately so the user sees the teammate "working" while
  *  the LLM turn runs; later edited in place with the reply via chat.update. */
@@ -409,11 +415,14 @@ export const CHANNEL_HOLD_TTL_MS = 30 * 60_000;
 async function estimateHoldUsd(
   agentKey: string,
   ctx: { channelId: string; orgId: string; teamId: string },
-  modelCalls: number
+  modelCalls: number,
+  monthlyBudgetUsdCents: number
 ): Promise<number> {
   let perCall = 0;
+  let boundSpec: string | undefined;
   try {
     const resolved = await resolveAgent(agentKey, ctx);
+    boundSpec = resolved.model.spec;
     // Through the ledger's own pricing helper, so the USD-per-MTok convention
     // lives in exactly one place — a hold sized by a second copy of the formula
     // would drift from the cost it is netted against.
@@ -423,7 +432,16 @@ async function estimateHoldUsd(
     // fail on the same lookup a moment later; hold the fallback rather than
     // letting an unpriced turn through unbounded.
   }
-  // An unknown or zero-priced model prices at 0, and a zero hold bounds nothing.
+  // Outside the try above: a refusal must not be swallowed as a resolution
+  // failure. A capped channel cannot count spend on a model with no price, so
+  // the call is refused here, before anything is held or spent.
+  if (boundSpec !== undefined) {
+    await assertModelPricedForUsdCap(boundSpec, {
+      channelCapCents: monthlyBudgetUsdCents,
+      channelId: ctx.channelId,
+    });
+  }
+  // A zero-priced model prices at 0, and a zero hold bounds nothing.
   // The `* calls` scaling is applied once: forgetting it on any one branch would
   // under-hold a fan-out pass by exactly the factor `modelCalls` exists to cover.
   return (perCall > 0 ? perCall : CHANNEL_TURN_RESERVATION_USD) * Math.max(1, modelCalls);
@@ -518,7 +536,8 @@ export async function reserveChannelTurn(
   const reservation = await estimateHoldUsd(
     opts.agentKey,
     { channelId, orgId: opts.orgId, teamId: opts.teamId },
-    opts.modelCalls ?? 1
+    opts.modelCalls ?? 1,
+    monthlyBudgetUsdCents
   );
 
   let claim: { accruedBefore: number; holdId: string } | null = null;
@@ -961,28 +980,40 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
     : baseToolNote;
   // A concurrent turn that would take the channel past its cap is refused here
   // rather than after the fact.
-  const turn = await runHeldChannelTurn(
-    {
-      agentKey,
-      id: input.channelId,
-      monthlyBudgetUsdCents: channel?.monthlyBudgetUsdCents ?? null,
-      orgId: input.orgId,
-      personaPrompt,
-      teamId: input.teamId,
-    },
-    userMessage,
-    'llm.channel_assistant',
-    {
-      // The turn itself plus the post-turn memory summarizer.
-      modelCalls: 2,
-      promptNote,
-      tools: {
-        delegateTask: delegateTool,
-        generateWorkflow: generateWorkflowTool,
-        refineWorkflow: refineWorkflowTool,
-      } as AgentTools,
+  let turn: Awaited<ReturnType<typeof runHeldChannelTurn>>;
+  try {
+    turn = await runHeldChannelTurn(
+      {
+        agentKey,
+        id: input.channelId,
+        monthlyBudgetUsdCents: channel?.monthlyBudgetUsdCents ?? null,
+        orgId: input.orgId,
+        personaPrompt,
+        teamId: input.teamId,
+      },
+      userMessage,
+      'llm.channel_assistant',
+      {
+        // The turn itself plus the post-turn memory summarizer.
+        modelCalls: 2,
+        promptNote,
+        tools: {
+          delegateTask: delegateTool,
+          generateWorkflow: generateWorkflowTool,
+          refineWorkflow: refineWorkflowTool,
+        } as AgentTools,
+      }
+    );
+  } catch (err) {
+    // A capped channel on a model with no price: say why in the thread rather
+    // than the generic error text, which would send people to retry.
+    const refusal = findUnpricedModelRefusal(err);
+    if (!refusal) {
+      throw err;
     }
-  );
+    console.error(`[channelAssistant] refused a turn for ${input.channelId}: ${refusal.message}`);
+    return { reply: unpricedModelReply(refusal) };
+  }
   if (!turn) {
     return { reply: BUDGET_EXCEEDED_REPLY };
   }
@@ -1064,6 +1095,7 @@ async function summarizeAndStoreChannelMemory(
 ): Promise<number> {
   let costUsd = 0;
   try {
+    const ctx = { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId };
     const spec = await resolveAgentSpec(
       {
         agentKey: 'commitToMemory' as ModelBackedAgentKey,
@@ -1071,11 +1103,16 @@ async function summarizeAndStoreChannelMemory(
         // Override the role's default prompt with the channel-exchange framing.
         promptOverride: CHANNEL_MEMORY_SUMMARIZER_PROMPT,
       },
-      { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
+      ctx
     );
 
     const exchange = JSON.stringify({ assistantReply: reply, userMessage: input.userText });
+    // The channel scope rides along so the USD-cap guard in `runAgent` sees this
+    // channel: without it the call looks like an uncapped one, and a
+    // `commitToMemory` override with no price would spend at $0 on every mention.
+    // A refusal lands in the catch below and stores the raw exchange instead.
     const result = await runAgent<z.infer<typeof ChannelMemorySummarySchema>>(spec, exchange, {
+      ctx: { ...(await currentRequestContext()), ...ctx },
       spanName: 'llm.channel_memory_summary',
     });
 
