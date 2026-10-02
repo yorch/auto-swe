@@ -35,6 +35,9 @@ export function nodeTagColumns(tag: NodeTag | undefined): {
   };
 }
 
+// Decodes with the default payload converter, the one the workflow interceptor
+// encodes with. No custom `payloadConverterPath` is configured; adding one would
+// have to change both sides, or this catch silently turns every tag into "none".
 function decode(headers: Record<string, unknown> | undefined): NodeTag | undefined {
   const raw = headers?.[NODE_TAG_HEADER];
   if (!raw) {

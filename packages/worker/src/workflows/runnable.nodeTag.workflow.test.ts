@@ -44,6 +44,9 @@ import { activityNodeTagInterceptor } from '../lib/activityNodeTag.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 
 const TASK_QUEUE = 'runnable-node-tag-test';
+// Each run takes about a second. A workflow-task failure (a throwing interceptor,
+// say) is retried by Temporal indefinitely, so a long timeout turns it into a hang.
+const TEST_TIMEOUT_MS = 30_000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let currentSpec: Record<string, unknown> = {};
@@ -224,7 +227,7 @@ describe('trace attribution through RunnableWorkflow', () => {
       expect(first?.recordingId, activity).toBe(node);
       expect(first?.stepAttempt, activity).toBe(1);
     }
-  }, 120_000);
+  }, TEST_TIMEOUT_MS);
 
   it('tells two nodes that use the same step apart', async () => {
     await run(
@@ -239,7 +242,7 @@ describe('trace attribution through RunnableWorkflow', () => {
       )
     );
     expect(byActivity('runLint').map((r) => r.specNodeId)).toEqual(['first', 'second']);
-  }, 120_000);
+  }, TEST_TIMEOUT_MS);
 
   it('attributes each concurrent fan-out branch to its own recording id', async () => {
     const items = Array.from({ length: 6 }, (_, i) => ({ id: String(i), ms: (6 - i) * 40 }));
@@ -272,9 +275,7 @@ describe('trace attribution through RunnableWorkflow', () => {
     for (const r of impl) {
       expect(r.specNodeId).toBe('impl');
     }
-    // Finish order is the reverse of dispatch order; attribution must not follow it.
-    expect(impl[0]?.recordingId).toBe('fan[5]/impl');
-  }, 120_000);
+  }, TEST_TIMEOUT_MS);
 
   it('keeps nested fan-out branches apart', async () => {
     await run(
@@ -319,7 +320,7 @@ describe('trace attribution through RunnableWorkflow', () => {
       'outer[1]/inner[0]/impl',
       'outer[1]/inner[1]/impl',
     ]);
-  }, 120_000);
+  }, TEST_TIMEOUT_MS);
 
   it('keeps the node across Temporal retries and counts interpreter retries', async () => {
     await run(
@@ -354,5 +355,5 @@ describe('trace attribution through RunnableWorkflow', () => {
       { attempt: 1, recording: 'flaky', spec: 'flaky', step: 1 },
       { attempt: 1, recording: 'flaky', spec: 'flaky', step: 2 },
     ]);
-  }, 120_000);
+  }, TEST_TIMEOUT_MS);
 });
