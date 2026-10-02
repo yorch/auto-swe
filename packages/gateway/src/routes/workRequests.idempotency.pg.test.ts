@@ -45,6 +45,7 @@ describe.skipIf(!enabled)('POST /work-requests Idempotency-Key against Postgres'
   let failStart = false;
   let startError: Error | null = null;
   let startDelayMs = 0;
+  let beforeReplySend: (() => Promise<void>) | null = null;
   let seq = 0;
 
   const unscoped = <T>(fn: () => Promise<T>) =>
@@ -133,6 +134,10 @@ describe.skipIf(!enabled)('POST /work-requests Idempotency-Key against Postgres'
     app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
+    // Lets a test act at the moment a reply is about to be sent.
+    app.addHook('onSend', async () => {
+      await beforeReplySend?.();
+    });
     app.decorate('auth', {
       verifyAccessToken: (token: string) => ({
         exp: 9999999999,
@@ -164,6 +169,7 @@ describe.skipIf(!enabled)('POST /work-requests Idempotency-Key against Postgres'
     failStart = false;
     startError = null;
     startDelayMs = 0;
+    beforeReplySend = null;
     started.length = 0;
     seq++;
   });
@@ -193,6 +199,26 @@ describe.skipIf(!enabled)('POST /work-requests Idempotency-Key against Postgres'
     expect(second.json().data).toEqual({ ...first.json().data, deduplicated: true });
     expect(started).toHaveLength(1);
     expect(await runInputs(ticket)).toHaveLength(1);
+  });
+
+  it('stops after answering a replay: the handler does not go on to launch', async () => {
+    const ticket = `STOP-${seq}`;
+    expect((await submit({ key: 'stop', ticket })).statusCode).toBe(201);
+    expect(started).toHaveLength(1);
+    // Just before the replay's answer goes out, remove what the replay found, as if the run and
+    // its key were gone by the time a handler that carried on past its reply looked again. The
+    // unique index no longer stands in the way, so only the handler stopping prevents a second run.
+    beforeReplySend = async () => {
+      beforeReplySend = null;
+      await prisma.activeWorkflow.deleteMany({ where: { repoId } });
+      await prisma.runInput.deleteMany({ where: { connectionId: repoId } });
+    };
+    const replay = await submit({ key: 'stop', ticket });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json().data.deduplicated).toBe(true);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(started).toHaveLength(1);
+    expect(await runInputs(ticket)).toHaveLength(0);
   });
 
   it('rejects the same key with different params as 422', async () => {
