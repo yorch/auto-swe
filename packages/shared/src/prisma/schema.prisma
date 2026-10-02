@@ -1584,7 +1584,6 @@ model AgentTrace {
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([runId, nodeId])
-  @@index([runId, recordingId])
   @@index([createdAt])
   @@map("agent_traces")
 }
