@@ -1,4 +1,14 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  mergeNodes,
+  openPullRequest,
+  prResult,
+  qualityGate,
+  statusStamp,
+  storeCodeResult,
+  terminate,
+  validatePhase,
+} from './authoring/index.js';
 
 /**
  * After a vuln scan, a human decides: fix now, accept risk, or abandon.
@@ -10,92 +20,58 @@ export const SECURITY_TRIAGE_SPEC: WorkflowSpec = {
     'or abandon the change entirely.',
   entry: 'setValidating',
   name: 'security-triage',
-  nodes: {
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
+  nodes: mergeNodes(
+    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'storeCodeResult',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
       },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
-    fixVulns: {
-      inputs: {
-        gateName: { literal: 'runVulnScan' },
-        gateOutput: { from: 'nodes.vulnScan.output' },
-        previousCodeResult: { from: 'context.currentCodeResult' },
+      storeCodeResult: storeCodeResult('vulnScan', { group: 'implement' }),
+      vulnScan: qualityGate('runVulnScan', 'securityDecision', { group: 'security triage' }),
+      securityDecision: {
+        description: 'Vulnerability scan complete. Choose how to proceed.',
+        group: 'security triage',
+        onTimeout: 'openPR',
+        options: [
+          { label: 'Fix vulnerabilities now', next: 'fixVulns', value: 'fix' },
+          { label: 'Accept risk — open PR as-is', next: 'openPR', value: 'accept' },
+          { label: 'Abandon — too risky', next: 'terminateAbandoned', value: 'abandon' },
+        ],
+        storeAs: 'context.securityDecision',
+        timeout: '4h',
+        title: 'How should we handle the security scan results?',
+        type: 'humanDecision',
       },
-      next: 'updateCodeAfterFix',
-      step: 'executeGateFixImplementation',
-      type: 'step',
-    },
-    implement: {
-      next: 'storeCodeResult',
-      step: 'executeImplementation',
-      type: 'step',
-    },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'savePrInfo',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
-    savePrInfo: {
-      next: 'done',
-      type: 'set',
-      values: {
-        'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
-        'context.prUrl': { from: 'nodes.openPR.output.prUrl' },
+      fixVulns: {
+        group: 'security triage',
+        inputs: {
+          gateName: { literal: 'runVulnScan' },
+          gateOutput: { from: 'nodes.vulnScan.output' },
+          previousCodeResult: { from: 'context.currentCodeResult' },
+        },
+        next: 'updateCodeAfterFix',
+        step: 'executeGateFixImplementation',
+        title: 'Fix the vulnerabilities',
+        type: 'step',
       },
+      updateCodeAfterFix: {
+        group: 'security triage',
+        next: 'openPR',
+        title: 'Keep the fixed code',
+        type: 'set',
+        values: { 'context.currentCodeResult': { from: 'nodes.fixVulns.output' } },
+      },
+      terminateAbandoned: terminate('FAILED', { group: 'security triage', title: 'Abandoned' }),
     },
-    securityDecision: {
-      description: 'Vulnerability scan complete. Choose how to proceed.',
-      onTimeout: 'openPR',
-      options: [
-        { label: 'Fix vulnerabilities now', next: 'fixVulns', value: 'fix' },
-        { label: 'Accept risk — open PR as-is', next: 'openPR', value: 'accept' },
-        { label: 'Abandon — too risky', next: 'terminateAbandoned', value: 'abandon' },
-      ],
-      storeAs: 'context.securityDecision',
-      timeout: '4h',
-      title: 'How should we handle the security scan results?',
-      type: 'humanDecision',
-    },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'implement',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setValidating: {
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    storeCodeResult: {
-      next: 'vulnScan',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.implement.output' } },
-    },
-    terminateAbandoned: { status: 'FAILED', type: 'terminate' },
-    updateCodeAfterFix: {
-      next: 'openPR',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.fixVulns.output' } },
-    },
-    validate: {
-      next: 'setImplementing',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
-    vulnScan: {
-      next: 'securityDecision',
-      onFail: 'warn',
-      step: 'runVulnScan',
-      type: 'step',
-    },
-  },
+    openPullRequest({ next: 'done' }),
+    {
+      done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

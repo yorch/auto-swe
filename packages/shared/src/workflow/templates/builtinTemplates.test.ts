@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorkflowSpecSchema } from '../spec.js';
+import { findInvalidPresentation, WorkflowSpecSchema } from '../spec.js';
 import { validateSpec } from '../validateSpec.js';
 import { BUILTIN_TEMPLATES } from './index.js';
 
@@ -15,11 +15,36 @@ describe.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
       expect(report.errors).toEqual([]);
       expect(
         report.warnings.filter((i) =>
-          ['UNREACHABLE', 'FANOUT_LEAK', 'TERMINAL_IN_SUBGRAPH_ONLY', 'IGNORED_FIELD'].includes(
-            i.code
-          )
+          [
+            'UNREACHABLE',
+            'FANOUT_LEAK',
+            'TERMINAL_IN_SUBGRAPH_ONLY',
+            'IGNORED_FIELD',
+            'GROUP_NOT_CONTIGUOUS',
+          ].includes(i.code)
         )
       ).toEqual([]);
+    });
+
+    it('holds its group and title to the authoring limits, as stored (not as a tolerant parse leaves them)', () => {
+      expect(findInvalidPresentation(spec)).toEqual([]);
+    });
+
+    it('does not stamp COMPLETED itself: the finalizer writes it when the run ends SUCCESS', () => {
+      for (const [id, node] of Object.entries(spec.nodes)) {
+        const stampsCompleted =
+          node.type === 'step' &&
+          node.step === 'updateDomainState' &&
+          node.config?.status === 'COMPLETED';
+        expect(stampsCompleted, id).toBe(false);
+      }
+    });
+
+    it('gives every node a group, so the outline has no loose nodes', () => {
+      const loose = Object.entries(spec.nodes)
+        .filter(([id, node]) => !node.group && !(id === 'done' || node.type === 'terminate'))
+        .map(([id]) => id);
+      expect(loose).toEqual([]);
     });
 
     it('never routes publishOutcome straight into writeOutcome', () => {

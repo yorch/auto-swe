@@ -853,6 +853,26 @@ describe('workflow-templates routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('rejects a new version whose group or title breaks the authoring limits, though reading would tolerate it', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const first = Object.keys((VALID_SPEC as { nodes: Record<string, object> }).nodes)[0] as string;
+    const spec = JSON.parse(JSON.stringify(VALID_SPEC));
+    spec.nodes[first].title = 't'.repeat(200);
+    spec.nodes[first].group = '';
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { spec },
+      url: `/api/v1/workflow-templates/${tpl.id}/versions`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.stringify(res.json())).toContain('.title');
+    expect(JSON.stringify(res.json())).toContain('.group');
+  });
+
   it('promotes a version to active', async () => {
     const tpl = state.templates[0];
     if (!tpl) {

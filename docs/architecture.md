@@ -319,6 +319,72 @@ The four human nodes are handled inside the interpreter: each creates a `Workflo
 optionally notifies Slack, then parks on the `hitl_<nodeId>` signal until an inbox or Slack response
 arrives, or the timeout routes to `onTimeout`. See [hitl-workflows.md](./hitl-workflows.md).
 
+#### Presentation fields: `group` and `title`
+
+Every node may carry two optional, presentation-only strings. `group` (up to 40 characters) is a
+phase label such as `review loop` or `CI loop`; `title` (up to 80) is a name shown in place of the
+node id. The interpreter, the worker, the cost estimator and template analytics never read them, and
+they are absent on a spec saved without them, so such a spec parses and hashes exactly as it
+always did — including inside a signed bundle, whose content hash covers the spec as written. They
+are fields, not node types. The four human nodes already carry a required `title` (the approver's
+inbox heading, up to 200 characters), so they take only `group`, and their `title` is what the canvas
+shows as their name.
+
+`validateSpec` raises an advisory `GROUP_NOT_CONTIGUOUS` warning when the edges between the nodes
+sharing a `group` (direction ignored) do not join them into one connected piece, because a card
+standing in for members with no edge between them would misdraw the graph. It checks connectedness
+only: it does not require a single entry or exit, and a connected group with a path that leaves and
+re-enters it passes. Both `group` and `title` are trimmed when a spec is read, so `ci` and `ci ` are
+one group, and a value that is not a non-blank string within the limits is treated as absent on read
+while the save API rejects it.
+
+Reading is tolerant by design: a stored or bundle-installed spec may carry a `title` or `group` in any
+shape, because before these fields existed such a key was ignored. A bad value therefore drops that
+field and nothing else, and never fails run creation or hides a run's graph.
+
+#### Reading a large graph
+
+The same spec is shown three ways, none of which changes it:
+
+- **Canvas.** A card shows the node's `title` (its id when there is none; the id stays in the
+  card's tooltip and the inspector) and a badge for its `group`. Bookkeeping nodes (`set` and
+  `updateDomainState`) can be folded out of view, and, on the read-only canvases, each contiguous
+  group of two or more nodes can be folded into one card with a count. Edges into the group lead
+  to the card and each distinct way out of it is drawn as an exit. A group holding a node that
+  failed, is running or pending, carries a diff mark, or is selected stays open. Clicking a card, or
+  pressing Enter on it, opens that group. The editor never folds, because a hidden node is one the
+  author cannot change.
+- **Outline.** The steps as a list in flow order (a walk from the entry that follows each node's edges
+  in order), gathered under their `group` headings, with a status beside each row when a run overlay
+  is supplied. Rows are selectable and keyboard-driven: Up and Down move and select, Home and End
+  jump, and a heading folds its group. It is offered on the template page, in the run viewer, and as
+  a rail in the editor.
+- **Inspector.** `title` and `group` are edited in the node inspector; clearing one removes the key.
+
+#### How the built-in templates are written
+
+The seeded templates are flat specs like any other, but they are authored with a set of pure helpers
+in `packages/shared/src/workflow/templates/authoring/` that expand when the template module loads:
+`reviewLoop`, `ciLoop` (with `waitForCi`), `openPullRequest`, `validatePhase`, `signalGate`,
+`policyGatedWrite`, `sourceHead`, and small node factories for status stamps, quality gates, counters
+and terminals. A helper returns ordinary nodes under the ids the templates have always used, stamped
+with a `group` and `title`; nothing in a stored spec, a run snapshot, or a bundle refers to a helper.
+`golden.test.ts` holds every built-in to the flat spec it was seeded as (stored under
+`templates/__golden__/`), apart from a short list of intended changes, so a refactor of a helper
+cannot alter a template unnoticed. An edit to a template or helper is released like any other change
+to a built-in: `syncBuiltins` compares specs key-order-insensitively and appends a new version.
+
+#### Limitations
+
+- A group collapses only when it has two or more members and they form one connected piece; otherwise
+  it is left open and the contiguity warning says why.
+- Collapsing is a read-only canvas feature. The editor shows every node, and offers the outline
+  beside its canvas instead.
+- `group` and `title` are not part of the natural-language authoring prompt, so a generated draft
+  carries none until an author adds them.
+- A group is collapsed all at once or expanded one card at a time; there is no per-group collapse
+  control on the canvas (the outline folds each heading separately).
+
 ### Dispatcher
 
 ```
@@ -352,7 +418,12 @@ Built-in templates follow the same rule. `syncBuiltins()` runs at every gateway 
 a missing built-in template, but on an existing one it never touches `status`, `isDefault` or
 `activeVersion`, and never rewrites a version. When a release changes a built-in spec it appends a
 new version, and activates it only when the template is still active on the previous built-in
-version; a template an admin archived or moved onto their own version keeps that choice. A
+version; a template an admin archived or moved onto their own version keeps that choice, and so
+does one running a live A/B experiment (`experimentSplit` above zero): the new version is appended,
+a warning names the template, and the admin promotes it when the experiment ends. Template-level
+fields (`inputSchema`, `workspaceProvider`) are filled only where the row has none, so an admin's
+edit is never reverted; a release that changes one of them for an already-seeded built-in does not
+propagate it. A
 built-in version is one with no author (`createdBy` and `generatedBy` both null). The same
 create-if-missing rule covers the GLOBAL agents and their skill refs: a ref an admin removed stays
 removed, and only a built-in skill new in this release is attached to an existing agent. The one

@@ -1866,10 +1866,10 @@
       "title": "PRD analysis and decomposition"
     },
     {
-      "anchor": "waitForStaging: {",
-      "before": 30,
+      "anchor": "signal: 'stagingDeploySignal',",
+      "before": 10,
       "id": "rollout",
-      "lines": 90,
+      "lines": 32,
       "path": "packages/shared/src/workflow/templates/canaryRollout.ts",
       "title": "External staging and monitoring waits"
     },

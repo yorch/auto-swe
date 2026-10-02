@@ -11,6 +11,9 @@
  *   - "fit to view" / "actual size" / "+ / −" controls
  *   - per-node multi-port handles for cond / signal / fanOut
  *   - smooth-step edges color-coded by kind
+ *   - two display-only folds: bookkeeping nodes out of the view, and each
+ *     `group` into one card (neither ever changes the spec)
+ *   - optionally, an outline (list) view of the same spec
  *
  * For interactive editing, prefer the higher-level <TemplateEditor> wrapper
  * which adds drag-to-create, drag-to-connect, and an inspector rail.
@@ -35,11 +38,14 @@ import {
   useRef,
   useState,
 } from 'react';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
 import { FlowChrome } from './flowChrome';
 import { foldBookkeeping } from './foldBookkeeping';
+import { foldGroups } from './foldGroups';
 import { FIT_VIEW_OPTIONS, specToFlow } from './specToFlow';
+import { WorkflowOutline } from './WorkflowOutline';
 
 export type { DiffKind } from '@/lib/workflowLayout';
 
@@ -63,6 +69,8 @@ interface Props {
    * viewer can flip it either way; the spec itself is never changed.
    */
   foldBookkeeping?: boolean;
+  /** Offer a Graph / Outline switch. The outline lists the same spec as rows. */
+  outline?: boolean;
 }
 
 /** Graphs larger than this open folded unless the caller says otherwise. */
@@ -73,6 +81,14 @@ const ALWAYS_VISIBLE_STATUSES = new Set(['FAILED', 'RUNNING', 'PENDING']);
 
 const NODE_TYPES = { dag: DagNode };
 
+const VIEW_OPTIONS = [
+  { label: 'Graph', value: 'graph' },
+  { label: 'Outline', value: 'outline' },
+] as const;
+
+const TOOLBAR_BUTTON =
+  'rounded-sm border border-ink-600 bg-ink-800/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-400 hover:text-paper-100';
+
 function InnerDag({
   spec: fullSpec,
   statuses,
@@ -81,10 +97,20 @@ function InnerDag({
   onSelect,
   height,
   foldBookkeeping: foldDefault,
+  outline,
 }: Props) {
+  const [view, setView] = useState<'graph' | 'outline'>('graph');
   const [folded, setFolded] = useState(
     () => foldDefault ?? Object.keys(fullSpec.nodes).length > AUTO_FOLD_NODE_COUNT
   );
+  // Groups the viewer has collapsed into cards. Nothing starts collapsed, and a different
+  // spec (another version) starts over: its labels mean other groups.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const specContentKey = JSON.stringify(fullSpec);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the spec's content is the trigger
+  useEffect(() => {
+    setCollapsed(new Set());
+  }, [specContentKey]);
   // What the viewer is looking at is never folded away: a node that failed, is
   // running or waiting, was changed in a diff, or is selected stays on the canvas.
   const keepKey = JSON.stringify([
@@ -94,22 +120,38 @@ function InnerDag({
     Object.keys(diffMarkers ?? {}),
     selectedNodeId,
   ]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: keepKey is the serialized content of everything `keep` reads
-  const fold = useMemo(() => {
-    const keep = new Set<string>(JSON.parse(keepKey).flat().filter(Boolean) as string[]);
-    return foldBookkeeping(fullSpec, keep);
-  }, [JSON.stringify(fullSpec), keepKey]);
-  const spec = folded ? fold.spec : fullSpec;
+  const keep = useMemo(
+    () => new Set<string>(JSON.parse(keepKey).flat().filter(Boolean) as string[]),
+    [keepKey]
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the serialized spec, and keepKey for what `keep` holds
+  const fold = useMemo(() => foldBookkeeping(fullSpec, keep), [JSON.stringify(fullSpec), keepKey]);
+  const bookkeepingSpec = folded ? fold.spec : fullSpec;
+  // Then the group fold, over what the bookkeeping fold left. Groups are read off
+  // that spec, so a card's count is the steps actually on screen.
+  const collapsedKey = JSON.stringify([...collapsed].sort());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on serialized content so a poll with no change does not rebuild
+  const groupFold = useMemo(
+    () => foldGroups(bookkeepingSpec, collapsed, keep),
+    [JSON.stringify(bookkeepingSpec), collapsedKey, keepKey]
+  );
+  const spec = groupFold.spec;
   // Poll refreshes hand us new object identities for `spec` / `statuses` /
   // `diffMarkers` every 3-5s even when their content is unchanged. Keying the
   // memo on serialized content (rather than identity) means a poll with no
   // real change doesn't tear down and rebuild every React Flow node.
-  const specKey = JSON.stringify(spec);
+  const specKey = JSON.stringify([spec, groupFold.extraEdges]);
   const statusesKey = JSON.stringify(statuses?.byNodeId ?? null);
   const diffKey = JSON.stringify(diffMarkers ?? null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on serialized content so identity-only poll changes don't rebuild the graph
   const initial = useMemo(
-    () => specToFlow(spec, { diffMarkers, statuses }),
+    () =>
+      specToFlow(spec, {
+        diffMarkers,
+        extraEdges: groupFold.extraEdges,
+        folded: groupFold.folded,
+        statuses,
+      }),
     [specKey, statusesKey, diffKey]
   );
 
@@ -132,10 +174,10 @@ function InnerDag({
   const nodesInitialized = useNodesInitialized();
   // biome-ignore lint/correctness/useExhaustiveDependencies: specKey is the trigger — a different spec must be refitted.
   useEffect(() => {
-    if (nodesInitialized) {
+    if (nodesInitialized && view === 'graph') {
       void fitView(FIT_VIEW_OPTIONS);
     }
-  }, [nodesInitialized, specKey, fitView]);
+  }, [nodesInitialized, specKey, fitView, view]);
 
   // Reflect external selection by setting React Flow's `selected` flag.
   const nodesWithSelection = useMemo(
@@ -148,6 +190,38 @@ function InnerDag({
   );
 
   const containerRef = useRef<HTMLDivElement>(null);
+  // Where keyboard focus goes once an expanded group's members are on the canvas: the
+  // card that had it is unmounted, which would otherwise drop focus to <body>.
+  const pendingFocus = useRef<string | null>(null);
+
+  /** Open one collapsed group. A card is not a node, so it is never "selected". */
+  const expandGroup = useCallback(
+    (cardId: string) => {
+      const card = groupFold.folded[cardId];
+      if (!card) {
+        return;
+      }
+      pendingFocus.current = card.memberIds[0] ?? null;
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        next.delete(card.group);
+        return next;
+      });
+    },
+    [groupFold.folded]
+  );
+
+  // Selecting is for real nodes; a group card opens instead.
+  const selectOrExpand = useCallback(
+    (id: string | null) => {
+      if (id !== null && id in groupFold.folded) {
+        expandGroup(id);
+        return;
+      }
+      onSelect?.(id);
+    },
+    [groupFold.folded, expandGroup, onSelect]
+  );
 
   // Move DOM focus onto a node's React Flow wrapper so focus follows keyboard
   // selection (React Flow tags each wrapper with `data-id`).
@@ -158,10 +232,19 @@ function InnerDag({
     el?.focus();
   }, []);
 
+  useEffect(() => {
+    const id = pendingFocus.current;
+    if (id && nodes.some((n) => n.id === id)) {
+      pendingFocus.current = null;
+      requestAnimationFrame(() => focusNodeEl(id));
+    }
+  }, [nodes, focusNodeEl]);
+
   // Keyboard graph traversal: arrows walk the edges, Home jumps to the entry
-  // node, Enter/Space opens the anchored node in the inspector. The anchor is
-  // the currently focused node (falling back to the selected one), so a
-  // keyboard/screen-reader user can traverse the DAG without a pointer.
+  // node, Enter/Space opens the anchored node in the inspector (or expands a
+  // collapsed group). The anchor is the currently focused node (falling back to
+  // the selected one), so a keyboard/screen-reader user can traverse the DAG
+  // without a pointer.
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
       const focusedId =
@@ -174,7 +257,10 @@ function InnerDag({
         const target = adjacentNodeId(anchor, direction, nodes, edges);
         if (target) {
           e.preventDefault();
-          onSelect?.(target);
+          // A card takes focus but is not selected: there is nothing to inspect.
+          if (!(target in groupFold.folded)) {
+            onSelect?.(target);
+          }
           focusNodeEl(target);
         }
       };
@@ -201,58 +287,113 @@ function InnerDag({
         case ' ':
           if (anchor) {
             e.preventDefault();
-            onSelect?.(anchor);
+            selectOrExpand(anchor);
           }
           break;
       }
     },
-    [nodes, edges, selectedNodeId, onSelect, focusNodeEl]
+    [nodes, edges, selectedNodeId, onSelect, focusNodeEl, groupFold.folded, selectOrExpand]
   );
+
+  const collapsibleCount = groupFold.collapsible.length;
+  const collapseAll = () => setCollapsed(new Set(groupFold.collapsible));
+  // How many cards are actually on the canvas: a collapsed group holding something the
+  // viewer is looking for stays open, so this can be fewer than `collapsed.size`.
+  const foldedCount = Object.keys(groupFold.folded).length;
+  const showToolbar =
+    outline || fold.hidden.length > 0 || collapsibleCount > 0 || collapsed.size > 0;
 
   return (
     <div
-      aria-label="Workflow graph. Left and right arrows follow the flow, up and down arrows switch between branches, Enter opens a step, Home jumps to the start."
-      // `role="application"` is intentional here — arrow-key navigation needs
-      // raw key events rather than the browser's default roving-tabindex
-      // behavior a `role="group"`/list would impose. Individual nodes carry
-      // their own descriptive `aria-label` (see specToFlow's `ariaLabel`).
-      aria-roledescription="workflow graph"
-      className="relative rounded-sm border border-ink-600 bg-ink-900"
-      onKeyDown={onKeyDown}
-      ref={containerRef}
-      role="application"
+      className="relative flex flex-col rounded-sm border border-ink-600 bg-ink-900"
       style={{ height: height ?? 480 }}
     >
-      {fold.hidden.length > 0 && (
-        <button
-          aria-pressed={folded}
-          className="absolute left-2 top-2 z-10 rounded-sm border border-ink-600 bg-ink-800/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-400 hover:text-paper-100"
-          onClick={() => setFolded((v) => !v)}
-          title="Status stamps and counters (set / updateDomainState nodes) change run state but do no work. Folding them out shortens the graph; nothing is edited."
-          type="button"
-        >
-          {folded ? `Show ${fold.hidden.length} bookkeeping nodes` : 'Hide bookkeeping nodes'}
-        </button>
+      {showToolbar && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-600/60 bg-ink-900 px-2 py-1.5">
+          {outline && (
+            <SegmentedControl
+              ariaLabel="Workflow view"
+              onChange={setView}
+              options={[...VIEW_OPTIONS]}
+              value={view}
+            />
+          )}
+          {view === 'graph' && fold.hidden.length > 0 && (
+            <button
+              aria-pressed={folded}
+              className={TOOLBAR_BUTTON}
+              onClick={() => setFolded((v) => !v)}
+              title="Status stamps and counters (set / updateDomainState nodes) change run state but do no work. Folding them out shortens the graph; nothing is edited."
+              type="button"
+            >
+              {folded ? `Show ${fold.hidden.length} bookkeeping nodes` : 'Hide bookkeeping nodes'}
+            </button>
+          )}
+          {view === 'graph' && (collapsibleCount > 0 || collapsed.size > 0) && (
+            <button
+              aria-pressed={collapsed.size > 0}
+              className={TOOLBAR_BUTTON}
+              onClick={() => (collapsed.size > 0 ? setCollapsed(new Set()) : collapseAll())}
+              title="Fold each group of steps into one card. A group holding a failed, running or pending step, a diff mark, or the selected step stays open. Nothing is edited."
+              type="button"
+            >
+              {collapsed.size > 0
+                ? foldedCount > 0
+                  ? `Expand ${foldedCount} group${foldedCount === 1 ? '' : 's'}`
+                  : 'Expand groups'
+                : `Collapse ${collapsibleCount} group${collapsibleCount === 1 ? '' : 's'}`}
+            </button>
+          )}
+        </div>
       )}
-      <ReactFlow
-        edges={edges}
-        fitView
-        fitViewOptions={FIT_VIEW_OPTIONS}
-        maxZoom={2.5}
-        minZoom={0.15}
-        nodes={nodesWithSelection}
-        nodesConnectable={false}
-        nodesDraggable={false}
-        nodeTypes={NODE_TYPES}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={(_, n) => onSelect?.(n.id === selectedNodeId ? null : n.id)}
-        onNodesChange={onNodesChange}
-        onPaneClick={() => onSelect?.(null)}
-        proOptions={{ hideAttribution: true }}
-        zoomOnDoubleClick={false}
-      >
-        <FlowChrome />
-      </ReactFlow>
+      {view === 'outline' ? (
+        <WorkflowOutline
+          className="min-h-0 flex-1"
+          diffMarkers={diffMarkers}
+          height="100%"
+          onSelect={onSelect}
+          selectedNodeId={selectedNodeId}
+          spec={fullSpec}
+          statuses={statuses}
+        />
+      ) : (
+        <div
+          aria-label="Workflow graph. Left and right arrows follow the flow, up and down arrows switch between branches, Enter opens a step or expands a collapsed group, Home jumps to the start."
+          // `role="application"` is intentional here — arrow-key navigation needs
+          // raw key events rather than the browser's default roving-tabindex
+          // behavior a `role="group"`/list would impose. Individual nodes carry
+          // their own descriptive `aria-label` (see specToFlow's `ariaLabel`).
+          aria-roledescription="workflow graph"
+          className="relative min-h-0 flex-1"
+          onKeyDown={onKeyDown}
+          ref={containerRef}
+          role="application"
+        >
+          <ReactFlow
+            edges={edges}
+            fitView
+            fitViewOptions={FIT_VIEW_OPTIONS}
+            maxZoom={2.5}
+            minZoom={0.15}
+            nodes={nodesWithSelection}
+            nodesConnectable={false}
+            nodesDraggable={false}
+            nodeTypes={NODE_TYPES}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={(_, n) =>
+              n.id in groupFold.folded
+                ? expandGroup(n.id)
+                : onSelect?.(n.id === selectedNodeId ? null : n.id)
+            }
+            onNodesChange={onNodesChange}
+            onPaneClick={() => onSelect?.(null)}
+            proOptions={{ hideAttribution: true }}
+            zoomOnDoubleClick={false}
+          >
+            <FlowChrome />
+          </ReactFlow>
+        </div>
+      )}
     </div>
   );
 }

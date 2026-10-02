@@ -23,6 +23,10 @@
  *                          where a terminate ends one branch, not the run
  *     - IGNORED_FIELD      a node sets `retry` / `startToCloseTimeout` / `heartbeatTimeout`,
  *                          which the interpreter never reads (use `onFail: { retry }`)
+ *     - GROUP_NOT_CONTIGUOUS  the edges between nodes sharing a `group` label do not join them
+ *                          into one connected piece (edges are taken as undirected). It does NOT
+ *                          check single entry or exit, and a group that is connected but also has a
+ *                          path leaving and re-entering it passes
  *
  * Pure + I/O-free so it runs identically in the worker (pre-run / repair loop),
  * the gateway, and the web canvas (live lint). Wiring differs by caller: the
@@ -131,6 +135,57 @@ export function findInternalSteps(spec: WorkflowSpec): Array<{ nodeId: string; s
     }
   }
   return found;
+}
+
+/**
+ * The connected pieces of each `group` label, counting only edges between two
+ * nodes that share the label (direction ignored). A group that is one piece is
+ * "contiguous": folding it into one card does not stand a card in for members
+ * with no edge between them. That is all this checks; it says nothing about how
+ * many entries or exits the group has, and a connected group may still have a
+ * path that leaves and re-enters it. Returns only the groups that fall apart,
+ * each as its pieces.
+ */
+export function splitGroups(spec: WorkflowSpec): Map<string, string[][]> {
+  const members = new Map<string, string[]>();
+  for (const [id, node] of Object.entries(spec.nodes)) {
+    // The schema trims on read; trimming again keeps a hand-built spec in agreement
+    // with the web views, which group by the trimmed label.
+    const group = node.group?.trim();
+    if (group) {
+      members.set(group, [...(members.get(group) ?? []), id]);
+    }
+  }
+  const split = new Map<string, string[][]>();
+  for (const [group, ids] of members) {
+    const inGroup = new Set(ids);
+    // Union-find over the group's own edges.
+    const parent = new Map(ids.map((id) => [id, id]));
+    const find = (id: string): string => {
+      let root = id;
+      while (parent.get(root) !== root) {
+        root = parent.get(root) as string;
+      }
+      parent.set(id, root);
+      return root;
+    };
+    for (const id of ids) {
+      for (const [, target] of nodeEdges(spec.nodes[id] as Node)) {
+        if (inGroup.has(target)) {
+          parent.set(find(id), find(target));
+        }
+      }
+    }
+    const pieces = new Map<string, string[]>();
+    for (const id of ids) {
+      const root = find(id);
+      pieces.set(root, [...(pieces.get(root) ?? []), id]);
+    }
+    if (pieces.size > 1) {
+      split.set(group, [...pieces.values()]);
+    }
+  }
+  return split;
 }
 
 export function validateSpec(
@@ -343,6 +398,18 @@ export function validateSpec(
         });
       }
     }
+  }
+
+  for (const [group, pieces] of splitGroups(spec)) {
+    warnings.push({
+      code: 'GROUP_NOT_CONTIGUOUS',
+      field: 'group',
+      message: `group '${group}' is split into ${pieces.length} disconnected pieces (${pieces
+        .map((p) => p.join(', '))
+        .join(' | ')}); a folded view would hide the path between them`,
+      nodeId: pieces[1]?.[0],
+      severity: 'warning',
+    });
   }
 
   return { errors, warnings };

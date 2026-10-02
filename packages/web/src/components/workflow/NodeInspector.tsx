@@ -8,8 +8,13 @@
  */
 
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
-import { readNodeEdge, setNodeEdge } from '@auto-swe/shared/workflow';
-import { useEffect, useState } from 'react';
+import {
+  MAX_NODE_GROUP_LENGTH,
+  MAX_NODE_TITLE_LENGTH,
+  readNodeEdge,
+  setNodeEdge,
+} from '@auto-swe/shared/workflow';
+import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { Input } from '@/components/ui/Input';
@@ -37,6 +42,8 @@ interface InspectorProps {
   stepRegistry: StepMetadata[];
   isEntry: boolean;
   allNodeIds: string[];
+  /** Group labels already used in the spec, offered as suggestions. */
+  knownGroups?: string[];
   onChangeNode: (next: SpecNode) => void;
   onRename: (oldId: string, newId: string) => void;
   onDelete: () => void;
@@ -88,6 +95,7 @@ export function NodeInspector({
   stepRegistry,
   isEntry,
   allNodeIds,
+  knownGroups,
   onChangeNode,
   onRename,
   onDelete,
@@ -148,6 +156,13 @@ export function NodeInspector({
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
+        <NodeMetaFields
+          knownGroups={knownGroups}
+          node={node}
+          nodeId={nodeId}
+          onChange={onChangeNode}
+        />
+
         {/* Step-specific schema-aware form */}
         {node.type === 'step' && (
           <StepConfigSection
@@ -238,6 +253,94 @@ export function NodeInspector({
         </details>
       </div>
     </aside>
+  );
+}
+
+const HUMAN_TYPES = new Set<SpecNode['type']>([
+  'humanApproval',
+  'humanDecision',
+  'humanInput',
+  'humanReview',
+]);
+
+/**
+ * `title` and `group`: presentation-only, read by the canvas, the outline and the
+ * run viewer, never by the engine. Committed on blur (like the id), and an empty
+ * value removes the key rather than saving an empty string.
+ *
+ * The four human nodes already carry a REQUIRED title — what an approver sees in
+ * the inbox — so there it can be changed but not cleared.
+ */
+function NodeMetaFields({
+  node,
+  nodeId,
+  knownGroups,
+  onChange,
+}: {
+  node: SpecNode;
+  nodeId: string;
+  knownGroups?: string[];
+  onChange: (next: SpecNode) => void;
+}) {
+  const isHuman = HUMAN_TYPES.has(node.type);
+  const listId = useId();
+  const [title, setTitle] = useState(node.title ?? '');
+  const [group, setGroup] = useState(node.group ?? '');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resync when another node is selected or the value changes underneath
+  useEffect(() => {
+    setTitle(node.title ?? '');
+    setGroup(node.group ?? '');
+  }, [nodeId, node.title, node.group]);
+
+  const commit = (key: 'title' | 'group', raw: string) => {
+    const value = raw.trim();
+    if (key === 'title' && isHuman && !value) {
+      setTitle(node.title ?? '');
+      return;
+    }
+    if ((node[key] ?? '') === value) {
+      return;
+    }
+    const next = { ...node } as Record<string, unknown>;
+    if (value) {
+      next[key] = value;
+    } else {
+      delete next[key];
+    }
+    onChange(next as unknown as SpecNode);
+  };
+
+  return (
+    <div className="mb-5 space-y-3">
+      <Input
+        compact
+        hint={
+          isHuman
+            ? 'shown to approvers in the inbox, and as this node’s name on the canvas'
+            : 'shown on the canvas and in the outline instead of the id'
+        }
+        label="Title"
+        maxLength={isHuman ? 200 : MAX_NODE_TITLE_LENGTH}
+        onBlur={(e) => commit('title', e.target.value)}
+        onChange={(e) => setTitle(e.target.value)}
+        value={title}
+      />
+      <Input
+        compact
+        hint="steps with the same group are listed together and can be collapsed"
+        label="Group"
+        list={listId}
+        maxLength={MAX_NODE_GROUP_LENGTH}
+        onBlur={(e) => commit('group', e.target.value)}
+        onChange={(e) => setGroup(e.target.value)}
+        value={group}
+      />
+      <datalist id={listId}>
+        {(knownGroups ?? []).map((g) => (
+          <option key={g} value={g} />
+        ))}
+      </datalist>
+    </div>
   );
 }
 

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { AGENT_RUN_SPEC } from '@auto-swe/shared/lib/agentRun';
 import { classifyAgentRunFailure } from '@auto-swe/shared/lib/agentRunFailure';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import { DEFAULT_ENGINEERING_SPEC, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
@@ -91,7 +91,10 @@ const fakeActivities = {
   cancelPendingHumanSteps: async (runId: string) => {
     calls.cancelledHumanSteps.push(runId);
   },
+  // The activities the seeded default-engineering template needs on its happy path.
+  commitToMemory: async () => 'lesson-1',
   createHumanStep: async () => {},
+  createOrUpdatePullRequest: async () => ({ prNumber: 42, prUrl: 'https://example.test/pr/42' }),
   createWorkflowRun: async (input: unknown) => {
     calls.createWorkflowRun.push(input);
     if (createRunError) {
@@ -115,6 +118,12 @@ const fakeActivities = {
   recordWorkflowStep: async (args: { error?: string; nodeId: string; status: string }) => {
     calls.recordedSteps.push(args);
   },
+  resolveCiWaitConfig: async () => ({
+    deadlineSec: 1,
+    graceSec: 1,
+    intervalSec: 1,
+    mode: 'signal',
+  }),
   resolveHumanStep: async () => {},
   resolveWorkspace: async (input: { connectionId?: string | null; workspaceProvider?: string }) => {
     calls.resolveWorkspace.push(input);
@@ -129,6 +138,7 @@ const fakeActivities = {
       'AGENT_RUN_PUSH_POLICY'
     );
   },
+  runReviewNetwork: async () => ({ approved: true, rejectionSummary: '', verdicts: [] }),
   runTool: async (input: unknown) => {
     calls.runTool.push(input);
     return { connectionType: 'zendesk', ok: true };
@@ -144,6 +154,7 @@ const fakeActivities = {
   },
   updateDomainState: (workflowId: string, status: string) =>
     updateDomainStateImpl(workflowId, status),
+  validateContext: async () => ({ contextSnapshotId: 'cs-1', successCriteria: ['builds'] }),
   writeOutcome: async (input: unknown) => {
     calls.writeOutcome.push(input);
     return { connectionType: 'notion', ok: true, reference: 'page-id' };
@@ -241,6 +252,40 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     const result = await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-ok'));
     expect((result as { status: string }).status).toBe('SUCCESS');
     expect(calls.domainStates).toContain('IMPLEMENTING');
+    expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
+  }, 120_000);
+
+  it('runs the seeded default-engineering template to SUCCESS with no COMPLETED stamp of its own', async () => {
+    // The template used to end `commitLesson -> setCompleted -> done`, where `setCompleted`
+    // stamped COMPLETED just before the run ended SUCCESS. `finalizeWorkflowRun` already
+    // writes COMPLETED on SUCCESS (templates.test.ts: 'writes the terminal status back to the
+    // ActiveWorkflow row'), so the node is gone. This runs the real spec through the real
+    // workflow: the stamps stop at AWAITING_HUMAN_MERGE and the run still finalizes SUCCESS.
+    currentSpec = DEFAULT_ENGINEERING_SPEC as unknown as Record<string, unknown>;
+    calls.domainStates.length = 0;
+    const handle = await env.client.workflow.start('RunnableWorkflow', startArgs('wf-default-eng'));
+    const waitFor = async (status: string) => {
+      const deadline = Date.now() + 30_000;
+      while (!calls.domainStates.includes(status) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(calls.domainStates).toContain(status);
+    };
+    await waitFor('AWAITING_CI');
+    await handle.signal('ciPipelineSignal', { passed: true });
+    await waitFor('AWAITING_HUMAN_MERGE');
+    await handle.signal('humanMergeSignal', true);
+    const result = (await handle.result()) as { prNumber?: number; status: string };
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.prNumber).toBe(42);
+    expect(calls.domainStates).toEqual([
+      'VALIDATING_CONTEXT',
+      'IMPLEMENTING',
+      'IN_REVIEW',
+      'AWAITING_CI',
+      'AWAITING_HUMAN_MERGE',
+    ]);
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
   }, 120_000);
 

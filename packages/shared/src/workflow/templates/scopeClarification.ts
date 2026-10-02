@@ -1,4 +1,13 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  initCounters,
+  mergeNodes,
+  prResult,
+  reviewLoop,
+  statusStamp,
+  terminate,
+  validatePhase,
+} from './authoring/index.js';
 
 /**
  * Collects human guidance before implementation starts.
@@ -10,147 +19,79 @@ export const SCOPE_CLARIFICATION_SPEC: WorkflowSpec = {
     'Useful for tickets whose descriptions are intentionally vague or too high-level for the agent to act on without guidance.',
   entry: 'clarify',
   name: 'scope-clarification',
-  nodes: {
-    checkApproval: {
-      expr: 'nodes.review.output.approved == true',
-      onFalse: 'incReviewRetries',
-      onTrue: 'openPR',
-      type: 'cond',
-    },
-    checkReviewLimit: {
-      expr: 'context.reviewRetries >= 3',
-      onFalse: 'reviewFix',
-      onTrue: 'terminateReviewFailed',
-      type: 'cond',
-    },
-    clarify: {
-      description:
-        'Answer as much or as little as you like. Leave fields blank to let the agent decide.',
-      fields: [
-        {
-          key: 'approach',
-          label: 'Preferred implementation approach',
-          required: false,
-          type: 'text',
-        },
-        {
-          key: 'constraints',
-          label: 'Constraints or things to avoid',
-          required: false,
-          type: 'text',
-        },
-        {
-          key: 'testFocus',
-          label: 'Areas to focus testing on',
-          required: false,
-          type: 'text',
-        },
-      ],
-      onSubmit: 'storeClarification',
-      onTimeout: 'validate',
-      storeAs: 'context.clarification',
-      timeout: '30m',
-      title: 'Clarify implementation requirements',
-      type: 'humanInput',
-    },
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
+  nodes: mergeNodes(
+    {
+      clarify: {
+        description:
+          'Answer as much or as little as you like. Leave fields blank to let the agent decide.',
+        fields: [
+          {
+            key: 'approach',
+            label: 'Preferred implementation approach',
+            required: false,
+            type: 'text',
+          },
+          {
+            key: 'constraints',
+            label: 'Constraints or things to avoid',
+            required: false,
+            type: 'text',
+          },
+          {
+            key: 'testFocus',
+            label: 'Areas to focus testing on',
+            required: false,
+            type: 'text',
+          },
+        ],
+        group: 'clarify',
+        onSubmit: 'storeClarification',
+        onTimeout: 'validate',
+        storeAs: 'context.clarification',
+        timeout: '30m',
+        title: 'Clarify implementation requirements',
+        type: 'humanInput',
       },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
-    implement: {
-      // Without this binding the human's answers never reach the implementer.
-      inputs: { guidance: { default: '', from: 'context.clarification' } },
-      next: 'initCounters',
-      step: 'executeImplementation',
-      type: 'step',
-    },
-    incReviewRetries: {
-      next: 'storeRejection',
-      type: 'set',
-      values: { 'context.reviewRetries': { expr: 'context.reviewRetries + 1' } },
-    },
-    initCounters: {
-      next: 'setReviewing',
-      type: 'set',
-      values: {
-        'context.currentCodeResult': { from: 'nodes.implement.output' },
-        'context.reviewRetries': { literal: 0 },
+      storeClarification: {
+        group: 'clarify',
+        next: 'validate',
+        title: 'Keep the answers',
+        type: 'set',
+        values: { 'context.clarification': { from: 'nodes.clarify.output.data' } },
       },
     },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'done',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
-    review: {
-      inputs: {
-        codeResult: { from: 'context.currentCodeResult' },
-        successCriteria: { from: 'context.successCriteria' },
-      },
-      next: 'checkApproval',
-      step: 'runReviewNetwork',
-      type: 'step',
-    },
-    reviewFix: {
-      inputs: {
-        previousCodeResult: { from: 'context.currentCodeResult' },
-        rejectionSummary: { from: 'context.lastRejectionSummary' },
-      },
-      next: 'updateCodeAfterFix',
-      step: 'executeReviewFixImplementation',
-      type: 'step',
-    },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'implement',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setReviewing: {
-      config: { status: 'IN_REVIEW' },
-      next: 'review',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    storeClarification: {
-      next: 'validate',
-      type: 'set',
-      values: { 'context.clarification': { from: 'nodes.clarify.output.data' } },
-    },
-    storeRejection: {
-      next: 'checkReviewLimit',
-      type: 'set',
-      values: {
-        'context.lastRejectionSummary': {
-          default: '',
-          from: 'nodes.review.output.rejectionSummary',
-        },
-      },
-    },
-    successCriteria: {
+    // No status stamp here: the run starts at `clarify`, and this template's
+    // validate node is entered from it.
+    validatePhase({
       next: 'setImplementing',
-      type: 'set',
-      values: {
-        'context.successCriteria': { default: [], from: 'nodes.validate.output.successCriteria' },
+      stamp: false,
+      successCriteriaId: 'successCriteria',
+    }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        // Without this binding the human's answers never reach the implementer.
+        inputs: { guidance: { default: '', from: 'context.clarification' } },
+        next: 'initCounters',
+        step: 'executeImplementation',
+        title: 'Implement with the guidance',
+        type: 'step',
       },
+      initCounters: initCounters('setReviewing', { ci: false, group: 'implement' }),
     },
-    terminateReviewFailed: { status: 'FAILED', type: 'terminate' },
-    updateCodeAfterFix: {
-      next: 'setReviewing',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.reviewFix.output' } },
-    },
-    validate: {
-      next: 'successCriteria',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
-  },
+    reviewLoop({ approved: 'openPR', keepFixId: 'updateCodeAfterFix' }),
+    {
+      openPR: {
+        group: 'finish',
+        inputs: { codeResult: { from: 'context.currentCodeResult' } },
+        next: 'done',
+        step: 'createOrUpdatePullRequest',
+        title: 'Open the pull request',
+        type: 'step',
+      },
+      done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

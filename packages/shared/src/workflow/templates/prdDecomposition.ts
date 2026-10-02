@@ -1,4 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import { mergeNodes, statusStamp, terminate } from './authoring/index.js';
 
 /**
  * PRD Decomposition workflow: a PM submits a PRD document, the system
@@ -14,54 +15,31 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
     'as an implementation work request automatically.',
   entry: 'setAnalyzing',
   name: 'prd-decomposition',
-  nodes: {
+  nodes: mergeNodes({
+    // Each phase has its own status vocabulary, so these stamps stay explicit.
+    setAnalyzing: statusStamp('ANALYZING', 'analyzePrd', { group: 'analyze' }),
     analyzePrd: {
+      group: 'analyze',
       next: 'storePrdAnalysis',
       step: 'analyzePrd',
+      title: 'Analyse the PRD',
       type: 'step',
     },
-    createTrackerItems: {
-      inputs: {
-        decomposition: { from: 'context.decomposition' },
+    storePrdAnalysis: {
+      group: 'analyze',
+      next: 'pmReview',
+      title: 'Keep the analysis',
+      type: 'set',
+      values: {
+        'context.analysis': { from: 'nodes.analyzePrd.output' },
       },
-      next: 'storeTrackerItems',
-      onFail: 'warn',
-      step: 'createTrackerItems',
-      type: 'step',
-    },
-    decomposePrd: {
-      inputs: {
-        analysis: { from: 'context.analysis' },
-        pmFeedback: { default: null, from: 'context.pmReviewPayload.value' },
-      },
-      next: 'storeDecomposition',
-      step: 'decomposePrd',
-      type: 'step',
-    },
-    done: {
-      result: {
-        workRequestIds: { from: 'nodes.submitPrdWorkRequests.output.workRequestIds' },
-      },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
-    engReview: {
-      contentFrom: 'context.decomposition',
-      description:
-        'Review the proposed epic and story breakdown. Submit to approve and trigger ' +
-        'automatic ticket creation and implementation queue submission. Timeout abandons the PRD run.',
-      onSubmit: 'storeEngReview',
-      onTimeout: 'terminateTimeout',
-      storeAs: 'context.engReviewPayload',
-      timeout: '7d',
-      title: 'Engineering Review: Approve Decomposition',
-      type: 'humanReview',
     },
     pmReview: {
       contentFrom: 'context.analysis',
       description:
         'Review the readiness analysis. You may add feedback (stored as the signal value) ' +
         'before the system decomposes the PRD into stories. Timeout skips PM feedback.',
+      group: 'PM review',
       onSubmit: 'setPmFeedbackReceived',
       onTimeout: 'setDecomposing',
       storeAs: 'context.pmReviewPayload',
@@ -69,78 +47,104 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
       title: 'PM Review: PRD Readiness Analysis',
       type: 'humanReview',
     },
-    setAnalyzing: {
-      config: { status: 'ANALYZING' },
-      next: 'analyzePrd',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setCreatingTickets: {
-      config: { status: 'CREATING_TICKETS' },
-      next: 'createTrackerItems',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setDecomposing: {
-      config: { status: 'DECOMPOSING' },
-      next: 'decomposePrd',
-      step: 'updateDomainState',
-      type: 'step',
-    },
     setPmFeedbackReceived: {
+      group: 'PM review',
       next: 'setDecomposing',
+      title: 'Note that PM feedback arrived',
       type: 'set',
       values: {
         'context.pmFeedbackReceived': { literal: true },
       },
     },
-    setSubmitting: {
-      config: { status: 'SUBMITTING' },
-      next: 'submitPrdWorkRequests',
-      step: 'updateDomainState',
+    setDecomposing: statusStamp('DECOMPOSING', 'decomposePrd', { group: 'decompose' }),
+    decomposePrd: {
+      group: 'decompose',
+      inputs: {
+        analysis: { from: 'context.analysis' },
+        pmFeedback: { default: null, from: 'context.pmReviewPayload.value' },
+      },
+      next: 'storeDecomposition',
+      step: 'decomposePrd',
+      title: 'Decompose into epics and stories',
       type: 'step',
     },
     storeDecomposition: {
+      group: 'decompose',
       next: 'engReview',
+      title: 'Keep the decomposition',
       type: 'set',
       values: {
         'context.decomposition': { from: 'nodes.decomposePrd.output' },
       },
     },
+    engReview: {
+      contentFrom: 'context.decomposition',
+      description:
+        'Review the proposed epic and story breakdown. Submit to approve and trigger ' +
+        'automatic ticket creation and implementation queue submission. Timeout abandons the PRD run.',
+      group: 'engineering review',
+      onSubmit: 'storeEngReview',
+      onTimeout: 'terminateTimeout',
+      storeAs: 'context.engReviewPayload',
+      timeout: '7d',
+      title: 'Engineering Review: Approve Decomposition',
+      type: 'humanReview',
+    },
     storeEngReview: {
+      group: 'engineering review',
       next: 'setCreatingTickets',
+      title: 'Keep the sign-off',
       type: 'set',
       values: {
         'context.engReviewPayload': { from: 'nodes.engReview.output' },
       },
     },
-    storePrdAnalysis: {
-      next: 'pmReview',
-      type: 'set',
-      values: {
-        'context.analysis': { from: 'nodes.analyzePrd.output' },
+    terminateTimeout: terminate('TIMED_OUT', {
+      group: 'engineering review',
+      title: 'Review timed out',
+    }),
+    setCreatingTickets: statusStamp('CREATING_TICKETS', 'createTrackerItems', {
+      group: 'tickets',
+    }),
+    createTrackerItems: {
+      group: 'tickets',
+      inputs: {
+        decomposition: { from: 'context.decomposition' },
       },
+      next: 'storeTrackerItems',
+      onFail: 'warn',
+      step: 'createTrackerItems',
+      title: 'Create the tracker tickets',
+      type: 'step',
     },
     storeTrackerItems: {
+      group: 'tickets',
       next: 'setSubmitting',
+      title: 'Keep the tickets',
       type: 'set',
       values: {
         'context.trackerItems': { from: 'nodes.createTrackerItems.output' },
       },
     },
+    setSubmitting: statusStamp('SUBMITTING', 'submitPrdWorkRequests', { group: 'submit' }),
     submitPrdWorkRequests: {
+      group: 'submit',
       inputs: {
         decomposition: { from: 'context.decomposition' },
         trackerItems: { default: null, from: 'context.trackerItems' },
       },
       next: 'done',
       step: 'submitPrdWorkRequests',
+      title: 'Submit the work requests',
       type: 'step',
     },
-    terminateTimeout: {
-      status: 'TIMED_OUT',
-      type: 'terminate',
-    },
-  },
+    done: terminate('SUCCESS', {
+      group: 'submit',
+      result: {
+        workRequestIds: { from: 'nodes.submitPrdWorkRequests.output.workRequestIds' },
+      },
+      title: 'Done',
+    }),
+  }),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

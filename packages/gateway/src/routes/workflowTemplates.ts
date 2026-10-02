@@ -15,6 +15,7 @@ import {
   computeGlobalAnalytics,
   diffSpecs,
   findInternalSteps,
+  findInvalidPresentation,
   formatValidationIssue,
   getStepMetadata,
   hasStep,
@@ -590,6 +591,12 @@ function parseSpecOrThrow(input: unknown): unknown {
       ),
       { statusCode: 400 }
     );
+  }
+  // Reading `group`/`title` is tolerant (a bad value degrades to absent), so an authored
+  // spec is held to their limits here, before the parse would quietly drop the value.
+  const badPresentation = findInvalidPresentation(input);
+  if (badPresentation.length > 0) {
+    throw Object.assign(new Error(badPresentation.join('; ')), { statusCode: 400 });
   }
   let parsed: WorkflowSpec;
   try {

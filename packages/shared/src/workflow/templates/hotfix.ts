@@ -1,4 +1,14 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  mergeNodes,
+  openPullRequest,
+  prResult,
+  qualityGate,
+  statusStamp,
+  storeCodeResult,
+  terminate,
+  validatePhase,
+} from './authoring/index.js';
 
 /**
  * Expedited P0 path: implement → lint → typecheck → open PR immediately.
@@ -13,69 +23,25 @@ export const HOTFIX_SPEC: WorkflowSpec = {
     'Intended for P0 production incidents only.',
   entry: 'setValidating',
   name: 'hotfix',
-  nodes: {
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
+  nodes: mergeNodes(
+    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'storeCodeResult',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
       },
-      status: 'SUCCESS',
-      type: 'terminate',
+      storeCodeResult: storeCodeResult('runLint', { group: 'implement' }),
+      runLint: qualityGate('runLint', 'runTypecheck', { group: 'verify' }),
+      runTypecheck: qualityGate('runTypecheck', 'openPR', { group: 'verify' }),
     },
-    implement: {
-      next: 'storeCodeResult',
-      step: 'executeImplementation',
-      type: 'step',
-    },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'savePrInfo',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
-    runLint: {
-      next: 'runTypecheck',
-      onFail: 'warn',
-      step: 'runLint',
-      type: 'step',
-    },
-    runTypecheck: {
-      next: 'openPR',
-      onFail: 'warn',
-      step: 'runTypecheck',
-      type: 'step',
-    },
-    savePrInfo: {
-      next: 'done',
-      type: 'set',
-      values: {
-        'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
-        'context.prUrl': { from: 'nodes.openPR.output.prUrl' },
-      },
-    },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'implement',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setValidating: {
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    storeCodeResult: {
-      next: 'runLint',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.implement.output' } },
-    },
-    validate: {
-      next: 'setImplementing',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
-  },
+    openPullRequest({ next: 'done' }),
+    {
+      done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

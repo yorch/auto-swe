@@ -24,6 +24,13 @@ export interface SpecDiff {
   changedNodes: string[];
   /** Node IDs unchanged across the two specs. */
   unchangedNodes: string[];
+  /**
+   * Node IDs whose only difference is `group` / `title` (a human node's `title` is
+   * content, not presentation). They are neither changed nor unchanged: a spec that
+   * merely gained group labels would otherwise report every node as changed and bury
+   * the real edits.
+   */
+  presentationOnlyNodes: string[];
   /** Top-level spec-meta changes (entry / name / description / schemaVersion). */
   metaChanges: SpecMetaChange[];
 }
@@ -49,6 +56,16 @@ function canonical(value: unknown): string {
   });
 }
 
+/** The node without its presentation-only fields. A human node's `title` stays. */
+function withoutPresentation(node: Node): Node {
+  const { group: _group, ...rest } = node as Node & { group?: unknown };
+  if (node.type.startsWith('human')) {
+    return rest as Node;
+  }
+  const { title: _title, ...bare } = rest as { title?: unknown };
+  return bare as Node;
+}
+
 function nodesEqual(a: Node, b: Node): boolean {
   return canonical(a) === canonical(b);
 }
@@ -61,6 +78,7 @@ export function diffSpecs(before: WorkflowSpec, after: WorkflowSpec): SpecDiff {
   const removedNodes: string[] = [];
   const changedNodes: string[] = [];
   const unchangedNodes: string[] = [];
+  const presentationOnlyNodes: string[] = [];
 
   for (const id of afterIds) {
     if (!beforeIds.has(id)) {
@@ -71,6 +89,8 @@ export function diffSpecs(before: WorkflowSpec, after: WorkflowSpec): SpecDiff {
     const b = after.nodes[id];
     if (a && b && nodesEqual(a, b)) {
       unchangedNodes.push(id);
+    } else if (a && b && nodesEqual(withoutPresentation(a), withoutPresentation(b))) {
+      presentationOnlyNodes.push(id);
     } else {
       changedNodes.push(id);
     }
@@ -92,6 +112,7 @@ export function diffSpecs(before: WorkflowSpec, after: WorkflowSpec): SpecDiff {
     addedNodes: addedNodes.sort(),
     changedNodes: changedNodes.sort(),
     metaChanges,
+    presentationOnlyNodes: presentationOnlyNodes.sort(),
     removedNodes: removedNodes.sort(),
     unchangedNodes: unchangedNodes.sort(),
   };
@@ -104,6 +125,7 @@ export function specsEqual(a: WorkflowSpec, b: WorkflowSpec): boolean {
     d.addedNodes.length === 0 &&
     d.removedNodes.length === 0 &&
     d.changedNodes.length === 0 &&
+    d.presentationOnlyNodes.length === 0 &&
     d.metaChanges.length === 0
   );
 }

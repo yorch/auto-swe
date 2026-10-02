@@ -1060,11 +1060,32 @@ async function syncBuiltinTemplate(
     latestBuiltin !== undefined &&
     existing.activeVersion === latestBuiltin.version &&
     existing.status === 'ACTIVE';
-  if (onPreviousBuiltin) {
+  if (onPreviousBuiltin && (existing.experimentSplit ?? 0) > 0) {
+    // A live A/B experiment compares versions by number. Moving its control arm to a
+    // new version mid-experiment would split the control sample across two versions
+    // (and leave a built-in experiment arm behind), so the new version is appended
+    // for the admin to promote deliberately.
+    console.warn(
+      `[syncBuiltins] '${tmpl.name}' is running an A/B experiment (${existing.experimentSplit}% to ` +
+        `v${existing.experimentVersion ?? '?'}); appended v${next} but left it on v${latestBuiltin.version}. ` +
+        'Promote it when the experiment ends.'
+    );
+  } else if (onPreviousBuiltin) {
+    // Template-level built-in fields are only filled where the row has none: the
+    // admin API can PATCH them, and nothing records what the previous release
+    // shipped, so a stored value cannot be told apart from an admin's edit.
+    const fill = {
+      ...(existing.inputSchema == null && templateFields.inputSchema
+        ? { inputSchema: templateFields.inputSchema }
+        : {}),
+      ...(existing.workspaceProvider == null && templateFields.workspaceProvider
+        ? { workspaceProvider: templateFields.workspaceProvider }
+        : {}),
+    };
     // Conditional on the row still pointing where we read it, so an admin's
     // concurrent activation is not overwritten.
     await prisma.workflowTemplate.updateMany({
-      data: { activeVersion: next, ...templateFields },
+      data: { activeVersion: next, ...fill },
       where: { activeVersion: latestBuiltin.version, id: existing.id, teamId: null },
     });
   }

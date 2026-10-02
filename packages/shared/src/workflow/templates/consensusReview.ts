@@ -1,4 +1,15 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  ciLoop,
+  ciWaitEntry,
+  initCounters,
+  mergeNodes,
+  openPullRequest,
+  prResult,
+  statusStamp,
+  terminate,
+  validatePhase,
+} from './authoring/index.js';
 
 /**
  * Two independent agent review network calls run in parallel via fanOut.
@@ -16,191 +27,141 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
     'Demonstrates fanOut for parallel quality gates rather than parallel work.',
   entry: 'setValidating',
   name: 'consensus-review',
-  nodes: {
-    // ── Branch nodes (run inside fanOut) ─────────────────────────────────
-    branchApproved: { status: 'SUCCESS', type: 'terminate' },
-    branchRejected: { status: 'FAILED', type: 'terminate' },
-    checkBranchApproval: {
-      expr: 'nodes.runBranchReview.output.approved == true',
-      onFalse: 'storeBranchRejection',
-      onTrue: 'branchApproved',
-      type: 'cond',
+  nodes: mergeNodes(
+    {
+      // ── Branch nodes (run inside fanOut) ─────────────────────────────────
+      branchApproved: terminate('SUCCESS', { group: 'reviewer branch', title: 'Branch approved' }),
+      branchRejected: terminate('FAILED', { group: 'reviewer branch', title: 'Branch rejected' }),
+      checkBranchApproval: {
+        expr: 'nodes.runBranchReview.output.approved == true',
+        group: 'reviewer branch',
+        onFalse: 'storeBranchRejection',
+        onTrue: 'branchApproved',
+        title: 'Approved?',
+        type: 'cond',
+      },
+      runBranchReview: {
+        group: 'reviewer branch',
+        inputs: {
+          codeResult: { from: 'context.currentCodeResult' },
+          successCriteria: { from: 'context.successCriteria' },
+        },
+        next: 'checkBranchApproval',
+        step: 'runReviewNetwork',
+        title: 'Review network (one reviewer slot)',
+        type: 'step',
+      },
+      storeBranchRejection: {
+        group: 'reviewer branch',
+        next: 'branchRejected',
+        title: 'Record why it was rejected',
+        type: 'set',
+        values: {
+          'context.branchRejectionSummary': {
+            default: '',
+            from: 'nodes.runBranchReview.output.rejectionSummary',
+          },
+        },
+      },
     },
-
     // ── Main graph ────────────────────────────────────────────────────────
-    checkCI: {
-      expr: 'context.ciResultPayload.passed == true',
-      onFalse: 'terminateCIFailed',
-      onTrue: 'setCompleted',
-      type: 'cond',
-    },
-    checkConsensus: {
-      expr: 'nodes.fanOutReview.output.failed == 0',
-      onFalse: 'incReviewRetries',
-      onTrue: 'setAwaitingCi',
-      type: 'cond',
-    },
-    checkReviewLimit: {
-      expr: 'context.reviewRetries >= 3',
-      onFalse: 'consensusFix',
-      onTrue: 'terminateReviewFailed',
-      type: 'cond',
-    },
-    consensusFix: {
-      inputs: {
-        previousCodeResult: { from: 'context.currentCodeResult' },
-        rejectionSummary: { from: 'context.lastRejectionSummary' },
+    validatePhase({ next: 'setImplementing' }),
+    {
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+      implement: {
+        group: 'implement',
+        next: 'initCounters',
+        step: 'executeImplementation',
+        title: 'Implement the ticket',
+        type: 'step',
       },
-      next: 'updateCodeAfterFix',
-      step: 'executeReviewFixImplementation',
-      type: 'step',
-    },
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
+      initCounters: initCounters('fanOutReview', { ci: false, group: 'implement' }),
+      // The consensus review: two reviewer slots, both must approve.
+      fanOutReview: {
+        // Two reviewer slots — each branch runs runBranchReview independently.
+        concurrency: 2,
+        exports: ['context.branchRejectionSummary'],
+        group: 'consensus review',
+        itemKey: 'reviewerSlot',
+        join: 'storeConsensusResult',
+        onBranchFail: 'continue',
+        over: { literal: [{ id: 1 }, { id: 2 }] },
+        subgraph: 'runBranchReview',
+        title: 'Run both reviewers',
+        type: 'fanOut',
       },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
-    fanOutReview: {
-      // Two reviewer slots — each branch runs runBranchReview independently.
-      concurrency: 2,
-      exports: ['context.branchRejectionSummary'],
-      itemKey: 'reviewerSlot',
-      join: 'storeConsensusResult',
-      onBranchFail: 'continue',
-      over: { literal: [{ id: 1 }, { id: 2 }] },
-      subgraph: 'runBranchReview',
-      type: 'fanOut',
-    },
-    implement: {
-      next: 'initCounters',
-      step: 'executeImplementation',
-      type: 'step',
-    },
-    incReviewRetries: {
-      next: 'storeLastRejection',
-      type: 'set',
-      values: { 'context.reviewRetries': { expr: 'context.reviewRetries + 1' } },
-    },
-    initCounters: {
-      next: 'fanOutReview',
-      type: 'set',
-      values: {
-        'context.currentCodeResult': { from: 'nodes.implement.output' },
-        'context.reviewRetries': { literal: 0 },
+      storeConsensusResult: {
+        group: 'consensus review',
+        next: 'checkConsensus',
+        title: 'Keep the verdicts',
+        type: 'set',
+        values: { 'context.fanOutReview': { from: 'nodes.fanOutReview.output' } },
       },
-    },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'savePrInfo',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
-    runBranchReview: {
-      inputs: {
-        codeResult: { from: 'context.currentCodeResult' },
-        successCriteria: { from: 'context.successCriteria' },
+      checkConsensus: {
+        expr: 'nodes.fanOutReview.output.failed == 0',
+        group: 'consensus review',
+        onFalse: 'incReviewRetries',
+        onTrue: 'setAwaitingCi',
+        title: 'Both approved?',
+        type: 'cond',
       },
-      next: 'checkBranchApproval',
-      step: 'runReviewNetwork',
-      type: 'step',
-    },
-    savePrInfo: {
-      next: 'waitForCI',
-      type: 'set',
-      values: {
-        'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
-        'context.prUrl': { from: 'nodes.openPR.output.prUrl' },
+      incReviewRetries: {
+        group: 'consensus review',
+        next: 'storeLastRejection',
+        title: 'Count the attempt',
+        type: 'set',
+        values: { 'context.reviewRetries': { expr: 'context.reviewRetries + 1' } },
       },
-    },
-    setAwaitingCi: {
-      config: { status: 'AWAITING_CI' },
-      next: 'openPR',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setCompleted: {
-      config: { status: 'COMPLETED' },
-      next: 'done',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'implement',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setSuccessCriteria: {
-      next: 'setImplementing',
-      type: 'set',
-      values: {
-        'context.successCriteria': { default: [], from: 'nodes.validate.output.successCriteria' },
-      },
-    },
-    setValidating: {
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    storeBranchRejection: {
-      next: 'branchRejected',
-      type: 'set',
-      values: {
-        'context.branchRejectionSummary': {
-          default: '',
-          from: 'nodes.runBranchReview.output.rejectionSummary',
+      storeLastRejection: {
+        group: 'consensus review',
+        next: 'checkReviewLimit',
+        title: 'Record why it was rejected',
+        type: 'set',
+        values: {
+          'context.lastRejectionSummary': {
+            default: 'One or more reviewers rejected the implementation.',
+            from: 'context.fanOutReview.results',
+          },
         },
       },
-    },
-    storeConsensusResult: {
-      next: 'checkConsensus',
-      type: 'set',
-      values: { 'context.fanOutReview': { from: 'nodes.fanOutReview.output' } },
-    },
-    storeLastRejection: {
-      next: 'checkReviewLimit',
-      type: 'set',
-      values: {
-        'context.lastRejectionSummary': {
-          default: 'One or more reviewers rejected the implementation.',
-          from: 'context.fanOutReview.results',
-        },
+      checkReviewLimit: {
+        expr: 'context.reviewRetries >= 3',
+        group: 'consensus review',
+        onFalse: 'consensusFix',
+        onTrue: 'terminateReviewFailed',
+        title: 'Out of attempts?',
+        type: 'cond',
       },
+      consensusFix: {
+        group: 'consensus review',
+        inputs: {
+          previousCodeResult: { from: 'context.currentCodeResult' },
+          rejectionSummary: { from: 'context.lastRejectionSummary' },
+        },
+        next: 'updateCodeAfterFix',
+        step: 'executeReviewFixImplementation',
+        title: 'Fix the review findings',
+        type: 'step',
+      },
+      updateCodeAfterFix: {
+        group: 'consensus review',
+        next: 'fanOutReview',
+        title: 'Keep the fixed code',
+        type: 'set',
+        values: { 'context.currentCodeResult': { from: 'nodes.consensusFix.output' } },
+      },
+      terminateReviewFailed: terminate('FAILED', {
+        group: 'consensus review',
+        title: 'Review failed',
+      }),
+      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     },
-    terminateCIFailed: {
-      result: { prNumber: { from: 'context.prNumber' }, prUrl: { from: 'context.prUrl' } },
-      status: 'FAILED',
-      type: 'terminate',
-    },
-    terminateCITimedOut: {
-      result: { prNumber: { from: 'context.prNumber' }, prUrl: { from: 'context.prUrl' } },
-      status: 'TIMED_OUT',
-      type: 'terminate',
-    },
-    terminateReviewFailed: { status: 'FAILED', type: 'terminate' },
-    updateCodeAfterFix: {
-      next: 'fanOutReview',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.consensusFix.output' } },
-    },
-    validate: {
-      next: 'setSuccessCriteria',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
-    waitForCI: {
-      name: 'ciPipelineSignal',
-      onReceive: 'checkCI',
-      onTimeout: 'terminateCITimedOut',
-      storeAs: 'context.ciResultPayload',
-      timeout: '4h',
-      type: 'signal',
-    },
-  },
+    openPullRequest({ next: ciWaitEntry() }),
+    // A bare CI gate: this template does not loop on CI failures.
+    ciLoop({ fix: false, passed: 'done' }),
+    {
+      done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

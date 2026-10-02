@@ -1,4 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import { mergeNodes, sourceHead, terminate } from './authoring/index.js';
 
 /**
  * Notion content draft workflow.
@@ -16,56 +17,48 @@ export const NOTION_CONTENT_DRAFT_SPEC: WorkflowSpec = {
     'Read a Notion source page, draft a short update with the content writer, and append it to a target Notion page.',
   entry: 'resolveWorkspace',
   name: 'notion-content-draft',
-  nodes: {
-    done: {
-      result: {
-        targetPageId: { from: 'request.payload.targetPageId' },
-        text: { from: 'nodes.draftContent.output.text' },
-      },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
-    draftContent: {
-      agentRef: 'contentWriter',
-      inputs: {
-        instructions: { default: '', from: 'request.payload.instructions' },
-        source: { from: 'nodes.readSource.output.data' },
-        targetPageId: { from: 'request.payload.targetPageId' },
-      },
-      next: 'writeOutcome',
-      spanName: 'llm.notion_draft',
-      type: 'agent',
-    },
-    readSource: {
-      config: {},
-      inputs: {
-        connectionId: { from: 'request.payload.connectionId' },
-        pageId: { from: 'request.payload.sourcePageId' },
-      },
+  nodes: mergeNodes(
+    sourceHead({
       next: 'draftContent',
-      step: 'readSource',
-      type: 'step',
-    },
-    resolveWorkspace: {
-      config: { workspaceProvider: 'document' },
-      inputs: {
-        connectionId: { from: 'request.payload.connectionId' },
+      provider: 'document',
+      read: { pageId: { from: 'request.payload.sourcePageId' } },
+    }),
+    {
+      draftContent: {
+        agentRef: 'contentWriter',
+        group: 'draft',
+        inputs: {
+          instructions: { default: '', from: 'request.payload.instructions' },
+          source: { from: 'nodes.readSource.output.data' },
+          targetPageId: { from: 'request.payload.targetPageId' },
+        },
+        next: 'writeOutcome',
+        spanName: 'llm.notion_draft',
+        title: 'Draft the update',
+        type: 'agent',
       },
-      next: 'readSource',
-      step: 'resolveWorkspace',
-      type: 'step',
-    },
-    writeOutcome: {
-      config: {},
-      inputs: {
-        connectionId: { from: 'request.payload.connectionId' },
-        pageId: { from: 'request.payload.targetPageId' },
-        text: { from: 'nodes.draftContent.output.text' },
+      writeOutcome: {
+        config: {},
+        group: 'write',
+        inputs: {
+          connectionId: { from: 'request.payload.connectionId' },
+          pageId: { from: 'request.payload.targetPageId' },
+          text: { from: 'nodes.draftContent.output.text' },
+        },
+        next: 'done',
+        step: 'writeOutcome',
+        title: 'Append to the target page',
+        type: 'step',
       },
-      next: 'done',
-      step: 'writeOutcome',
-      type: 'step',
-    },
-  },
+      done: terminate('SUCCESS', {
+        group: 'write',
+        result: {
+          targetPageId: { from: 'request.payload.targetPageId' },
+          text: { from: 'nodes.draftContent.output.text' },
+        },
+        title: 'Done',
+      }),
+    }
+  ),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

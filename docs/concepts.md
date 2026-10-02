@@ -48,7 +48,11 @@ through the **scope cascade**, so one platform can behave differently per team.
 - **Node** — One step of a spec. Node types include `step` (a built-in activity), `agent` (a library
   agent), `cond` (a branch), `signal` (wait for an outside event), `fanOut` (parallel branches),
   `shell` and `containerStep` (a sandboxed command), `eval` (score a result), and the four human
-  nodes. The full list is in [architecture.md](./architecture.md#node-types).
+  nodes. The full list is in [architecture.md](./architecture.md#node-types). A node may also carry
+  a short `title` and a `group` label, which only change how the graph is drawn and listed: the
+  canvas shows the title in place of the id and can fold a group into one card, and the outline lists
+  the steps in order under their groups. See
+  [architecture.md](./architecture.md#presentation-fields-group-and-title).
 
 - **Gate** — A place a run stops for a person. The human nodes — `humanApproval`, `humanDecision`,
   `humanInput`, and `humanReview` — park the run until someone answers in the approvals inbox or in

@@ -15,6 +15,8 @@ import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { Handle, type NodeProps, Position } from '@xyflow/react';
 import { cn } from '@/lib/utils';
 import { type DiffKind, type EdgeKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
+import type { FoldedGroup } from './foldGroups';
+import { nodeDisplayName, nodeGroupOf } from './nodeDisplay';
 import { NODE_TYPE_TONE } from './nodeTypeTone';
 
 /** The source-handle ids a node exposes are exactly the edge kinds the layout
@@ -31,6 +33,12 @@ export interface DagNodeData {
   subLabel?: string;
   /** When true, expose drag-to-connect handles. */
   editable?: boolean;
+  /**
+   * Set when this card stands for a collapsed group (see `foldGroups`) rather
+   * than a spec node; `node` is then a placeholder. `ran` is how many of its
+   * members the run overlay has a status for.
+   */
+  folded?: FoldedGroup & { ran?: number };
   [key: string]: unknown;
 }
 
@@ -162,9 +170,24 @@ const HANDLE_LABEL: Record<HandleKind, string> = {
   subgraph: 'sub',
 };
 
+function GroupBadge({ group }: { group: string }) {
+  return (
+    <div className="flex">
+      <span className="max-w-full truncate rounded-sm border border-ink-500 px-1 font-mono text-[9px] uppercase leading-[14px] tracking-[0.12em] text-paper-400">
+        {group}
+      </span>
+    </div>
+  );
+}
+
 export function DagNode({ id, data, selected }: NodeProps) {
   const d = data as DagNodeData;
-  const handles = handlePortsFor(d.node);
+  const folded = d.folded;
+  const handles: HandlePort[] = folded
+    ? folded.exits.map((e) => ({ id: e.port, kind: 'next' as const, label: e.label }))
+    : handlePortsFor(d.node);
+  const name = folded ? folded.group : nodeDisplayName(d.node, id);
+  const group = folded ? undefined : nodeGroupOf(d.node);
   const stripeClass = d.status ? STATUS_STRIPE[d.status.status] : null;
   const diffBorder = d.diff ? DIFF_BORDER[d.diff] : null;
   const isLive = d.status?.status === 'RUNNING' || d.status?.status === 'PENDING';
@@ -174,6 +197,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
       className={cn(
         'group relative flex flex-col rounded-sm border bg-ink-800 transition-colors',
         'border-l-[3px]',
+        folded && 'border-dashed',
         NODE_TYPE_TONE[d.node.type].border,
         selected
           ? 'border-ember-400 shadow-[0_0_0_1px_var(--color-ember-400)]'
@@ -185,6 +209,9 @@ export function DagNode({ id, data, selected }: NodeProps) {
       // rather than a local copy, so the card cannot drift out of the slot the
       // layout planned for it.
       style={{ height: NODE_HEIGHT, width: NODE_WIDTH }}
+      // The id is the node's identity (edges, analytics, run history key on it),
+      // so it stays reachable even when a title is what the card shows.
+      title={folded ? `${folded.group}: ${folded.memberIds.join(', ')}` : id}
     >
       {/* Target handle — left edge, accepts all incoming edges */}
       <Handle
@@ -206,18 +233,30 @@ export function DagNode({ id, data, selected }: NodeProps) {
       )}
 
       {/* Body */}
-      <div className="flex h-full flex-col justify-center gap-1 px-3 py-2">
+      <div className="flex h-full flex-col justify-center gap-1 px-3 py-1.5">
         <div className="flex items-baseline justify-between gap-2">
           <span className="truncate font-display text-[15px] font-medium leading-none text-paper-50">
-            {id.length > 26 ? `${id.slice(0, 25)}…` : id}
+            {name}
           </span>
-          <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-paper-500">
-            {CATEGORY_LABEL[d.node.type]}
+          <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.16em] text-paper-500">
+            {folded ? 'group' : CATEGORY_LABEL[d.node.type]}
           </span>
         </div>
+        {folded && (
+          <div className="truncate font-mono text-[11px] text-paper-400">
+            {folded.memberIds.length} steps
+            {folded.ran !== undefined && ` · ${folded.ran} ran`}
+          </div>
+        )}
         {d.subLabel && (
           <div className="truncate font-mono text-[11px] text-paper-400">{d.subLabel}</div>
         )}
+        {folded && (
+          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500">
+            ▸ expand
+          </div>
+        )}
+        {group && !d.status && <GroupBadge group={group} />}
         {d.status && (
           <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-ember-400">
             {d.status.status.toLowerCase()}
@@ -226,6 +265,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
             )}
           </div>
         )}
+        {group && d.status && <GroupBadge group={group} />}
       </div>
 
       {/* Source handles — one per outgoing edge, stacked on the right */}

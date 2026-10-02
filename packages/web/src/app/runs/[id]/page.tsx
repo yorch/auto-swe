@@ -112,6 +112,7 @@ function LayoutA({
             <WorkflowDag
               height="100%"
               onSelect={setSelectedNodeId}
+              outline
               selectedNodeId={selectedNodeId ? specNodeIdOfRecording(selectedNodeId, linker) : null}
               spec={spec}
               statuses={dagOverlay}
