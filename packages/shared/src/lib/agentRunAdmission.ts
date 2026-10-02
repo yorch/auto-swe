@@ -149,6 +149,43 @@ export const RECONCILE_GRACE_MS = 5 * 60_000;
 /** Most Temporal lookups one admission call may make. */
 export const RECONCILE_MAX_CHECKS = 8;
 
+/** One lookup is abandoned after this long, and its row keeps counting. */
+export const RECONCILE_LOOKUP_TIMEOUT_MS = 3_000;
+
+/**
+ * A row positively confirmed running is not asked about again for this long.
+ * Without it the oldest rows (the long-running live ones) are re-described by
+ * every admission and the stale rows behind them are never reached.
+ */
+export const RECONCILE_RECHECK_MS = 60_000;
+
+const confirmedRunning = new Map<string, number>();
+
+/** Test seam: forget which rows were recently confirmed running. */
+export function __resetReconcileCacheForTests(): void {
+  confirmedRunning.clear();
+}
+
+/** Temporal execution states from which a workflow never runs again. */
+const FINISHED_WORKFLOW_STATUSES: ReadonlySet<string> = new Set([
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED',
+  'TERMINATED',
+  'TIMED_OUT',
+]);
+
+/**
+ * The single definition of "this workflow is gone" for admission, shared by the
+ * gateway and the worker. Only a definitively finished status counts;
+ * `CONTINUED_AS_NEW`, `UNSPECIFIED`, an absent status and any status a future
+ * Temporal adds all keep the slot. (A workflow that does not exist at all is
+ * the caller's `WorkflowNotFoundError`, which each side maps to gone itself.)
+ */
+export function isWorkflowStatusFinished(statusName: string | undefined): boolean {
+  return statusName !== undefined && FINISHED_WORKFLOW_STATUSES.has(statusName);
+}
+
 export interface ReconcileOptions {
   /**
    * Whether the run's workflow is still executing in Temporal: `true` while it
@@ -163,6 +200,8 @@ export interface ReconcileOptions {
   now?: Date;
   graceMs?: number;
   maxChecks?: number;
+  lookupTimeoutMs?: number;
+  recheckMs?: number;
   /** A lookup that could not be answered; the row keeps counting. */
   onUnreachable?: (workflowId: string, err: unknown) => void;
   /** Rows whose workflow is gone; they have been closed. */
@@ -198,15 +237,45 @@ export async function reconcileAgentRunSlots(
 ): Promise<AgentRunSlot[]> {
   const now = (opts.now ?? new Date()).getTime();
   const graceMs = opts.graceMs ?? RECONCILE_GRACE_MS;
+  const timeoutMs = opts.lookupTimeoutMs ?? RECONCILE_LOOKUP_TIMEOUT_MS;
+  const recheckMs = opts.recheckMs ?? RECONCILE_RECHECK_MS;
+  const live = new Set(slots.map((s) => s.workflowId));
+  for (const [id, until] of confirmedRunning) {
+    if (until <= now || !live.has(id)) {
+      confirmedRunning.delete(id);
+    }
+  }
   const candidates = [...slots]
-    .filter((s) => s.workflowId !== opts.self && now - s.launchedAt.getTime() >= graceMs)
+    .filter(
+      (s) =>
+        s.workflowId !== opts.self &&
+        now - s.launchedAt.getTime() >= graceMs &&
+        !confirmedRunning.has(s.workflowId)
+    )
     .sort(order)
     .slice(0, Math.max(0, opts.maxChecks ?? RECONCILE_MAX_CHECKS));
   if (candidates.length === 0) {
     return [...slots];
   }
 
-  const answers = await Promise.allSettled(candidates.map((c) => opts.isRunning(c.workflowId)));
+  const withDeadline = (workflowId: string): Promise<boolean> =>
+    new Promise<boolean>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Temporal lookup timed out after ${timeoutMs}ms`)),
+        timeoutMs
+      );
+      opts.isRunning(workflowId).then(
+        (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        },
+        (e: unknown) => {
+          clearTimeout(timer);
+          reject(e);
+        }
+      );
+    });
+  const answers = await Promise.allSettled(candidates.map((c) => withDeadline(c.workflowId)));
   const gone = new Set<string>();
   answers.forEach((answer, i) => {
     const id = (candidates[i] as AgentRunSlot).workflowId;
@@ -214,6 +283,8 @@ export async function reconcileAgentRunSlots(
       opts.onUnreachable?.(id, answer.reason);
     } else if (answer.value === false) {
       gone.add(id);
+    } else {
+      confirmedRunning.set(id, now + recheckMs);
     }
   });
   if (gone.size === 0) {

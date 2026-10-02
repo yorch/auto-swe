@@ -242,7 +242,11 @@ one cannot both proceed.
 the worker reconcile the non-terminal rows against Temporal during an admission call. A row whose
 workflow is finished or does not exist is closed (`currentStatus` set to `FAILED`, only if still
 non-terminal) and stops counting. The reconciliation is lazy (it happens inside admission, with no
-timer or schema), bounded (at most 8 Temporal lookups per call, oldest launch first), skips the
+timer or schema), bounded (at most 8 Temporal lookups per call, each abandoned after 3 s, oldest
+launch first, and a row confirmed running is not asked about again for a minute so a few long-running
+runs cannot hide stale rows behind them), counts as gone only a definitively finished status
+(`COMPLETED`, `FAILED`, `CANCELLED`, `TERMINATED`, `TIMED_OUT`) or a missing workflow, the same
+rule on the gateway and the worker, skips the
 calling run and any row launched in the last five minutes (the gateway writes the ledger row before it
 starts the workflow), and fails safe: when Temporal cannot be asked, the row keeps its slot and a
 warning is logged.
@@ -400,7 +404,8 @@ hidden template's own link is not shown.
   `PullRequest`, so CI webhooks do not signal the run.
 - **One repository per run,** and the repository must be a `git_repo` connection.
 - **A dead run can still hold a slot briefly.** Reconciliation (section 7) frees a slot only for a
-  workflow Temporal reports finished or missing, at most 8 rows per admission call, and not for a row
+  workflow Temporal reports finished or missing, at most 8 rows per admission call (a stale row behind
+  more than 8 live ones is reached over successive calls), and not for a row
   launched in the last five minutes; while Temporal is unreachable the slot is kept. The reconciled row's
   `WorkflowRun` is not touched: only the ledger row that admission counts is closed.
 - **Platform agents are excluded by a code list,** not a column, so adding a platform-internal agent

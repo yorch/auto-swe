@@ -26,6 +26,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),
 }));
 
+import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmission';
 import { agentRunRoutes } from './agentRuns.js';
 
 const USER = 'user-1';
@@ -62,6 +63,7 @@ describe('POST /api/v1/agent-runs', () => {
   let agentQueries: Array<Record<string, unknown>>;
 
   beforeEach(async () => {
+    __resetReconcileCacheForTests();
     cfg.hostsOk = true;
     cfg.settings['workspace.agentRunMaxConcurrentGlobal'] = 4;
     cfg.settings['workspace.agentRunMaxConcurrentPerTeam'] = 2;
@@ -189,11 +191,11 @@ describe('POST /api/v1/agent-runs', () => {
       }) as unknown as never
     );
     app.decorate('temporal', {
-      isWorkflowRunning: async (id: string) => {
+      isWorkflowGone: async (id: string) => {
         if (s.temporal[id] === 'down') {
           throw new Error('temporal unreachable');
         }
-        return s.temporal[id] !== 'finished';
+        return s.temporal[id] === 'finished';
       },
       startRunnableWorkflow: async (id: string, input: Record<string, unknown>) => {
         events.push('start');

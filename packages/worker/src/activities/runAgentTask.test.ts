@@ -146,6 +146,7 @@ vi.mock('./agentRunFinalize.js', () => ({
   pushGatedCommit: m.push,
 }));
 
+import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmission';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
 import { runAgentTask } from './runAgentTask.js';
@@ -182,6 +183,7 @@ async function failureOf(p: Promise<unknown>): Promise<ApplicationFailure> {
 }
 
 beforeEach(() => {
+  __resetReconcileCacheForTests();
   vi.clearAllMocks();
   m.run = {
     template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },

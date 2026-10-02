@@ -277,7 +277,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       await loadAgentRunSlots(fastify.prisma, template.id),
       {
         close: closeAgentRunLedgerRows(fastify.prisma),
-        isRunning: (workflowId) => fastify.temporal.isWorkflowRunning(workflowId),
+        isRunning: async (workflowId) => !(await fastify.temporal.isWorkflowGone(workflowId)),
         onClosed: (workflowIds) =>
           fastify.log.warn(
             { workflowIds },

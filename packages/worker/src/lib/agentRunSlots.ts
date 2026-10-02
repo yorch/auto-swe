@@ -2,6 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import {
   type AgentRunSlot,
   closeAgentRunLedgerRows,
+  isWorkflowStatusFinished,
   loadAgentRunSlots,
   reconcileAgentRunSlots,
 } from '@auto-swe/shared/lib/agentRunAdmission';
@@ -9,18 +10,15 @@ import { WorkflowNotFoundError } from '@temporalio/client';
 import { logWarn } from './activityLog.js';
 import { getTemporalClient } from './temporalClient.js';
 
-/** Temporal execution states from which a workflow never runs again. */
-const FINISHED = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'TERMINATED', 'TIMED_OUT']);
-
 /**
  * Whether the workflow is still executing in Temporal. `false` for a finished
  * execution and for one that does not exist; throws when Temporal cannot be
  * asked, so the caller keeps counting the row.
  */
-async function workflowIsRunning(workflowId: string): Promise<boolean> {
+export async function workflowIsRunning(workflowId: string): Promise<boolean> {
   try {
     const { status } = await getTemporalClient().workflow.getHandle(workflowId).describe();
-    return !FINISHED.has(status.name);
+    return !isWorkflowStatusFinished(status.name);
   } catch (err) {
     if (err instanceof WorkflowNotFoundError) {
       return false;
