@@ -11,6 +11,7 @@ import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../l
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
+import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 
 const LessonOutputSchema = z.object({
   failureType: z
@@ -137,6 +138,7 @@ export async function commitToMemory(
   // must not add a second, priced row for the same call.
   let llmTraced = false;
   try {
+    await assertRolePricedForUsdCap('commitToMemory');
     await assertBudgetAvailable('commitToMemory');
     const result = await memoryAgent.generate([{ content: llmUserMessage, role: 'user' }], {
       structuredOutput: { schema: LessonOutputSchema },

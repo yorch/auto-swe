@@ -114,6 +114,13 @@ const recordLlmUsageMock = vi.fn(async (..._args: unknown[]) => ({
   modelSpec: '',
   outputTokens: 0,
 }));
+const { assertRolePricedMock } = vi.hoisted(() => ({
+  assertRolePricedMock: vi.fn(async (_role: string) => {}),
+}));
+vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: assertRolePricedMock }));
+const unpriced = () =>
+  Object.assign(new Error('Model has no price in the model catalog'), { type: 'MODEL_UNPRICED' });
+
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
   recordLlmUsage: (...args: unknown[]) => recordLlmUsageMock(...args),
@@ -197,6 +204,16 @@ afterEach(() => {
 });
 
 describe('runImplementerFixSession', () => {
+  it('refuses an unpriced model before any workspace exists, for the role it runs as', async () => {
+    assertRolePricedMock.mockRejectedValueOnce(unpriced());
+    await expect(runImplementerFixSession(input())).rejects.toMatchObject({
+      type: 'MODEL_UNPRICED',
+    });
+    expect(assertRolePricedMock).toHaveBeenCalledWith(input().agentKey);
+    expect(findRepo).not.toHaveBeenCalled();
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
   it('resolves the repo from CodeResult.repoId without a branch lookup', async () => {
     findRepo.mockResolvedValue(REPO as never);
     const out = await runImplementerFixSession(input());

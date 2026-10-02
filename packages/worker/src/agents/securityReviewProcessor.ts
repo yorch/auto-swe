@@ -8,6 +8,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec } from '../lib/models.js';
+import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
@@ -60,6 +61,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
         name: 'security-review-gate',
       });
 
+      await assertRolePricedForUsdCap('securityReview');
       await assertBudgetAvailable('securityReview');
       const result = await agent.generate(
         [

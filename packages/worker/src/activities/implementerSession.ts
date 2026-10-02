@@ -17,6 +17,7 @@ import { getExecErrorStdout } from '../lib/errors.js';
 import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
   detectTestCommand,
   parseDiffToFileChanges,
@@ -108,6 +109,8 @@ async function resolveSessionRepo(previousCodeResult: CodeResult): Promise<Conne
  */
 export async function runImplementerFixSession(input: FixSessionInput): Promise<CodeResult> {
   const { mode, previousCodeResult } = input;
+  // First, before a clone or a container exists (see executeImplementation).
+  await assertRolePricedForUsdCap(input.agentKey);
   const repo = await resolveSessionRepo(previousCodeResult);
 
   const repoRef = toRepoRef(repo);

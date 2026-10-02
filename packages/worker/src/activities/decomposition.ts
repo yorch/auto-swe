@@ -38,6 +38,7 @@ import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import {
   createWorkspace,
@@ -543,6 +544,7 @@ async function mergeOneWithResolver(
         sourceBranch: source,
         targetBranch,
       });
+      await assertRolePricedForUsdCap('mergeConflictResolver');
       await assertBudgetAvailable('decomposition');
       calledModel = true;
       const result = await agent.generate(

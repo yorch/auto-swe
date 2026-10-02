@@ -7,6 +7,7 @@ import type { AgentTracer } from '../lib/agentTracer.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
+import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { PLANNER_AGENT_PROMPT } from './prompts.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
@@ -54,6 +55,7 @@ export async function decomposeEpic(
         });
 
         llmUserMessage = JSON.stringify({ availableRepos, epicDescription });
+        await assertRolePricedForUsdCap('planner');
         await assertBudgetAvailable('planner');
         const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
           structuredOutput: { schema: PlannerOutputSchema },

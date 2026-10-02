@@ -12,6 +12,7 @@ import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec } from '../lib/models.js';
+import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
   PERFORMANCE_REVIEWER_PROMPT,
@@ -223,6 +224,11 @@ export async function runReviewNetwork(
   // instant, before any has recorded usage, so three concurrent reads of the
   // same row reach the same verdict — the check that matters is the one before
   // the fan-out begins.
+  // Before the fan-out, for the same reason: refuse an unpriced reviewer model
+  // under a USD cap once, not three times concurrently.
+  for (const agentKey of new Set(Object.values(REVIEWER_AGENT_KEYS))) {
+    await assertRolePricedForUsdCap(agentKey);
+  }
   await assertBudgetAvailable('review');
 
   const results = await Promise.allSettled([

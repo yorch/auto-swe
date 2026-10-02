@@ -30,6 +30,7 @@ import type { AgentTracer } from '../lib/agentTracer.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
+import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { DECOMPOSER_AGENT_PROMPT } from './prompts.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
@@ -88,6 +89,7 @@ export async function planDecomposition(
           externalTicketId: request.externalTicketId,
           maxSubtasks: MAX_SUBTASKS,
         });
+        await assertRolePricedForUsdCap('decomposer');
         await assertBudgetAvailable('decomposer');
         const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
           structuredOutput: { schema: DecomposerOutputSchema },
