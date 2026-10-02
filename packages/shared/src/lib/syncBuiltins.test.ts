@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
@@ -322,6 +322,47 @@ describe('syncBuiltins — rolling the helper-built templates out', () => {
     await seedSweStarter(prisma);
     expect(versionsOf(tables, row.id).map((v) => v.version)).toEqual([1, 2, 3]);
     expect(row.activeVersion).toBe(2);
+  });
+
+  it('appends but does NOT activate the new version when the template is running an A/B experiment, and says so', async () => {
+    const { prisma, tables } = await seedFromPreviousRelease();
+    const live = template(tables, 'agent-reviewed-pr');
+    Object.assign(live, { experimentSplit: 20, experimentVersion: 1 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await seedSweStarter(prisma);
+      expect(versionsOf(tables, live.id).map((v) => v.version)).toEqual([1, 2]);
+      expect(live.activeVersion).toBe(1);
+      const said = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('experiment'));
+      expect(said.some((m) => m.includes('agent-reviewed-pr'))).toBe(true);
+      // Every other template moved as usual, and none of them were reported.
+      expect(template(tables, 'hotfix').activeVersion).toBe(2);
+      expect(said.some((m) => m.includes('hotfix'))).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('treats a zero or absent split as no experiment', async () => {
+    const { prisma, tables } = await seedFromPreviousRelease();
+    Object.assign(template(tables, 'hotfix'), { experimentSplit: 0, experimentVersion: 1 });
+    await seedSweStarter(prisma);
+    expect(template(tables, 'hotfix').activeVersion).toBe(2);
+    expect(template(tables, 'four-eyes').activeVersion).toBe(2);
+  });
+
+  it('does not overwrite an inputSchema or workspaceProvider an admin changed, but fills ones that are unset', async () => {
+    const { prisma, tables } = await seedFromPreviousRelease();
+    const edited = template(tables, 'default-engineering');
+    edited.inputSchema = { admin: 'edited' };
+    edited.workspaceProvider = 'document';
+    const unset = template(tables, 'hotfix');
+    unset.workspaceProvider = null;
+    await seedSweStarter(prisma);
+    expect(edited.inputSchema).toEqual({ admin: 'edited' });
+    expect(edited.workspaceProvider).toBe('document');
+    expect(edited.activeVersion).toBe(2);
+    expect(unset.workspaceProvider).toBe('git_repo');
   });
 });
 

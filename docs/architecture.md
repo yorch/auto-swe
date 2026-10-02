@@ -410,7 +410,12 @@ Built-in templates follow the same rule. `syncBuiltins()` runs at every gateway 
 a missing built-in template, but on an existing one it never touches `status`, `isDefault` or
 `activeVersion`, and never rewrites a version. When a release changes a built-in spec it appends a
 new version, and activates it only when the template is still active on the previous built-in
-version; a template an admin archived or moved onto their own version keeps that choice. A
+version; a template an admin archived or moved onto their own version keeps that choice, and so
+does one running a live A/B experiment (`experimentSplit` above zero): the new version is appended,
+a warning names the template, and the admin promotes it when the experiment ends. Template-level
+fields (`inputSchema`, `workspaceProvider`) are filled only where the row has none, so an admin's
+edit is never reverted; a release that changes one of them for an already-seeded built-in does not
+propagate it. A
 built-in version is one with no author (`createdBy` and `generatedBy` both null). The same
 create-if-missing rule covers the GLOBAL agents and their skill refs: a ref an admin removed stays
 removed, and only a built-in skill new in this release is attached to an existing agent. The one
