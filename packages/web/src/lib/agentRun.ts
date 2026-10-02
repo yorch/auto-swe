@@ -1,9 +1,9 @@
+import { AGENT_RUN_MAX_PROMPT_CHARS } from '@auto-swe/shared/lib/agentRun';
 import type { AgentRunLimits } from '@auto-swe/shared/types/api';
 import { ApiError } from '@/lib/api';
 import { isRecord } from '@/lib/utils';
 
-/** Mirrors the gateway's `MAX_DESCRIPTION_LENGTH`, which bounds the prompt. */
-export const AGENT_RUN_MAX_PROMPT_CHARS = 20_000;
+export { AGENT_RUN_MAX_PROMPT_CHARS } from '@auto-swe/shared/lib/agentRun';
 
 export type AgentRunDeliver = 'none' | 'branch' | 'draft_pr';
 
@@ -141,6 +141,19 @@ export function buildLaunchBody(v: AgentRunFormValues) {
  * the key, so the gateway answers `RUN_CONFLICT` instead of starting a second
  * run; changing anything, or starting over, mints a fresh one.
  */
+/**
+ * A fresh random key. `crypto.randomUUID` exists only in secure contexts, and
+ * the dashboard may be served over plain http, so fall back to `getRandomValues`
+ * (available everywhere).
+ */
+export function newIdempotencyKey(): string {
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export interface IdempotencyState {
   fingerprint: string;
   key: string;
@@ -149,7 +162,7 @@ export interface IdempotencyState {
 export function idempotencyFor(
   prev: IdempotencyState | null,
   body: object,
-  newKey: () => string = () => crypto.randomUUID()
+  newKey: () => string = newIdempotencyKey
 ): IdempotencyState {
   const fingerprint = JSON.stringify(body);
   return prev && prev.fingerprint === fingerprint ? prev : { fingerprint, key: newKey() };
@@ -318,3 +331,39 @@ export {
   type AgentRunFailureView,
   classifyAgentRunFailure,
 } from '@auto-swe/shared/lib/agentRunFailure';
+
+/**
+ * What a re-run of this agent run will do, read from the launch payload the run
+ * kept (`contextSnapshot.request.payload`), else from its result. `null` when
+ * neither says, which callers treat as "may publish".
+ */
+export function agentRunDeliver(run: {
+  contextSnapshot?: unknown;
+  result?: unknown;
+}): AgentRunDeliver | null {
+  const request = isRecord(run.contextSnapshot) ? run.contextSnapshot.request : null;
+  const payload = isRecord(request) ? request.payload : null;
+  for (const v of [
+    isRecord(payload) ? payload.deliver : null,
+    isRecord(run.result) ? run.result.deliver : null,
+  ]) {
+    if (v === 'none' || v === 'branch' || v === 'draft_pr') {
+      return v;
+    }
+  }
+  return null;
+}
+
+/** The consequence a re-run's confirmation names; `null` for a re-run that publishes nothing. */
+export function rerunConsequence(deliver: AgentRunDeliver | null): string | null {
+  switch (deliver) {
+    case 'none':
+      return null;
+    case 'branch':
+      return 'This starts a new agent run that pushes a new branch to the repository once its checks pass.';
+    case 'draft_pr':
+      return 'This starts a new agent run that pushes a new branch and opens a new draft pull request once its checks pass.';
+    default:
+      return 'This starts a new agent run. The original delivery is not recorded, so it may push a new branch or open a draft pull request.';
+  }
+}

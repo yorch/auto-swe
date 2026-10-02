@@ -6,6 +6,7 @@ import type {
   AgentRunLimits,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { newIdempotencyKey } from '@/lib/agentRun';
 import { api } from '@/lib/api';
 
 /** The query string for the form-support reads: scoped to a repository when one is chosen. */
@@ -19,6 +20,9 @@ function repoQuery(repoId: string | null): string {
  */
 export function useAgentRunAgents(repoId: string | null) {
   return useQuery({
+    // The list depends on the repository (organization overrides); without one there is
+    // nothing to offer, so do not fetch.
+    enabled: repoId !== null,
     queryFn: () =>
       api
         .get<{ data: AgentRunAgent[] }>(`/api/v1/agent-runs/agents${repoQuery(repoId)}`)
@@ -70,9 +74,14 @@ export function useLaunchAgentRun() {
 export function useRerunAgentRun() {
   const qc = useQueryClient();
   return useMutation({
+    // A fresh key per confirmed re-run: it is a new run by intent, never a retry of one.
     mutationFn: (workRequestId: string) =>
       api
-        .post<{ data: AgentRunLaunchResponse }>(`/api/v1/agent-runs/${workRequestId}/rerun`, {})
+        .fetch<{ data: AgentRunLaunchResponse }>(`/api/v1/agent-runs/${workRequestId}/rerun`, {
+          body: JSON.stringify({}),
+          headers: { 'Idempotency-Key': newIdempotencyKey() },
+          method: 'POST',
+        })
         .then((r) => r.data),
     onSuccess: () => invalidateRuns(qc),
   });

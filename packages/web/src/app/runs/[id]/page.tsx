@@ -29,14 +29,9 @@ import { SegmentedControl, type SegmentedOption } from '@/components/ui/Segmente
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
-import { useRerunAgentRun } from '@/hooks/useAgentRuns';
 import { useApprovals } from '@/hooks/useApprovals';
-import {
-  useCancelWorkflowRun,
-  useRetriedRun,
-  useRetryWorkRequest,
-  useRunDetail,
-} from '@/hooks/useRuns';
+import { useRunReRun } from '@/hooks/useRunReRun';
+import { useCancelWorkflowRun, useRetriedRun, useRunDetail } from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
@@ -714,12 +709,10 @@ export default function RunDetailPage({ params }: PageProps) {
     toggleFullTraces,
   } = useRunDetail(id ?? '');
   const cancelRun = useCancelWorkflowRun(id ?? '');
-  const genericRetry = useRetryWorkRequest();
-  const agentRerun = useRerunAgentRun();
-  // An agent run is re-run through its own endpoint: the generic retry rebuilds
-  // the request without its payload and answers 409 USE_AGENT_RUN_RERUN.
-  const isAgentRun = run?.isAgentRun === true;
-  const retryRun = isAgentRun ? agentRerun : genericRetry;
+  // An agent run is re-run through its own endpoint, after a confirmation when it
+  // delivers; see `useRunReRun`.
+  const retryRun = useRunReRun(run);
+  const isAgentRun = retryRun.isAgentRun;
   const retried = useRetriedRun(
     retryRun.data?.workRequestId ?? null,
     retryRun.data?.temporalWorkflowId ?? null
@@ -795,14 +788,8 @@ export default function RunDetailPage({ params }: PageProps) {
   const handleJumpToFailure = useCallback(() => {
     traceAnchorRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
-  // One re-run per page view: a second click while the first is in flight (or
-  // after it started a run) would launch a duplicate.
-  const reRunLocked = retryRun.isPending || retryRun.isSuccess;
-  const handleReRun = useCallback(() => {
-    if (run?.workRequest && !reRunLocked) {
-      retryRun.mutate(run.workRequest.id);
-    }
-  }, [run?.workRequest, retryRun, reRunLocked]);
+  const reRunLocked = retryRun.locked;
+  const handleReRun = retryRun.request;
 
   const notFound = (
     <EmptyState action={<ButtonLink href="/runs">Back to runs</ButtonLink>} title="Run not found" />
@@ -920,9 +907,10 @@ export default function RunDetailPage({ params }: PageProps) {
               )}
             </Alert>
           )}
-          {retryRun.isError && (
+          {retryRun.errorView && (
             <Alert className="px-2 py-1 text-xs">
-              Re-run failed: {errMsg(retryRun.error, 'unknown error')}
+              Re-run failed: {retryRun.errorView.title}. {retryRun.errorView.message}
+              {retryRun.errorView.hint ? ` ${retryRun.errorView.hint}` : ''}
             </Alert>
           )}
           {/* The Agent Run template is hidden: its detail route answers 404 for everyone. */}
@@ -978,6 +966,15 @@ export default function RunDetailPage({ params }: PageProps) {
           />
         )}
       </div>
+
+      <ConfirmModal
+        confirmLabel="Re-run"
+        message={retryRun.confirmMessage ?? ''}
+        onClose={retryRun.cancel}
+        onConfirm={retryRun.confirm}
+        open={retryRun.confirming}
+        title="Re-run this agent run?"
+      />
 
       <ConfirmModal
         closeOnConfirm={false}
