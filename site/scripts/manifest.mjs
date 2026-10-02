@@ -132,6 +132,7 @@ export const SIDEBAR = [
       'docs/deployment',
       'docs/model-configuration',
       'docs/oauth-setup',
+      'docs/mcp-server',
       'docs/github-app-setup',
       'docs/slack-app-setup',
       'reference/cli',

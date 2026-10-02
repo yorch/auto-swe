@@ -220,7 +220,8 @@ If Okta is unreachable at that moment, the gateway still boots — the discovery
 Sign-in above is the platform *consuming* OAuth. The gateway is also an OAuth 2.1 authorization
 server, so an MCP client (an editor, a coding agent) can obtain a token that names this
 deployment's MCP resource. It is better-auth's `@better-auth/oauth-provider` plus its `jwt` plugin,
-mounted under the same `/api/auth` prefix as sign-in, and off until an admin turns it on.
+mounted under the same `/api/auth` prefix as sign-in, and off until an admin turns it on. The resource
+server that accepts the tokens is described in [mcp-server.md](./mcp-server.md).
 
 | Setting | Default | Effect |
 |---|---|---|
@@ -342,14 +343,14 @@ once more.
 
 ### Limitations
 
-- No MCP endpoint accepts these tokens; the resource identifier is reserved for it.
+- The only endpoint that accepts these tokens is the MCP endpoint ([mcp-server.md](./mcp-server.md)); the REST API refuses them.
 - Open registration is an anonymous write endpoint. Clients are public, unverified and rate limited, but
   nothing removes expired clients, expired tokens or `oauth_client_assertions` rows, so those tables grow.
 - A client that registers without `grant_types` receives only `authorization_code` (the RFC 7591 default) and
   cannot refresh; MCP clients register with both grants.
 - Turning `mcp.writeToolsEnabled` off stops new tokens that carry `mcp:write`, on both grants. A token
-  already issued keeps the scope until it expires (10 minutes), and no resource server drops it, because
-  none exists.
+  already issued keeps the scope until it expires (10 minutes), but the MCP endpoint's verifier drops it from
+  the token's effective scopes at once.
 - The discovery document is the provider's with introspection, back-channel logout and every client
   authentication method but `none` removed.
 - A magic-link sign-in cannot continue an authorization: the link is verified in a later request that

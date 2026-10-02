@@ -44,6 +44,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [deployment.md](./deployment.md) | Production runbook — environment, database, Temporal, images, service layout, smoke test, day-2 ops, hardening |
 | [model-configuration.md](./model-configuration.md) | DB-backed model selection and provider credentials — the scope cascade, encryption, day-2 operations |
 | [oauth-setup.md](./oauth-setup.md) | GitHub, Google, and Okta sign-in; magic-link email |
+| [mcp-server.md](./mcp-server.md) | The MCP endpoint — Streamable HTTP transport, how a bearer token is verified on every request, protected resource metadata, the `mcp.*` switches |
 | [github-app-setup.md](./github-app-setup.md) | GitHub App creation, permissions, installation, auth modes |
 | [slack-app-setup.md](./slack-app-setup.md) | Slack app manifest import and admin configuration |
 | [packages/cli/README.md](../packages/cli/README.md) | `auto-swe` CLI — work requests, runs, workflow templates, tokens, bundles |
