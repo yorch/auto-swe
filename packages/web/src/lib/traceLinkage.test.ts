@@ -184,6 +184,28 @@ describe('traceMatchesSelection', () => {
   });
 });
 
+describe('ids containing a slash', () => {
+  const slashLinker = buildTraceLinker(
+    parseWorkflowSpec({
+      entry: 'a/fan',
+      name: 'slashes',
+      nodes: {
+        'a/fan': { join: 'done', over: { literal: [1] }, subgraph: 'b/impl', type: 'fanOut' },
+        'b/impl': { next: 'done', step: 'executeImplementation', type: 'step' },
+        done,
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    })
+  );
+
+  it('selecting a fan-out whose id has a slash still shows its branches', () => {
+    const t = recorded('a/fan[0]/b/impl', 'b/impl');
+    expect(traceMatchesSelection(t, 'a/fan', slashLinker)).toBe(true);
+    expect(traceMatchesSelection(t, 'b/impl', slashLinker)).toBe(true);
+    expect(traceMatchesSelection(t, 'a/fan[1]/b/impl', slashLinker)).toBe(false);
+  });
+});
+
 describe('traceBelongsToStep', () => {
   it('matches one execution exactly and respects the interpreter attempt', () => {
     const t = trace({

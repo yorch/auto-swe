@@ -89,15 +89,39 @@ export function branchOfRecording(recordingId: string, specNodeId: string): stri
   return recordingId.slice(0, -suffix.length) || null;
 }
 
-/** Fan-out node ids a branch path runs inside, outermost first. */
-function fanOutsOfBranch(branch: string | null): string[] {
-  if (!branch) {
-    return [];
+/**
+ * Fan-out node ids a branch path runs inside, outermost first. Node ids are
+ * free-form, so each `id[n]` segment is matched against the spec's ids (longest
+ * first) instead of splitting the path on `/`.
+ */
+function fanOutsOfBranch(branch: string | null, linker: TraceLinker): string[] {
+  const found: string[] = [];
+  let rest = branch ?? '';
+  while (rest) {
+    let best: { id: string; len: number } | null = null;
+    for (const id of linker.specNodeIds) {
+      if (!rest.startsWith(`${id}[`)) {
+        continue;
+      }
+      const index = /^\d+\]/.exec(rest.slice(id.length + 1));
+      if (!index) {
+        continue;
+      }
+      const len = id.length + 1 + index[0].length;
+      if ((rest.length === len || rest[len] === '/') && (!best || id.length > best.id.length)) {
+        best = { id, len };
+      }
+    }
+    if (best) {
+      found.push(best.id);
+      rest = rest.slice(best.len + 1);
+    } else {
+      // A segment the spec no longer names: step past it and keep looking.
+      const slash = rest.indexOf('/');
+      rest = slash === -1 ? '' : rest.slice(slash + 1);
+    }
   }
-  return branch.split('/').flatMap((segment) => {
-    const m = /^(.*)\[\d+\]$/.exec(segment);
-    return m?.[1] ? [m[1]] : [];
-  });
+  return found;
 }
 
 export interface TraceAttribution {
@@ -138,14 +162,16 @@ export function attributeTrace(t: AgentTraceRecord, linker: TraceLinker): TraceA
 export function recordingMatchesSelection(
   recordingId: string,
   selection: string,
-  linker: TraceLinker
+  linker: TraceLinker,
+  /** The recorded spec node when the caller has it; otherwise inferred from the id. */
+  knownSpecId?: string
 ): boolean {
   if (linker.specNodeIds.has(selection)) {
-    const specId = specNodeIdOfRecording(recordingId, linker);
+    const specId = knownSpecId ?? specNodeIdOfRecording(recordingId, linker);
     if (specId === selection) {
       return true;
     }
-    return fanOutsOfBranch(branchOfRecording(recordingId, specId)).includes(selection);
+    return fanOutsOfBranch(branchOfRecording(recordingId, specId), linker).includes(selection);
   }
   // A recording id selects that execution, or everything inside it when it is a
   // fan-out's own recording id (its branches are `<id>[i]/...`).
@@ -159,7 +185,12 @@ export function traceMatchesSelection(
   linker: TraceLinker
 ): boolean {
   if (t.specNodeId) {
-    return recordingMatchesSelection(t.recordingId ?? t.specNodeId, selection, linker);
+    return recordingMatchesSelection(
+      t.recordingId ?? t.specNodeId,
+      selection,
+      linker,
+      t.specNodeId
+    );
   }
   const candidates = linker.candidatesByActivity.get(t.nodeId) ?? [];
   const selectedNode = linker.specNodeIds.has(selection)
