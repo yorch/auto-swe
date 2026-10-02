@@ -250,10 +250,130 @@ function checkLayoutRendersPerRequest() {
 }
 
 // ---------------------------------------------------------------------------
+// INVARIANT 4 — MCP code reaches data only through a REST route.
+//
+// An MCP tool is an in-process call to the same route a REST client would use, so the route's
+// role check, visibility filter, tenant guard, rate limit and audit apply to it unchanged. A tool
+// that read the database itself would be a second permission path, written by hand and reviewed
+// by nobody: it type-checks, its own tests pass, and it ignores a visibility rule the route has.
+//
+// So the MCP transport and tools (`lib/mcp/**`, `routes/mcp.ts`) take no database access, by
+// import or by reaching for the `prisma` decoration on the Fastify instance. The wiring that does
+// need the database (`lib/mcpRouteOptions.ts`, `lib/mcpTokenVerifier.ts`, the grants) lives
+// outside those paths and hands the MCP code plain functions.
+//
+// Unlike the rules above, this is a standing constraint on a new surface, not a past incident.
+// ---------------------------------------------------------------------------
+
+const MCP_CODE_DIR = 'packages/gateway/src/lib/mcp';
+const MCP_ROUTE_FILE = 'packages/gateway/src/routes/mcp.ts';
+
+/**
+ * What MCP code may import: an allowlist, not a blocklist. A blocklist can only name the
+ * spellings someone thought of (`@auto-swe/shared/db`, the `@auto-swe/shared` barrel, a dynamic
+ * `import()`, a service that itself uses Prisma), and every omitted one is a way around the rule.
+ * Everything not listed here is refused, so a new dependency is a deliberate edit to this list.
+ */
+const ALLOWED_PACKAGES = new Set([
+  '@modelcontextprotocol/server',
+  'better-auth/node',
+  'fastify',
+  'fastify-plugin',
+  'zod',
+]);
+/** Pure gateway modules (no I/O) MCP code may import, as repo-relative `.ts` paths; `lib/mcp/` is always allowed. */
+const ALLOWED_LOCAL = new Set([
+  'packages/gateway/src/lib/mcpOAuth.ts',
+  'packages/gateway/src/lib/ticketId.ts',
+]);
+
+/** Every module specifier a file pulls in: static, side-effect, re-export, dynamic and require. */
+function moduleSpecifiers(code) {
+  const found = [];
+  for (const m of code.matchAll(/\bfrom\s*(['"])([^'"]+)\1/g)) {
+    found.push(m[2]);
+  }
+  for (const m of code.matchAll(/\bimport\s*(['"])([^'"]+)\1/g)) {
+    found.push(m[2]);
+  }
+  for (const m of code.matchAll(/\b(?:import|require)\s*\(\s*(['"`])([^'"`]*)\1/g)) {
+    found.push(m[2]);
+  }
+  // A call whose argument is not a plain string cannot be checked, so it is refused.
+  for (const m of code.matchAll(/\b(?:import|require)\s*\(\s*(?!['"`])/g)) {
+    found.push(`<computed:${m[0]}>`);
+  }
+  return found;
+}
+
+function importAllowed(file, specifier) {
+  if (specifier.startsWith('node:') || ALLOWED_PACKAGES.has(specifier)) {
+    return true;
+  }
+  if (!specifier.startsWith('.')) {
+    return false;
+  }
+  const target = relative(ROOT, join(ROOT, dirname(file), specifier)).replace(/\.js$/, '.ts');
+  return (
+    target.startsWith(`${MCP_CODE_DIR}/`) || ALLOWED_LOCAL.has(target) || target === MCP_ROUTE_FILE
+  );
+}
+
+/** Ways to name the database that need no import: the decoration, a destructured alias, bracket access. */
+const DATABASE_WORDS = [
+  [/\bprisma\b/i, 'names `prisma` (app.prisma, a destructured alias, app["prisma"], an import)'],
+  [/\bPrismaClient\b/, 'names PrismaClient'],
+  [/\$queryRaw|\$executeRaw/, 'runs raw SQL'],
+];
+
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/^\s*\/\/.*$/gm, '');
+}
+
+function checkMcpCodeHasNoDatabaseAccess() {
+  const files = [
+    ...walk(MCP_CODE_DIR, (f) => f.endsWith('.ts') && !f.endsWith('.test.ts')),
+    MCP_ROUTE_FILE,
+  ];
+  const why =
+    "MCP tools must reach data only through a REST route, by the bridge, so the route's role " +
+    'check, visibility filter, tenant guard and audit apply to them. Direct access, or any module ' +
+    'that has it, is a second, weaker permission path. Move the work to a route; if a new pure ' +
+    'dependency is genuinely needed, add it to the allowlist in scripts/check-invariants.mjs.';
+  for (const file of files) {
+    const code = stripComments(read(file));
+    for (const specifier of moduleSpecifiers(code)) {
+      if (!importAllowed(file, specifier)) {
+        const line = code
+          .split('\n')
+          .findIndex((l) => l.includes(specifier.replace(/^<computed:/, '')));
+        fail(
+          file,
+          Math.max(line, 0) + 1,
+          'mcp-no-database-access',
+          `MCP code imports "${specifier}", which is not on the allowlist`,
+          why
+        );
+      }
+    }
+    code.split('\n').forEach((text, i) => {
+      for (const [pattern, what] of DATABASE_WORDS) {
+        if (pattern.test(text)) {
+          fail(file, i + 1, 'mcp-no-database-access', `MCP code ${what}`, why);
+        }
+      }
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 checkWorkspaceImageLiterals();
 checkDockerfileYarnProvisioning();
 checkLayoutRendersPerRequest();
+checkMcpCodeHasNoDatabaseAccess();
 
 if (failures.length > 0) {
   console.error(`Invariant check failed — ${failures.length} violation(s).\n`);
@@ -268,7 +388,8 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('Invariant check passed — 3 invariants, no violations.');
+console.log('Invariant check passed — 4 invariants, no violations.');
 console.log('  workspace image is inherited, never written inline at a call site');
 console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
 console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
+console.log('  MCP code takes no database access: it reaches data only through a REST route');

@@ -301,6 +301,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: ListWorkRequestsQuery },
     },

@@ -8,6 +8,8 @@ import { normalizeIP } from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
+import { MCP_BRIDGE_HEADER } from '../lib/mcp/bridge.js';
+import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 
 // ── JWT Configuration ──
 
@@ -58,6 +60,18 @@ declare module 'fastify' {
      * this is a memory read in the steady state.
      */
     repoAccessGate?: RepoAccessGate;
+    /**
+     * Set when the request is an MCP tool call bridged in-process: which client, under which
+     * consent, with which effective scopes. Absent on every other request.
+     */
+    mcpBridge?: { clientId: string; consentId: string; scopes: string[] };
+  }
+  interface FastifyContextConfig {
+    /**
+     * Opt a route in to MCP tool calls. A bridged call is refused on a route that does not
+     * declare this, and on one that declares `read` when the token has no `mcp:read`.
+     */
+    mcpScope?: 'read' | 'write';
   }
 }
 
@@ -571,13 +585,94 @@ export function _hasCachedSessionForTests(cookieValue: string): boolean {
   return sessionPayloadCache.has(cookieValue);
 }
 
+type BridgeOutcome = { payload: JwtPayload } | { status: 401 | 403; code: string; message: string };
+
+const MCP_ROLES = ['ADMIN', 'LEAD', 'ENGINEER'];
+
+/**
+ * Authenticate an MCP tool call that the bridge made in-process (`lib/mcp/bridge.ts`).
+ *
+ * Reached only when the request carries the bridge header, in whatever form, and from there it
+ * never falls through to the PAT, API-JWT or session paths: a call that claims to be bridged is
+ * either a good bridged call or refused. In order:
+ *
+ * 1. the header must be exactly this process's per-boot secret (else 403);
+ * 2. the route must declare `config.mcpScope` (else 403);
+ * 3. the credential must be an `Authorization: Bearer` MCP access token, not a PAT (else 401);
+ * 4. the shared MCP verifier must accept it, which re-reads consent, client and user (else 401);
+ * 5. its effective scopes must cover the route's `mcpScope` (else 403 `INSUFFICIENT_SCOPE`).
+ *
+ * The caller is the verified token's user, with their current role.
+ */
+async function authenticateBridgedCall(
+  request: FastifyRequest,
+  headerValue: unknown
+): Promise<BridgeOutcome> {
+  const bridge = request.server.mcpBridge;
+  if (!bridge?.accepts(headerValue)) {
+    return { code: 'FORBIDDEN', message: 'Invalid bridge credentials', status: 403 };
+  }
+  const mcpScope = request.routeOptions.config.mcpScope;
+  if (mcpScope !== 'read' && mcpScope !== 'write') {
+    return { code: 'FORBIDDEN', message: 'This route is not available to MCP', status: 403 };
+  }
+  const authHeader = request.headers.authorization;
+  const token =
+    typeof authHeader === 'string' ? authHeader.match(/^Bearer (\S+)$/)?.[1] : undefined;
+  if (!token || token.startsWith(PAT_PREFIX)) {
+    return { code: 'TOKEN_INVALID', message: 'Invalid token', status: 401 };
+  }
+  const authInfo = await bridge.verify(token);
+  const { userId, role, consentId } = authInfo?.extra ?? {};
+  if (
+    !authInfo ||
+    typeof userId !== 'string' ||
+    typeof consentId !== 'string' ||
+    typeof role !== 'string' ||
+    !MCP_ROLES.includes(role)
+  ) {
+    return { code: 'TOKEN_INVALID', message: 'Invalid token', status: 401 };
+  }
+  const needed = mcpScope === 'write' ? MCP_SCOPE_WRITE : MCP_SCOPE_READ;
+  if (!authInfo.scopes.includes(needed)) {
+    return {
+      code: 'INSUFFICIENT_SCOPE',
+      message: `This call needs the ${needed} scope`,
+      status: 403,
+    };
+  }
+  request.mcpBridge = { clientId: authInfo.clientId, consentId, scopes: authInfo.scopes };
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    payload: {
+      exp: authInfo.expiresAt ?? now + 60,
+      iat: now,
+      role: role as Role,
+      sub: userId,
+    },
+  };
+}
+
 export function requireAuth(options: RBACOptions = {}) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
     let payload: JwtPayload | null = null;
 
+    // Path 0: an MCP tool call made in-process by the bridge. Checked first, and by presence of
+    // the header rather than by its value, so no malformed or wrong value can fall through to
+    // the paths below.
+    const bridgeHeader = request.headers[MCP_BRIDGE_HEADER];
+    if (bridgeHeader !== undefined) {
+      const outcome = await authenticateBridgedCall(request, bridgeHeader);
+      if ('status' in outcome) {
+        return reply
+          .status(outcome.status)
+          .send({ error: { code: outcome.code, message: outcome.message } });
+      }
+      payload = outcome.payload;
+    }
     // Path 1: Authorization: Bearer <PAT or JWT>
-    if (authHeader?.startsWith('Bearer ')) {
+    else if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.slice(7);
       try {
         payload = token.startsWith(PAT_PREFIX)

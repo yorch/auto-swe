@@ -333,6 +333,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { querystring: ListReposQuery },
     },

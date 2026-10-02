@@ -9,6 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getAuth, initAuth, MCP_RESOURCE } from '../lib/betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from '../lib/betterAuthHandler.js';
 import { registerFormBodyParser } from '../lib/formBody.js';
+import { mcpBridgePlugin } from '../lib/mcp/bridge.js';
 import { MCP_CONSENT_SKEW_SECONDS } from '../lib/mcpOAuth.js';
 import { mcpOAuthGate } from '../lib/mcpOAuthGate.js';
 import { mcpOAuthGateOptions } from '../lib/mcpOAuthGateOptions.js';
@@ -223,7 +224,9 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
     });
     await app.register(mcpOAuthGate, mcpOAuthGateOptions());
     registerBetterAuthRoutes(app, createBetterAuthHandler());
-    await app.register(mcpRoutes, mcpRouteOptions());
+    const options = mcpRouteOptions();
+    await app.register(mcpBridgePlugin, { verifier: options.verifier });
+    await app.register(mcpRoutes, options);
     await app.ready();
   }, 60_000);
 
@@ -235,7 +238,7 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
     await app?.close();
   });
 
-  it('serves a token the authorization server issued: initialize and an empty tool list', async () => {
+  it('serves a token the authorization server issued: initialize and the read tools', async () => {
     const { token } = await connect();
     const header = decodePart(token, 0);
     expect(header.typ).toBe('at+jwt');
@@ -252,7 +255,7 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
       }
     );
     expect(list.statusCode, list.body).toBe(200);
-    expect(list.body).toContain('"tools":[]');
+    expect(list.body).toContain('"name":"list_repositories"');
   });
 
   it('serves the same token to a modern-envelope request as plain JSON', async () => {
@@ -275,7 +278,18 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
     );
     expect(res.statusCode, res.body).toBe(200);
     expect(String(res.headers['content-type'])).toMatch(/^application\/json/);
-    expect(res.json().result.tools).toEqual([]);
+    expect(
+      res
+        .json()
+        .result.tools.map((t: { name: string }) => t.name)
+        .sort()
+    ).toEqual([
+      'get_run',
+      'list_pending_human_steps',
+      'list_repositories',
+      'list_runs',
+      'list_work_requests',
+    ]);
   });
 
   describe('credentials that are not an MCP access token', () => {

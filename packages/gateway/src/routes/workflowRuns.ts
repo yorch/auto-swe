@@ -139,6 +139,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: ListRunsQuery, response: { 200: RunListResponseSchema } },
     },
@@ -329,6 +330,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         params: RunIdParam,

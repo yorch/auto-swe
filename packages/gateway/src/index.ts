@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from './lib/betterAuthHandler.js';
 import { registerFormBodyParser } from './lib/formBody.js';
+import { mcpBridgePlugin } from './lib/mcp/bridge.js';
 import { mcpConsentAudit } from './lib/mcpConsentAudit.js';
 import { mcpOAuthGate } from './lib/mcpOAuthGate.js';
 import { mcpConsentAuditOptions, mcpOAuthGateOptions } from './lib/mcpOAuthGateOptions.js';
@@ -210,7 +211,11 @@ async function start() {
 
   // The MCP endpoint and its protected-resource metadata. Registered unconditionally: `mcp.enabled`
   // is read per request and a disabled deployment answers 404, so the switch needs no restart.
-  await app.register(mcpRoutes, mcpRouteOptions());
+  // The bridge goes on the root first: `requireAuth` on every route consults it, and the MCP routes'
+  // tools call REST through it.
+  const mcpOptions = mcpRouteOptions();
+  await app.register(mcpBridgePlugin, { verifier: mcpOptions.verifier });
+  await app.register(mcpRoutes, mcpOptions);
 
   // Public: which social providers are configured? The login page reads
   // this to know whether to show GitHub / Google buttons (they're hidden

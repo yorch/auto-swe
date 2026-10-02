@@ -220,3 +220,12 @@ jobs:
         env:
           WORK_REQUEST_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/workRequests.idempotency.pg.test.ts
+
+      # The read tools against the real route plugins and the same tables: what a
+      # tool returns for a team member, an outsider, an ADMIN and a deactivated
+      # user is what REST returns for them. Its own step, for the same reason: it
+      # wipes the OAuth tables the suites above also use.
+      - name: MCP read tools (database-backed tests)
+        env:
+          MCP_OAUTH_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/mcp/tools.pg.test.ts
