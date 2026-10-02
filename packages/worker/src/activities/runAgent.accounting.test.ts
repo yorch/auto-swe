@@ -24,6 +24,7 @@ const { ledger } = vi.hoisted(() => ({
   ledger: {
     budgetCalls: 0,
     recorded: [] as number[],
+    specs: [] as (string | undefined)[],
     stopAfterBudgetChecks: Number.POSITIVE_INFINITY,
   },
 }));
@@ -34,15 +35,24 @@ vi.mock('../lib/costTracking.js', () => ({
       throw ApplicationFailure.nonRetryable('Budget already exhausted', 'BUDGET_EXCEEDED');
     }
   }),
-  recordLlmUsage: vi.fn(async (_wf: string, _role: string, usage: { inputTokens?: number }) => {
-    ledger.recorded.push(usage.inputTokens ?? 0);
-    return {
-      costUsd: 0.01,
-      inputTokens: usage.inputTokens ?? 0,
-      modelSpec: 'x/y',
-      outputTokens: 5,
-    };
-  }),
+  recordLlmUsage: vi.fn(
+    async (
+      _wf: string,
+      _role: string,
+      usage: { inputTokens?: number },
+      _span?: string,
+      boundSpec?: string
+    ) => {
+      ledger.recorded.push(usage.inputTokens ?? 0);
+      ledger.specs.push(boundSpec);
+      return {
+        costUsd: 0.01,
+        inputTokens: usage.inputTokens ?? 0,
+        modelSpec: 'x/y',
+        outputTokens: 5,
+      };
+    }
+  ),
 }));
 
 import type { AgentSpec } from '../lib/config/agentSpec.js';
@@ -107,6 +117,7 @@ function specFor(model: unknown): AgentSpec {
 beforeEach(() => {
   ledger.budgetCalls = 0;
   ledger.recorded = [];
+  ledger.specs = [];
   ledger.stopAfterBudgetChecks = Number.POSITIVE_INFINITY;
   cancel.controller = new AbortController();
 });
@@ -121,6 +132,14 @@ describe('runAgent per-step accounting', () => {
     expect(ledger.recorded).toEqual([10, 10, 10]);
     expect(r.inputTokens).toBe(30);
     expect(r.stoppedReason).toBeUndefined();
+  });
+
+  it('debits every step at the bound model spec, not an ambient re-resolution', async () => {
+    const { model } = toolLoopModel({ finishOnCall: 2 });
+    await runAgent({ ...specFor(model), modelSpec: 'anthropic/claude-opus-5-5' }, 'go', {
+      perStepAccounting: true,
+    });
+    expect(ledger.specs).toEqual(['anthropic/claude-opus-5-5', 'anthropic/claude-opus-5-5']);
   });
 
   it('reports max_steps when the loop used every step', async () => {

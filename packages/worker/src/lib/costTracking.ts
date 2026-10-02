@@ -199,6 +199,11 @@ export interface LlmAttribution {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /**
+   * False when the model had no known price, so `costUsd` is a recorded $0 rather
+   * than a measured zero. Absent on a hand-built attribution (no call was made).
+   */
+  pricingKnown?: boolean;
 }
 
 /**
@@ -346,7 +351,8 @@ export async function recordLlmUsage(
   temporalWorkflowId: string,
   role: string,
   usage: TokenUsage,
-  spanName = 'llm.usage'
+  spanName = 'llm.usage',
+  boundModelSpec?: string
 ): Promise<LlmAttribution> {
   // Resolve the spec defensively: if the DB row is corrupt (missing `/`,
   // unknown provider, decrypt failure) we still need to debit the token
@@ -354,12 +360,18 @@ export async function recordLlmUsage(
   // would let an activity burn unlimited tokens (each retry re-spends at
   // the provider but never updates the DB counter → BUDGET_EXCEEDED never
   // fires).
+  //
+  // `boundModelSpec` is the spec the caller actually bound for this call. When
+  // given it is priced as-is: re-resolving `role` from the ambient activity
+  // context cannot see a CHANNEL tier, an owning-team override the caller chose
+  // not to use, or an explicit `key@version` pin, so it would price a different
+  // model than the one that was paid for. Omitted, the role is re-resolved.
   let modelSpec: string;
   let specResolutionError: unknown;
   try {
     // `role` is identity-agnostic here; getModelSpec resolves the DB row by the
     // role string. Pricing below is keyed on the resolved spec, not the role.
-    modelSpec = await getModelSpec(role as ModelBackedAgentKey);
+    modelSpec = boundModelSpec || (await getModelSpec(role as ModelBackedAgentKey));
   } catch (err) {
     modelSpec = 'unknown/unknown';
     specResolutionError = err;
@@ -457,7 +469,7 @@ export async function recordLlmUsage(
             throw err;
           }
           span.setAttribute('llm.workflow_found', false);
-          return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
+          return { costUsd: callCost, inputTokens, modelSpec, outputTokens, pricingKnown: known };
         }
 
         const newInput = Number(updated.tokensInputUsed);
@@ -500,7 +512,7 @@ export async function recordLlmUsage(
           );
         }
 
-        return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
+        return { costUsd: callCost, inputTokens, modelSpec, outputTokens, pricingKnown: known };
       } catch (e) {
         span.recordException(e as Error);
         throw e;

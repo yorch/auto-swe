@@ -91,6 +91,19 @@ routes:
   bounded-concurrency subtask fan-in plus synthesis inside one activity. `finalizeChannelTaskRun`
   reads `nodes.composite.output.text ?? nodes.task.output.text`.
 
+The general route is repo-less, so its run has no `ActiveWorkflow` row for the ambient context to
+derive a team from. Its agent nodes, planner and fan-out therefore take the channel's own team and
+org (`withChannelScope`), which puts a TEAM or ORGANIZATION override of `channelAssistant` in force
+for the delegated task exactly as it is for the reply. This is resolution only: it grants nothing.
+The same scope reaches `runAgent`, so a TEAM- or ORGANIZATION-scope `workspace.agentMaxSteps` (the
+setting has no CHANNEL tier) bounds the tool loop of mention turns and delegated tasks.
+
+**Not an agent run.** A delegated task is a `RunnableWorkflow`; it is not a library
+[agent run](./agent-runs.md), which is a repository-bound, container-bound step that requires an
+ENGINEER launcher. The general route has no repository, and the code route launches the team's
+engineering template. `channelAssistant` is on the agent-run non-launchable list. See
+[agent-runs.md §9](./agent-runs.md#9-relation-to-the-channel-assistant).
+
 > The fan-in lives inside one activity rather than using a `fanOut` node because the interpreter
 > cannot surface a branch agent's text back to a join.
 
@@ -176,9 +189,19 @@ the batch size.
 **The hold is priced, not guessed at.** `estimateHoldUsd` resolves the agent the channel is bound to
 and prices a nominal turn envelope (8K in / 1.5K out) through `calculateCostUsd`, the same helper the
 run ledger prices real calls with — so an Opus channel holds ~$0.078 per call and a Haiku channel
-~$0.016, rather than sharing one number that is ~5x wrong for one of them, and the hold cannot drift
-from the cost it is netted against. `CHANNEL_TURN_RESERVATION_USD` ($0.05) survives only as the
-fallback for a model with no known price, since a zero hold would bound nothing.
+~$0.016, rather than sharing one number that is ~5x wrong for one of them. `CHANNEL_TURN_RESERVATION_USD`
+($0.05) survives only as the fallback for a model with no known price, since a zero hold would bound
+nothing.
+
+The settled cost is priced at the model the call was **bound to**: `runAgent` passes its resolved
+`modelSpec` to `recordLlmUsage`, so a CHANNEL-scope override is charged at the override's rate. The
+three channel-memory passes are the exception (see Limitations).
+
+A bound model with no known price measures as $0. Settling that would net the whole hold back off the
+ledger and leave the cap with nothing to count, so a turn whose pricing is unknown settles at no less
+than its reservation (`llm.cost_pricing_known=false` is still recorded). The floor applies to
+held turns; the run-level tier ledger and an agent run's organization USD cap have no reservation to
+fall back on and record the $0.
 
 Every channel pass resolves its agent at the **CHANNEL tier** — `{ channelId, orgId, teamId }`
 threaded explicitly into `resolveAgent`, `getModel` and `loadAgentSkills`. The ambient Temporal
@@ -292,12 +315,26 @@ unproven on real traffic, and turn them on one channel at a time.
   admits. `finalizeChannelTaskRun` spends on the ledger with no hold at all. A hold lost to a worker
   crash over-counts the channel until the sweep reclaims it — which only happens once the channel
   reaches its cap, or an admin calls `/:id/budget/reset` (API-only; there is no UI control).
+- **The channel-memory passes settle at the ambient model's price.** `passiveIngestChannelMemory`,
+  `consolidateChannelMemory` and `sweepChannelOpenItems` bind `commitToMemory` at the CHANNEL tier and
+  size their hold at that tier, but call `recordLlmUsage` without the bound spec. The call runs on the
+  channel's override; the cost they settle is priced at the model the ambient Temporal context
+  resolves, which has no `channelId`. For a channel whose `commitToMemory` override is dearer than the
+  ambient model they under-charge, and the hold-versus-settle drift §7 describes as closed for turns
+  remains for these passes.
+- **A model with no known price is not charged to the run-level ledger.** A held channel turn keeps
+  its reservation (§7), but the run's tier ledger and an agent run's organization USD cap record $0
+  for an unpriced model. Add the model to the model catalog.
 - **A channel's turn runs are visible to its owning team, not to everyone in the Slack channel.**
   A turn run links its channel (`WorkflowRun.channelId`), and run visibility admits members of the
   channel's owning team — the same people who can open the channel's settings and audit feed.
   Someone who talks to the assistant in Slack but is not on that team does not see the run in
   `/runs`. A run whose channel row has since been deleted loses the link and is visible to platform
   ADMINs only.
+- **Slack cannot launch a library agent against a repository.** The assistant answers, delegates a
+  task, or generates a workflow; it has no route to an agent run. Adding one is a new feature with
+  its own identity, RBAC, budget and security design (see
+  [agent-runs.md §9](./agent-runs.md#9-relation-to-the-channel-assistant)).
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.

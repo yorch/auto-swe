@@ -348,6 +348,63 @@ describe('recordLlmUsage', () => {
     expect(row.tokensOutputUsed).toBe(50);
   });
 
+  describe('with a bound model spec', () => {
+    // The mocked GLOBAL `implementer` Agent resolves to anthropic/claude-opus-4-8; the
+    // caller bound a different model (a CHANNEL override, an owning-team override the
+    // run chose not to use, or an explicit key@version pin).
+    const bound = 'anthropic/claude-haiku-4-5-20251001';
+    const usage = { inputTokens: 100_000, outputTokens: 100_000 };
+
+    it('prices at the bound model, not the model the ambient context resolves', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        usage,
+        'llm.usage',
+        bound
+      );
+      expect(priced.modelSpec).toBe(bound);
+      expect(priced.costUsd).toBeCloseTo(await calculateCostUsd(bound, 100_000, 100_000), 6);
+    });
+
+    it('prices a call with no ledger row at the bound model too', async () => {
+      (prisma.activeWorkflow.update as unknown as Mock).mockRejectedValue(
+        Object.assign(new Error('none'), { code: 'P2025' })
+      );
+      const priced = await recordLlmUsage('chan-turn', 'implementer', usage, 'llm.usage', bound);
+      expect(priced.modelSpec).toBe(bound);
+      expect(priced.costUsd).toBeCloseTo(await calculateCostUsd(bound, 100_000, 100_000), 6);
+    });
+
+    it('says when the bound model has no known price, still recording $0', async () => {
+      ledger({});
+      const unpriced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        usage,
+        'llm.usage',
+        'openrouter/nobody-priced-this'
+      );
+      expect(unpriced.costUsd).toBe(0);
+      expect(unpriced.pricingKnown).toBe(false);
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        usage,
+        'llm.usage',
+        bound
+      );
+      expect(priced.pricingKnown).toBe(true);
+    });
+
+    it('still re-resolves from the role when no spec is passed', async () => {
+      ledger({});
+      const priced = await recordLlmUsage('wf-temporal-1', 'implementer', usage);
+      expect(priced.modelSpec).toBe('anthropic/claude-opus-4-8');
+    });
+  });
+
   it('does not lose usage when calls run concurrently', async () => {
     // The review network fires three reviewers under one Promise.allSettled and
     // fanOut branches run in parallel, so read-modify-write dropped increments

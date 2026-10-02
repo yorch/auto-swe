@@ -112,8 +112,29 @@ describe('runAgent', () => {
       'wf-1',
       'validateContext',
       { inputTokens: 1, outputTokens: 2 },
-      'llm.context_validation'
+      'llm.context_validation',
+      // Priced at the model the call was bound to, not re-resolved from ambient context.
+      'anthropic/claude-x'
     );
+  });
+
+  it('reports an unpriced model to the caller, so a cap can still count the call', async () => {
+    generateMock.mockResolvedValue({
+      object: { ok: true },
+      usage: { inputTokens: 1, outputTokens: 2 },
+    });
+    mockedRecordUsage.mockResolvedValueOnce({
+      costUsd: 0,
+      inputTokens: 1,
+      modelSpec: 'x/unpriced',
+      outputTokens: 2,
+      pricingKnown: false,
+    });
+
+    const result = await runAgent(makeSpec(), 'M');
+
+    expect(result.costUsd).toBe(0);
+    expect(result.pricingKnown).toBe(false);
   });
 
   it('skips usage recording when the provider reports none', async () => {

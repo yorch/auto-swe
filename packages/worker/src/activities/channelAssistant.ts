@@ -24,6 +24,7 @@ import {
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { calculateCostUsd } from '../lib/costTracking.js';
 import { withHeartbeat } from '../lib/execUtils.js';
@@ -437,6 +438,12 @@ export interface ChannelBudgetHold {
    * settle on its success path and still release in a `finally`.
    */
   settle(costUsd: number, opts?: { countRun?: boolean }): Promise<void>;
+  /**
+   * The turn ran on a model with no known price, so its measured cost is an
+   * unpriced $0. `settle` then keeps the reservation instead of netting it off,
+   * which is what keeps a monthly cap binding for such a channel.
+   */
+  markPricingUnknown(): void;
 }
 
 /**
@@ -577,6 +584,7 @@ export async function reserveChannelTurn(
  * to pass a zero.
  */
 const REFUSED_HOLD: ChannelBudgetHold = {
+  markPricingUnknown: () => {},
   overBudget: true,
   settle: async () => {},
 };
@@ -631,13 +639,21 @@ function makeHold(
   holdId: string | null
 ): ChannelBudgetHold {
   let settled = false;
+  let pricingUnknown = false;
   return {
+    markPricingUnknown: () => {
+      pricingUnknown = true;
+    },
     overBudget: false,
-    async settle(costUsd: number, opts: { countRun?: boolean } = {}): Promise<void> {
+    async settle(measuredUsd: number, opts: { countRun?: boolean } = {}): Promise<void> {
       if (settled) {
         return;
       }
       settled = true;
+      // An unpriced model measures as $0, which would net the whole reservation
+      // back off and leave the cap with nothing to count. Keep at least what was
+      // held. (An uncapped channel holds 0, so this changes nothing for it.)
+      const costUsd = pricingUnknown ? Math.max(measuredUsd, reservedUsd) : measuredUsd;
       const countRun = opts.countRun ?? true;
       if (holdId === null) {
         // Nothing held and nothing spent: an uncapped channel whose background
@@ -693,13 +709,14 @@ export async function runChannelAgentTurn(
    * digest path (it has no delegate affordance).
    */
   extras?: { tools?: AgentTools; promptNote?: string }
-): Promise<{ reply: string; costUsd: number }> {
+): Promise<{ reply: string; costUsd: number; pricingKnown?: boolean }> {
   const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
 
   // CHANNEL tier fires because `channelId` is set; team/org tiers cascade after it.
+  const ctx = { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId };
   const spec = await resolveAgentSpec(
     { agentKey: agentKey as ModelBackedAgentKey, basePrompt: '' },
-    { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId }
+    ctx
   );
 
   // Persona: prepend before any other additions so callers' promptNote and tool
@@ -716,9 +733,18 @@ export async function runChannelAgentTurn(
     spec.systemPrompt = `${spec.systemPrompt}${extras.promptNote}`;
   }
 
-  const result = await runAgent(spec, userMessage, { spanName });
+  // The same scope the spec resolved at, so `workspace.agentMaxSteps` does too.
+  // Merged over the ambient context so the run's pins ride along.
+  const result = await runAgent(spec, userMessage, {
+    ctx: { ...(await currentRequestContext()), ...ctx },
+    spanName,
+  });
 
-  return { costUsd: result.costUsd ?? 0, reply: (result.text ?? '').trim() };
+  return {
+    costUsd: result.costUsd ?? 0,
+    pricingKnown: result.pricingKnown,
+    reply: (result.text ?? '').trim(),
+  };
 }
 
 /** A turn that ran, with the budget it is holding until the caller settles. */
@@ -764,6 +790,9 @@ export async function runHeldChannelTurn(
   }
   try {
     const turn = await runChannelAgentTurn(channel, userMessage, spanName, extras);
+    if (turn.pricingKnown === false) {
+      hold.markPricingUnknown();
+    }
     return { ...turn, hold };
   } catch (err) {
     // A turn that never produced a reply also never spent its hold.

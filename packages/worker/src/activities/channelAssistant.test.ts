@@ -27,6 +27,11 @@ vi.mock('@auto-swe/shared/lib/billing', () => ({
   currentYearMonth: vi.fn().mockReturnValue('2026-06'),
 }));
 
+const currentRequestContextMock = vi.fn();
+vi.mock('../lib/config/contextLookup.js', () => ({
+  currentRequestContext: (...args: unknown[]) => currentRequestContextMock(...args),
+}));
+
 const resolveAgentSpecMock = vi.fn();
 vi.mock('../lib/config/agentSpec.js', () => ({
   resolveAgentSpec: (...args: unknown[]) => resolveAgentSpecMock(...args),
@@ -128,6 +133,7 @@ beforeEach(() => {
   vi.mocked(AgentTracer).mockImplementation(makeTracerMock as never);
   // `clearAllMocks` also wipes this; the rollover test moves it forward.
   vi.mocked(currentYearMonth).mockReturnValue('2026-06');
+  currentRequestContextMock.mockResolvedValue({});
   resolveAgentMock.mockResolvedValue({ model: { spec: 'anthropic/claude-opus-4-8' } });
   resolveAgentSpecMock.mockResolvedValue({
     agentKey: 'channelAssistant',
@@ -456,6 +462,59 @@ describe('reserveChannelTurn', () => {
     expect(ledger.total()).toBeCloseTo(1.02, 6);
   });
 
+  it('keeps the reservation when the model has no known price, so the cap still counts it', async () => {
+    const ledger = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    const held = ledger.total();
+    expect(held).toBeGreaterThan(1);
+
+    hold.markPricingUnknown();
+    await hold.settle(0);
+    // An unpriced model measures $0; netting that against the hold would refund it all.
+    expect(ledger.total()).toBeCloseTo(held, 6);
+  });
+
+  it('still settles a priced turn net of its reservation', async () => {
+    const ledger = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    await hold.settle(0.02);
+    expect(ledger.total()).toBeCloseTo(1.02, 6);
+  });
+
+  describe('a mention turn on a capped channel', () => {
+    const capped = {
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: 100_000,
+      orgId: 'org-1',
+      teamId: 'team-1',
+    };
+
+    it('with an unpriced channel-scope override, still charges the channel at least its hold', async () => {
+      const ledger = fakeLedger(1);
+      findChannel.mockResolvedValue(capped as never);
+      runAgentMock.mockResolvedValue({
+        costUsd: 0,
+        pricingKnown: false,
+        text: 'hi there',
+      });
+
+      await runChannelAssistantTurn(makeInput({ userText: 'hello' }));
+
+      expect(ledger.total()).toBeGreaterThan(1.04);
+    });
+
+    it("with a priced channel-scope override, settles the hold at the override's price", async () => {
+      const ledger = fakeLedger(1);
+      findChannel.mockResolvedValue(capped as never);
+      // What runAgent returns when it priced the call at the channel's override.
+      runAgentMock.mockResolvedValue({ costUsd: 0.5, pricingKnown: true, text: 'hi there' });
+
+      await runChannelAssistantTurn(makeInput({ userText: 'hello' }));
+
+      expect(ledger.total()).toBeCloseTo(1.5, 6);
+    });
+  });
+
   it('settles onto the month it held against, across a rollover', async () => {
     // The hold is written under the month current at reserve time. If settle
     // re-read the clock, a turn spanning midnight on the 1st would leak its
@@ -716,6 +775,45 @@ describe('runChannelAssistantTurn', () => {
     expect(passedMessage).toContain("Relevant context from this channel's memory:");
     expect(passedMessage).toContain('- we deploy with yarn release');
     expect(passedMessage).toContain('User: how do I deploy?');
+  });
+
+  it('runs the turn at the same channel/team/org scope its agent resolved at', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+      orgId: 'org-1',
+      teamId: 'team-1',
+    } as never);
+
+    await runChannelAssistantTurn(makeInput({ userText: 'hello' }));
+
+    const scope = { channelId: 'chan-1', orgId: 'org-1', teamId: 'team-1' };
+    expect(resolveAgentSpecMock.mock.calls[0]?.[1]).toEqual(scope);
+    expect(runAgentMock.mock.calls[0]?.[2]).toMatchObject({ ctx: scope });
+  });
+
+  it("keeps the run's own pins when it hands runAgent the channel scope", async () => {
+    currentRequestContextMock.mockResolvedValue({
+      agentVersions: { channelAssistant: 3 },
+      pinnedSettings: { 'x.y': 1 },
+    });
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+      orgId: 'org-1',
+      teamId: 'team-1',
+    } as never);
+
+    await runChannelAssistantTurn(makeInput({ userText: 'hello' }));
+
+    expect(runAgentMock.mock.calls[0]?.[2]).toMatchObject({
+      ctx: {
+        agentVersions: { channelAssistant: 3 },
+        channelId: 'chan-1',
+        pinnedSettings: { 'x.y': 1 },
+        teamId: 'team-1',
+      },
+    });
   });
 
   it('passes the raw user text when there is no relevant memory or thread context', async () => {

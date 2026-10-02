@@ -5,6 +5,7 @@ import {
 import { heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { withChannelScope } from '../lib/config/channelContext.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { withHeartbeat } from '../lib/execUtils.js';
@@ -80,7 +81,7 @@ async function planChannelTaskImpl(input: {
     // A channel-task run carries its channelId on the request (not derivable from
     // currentRequestContext) — thread it so the CHANNEL config tier picks the
     // per-channel model, matching the agent nodes downstream.
-    const ctx = input.channelId ? { ...baseCtx, channelId: input.channelId } : baseCtx;
+    const ctx = await withChannelScope(baseCtx, input.channelId);
     const spec = await resolveAgentSpec(
       {
         agentKey: CHANNEL_ASSISTANT_KEY,
@@ -92,6 +93,7 @@ async function planChannelTaskImpl(input: {
     spec.outputSchema = PlanSchema;
 
     const result = await runAgent<z.infer<typeof PlanSchema>>(spec, input.task, {
+      ctx,
       spanName: 'llm.channel_task.plan',
     });
     const subtasks = (result.object?.subtasks ?? [])
@@ -152,7 +154,7 @@ async function runChannelSubtasksImpl(input: {
   }
 
   const baseCtx = await currentRequestContext();
-  const ctx = input.channelId ? { ...baseCtx, channelId: input.channelId } : baseCtx;
+  const ctx = await withChannelScope(baseCtx, input.channelId);
 
   // Resolve the branch agent spec once (channel persona) and reuse it — runAgent
   // builds a fresh Mastra agent per call, so sharing the read-only spec is safe.
@@ -173,6 +175,7 @@ async function runChannelSubtasksImpl(input: {
       heartbeat(`channel subtask ${i + 1}/${subtasks.length}`);
       try {
         const r = await runAgent(branchSpec, (subtasks[i] as ChannelSubtask).description, {
+          ctx,
           spanName: 'llm.channel_task.branch',
         });
         answers[i] = (r.text ?? '').trim();
@@ -206,6 +209,7 @@ async function runChannelSubtasksImpl(input: {
       ctx
     );
     const r = await runAgent(synthSpec, JSON.stringify({ parts, task: input.task }), {
+      ctx,
       spanName: 'llm.channel_task.synthesize',
     });
     const text = (r.text ?? '').trim();
