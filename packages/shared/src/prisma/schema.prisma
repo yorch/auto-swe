@@ -1876,6 +1876,48 @@ model ModelCatalogEntry {
   @@map("model_catalog_entries")
 }
 
+/// Why a model is on the discovery list. NEW: a provider lists it and nothing
+/// prices it. RETIREMENT_CANDIDATE: priced here, but a provider whose listing
+/// succeeded no longer lists it. Neither changes the catalog.
+enum ModelSuggestionType {
+  NEW
+  RETIREMENT_CANDIDATE
+}
+
+/// A flag raised by model discovery, kept apart from `model_catalog_entries` so
+/// that discovery can never make a model "known" at $0 and the pricing path never
+/// reads it. Written only by the discovery run; an admin only dismisses it. A NEW
+/// row disappears once the model is priced, a RETIREMENT_CANDIDATE once the
+/// provider lists it again or the model is retired; nothing here retires a model.
+model ModelSuggestion {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider    String
+  modelId     String              @map("model_id")
+  type        ModelSuggestionType
+  kind        ModelKind           @default(CHAT)
+  displayName String?             @map("display_name")
+  firstSeenAt DateTime            @default(now()) @map("first_seen_at") @db.Timestamptz
+  lastSeenAt  DateTime            @default(now()) @map("last_seen_at") @db.Timestamptz
+  dismissedAt DateTime?           @map("dismissed_at") @db.Timestamptz
+
+  @@unique([provider, modelId])
+  @@map("model_suggestions")
+}
+
+/// What the last discovery run saw for one provider: when it asked, and why it
+/// got no answer. A provider whose listing failed keeps its previous suggestions
+/// untouched, so this row is the only trace the failure leaves.
+model ModelDiscoveryProviderStatus {
+  provider      String    @id
+  checkedAt     DateTime  @map("checked_at") @db.Timestamptz
+  /// Last run whose listing succeeded; null until one has.
+  lastSuccessAt DateTime? @map("last_success_at") @db.Timestamptz
+  /// Null when the last listing succeeded.
+  error         String?
+
+  @@map("model_discovery_provider_status")
+}
+
 /// Singleton GitHub integration config. One row (id = "default").
 /// Encrypted fields follow the same AES-256-GCM envelope used by
 /// ProviderCredential (ciphertext + nonce + authTag per secret).

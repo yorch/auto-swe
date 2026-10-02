@@ -50,6 +50,9 @@ CREATE TYPE "ModelKind" AS ENUM ('CHAT', 'EMBEDDING');
 CREATE TYPE "ModelStatus" AS ENUM ('ACTIVE', 'DEPRECATED', 'RETIRED');
 
 -- CreateEnum
+CREATE TYPE "ModelSuggestionType" AS ENUM ('NEW', 'RETIREMENT_CANDIDATE');
+
+-- CreateEnum
 CREATE TYPE "ScannerPatternType" AS ENUM ('INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'CODE_SECURITY', 'SENSITIVE_FILE', 'PII');
 
 -- CreateTable
@@ -907,6 +910,31 @@ CREATE TABLE "model_catalog_entries" (
 );
 
 -- CreateTable
+CREATE TABLE "model_suggestions" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "provider" TEXT NOT NULL,
+    "model_id" TEXT NOT NULL,
+    "type" "ModelSuggestionType" NOT NULL,
+    "kind" "ModelKind" NOT NULL DEFAULT 'CHAT',
+    "display_name" TEXT,
+    "first_seen_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "last_seen_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "dismissed_at" TIMESTAMPTZ,
+
+    CONSTRAINT "model_suggestions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "model_discovery_provider_status" (
+    "provider" TEXT NOT NULL,
+    "checked_at" TIMESTAMPTZ NOT NULL,
+    "last_success_at" TIMESTAMPTZ,
+    "error" TEXT,
+
+    CONSTRAINT "model_discovery_provider_status_pkey" PRIMARY KEY ("provider")
+);
+
+-- CreateTable
 CREATE TABLE "github_config" (
     "id" TEXT NOT NULL DEFAULT 'default',
     "token_ciphertext" BYTEA,
@@ -1725,6 +1753,9 @@ CREATE INDEX "provider_credentials_org_id_idx" ON "provider_credentials"("org_id
 
 -- CreateIndex
 CREATE UNIQUE INDEX "model_catalog_entries_provider_model_id_key" ON "model_catalog_entries"("provider", "model_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "model_suggestions_provider_model_id_key" ON "model_suggestions"("provider", "model_id");
 
 -- CreateIndex
 CREATE INDEX "config_settings_key_idx" ON "config_settings"("key");
