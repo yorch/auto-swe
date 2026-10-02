@@ -209,7 +209,7 @@ feature quietly stops until the model is priced; check the worker log when ambie
 flagging goes missing on a capped channel. The memory summarizer inside a mention turn runs under
 the channel scope, so it is guarded too; a refusal there stores the raw exchange instead and spends
 nothing. The same check runs in `runAgent`, so a delegated channel task refuses too (the failure
-surfaces from the task's branch rather than as an empty answer). An uncapped channel proceeds and
+surfaces from the task's branch rather than as an empty answer, and the thread's failure line carries the reason). An uncapped channel proceeds and
 records $0 with `llm.cost_pricing_known=false`. While the catalog itself cannot be read the refusal
 is a retryable `MODEL_PRICE_UNAVAILABLE` instead, so a database blip never tells an admin to add a
 price that exists.

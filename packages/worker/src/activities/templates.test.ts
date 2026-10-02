@@ -131,6 +131,7 @@ import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { notifySlackRunComplete, notifySlackStepFailure } from '../lib/slackNotify.js';
 import { assertScheduledFireAuthorized } from './scheduledFireAuthorization.js';
 import {
+  buildChannelTaskResultText,
   createWorkflowRun,
   finalizeWorkflowRun,
   recordWorkflowStep,
@@ -707,6 +708,25 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockReset();
     mockNotifySlack.mockReset();
     mockTrackerSync.mockReset();
+  });
+});
+
+describe('buildChannelTaskResultText', () => {
+  it('says why a task failed when the cause was a refused model call', () => {
+    const text = buildChannelTaskResultText(
+      null,
+      'FAILED',
+      'Summarise',
+      'Model "x/y" has no price in the model catalog. Add the model to the model catalog.'
+    );
+    expect(text).toContain('finished with status *FAILED*');
+    expect(text).toContain('has no price in the model catalog');
+  });
+
+  it('keeps the plain line when there is no reason', () => {
+    expect(buildChannelTaskResultText(null, 'FAILED', undefined)).toBe(
+      ':rotating_light: Task finished with status *FAILED*.'
+    );
   });
 });
 

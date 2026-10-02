@@ -720,7 +720,8 @@ async function finalizeChannelTaskRun(
     return;
   }
   try {
-    const text = buildChannelTaskResultText(ctx.contextSnapshot, status, payload.title);
+    const reason = status === 'FAILED' ? await priceRefusalReason(runId) : undefined;
+    const text = buildChannelTaskResultText(ctx.contextSnapshot, status, payload.title, reason);
     await postSlackThreadMessage(slackChannelId, threadTs, text);
   } catch (err) {
     // Best-effort: a Slack failure must not fail the finalize.
@@ -728,6 +729,33 @@ async function finalizeChannelTaskRun(
       channelId,
       err: err instanceof Error ? err.message : err,
     });
+  }
+}
+
+const PRICE_REFUSAL_PREFIXES = ['MODEL_UNPRICED: ', 'MODEL_PRICE_UNAVAILABLE: '];
+
+/**
+ * The reason a task failed when the cause was a refused model call (no price
+ * under the channel's USD cap), read from the failed step the interpreter
+ * recorded as `<TYPE>: <message>`; otherwise nothing. Best-effort: a lookup
+ * failure leaves the generic line.
+ */
+async function priceRefusalReason(runId: string): Promise<string | undefined> {
+  try {
+    const step = await prisma.workflowStep.findFirst({
+      orderBy: { endedAt: 'desc' },
+      select: { error: true },
+      where: {
+        OR: PRICE_REFUSAL_PREFIXES.map((p) => ({ error: { startsWith: p } })),
+        runId,
+        status: 'FAILED',
+      },
+    });
+    const error = step?.error;
+    const prefix = error ? PRICE_REFUSAL_PREFIXES.find((p) => error.startsWith(p)) : undefined;
+    return error && prefix ? error.slice(prefix.length) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -742,14 +770,16 @@ async function finalizeChannelTaskRun(
  * by `notifySlackPrReady` at PR-open time, so we don't re-surface it here. Non-success
  * statuses get a short failure note. Truncated to {@link CHANNEL_TASK_RESULT_MAX} chars.
  */
-function buildChannelTaskResultText(
+export function buildChannelTaskResultText(
   contextSnapshot: unknown,
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
-  title: string | undefined
+  title: string | undefined,
+  reason?: string
 ): string {
   const titleLine = title ? ` *${title}*` : '';
   if (status !== 'SUCCESS') {
-    return `:rotating_light: Task${titleLine} finished with status *${status}*.`;
+    const why = reason ? ` ${reason}` : '';
+    return `:rotating_light: Task${titleLine} finished with status *${status}*.${why}`;
   }
 
   const snapshot = (contextSnapshot ?? null) as {

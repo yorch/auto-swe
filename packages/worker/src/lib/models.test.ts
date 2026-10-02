@@ -10,6 +10,7 @@ import { resolveAgent } from './config/agentResolver.js';
 import { ConfigMissingError } from './config/resolver.js';
 import {
   _resetModelCacheForTests,
+  getBoundModel,
   getModel,
   getModelSpec,
   resolveModel,
@@ -125,6 +126,27 @@ describe('getModel', () => {
     mockedResolveAgent.mockResolvedValue(resolvedAgent());
     const m = await getModel('implementer');
     expect(m.modelId).toBe('claude-opus-4-6');
+  });
+});
+
+describe('getBoundModel', () => {
+  it('returns the spec of the very agent the model was built from', async () => {
+    mockedResolveAgent.mockResolvedValue(
+      resolvedAgent({ spec: 'anthropic/claude-haiku-4-5-20251001' })
+    );
+    const bound = await getBoundModel('commitToMemory');
+    expect(bound.spec).toBe('anthropic/claude-haiku-4-5-20251001');
+    expect(bound.model.modelId).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('resolves once, at the explicit ctx (the CHANNEL tier the ambient context cannot supply)', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent());
+    await getBoundModel('commitToMemory', { channelId: 'chan-1', orgId: 'o', teamId: 't' });
+    expect(mockedResolveAgent).toHaveBeenCalledTimes(1);
+    expect(mockedResolveAgent).toHaveBeenCalledWith(
+      'commitToMemory',
+      expect.objectContaining({ channelId: 'chan-1', orgId: 'o', teamId: 't' })
+    );
   });
 });
 
