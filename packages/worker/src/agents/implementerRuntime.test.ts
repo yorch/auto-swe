@@ -101,6 +101,77 @@ describe('runImplementerTurn', () => {
     );
   });
 
+  it('prices each model a turn spent on at its own spec and records one combined call', async () => {
+    recordLlmUsage
+      .mockResolvedValueOnce({
+        costUsd: 0.5,
+        inputTokens: 1000,
+        modelSpec: 'anthropic/claude-opus-5-5',
+        outputTokens: 40,
+        pricingKnown: true,
+      })
+      .mockResolvedValueOnce({
+        costUsd: 0.01,
+        inputTokens: 10,
+        modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+        outputTokens: 5,
+        pricingKnown: false,
+      });
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => ({
+        text: 'ok',
+        toolCallCount: 2,
+        // Ignored once the split is given.
+        usage: { inputTokens: 999, outputTokens: 999 },
+        usageByModel: [
+          {
+            modelSpec: 'anthropic/claude-opus-5-5',
+            usage: { inputTokens: 1000, outputTokens: 40 },
+          },
+          {
+            modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+            usage: { inputTokens: 10, outputTokens: 5 },
+          },
+        ],
+      }),
+    };
+
+    const { attribution } = await runImplementerTurn({
+      ...turn(runtime),
+      boundModelSpec: 'openai/ignored',
+    });
+
+    expect(recordLlmUsage).toHaveBeenCalledTimes(2);
+    expect(recordLlmUsage.mock.calls[0]?.[4]).toBe('anthropic/claude-opus-5-5');
+    expect(recordLlmUsage.mock.calls[1]?.[4]).toBe('anthropic/claude-haiku-4-5-20251001');
+    // The call row carries the total, attributed to the model that spent the most.
+    expect(attribution).toEqual({
+      costUsd: 0.51,
+      inputTokens: 1010,
+      modelSpec: 'anthropic/claude-opus-5-5',
+      outputTokens: 45,
+      pricingKnown: false,
+    });
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        costUsd: 0.51,
+        inputTokens: 1010,
+        model: 'anthropic/claude-opus-5-5',
+        outputTokens: 45,
+      })
+    );
+  });
+
+  it('records nothing against the ledger when a harness turn spent no tokens', async () => {
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => ({ text: 'ok', toolCallCount: 0, usageByModel: [] }),
+    };
+    const { attribution } = await runImplementerTurn(turn(runtime));
+    expect(recordLlmUsage).not.toHaveBeenCalled();
+    expect(attribution.costUsd).toBe(0);
+  });
+
   it('still records the call when the model only made tool calls', async () => {
     const runtime: ImplementerRuntime = {
       runTurn: async () => ({ toolCallCount: 7, usage: { inputTokens: 1, outputTokens: 1 } }),
