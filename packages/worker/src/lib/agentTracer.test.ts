@@ -24,6 +24,36 @@ describe('AgentTracer.persist', () => {
     });
   });
 
+  it('records the spec node, recording id and step attempt it was given', async () => {
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: 'e' });
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'runLint', 'a', 2, {
+      recordingId: 'fan[1]/lint',
+      specNodeId: 'lint',
+      stepAttempt: 3,
+    });
+    expect(createManyMock).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          attempt: 2,
+          nodeId: 'runLint',
+          recordingId: 'fan[1]/lint',
+          specNodeId: 'lint',
+          stepAttempt: 3,
+        }),
+      ],
+    });
+  });
+
+  it('writes NULL attribution when the activity was not dispatched for a node', async () => {
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: 'e' });
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
+    expect(createManyMock).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ recordingId: null, specNodeId: null, stepAttempt: null })],
+    });
+  });
+
   it('attaches the run when one exists', async () => {
     const tracer = new AgentTracer();
     tracer.addActivityEvent({ name: 'e' });

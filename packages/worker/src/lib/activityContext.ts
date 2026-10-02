@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { trace } from '@opentelemetry/api';
 import { activityInfo } from '@temporalio/activity';
+import { currentNodeTag } from './activityNodeTag.js';
 import type { AgentTracer } from './agentTracer.js';
 
 /**
@@ -87,6 +88,7 @@ export async function persistActivityTrace(tracer: AgentTracer, agentKey: string
     { runId: await currentWorkflowRunId(), workflowId: currentWorkflowId() },
     currentActivityType(),
     agentKey,
-    currentAttempt()
+    currentAttempt(),
+    currentNodeTag()
   );
 }
