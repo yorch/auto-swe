@@ -68,16 +68,71 @@ const InputMapSchema = z.record(z.string(), BindingSchema);
  * REQUIRED `title` (the approver's inbox heading) with its own, longer bound;
  * they take only the group field, and the canvas reads their `title` as the
  * display name.
+ *
+ * READING IS TOLERANT. Before these fields existed an unknown `title`/`group` key
+ * was silently stripped, and a bundle installs its spec raw, so a stored spec may
+ * carry one in any shape. A value that is not a string, is blank, or is over the
+ * limit therefore degrades to absent instead of failing the parse (which would
+ * fail run creation and blank the run viewer's graph); a string is trimmed, so
+ * `"ci"` and `"ci "` are one group everywhere. The limits are enforced where a
+ * spec is authored: {@link findInvalidPresentation} (the gateway's save path)
+ * and the template helpers' tests.
  */
 export const MAX_NODE_GROUP_LENGTH = 40;
 export const MAX_NODE_TITLE_LENGTH = 80;
+const tolerantLabel = (max: number) =>
+  z
+    .unknown()
+    .transform((v): string | undefined => {
+      if (typeof v !== 'string') {
+        return undefined;
+      }
+      const t = v.trim();
+      return t.length > 0 && t.length <= max ? t : undefined;
+    })
+    .optional();
 const NodeGroupFields = {
-  group: z.string().min(1).max(MAX_NODE_GROUP_LENGTH).optional(),
+  group: tolerantLabel(MAX_NODE_GROUP_LENGTH),
 };
 const NodeMetaFields = {
   ...NodeGroupFields,
-  title: z.string().min(1).max(MAX_NODE_TITLE_LENGTH).optional(),
+  title: tolerantLabel(MAX_NODE_TITLE_LENGTH),
 };
+
+/**
+ * Strict check of the presentation fields on a RAW spec, for the places a spec is
+ * authored (the save API). Returns one message per bad value. Human-node titles
+ * are not checked here: they are required and bounded by the node schema itself.
+ */
+export function findInvalidPresentation(raw: unknown): string[] {
+  const nodes = (raw as { nodes?: unknown } | null)?.nodes;
+  if (!nodes || typeof nodes !== 'object') {
+    return [];
+  }
+  const issues: string[] = [];
+  for (const [id, node] of Object.entries(nodes as Record<string, unknown>)) {
+    if (!node || typeof node !== 'object') {
+      continue;
+    }
+    const n = node as Record<string, unknown>;
+    const fields: Array<[string, number]> = [['group', MAX_NODE_GROUP_LENGTH]];
+    if (typeof n.type !== 'string' || !n.type.startsWith('human')) {
+      fields.push(['title', MAX_NODE_TITLE_LENGTH]);
+    }
+    for (const [field, max] of fields) {
+      if (!(field in n) || n[field] === undefined) {
+        continue;
+      }
+      const v = n[field];
+      if (typeof v !== 'string' || v.trim() === '' || v.trim().length > max) {
+        issues.push(
+          `node '${id}'.${field} must be a non-blank string of at most ${max} characters`
+        );
+      }
+    }
+  }
+  return issues;
+}
 
 const RetryPolicySchema = z
   .object({

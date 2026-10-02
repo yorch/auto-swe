@@ -91,6 +91,7 @@ export type {
 } from './spec.js';
 export {
   BindingSchema,
+  findInvalidPresentation,
   MAX_FANOUT_CONCURRENCY,
   MAX_NODE_GROUP_LENGTH,
   MAX_NODE_TITLE_LENGTH,

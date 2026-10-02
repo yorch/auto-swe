@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  findInvalidPresentation,
   MAX_NODE_GROUP_LENGTH,
   MAX_NODE_TITLE_LENGTH,
   NodeSchema,
@@ -115,19 +116,100 @@ describe('node group/title metadata', () => {
     ).toBe(true);
   });
 
-  it('bounds group and title, and refuses empty strings', () => {
+  describe('reading is tolerant: a bad value degrades to absent, it never fails the parse', () => {
     const step = { step: 'runLint', type: 'step' };
-    expect(
-      NodeSchema.safeParse({ ...step, group: 'g'.repeat(MAX_NODE_GROUP_LENGTH) }).success
-    ).toBe(true);
-    expect(
-      NodeSchema.safeParse({ ...step, group: 'g'.repeat(MAX_NODE_GROUP_LENGTH + 1) }).success
-    ).toBe(false);
-    expect(
-      NodeSchema.safeParse({ ...step, title: 't'.repeat(MAX_NODE_TITLE_LENGTH + 1) }).success
-    ).toBe(false);
-    expect(NodeSchema.safeParse({ ...step, group: '' }).success).toBe(false);
-    expect(NodeSchema.safeParse({ ...step, title: '' }).success).toBe(false);
+    const parsed = (extra: Record<string, unknown>) =>
+      parseWorkflowSpec(
+        base(
+          {
+            done: { status: 'SUCCESS', type: 'terminate' },
+            s: { ...step, next: 'done', ...extra },
+          },
+          's'
+        )
+      ).nodes.s as { group?: string; title?: string };
+
+    it.each([
+      ['an over-long title', { title: 't'.repeat(MAX_NODE_TITLE_LENGTH + 1) }],
+      ['an over-long group', { group: 'g'.repeat(MAX_NODE_GROUP_LENGTH + 1) }],
+      ['an empty group', { group: '' }],
+      ['a blank title', { title: '   ' }],
+      ['a numeric group', { group: 7 }],
+      ['an object title', { title: { en: 'x' } }],
+      ['a null group', { group: null }],
+      ['an array title', { title: ['x'] }],
+    ])('%s parses, and the field is absent', (_what, extra) => {
+      const node = parsed(extra);
+      expect(node.group).toBeUndefined();
+      expect(node.title).toBeUndefined();
+      expect(JSON.stringify(node)).not.toMatch(/"(group|title)"/);
+    });
+
+    it('keeps a valid value, trimmed, so "ci" and "ci " are one group', () => {
+      expect(parsed({ group: ' ci ', title: ' Build ' })).toMatchObject({
+        group: 'ci',
+        title: 'Build',
+      });
+      const edge = 'g'.repeat(MAX_NODE_GROUP_LENGTH);
+      expect(parsed({ group: edge }).group).toBe(edge);
+    });
+
+    it('never costs a node its other fields', () => {
+      expect(parsed({ group: 9, next: 'done' })).toMatchObject({ next: 'done', step: 'runLint' });
+    });
+
+    it('leaves a human node title strictly required', () => {
+      expect(
+        NodeSchema.safeParse({
+          onApprove: 'e',
+          onReject: 'e',
+          onTimeout: 'e',
+          timeout: '1h',
+          title: '',
+          type: 'humanApproval',
+        }).success
+      ).toBe(false);
+    });
+  });
+
+  describe('findInvalidPresentation: the authoring-side limits', () => {
+    const raw = (n: Record<string, unknown>) => ({
+      nodes: { a: { step: 'x', type: 'step', ...n } },
+    });
+
+    it('accepts good values and absence', () => {
+      expect(findInvalidPresentation(raw({}))).toEqual([]);
+      expect(findInvalidPresentation(raw({ group: 'ci', title: 'T' }))).toEqual([]);
+      expect(findInvalidPresentation(raw({ group: 'g'.repeat(MAX_NODE_GROUP_LENGTH) }))).toEqual(
+        []
+      );
+    });
+
+    it.each([
+      ['an over-long title', { title: 't'.repeat(MAX_NODE_TITLE_LENGTH + 1) }, 'title'],
+      ['an over-long group', { group: 'g'.repeat(MAX_NODE_GROUP_LENGTH + 1) }, 'group'],
+      ['an empty group', { group: '' }, 'group'],
+      ['a blank title', { title: '  ' }, 'title'],
+      ['a non-string group', { group: 3 }, 'group'],
+      ['a null title', { title: null }, 'title'],
+    ])('rejects %s', (_what, extra, field) => {
+      const issues = findInvalidPresentation(raw(extra));
+      expect(issues).toHaveLength(1);
+      expect(issues[0]).toContain(`'a'.${field}`);
+    });
+
+    it('does not judge a human node title (the schema owns it) but does judge its group', () => {
+      const human = { nodes: { h: { title: 'x'.repeat(150), type: 'humanApproval' } } };
+      expect(findInvalidPresentation(human)).toEqual([]);
+      expect(
+        findInvalidPresentation({ nodes: { h: { group: '', type: 'humanApproval' } } })
+      ).toHaveLength(1);
+    });
+
+    it('is quiet on input that is not a spec', () => {
+      expect(findInvalidPresentation(null)).toEqual([]);
+      expect(findInvalidPresentation({ nodes: 'x' })).toEqual([]);
+    });
   });
 
   it('does not touch the edges of a node that carries them', () => {

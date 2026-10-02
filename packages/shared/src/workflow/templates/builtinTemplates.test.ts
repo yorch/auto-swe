@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorkflowSpecSchema } from '../spec.js';
+import { findInvalidPresentation, WorkflowSpecSchema } from '../spec.js';
 import { validateSpec } from '../validateSpec.js';
 import { BUILTIN_TEMPLATES } from './index.js';
 
@@ -24,6 +24,10 @@ describe.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
           ].includes(i.code)
         )
       ).toEqual([]);
+    });
+
+    it('holds its group and title to the authoring limits, as stored (not as a tolerant parse leaves them)', () => {
+      expect(findInvalidPresentation(spec)).toEqual([]);
     });
 
     it('does not stamp COMPLETED itself: the finalizer writes it when the run ends SUCCESS', () => {
