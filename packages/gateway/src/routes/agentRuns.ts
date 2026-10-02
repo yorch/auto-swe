@@ -24,6 +24,7 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { isOrgMember } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { reachableConnections } from '../lib/tenantScope.js';
@@ -407,7 +408,9 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
           },
         })
     );
-    if (!repo) {
+    // The launch also requires membership of the repository's organization; without
+    // it the list would offer an organization's agents the launch then refuses.
+    if (!repo || !(await isOrgMember(fastify.prisma, user, repo.team.orgId))) {
       error(reply, 404, 'CONNECTION_NOT_FOUND', 'Connection not found or inactive');
       return null;
     }

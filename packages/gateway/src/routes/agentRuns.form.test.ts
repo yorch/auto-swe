@@ -62,6 +62,7 @@ describe('agent run form support (agents, limits)', () => {
   let user: { role: string; sub: string };
   let agentRows: Array<Record<string, unknown>>;
   let agentWheres: Array<Record<string, unknown>>;
+  let orgMembers: string[];
 
   beforeEach(async () => {
     cfg.settingsCtx = [];
@@ -71,6 +72,7 @@ describe('agent run form support (agents, limits)', () => {
     cfg.settings['workspace.agentRunMaxWallClockSeconds'] = 1800;
     user = { role: 'ENGINEER', sub: OWNER };
     agentWheres = [];
+    orgMembers = [OWNER, SHARED, OUTSIDER];
     agentRows = [
       {
         description: 'd',
@@ -107,6 +109,10 @@ describe('agent run form support (agents, limits)', () => {
           matches(where, { owner: [OWNER], shared: [SHARED] })
             ? { id: REPO, team: { orgId: 'org-1' }, teamId: 'team-1' }
             : null,
+      },
+      organizationMembership: {
+        findUnique: async ({ where }: { where: { userId_orgId: { userId: string } } }) =>
+          orgMembers.includes(where.userId_orgId.userId) ? { role: 'ORG_MEMBER' } : null,
       },
     } as unknown as never);
     app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
@@ -217,6 +223,13 @@ describe('agent run form support (agents, limits)', () => {
       expect(agentWheres).toEqual([]);
     });
 
+    it('404s a team member who is not a member of the repository organization, as the launch refuses them', async () => {
+      orgMembers = [];
+      const res = await get(`/api/v1/agent-runs/agents?repoId=${REPO}`);
+      expect(res.statusCode).toBe(404);
+      expect(agentWheres).toEqual([]);
+    });
+
     it('an ADMIN reaches a repository of a team they do not belong to', async () => {
       user = { role: 'ADMIN', sub: OUTSIDER };
       expect((await get(`/api/v1/agent-runs/agents?repoId=${REPO}`)).statusCode).toBe(200);
@@ -262,6 +275,12 @@ describe('agent run form support (agents, limits)', () => {
 
     it('404s a repository the caller cannot reach, without resolving settings', async () => {
       user = { role: 'ENGINEER', sub: OUTSIDER };
+      expect((await get(`/api/v1/agent-runs/limits?repoId=${REPO}`)).statusCode).toBe(404);
+      expect(cfg.settingsCtx).toEqual([]);
+    });
+
+    it('404s a non-org-member team member without resolving settings', async () => {
+      orgMembers = [];
       expect((await get(`/api/v1/agent-runs/limits?repoId=${REPO}`)).statusCode).toBe(404);
       expect(cfg.settingsCtx).toEqual([]);
     });
