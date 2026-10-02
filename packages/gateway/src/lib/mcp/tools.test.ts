@@ -216,6 +216,7 @@ interface Seen {
 
 async function build(options: {
   rateMax?: number;
+  hosts?: () => Promise<string[]>;
   key: TestKey;
   deps?: (d: ReturnType<typeof fakeVerifierDeps>) => void;
 }) {
