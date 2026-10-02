@@ -23,6 +23,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from './lib/betterAuthHandler.js';
+import { registerFormBodyParser } from './lib/formBody.js';
 import { mcpOAuthGate } from './lib/mcpOAuthGate.js';
 import { mcpOAuthGateOptions } from './lib/mcpOAuthGateOptions.js';
 import {
@@ -118,25 +119,7 @@ async function start() {
   // Raw body for HMAC webhook verification (opt-in per route)
   await app.register(fastifyRawBody, { encoding: 'utf8', global: false, runFirst: true });
 
-  // Accept HTML form posts (application/x-www-form-urlencoded) everywhere —
-  // without this Fastify 415s them before any handler runs, which is how the
-  // better-auth social sign-in buttons silently broke. The Slack routes
-  // (slash commands, interactivity) rely on this parser too.
-  app.addContentTypeParser(
-    'application/x-www-form-urlencoded',
-    { parseAs: 'string' },
-    (_req, body, done) => {
-      try {
-        const out: Record<string, string> = {};
-        for (const [k, v] of new URLSearchParams(body as string)) {
-          out[k] = v;
-        }
-        done(null, out);
-      } catch (err) {
-        done(err as Error);
-      }
-    }
-  );
+  registerFormBodyParser(app);
 
   await app.register(cookie);
 

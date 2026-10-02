@@ -13,7 +13,14 @@ vi.mock('./betterAuth.js', () => ({
 
 import { ipRateLimitKey } from '../plugins/auth.js';
 import { registerBetterAuthRoutes } from './betterAuthHandler.js';
-import { type McpGateSettings, type McpOAuthGateOptions, mcpOAuthGate } from './mcpOAuthGate.js';
+import { registerFormBodyParser } from './formBody.js';
+import { mcpIssuanceRefusal } from './mcpOAuth.js';
+import {
+  type McpGateSettings,
+  type McpOAuthGateOptions,
+  mcpOAuthGate,
+  narrowMetadata,
+} from './mcpOAuthGate.js';
 
 const RESOURCE = 'http://test.local/api/v1/mcp';
 const REDIRECT = 'http://127.0.0.1:33333/cb';
@@ -38,14 +45,7 @@ async function makeApp(initial: Partial<McpGateSettings> = {}): Promise<Harness>
     settingsError: false,
   };
   apps.push(h.app);
-  // Same urlencoded parser as the real app: it hands the gate an object.
-  h.app.addContentTypeParser(
-    'application/x-www-form-urlencoded',
-    { parseAs: 'string' },
-    (_r, body, done) => {
-      done(null, Object.fromEntries(new URLSearchParams(body as string)));
-    }
-  );
+  registerFormBodyParser(h.app); // the real app's parser: it also keeps the raw string
   await h.app.register(rateLimit, {
     keyGenerator: ipRateLimitKey,
     max: 1000,
@@ -143,7 +143,6 @@ describe('mcpOAuthGate: paths', () => {
     ['POST', '/api/auth/oauth2/revoke'],
     ['GET', '/api/auth/oauth2/public-client'],
     ['GET', '/api/auth/jwks'],
-    ['GET', '/api/auth/.well-known/oauth-authorization-server'],
     ['GET', '/.well-known/oauth-authorization-server/api/auth'],
   ])('mcp.enabled off: %s %s is 404 and never reaches better-auth', async (method, url) => {
     const h = await makeApp({ enabled: false });
@@ -163,7 +162,7 @@ describe('mcpOAuthGate: paths', () => {
       url: '/.well-known/oauth-authorization-server/api/auth',
     });
     expect(meta.statusCode).toBe(200);
-    expect(meta.json()).toEqual({ issuer: 'x' });
+    expect(meta.json()).toMatchObject({ issuer: 'x' });
     expect((await h.app.inject({ method: 'GET', url: '/api/auth/jwks' })).statusCode).toBe(200);
     expect(
       (await h.app.inject({ method: 'POST', payload: {}, url: '/api/auth/oauth2/revoke' }))
@@ -197,6 +196,7 @@ describe('mcpOAuthGate: paths', () => {
     '/api/auth/admin/oauth2/resources',
     '/api/auth/admin/oauth2/resources/x/clients/y',
     '/api/auth/.well-known/openid-configuration',
+    '/api/auth/.well-known/oauth-authorization-server',
     '/api/auth/token',
   ])('%s is 404', async (url) => {
     const h = await makeApp();
@@ -534,5 +534,175 @@ describe('mcpOAuthGate: registration', () => {
         })
       ).statusCode
     ).toBe(200);
+  });
+});
+
+const form = (h: Harness, method: 'POST', url: string, body: string) =>
+  h.app.inject({
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    method,
+    payload: body,
+    url,
+  });
+
+describe('mcpOAuthGate: POST /oauth2/authorize reads the body, so the gate does too', () => {
+  const AUTHORIZE = '/api/auth/oauth2/authorize';
+
+  it('refuses a POST whose body asks for write while its query says read', async () => {
+    const h = await makeApp();
+    const res = await form(
+      h,
+      'POST',
+      `${AUTHORIZE}?scope=mcp:read&resource=${encodeURIComponent(RESOURCE)}`,
+      authorizeQuery({ scope: 'mcp:read mcp:write' })
+    );
+    expect(res.statusCode).toBe(400);
+    expect(h.reached).toHaveLength(0);
+  });
+
+  it('refuses a body write scope while writes are off, even with a clean query', async () => {
+    const h = await makeApp();
+    const res = await form(h, 'POST', AUTHORIZE, authorizeQuery({ scope: 'mcp:read mcp:write' }));
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('invalid_scope');
+  });
+
+  it('refuses a POST with no scope in the body, which the plugin would fill from the client', async () => {
+    const h = await makeApp();
+    const res = await form(
+      h,
+      'POST',
+      `${AUTHORIZE}?scope=mcp:read`,
+      authorizeQuery({ scope: null })
+    );
+    expect(res.statusCode).toBe(400);
+    expect(h.reached).toHaveLength(0);
+  });
+
+  it('refuses a POST whose resource is only in the query, which the plugin would not see', async () => {
+    const h = await makeApp({ writeToolsEnabled: true });
+    const res = await form(
+      h,
+      'POST',
+      `${AUTHORIZE}?resource=${encodeURIComponent(RESOURCE)}`,
+      authorizeQuery({ resource: null })
+    );
+    expect(res.statusCode).toBe(400);
+    expect(h.reached).toHaveLength(0);
+  });
+
+  it('refuses scope or resource given more than once, in the query or the body', async () => {
+    const h = await makeApp({ writeToolsEnabled: true });
+    const get = (query: string) => h.app.inject({ method: 'GET', url: `${AUTHORIZE}?${query}` });
+    expect((await get(`${authorizeQuery()}&scope=mcp:read`)).statusCode).toBe(400);
+    expect((await get(`${authorizeQuery()}&resource=${RESOURCE}`)).statusCode).toBe(400);
+    expect(
+      (await form(h, 'POST', AUTHORIZE, `${authorizeQuery()}&scope=mcp:write`)).statusCode
+    ).toBe(400);
+    expect(
+      (await form(h, 'POST', AUTHORIZE, `${authorizeQuery()}&resource=${RESOURCE}`)).statusCode
+    ).toBe(400);
+    expect(h.reached).toHaveLength(0);
+  });
+
+  it('passes a well-formed POST', async () => {
+    const h = await makeApp();
+    expect((await form(h, 'POST', AUTHORIZE, authorizeQuery())).statusCode).toBe(200);
+  });
+
+  it('refuses a repeated resource at the token endpoint', async () => {
+    const h = await makeApp();
+    const res = await form(
+      h,
+      'POST',
+      '/api/auth/oauth2/token',
+      `grant_type=refresh_token&resource=${RESOURCE}&resource=${RESOURCE}`
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('invalid_target');
+  });
+});
+
+describe('mcpOAuthGate: an authorization resumed after sign-in', () => {
+  const signIn = (h: Harness) =>
+    h.app.inject({
+      method: 'POST',
+      payload: { email: 'a@b.c', oauth_query: authorizeQuery(), password: 'x' },
+      url: '/api/auth/sign-in/email',
+    });
+
+  it('drops the pending authorization while MCP is off, so sign-in just signs in', async () => {
+    const h = await makeApp({ enabled: false });
+    expect((await signIn(h)).statusCode).toBe(200);
+    expect(h.reached[0]?.body).toEqual({ email: 'a@b.c', password: 'x' });
+  });
+
+  it('leaves it alone while MCP is on', async () => {
+    const h = await makeApp();
+    await signIn(h);
+    expect(h.reached[0]?.body).toMatchObject({ oauth_query: expect.any(String) });
+  });
+});
+
+describe('mcpIssuanceRefusal', () => {
+  const on = { enabled: true, writeToolsEnabled: false };
+  it('allows an active account reading', () => {
+    expect(mcpIssuanceRefusal({ isActive: true }, ['mcp:read', 'offline_access'], on)).toBeNull();
+  });
+  it('refuses when MCP is off, the account is inactive or missing, or write is held while off', () => {
+    expect(
+      mcpIssuanceRefusal({ isActive: true }, ['mcp:read'], { ...on, enabled: false })
+    ).toBeTruthy();
+    expect(mcpIssuanceRefusal({ isActive: false }, ['mcp:read'], on)).toBeTruthy();
+    expect(mcpIssuanceRefusal({}, ['mcp:read'], on)).toBeTruthy();
+    expect(mcpIssuanceRefusal(null, ['mcp:read'], on)).toBeTruthy();
+    expect(mcpIssuanceRefusal({ isActive: true }, ['mcp:read', 'mcp:write'], on)).toBeTruthy();
+    expect(
+      mcpIssuanceRefusal({ isActive: true }, ['mcp:write'], { ...on, writeToolsEnabled: true })
+    ).toBeNull();
+  });
+});
+
+describe('discovery metadata', () => {
+  const provider = {
+    backchannel_logout_session_supported: true,
+    backchannel_logout_supported: true,
+    code_challenge_methods_supported: ['S256'],
+    introspection_endpoint: 'x',
+    introspection_endpoint_auth_methods_supported: ['client_secret_basic'],
+    issuer: 'i',
+    revocation_endpoint_auth_methods_supported: ['client_secret_basic'],
+    revocation_endpoint_auth_signing_alg_values_supported: ['RS256'],
+    token_endpoint_auth_methods_supported: ['none', 'client_secret_basic', 'private_key_jwt'],
+    token_endpoint_auth_signing_alg_values_supported: ['RS256'],
+  };
+
+  it('narrowMetadata drops what the gate refuses and keeps the rest', () => {
+    expect(narrowMetadata(provider)).toEqual({
+      code_challenge_methods_supported: ['S256'],
+      issuer: 'i',
+      revocation_endpoint_auth_methods_supported: ['none'],
+      token_endpoint_auth_methods_supported: ['none'],
+    });
+  });
+
+  it('is what the discovery route serves', async () => {
+    const h = await makeApp();
+    // the harness stub returns only { issuer }; replace it with a provider-shaped document
+    const app = Fastify();
+    apps.push(app);
+    await app.register(mcpOAuthGate, {
+      authServerMetadata: async () => new Response(JSON.stringify(provider), { status: 200 }),
+      getSessionUser: async () => null,
+      getSettings: async () => ({ enabled: true, writeToolsEnabled: false }),
+      resource: RESOURCE,
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/.well-known/oauth-authorization-server/api/auth',
+    });
+    expect(res.json().introspection_endpoint).toBeUndefined();
+    expect(res.json().token_endpoint_auth_methods_supported).toEqual(['none']);
+    expect(h.reached).toHaveLength(0);
   });
 });

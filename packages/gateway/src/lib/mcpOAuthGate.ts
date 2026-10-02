@@ -54,7 +54,6 @@ const ALLOWED_PATHS: ReadonlySet<string> = new Set([
   REGISTER,
   `${AUTH_BASE_PATH}/oauth2/revoke`,
   `${AUTH_BASE_PATH}/oauth2/public-client`,
-  `${AUTH_BASE_PATH}/.well-known/oauth-authorization-server`,
   `${AUTH_BASE_PATH}/jwks`,
 ]);
 
@@ -109,14 +108,46 @@ function isOAuthNamespace(rel: string): boolean {
 
 type FormBody = Record<string, unknown>;
 
+/**
+ * The discovery document the provider generates describes the provider; this server serves
+ * a subset of it. Drop what the gate refuses so a client that follows the document does not
+ * walk into a 404 or a rejected registration: introspection, back-channel logout, and every
+ * client authentication method but "none".
+ */
+export function narrowMetadata(doc: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...doc };
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('introspection_') || key.startsWith('backchannel_logout_')) {
+      delete out[key];
+    }
+  }
+  out.token_endpoint_auth_methods_supported = ['none'];
+  out.revocation_endpoint_auth_methods_supported = ['none'];
+  delete out.token_endpoint_auth_signing_alg_values_supported;
+  delete out.revocation_endpoint_auth_signing_alg_values_supported;
+  return out;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Query-string parameters plus any urlencoded body fields: what `authorize` and `token` read. */
-function requestParams(request: FastifyRequest): URLSearchParams {
+/** The query string's parameters. */
+function queryParams(request: FastifyRequest): URLSearchParams {
   const query = request.url.indexOf('?');
-  const params = new URLSearchParams(query === -1 ? '' : request.url.slice(query + 1));
+  return new URLSearchParams(query === -1 ? '' : request.url.slice(query + 1));
+}
+
+/**
+ * The body's parameters, with repeated keys intact when the body was urlencoded (the raw
+ * string is kept for exactly this). The OAuth token and authorize endpoints read the body
+ * and nothing else.
+ */
+function bodyParams(request: FastifyRequest): URLSearchParams {
+  if (request.rawFormBody !== undefined) {
+    return new URLSearchParams(request.rawFormBody);
+  }
+  const params = new URLSearchParams();
   if (isRecord(request.body)) {
     for (const [key, value] of Object.entries(request.body)) {
       for (const one of Array.isArray(value) ? value : [value]) {
@@ -200,15 +231,31 @@ export const mcpOAuthGate = fp<McpOAuthGateOptions>(
 
     app.addHook('preHandler', async (request, reply) => {
       const settings = settingsByRequest.get(request);
+      const path = rawPath(request.url);
       if (!settings) {
+        // The provider also resumes an authorization after sign-in, from any endpoint whose
+        // body carries `oauth_query`. With MCP off, sign-in must just sign in.
+        const folded = foldPath(path);
+        if (
+          folded.startsWith(`${AUTH_BASE_PATH}/`) &&
+          isRecord(request.body) &&
+          'oauth_query' in request.body
+        ) {
+          const current = await loadSettings(request, reply);
+          if (!current) {
+            return reply;
+          }
+          if (!current.enabled) {
+            delete request.body.oauth_query;
+          }
+        }
         return;
       }
-      const path = rawPath(request.url);
       if (path === REGISTER) {
         return hardenRegistration(request, reply);
       }
       if (path === TOKEN) {
-        return checkResources(reply, requestParams(request), { required: false });
+        return checkResources(reply, bodyParams(request), { required: false });
       }
       if (path === AUTHORIZE || path === CONSENT || path === CONTINUE) {
         return checkAuthorization(request, reply, path, settings);
@@ -222,6 +269,9 @@ export const mcpOAuthGate = fp<McpOAuthGateOptions>(
       { required }: { required: boolean }
     ) {
       const resources = params.getAll('resource');
+      if (resources.length > 1) {
+        return oauthError(reply, 400, 'invalid_target', 'resource must not be repeated');
+      }
       if (resources.length === 0 && required) {
         return oauthError(
           reply,
@@ -242,20 +292,23 @@ export const mcpOAuthGate = fp<McpOAuthGateOptions>(
 
     function checkScope(
       reply: FastifyReply,
-      scope: string | null,
+      scopes: string[],
       settings: McpGateSettings,
       { required }: { required: boolean }
     ) {
+      if (scopes.length > 1) {
+        return oauthError(reply, 400, 'invalid_request', 'scope must not be repeated');
+      }
       if (settings.writeToolsEnabled) {
         return;
       }
       // Without a `scope` the plugin grants the client's registered scopes, which for a
       // registration that listed `mcp:write` includes it. While writes are off there is
       // no way to say "everything but write" without a database read, so ask for a scope.
-      if (scope === null && required) {
+      if (scopes.length === 0 && required) {
         return oauthError(reply, 400, 'invalid_scope', 'A scope parameter is required');
       }
-      if (scope?.split(' ').includes(MCP_SCOPE_WRITE)) {
+      if (scopes[0]?.split(' ').includes(MCP_SCOPE_WRITE)) {
         return oauthError(reply, 400, 'invalid_scope', 'Write access is not enabled');
       }
     }
@@ -273,10 +326,23 @@ export const mcpOAuthGate = fp<McpOAuthGateOptions>(
         return oauthError(reply, 403, 'access_denied', 'This account is not active');
       }
       if (path === AUTHORIZE) {
-        const params = requestParams(request);
+        // The plugin reads the body of a POST and the query of a GET, never both. Check
+        // exactly what it will use, and refuse a POST that also carries the parameters the
+        // policy is about in its query, where the two could disagree.
+        const isPost = request.method === 'POST';
+        const query = queryParams(request);
+        if (isPost && (query.has('scope') || query.has('resource'))) {
+          return oauthError(
+            reply,
+            400,
+            'invalid_request',
+            'scope and resource belong in the body of a POST'
+          );
+        }
+        const params = isPost ? bodyParams(request) : query;
         return (
           checkResources(reply, params, { required: true }) ??
-          checkScope(reply, params.get('scope'), settings, { required: true })
+          checkScope(reply, params.getAll('scope'), settings, { required: true })
         );
       }
       // consent / continue carry the original authorization request, signed, as `oauth_query`.
@@ -286,14 +352,14 @@ export const mcpOAuthGate = fp<McpOAuthGateOptions>(
         const params = new URLSearchParams(original);
         const refused =
           checkResources(reply, params, { required: true }) ??
-          checkScope(reply, params.get('scope'), settings, { required: false });
+          checkScope(reply, params.getAll('scope'), settings, { required: false });
         if (refused) {
           return refused;
         }
       }
       // The scope the user narrows the grant to (consent only).
       if (typeof body.scope === 'string') {
-        return checkScope(reply, body.scope, settings, { required: false });
+        return checkScope(reply, [body.scope], settings, { required: false });
       }
     }
 
@@ -355,9 +421,12 @@ export const mcpOAuthGate = fp<McpOAuthGateOptions>(
       );
       reply.status(response.status);
       response.headers.forEach((value: string, key: string) => {
-        reply.header(key, value);
+        if (key !== 'content-length') {
+          reply.header(key, value);
+        }
       });
-      return reply.send(await response.text());
+      const text = await response.text();
+      return reply.send(response.ok ? JSON.stringify(narrowMetadata(JSON.parse(text))) : text);
     });
   },
   { fastify: '5.x', name: 'mcp-oauth-gate' }

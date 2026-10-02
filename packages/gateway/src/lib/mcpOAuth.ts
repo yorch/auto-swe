@@ -43,3 +43,34 @@ export function mcpIssuerFor(baseUrl: string): string {
 export function mcpResourceFor(baseUrl: string): string {
   return `${trimTrailingSlashes(baseUrl)}/api/v1/mcp`;
 }
+
+/** What a token may be issued under right now. */
+export interface McpIssuanceState {
+  enabled: boolean;
+  writeToolsEnabled: boolean;
+}
+
+/**
+ * Why a token must not be issued, or null when it may be.
+ *
+ * Authorization can be completed on paths the gate never sees (the plugin resumes it from
+ * the sign-in response), so the rules that bound a grant are also checked where every
+ * access token is minted, on the code and the refresh grant alike: the account is active,
+ * MCP is on, and `mcp:write` is held only while writes are enabled.
+ */
+export function mcpIssuanceRefusal(
+  user: Record<string, unknown> | null | undefined,
+  scopes: readonly string[],
+  state: McpIssuanceState
+): string | null {
+  if (!state.enabled) {
+    return 'MCP access is not enabled';
+  }
+  if (user?.isActive !== true) {
+    return 'This account is not active';
+  }
+  if (!state.writeToolsEnabled && scopes.includes(MCP_SCOPE_WRITE)) {
+    return 'Write access is not enabled';
+  }
+  return null;
+}

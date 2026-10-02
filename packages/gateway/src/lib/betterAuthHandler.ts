@@ -48,7 +48,10 @@ export function createBetterAuthHandler(): RouteHandlerMethod {
           url.pathname.startsWith(FORM_ONLY_PREFIX) &&
           request.headers['content-type']?.startsWith('application/x-www-form-urlencoded')
         ) {
-          body = new URLSearchParams(request.body as Record<string, string>).toString();
+          // Forward what was sent: the parsed object has already dropped repeated keys.
+          body =
+            request.rawFormBody ??
+            new URLSearchParams(request.body as Record<string, string>).toString();
         } else {
           body = JSON.stringify(request.body);
           headers.set('content-type', 'application/json');
