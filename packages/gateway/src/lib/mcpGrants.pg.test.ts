@@ -489,6 +489,30 @@ describe.skipIf(!enabled)('MCP grants against Postgres', () => {
       expect((await exchange(a, keptOther.code, keptOther.verifier)).statusCode).toBe(200);
     });
 
+    it('does not remove another user’s pending code for the same client, even one that mentions this user', async () => {
+      const a = await makeUser();
+      const b = await makeUser();
+      const clientId = await registerClient();
+      await connect(a.cookie, clientId);
+      const heldByB = await authorizeCode(b.cookie, clientId);
+      // The pre-filter on the user's id would catch B's code if it merely quoted A's id (a
+      // `state` the client chose, say); only the code's own owner may decide.
+      const row = await prisma.verification.findFirstOrThrow({
+        where: { value: { contains: b.id } },
+      });
+      const value = JSON.parse(row.value);
+      value.query.state = a.id;
+      await prisma.verification.update({
+        data: { value: JSON.stringify(value) },
+        where: { id: row.id },
+      });
+
+      await rest('DELETE', `/api/v1/me/mcp-grants/${clientId}`, a.id);
+
+      expect(await prisma.verification.count({ where: { id: row.id } })).toBe(1);
+      expect((await exchange(clientId, heldByB.code, heldByB.verifier)).statusCode).toBe(200);
+    });
+
     it('records the revocation when tokens outlived their consent, against the user', async () => {
       const user = await makeUser();
       const clientId = await registerClient();
