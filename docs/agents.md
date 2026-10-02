@@ -633,13 +633,15 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
-- **Node attribution needs the worker's workflow interceptor.** A worker started without
-  `workflowModules: [nodeTagInterceptor]` (every test harness that builds its own `Worker`) writes
-  traces with null `specNodeId`, and so does any activity not dispatched through the interpreter —
-  the non-runnable workflows, and the human-gate nodes, which dispatch no traced activity. Traces
-  written before the columns existed stay null; the run viewer falls back to the activity name,
-  lists such a trace under every node that runs that activity, and labels it ambiguous. It cannot
-  place one in a fan-out branch. Nothing backfills old rows.
+- **Node attribution needs the worker's workflow interceptor.** A worker built without
+  `workflowModules: [nodeTagInterceptor]` writes traces with null `specNodeId` — every test harness
+  that builds its own `Worker`, and a worker still running older code during a rolling deploy. So
+  does any activity not dispatched through the interpreter: the non-runnable workflows, and the
+  human-gate nodes, which dispatch no traced activity. Traces written before the columns existed
+  stay null and nothing backfills them. For those the run viewer falls back to the activity name:
+  it lists the trace under every node that runs that activity and labels it ambiguous when two or
+  more nodes do (and always when a fan-out branch is selected, since a fallback match cannot name a
+  branch). A fallback match with a single candidate node is shown unlabelled.
 - **`STEP_REQUIRED_AGENTS` drift is caught late in one direction.** A stale key — naming a step
   that no longer exists — fails `stepRequiredAgents.coverage.test.ts` in CI. A *missing* key, the
   damaging direction, cannot be inferred statically: one activity module hosts several activities,

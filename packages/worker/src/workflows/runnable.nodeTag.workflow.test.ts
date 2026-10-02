@@ -189,171 +189,191 @@ const tagOf = (r: Record<string, unknown>) => ({
 });
 
 describe('trace attribution through RunnableWorkflow', () => {
-  it('tags the trace of every dispatch kind with its spec node', async () => {
-    const result = await run(
-      'wf-tag-kinds',
-      makeSpec(
-        {
-          agentN: { agentRef: 'implementer', next: 'mcpN', type: 'agent' },
-          containerN: { image: 'alpine', next: 'shellN', type: 'containerStep' },
-          end: done,
-          evalN: {
-            next: 'containerN',
-            scorers: [{ expr: 'true', kind: 'assert' }],
-            target: { literal: 1 },
-            type: 'eval',
-          },
-          lintN: { next: 'agentN', step: 'runLint', type: 'step' },
-          mcpN: { connectionRef: 'conn', next: 'evalN', tool: 't', type: 'mcp' },
-          shellN: { command: 'true', image: 'alpine', next: 'end', type: 'shell' },
-        },
-        'lintN'
-      )
-    );
-    expect(result.status).toBe('SUCCESS');
-    const byNode = Object.fromEntries(
-      [
-        ['runLint', 'lintN'],
-        ['runAgentNode', 'agentN'],
-        ['mcpCallTool', 'mcpN'],
-        ['runEvalNode', 'evalN'],
-        ['runContainerStep', 'containerN'],
-        ['runShellStep', 'shellN'],
-      ].map(([activity, node]) => [activity, { first: byActivity(activity as string)[0], node }])
-    );
-    for (const [activity, { first, node }] of Object.entries(byNode)) {
-      expect(first, activity).toBeDefined();
-      expect(first?.specNodeId, activity).toBe(node);
-      expect(first?.recordingId, activity).toBe(node);
-      expect(first?.stepAttempt, activity).toBe(1);
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('tells two nodes that use the same step apart', async () => {
-    await run(
-      'wf-tag-same-step',
-      makeSpec(
-        {
-          end: done,
-          first: { next: 'second', step: 'runLint', type: 'step' },
-          second: { next: 'end', step: 'runLint', type: 'step' },
-        },
-        'first'
-      )
-    );
-    expect(byActivity('runLint').map((r) => r.specNodeId)).toEqual(['first', 'second']);
-  }, TEST_TIMEOUT_MS);
-
-  it('attributes each concurrent fan-out branch to its own recording id', async () => {
-    const items = Array.from({ length: 6 }, (_, i) => ({ id: String(i), ms: (6 - i) * 40 }));
-    const result = await run(
-      'wf-tag-fanout',
-      makeSpec(
-        {
-          branchDone: done,
-          done,
-          fan: {
-            concurrency: 6,
-            itemKey: 'subtask',
-            join: 'done',
-            over: { literal: items },
-            subgraph: 'impl',
-            type: 'fanOut',
-          },
-          impl: { next: 'branchDone', step: 'executeImplementation', type: 'step' },
-        },
-        'fan'
-      )
-    );
-    expect(result.status).toBe('SUCCESS');
-    const impl = byActivity('executeImplementation');
-    expect(impl).toHaveLength(6);
-    // The branch index is the item id, so a crossed tag shows up as a mismatch.
-    expect(impl.map((r) => r.recordingId).sort()).toEqual(
-      items.map((i) => `fan[${i.id}]/impl`).sort()
-    );
-    for (const r of impl) {
-      expect(r.specNodeId).toBe('impl');
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('keeps nested fan-out branches apart', async () => {
-    await run(
-      'wf-tag-nested',
-      makeSpec(
-        {
-          branchDone: done,
-          done,
-          impl: { next: 'branchDone', step: 'executeImplementation', type: 'step' },
-          inner: {
-            concurrency: 2,
-            itemKey: 'subtask',
-            join: 'branchDone',
-            over: {
-              literal: [
-                { id: 'x', ms: 60 },
-                { id: 'y', ms: 0 },
-              ],
+  it(
+    'tags the trace of every dispatch kind with its spec node',
+    async () => {
+      const result = await run(
+        'wf-tag-kinds',
+        makeSpec(
+          {
+            agentN: { agentRef: 'implementer', next: 'mcpN', type: 'agent' },
+            containerN: { image: 'alpine', next: 'shellN', type: 'containerStep' },
+            end: done,
+            evalN: {
+              next: 'containerN',
+              scorers: [{ expr: 'true', kind: 'assert' }],
+              target: { literal: 1 },
+              type: 'eval',
             },
-            subgraph: 'impl',
-            type: 'fanOut',
+            lintN: { next: 'agentN', step: 'runLint', type: 'step' },
+            mcpN: { connectionRef: 'conn', next: 'evalN', tool: 't', type: 'mcp' },
+            shellN: { command: 'true', image: 'alpine', next: 'end', type: 'shell' },
           },
-          outer: {
-            concurrency: 2,
-            itemKey: 'subtask',
-            join: 'done',
-            over: { literal: [1, 2] },
-            subgraph: 'inner',
-            type: 'fanOut',
+          'lintN'
+        )
+      );
+      expect(result.status).toBe('SUCCESS');
+      const byNode = Object.fromEntries(
+        [
+          ['runLint', 'lintN'],
+          ['runAgentNode', 'agentN'],
+          ['mcpCallTool', 'mcpN'],
+          ['runEvalNode', 'evalN'],
+          ['runContainerStep', 'containerN'],
+          ['runShellStep', 'shellN'],
+        ].map(([activity, node]) => [activity, { first: byActivity(activity as string)[0], node }])
+      );
+      for (const [activity, { first, node }] of Object.entries(byNode)) {
+        expect(first, activity).toBeDefined();
+        expect(first?.specNodeId, activity).toBe(node);
+        expect(first?.recordingId, activity).toBe(node);
+        expect(first?.stepAttempt, activity).toBe(1);
+      }
+    },
+    TEST_TIMEOUT_MS
+  );
+
+  it(
+    'tells two nodes that use the same step apart',
+    async () => {
+      await run(
+        'wf-tag-same-step',
+        makeSpec(
+          {
+            end: done,
+            first: { next: 'second', step: 'runLint', type: 'step' },
+            second: { next: 'end', step: 'runLint', type: 'step' },
           },
-        },
-        'outer'
-      )
-    );
-    expect(
-      byActivity('executeImplementation')
-        .map((r) => r.recordingId)
-        .sort()
-    ).toEqual([
-      'outer[0]/inner[0]/impl',
-      'outer[0]/inner[1]/impl',
-      'outer[1]/inner[0]/impl',
-      'outer[1]/inner[1]/impl',
-    ]);
-  }, TEST_TIMEOUT_MS);
+          'first'
+        )
+      );
+      expect(byActivity('runLint').map((r) => r.specNodeId)).toEqual(['first', 'second']);
+    },
+    TEST_TIMEOUT_MS
+  );
 
-  it('keeps the node across Temporal retries and counts interpreter retries', async () => {
-    await run(
-      'wf-tag-mcp-retry',
-      makeSpec(
-        {
-          end: done,
-          mcpN: { connectionRef: 'conn', next: 'end', tool: 't', type: 'mcp' },
-        },
-        'mcpN'
-      )
-    );
-    // Temporal's retry of one dispatch: same node, same interpreter attempt.
-    expect(byActivity('mcpCallTool').map(tagOf)).toEqual([
-      { attempt: 1, recording: 'mcpN', spec: 'mcpN', step: 1 },
-      { attempt: 2, recording: 'mcpN', spec: 'mcpN', step: 1 },
-    ]);
+  it(
+    'attributes each concurrent fan-out branch to its own recording id',
+    async () => {
+      const items = Array.from({ length: 6 }, (_, i) => ({ id: String(i), ms: (6 - i) * 40 }));
+      const result = await run(
+        'wf-tag-fanout',
+        makeSpec(
+          {
+            branchDone: done,
+            done,
+            fan: {
+              concurrency: 6,
+              itemKey: 'subtask',
+              join: 'done',
+              over: { literal: items },
+              subgraph: 'impl',
+              type: 'fanOut',
+            },
+            impl: { next: 'branchDone', step: 'executeImplementation', type: 'step' },
+          },
+          'fan'
+        )
+      );
+      expect(result.status).toBe('SUCCESS');
+      const impl = byActivity('executeImplementation');
+      expect(impl).toHaveLength(6);
+      // The branch index is the item id, so a crossed tag shows up as a mismatch.
+      expect(impl.map((r) => r.recordingId).sort()).toEqual(
+        items.map((i) => `fan[${i.id}]/impl`).sort()
+      );
+      for (const r of impl) {
+        expect(r.specNodeId).toBe('impl');
+      }
+    },
+    TEST_TIMEOUT_MS
+  );
 
-    rows.length = 0;
-    await run('wf-tag-retry', {
-      ...makeSpec(
-        {
-          end: done,
-          flaky: { next: 'end', onFail: { retry: 1 }, step: 'runLint', type: 'step' },
-        },
-        'flaky'
-      ),
-      name: 'node-tag-retry',
-    });
-    // The interpreter re-dispatches: a fresh Temporal attempt 1, interpreter attempt 2.
-    expect(byActivity('runLint').map(tagOf)).toEqual([
-      { attempt: 1, recording: 'flaky', spec: 'flaky', step: 1 },
-      { attempt: 1, recording: 'flaky', spec: 'flaky', step: 2 },
-    ]);
-  }, TEST_TIMEOUT_MS);
+  it(
+    'keeps nested fan-out branches apart',
+    async () => {
+      await run(
+        'wf-tag-nested',
+        makeSpec(
+          {
+            branchDone: done,
+            done,
+            impl: { next: 'branchDone', step: 'executeImplementation', type: 'step' },
+            inner: {
+              concurrency: 2,
+              itemKey: 'subtask',
+              join: 'branchDone',
+              over: {
+                literal: [
+                  { id: 'x', ms: 60 },
+                  { id: 'y', ms: 0 },
+                ],
+              },
+              subgraph: 'impl',
+              type: 'fanOut',
+            },
+            outer: {
+              concurrency: 2,
+              itemKey: 'subtask',
+              join: 'done',
+              over: { literal: [1, 2] },
+              subgraph: 'inner',
+              type: 'fanOut',
+            },
+          },
+          'outer'
+        )
+      );
+      expect(
+        byActivity('executeImplementation')
+          .map((r) => r.recordingId)
+          .sort()
+      ).toEqual([
+        'outer[0]/inner[0]/impl',
+        'outer[0]/inner[1]/impl',
+        'outer[1]/inner[0]/impl',
+        'outer[1]/inner[1]/impl',
+      ]);
+    },
+    TEST_TIMEOUT_MS
+  );
+
+  it(
+    'keeps the node across Temporal retries and counts interpreter retries',
+    async () => {
+      await run(
+        'wf-tag-mcp-retry',
+        makeSpec(
+          {
+            end: done,
+            mcpN: { connectionRef: 'conn', next: 'end', tool: 't', type: 'mcp' },
+          },
+          'mcpN'
+        )
+      );
+      // Temporal's retry of one dispatch: same node, same interpreter attempt.
+      expect(byActivity('mcpCallTool').map(tagOf)).toEqual([
+        { attempt: 1, recording: 'mcpN', spec: 'mcpN', step: 1 },
+        { attempt: 2, recording: 'mcpN', spec: 'mcpN', step: 1 },
+      ]);
+
+      rows.length = 0;
+      await run('wf-tag-retry', {
+        ...makeSpec(
+          {
+            end: done,
+            flaky: { next: 'end', onFail: { retry: 1 }, step: 'runLint', type: 'step' },
+          },
+          'flaky'
+        ),
+        name: 'node-tag-retry',
+      });
+      // The interpreter re-dispatches: a fresh Temporal attempt 1, interpreter attempt 2.
+      expect(byActivity('runLint').map(tagOf)).toEqual([
+        { attempt: 1, recording: 'flaky', spec: 'flaky', step: 1 },
+        { attempt: 1, recording: 'flaky', spec: 'flaky', step: 2 },
+      ]);
+    },
+    TEST_TIMEOUT_MS
+  );
 });
