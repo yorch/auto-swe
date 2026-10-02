@@ -32,7 +32,10 @@ the dashboard at **Settings → API tokens**, or with
 
 ```
 run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
-                                     Submit a work request and start a run on the default template
+    [--idempotency-key=<key>]
+                                     Submit a work request and start a run on the default template;
+                                     with --idempotency-key a retried submission returns the run it
+                                     already started instead of a second one
 
 agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|draft_pr]
           [--max-steps=N] [--timeout=SECONDS] [--wait]

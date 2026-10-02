@@ -6,6 +6,7 @@ import { missingValue, parseFlags } from '../lib/flags.js';
 const SUB_HELP = `auto-swe run — submit a work request
 
   run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
+      [--idempotency-key=<key>]
 
   FLAGS
     --ticket=<id>           External ticket ID (e.g. JIRA-123, GH-42)
@@ -14,6 +15,9 @@ const SUB_HELP = `auto-swe run — submit a work request
     --description=<text>    What the agent should implement
     --budget=STANDARD|LARGE|EPIC
                             Budget tier for the run (default: STANDARD)
+    --idempotency-key=<key> Make a retried submission return the run it already started
+                            instead of a second one (same key, same ticket, repo and
+                            description; a key is scoped to you)
 
   The run uses the repository's team default template (or the global default).
   To start a specific template with an arbitrary payload, use \`workflows run\`.
@@ -27,6 +31,8 @@ const SUB_HELP = `auto-swe run — submit a work request
 interface WorkRequestResponse {
   workRequestId: string;
   workflowIds: string[];
+  /** Present (true) when an `Idempotency-Key` replay returned an earlier submission. */
+  deduplicated?: boolean;
 }
 
 /** Page size for the repository lookup — the list endpoint's maximum. */
@@ -81,7 +87,15 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   }
 
   const { flags } = parseFlags(args);
-  const bare = missingValue(flags, 'ticket', 'description', 'repo', 'repo-id', 'budget');
+  const bare = missingValue(
+    flags,
+    'ticket',
+    'description',
+    'repo',
+    'repo-id',
+    'budget',
+    'idempotency-key'
+  );
   if (bare) {
     process.stderr.write(`--${bare} requires a value\n`);
     return 1;
@@ -153,9 +167,19 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     externalTicketId: flags.ticket,
     repoIds: [resolvedRepoId],
   };
-  const result = await apiRequest<WorkRequestResponse>(env, 'POST', '/api/v1/work-requests', body);
+  const result = await apiRequest<WorkRequestResponse>(
+    env,
+    'POST',
+    '/api/v1/work-requests',
+    body,
+    flags['idempotency-key'] ? { 'Idempotency-Key': flags['idempotency-key'] } : undefined
+  );
 
-  process.stdout.write(`Work request submitted.\n`);
+  process.stdout.write(
+    result.deduplicated
+      ? `Work request already submitted with this idempotency key; nothing new started.\n`
+      : `Work request submitted.\n`
+  );
   process.stdout.write(`  Work request:    ${result.workRequestId}\n`);
   process.stdout.write(`  Active workflow: ${result.workflowIds.join(', ')}\n`);
   process.stdout.write(`  Ticket:          ${flags.ticket}\n`);

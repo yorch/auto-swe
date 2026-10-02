@@ -110,7 +110,7 @@ packages/
 | `src/plugins/prisma.ts`, `src/plugins/temporal.ts` | Decorate `fastify.prisma` / `fastify.temporal` |
 | `src/lib/betterAuth.ts` | better-auth instance — email+password, GitHub/Google OAuth, Okta SSO (OIDC), magic-link, cookie sessions |
 | `src/lib/workflowLaunch.ts` | `launchTrackedWorkflow` — the single launch path; every route that starts a run goes through it. Writes the `RunInput` (+ `ActiveWorkflow`, when the launch keeps one) in one transaction, **then** starts the Temporal workflow, deleting the rows if the start fails. The unique index on `ActiveWorkflow.temporalWorkflowId` is the atomic dedup gate, so a run cannot execute without a ledger row to attribute its spend and PRs to. |
-| `src/lib/idempotency.ts` | `Idempotency-Key` support for the two generic triggers — hashes the caller's key into a deterministic workflow ID so the dedup gate above has something stable to fire on |
+| `src/lib/idempotency.ts` | `Idempotency-Key` support for the two generic triggers — hashes the caller's key into a deterministic workflow ID so the dedup gate above has something stable to fire on. `POST /work-requests` reuses only its header schema: it keeps its ticket-derived workflow ID and stores the key on `RunInput` (unique per submitter) instead — see [product overview](./product-overview.md) |
 | `src/lib/github.ts` | GitHub webhook HMAC verification + the paginated repository listing behind repo import (plain `fetch`; the gateway carries no Octokit) |
 | `src/lib/slack.ts` | Slack request-signature verification + Web API helpers (post a message, publish App Home, open a view) |
 | `src/routes/slack.ts` | Slack slash-command, events, and interactive handlers (mounted at `/api/v1/auth/slack`) |
