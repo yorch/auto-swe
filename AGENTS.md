@@ -161,7 +161,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "64 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "72 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -317,7 +317,12 @@ null = 15 s / 60 s).
 They are environment variables, so changing GitHub, Google, or Okta OAuth credentials means
 restarting the gateway. Okta is registered
 through better-auth's `genericOAuth` plugin, whose `init` fetches the OIDC discovery document once
-at startup — so the issuer is read at boot too, not per sign-in.
+at startup — so the issuer is read at boot too, not per sign-in. The same goes for the OAuth
+authorization server MCP clients use (`jwt` + `oauthProvider` in `buildAuth`): its issuer, resource,
+scopes and token lifetimes derive from `BETTER_AUTH_URL` / `CORS_ORIGIN` at boot. Its operator switches
+(`mcp.enabled`, `mcp.writeToolsEnabled`) are registry settings read per request by
+`lib/mcpOAuthGate.ts`, so those need no restart. That gate is the only place that decides which
+`/api/auth/oauth2/*` endpoints exist; a new better-auth OAuth endpoint is 404 until it is allowlisted there.
 
 **Per-user GitHub credentials** (`ConnectionCredential`, off unless `github.userCredentialsEnabled`)
 let a user's own token stand in for the platform credential on runs **they launched**. Two rules

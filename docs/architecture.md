@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 64 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 72 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Generated `init` baseline, a hand-written constraints/indexes migration, and appended migrations for later changes |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -409,6 +409,16 @@ deactivation applies before the token expires. Changing a user's role or active 
 user's cached sessions and bearer state on the node that made the change at once; other gateway
 nodes pick it up when their cache entries expire.
 
+**MCP clients** authenticate against a fourth component, an OAuth 2.1 authorization server that is part
+of the gateway: better-auth's OAuth provider and `jwt` plugin, served under `/api/auth/oauth2/*` and
+published at `/.well-known/oauth-authorization-server/api/auth`. It issues short-lived JWT access tokens
+whose audience is the MCP resource (`{BETTER_AUTH_URL}/api/v1/mcp`), signed with a key distinct from the
+REST API's, so a token from one is not valid on the other. A Fastify plugin in front of better-auth
+(`mcpOAuthGate.ts`) decides which provider endpoints exist, who may authorize and what a client may
+register; the operator switches are the registry settings `mcp.enabled` and `mcp.writeToolsEnabled`. The
+tables it uses are the eight `oauth*` and `jwks` models. Details, and what it does not do, are in
+[oauth-setup.md](./oauth-setup.md#the-platform-as-an-oauth-server-for-mcp-clients).
+
 **Authorization** is declarative on the `requireAuth` hook. Platform roles are
 `ENGINEER < LEAD < ADMIN`. `requiredTeamRole` resolves team membership from a route's team param;
 `requiredOrgRole` resolves `OrganizationMembership` from its `:orgId` param and checks
@@ -434,7 +444,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 64 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 72 models.
 
 ```mermaid
 erDiagram
