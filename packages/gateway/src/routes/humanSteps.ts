@@ -139,6 +139,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: ListQuery, response: { 200: StepListResponseSchema } },
     },
