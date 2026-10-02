@@ -75,6 +75,8 @@ Notes:
 - **One GitHub provider.** GHE sign-in replaces github.com sign-in: both use the single `github` provider id and cannot coexist on one gateway.
 - **Email linking.** A sign-in links onto an existing user with the same verified email, so enable GHE sign-in only for an instance whose email verification you trust.
 - **Invalid Base URL.** A Base URL that is not an `http` or `https` URL registers no GitHub sign-in; the gateway logs the reason and the login page hides the button.
+- **A GitHub App's credentials also work, with one permission.** A GitHub App's user token ignores the scopes the gateway requests, so the App must be granted **Account permissions → Email addresses → Read-only**. Without it GHE answers `403` to `/user/emails` and sign-in is refused. An OAuth App needs no such setting.
+- **When sign-in fails.** The login page shows a short message. The detail is in the gateway log, for example `GitHub Enterprise sign-in refused for ghe.example.com: GET /user/emails answered 403; Resource not accessible by integration; needs emails=read`: GHE's own message and the permission it says the token needed. The log never contains the access token.
 
 ### Production-only extras
 
