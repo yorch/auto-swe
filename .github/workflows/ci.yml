@@ -229,3 +229,12 @@ jobs:
         env:
           MCP_OAUTH_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/mcp/tools.pg.test.ts
+
+      # The write tools: the concurrency cap is a count taken under a per-user
+      # advisory lock inside the transaction that writes the ledger rows, which
+      # only parallel requests against a real database can exercise. Its own
+      # step, as it wipes the same OAuth tables and settings as the suites above.
+      - name: MCP write tools (database-backed tests)
+        env:
+          MCP_OAUTH_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/mcp/writeTools.pg.test.ts
