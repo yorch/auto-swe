@@ -156,7 +156,8 @@ const INTENDED_CHANGES: Record<
   // The two templates that ended the run on the first CI failure now fix and retry like
   // their siblings, in addition to the setCompleted removal above.
   'consensus-review': {
-    apply: (g: WorkflowSpec) => withCiFixLoop(
+    apply: (g: WorkflowSpec) =>
+      withCiFixLoop(
         removePassThrough(g, 'setCompleted'),
         'fanOutReview',
         g.description.replace(
@@ -169,7 +170,8 @@ const INTENDED_CHANGES: Record<
       're-enters the two-reviewer consensus (up to 3 attempts) instead of failing the run',
   },
   'four-eyes': {
-    apply: (g: WorkflowSpec) => withCiFixLoop(
+    apply: (g: WorkflowSpec) =>
+      withCiFixLoop(
         removePassThrough(g, 'setCompleted'),
         'setReviewing',
         g.description.replace(

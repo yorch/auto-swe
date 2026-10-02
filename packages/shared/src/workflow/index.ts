@@ -39,8 +39,6 @@ export {
   estimateSpecCost,
 } from './costEstimator.js';
 export { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
-export { CONSENSUS_REVIEW_SPEC } from './templates/consensusReview.js';
-export { FOUR_EYES_SPEC } from './templates/fourEyes.js';
 export type { Context } from './expr.js';
 export {
   evalBoolean,
@@ -117,6 +115,8 @@ export {
   listSteps,
   MCP_TOOL_KEY,
 } from './stepRegistry.js';
+export { CONSENSUS_REVIEW_SPEC } from './templates/consensusReview.js';
+export { FOUR_EYES_SPEC } from './templates/fourEyes.js';
 export type {
   ValidateSpecOptions,
   ValidationIssue,

@@ -171,62 +171,63 @@ const GATES = {
   },
 } as const;
 
-describe.each(
-  Object.keys(GATES) as Array<keyof typeof GATES>
-)('%s fixes and retries on a CI failure', (name) => {
-  const gate = GATES[name];
+describe.each(Object.keys(GATES) as Array<keyof typeof GATES>)(
+  '%s fixes and retries on a CI failure',
+  (name) => {
+    const gate = GATES[name];
 
-  it('runs the CI fixer, re-reviews the fix, re-pushes, and succeeds once CI passes', async () => {
-    useTemplate(name);
-    const handle = await start(`wf-ci-fix-once-${name}`);
-    await gate.signOff(handle, 1);
-    await ciResult(handle, 1, false);
-    // The fixed code goes back through the gate before it is pushed again.
-    await gate.signOff(handle, 2);
-    await ciResult(handle, 2, true);
-    const result = (await handle.result()) as { prNumber?: number; status: string };
+    it('runs the CI fixer, re-reviews the fix, re-pushes, and succeeds once CI passes', async () => {
+      useTemplate(name);
+      const handle = await start(`wf-ci-fix-once-${name}`);
+      await gate.signOff(handle, 1);
+      await ciResult(handle, 1, false);
+      // The fixed code goes back through the gate before it is pushed again.
+      await gate.signOff(handle, 2);
+      await ciResult(handle, 2, true);
+      const result = (await handle.result()) as { prNumber?: number; status: string };
 
-    expect(result.status).toBe('SUCCESS');
-    expect(result.prNumber).toBe(42);
-    expect(events).toEqual([
-      'implement',
-      ...gate.perPass,
-      'pushPr',
-      'fetchLogs',
-      'ciFix',
-      ...gate.perPass,
-      'pushPr',
-    ]);
-    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
-  }, 120_000);
+      expect(result.status).toBe('SUCCESS');
+      expect(result.prNumber).toBe(42);
+      expect(events).toEqual([
+        'implement',
+        ...gate.perPass,
+        'pushPr',
+        'fetchLogs',
+        'ciFix',
+        ...gate.perPass,
+        'pushPr',
+      ]);
+      expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
+    }, 120_000);
 
-  it('fails the run after the same limit as the siblings when CI keeps failing', async () => {
-    useTemplate(name);
-    const handle = await start(`wf-ci-fix-limit-${name}`);
-    await gate.signOff(handle, 1);
-    await ciResult(handle, 1, false);
-    await gate.signOff(handle, 2);
-    await ciResult(handle, 2, false);
-    await gate.signOff(handle, 3);
-    await ciResult(handle, 3, false);
-    const result = (await handle.result()) as { prNumber?: number; status: string };
+    it('fails the run after the same limit as the siblings when CI keeps failing', async () => {
+      useTemplate(name);
+      const handle = await start(`wf-ci-fix-limit-${name}`);
+      await gate.signOff(handle, 1);
+      await ciResult(handle, 1, false);
+      await gate.signOff(handle, 2);
+      await ciResult(handle, 2, false);
+      await gate.signOff(handle, 3);
+      await ciResult(handle, 3, false);
+      const result = (await handle.result()) as { prNumber?: number; status: string };
 
-    // Three CI failures: two fix attempts, then the third failure is terminal.
-    expect(result.status).toBe('FAILED');
-    expect(result.prNumber).toBe(42);
-    expect(count('ciFix')).toBe(2);
-    expect(count('pushPr')).toBe(3);
-    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
-  }, 120_000);
+      // Three CI failures: two fix attempts, then the third failure is terminal.
+      expect(result.status).toBe('FAILED');
+      expect(result.prNumber).toBe(42);
+      expect(count('ciFix')).toBe(2);
+      expect(count('pushPr')).toBe(3);
+      expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+    }, 120_000);
 
-  it('does not fix anything when CI passes the first time', async () => {
-    useTemplate(name);
-    const handle = await start(`wf-ci-pass-${name}`);
-    await gate.signOff(handle, 1);
-    await ciResult(handle, 1, true);
-    const result = (await handle.result()) as { status: string };
+    it('does not fix anything when CI passes the first time', async () => {
+      useTemplate(name);
+      const handle = await start(`wf-ci-pass-${name}`);
+      await gate.signOff(handle, 1);
+      await ciResult(handle, 1, true);
+      const result = (await handle.result()) as { status: string };
 
-    expect(result.status).toBe('SUCCESS');
-    expect(events).toEqual(['implement', ...gate.perPass, 'pushPr']);
-  }, 120_000);
-});
+      expect(result.status).toBe('SUCCESS');
+      expect(events).toEqual(['implement', ...gate.perPass, 'pushPr']);
+    }, 120_000);
+  }
+);
