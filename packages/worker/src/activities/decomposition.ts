@@ -18,7 +18,8 @@ import type {
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
 import { buildImplementerForActivity } from '../agents/implementer.js';
-import { mastraRuntime, runImplementerTurn } from '../agents/implementerRuntime.js';
+import { runImplementerTurn } from '../agents/implementerRuntime.js';
+import { selectImplementerRuntime } from '../agents/implementerRuntimeSelect.js';
 import { MERGE_CONFLICT_RESOLVER_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import {
@@ -525,19 +526,32 @@ async function mergeOneWithResolver(
       `resolver attempt ${attempt}/${opts.maxAttempts} for ${source}: ${conflictedFiles.length} files`
     );
 
-    const { agent, promptSuffix, closeMcp, maxSteps } = await buildImplementerForActivity(
+    const built = await buildImplementerForActivity(
       workspace,
       opts.tracer,
       activityCtx,
       'mergeConflictResolver'
     );
-    const fullSystemPrompt = systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
+    const { closeMcp } = built;
     // Declared out here so the catch can trace the request. Built inside the
-    // try: reading the payloads can throw, and the MCP client is already open.
+    // try: choosing the runtime and reading the payloads can throw, and the MCP
+    // client is already open.
+    let fullSystemPrompt = systemPrompt;
     let userMessage = '';
     let calledModel = false;
     const start = Date.now();
     try {
+      const { promptSuffix, runtime } = await selectImplementerRuntime({
+        agent: built.agent,
+        agentKey: 'mergeConflictResolver',
+        ctx: activityCtx,
+        maxSteps: built.maxSteps,
+        promptSuffix: built.promptSuffix,
+        skills: built.skills,
+        tracer: opts.tracer,
+        workspace,
+      });
+      fullSystemPrompt = systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
       userMessage = JSON.stringify({
         attempt,
         conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
@@ -550,7 +564,7 @@ async function mergeOneWithResolver(
       await runImplementerTurn({
         context: { attempt, source },
         role: 'mergeConflictResolver',
-        runtime: mastraRuntime(agent, maxSteps),
+        runtime,
         system: fullSystemPrompt,
         tracer: opts.tracer,
         usageEvent: `llm.resolve_conflict.${source}.attempt_${attempt}`,

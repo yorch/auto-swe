@@ -14,7 +14,8 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { buildImplementerForActivity } from '../agents/implementer.js';
-import { mastraRuntime, runImplementerTurn } from '../agents/implementerRuntime.js';
+import { runImplementerTurn } from '../agents/implementerRuntime.js';
+import { selectImplementerRuntime } from '../agents/implementerRuntimeSelect.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentAttempt, currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
@@ -166,15 +167,21 @@ export async function executeImplementation(
     // the tracer captures every call. promptSuffix carries prompt-fragment
     // skills to append to the system prompt.
     const activityCtx = await currentRequestContext();
-    const {
-      agent,
-      promptSuffix,
-      closeMcp: cm,
-      maxSteps,
+    const built = await buildImplementerForActivity(workspace, tracer, activityCtx);
+    const { skills } = built;
+    closeMcp = built.closeMcp;
+    // The runtime — the Mastra loop or the Claude Code harness — decides how skills
+    // reach the prompt, so the suffix comes back from it.
+    const { promptSuffix, runtime } = await selectImplementerRuntime({
+      agent: built.agent,
+      agentKey: 'implementer',
+      ctx: activityCtx,
+      maxSteps: built.maxSteps,
+      promptSuffix: built.promptSuffix,
       skills,
-    } = await buildImplementerForActivity(workspace, tracer, activityCtx);
-    closeMcp = cm;
-    const runtime = mastraRuntime(agent, maxSteps);
+      tracer,
+      workspace,
+    });
 
     tracer.addActivityEvent({
       name: 'skills.loaded',

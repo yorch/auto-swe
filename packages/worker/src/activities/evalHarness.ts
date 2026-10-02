@@ -20,7 +20,8 @@ import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { createImplementerAgent } from '../agents/implementer.js';
-import { mastraRuntime, runImplementerTurn } from '../agents/implementerRuntime.js';
+import { runImplementerTurn } from '../agents/implementerRuntime.js';
+import { selectImplementerRuntime } from '../agents/implementerRuntimeSelect.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -187,9 +188,22 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
       model
     );
     closeMcp = built.closeMcp;
+    // Chosen once for the whole case, like production: the same runtime the
+    // setting gives a real run is the one an eval must grade, and a runtime that
+    // resumes its session across iterations must not be rebuilt per iteration.
+    const { promptSuffix, runtime } = await selectImplementerRuntime({
+      agent: built.agent,
+      agentKey: parsed.key,
+      ctx,
+      maxSteps: agentSettings['workspace.agentMaxSteps'],
+      promptSuffix: built.promptSuffix,
+      skills: resolved.skills,
+      tracer,
+      workspace,
+    });
 
     const basePrompt = resolved.model.systemPrompt ?? IMPLEMENTER_SYSTEM_PROMPT;
-    const systemPrompt = built.promptSuffix ? `${basePrompt}\n\n${built.promptSuffix}` : basePrompt;
+    const systemPrompt = promptSuffix ? `${basePrompt}\n\n${promptSuffix}` : basePrompt;
     const taskDescription =
       typeof caseRow.input === 'string' ? caseRow.input : JSON.stringify(caseRow.input);
 
@@ -206,7 +220,7 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
         boundModelSpec: resolved.model.spec,
         context: { caseId: caseRow.id, iteration: i, ref },
         role: parsed.key,
-        runtime: mastraRuntime(built.agent, agentSettings['workspace.agentMaxSteps']),
+        runtime,
         system: systemPrompt,
         tracer,
         usageEvent,

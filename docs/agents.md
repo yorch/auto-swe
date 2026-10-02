@@ -294,6 +294,80 @@ command is covered the same as a passing one.
   the tool falls back to a bounded truncation of the output. It never throws on a failed offload and
   never hands the model the full, unbounded result.
 
+### 3.7 Runtimes: Mastra and the Claude Code harness
+
+**Files:** `packages/worker/src/agents/implementerRuntimeSelect.ts`, `agents/claudeCode/`
+
+The loop that drives an implementer turn is chosen by the run-pinned `workspace.implementerRuntime`
+setting (`mastra` by default; `claude-code`). It applies to the implementer, the CI / review / gate
+fixers, the merge-conflict resolver and eval replays — everything that goes through
+`runImplementerTurn`. The setting is `ADMIN`-only because it decides what runs inside the trust
+boundary, and run-pinned because a run that began on one runtime must not finish on the other.
+
+Both runtimes sit behind the same `ImplementerRuntime` interface: it drives one turn and reports
+text, tool-call count and usage. Usage accounting, the advisory output scan and the trace row stay
+in `runImplementerTurn`, so a turn is metered and traced identically whichever loop ran it. Our own
+outer loop — TDD iterations, the test run, commit, push, the diff scans — is unchanged.
+
+**How the harness runs.** The Claude Agent SDK runs in the worker. The `claude` binary runs in the
+workspace container, started through `docker exec -i` with the SDK's `spawnClaudeCodeProcess`. The
+SDK's `PreToolUse` hook runs in the worker, so every tool call is decided there, by `decideToolCall`
+(`claudeCode/policy.ts`), before the harness executes it:
+
+| Tool | Worker-side policy |
+|---|---|
+| `Bash` | audit line with secrets redacted, then `scanShellCommand` (soft block) |
+| `Write`, `Edit` | path confined to the checkout, `checkSensitiveFilePath` (hard block), then the pre-write content check on the inserted text (CRITICAL blocks; lower severities allow with a warning returned to the model) |
+| `Read`, `Glob`, `Grep` | confined to the checkout and the harness's own `.claude` directory; a glob may not be absolute or contain `..` |
+| anything else | refused |
+
+The tools are the same capability as the four Mastra workspace tools under Claude Code's names:
+`toolKeys`, `loadSkill` and the `mcp` binding do not apply. A scanner that cannot complete throws and
+the call is refused. Decisions are granted explicitly (`permissionMode: 'default'` with a hook
+`allow`); `bypassPermissions` is not used, and the harness refuses it as root anyway. Refusals and
+warnings carry the same `AgentTrace.error` tags (`SECURITY_TRACE_ERRORS`) as the Mastra tools, so the
+security-events view counts them.
+
+**Model access.** The harness runs on the model and decrypted credential the Mastra runtime would
+have used for the same Agent, and only for `anthropic/<model>` specs — Claude Code speaks the
+Anthropic Messages API. A credential's `apiBase` is how a deployment sends the harness through its
+own gateway (for example Kong); a trailing `/v1`, which the AI SDK spelling includes, is stripped
+because the harness appends it. The credential reaches the container as `ANTHROPIC_API_KEY`, named on
+the `docker exec` command line without a value so it never appears in `ps`. The base URL is also
+pinned through the SDK's highest-priority settings layer, so a repository's own `.claude/settings.json`
+cannot redirect the key to another host.
+
+**Repository configuration.** The repository's `CLAUDE.md` and `.claude` settings apply
+(`settingSources: ['project']`), so a flow ported from a developer machine behaves as it did there.
+
+**Skills.** The Mastra loop discloses skills through a `loadSkill` tool; the harness has none, so it
+receives each skill's text inline in the system prompt. A prompt over 100 000 characters is staged as
+a file in the container, because it travels on a command line capped at 128 KiB per argument.
+
+**Usage.** The harness reports usage per model as running totals, and a resumed session starts from
+its saved totals, so a turn records the change since the last. Each model is priced at its own spec
+(a harness may delegate small tasks to a cheaper model), and cache reads and writes count as input
+tokens.
+
+**Sessions and cleanup.** Turns after the first resume the same session, so a TDD loop keeps its
+context and prompt cache. Every process the harness starts carries the exec tag
+(`AUTO_SWE_EXEC_ID`), and the tag is killed after every turn: `docker exec` does not stop what it
+started when its client dies, so a cancelled or timed-out turn would otherwise leave the harness and
+its children running.
+
+**Container requirements.** The runtime copies the binary in at first use, choosing the variant for
+the container's architecture and libc, and installs `bash` on Alpine (Claude Code's shell tool needs
+it and busybox `sh` is not enough). The SDK ships a binary per platform as an optional dependency;
+`.yarnrc.yml` sets `supportedArchitectures` so both libc variants for the build architecture are
+installed and end up in the worker image. An executor image with neither `bash` nor `apk`, or on an
+architecture the worker was not built for, fails the turn without retrying.
+
+**Testing.** `runtime.docker.test.ts` runs the real runtime against a real container and a mock
+Messages API, with no API key: `CLAUDE_CODE_DOCKER_TEST=1 yarn vitest run
+packages/worker/src/agents/claudeCode/runtime.docker.test.ts`. It needs the Docker registry and
+Alpine's package mirror, so it is run on demand and is not part of the CI gate that image
+publishing depends on.
+
 ---
 
 ## 4. The Review Network
@@ -644,6 +718,37 @@ Writes cut a new immutable `version`.
   it lists the trace under every node that runs that activity and labels it ambiguous when two or
   more nodes do (and always when a fan-out branch is selected, since a fallback match cannot name a
   branch). A fallback match with a single candidate node is shown unlabelled.
+- **The Claude Code harness holds a model credential inside the workspace container.** The agent
+  runs as root on a network with unrestricted egress, so anything it runs can read the key and send
+  it elsewhere; a repository's settings cannot move where the harness itself sends it, but the
+  agent's own commands can. The blast radius is whatever the key can spend. Point the credential at
+  a gateway key scoped to that run's budget, and enable `workspace.implementerRuntime` only where
+  that is acceptable. Minting a key per run is not built.
+- **A repository's own hooks and settings run inside the container.** With project settings
+  loaded, a repository can ship shell hooks and permission rules. They execute in the untrusted
+  container and cannot override the worker-side decision on a tool call (a deny wins), but they
+  can run code at session start and shape what the model is told.
+- **The harness ignores `toolKeys` and the `mcp` binding.** It gets the six fixed tools; MCP servers
+  an Agent references are not passed to it, and there is no sub-agent, web or plugin tool.
+- **`Edit` is content-checked on the inserted text only,** not on the whole resulting file, and
+  `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
+  evade them.
+- **Harness usage is metered conservatively and priced by the model it names.** Cache reads and
+  writes count as input tokens, which overstates cost and never understates it. The budget is
+  checked before a turn and accrued after it, so one turn can overshoot by up to its step budget; the
+  SDK's own cost cap is not used because it is a client-side estimate. A model the harness picks that
+  has no catalog price records $0 with a warning; the organization-USD-cap guard checks only the
+  Agent's configured model.
+- **The harness runs unattended.** Anything not allowed by the worker policy is refused, and the
+  interactive question tool is not offered, so a flow that depends on asking the user needs a human
+  node instead.
+- **The session lives and dies with the workspace.** Its transcript is inside the container, which is
+  destroyed after the activity, so a Temporal retry starts a fresh session rather than resuming.
+- **Anthropic models only, and API-key authentication only.** Anthropic does not allow a third-party
+  product to offer claude.ai login, so subscription credentials are not supported.
+- **The worker image carries two native binaries (about 240 MB each),** and `supportedArchitectures`
+  also installs the musl variants of every other native dependency, which adds about half a gigabyte
+  to a `yarn install`.
 - **`STEP_REQUIRED_AGENTS` drift is caught late in one direction.** A stale key — naming a step
   that no longer exists — fails `stepRequiredAgents.coverage.test.ts` in CI. A *missing* key, the
   damaging direction, cannot be inferred statically: one activity module hosts several activities,

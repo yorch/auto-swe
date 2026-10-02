@@ -148,6 +148,7 @@ describe('run pinning', () => {
     expect(snapshot).toEqual({
       'workflow.fanoutConcurrency': 8,
       'workflow.maxTransitions': 500,
+      'workspace.implementerRuntime': 'mastra',
     });
   });
 });
