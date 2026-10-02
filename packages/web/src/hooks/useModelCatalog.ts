@@ -86,20 +86,59 @@ export function useDeleteCatalogEntry() {
   });
 }
 
-/** What one provider lists that nothing prices — or why it could not be listed. */
-export interface ProviderDiscovery {
+/** A flag the discovery run stored. Neither kind changes the catalog or any price. */
+export interface ModelSuggestion {
+  id: string;
   provider: string;
-  ok: boolean;
-  error?: string;
-  models: Array<{ spec: string; modelId: string; kind: ModelKind; displayName: string | null }>;
+  modelId: string;
+  spec: string;
+  /** NEW: listed by a provider, priced by nothing. RETIREMENT_CANDIDATE: priced here, no longer listed. */
+  type: 'NEW' | 'RETIREMENT_CANDIDATE';
+  kind: ModelKind;
+  displayName: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  dismissedAt: string | null;
 }
 
-/// On demand: the gateway calls each GLOBAL provider credential's list-models
-/// endpoint. It writes nothing, so there is nothing to invalidate.
-export function useDiscoverModels() {
+/** When a provider was last asked, and why it gave no answer. */
+export interface DiscoveryProviderStatus {
+  provider: string;
+  checkedAt: string;
+  lastSuccessAt: string | null;
+  error: string | null;
+}
+
+/// What the scheduled (or last on-demand) discovery run stored.
+export function useModelSuggestions(includeDismissed: boolean) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: { suggestions: ModelSuggestion[]; providers: DiscoveryProviderStatus[] } }>(
+          `${BASE}/suggestions${includeDismissed ? '?includeDismissed=true' : ''}`
+        )
+        .then((r) => r.data),
+    queryKey: ['model-catalog-suggestions', includeDismissed],
+  });
+}
+
+export function useDismissSuggestion() {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: () =>
-      api.post<{ data: ProviderDiscovery[] }>(`${BASE}/discover`, {}).then((r) => r.data),
+    mutationFn: ({ id, dismiss }: { id: string; dismiss: boolean }) =>
+      api.post(`${BASE}/suggestions/${id}/${dismiss ? 'dismiss' : 'undismiss'}`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['model-catalog-suggestions'] }),
+  });
+}
+
+/// "Check providers now": the gateway calls each GLOBAL provider credential's
+/// list-models endpoint and refreshes the stored suggestions, as the schedule
+/// does. It writes no catalog row, so only the suggestions are refetched.
+export function useDiscoverModels() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post(`${BASE}/discover`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['model-catalog-suggestions'] }),
   });
 }
 

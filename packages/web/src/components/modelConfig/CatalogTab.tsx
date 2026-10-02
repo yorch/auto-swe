@@ -18,8 +18,11 @@ import {
   type CatalogEntryInput,
   useCreateCatalogEntry,
   useDeleteCatalogEntry,
+  type ModelSuggestion,
   useDiscoverModels,
+  useDismissSuggestion,
   useModelCatalog,
+  useModelSuggestions,
   useResetCatalogEntry,
   useUnpricedModels,
   useUpdateCatalogEntry,
@@ -33,6 +36,7 @@ import {
   type ModelKind,
   type ModelStatus,
 } from '@/lib/modelCatalog';
+import { formatDate } from '@/lib/utils';
 
 /** What an "Add model" starts from: blank, an unpriced spec, or a discovered model. */
 interface NewEntryDraft {
@@ -66,7 +70,7 @@ export function CatalogTab() {
   return (
     <div className="space-y-6">
       <UnpricedPanel onAdd={(spec) => setCreating(splitSpec(spec))} />
-      <DiscoveryPanel cataloged={entries ?? []} onAdd={setCreating} />
+      <DiscoveryPanel cataloged={entries ?? []} onAdd={setCreating} onEdit={setEditing} />
       <Card>
         <CardHeader>
           <CardTitle eyebrow="Model catalog">Prices per million tokens</CardTitle>
@@ -256,80 +260,162 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
   );
 }
 
-/// On demand: what each configured provider lists that nothing prices. Results
-/// are suggestions — adding one is still an admin entering its price.
+/// What the discovery run stored: models a provider lists that nothing prices,
+/// and priced ones it no longer lists. The run is scheduled; "Check providers
+/// now" runs it on demand. Both are suggestions — adding one is still an admin
+/// entering its price, and nothing here retires a model.
 function DiscoveryPanel({
   cataloged,
   onAdd,
+  onEdit,
 }: {
   cataloged: ModelCatalogEntry[];
   onAdd: (draft: NewEntryDraft) => void;
+  onEdit: (entry: ModelCatalogEntry) => void;
 }) {
+  const [showDismissed, setShowDismissed] = useState(false);
+  const { data, error } = useModelSuggestions(showDismissed);
   const discover = useDiscoverModels();
-  // Drop a model the moment it is added, without asking the providers again.
-  const known = new Set(cataloged.map(entrySpec));
+  const dismiss = useDismissSuggestion();
+  // Drop a model the moment it is added, without waiting for the next run.
+  const bySpec = new Map(cataloged.map((e) => [entrySpec(e), e]));
+  const fresh = (data?.suggestions ?? []).filter((s) => s.type === 'NEW' && !bySpec.has(s.spec));
+  const retired = (data?.suggestions ?? []).filter(
+    (s) => s.type === 'RETIREMENT_CANDIDATE' && bySpec.has(s.spec)
+  );
+  const failed = (data?.providers ?? []).filter((p) => p.error);
+  const lastChecked = (data?.providers ?? []).reduce<string | null>(
+    (latest, p) => (latest && latest > p.checkedAt ? latest : p.checkedAt),
+    null
+  );
+
+  const dismissButton = (s: ModelSuggestion) => (
+    <Button
+      disabled={dismiss.isPending}
+      onClick={() => dismiss.mutate({ dismiss: s.dismissedAt === null, id: s.id })}
+      size="sm"
+      variant="ghost"
+    >
+      {s.dismissedAt === null ? 'Dismiss' : 'Restore'}
+    </Button>
+  );
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle eyebrow="New from providers">Models the catalog lacks</CardTitle>
-        <Button disabled={discover.isPending} onClick={() => discover.mutate()} size="sm">
-          {discover.isPending ? 'Checking…' : 'Check providers for new models'}
-        </Button>
-      </CardHeader>
-      <p className="mb-4 text-xs text-paper-500">
-        Lists models through each global provider credential and shows the ones nothing prices.
-        Nothing is added until you add it — with its price.
-      </p>
-      {discover.error && <Alert>{errMsg(discover.error, 'Could not check providers')}</Alert>}
-      {discover.data?.length === 0 && (
-        <p className="text-xs text-paper-500">No global provider credentials to check.</p>
-      )}
-      {discover.data?.map((p) => {
-        const fresh = p.models.filter((m) => !known.has(m.spec));
-        return (
-          <div className="mb-4" key={p.provider}>
-            <div className="mb-1 font-mono text-xs text-paper-300">{p.provider}</div>
-            {!p.ok ? (
-              <p className="text-xs text-brick-400">Could not list models: {p.error}</p>
-            ) : fresh.length === 0 ? (
-              <p className="text-xs text-paper-500">Nothing new — every listed model is priced.</p>
-            ) : (
-              <Table>
-                <tbody>
-                  {fresh.map((m) => (
-                    <TRow key={m.spec}>
-                      <Td className="py-1.5">
-                        <div className="font-mono text-xs">{m.spec}</div>
-                        {m.displayName && (
-                          <div className="text-[11px] text-paper-500">{m.displayName}</div>
-                        )}
-                      </Td>
-                      <Td className="py-1.5 text-xs">{m.kind.toLowerCase()}</Td>
-                      <Td className="py-1.5 text-right">
-                        <Button
-                          onClick={() =>
-                            onAdd({
-                              displayName: m.displayName,
-                              kind: m.kind,
-                              modelId: m.modelId,
-                              provider: p.provider,
-                            })
-                          }
-                          size="sm"
-                          variant="ghost"
-                        >
-                          Add
-                        </Button>
-                      </Td>
-                    </TRow>
-                  ))}
-                </tbody>
-              </Table>
-            )}
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle eyebrow="New from providers">Models the catalog lacks</CardTitle>
+          <div className="flex items-center gap-4">
+            <ToggleSwitch
+              checked={showDismissed}
+              label="Show dismissed"
+              onChange={() => setShowDismissed((v) => !v)}
+            />
+            <Button disabled={discover.isPending} onClick={() => discover.mutate()} size="sm">
+              {discover.isPending ? 'Checking…' : 'Check providers now'}
+            </Button>
           </div>
-        );
-      })}
-    </Card>
+        </CardHeader>
+        <p className="mb-4 text-xs text-paper-500">
+          Providers are asked on a schedule, through each global provider credential. Nothing is
+          added to the catalog until you add it — with its price.{' '}
+          {lastChecked
+            ? `Last checked ${formatDate(lastChecked)}.`
+            : 'No provider has been checked yet.'}
+        </p>
+        {error && <Alert>{errMsg(error, 'Could not load suggestions')}</Alert>}
+        {discover.error && <Alert>{errMsg(discover.error, 'Could not check providers')}</Alert>}
+        {failed.map((p) => (
+          <p className="mb-2 text-xs text-brick-400" key={p.provider}>
+            {p.provider}: could not list models ({p.error}) at {formatDate(p.checkedAt)}.{' '}
+            {p.lastSuccessAt
+              ? `Its suggestions are from ${formatDate(p.lastSuccessAt)}.`
+              : 'It has never been listed.'}
+          </p>
+        ))}
+        {data && fresh.length === 0 ? (
+          <p className="text-xs text-paper-500">Nothing new — every listed model is priced.</p>
+        ) : (
+          <Table>
+            <tbody>
+              {fresh.map((m) => (
+                <TRow key={m.id}>
+                  <Td className="py-1.5">
+                    <div className={`font-mono text-xs ${m.dismissedAt ? 'text-paper-500' : ''}`}>
+                      {m.spec}
+                    </div>
+                    {m.displayName && (
+                      <div className="text-[11px] text-paper-500">{m.displayName}</div>
+                    )}
+                  </Td>
+                  <Td className="py-1.5 text-xs">{m.kind.toLowerCase()}</Td>
+                  <Td className="py-1.5 text-xs text-paper-500">
+                    first seen {formatDate(m.firstSeenAt)}
+                  </Td>
+                  <Td className="py-1.5 text-right">
+                    <Button
+                      onClick={() =>
+                        onAdd({
+                          displayName: m.displayName,
+                          kind: m.kind,
+                          modelId: m.modelId,
+                          provider: m.provider,
+                        })
+                      }
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Add
+                    </Button>
+                    {dismissButton(m)}
+                  </Td>
+                </TRow>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
+
+      {retired.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle eyebrow="Possibly retired">Priced, but no longer listed</CardTitle>
+          </CardHeader>
+          <p className="mb-4 text-xs text-paper-500">
+            A provider whose listing succeeded no longer lists these. Nothing is retired for you: a
+            pinned agent version may still bill against one, and a provider may serve an alias it
+            does not list. Edit the row to mark it deprecated or retired, or dismiss the flag.
+          </p>
+          <Table>
+            <tbody>
+              {retired.map((m) => (
+                <TRow key={m.id}>
+                  <Td className="py-1.5 font-mono text-xs">{m.spec}</Td>
+                  <Td className="py-1.5 text-xs text-paper-500">
+                    not listed since {formatDate(m.firstSeenAt)}
+                  </Td>
+                  <Td className="py-1.5 text-right">
+                    <Button
+                      onClick={() => {
+                        const entry = bySpec.get(m.spec);
+                        if (entry) {
+                          onEdit(entry);
+                        }
+                      }}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Edit
+                    </Button>
+                    {dismissButton(m)}
+                  </Td>
+                </TRow>
+              ))}
+            </tbody>
+          </Table>
+        </Card>
+      )}
+    </>
   );
 }
 
