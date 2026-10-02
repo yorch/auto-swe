@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { create } from 'zustand';
 import { api } from '@/lib/api';
 import { API_BASE, COOKIE_ACCESS_TOKEN, COOKIE_SESSION_MARKER } from '@/lib/config';
+import { resumeUrl } from '@/lib/mcpConsent';
 import { gatewayUnreachableMessage } from '@/lib/networkErrors';
 
 /**
@@ -28,8 +29,12 @@ interface AuthState {
   /** Email+password sign-in via better-auth (`/api/auth/sign-in/email`).
    *  Establishes the session cookie; subsequent API calls authenticate via
    *  `credentials: 'include'` exactly like the social / magic-link flows.
-   *  (ARCH-4: the legacy hand-rolled /api/v1/auth/login was removed.) */
-  login: (email: string, password: string) => Promise<void>;
+   *  (ARCH-4: the legacy hand-rolled /api/v1/auth/login was removed.)
+   *
+   *  `oauthQuery` is the signed query of an MCP client's pending authorization (see
+   *  `signedOAuthQuery`). The server then answers the sign-in with where the authorization
+   *  continues, and that URL is returned; otherwise the result is null. */
+  login: (email: string, password: string, oauthQuery?: string) => Promise<string | null>;
   /** Resolve the active session from a better-auth cookie. Used after the
    *  social / magic-link callback lands back on /login?bridge=1 — no JWT
    *  is minted; instead the gateway authenticates every subsequent API
@@ -150,12 +155,17 @@ async function betterAuthRedirect(
   path: string,
   provider: SocialProviderId,
   callbackPath: string,
-  fallback: string
+  fallback: string,
+  oauthQuery?: string
 ): Promise<void> {
   if (typeof window === 'undefined') {
     return;
   }
-  const body = { callbackURL: `${window.location.origin}${callbackPath}`, provider };
+  const body = {
+    callbackURL: `${window.location.origin}${callbackPath}`,
+    ...(oauthQuery ? { oauth_query: oauthQuery } : {}),
+    provider,
+  };
   const raw = await betterAuthPost(path, body, fallback);
   const parsed = BetterAuthRedirectSchema.safeParse(raw);
   if (!parsed.success || !parsed.data.url) {
@@ -263,11 +273,15 @@ export const useAuthStore = create<AuthState>((set) => ({
       `Could not link ${provider} account`
     ),
 
-  login: async (email, password) => {
+  login: async (email, password, oauthQuery) => {
     let res: Response;
     try {
       res = await fetch(`${API_BASE}/api/auth/sign-in/email`, {
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email,
+          password,
+          ...(oauthQuery ? { oauth_query: oauthQuery } : {}),
+        }),
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         method: 'POST',
@@ -284,6 +298,9 @@ export const useAuthStore = create<AuthState>((set) => ({
         parsed.success && parsed.data.message ? parsed.data.message : 'Invalid email or password'
       );
     }
+    // With a pending authorization the response says where it continues (the consent page,
+    // or the app's own redirect when consent already exists).
+    const signedIn: unknown = oauthQuery ? await res.json().catch(() => null) : null;
     const probe = await fetchBetterAuthSession();
     if (probe.status !== 'authenticated') {
       throw new Error('Sign-in succeeded but no session was established — try again.');
@@ -291,6 +308,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     setSessionMarkerCookie();
     await api.refreshToken();
     set({ isAuthenticated: true, user: probe.user });
+    const parsed = BetterAuthRedirectSchema.safeParse(signedIn);
+    return parsed.success ? resumeUrl(parsed.data.url) : null;
   },
 
   logout: async () => {
@@ -337,12 +356,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     );
   },
 
-  signInWithProvider: async (provider) =>
+  signInWithProvider: async (provider, oauthQuery) =>
     betterAuthRedirect(
       '/api/auth/sign-in/social',
       provider,
       '/login?bridge=1',
-      `Could not start ${provider} sign-in`
+      `Could not start ${provider} sign-in`,
+      oauthQuery
     ),
   user: null,
 }));

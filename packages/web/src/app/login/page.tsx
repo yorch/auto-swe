@@ -12,6 +12,7 @@ import { isOkResponse, probeGateway } from '@/hooks/useGatewayStatus';
 import { api } from '@/lib/api';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
+import { signedOAuthQuery } from '@/lib/oauthQuery';
 import { safeRedirectPath } from '@/lib/safeRedirect';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
 
@@ -92,6 +93,11 @@ function LoginPageInner() {
     searchParams.get('redirect'),
     typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
   );
+
+  // An MCP client's authorization that sent the user here to sign in: the signed part of
+  // this page's own query. Sign-in resumes it, so the user lands on the consent screen
+  // instead of the dashboard.
+  const oauthQuery = signedOAuthQuery(searchParams.toString());
 
   const [tab, setTab] = useState<Tab>('magic');
   const [providers, setProviders] = useState<ProviderFlags>({
@@ -217,7 +223,16 @@ function LoginPageInner() {
     setInfo('');
     setLoading(true);
     try {
-      await login(email, password);
+      const resume = await login(email, password, oauthQuery);
+      if (resume) {
+        // An account still awaiting approval may not authorize anything.
+        if (useAuthStore.getState().user?.isActive === false) {
+          setPendingEmail(email);
+          return;
+        }
+        window.location.assign(resume);
+        return;
+      }
       router.push(destination);
     } catch (err: unknown) {
       setError(errMsg(err, 'Login failed'));
@@ -257,7 +272,7 @@ function LoginPageInner() {
       // the page unloads. It also disables both social buttons for the
       // duration of the fetch — a double-click would mint two OAuth states
       // and the second's state cookie would break the first's callback.
-      await signInWithProvider(provider);
+      await signInWithProvider(provider, oauthQuery);
     } catch (err: unknown) {
       setError(errMsg(err, `Could not start ${provider} sign-in`));
       setLoading(false);
@@ -468,6 +483,14 @@ function LoginPageInner() {
         {info && (
           <Alert className="mb-4" variant="success">
             {info}
+          </Alert>
+        )}
+
+        {oauthQuery && tab === 'magic' && (
+          <Alert className="mb-4" variant="warning">
+            An app is waiting for you to sign in. A magic link cannot continue that connection: sign
+            in with a password or a provider instead, or start the connection again from the app
+            after the link signs you in.
           </Alert>
         )}
 

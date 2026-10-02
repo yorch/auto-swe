@@ -595,6 +595,7 @@ __metadata:
   resolution: "@auto-swe/web@workspace:packages/web"
   dependencies:
     "@auto-swe/shared": "workspace:*"
+    "@better-auth/oauth-provider": "npm:1.7.7"
     "@tailwindcss/postcss": "npm:4.3.3"
     "@tanstack/react-query": "npm:5.104.0"
     "@testing-library/dom": "npm:10.4.2"

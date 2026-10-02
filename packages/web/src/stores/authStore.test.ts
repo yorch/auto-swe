@@ -107,3 +107,72 @@ describe('authStore.checkAuth', () => {
     expect(hasMarkerCookie()).toBe(true);
   });
 });
+
+describe('authStore.login hand-off to an MCP authorization', () => {
+  const SESSION = {
+    session: { expiresAt: '2099-01-01T00:00:00.000Z', id: 's1' },
+    user: { email: 'a@b.c', id: 'u2', isActive: true, role: 'ENGINEER' },
+  };
+
+  function stubSignIn(signInBody: unknown) {
+    const spy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/sign-in/email')) {
+        return jsonResponse(200, signInBody);
+      }
+      if (url.endsWith('/api/auth/get-session')) {
+        return jsonResponse(200, SESSION);
+      }
+      if (url.endsWith('/api/v1/auth/session-token')) {
+        return jsonResponse(200, { data: { accessToken: 'jwt-1' } });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', spy);
+    return spy;
+  }
+
+  const signInBody = (spy: ReturnType<typeof stubSignIn>) => {
+    const call = spy.mock.calls.find(([u]) => String(u).endsWith('/sign-in/email'));
+    return JSON.parse(String((call?.[1] as RequestInit | undefined)?.body));
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    // biome-ignore lint/suspicious/noDocumentCookie: test teardown
+    document.cookie = `${COOKIE_SESSION_MARKER}=; path=/; max-age=0`;
+  });
+
+  it('sends the signed query with the sign-in and returns where the authorization continues', async () => {
+    const spy = stubSignIn({
+      redirect: true,
+      url: 'http://localhost:3000/oauth/consent?client_id=c1',
+    });
+
+    const next = await useAuthStore.getState().login('a@b.c', 'pw', 'client_id=c1&sig=abc');
+
+    expect(signInBody(spy)).toEqual({
+      email: 'a@b.c',
+      oauth_query: 'client_id=c1&sig=abc',
+      password: 'pw',
+    });
+    expect(next).toBe('http://localhost:3000/oauth/consent?client_id=c1');
+    // The dashboard session is still established before leaving.
+    expect(useAuthStore.getState().isAuthenticated).toBe(true);
+    expect(hasMarkerCookie()).toBe(true);
+  });
+
+  it('sends nothing extra, and returns null, for an ordinary sign-in', async () => {
+    const spy = stubSignIn({ redirect: false, url: 'http://localhost:3000/ignored' });
+
+    const next = await useAuthStore.getState().login('a@b.c', 'pw');
+
+    expect(signInBody(spy)).toEqual({ email: 'a@b.c', password: 'pw' });
+    expect(next).toBeNull();
+  });
+
+  it('never navigates to a URL that would run script', async () => {
+    stubSignIn({ redirect: true, url: 'javascript:alert(1)' });
+    expect(await useAuthStore.getState().login('a@b.c', 'pw', 'client_id=c1&sig=abc')).toBeNull();
+  });
+});
