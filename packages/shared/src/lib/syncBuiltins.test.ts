@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
@@ -224,6 +227,105 @@ describe('syncBuiltins — templates', () => {
     expect(par.activeVersion).toBe(1);
   });
 });
+
+describe('syncBuiltins — rolling the helper-built templates out', () => {
+  const goldenDir = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../workflow/templates/__golden__'
+  );
+  const golden = (name: string): unknown =>
+    JSON.parse(readFileSync(path.join(goldenDir, `${name}.json`), 'utf8'));
+
+  /** A database seeded by the release BEFORE the templates were rewritten. */
+  async function seedFromPreviousRelease() {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    for (const t of BUILTIN_TEMPLATES) {
+      const row = template(tables, t.name);
+      (versionsOf(tables, row.id)[0] as Row).spec = golden(t.name);
+    }
+    return { prisma, tables };
+  }
+
+  it('appends one new version per template, leaves the old ones untouched, and moves each template onto the new one', async () => {
+    const { prisma, tables } = await seedFromPreviousRelease();
+    await seedSweStarter(prisma);
+    for (const t of BUILTIN_TEMPLATES) {
+      const row = template(tables, t.name);
+      const versions = versionsOf(tables, row.id);
+      expect(
+        versions.map((v) => v.version),
+        t.name
+      ).toEqual([1, 2]);
+      // v1 is the previous release's flat spec: a run pinned to it keeps its graph.
+      expect(versions[0]?.spec, t.name).toEqual(golden(t.name));
+      expect(versions[1]?.spec, t.name).toEqual(t.spec);
+      expect(row.activeVersion, t.name).toBe(2);
+    }
+  });
+
+  it('the seven templates that lose their setCompleted node lose it only in the new version', async () => {
+    const { prisma, tables } = await seedFromPreviousRelease();
+    await seedSweStarter(prisma);
+    const hadIt = BUILTIN_TEMPLATES.filter((t) => 'setCompleted' in (golden(t.name) as Spec).nodes);
+    expect(hadIt.map((t) => t.name).sort()).toEqual([
+      'agent-reviewed-pr',
+      'code-and-ci',
+      'consensus-review',
+      'default-engineering',
+      'dependency-update',
+      'four-eyes',
+      'pr-approval-gate',
+    ]);
+    for (const t of hadIt) {
+      const [v1, v2] = versionsOf(tables, template(tables, t.name).id) as [Row, Row];
+      expect('setCompleted' in (v1.spec as Spec).nodes, t.name).toBe(true);
+      expect('setCompleted' in (v2.spec as Spec).nodes, t.name).toBe(false);
+    }
+  });
+
+  it('is a no-op once rolled out, and for a stored spec that differs only in key order', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    // Postgres `jsonb` does not keep key order, so what is read back is the same spec with its
+    // keys (and the nodes map) in another order. That alone must not look like a change.
+    const reverse = (v: unknown): unknown =>
+      Array.isArray(v)
+        ? v.map(reverse)
+        : v && typeof v === 'object'
+          ? Object.fromEntries(
+              Object.entries(v)
+                .reverse()
+                .map(([k, x]) => [k, reverse(x)])
+            )
+          : v;
+    for (const t of BUILTIN_TEMPLATES) {
+      (versionsOf(tables, template(tables, t.name).id)[0] as Row).spec = reverse(t.spec);
+    }
+    const before = tables.workflowTemplateVersion.length;
+    await seedSweStarter(prisma);
+    expect(tables.workflowTemplateVersion).toHaveLength(before);
+  });
+
+  it('leaves a template an admin moved off the built-in on their own version', async () => {
+    const { prisma, tables } = await seedFromPreviousRelease();
+    const row = template(tables, 'agent-reviewed-pr');
+    tables.workflowTemplateVersion.push({
+      createdBy: 'user-1',
+      generatedBy: null,
+      id: 'admin-v2',
+      spec: { mine: true },
+      templateId: row.id,
+      version: 2,
+    });
+    row.activeVersion = 2;
+    await seedSweStarter(prisma);
+    expect(versionsOf(tables, row.id).map((v) => v.version)).toEqual([1, 2, 3]);
+    expect(row.activeVersion).toBe(2);
+  });
+});
+
+type Spec = { nodes: Record<string, unknown> };
 
 describe('syncBuiltins — agents and skill refs', () => {
   const assigned = BUILTIN_SKILLS.find((s) => s.assignments.length > 0);
