@@ -117,7 +117,7 @@ async function build(
           costUsdAccrued: '0',
           endedAt: null,
           id: Array.isArray(entry) ? entry[0] : entry,
-          launchedById: Array.isArray(entry) ? entry[1] : TEST_USER,
+          isMine: Array.isArray(entry) ? entry[1] === TEST_USER : true,
           startedAt: '2026-10-01T10:00:00.000Z',
           status: 'RUNNING',
           templateName: 'Default',
@@ -435,8 +435,27 @@ describe('the write tools', () => {
       expect(json.result.structuredContent.status).toBe('PARTIAL');
       expect(json.result.structuredContent.runIds).toEqual([RUN_ID]);
       expect(json.result.structuredContent.notCancelled).toEqual([
-        { reason: 'Launched by someone else; cancel it with its own runId.', runId: OTHER },
+        { reason: 'Not launched by you; cancel it with its own runId.', runId: OTHER },
       ]);
+    });
+
+    it.each([
+      [401, 'TOKEN_INVALID'],
+      [403, 'INSUFFICIENT_SCOPE'],
+      [403, 'MCP_WRITE_DISABLED'],
+      [429, 'MCP_WRITE_RATE_LIMITED'],
+    ])('stops on %i %s and reports the rest as not attempted', async (status, code) => {
+      const s = await setup();
+      const SECOND = '99999999-9999-4999-8999-999999999999';
+      s.listed.runs = [RUN_ID, SECOND];
+      s.route.status = status;
+      s.route.body = { error: { code, message: `internal detail: ${INJECTION}` } };
+      const { json } = await s.callTool(s.writeToken, 'cancel_run', { workRequestId: WR_ID });
+      expect(s.sent).toHaveLength(1);
+      expect(json.result.isError).toBe(true);
+      expect(json.result.content[0].text).toContain('Nothing was cancelled');
+      expect(json.result.content[0].text).toContain('Not attempted');
+      expect(JSON.stringify(json.result)).not.toContain('IGNORE');
     });
 
     it('says so when the work request has no running run yet, and cancels nothing', async () => {

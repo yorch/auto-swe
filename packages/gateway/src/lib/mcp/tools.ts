@@ -474,9 +474,13 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
         stop: false,
       };
     }
+    // Authorization lost mid-loop (writes switched off, scope or token gone) or a limit reached:
+    // no further write will be taken, so the caller stops and reports the rest.
+    const code = errorCode(response.body);
     const stop =
       response.status === 429 ||
-      (response.status === 403 && errorCode(response.body) === 'MCP_WRITE_DISABLED');
+      response.status === 401 ||
+      (response.status === 403 && (code === 'MCP_WRITE_DISABLED' || code === 'INSUFFICIENT_SCOPE'));
     if (response.status === 409) {
       return {
         failure: failure('The run is not running, so it cannot be cancelled.'),
@@ -494,11 +498,28 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
     return { failure: writeFailure(response, 'Run not found.'), ok: false, stop };
   }
 
+  /** The result of a cancel by work request: an error only when nothing was cancelled. */
+  function partial(cancelled: string[], notCancelled: Map<string, string>): ToolResult {
+    const rest = [...notCancelled].map(([runId, reason]) => ({ reason, runId }));
+    if (cancelled.length === 0) {
+      return failure(
+        `Nothing was cancelled. ${rest.map((n) => `${n.runId}: ${n.reason}`).join(' ')}`
+      );
+    }
+    return ok(
+      cancelOutput.parse({
+        notCancelled: rest,
+        runIds: cancelled,
+        status: rest.length === 0 ? 'CANCELLED' : 'PARTIAL',
+      })
+    );
+  }
+
   const reasonOf = (r: ToolResult) => r.content[0]?.text ?? 'The platform refused the request.';
 
-  /** The running runs of a work request, every page of them, with who launched each. */
+  /** The running runs of a work request, every page of them, with whether the caller launched each. */
   async function runningRunsOf(workRequestId: string) {
-    const rows: Array<{ id: string; launchedById: string | null }> = [];
+    const rows: Array<{ id: string; isMine: boolean }> = [];
     for (let offset = 0; ; ) {
       const listed = await bridge.get(
         app,
@@ -514,9 +535,7 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
         app.log.error({ tool: 'cancel_run' }, 'mcp: a route returned an unreadable body');
         return { failure: failure('The platform returned an unexpected response.') };
       }
-      rows.push(
-        ...parsed.data.data.map((r) => ({ id: r.id, launchedById: r.launchedById ?? null }))
-      );
+      rows.push(...parsed.data.data.map((r) => ({ id: r.id, isMine: r.isMine === true })));
       offset += parsed.data.data.length;
       if (parsed.data.data.length === 0 || offset >= parsed.data.meta.total) {
         return { rows };
@@ -562,51 +581,53 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
               )
             : outcome.failure;
         }
-        const found = await runningRunsOf(args.workRequestId as string);
-        if (found.failure) {
-          return found.failure;
-        }
-        const rows = found.rows ?? [];
-        if (rows.length === 0) {
-          return failure(
-            'No running run was found for that work request. It may not have started yet (try again in a few seconds) or it has already finished; list_runs shows its state.'
-          );
-        }
         const cancelled: string[] = [];
-        const notCancelled: Array<{ reason: string; runId: string }> = [];
+        const notCancelled = new Map<string, string>();
+        const attempted = new Set<string>();
         let stopped: string | null = null;
-        for (const row of rows) {
-          if (row.launchedById !== caller.userId) {
-            notCancelled.push({
-              reason: 'Launched by someone else; cancel it with its own runId.',
-              runId: row.id,
-            });
-          } else if (stopped !== null) {
-            notCancelled.push({ reason: `Not attempted: ${stopped}`, runId: row.id });
-          } else {
+        let seenAny = false;
+        // Offset paging over a list that changes under it can skip a run, so the listing is
+        // repeated in rounds until a whole pass finds no own running run that has not been tried.
+        // Every run is tried at most once, and a round that finds nothing new ends the loop.
+        while (stopped === null) {
+          const found = await runningRunsOf(args.workRequestId as string);
+          if (found.failure) {
+            return seenAny ? partial(cancelled, notCancelled) : found.failure;
+          }
+          const rows = found.rows ?? [];
+          seenAny ||= rows.length > 0;
+          for (const row of rows) {
+            if (!row.isMine) {
+              notCancelled.set(row.id, 'Not launched by you; cancel it with its own runId.');
+            }
+          }
+          const fresh = rows.filter((r) => r.isMine && !attempted.has(r.id));
+          if (fresh.length === 0) {
+            break;
+          }
+          for (const row of fresh) {
+            if (stopped !== null) {
+              notCancelled.set(row.id, `Not attempted: ${stopped}`);
+              continue;
+            }
+            attempted.add(row.id);
             const outcome = await cancelOne(row.id);
             if (outcome.ok) {
               cancelled.push(row.id);
             } else {
-              notCancelled.push({ reason: reasonOf(outcome.failure), runId: row.id });
+              notCancelled.set(row.id, reasonOf(outcome.failure));
               if (outcome.stop) {
                 stopped = reasonOf(outcome.failure);
               }
             }
           }
         }
-        if (cancelled.length === 0) {
+        if (!seenAny) {
           return failure(
-            `Nothing was cancelled. ${notCancelled.map((n) => `${n.runId}: ${n.reason}`).join(' ')}`
+            'No running run was found for that work request. It may not have started yet (try again in a few seconds) or it has already finished; list_runs shows its state.'
           );
         }
-        return ok(
-          cancelOutput.parse({
-            notCancelled,
-            runIds: cancelled,
-            status: notCancelled.length === 0 ? 'CANCELLED' : 'PARTIAL',
-          })
-        );
+        return partial(cancelled, notCancelled);
       } catch (err) {
         app.log.error({ err, tool: 'cancel_run' }, 'mcp: a tool failed');
         return failureFor(500);

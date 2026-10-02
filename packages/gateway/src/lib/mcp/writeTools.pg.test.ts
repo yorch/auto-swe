@@ -75,6 +75,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
   const started: Array<{ id: string; launchedById?: string; budgetTier?: string }> = [];
   const cancelled: string[] = [];
   const failCancel = new Set<string>();
+  let beforeListPage: ((offset: number) => Promise<void>) | null = null;
 
   const call = (
     method: 'GET' | 'POST',
@@ -443,6 +444,12 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       max: 100_000,
       timeWindow: '1 minute',
     });
+    // Lets a test act just before a page of runs is listed.
+    app.addHook('onRequest', async (request) => {
+      if (request.method === 'GET' && request.url.startsWith('/api/v1/workflow-runs?')) {
+        await beforeListPage?.(Number(new URL(request.url, 'http://x').searchParams.get('offset')));
+      }
+    });
     // Lets a test act at the moment a reply is about to be sent.
     app.addHook('onSend', async () => {
       await beforeReplySend?.();
@@ -500,6 +507,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     started.length = 0;
     cancelled.length = 0;
     failCancel.clear();
+    beforeListPage = null;
     await clearRuns();
   });
 
@@ -1032,7 +1040,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       expect(result.structuredContent.status).toBe('PARTIAL');
       expect(result.structuredContent.runIds).toEqual([runs[0].id]);
       expect(result.structuredContent.notCancelled).toEqual([
-        { reason: 'Launched by someone else; cancel it with its own runId.', runId: runs[1].id },
+        { reason: 'Not launched by you; cancel it with its own runId.', runId: runs[1].id },
       ]);
       expect(await statusOf(runs[0].id)).toBe('CANCELLED');
       expect(await statusOf(runs[1].id)).toBe('RUNNING');
@@ -1090,12 +1098,36 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       expect(states.every((x) => x === 'CANCELLED')).toBe(true);
     });
 
+    it('does not skip a run when another run finishes between pages', async () => {
+      await settingsOn({ 'mcp.writeCallsPerMinute': 600 });
+      const { runs, workRequestId } = await runsOnOneRequest(
+        people.dave.id,
+        Array.from({ length: 120 }, () => people.dave.id)
+      );
+      // The newest run (first on page one) finishes while the second page is being fetched, which
+      // shifts every later run up by one: offset paging alone would step over one of them.
+      beforeListPage = async (offset) => {
+        if (offset === 100) {
+          beforeListPage = null;
+          await prisma.workflowRun.update({
+            data: { endedAt: new Date(), status: 'SUCCESS' },
+            where: { id: runs[119].id },
+          });
+        }
+      };
+      const { result } = await callTool(people.dave.token, 'cancel_run', { workRequestId });
+      const states = await Promise.all(runs.map((r) => statusOf(r.id)));
+      expect(states.filter((x) => x === 'RUNNING')).toEqual([]);
+      expect(states.filter((x) => x === 'CANCELLED')).toHaveLength(119);
+      expect(result.structuredContent.runIds).toHaveLength(119);
+    });
+
     it('is an error only when nothing was cancelled, and says why for each run', async () => {
       const { runs, workRequestId } = await runsOnOneRequest(people.dave.id, [people.carol.id]);
       const { result } = await callTool(people.dave.token, 'cancel_run', { workRequestId });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain(runs[0].id);
-      expect(result.content[0].text).toContain('Launched by someone else');
+      expect(result.content[0].text).toContain('Not launched by you');
       expect(await statusOf(runs[0].id)).toBe('RUNNING');
     });
 

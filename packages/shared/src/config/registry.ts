@@ -218,7 +218,7 @@ export const SETTING_DEFINITIONS = {
   'mcp.writeCallsPerMinute': defineSetting({
     defaultValue: 10,
     description:
-      'The most write tool calls (submit_work_request and cancel_run) one user may make through MCP in a minute, counting refused ones. It counts calls to the underlying routes, not tool calls: cancelling the runs of a work request by its id spends one per run. Counted per gateway process, so with several replicas a user can reach this many per replica. Read on every call, so a change applies within the ~30 s settings cache and needs no restart.',
+      'The most write tool calls (submit_work_request and cancel_run) one user may make through MCP in a minute, counting refused ones. It counts calls to the underlying routes, not tool calls: cancelling the runs of a work request by its id spends one per own run attempted, refused attempts included. Counted per gateway process, so with several replicas a user can reach this many per replica. Read on every call, so a change applies within the ~30 s settings cache and needs no restart.',
     group: 'mcp',
     label: 'MCP write calls per minute',
     overridableAt: [],

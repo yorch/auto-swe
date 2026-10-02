@@ -99,7 +99,7 @@ export const restRuns = z.object({
       endedAt: nullableTimestamp,
       id: z.string().uuid(),
       /** Read by `cancel_run` to cancel only runs the caller launched; never returned by a tool. */
-      launchedById: z.string().nullable().optional(),
+      isMine: z.boolean().optional(),
       startedAt: timestamp,
       status,
       templateName: shortName(200).nullable(),

@@ -192,7 +192,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.workflowRun.count({ where }),
       ]);
       return {
-        data: rows.map(projectRunSummary),
+        data: rows.map((r) => projectRunSummary(r, user.sub)),
         meta: { limit, offset, total },
       };
     }
