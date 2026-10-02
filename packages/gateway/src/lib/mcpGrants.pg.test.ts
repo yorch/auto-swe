@@ -83,12 +83,17 @@ describe.skipIf(!enabled)('MCP grants against Postgres', () => {
   const call = (
     method: 'GET' | 'POST',
     url: string,
-    opts: { cookie?: string; json?: unknown; form?: Record<string, string> } = {}
+    opts: {
+      cookie?: string;
+      json?: unknown;
+      form?: Record<string, string>;
+      origin?: string | null;
+    } = {}
   ) =>
     app.inject({
       headers: {
         host: HOST,
-        origin: ORIGIN,
+        ...(opts.origin === null ? {} : { origin: opts.origin ?? ORIGIN }),
         ...(opts.cookie ? { cookie: opts.cookie } : {}),
         ...(opts.form ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
       },
@@ -182,14 +187,28 @@ describe.skipIf(!enabled)('MCP grants against Postgres', () => {
       },
     });
 
-  /** Authorize (signed in), consent, exchange: the tokens a connected client holds. */
-  async function connect(cookie: string, clientId: string, scope = 'mcp:read offline_access') {
+  /** Authorize and consent (signed in): the code the client would be redirected with. */
+  async function authorizeCode(
+    cookie: string,
+    clientId: string,
+    scope = 'mcp:read offline_access'
+  ) {
     const { challenge, verifier } = pkce();
     const auth = await call('GET', authorizeUrl(clientId, challenge, scope), { cookie });
     expect(auth.statusCode, auth.body).toBe(302);
-    const accepted = await consent(cookie, new URL(String(auth.headers.location)).search);
+    const next = new URL(String(auth.headers.location));
+    // An app that already holds a consent is sent straight back with a code.
+    if (next.origin + next.pathname === REDIRECT) {
+      return { code: next.searchParams.get('code') as string, verifier };
+    }
+    const accepted = await consent(cookie, next.search);
     expect(accepted.statusCode, accepted.body).toBe(200);
-    const code = new URL(accepted.json().url).searchParams.get('code') as string;
+    return { code: new URL(accepted.json().url).searchParams.get('code') as string, verifier };
+  }
+
+  /** Authorize, consent, exchange: the tokens a connected client holds. */
+  async function connect(cookie: string, clientId: string, scope = 'mcp:read offline_access') {
+    const { code, verifier } = await authorizeCode(cookie, clientId, scope);
     const tokens = await exchange(clientId, code, verifier);
     expect(tokens.statusCode, tokens.body).toBe(200);
     return tokens.json() as { access_token: string; refresh_token: string };
@@ -354,9 +373,23 @@ describe.skipIf(!enabled)('MCP grants against Postgres', () => {
       const user = await makeUser();
       const clientId = await registerClient();
       const tokens = await connect(user.cookie, clientId);
+      // Every token the server issues is a JWT, so nothing stores an access token. The provider
+      // can store one for an opaque token, and revocation has to cover it.
+      const stored = await prisma.oauthAccessToken.create({
+        data: {
+          clientId,
+          expiresAt: new Date(Date.now() + 600_000),
+          scopes: ['mcp:read'],
+          token: `opaque-${crypto.randomUUID()}`,
+          userId: user.id,
+        },
+      });
 
       const res = await rest('DELETE', `/api/v1/me/mcp-grants/${clientId}`, user.id);
       expect(res.statusCode, res.body).toBe(204);
+      expect(
+        (await prisma.oauthAccessToken.findUniqueOrThrow({ where: { id: stored.id } })).revoked
+      ).not.toBeNull();
 
       const refused = await refresh(clientId, tokens.refresh_token);
       expect(refused.statusCode).toBe(400);
@@ -389,6 +422,69 @@ describe.skipIf(!enabled)('MCP grants against Postgres', () => {
       expect(revived.statusCode).toBe(400);
       expect(revived.json().error).toBe('invalid_grant');
       expect(revived.json().access_token).toBeUndefined();
+    });
+
+    it('kills an authorization code that was issued before the disconnect and not yet exchanged', async () => {
+      const user = await makeUser();
+      const clientId = await registerClient();
+      const held = await authorizeCode(user.cookie, clientId);
+
+      expect((await rest('DELETE', `/api/v1/me/mcp-grants/${clientId}`, user.id)).statusCode).toBe(
+        204
+      );
+
+      const res = await exchange(clientId, held.code, held.verifier);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().access_token).toBeUndefined();
+      expect(res.json().refresh_token).toBeUndefined();
+      expect(await prisma.oauthRefreshToken.count({ where: { userId: user.id } })).toBe(0);
+    });
+
+    it('does not let a code held through a disconnect come back with a later consent', async () => {
+      const user = await makeUser();
+      const clientId = await registerClient();
+      const held = await authorizeCode(user.cookie, clientId);
+      await rest('DELETE', `/api/v1/me/mcp-grants/${clientId}`, user.id);
+
+      // The user connects the app again, later.
+      const fresh = await connect(user.cookie, clientId);
+
+      const stale = await exchange(clientId, held.code, held.verifier);
+      expect(stale.statusCode).toBe(400);
+      expect(stale.json().refresh_token).toBeUndefined();
+      expect((await refresh(clientId, fresh.refresh_token)).statusCode).toBe(200);
+    });
+
+    it('only removes the codes of the pair being revoked', async () => {
+      const user = await makeUser();
+      const other = await makeUser();
+      const a = await registerClient('A');
+      const b = await registerClient('B');
+      const keptB = await authorizeCode(user.cookie, b);
+      const keptOther = await authorizeCode(other.cookie, a);
+      await authorizeCode(user.cookie, a);
+
+      await rest('DELETE', `/api/v1/me/mcp-grants/${a}`, user.id);
+
+      expect((await exchange(b, keptB.code, keptB.verifier)).statusCode).toBe(200);
+      expect((await exchange(a, keptOther.code, keptOther.verifier)).statusCode).toBe(200);
+    });
+
+    it('records the revocation when tokens outlived their consent, against the user', async () => {
+      const user = await makeUser();
+      const clientId = await registerClient();
+      await connect(user.cookie, clientId);
+      await prisma.oauthConsent.deleteMany({ where: { userId: user.id } });
+      await prisma.configAuditLog.deleteMany({ where: { entityType: 'McpGrant' } });
+
+      const res = await rest('DELETE', `/api/v1/me/mcp-grants/${clientId}`, user.id);
+      expect(res.statusCode).toBe(204);
+
+      const row = await prisma.configAuditLog.findFirstOrThrow({
+        where: { action: 'DELETE', entityType: 'McpGrant' },
+      });
+      expect(row).toMatchObject({ actorId: user.id, entityId: user.id });
+      expect(row.beforeJson).toMatchObject({ clientId, consent: null, refreshTokens: 1 });
     });
 
     it('leaves the same user’s other clients, and other users’ grants to the same client, alone', async () => {
@@ -438,6 +534,7 @@ describe.skipIf(!enabled)('MCP grants against Postgres', () => {
       const b = await registerClient('B');
       const tokenA = await connect(user.cookie, a);
       const tokenB = await connect(user.cookie, b);
+      const heldCode = await authorizeCode(user.cookie, a);
 
       // What PATCH /api/v1/users/:id does when it deactivates an account.
       await prisma.user.update({ data: { isActive: false }, where: { id: user.id } });
@@ -449,6 +546,10 @@ describe.skipIf(!enabled)('MCP grants against Postgres', () => {
       ).toBe(0);
       expect((await refresh(a, tokenA.refresh_token)).statusCode).toBe(400);
       expect((await refresh(b, tokenB.refresh_token)).statusCode).toBe(400);
+      // A code the account had not yet exchanged is gone with the rest.
+      await prisma.user.update({ data: { isActive: true }, where: { id: user.id } });
+      expect((await exchange(a, heldCode.code, heldCode.verifier)).statusCode).toBe(400);
+      await prisma.user.update({ data: { isActive: false }, where: { id: user.id } });
 
       // Reactivating the account does not bring them back: the tokens are revoked, not merely refused.
       await prisma.user.update({ data: { isActive: true }, where: { id: user.id } });
@@ -462,6 +563,34 @@ describe.skipIf(!enabled)('MCP grants against Postgres', () => {
       expect(
         await revokeMcpGrants(prisma, { actorId: user.id, clientId: 'nope', userId: user.id })
       ).toBe(false);
+    });
+  });
+
+  describe('consent CSRF', () => {
+    it('refuses a consent decision from a foreign or missing Origin, and issues nothing', async () => {
+      const user = await makeUser();
+      const clientId = await registerClient();
+      const auth = await call('GET', authorizeUrl(clientId, pkce().challenge, 'mcp:read'), {
+        cookie: user.cookie,
+      });
+      const search = new URL(String(auth.headers.location)).search.slice(1);
+
+      for (const origin of ['https://evil.example', null]) {
+        const res = await call('POST', '/api/auth/oauth2/consent', {
+          cookie: user.cookie,
+          json: { accept: true, oauth_query: search },
+          origin,
+        });
+        expect(res.statusCode, String(origin)).toBe(403);
+      }
+      expect(await prisma.oauthConsent.count()).toBe(0);
+
+      // The web app's own origin is accepted.
+      const ok = await call('POST', '/api/auth/oauth2/consent', {
+        cookie: user.cookie,
+        json: { accept: true, oauth_query: search },
+      });
+      expect(ok.statusCode, ok.body).toBe(200);
     });
   });
 

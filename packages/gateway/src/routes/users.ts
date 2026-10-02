@@ -361,11 +361,23 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        const updated = await fastify.prisma.user.update({
+        const updateArgs = {
           data: request.body,
           select: { email: true, id: true, isActive: true, role: true, slackId: true },
           where: { id: request.params.id },
-        });
+        } as const;
+        // Deactivation and the revocation of the account's MCP grants commit together, and
+        // any request that sets `isActive: false` revokes (it is idempotent), so a failure
+        // cannot leave an inactive account holding refresh tokens that reactivation would
+        // bring back to life.
+        const updated =
+          request.body.isActive === false
+            ? await fastify.prisma.$transaction(async (tx) => {
+                const row = await tx.user.update(updateArgs);
+                await revokeMcpGrants(tx, { actorId: actor.sub, userId: row.id });
+                return row;
+              })
+            : await fastify.prisma.user.update(updateArgs);
         // A demotion or deactivation must take effect now, not after a cache
         // TTL — drop every cached session and the cached bearer-token state for
         // the user. Keyed by user id: the session cache is keyed by the signed
@@ -375,11 +387,6 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           (request.body.isActive !== undefined && request.body.isActive !== user.isActive);
         if (privilegeChanged) {
           invalidateUserAuthCache(updated.id);
-        }
-        // A deactivated account keeps no MCP access: its refresh tokens would otherwise stay
-        // valid in the database, ready for the day the account is reactivated.
-        if (request.body.isActive === false && user.isActive !== false) {
-          await revokeMcpGrants(fastify.prisma, { actorId: actor.sub, userId: updated.id });
         }
         await writeAuditLog(fastify, {
           action: 'UPDATE',

@@ -67,6 +67,10 @@ async function buildApp() {
       update: vi.fn(),
     },
   };
+  // The interactive transaction runs its callback against the same mock.
+  Object.assign(mockPrisma, {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(mockPrisma)),
+  });
 
   const mockAuth = {
     verifyAccessToken: () => ({
@@ -790,6 +794,7 @@ describe('userRoutes', () => {
         });
 
         expect(res.statusCode).toBe(200);
+        // Inside the same transaction as the update (the mock's transaction client is the mock).
         expect(revokeMcpGrantsMock).toHaveBeenCalledWith(ctx.mockPrisma, {
           actorId: 'admin-1',
           userId: USER_ID,
@@ -813,6 +818,11 @@ describe('userRoutes', () => {
           url: `/api/v1/users/${USER_ID}`,
         });
 
+        expect(revokeMcpGrantsMock).not.toHaveBeenCalled();
+      });
+
+      it('revokes again when an already inactive user is deactivated again, so a retry heals a failure', async () => {
+        revokeMcpGrantsMock.mockClear();
         ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID, isActive: false });
         ctx.mockPrisma.user.update.mockResolvedValueOnce({
           email: 'other@example.com',
@@ -821,14 +831,37 @@ describe('userRoutes', () => {
           role: 'ENGINEER',
           slackId: null,
         });
-        await ctx.app.inject({
+        const res = await ctx.app.inject({
           headers: AUTH_HEADER,
           method: 'PATCH',
           payload: { isActive: false },
           url: `/api/v1/users/${USER_ID}`,
         });
 
-        expect(revokeMcpGrantsMock).not.toHaveBeenCalled();
+        expect(res.statusCode).toBe(200);
+        expect(revokeMcpGrantsMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('fails the request, and writes no user audit row, when the revocation fails', async () => {
+        revokeMcpGrantsMock.mockClear().mockRejectedValueOnce(new Error('db down'));
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID, isActive: true });
+        ctx.mockPrisma.user.update.mockResolvedValueOnce({
+          email: 'other@example.com',
+          id: USER_ID,
+          isActive: false,
+          role: 'ENGINEER',
+          slackId: null,
+        });
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { isActive: false },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+
+        // The real transaction rolls the update back with the failure.
+        expect(res.statusCode).toBe(500);
+        expect(ctx.mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
       });
 
       it('allows an admin to demote a different user', async () => {
