@@ -96,6 +96,12 @@ derive a team from. Its agent nodes, planner and fan-out therefore take the chan
 org (`withChannelScope`), which puts a TEAM or ORGANIZATION override of `channelAssistant` in force
 for the delegated task exactly as it is for the reply. This is resolution only: it grants nothing.
 
+**Not an agent run.** A delegated task is a `RunnableWorkflow`; it is not a library
+[agent run](./agent-runs.md), which is a repository-bound, container-bound step that requires an
+ENGINEER launcher. The general route has no repository, and the code route launches the team's
+engineering template. `channelAssistant` is on the agent-run non-launchable list. See
+[agent-runs.md §9](./agent-runs.md#9-relation-to-the-channel-assistant).
+
 > The fan-in lives inside one activity rather than using a `fanOut` node because the interpreter
 > cannot surface a branch agent's text back to a join.
 
@@ -314,6 +320,10 @@ unproven on real traffic, and turn them on one channel at a time.
   Someone who talks to the assistant in Slack but is not on that team does not see the run in
   `/runs`. A run whose channel row has since been deleted loses the link and is visible to platform
   ADMINs only.
+- **Slack cannot launch a library agent against a repository.** The assistant answers, delegates a
+  task, or generates a workflow; it has no route to an agent run. Adding one is a new feature with
+  its own identity, RBAC, budget and security design (see
+  [agent-runs.md §9](./agent-runs.md#9-relation-to-the-channel-assistant)).
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.

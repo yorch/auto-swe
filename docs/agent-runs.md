@@ -245,6 +245,38 @@ The agent loop persists its LLM trace as any agent activity does; the tool calls
 (`agent_run.push_policy`), the code scan and the push (`git.commit_push`) are activity events on the
 same run. The run viewer shows them under the run found by `workRequestId`.
 
+Each step is priced at the model the run resolved for the agent (the owning organization's override
+or the pinned version), not at whatever the ambient context would resolve, so the run's tier budget
+and the organization's usage are charged for the model that ran.
+
+---
+
+## 9. Relation to the channel assistant
+
+An agent run and the channel assistant are different mechanisms that share only the model-call loop
+(`runAgent`) and the Agent library.
+
+| | Agent run | Channel assistant |
+|---|---|---|
+| Executes | One library agent against one `git_repo` repository, in a Docker workspace, as a single step of the hidden system template | A conversational turn (a single model call with intent-recording tools, no container), or a thread-bound `RunnableWorkflow` for a delegated task |
+| Needs | A repository ledger row, an ENGINEER launcher with repository membership, and an `agent-<32hex>` ticket id | A Slack channel; no repository for a general task |
+| Budget | The run's tier budget, the organization cap and admission control | The channel's monthly budget, held before a turn and settled after |
+| Acts as | The launching user | The Slack user, or no one, per the channel's repository-access mode |
+
+A channel task is not an agent run for three reasons. The general route is repo-less on purpose, and
+an agent run cannot start without a repository. The code route already launches the team's
+engineering template, with its TDD loop, review network and CI wait, which a one-shot agent run
+does not have. And the two authorise differently: an agent run requires a linked ENGINEER, while a
+mention needs no linked account when the channel's repository-access gate is off. The `channelAssistant`
+agent is on `NON_LAUNCHABLE_AGENT_KEYS` for the same reason.
+
+Launching a library agent against a repository from Slack would be a new feature, not a reuse of
+either path. It needs its own identity (a linked, active user at the agent-run floor regardless of the
+channel's gate), RBAC (repository reach through `validateRunConnection`), budget (whether a channel is
+charged, and how admission refusals reach the thread), and security design (delivery modes, and MCP
+reachable from a channel any workspace member can type into). The agent-run launch path lives in the
+gateway, so the entry point would be too.
+
 ---
 
 ## Limitations
@@ -299,5 +331,7 @@ same run. The run viewer shows them under the run found by `workRequestId`.
 - **The real-Docker check is opt-in.** The trusted-container shell is exercised against real containers
   by `agentRunFinalize.docker.test.ts` only when `AGENT_RUN_DOCKER_TEST=1`; the default suite exercises
   the same code against a fake workspace.
+- **There is no Slack entry point.** An agent run is launched from the dashboard, CLI or REST API only;
+  the channel assistant cannot start one and a delegated channel task is a different workflow (§9).
 - **Cost estimates are absent.** The workflow cost estimator has no hint for `runAgentTask`, so an
   estimate for the system template is empty.
