@@ -134,8 +134,8 @@ scope cannot be granted.
 
 | Tool | Calls | Does |
 |---|---|---|
-| `submit_work_request` | `POST /api/v1/work-requests` | Starts a run for a ticket in a repository. Inputs: `externalTicketId`, `description`, `repoId`, and `idempotencyKey` (required, 8 to 128 characters of `A-Z a-z 0-9 . _ : ~ -`, sent as the `Idempotency-Key` header). There is no budget tier input: a run is always `STANDARD`. Returns `status` (`started`, `already_submitted` for a retry of a key that already launched a run, or `already_running` when the ticket already has a run in flight and nothing was launched), `workRequestId` and `workflowIds`. |
-| `cancel_run` | `POST /api/v1/workflow-runs/:id/cancel` | Cancels a run that is still running, if the caller may control it: the same rule as the dashboard, so a member of a team the repository is only shared with can see a run but not cancel it. Input: `runId`. Returns `runId` and `status`. |
+| `submit_work_request` | `POST /api/v1/work-requests` | Starts a run for a ticket in a repository. Inputs: `externalTicketId`, `description`, `repoId`, and `idempotencyKey` (required, 8 to 128 characters of `A-Z a-z 0-9 . _ : ~ -`, sent as the `Idempotency-Key` header). There is no budget tier input: a run is always `STANDARD`. Returns `status` (`started`, `already_submitted` for a retry of a key that already launched a run, or `already_running` when the ticket already has a run in flight and nothing was launched), and `workRequestId`, which identifies the submission: pass it to `cancel_run`, or to `list_runs` and `get_run` (via `list_runs`) to follow it. The run itself is created by the worker a moment after the submit, so a `list_runs` for the work request can be empty at first. |
+| `cancel_run` | `POST /api/v1/workflow-runs/:id/cancel` | Cancels a run that is still running, if the caller may control it: the same rule as the dashboard, so a member of a team the repository is only shared with can see a run but not cancel it. Input: `runId`, or the `workRequestId` that `submit_work_request` returned (exactly one), which cancels that work request's running run; if the worker has not created the run yet, the tool says so and nothing is cancelled. Returns `runIds` and `status`. |
 
 **A run launches under the caller's identity**, not a service account. It is recorded as launched by the
 user (`launchedById`, run identity `caller`), and where `github.userCredentialsEnabled` is on and the user
@@ -177,11 +177,16 @@ for one user are serialised and the cap cannot be exceeded by racing them, on on
 several. `launchTrackedWorkflow` takes the check as an optional `guard`; without one, which is every REST
 and CLI launch, its behaviour is unchanged.
 
-**Audit.** Every guarded call writes a `McpToolCall` row to the config audit log, from a hook on the two
-routes: the actor, the consent id (`entityId`), the OAuth client id, the tool, a SHA-256 digest of the
-input (never the description or any other input text), the HTTP status, the refusal code if any, and the
-work request or run id. A failure to write the row is logged and never changes the response, so a run that
-launched is not reported to the agent as an error it would retry. Refusals are audited too.
+**Audit.** Every bridged write that reaches the route writes a `McpToolCall` row to the config audit log,
+from a hook on the two routes: the actor, the consent id (`entityId`), the OAuth client id and its name, the
+tool, a SHA-256 digest of the raw input (never the description or any other input text), the HTTP status,
+the refusal code if any, the work request id, and for `cancel_run` the run id it targeted (also on a
+refusal). Refusals after authentication are audited too, including a body that fails validation. Not
+audited: a request refused before the route knows who is writing (a bad bridge credential, an invalid
+token, a token without `mcp:write`, the gateway's global rate limit) and a body that is not valid JSON.
+The client's user agent is not recorded, because the inner request is built without any header the
+client sent. A failure to write the row is logged and never changes the response, so a run that launched
+is not reported to the agent as an error it would retry.
 
 ### How a tool is authorized
 
@@ -264,8 +269,9 @@ and needs no restart. None is read only at startup.
   (and a log line) when the issuer is neither HTTPS nor `localhost`.
 - **Rate limit.** The gateway's global per-IP limit applies to the endpoint, and write tools have their own
   per-user burst limit (`mcp.writeCallsPerMinute`).
-- **A user stuck at the cap.** A run whose `ActiveWorkflow` row was left non-terminal by a crash or by a
-  Temporal terminate done outside the platform counts against `mcp.maxConcurrentRuns` until the row is
+- **A user stuck at the cap.** A run whose `ActiveWorkflow` row was left non-terminal by a crash, by a
+  Temporal terminate done outside the platform, or by a workflow that failed before its run row was
+  created (nothing to cancel in the dashboard either) counts against `mcp.maxConcurrentRuns` until the row is
   fixed: set its `currentStatus` to a terminal value (`CANCELLED`, `FAILED`, `COMPLETED` or `TIMED_OUT`).
   Raising `mcp.maxConcurrentRuns` frees the user meanwhile.
 
@@ -282,11 +288,16 @@ and needs no restart. None is read only at startup.
   fixed, the burst limit and the concurrency cap apply, and a person reviews and merges every pull
   request. Users should not set an MCP client to approve write tools automatically.
 - The concurrency cap is checked under a lock that only MCP submissions take, so a run started from the
-  dashboard at the same instant as an MCP submission can exceed the cap by one.
+  dashboard or the CLI at the same instant as an MCP submission can exceed the cap, by as many as are
+  launched concurrently.
+- A run whose workflow fails before the worker has created its run row leaves its `ActiveWorkflow` row
+  non-terminal with no run, so it keeps counting against the cap and `cancel_run` cannot reach it; see
+  Operations.
 - The burst limit is counted per gateway process, so with several replicas a user can reach the limit on
   each. Disabling writes, and a user's deactivation, take up to 30 seconds to reach every replica.
 - A cap refusal comes after the idempotency replay, so a retry of a run that already started is answered
-  with it even at the cap; a new key for a ticket already in flight is answered "already running".
+  with it even at the cap, and a retry that raced its own first submit is answered with the replay or
+  "still starting", not the cap; a new key for a ticket already in flight is answered "already running".
 - Resources and prompts are not exposed.
 - Consent is read or write, not per repository or per tool: a token reads everything its user can read.
 - `list_repositories` filters out the connections that are not git repositories after the route has

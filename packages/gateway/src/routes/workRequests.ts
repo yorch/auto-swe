@@ -28,6 +28,7 @@ import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.j
 import {
   assertMcpWriteAllowed,
   mcpWriteAuditHook,
+  mcpWriteBegin,
   sendRunCapRefusal,
 } from '../lib/mcpWriteGuard.js';
 import { paginationQuery } from '../lib/pagination.js';
@@ -364,6 +365,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       config: { mcpScope: 'write' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       onSend: mcpWriteAuditHook,
+      preValidation: mcpWriteBegin('submit_work_request'),
       schema: {
         body: CreateWorkRequestSchema,
         headers: IdempotencyHeaderSchema,
@@ -378,7 +380,6 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // the idempotency replay below, so the write switch, the burst limit, the tier and the key
       // rule apply to a replay as to a first submission. REST callers pass straight through.
       const mcpWrite = await assertMcpWriteAllowed(request, reply, {
-        input: request.body,
         submit: { budgetTier, idempotencyKey },
         tool: 'submit_work_request',
       });
@@ -705,6 +706,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         { guard: mcpWrite.launchGuard, log: fastify.log }
       );
       if (!launch.ok && launch.reason === 'GUARD_REFUSED') {
+        // A retry of this key whose first submit committed while this one waited for the lock is
+        // a replay, not a request the cap should turn away.
+        const raced = await replayForKey();
+        if (raced) {
+          return raced.reply;
+        }
         return sendRunCapRefusal(reply);
       }
       if (!launch.ok) {

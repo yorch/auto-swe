@@ -205,7 +205,7 @@ export const SETTING_DEFINITIONS = {
   'mcp.maxConcurrentRuns': defineSetting({
     defaultValue: 2,
     description:
-      'The most runs one user may have in flight before MCP refuses another submit_work_request. Every run counts, including ones the user started from the dashboard or the CLI, so it bounds what an agent acting for that user can have running in total. Checked under a per-user lock when a run is recorded, so parallel MCP submissions cannot exceed it; a run started from the dashboard at the same instant can still exceed it by one. A run left non-terminal by a crash or an external terminate keeps counting until its row is set to a terminal status. Read on every call, so a change applies within the ~30 s settings cache and needs no restart.',
+      'The most runs one user may have in flight before MCP refuses another submit_work_request. Every run counts, including ones the user started from the dashboard or the CLI, so it bounds what an agent acting for that user can have running in total. Checked under a per-user lock when a run is recorded, so parallel MCP submissions cannot exceed it; runs started from the dashboard or the CLI at the same instant do not take that lock and can exceed it, by as many as are launched concurrently. A run left non-terminal by a crash, an external terminate or a workflow that failed before its run row was created keeps counting until its row is set to a terminal status. Read on every call, so a change applies within the ~30 s settings cache and needs no restart.',
     group: 'mcp',
     label: 'MCP concurrent runs per user',
     overridableAt: [],

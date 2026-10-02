@@ -274,7 +274,9 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       repoId: { in: [ids.repo, ids.poorRepo] },
       temporalWorkflowId: { startsWith: 'eng-' },
     };
-    await prisma.workflowRun.deleteMany({ where: { workflowId: { startsWith: `eng-${MARK}` } } });
+    await prisma.workflowRun.deleteMany({
+      where: { workflowId: { startsWith: `eng-acme${MARK}` } },
+    });
     await prisma.workflowRun.deleteMany({ where: { workflowId: { startsWith: `${MARK}-run` } } });
     await prisma.activeWorkflow.deleteMany({ where: wfs });
     await prisma.runInput.deleteMany({
@@ -390,6 +392,9 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
         };
         await prisma.workflowRun.deleteMany({ where: { workRequest: repos } });
         await prisma.workflowRun.deleteMany({ where: { workflowId: { startsWith: MARK } } });
+        await prisma.workflowRun.deleteMany({
+          where: { workflowId: { startsWith: `eng-acme${MARK}` } },
+        });
         await prisma.activeWorkflow.deleteMany({
           where: { repository: { team: { slug: { startsWith: MARK } } } },
         });
@@ -714,6 +719,26 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       expect(started).toHaveLength(2);
     });
 
+    it('answers a same-key retry racing its own first submit with the replay, not the cap', async () => {
+      await settingsOn({ 'mcp.maxConcurrentRuns': 1 });
+      startDelayMs = 150;
+      const args = submitArgs();
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () => callTool(people.alice.token, 'submit_work_request', args))
+      );
+      expect(started).toHaveLength(1);
+      expect(results.filter((r) => r.result.structuredContent?.status === 'started')).toHaveLength(
+        1
+      );
+      for (const r of results) {
+        expect(JSON.stringify(r.result)).not.toContain('maximum number of runs');
+        if (r.result.isError) {
+          expect(r.result.content[0].text).toContain('still starting');
+        }
+      }
+      expect(await inFlight(people.alice.id)).toBe(1);
+    });
+
     it('is per user: another user is unaffected while alice is at the cap', async () => {
       await Promise.all([submit(people.alice.token), submit(people.alice.token)]);
       expect((await submit(people.alice.token)).result.isError).toBe(true);
@@ -900,9 +925,49 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     it('cancels a run the caller may control, and frees the slot', async () => {
       const { runId, workflowId } = await runFor(people.dave.id, people.dave.id);
       const { result } = await callTool(people.dave.token, 'cancel_run', { runId });
-      expect(result.structuredContent).toEqual({ runId, status: 'CANCELLED' });
+      expect(result.structuredContent).toEqual({ runIds: [runId], status: 'CANCELLED' });
       expect(cancelled).toEqual([workflowId]);
       expect((await prisma.workflowRun.findUniqueOrThrow({ where: { id: runId } })).status).toBe(
+        'CANCELLED'
+      );
+      expect(await inFlight(people.dave.id)).toBe(0);
+    });
+
+    it('cancels the run of the work request it just submitted, by the id submit returned', async () => {
+      const submitted = await submit(people.dave.token);
+      const out = submitted.result.structuredContent;
+      // What an agent was handed: the work request id, and nothing that cancel_run rejects.
+      expect(Object.keys(out).sort()).toEqual(['status', 'workRequestId']);
+      // The worker has not created the run yet: the agent is told so, and nothing is cancelled.
+      const early = await callTool(people.dave.token, 'cancel_run', {
+        workRequestId: out.workRequestId,
+      });
+      expect(early.result.isError).toBe(true);
+      expect(early.result.content[0].text).toContain('may not have started yet');
+      // The worker's createWorkflowRun, as it would write it.
+      const active = await prisma.activeWorkflow.findFirstOrThrow({
+        where: { workRequestId: out.workRequestId },
+      });
+      const template = await prisma.workflowTemplate.findFirstOrThrow({
+        where: { name: { startsWith: MARK }, teamId: ids.team },
+      });
+      const run = await prisma.workflowRun.create({
+        data: {
+          launchedById: people.dave.id,
+          specSnapshot: {},
+          status: 'RUNNING',
+          templateId: template.id,
+          templateVersion: 1,
+          workflowId: active.temporalWorkflowId,
+          workRequestId: out.workRequestId,
+        },
+      });
+      const { result } = await callTool(people.dave.token, 'cancel_run', {
+        workRequestId: out.workRequestId,
+      });
+      expect(result.structuredContent).toEqual({ runIds: [run.id], status: 'CANCELLED' });
+      expect(cancelled).toEqual([active.temporalWorkflowId]);
+      expect((await prisma.workflowRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe(
         'CANCELLED'
       );
       expect(await inFlight(people.dave.id)).toBe(0);

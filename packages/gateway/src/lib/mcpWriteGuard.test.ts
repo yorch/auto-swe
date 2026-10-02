@@ -76,6 +76,7 @@ describe('the write guards, enforced in the bridged route', () => {
           return null;
         },
       },
+      oauthClient: { findUnique: async () => ({ name: 'Test Client' }) },
       personalAccessToken: { findUnique: async () => null, update: async () => ({}) },
       runInput: {
         findUnique: async () => {
@@ -275,18 +276,30 @@ describe('the write guards, enforced in the bridged route', () => {
       });
       const after = row.afterJson as Record<string, unknown>;
       expect(after).toMatchObject({
+        clientName: 'Test Client',
         errorCode: 'REPO_NOT_FOUND',
         oauthClientId: 'client-abc',
         status: 404,
         tool: 'submit_work_request',
       });
       expect(after.inputDigest).toBe(
-        createHash('sha256')
-          .update(JSON.stringify({ budgetTier: 'STANDARD', ...body }))
-          .digest('hex')
+        createHash('sha256').update(JSON.stringify(body)).digest('hex')
       );
       expect(JSON.stringify(row)).not.toContain('secret');
       expect(JSON.stringify(row)).not.toContain('IGNORE');
+    });
+
+    it('is written when the body fails validation, and a refused cancel records the run it targeted', async () => {
+      const bad = await forged({ repoIds: [] });
+      expect(bad.statusCode).toBe(400);
+      await forgedCancel();
+      const afters = audit.map((a) => a.data.afterJson as Record<string, unknown>);
+      expect(afters.map((a) => [a.tool, a.status])).toEqual([
+        ['submit_work_request', 400],
+        ['cancel_run', 404],
+      ]);
+      expect(afters[1].runId).toBe(RUN);
+      expect(afters[0].runId).toBeUndefined();
     });
 
     it('is written for a refusal too, and for a cancel', async () => {

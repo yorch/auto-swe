@@ -34,8 +34,8 @@ export const MCP_WRITE_CODES = {
 
 declare module 'fastify' {
   interface FastifyRequest {
-    /** Set by {@link assertMcpWriteAllowed} on a bridged write; read by {@link mcpWriteAuditHook}. */
-    mcpWrite?: { tool: McpWriteTool; inputDigest: string };
+    /** Set by {@link mcpWriteBegin} on a bridged write; read by {@link mcpWriteAuditHook}. */
+    mcpWrite?: { tool: McpWriteTool; inputDigest: string; target?: string };
   }
 }
 
@@ -118,8 +118,6 @@ export async function assertMcpWriteAllowed(
   reply: FastifyReply,
   call: {
     tool: McpWriteTool;
-    /** What the call was asked to do; only a digest of it is kept. */
-    input: unknown;
     /** `submit_work_request` only. */
     submit?: { budgetTier: string; idempotencyKey: string | undefined };
   }
@@ -128,10 +126,6 @@ export async function assertMcpWriteAllowed(
     return {};
   }
   const user = requireUser(request);
-  request.mcpWrite = {
-    inputDigest: createHash('sha256').update(JSON.stringify(call.input)).digest('hex'),
-    tool: call.tool,
-  };
 
   // Settings are read per call. If they cannot be read this throws and the call is a 500: a
   // guard that cannot tell what is allowed must not allow.
@@ -187,7 +181,33 @@ export function sendRunCapRefusal(reply: FastifyReply) {
 }
 
 /**
- * Route-level `onSend` hook that writes the audit row for a bridged write: who (the user and the
+ * Route-level `preValidation` hook that opens the audit record for a bridged write: before the
+ * body is validated, so a refusal for a malformed body is audited too. Only the digest of what was
+ * asked is kept (of the raw body, or of the run id for a cancel), never any of its text; a cancel
+ * also keeps the run id it targeted, which is an identifier and not a secret. A request refused
+ * before this point (a bad bridge credential, a token or scope the route refuses, the global rate
+ * limit) or whose body is not parseable JSON never reaches it, and is not audited.
+ */
+export function mcpWriteBegin(tool: McpWriteTool) {
+  return async (request: FastifyRequest) => {
+    if (!request.mcpBridge || !request.user) {
+      return;
+    }
+    const params = request.params as { id?: unknown } | undefined;
+    const target = tool === 'cancel_run' && typeof params?.id === 'string' ? params.id : undefined;
+    const input = tool === 'cancel_run' ? { runId: target } : request.body;
+    request.mcpWrite = {
+      inputDigest: createHash('sha256')
+        .update(JSON.stringify(input ?? null))
+        .digest('hex'),
+      target: target?.slice(0, 64),
+      tool,
+    };
+  };
+}
+
+/**
+ * Route-level `onSend` hook that writes the audit row for a bridged write opened by {@link mcpWriteBegin}: who (the user and the
  * consent they gave), through which client, which tool, a digest of the input, and how it ended.
  * One row per guarded attempt, refusals included. The input's text is never stored, only its
  * digest. Best-effort by design: an audit failure is logged and never changes the response, so a
@@ -212,14 +232,27 @@ export async function mcpWriteAuditHook(
       body = undefined;
     }
     const workflowIds = body?.data?.workflowIds;
+    // The client's display name is a convenience for whoever reads the row: without it the row is
+    // still written.
+    let clientName: string | undefined;
+    try {
+      const client = await request.server.prisma.oauthClient.findUnique({
+        select: { name: true },
+        where: { clientId: bridge.clientId },
+      });
+      clientName = client?.name ?? undefined;
+    } catch {
+      clientName = undefined;
+    }
     await writeAuditLog(request.server, {
       action: 'CREATE',
       actor: user,
       after: {
+        clientName,
         errorCode: typeof body?.error?.code === 'string' ? body.error.code : undefined,
         inputDigest: write.inputDigest,
         oauthClientId: bridge.clientId,
-        runId: write.tool === 'cancel_run' ? body?.data?.id : undefined,
+        runId: write.target,
         status: reply.statusCode,
         tool: write.tool,
         workflowIds: Array.isArray(workflowIds) ? workflowIds : undefined,
