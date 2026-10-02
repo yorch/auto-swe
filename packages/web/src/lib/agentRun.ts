@@ -1,4 +1,3 @@
-import { AGENT_RUN_TEMPLATE_NAME } from '@auto-swe/shared/lib/agentRun';
 import type { AgentRunLimits } from '@auto-swe/shared/types/api';
 import { ApiError } from '@/lib/api';
 import { isRecord } from '@/lib/utils';
@@ -260,11 +259,6 @@ export function describeLaunchError(err: unknown): LaunchErrorView {
 
 // ── Run viewer ──────────────────────────────────────────────────────────────
 
-/** `true` for a run of the hidden "Agent Run" system template. */
-export function isAgentRunTemplate(templateName: string | null | undefined): boolean {
-  return templateName === AGENT_RUN_TEMPLATE_NAME;
-}
-
 export interface AgentRunOutcome {
   text: string;
   deliver: AgentRunDeliver;
@@ -320,111 +314,7 @@ export function parseAgentRunOutcome(result: unknown): AgentRunOutcome | null {
   };
 }
 
-export interface AgentRunFailureView {
-  code: string | null;
-  title: string;
-  explanation: string;
-}
-
-/**
- * Names why an agent run failed. The step row carries the worker's message, not
- * always its error type, so this recognises the type token when present and the
- * messages the worker writes otherwise. `null` means "nothing specific to say";
- * the generic failure card still shows the message.
- */
-export function classifyAgentRunFailure(
-  error: string | null | undefined
-): AgentRunFailureView | null {
-  if (!error) {
-    return null;
-  }
-  const has = (code: string, ...phrases: string[]) =>
-    error.includes(code) || phrases.some((p) => error.includes(p));
-  if (has('SECURITY_GATE_FAILURE', 'Security scan failed with critical findings')) {
-    return {
-      code: 'SECURITY_GATE_FAILURE',
-      explanation:
-        'The security gate found a critical issue in the change. Nothing was pushed and no pull request was opened.',
-      title: 'Blocked by the security gate',
-    };
-  }
-  if (has('SECURITY_GATE_UNAVAILABLE', 'Security gate could not complete')) {
-    return {
-      code: 'SECURITY_GATE_UNAVAILABLE',
-      explanation:
-        'The security gate could not run, so the change was not published. A gate that cannot say the change is clean never lets it through. Re-run to try again.',
-      title: 'Security gate unavailable',
-    };
-  }
-  if (has('AGENT_RUN_PUSH_POLICY', 'Push policy refused this change', 'could not be classified')) {
-    return {
-      code: 'AGENT_RUN_PUSH_POLICY',
-      explanation:
-        'The change touches something an agent run may never publish (a sensitive file, a binary, a symlink or submodule, an oversized file, or a workflow file). Nothing was pushed, including the files that were allowed.',
-      title: 'Refused by the push policy',
-    };
-  }
-  if (has('AGENT_RUN_DIFF_TOO_LARGE', 'the security gate can scan')) {
-    return {
-      code: 'AGENT_RUN_DIFF_TOO_LARGE',
-      explanation:
-        'The change is too large for the security gate to read in one pass, and a partial scan would not be a scan. Ask for a smaller change.',
-      title: 'Change too large to check',
-    };
-  }
-  if (has('AGENT_RUN_EXPORT_TOO_LARGE', 'export limit')) {
-    return {
-      code: 'AGENT_RUN_EXPORT_TOO_LARGE',
-      explanation:
-        'The working tree is too large to copy out of the sandbox. Keep dependency and build output in ignored paths.',
-      title: 'Working tree too large',
-    };
-  }
-  if (has('DRAFT_PR_UNSUPPORTED', 'does not support draft pull requests')) {
-    return {
-      code: 'DRAFT_PR_UNSUPPORTED',
-      explanation:
-        'The branch was pushed, but this repository cannot hold draft pull requests, so none was opened (a ready-for-review one is never opened instead). Open a pull request from the branch yourself, or re-run with "Push a branch".',
-      title: 'Draft pull requests are not supported here',
-    };
-  }
-  if (has('PR_CREATE_FAILED', 'the pull request could not be opened')) {
-    return {
-      code: 'PR_CREATE_FAILED',
-      explanation:
-        'The branch was pushed, but opening the pull request failed. The branch is still there.',
-      title: 'Pull request could not be opened',
-    };
-  }
-  if (has('BUDGET_EXCEEDED')) {
-    return {
-      code: 'BUDGET_EXCEEDED',
-      explanation:
-        'The run reached its budget and stopped. Use a larger budget tier or a narrower task.',
-      title: 'Budget exhausted',
-    };
-  }
-  if (has('AGENT_RUN_CONCURRENCY_EXCEEDED', 'Too many agent runs are in flight')) {
-    return {
-      code: 'AGENT_RUN_CONCURRENCY_EXCEEDED',
-      explanation:
-        'Too many agent runs were in flight when this one started. Re-run when one finishes.',
-      title: 'Concurrency limit reached',
-    };
-  }
-  if (has('AGENT_RUNS_DISABLED', 'Agent runs are disabled')) {
-    return {
-      code: 'AGENT_RUNS_DISABLED',
-      explanation: 'Agent runs are switched off for this team or the platform.',
-      title: 'Agent runs are disabled',
-    };
-  }
-  if (has('AGENT_NOT_LAUNCHABLE', 'cannot be launched as an agent run')) {
-    return {
-      code: 'AGENT_NOT_LAUNCHABLE',
-      explanation: 'This agent backs a platform mechanism and cannot be launched as an agent run.',
-      title: 'Agent cannot be launched',
-    };
-  }
-  return null;
-}
+export {
+  type AgentRunFailureView,
+  classifyAgentRunFailure,
+} from '@auto-swe/shared/lib/agentRunFailure';

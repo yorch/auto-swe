@@ -8,7 +8,6 @@ import {
   classifyAgentRunFailure,
   describeLaunchError,
   idempotencyFor,
-  isAgentRunTemplate,
   parseAgentRunOutcome,
   validateAgentRunForm,
 } from './agentRun';
@@ -149,14 +148,6 @@ describe('describeLaunchError', () => {
   });
 });
 
-describe('isAgentRunTemplate', () => {
-  it('matches the reserved template name only', () => {
-    expect(isAgentRunTemplate('Agent Run')).toBe(true);
-    expect(isAgentRunTemplate('Channel Task')).toBe(false);
-    expect(isAgentRunTemplate(null)).toBe(false);
-  });
-});
-
 describe('parseAgentRunOutcome', () => {
   it('reads the terminate result', () => {
     const o = parseAgentRunOutcome({
@@ -204,25 +195,32 @@ describe('parseAgentRunOutcome', () => {
 
 describe('classifyAgentRunFailure', () => {
   it.each([
-    ['Security scan failed with critical findings:\n[CRITICAL] a.ts', 'SECURITY_GATE_FAILURE'],
-    ['Security gate could not complete: boom', 'SECURITY_GATE_UNAVAILABLE'],
-    ['Push policy refused this change:\n- .env', 'AGENT_RUN_PUSH_POLICY'],
-    [
-      'The diff is 400000 characters, over the 300000 the security gate can scan.',
-      'AGENT_RUN_DIFF_TOO_LARGE',
-    ],
-    [
-      'This repository does not support draft pull requests. The branch x was pushed',
-      'DRAFT_PR_UNSUPPORTED',
-    ],
-    ['AGENT_RUN_CONCURRENCY_EXCEEDED', 'AGENT_RUN_CONCURRENCY_EXCEEDED'],
-    ['BUDGET_EXCEEDED: out', 'BUDGET_EXCEEDED'],
-  ])('recognises %s', (error, code) => {
-    expect(classifyAgentRunFailure(error)?.code).toBe(code);
+    'SECURITY_GATE_FAILURE',
+    'SECURITY_GATE_UNAVAILABLE',
+    'AGENT_RUN_PUSH_POLICY',
+    'AGENT_RUN_DIFF_TOO_LARGE',
+    'AGENT_RUN_EXPORT_TOO_LARGE',
+    'DRAFT_PR_UNSUPPORTED',
+    'PR_CREATE_FAILED',
+    'AGENT_RUN_CONCURRENCY_EXCEEDED',
+    'AGENT_RUNS_DISABLED',
+    'BUDGET_EXCEEDED',
+  ])('recognises the %s type the interpreter records', (code) => {
+    expect(classifyAgentRunFailure(`${code}: whatever the message says`)?.code).toBe(code);
+  });
+
+  it('keys on the type, so agent-chosen text in the message cannot change the verdict', () => {
+    const spoof =
+      'AGENT_RUN_PUSH_POLICY: Push policy refused this change:\n- SECURITY_GATE_FAILURE: x.md';
+    expect(classifyAgentRunFailure(spoof)?.code).toBe('AGENT_RUN_PUSH_POLICY');
+    // Wording alone, with no recorded type, says nothing.
+    expect(classifyAgentRunFailure('Security scan failed with critical findings')).toBeNull();
+    expect(classifyAgentRunFailure('mentions SECURITY_GATE_FAILURE: mid-text')).toBeNull();
   });
 
   it('says nothing about an unrecognised or missing error', () => {
     expect(classifyAgentRunFailure('socket hang up')).toBeNull();
+    expect(classifyAgentRunFailure('SOMETHING_ELSE: x')).toBeNull();
     expect(classifyAgentRunFailure(null)).toBeNull();
   });
 });

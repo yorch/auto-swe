@@ -521,7 +521,7 @@ async function walk(
       // runRetryable try/catch. Don't double-record.
       if (!SELF_RECORDING_NODE_TYPES.has(node.type)) {
         await safeRecord(dispatcher, {
-          error: err instanceof Error ? err.message : String(err),
+          error: describeStepError(err),
           nodeId: recordingId,
           status: 'FAILED',
         });
@@ -907,7 +907,7 @@ async function runRetryable(args: {
       if (isBranchCancelled(err)) {
         await safeRecord(dispatcher, {
           attempt,
-          error: err instanceof Error ? err.message : String(err),
+          error: describeStepError(err),
           nodeId,
           status: 'FAILED',
         });
@@ -919,7 +919,7 @@ async function runRetryable(args: {
       if (onError === 'continue') {
         await safeRecord(dispatcher, {
           attempt,
-          error: err instanceof Error ? err.message : String(err),
+          error: describeStepError(err),
           nodeId,
           status: 'SKIPPED',
         });
@@ -930,7 +930,7 @@ async function runRetryable(args: {
       // Record the failed attempt; retry if budget remains.
       await safeRecord(dispatcher, {
         attempt,
-        error: err instanceof Error ? err.message : String(err),
+        error: describeStepError(err),
         nodeId,
         status: 'FAILED',
       });
@@ -1295,7 +1295,7 @@ async function runFanOut(
           }
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = describeStepError(err);
         slots[i] = { error: msg, result: {}, status: 'FAILED' };
         firstError ??= err;
         if (node.onBranchFail === 'block') {
@@ -1518,3 +1518,36 @@ function setPath(ctx: Context, path: string, value: unknown): void {
 }
 
 export { lookupPath };
+
+/** Failure types that carry no information (`new ApplicationFailure(msg)` defaults to `Error`). */
+const UNINFORMATIVE_FAILURE_TYPES: ReadonlySet<string> = new Set(['Error', 'ApplicationFailure']);
+
+/**
+ * The text recorded as a step's error.
+ *
+ * A failed activity reaches the workflow as an `ActivityFailure` whose own
+ * message is always "Activity task failed"; the real failure is its innermost
+ * `cause`. Recording the wrapper made every activity failure read the same, so
+ * the run viewer could not say why a step failed. This walks the cause chain
+ * (duck-typed: this module has no runtime imports) and records
+ * `<type>: <message>` for a typed `ApplicationFailure`, else the innermost
+ * message. It changes only what is recorded: the arguments of the
+ * `recordWorkflowStep` activity, never the commands the workflow issues.
+ */
+export function describeStepError(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return String(err);
+  }
+  let innermost: Error = err;
+  for (let i = 0; i < 16; i++) {
+    const cause = (innermost as { cause?: unknown }).cause;
+    if (!(cause instanceof Error)) {
+      break;
+    }
+    innermost = cause;
+  }
+  const type = (innermost as { type?: unknown }).type;
+  return typeof type === 'string' && type.length > 0 && !UNINFORMATIVE_FAILURE_TYPES.has(type)
+    ? `${type}: ${innermost.message}`
+    : innermost.message;
+}
