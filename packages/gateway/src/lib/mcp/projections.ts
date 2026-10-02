@@ -287,3 +287,34 @@ export type WorkRequestsOutput = z.infer<typeof workRequestsOutput>;
 export type RunsOutput = z.infer<typeof runsOutput>;
 export type RunOutput = z.infer<typeof runOutput>;
 export type HumanStepsOutput = z.infer<typeof humanStepsOutput>;
+
+// ── Write tools ──
+
+/** `POST /work-requests`: 201 on a start, 200 with `deduplicated` on a replay of the same key. */
+export const restSubmitted = z.object({
+  data: z.object({
+    deduplicated: z.boolean().optional(),
+    workflowIds: z.array(z.string().uuid().nullable()),
+    workRequestId: z.string().uuid(),
+  }),
+});
+
+export const submitOutput = z.object({
+  status: z
+    .enum(['started', 'already_submitted', 'already_running'])
+    .describe(
+      'started: a run was launched. already_submitted: this idempotency key had already launched a run, which is returned. already_running: this ticket already has a run in flight, and nothing was launched.'
+    ),
+  workflowIds: z.array(z.string().uuid()).optional(),
+  workRequestId: z.string().uuid().optional(),
+});
+
+/** `POST /workflow-runs/:id/cancel`. */
+export const restCancelled = z.object({
+  data: z.object({ id: z.string().uuid(), status: z.literal('CANCELLED') }),
+});
+
+export const cancelOutput = z.object({
+  runId: z.string().uuid(),
+  status: z.literal('CANCELLED'),
+});

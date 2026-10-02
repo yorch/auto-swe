@@ -55,6 +55,17 @@ export interface McpBridge {
     path: string,
     query?: URLSearchParams
   ): Promise<BridgeResponse>;
+  /**
+   * One POST to a REST route, as `caller`. `body` is sent as JSON when given; `idempotencyKey`
+   * becomes the `Idempotency-Key` header. Only a route that declares `mcpScope: 'write'` will
+   * take it.
+   */
+  post(
+    app: FastifyInstance,
+    caller: McpCaller,
+    path: string,
+    options?: { body?: unknown; idempotencyKey?: string }
+  ): Promise<BridgeResponse>;
 }
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest();
@@ -68,6 +79,39 @@ export function createMcpBridge(verifier: OAuthTokenVerifier): McpBridge {
   const secret = randomBytes(32).toString('hex');
   const secretDigest = sha256(secret);
 
+  async function send(
+    app: FastifyInstance,
+    caller: McpCaller,
+    request: {
+      method: 'GET' | 'POST';
+      url: string;
+      body?: unknown;
+      headers?: Record<string, string>;
+    }
+  ): Promise<BridgeResponse> {
+    const res = await app.inject({
+      // Built from scratch: nothing the client sent is forwarded. The address is the one thing
+      // taken from the outer request, so the global rate limit counts this call against the client.
+      headers: {
+        ...request.headers,
+        accept: 'application/json',
+        authorization: `Bearer ${caller.token}`,
+        [MCP_BRIDGE_HEADER]: secret,
+      },
+      method: request.method,
+      ...(request.body !== undefined ? { payload: request.body as object } : {}),
+      remoteAddress: caller.clientIp,
+      url: request.url,
+    });
+    let body: unknown;
+    try {
+      body = res.payload ? JSON.parse(res.payload) : undefined;
+    } catch {
+      body = undefined;
+    }
+    return { body, status: res.statusCode };
+  }
+
   return {
     accepts(headerValue) {
       // A duplicated header reaches Fastify as one comma-joined string or as an array: neither is
@@ -76,25 +120,15 @@ export function createMcpBridge(verifier: OAuthTokenVerifier): McpBridge {
     },
     async get(app, caller, path, query) {
       const url = query && [...query.keys()].length > 0 ? `${path}?${query}` : path;
-      const res = await app.inject({
-        // Built from scratch: nothing the client sent is forwarded. The address is the one thing
-        // taken from the outer request, so the global rate limit counts this call against the client.
-        headers: {
-          accept: 'application/json',
-          authorization: `Bearer ${caller.token}`,
-          [MCP_BRIDGE_HEADER]: secret,
-        },
-        method: 'GET',
-        remoteAddress: caller.clientIp,
-        url,
+      return send(app, caller, { method: 'GET', url });
+    },
+    async post(app, caller, path, options) {
+      return send(app, caller, {
+        body: options?.body,
+        headers: options?.idempotencyKey ? { 'idempotency-key': options.idempotencyKey } : {},
+        method: 'POST',
+        url: path,
       });
-      let body: unknown;
-      try {
-        body = res.payload ? JSON.parse(res.payload) : undefined;
-      } catch {
-        body = undefined;
-      }
-      return { body, status: res.statusCode };
     },
     async verify(token) {
       try {

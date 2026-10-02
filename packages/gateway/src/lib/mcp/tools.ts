@@ -1,7 +1,8 @@
 import { type AuthInfo, McpServer } from '@modelcontextprotocol/server';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { MCP_SCOPE_READ } from '../mcpOAuth.js';
+import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../mcpOAuth.js';
+import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../ticketId.js';
 import {
   type BridgeResponse,
   callerFromAuthInfo,
@@ -9,23 +10,29 @@ import {
   type McpCaller,
 } from './bridge.js';
 import {
+  cancelOutput,
   humanStepsOutput,
   projectRunResult,
   repositoriesOutput,
+  restCancelled,
   restHumanSteps,
   restRepositories,
   restRun,
   restRuns,
+  restSubmitted,
   restWorkRequests,
   runOutput,
   runsOutput,
+  submitOutput,
   workRequestsOutput,
 } from './projections.js';
 
 /**
- * The read tools. Each is one GET to a REST route made through the bridge, so the route's own
- * role check and visibility filter decide what comes back; the tool only chooses the request and
- * reduces the response to an allowlisted shape. No tool reads the database.
+ * The tools. Each is one call to a REST route made through the bridge, so the route's own role
+ * check and visibility filter decide what comes back; the tool only chooses the request and
+ * reduces the response to an allowlisted shape. No tool reads the database. The read tools are
+ * GETs; the two write tools are POSTs to routes that bound them themselves
+ * (`lib/mcpWriteGuard.ts`), so a tool is never the control.
  */
 
 export interface McpToolDeps {
@@ -321,9 +328,182 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
   );
 }
 
+/** The tools that need `mcp:write`. */
+export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(['submit_work_request', 'cancel_run']);
+
+const WRITE = {
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+  readOnlyHint: false,
+} as const;
+
+/** Route error codes a write tool understands. Anything else is a fixed generic message. */
+const errorCode = (body: unknown): string | undefined => {
+  const code = (body as { error?: { code?: unknown } } | undefined)?.error?.code;
+  return typeof code === 'string' ? code : undefined;
+};
+
+/**
+ * A fixed message for a write refusal, chosen by status and, where several refusals share one,
+ * by the route's error code. The route's own text is never relayed: it can echo input.
+ */
+function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
+  const code = errorCode(response.body);
+  switch (response.status) {
+    case 402:
+      return failure(
+        "Your organization's monthly budget is used up, so no new run can start. Nothing was launched."
+      );
+    case 403:
+      return code === 'MCP_WRITE_DISABLED'
+        ? failure('Write access is turned off on this platform.')
+        : failureFor(403);
+    case 409:
+      return code === 'IDEMPOTENCY_KEY_IN_PROGRESS' || code === 'IDEMPOTENCY_KEY_RETRY'
+        ? failure(
+            'A request with this idempotency key is still starting. Retry shortly with the same key.'
+          )
+        : failure('The run is not in a state where this can be done.');
+    case 422:
+      return code === 'IDEMPOTENCY_KEY_MISMATCH'
+        ? failure(
+            'That idempotency key was already used for a different request. Use a new key for a different request.'
+          )
+        : failure('The platform refused the request.');
+    case 429:
+      return code === 'MCP_RUN_CAP_REACHED'
+        ? failure(
+            'You already have the maximum number of runs in flight. Wait for one to finish, or cancel one, then try again.'
+          )
+        : failure('Too many write calls. Wait a minute and try again.');
+    default:
+      return failureFor(response.status, notFound);
+  }
+}
+
+/**
+ * The write tools: `submit_work_request` and `cancel_run`, registered only for a token that holds
+ * `mcp:write` (which the verifier grants only while `mcp.writeToolsEnabled` is on). Neither can
+ * approve, merge or answer a human step: no tool does, and the routes they reach do none of it.
+ */
+export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller: McpCaller) {
+  const { app, bridge } = deps;
+
+  server.registerTool(
+    'submit_work_request',
+    {
+      annotations: { ...WRITE, title: 'Submit a work request' },
+      description:
+        "Submit a work request: the platform's agents implement the ticket in the repository and open a pull request for a person to review and merge. This tool never merges or approves anything. The run launches under YOUR identity, not a service account: it is recorded as launched by you, and where per-user GitHub credentials are enabled it may push branches and open pull requests with your own GitHub token. The description is read by the platform's agents as their instructions. Always the standard budget tier, and you may have only a few runs in flight at once. idempotencyKey is required: use a new random key for each distinct request, and reuse the same key only to retry that same request, which then returns the run it started instead of starting another. Use list_repositories for repoId.",
+      inputSchema: z
+        .object({
+          description: z
+            .string()
+            .min(1)
+            .max(MAX_DESCRIPTION_LENGTH)
+            .describe("What to implement: the instructions the platform's agents will follow"),
+          externalTicketId: ExternalTicketIdSchema.describe('The ticket id, such as JIRA-1234'),
+          idempotencyKey: z
+            .string()
+            .regex(/^[A-Za-z0-9._:~-]{8,128}$/)
+            .describe(
+              '8-128 characters from A-Z a-z 0-9 . _ : ~ - (a UUID is ideal). A new key per distinct request; the same key to retry one.'
+            ),
+          repoId: z.string().uuid().describe('The repository id, from list_repositories'),
+        })
+        .strict(),
+      outputSchema: submitOutput,
+      title: 'Submit a work request',
+    },
+    async (args): Promise<ToolResult> => {
+      try {
+        const response = await bridge.post(app, caller, '/api/v1/work-requests', {
+          body: {
+            description: args.description,
+            externalTicketId: args.externalTicketId,
+            repoIds: [args.repoId],
+          },
+          idempotencyKey: args.idempotencyKey,
+        });
+        if (response.status === 409 && errorCode(response.body) === 'WORKFLOW_ALREADY_EXISTS') {
+          // Not a failure: this ticket is already being worked on, and nothing was launched.
+          return ok(submitOutput.parse({ status: 'already_running' }));
+        }
+        if (response.status !== 200 && response.status !== 201) {
+          return writeFailure(response, 'Repository not found.');
+        }
+        const parsed = restSubmitted.safeParse(response.body);
+        if (!parsed.success) {
+          app.log.error(
+            { tool: 'submit_work_request' },
+            'mcp: a route returned an unreadable body'
+          );
+          return failure('The platform returned an unexpected response.');
+        }
+        return ok(
+          submitOutput.parse({
+            status: parsed.data.data.deduplicated ? 'already_submitted' : 'started',
+            workflowIds: parsed.data.data.workflowIds.filter((id) => id !== null),
+            workRequestId: parsed.data.data.workRequestId,
+          })
+        );
+      } catch (err) {
+        app.log.error({ err, tool: 'submit_work_request' }, 'mcp: a tool failed');
+        return failureFor(500);
+      }
+    }
+  );
+
+  server.registerTool(
+    'cancel_run',
+    {
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+        readOnlyHint: false,
+        title: 'Cancel a run',
+      },
+      description:
+        'Cancel a workflow run that is still running. Only runs you may control can be cancelled, the same as in the dashboard; a run you can see but do not own may be refused. Cancelling stops the run and cannot be undone. It does not approve, reject or answer any human step.',
+      inputSchema: z.object({ runId: z.string().uuid().describe('The run id') }).strict(),
+      outputSchema: cancelOutput,
+      title: 'Cancel a run',
+    },
+    async (args): Promise<ToolResult> => {
+      try {
+        const response = await bridge.post(
+          app,
+          caller,
+          `/api/v1/workflow-runs/${args.runId}/cancel`
+        );
+        if (response.status === 409) {
+          return failure('The run is not running, so it cannot be cancelled.');
+        }
+        if (response.status === 502) {
+          return failure('The platform could not cancel the run. Try again.');
+        }
+        if (response.status !== 200) {
+          return writeFailure(response, 'Run not found.');
+        }
+        const parsed = restCancelled.safeParse(response.body);
+        if (!parsed.success) {
+          app.log.error({ tool: 'cancel_run' }, 'mcp: a route returned an unreadable body');
+          return failure('The platform returned an unexpected response.');
+        }
+        return ok(cancelOutput.parse({ runId: parsed.data.data.id, status: 'CANCELLED' }));
+      } catch (err) {
+        app.log.error({ err, tool: 'cancel_run' }, 'mcp: a tool failed');
+        return failureFor(500);
+      }
+    }
+  );
+}
+
 /**
  * The server for one HTTP request. The factory runs per request, so which tools exist is decided
- * here from the verified token: a call with no `mcp:read` sees none.
+ * here from the verified token: a call with no `mcp:read` sees none, and the write tools exist only with `mcp:write`.
  */
 export function createMcpToolServer(deps: McpToolDeps, authInfo: AuthInfo | undefined): McpServer {
   const server = new McpServer(
@@ -333,6 +513,10 @@ export function createMcpToolServer(deps: McpToolDeps, authInfo: AuthInfo | unde
   const caller = callerFromAuthInfo(authInfo);
   if (caller?.scopes.includes(MCP_SCOPE_READ)) {
     registerReadTools(server, deps, caller);
+    // `mcp:write` is in the scopes only while writes are enabled and the user consented to them.
+    if (caller.scopes.includes(MCP_SCOPE_WRITE)) {
+      registerWriteTools(server, deps, caller);
+    }
   }
   return server;
 }
