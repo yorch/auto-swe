@@ -343,6 +343,10 @@ function buildAuth() {
         sameSite: 'lax',
         secure: BASE_URL.startsWith('https://'),
       },
+      // Cookie-authenticated POSTs (the OAuth consent decision among them) are refused unless
+      // their Origin is trusted. better-auth switches that check off under test runners
+      // unless it is pinned, which would leave the suites unable to see a CSRF regression.
+      disableOriginCheck: false,
     },
     baseURL: BASE_URL,
     database: prismaAdapter(prisma, { provider: 'postgresql' }),

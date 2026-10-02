@@ -280,10 +280,68 @@ hooks:
 The `jwt` plugin signs with an `EdDSA` key stored in `jwks`, encrypted with `BETTER_AUTH_SECRET`. A key signs
 for 30 days; it stays published for one more hour so a token signed in its last moments still verifies.
 
+### Signing in, consenting and disconnecting
+
+An authorization that reaches the gateway without a session sends the browser to the web app's
+`/login` page with the authorization request in the query, signed by the server. The login page
+sends the signed part of its own address back as `oauth_query` with a password or social sign-in.
+What happens next depends on the method:
+
+| Sign-in method | Continues the authorization? |
+|---|---|
+| Password | Yes. The server answers the sign-in with where it continues: the consent page, or the client's own redirect when that client already holds a consent that covers the request. |
+| Social (GitHub, Google, Okta) | Yes. The request is kept across the provider round trip, and the callback sends the browser to the consent page. That page is reachable without the dashboard's session marker and establishes the session itself, so a browser that has never signed in to the dashboard works. |
+| Magic link | No. The link is verified in a later request that has no memory of the authorization; see Limitations. |
+
+A user who is already signed in goes straight to the consent page. If the consent page is opened with no
+session, it offers a sign-in link that carries the signed request to `/login`, which resumes it. An
+account that is still awaiting approval never leaves the login page. The login and consent pages send
+`Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`, so neither can be framed.
+
+The consent page (`/oauth/consent`) shows:
+
+- the app's registered name, marked **unverified**: every client registers itself, and the name is
+  whatever it chose;
+- the host the user is sent back to, prominently, with a warning when it is a loopback address or an
+  app's own URL scheme, which any program on the machine could also be listening on;
+- what the app can do, in plain words. **Read** is seeing repositories, work requests, runs and pending
+  approvals. **Write** appears only when the app asked for it and `mcp.writeToolsEnabled` is on, as a
+  separate unticked choice that notes runs started this way use the user's own GitHub identity and appear
+  as them. `offline_access` is described as staying connected for up to 14 days.
+
+Approve sends `POST /api/auth/oauth2/consent` with a `scope` narrowed to what the user left ticked;
+Deny sends `accept: false`, and the client receives `access_denied` with `iss`. The page reads the
+app's name from `GET /api/auth/oauth2/public-client`, which needs the user's session.
+
+**Settings → Connected apps** lists the signed-in user's grants (`GET /api/v1/me/mcp-grants`: client
+name, redirect hosts, scopes, when it was granted) and disconnects one
+(`DELETE /api/v1/me/mcp-grants/:clientId`, own grants only; another user's client id is a 404). Both are
+ordinary REST routes for the ENGINEER role and work while `mcp.enabled` is off. The section is hidden when
+MCP is off and nothing is connected.
+
+Disconnecting is not deleting a consent row, because the refresh grant checks neither the consent nor the
+account: a refresh token would outlive its consent, and a later consent by the same client would revive
+every refresh token it was ever issued. The code grant does not look for a consent either, so an
+authorization code issued before a disconnect and not yet exchanged would mint one afterwards.
+`revokeMcpGrants` (`lib/mcpGrants.ts`) therefore deletes the consent rows, deletes the pair's pending
+authorization codes (rows of better-auth's `verification` table) and marks every stored refresh and access
+token of the user and client revoked, all in one transaction, together with an audit row (`McpGrant`, action `DELETE`, before-state the client and scopes). It is the only code
+that deletes a consent: the plugin's own deletion endpoints are 404. Deactivating a user (`PATCH
+/api/v1/users/:id` with `isActive: false`) revokes all of their grants the same way, in the same transaction
+as the update; any such request revokes, so repeating it after a failure completes the job. When tokens or
+codes remain but no consent row does, the audit row names the user as its entity (the client is in the
+before-state). A consent that grants
+access writes an audit row (`McpGrant`, `CREATE`) after the response; a failure to write it is logged and
+does not fail the authorization. Both appear in the audit log with the user as actor, or the admin who
+deactivated the account.
+
+A refresh with a revoked token is `invalid_grant`, also after the user consents again. The provider treats
+presenting a revoked refresh token as theft and then invalidates every refresh token of that user and
+client, so a client that retries with its old token after the user has re-consented has to be authorised
+once more.
+
 ### Limitations
 
-- The web app has no `/oauth/consent` page and nothing lists or revokes a user's grants, so a browser
-  cannot complete an authorization. Deleting a consent through the plugin is not reachable (404).
 - No MCP endpoint accepts these tokens; the resource identifier is reserved for it.
 - Open registration is an anonymous write endpoint. Clients are public, unverified and rate limited, but
   nothing removes expired clients, expired tokens or `oauth_client_assertions` rows, so those tables grow.
@@ -294,8 +352,17 @@ for 30 days; it stays published for one more hour so a token signed in its last 
   none exists.
 - The discovery document is the provider's with introspection, back-channel logout and every client
   authentication method but `none` removed.
-- A magic-link sign-in that completes in a different browser than the one that started the authorization
-  loses the authorization request.
+- A magic-link sign-in cannot continue an authorization: the link is verified in a later request that
+  has no memory of it, so the user lands on the dashboard and the app has to be started again. The login
+  page says so while an authorization is pending. Password and social sign-in continue it.
+- Cookie-authenticated `POST`s to the provider, the consent decision included, are refused unless their
+  `Origin` is a trusted origin (`advanced.disableOriginCheck` is pinned to `false`).
+- The consent page and Connected apps work in the same topologies as the dashboard: the browser sends the
+  session cookie cross-origin to the gateway. A deployment where that does not work cannot complete an
+  authorization either.
+- Revocation takes effect at the token endpoint at once. A JWT access token is not stored, so one already
+  issued stays valid until it expires (10 minutes) or the resource server, which must require the consent to
+  exist, rejects it.
 - Rate limits are per gateway replica.
 
 ---

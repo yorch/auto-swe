@@ -7,6 +7,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
+import { revokeMcpGrants } from '../lib/mcpGrants.js';
 import { invalidateUserAuthCache, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateUserSchema = z.object({
@@ -360,11 +361,23 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        const updated = await fastify.prisma.user.update({
+        const updateArgs = {
           data: request.body,
           select: { email: true, id: true, isActive: true, role: true, slackId: true },
           where: { id: request.params.id },
-        });
+        } as const;
+        // Deactivation and the revocation of the account's MCP grants commit together, and
+        // any request that sets `isActive: false` revokes (it is idempotent), so a failure
+        // cannot leave an inactive account holding refresh tokens that reactivation would
+        // bring back to life.
+        const updated =
+          request.body.isActive === false
+            ? await fastify.prisma.$transaction(async (tx) => {
+                const row = await tx.user.update(updateArgs);
+                await revokeMcpGrants(tx, { actorId: actor.sub, userId: row.id });
+                return row;
+              })
+            : await fastify.prisma.user.update(updateArgs);
         // A demotion or deactivation must take effect now, not after a cache
         // TTL — drop every cached session and the cached bearer-token state for
         // the user. Keyed by user id: the session cache is keyed by the signed

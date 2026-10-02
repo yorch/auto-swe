@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { type ReactNode, useEffect, useState } from 'react';
 import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
+import { ConnectedAppsSection } from '@/components/settings/ConnectedAppsSection';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { BUTTON_STYLE, Button, buttonClassName } from '@/components/ui/Button';
@@ -318,6 +319,10 @@ export default function SettingsPage() {
 
       <section>
         <AccessTokensSection number="04" />
+      </section>
+
+      <section>
+        <ConnectedAppsSection number="05" />
       </section>
 
       <ConfirmModal
