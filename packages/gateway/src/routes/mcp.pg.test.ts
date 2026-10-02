@@ -328,6 +328,25 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
       expect((await mcp(fresh)).statusCode).toBe(200);
     }, 30_000);
 
+    it('refuses a token minted before a consent that was deleted and recreated, and takes the new consent at once', async () => {
+      const { clientId, token, user } = await connect();
+      expect((await mcp(token)).statusCode).toBe(200);
+      const old = await prisma.oauthConsent.findFirstOrThrow({
+        where: { clientId, userId: user.id },
+      });
+      // Revocation deletes the row; a later consent creates a new one (new createdAt).
+      await prisma.oauthConsent.deleteMany({ where: { clientId, userId: user.id } });
+      expect((await mcp(token)).statusCode).toBe(401);
+      await new Promise((resolve) => setTimeout(resolve, (MCP_CONSENT_SKEW_SECONDS + 1) * 1000));
+      const { id: _id, ...rest } = old;
+      const recreated = await prisma.oauthConsent.create({
+        data: { ...rest, createdAt: new Date(), updatedAt: new Date() },
+      });
+      expect(recreated.createdAt.getTime()).toBeGreaterThan(old.createdAt.getTime());
+      // Same user, client and scopes, but the token predates the current consent.
+      expect((await mcp(token)).statusCode).toBe(401);
+    }, 30_000);
+
     it('keeps a token valid when the user is not asked to consent again', async () => {
       const { clientId, token, user } = await connect();
       const again = await issueToken(user.cookie, clientId, 'mcp:read offline_access');
