@@ -1,5 +1,7 @@
 import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { JSONWebKeySet } from 'jose';
 import { loadTokenUser } from '../plugins/auth.js';
 import type { McpRouteOptions } from '../routes/mcp.js';
@@ -18,6 +20,42 @@ function hostnameOf(origin: string): string | null {
   }
 }
 
+const GITHUB_HOSTS_TTL_MS = 60_000;
+
+/**
+ * Every GitHub web host the platform is configured for: the instance's own, and each distinct
+ * override a connection carries (GitHub Enterprise). A pull request link in a run's result is
+ * trusted only on one of these. Cached briefly, since it is read on every `get_run`.
+ */
+function githubHostsReader() {
+  let cached: { hosts: string[]; at: number } | null = null;
+  return async (): Promise<string[]> => {
+    if (cached && Date.now() - cached.at < GITHUB_HOSTS_TTL_MS) {
+      return cached.hosts;
+    }
+    const [config, rows] = await Promise.all([
+      resolveGitHubConfig(),
+      runUnscoped('the set of GitHub hosts is platform-wide, not a tenant', ['Connection'], () =>
+        prisma.connection.findMany({
+          distinct: ['githubUrl'],
+          select: { githubUrl: true },
+          where: { githubUrl: { not: null } },
+        })
+      ),
+    ]);
+    const hosts = new Set<string>();
+    for (const url of [config.baseUrl, ...rows.map((r) => r.githubUrl)]) {
+      try {
+        hosts.add(new URL(url as string).host.toLowerCase());
+      } catch {
+        // An unparseable override is not a host anyone could link to.
+      }
+    }
+    cached = { at: Date.now(), hosts: [...hosts] };
+    return cached.hosts;
+  };
+}
+
 /** The production wiring: keys and consent from the authorization server's own tables, settings from the registry. */
 export function mcpRouteOptions(): McpRouteOptions {
   const getSettings = async () => {
@@ -32,6 +70,7 @@ export function mcpRouteOptions(): McpRouteOptions {
       .map(hostnameOf)
       .filter((host): host is string => host !== null),
     dashboardOrigin: getDefaultClientOrigin(),
+    getGitHubHosts: githubHostsReader(),
     getSettings,
     issuer: MCP_ISSUER,
     resource: MCP_RESOURCE,

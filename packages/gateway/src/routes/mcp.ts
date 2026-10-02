@@ -44,6 +44,8 @@ export interface McpRouteOptions {
   serverVersion: string;
   /** The dashboard's public origin, for the links tool results carry. */
   dashboardOrigin: string;
+  /** `host[:port]` of every GitHub the platform is configured for (a pull request link must be on one). */
+  getGitHubHosts: () => Promise<readonly string[]>;
 }
 
 /** The scopes this server will accept now: write is advertised only while writes are enabled. */
@@ -102,6 +104,7 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
     app,
     bridge,
     dashboardOrigin: options.dashboardOrigin,
+    getGitHubHosts: options.getGitHubHosts,
     serverVersion: options.serverVersion,
   };
 

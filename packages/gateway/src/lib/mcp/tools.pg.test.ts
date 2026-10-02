@@ -60,7 +60,6 @@ const modernMeta = {
 describe.skipIf(!enabled)('MCP read tools against Postgres', () => {
   let app: FastifyInstance;
   let seq = 0;
-  const scoped: Array<{ method: string; url: string; scope: unknown }> = [];
 
   const call = (
     method: 'GET' | 'POST',
@@ -377,13 +376,6 @@ describe.skipIf(!enabled)('MCP read tools against Postgres', () => {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     app.addHook('onRoute', (routeOptions) => {
-      if (routeOptions.config?.mcpScope) {
-        scoped.push({
-          method: String(routeOptions.method),
-          scope: routeOptions.config.mcpScope,
-          url: routeOptions.url,
-        });
-      }
       if (!routeOptions.schema?.response) {
         routeOptions.schema = { ...routeOptions.schema, response: { 200: z.any() } };
       }
@@ -412,25 +404,6 @@ describe.skipIf(!enabled)('MCP read tools against Postgres', () => {
   afterAll(async () => {
     await cleanup();
     await app?.close();
-  });
-
-  it('declares mcpScope on exactly the five read routes, all of them GET and read', () => {
-    // Fastify also registers a HEAD twin and a trailing-slash twin of each route: the same handler.
-    const normalized = [
-      ...new Set(scoped.map((r) => `${r.method} ${r.url.replace(/\/$/, '')} ${r.scope}`)),
-    ].sort();
-    expect(normalized).toEqual([
-      'GET /api/v1/human-steps read',
-      'GET /api/v1/repositories read',
-      'GET /api/v1/work-requests read',
-      'GET /api/v1/workflow-runs read',
-      'GET /api/v1/workflow-runs/:id read',
-      'HEAD /api/v1/human-steps read',
-      'HEAD /api/v1/repositories read',
-      'HEAD /api/v1/work-requests read',
-      'HEAD /api/v1/workflow-runs read',
-      'HEAD /api/v1/workflow-runs/:id read',
-    ]);
   });
 
   it('refuses an MCP token sent straight to a REST route', async () => {

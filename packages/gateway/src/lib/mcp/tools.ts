@@ -33,6 +33,8 @@ export interface McpToolDeps {
   bridge: McpBridge;
   /** The dashboard's public origin, for the links tools return. */
   dashboardOrigin: string;
+  /** The `host[:port]` of every GitHub this platform is configured for; a PR link must be on one. */
+  getGitHubHosts: () => Promise<readonly string[]>;
   serverVersion: string;
 }
 
@@ -111,7 +113,10 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
       notFound?: string;
     },
     run: (args: z.infer<z.ZodObject<Shape>>) => Promise<BridgeResponse>,
-    project: (body: unknown, args: z.infer<z.ZodObject<Shape>>) => Record<string, unknown> | null
+    project: (
+      body: unknown,
+      args: z.infer<z.ZodObject<Shape>>
+    ) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>
   ) {
     server.registerTool(
       name,
@@ -127,7 +132,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
         if (response.status !== 200) {
           return failureFor(response.status, config.notFound);
         }
-        const projected = project(response.body, args);
+        const projected = await project(response.body, args);
         if (projected === null) {
           app.log.error({ tool: name }, 'mcp: a route returned a body the tool could not read');
           return failure('The platform returned an unexpected response.');
@@ -143,12 +148,12 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
     'list_repositories',
     {
       description:
-        'List the repositories you can submit work against: id, GitHub organization and name, default branch and owning team.',
+        'List the repositories you can submit work against: id, GitHub organization and name, default branch and owning team (50 per page by default; use offset to page).',
       input: pageInput,
       output: repositoriesOutput,
       title: 'List repositories',
     },
-    (args) => get('/api/v1/repositories', query(args)),
+    (args) => get('/api/v1/repositories', query({ ...args, limit: args.limit ?? 50 })),
     (body) => {
       const parsed = restRepositories.safeParse(body);
       if (!parsed.success) {
@@ -247,7 +252,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
     },
     // A run the caller cannot see is a 404, exactly as in REST.
     (args) => get(`/api/v1/workflow-runs/${args.runId}`),
-    (body) => {
+    async (body) => {
       const parsed = restRun.safeParse(body);
       if (!parsed.success) {
         return null;
@@ -258,7 +263,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
         dashboardUrl: `${origin}/runs/${data.id}`,
         endedAt: data.endedAt,
         id: data.id,
-        result: projectRunResult(data.result),
+        result: projectRunResult(data.result, await deps.getGitHubHosts()),
         startedAt: data.startedAt,
         status: data.status,
         steps: data.steps.map((s) => ({
@@ -279,7 +284,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
     'list_pending_human_steps',
     {
       description:
-        'List the steps of your runs that are waiting for a person (an approval or an answer): which run, what kind, its title and deadline. What to answer is not returned and cannot be answered here; use the inbox link.',
+        'List the pending human steps (approvals and answers) on runs you can see, which for an administrator is every team: which run, what kind, its title and deadline. At most 100, newest first; `truncated` is true when there may be more. What to answer is not returned and cannot be answered here; use the inbox link.',
       input: {},
       output: humanStepsOutput,
       title: 'List pending human steps',
@@ -292,6 +297,8 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
       }
       return {
         humanSteps: parsed.data.data.map((s) => ({ ...s, inboxUrl: `${origin}/govern/approvals` })),
+        // The route takes 100 and reports no total: a full page may be hiding more.
+        truncated: parsed.data.data.length >= 100,
       };
     }
   );

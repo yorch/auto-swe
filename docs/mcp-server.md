@@ -93,14 +93,14 @@ object: an argument the tool does not declare is refused, not ignored.
 
 | Tool | Calls | Returns |
 |---|---|---|
-| `list_repositories` | `GET /api/v1/repositories` | `id`, `organizationName`, `repoName`, `defaultBranch`, `isActive`, `team` (`id`, `name`, `slug`). Git repositories only. Inputs: `limit`, `offset`. |
+| `list_repositories` | `GET /api/v1/repositories` | `id`, `organizationName`, `repoName`, `defaultBranch`, `isActive`, `team` (`id`, `name`, `slug`). Git repositories only. Inputs: `limit` (default 50, max 100), `offset`. |
 | `list_work_requests` | `GET /api/v1/work-requests` | `id`, `externalTicketId`, `createdAt`, `isMine`, and the work request's workflows as `id` and `status`. No description and no requester's name. Inputs: `limit`, `offset`, `ticket` (substring of the ticket id). |
 | `list_runs` | `GET /api/v1/workflow-runs` | `id`, `status`, `templateName`, `startedAt`, `endedAt`, `costUsdAccrued`, `workRequest` (`id`, `externalTicketId`). Inputs: `limit`, `offset`, `status`, `workRequestId`. |
 | `get_run` | `GET /api/v1/workflow-runs/:id` | `id`, `status`, `templateName`, timestamps, `costUsdAccrued`, token totals, `steps` as `nodeId`, `status`, `attempt`, `failed`, `result`, `workRequest` and `dashboardUrl`. Input: `runId` (a UUID). |
-| `list_pending_human_steps` | `GET /api/v1/human-steps` | `id`, `runId`, `kind`, `nodeId`, `title`, `requestedAt`, `timeoutAt`, `requiredApprovers`, `currentApprovers`, `inboxUrl`. No inputs. |
+| `list_pending_human_steps` | `GET /api/v1/human-steps` | `id`, `runId`, `kind`, `nodeId`, `title`, `requestedAt`, `timeoutAt`, `requiredApprovers`, `currentApprovers`, `inboxUrl`, and `truncated`. Pending steps on runs the caller can see (every team's for an administrator), at most 100, newest first; `truncated` is true when the cap was reached. No inputs. |
 
 A list tool returns `total`, `limit` and `offset` beside its rows. `get_run.result` is exactly
-`{ prUrl, prNumber }`: an `https` URL without credentials and a positive integer, or `null`. A tool
+`{ prUrl, prNumber }` or `null`. `prUrl` is rebuilt as `https://<host>/<owner>/<repo>/pull/<prNumber>` and only on a GitHub host the platform is configured for (the instance's own and each connection's GitHub Enterprise override); a link with another host, a query, a fragment, credentials or a different pull request number is dropped, because the result is whatever a workflow's terminate node mapped. A tool
 returns `structuredContent` that matches its `outputSchema`, and the same JSON as text.
 
 **What is never returned.** Output is built from an explicit allowlist, because a tool result lands in a
@@ -110,7 +110,7 @@ context or spec snapshot, traces, a human step's context, fields or options, a r
 description, configuration or credentials, or a link other than the dashboard's and the pull request's.
 A ticket id that is outside the characters the submit route accepts is returned as `null`. The few names
 a team member authors (a template, a workflow node, a human step's title) are clipped and stripped of
-control characters, and are still text a person wrote.
+control characters, and are still text a person wrote. Characters a person cannot see but a model reads (zero-width and bidirectional-override characters, the Unicode tag block, private-use characters, unpaired surrogates) are removed, and names are clipped by code point.
 
 Not exposed: answering or approving a human step, merging, retrying, any write, templates, traces, and
 every administrative surface. `list_pending_human_steps` shows that a person is needed and where to go;
@@ -211,8 +211,8 @@ and needs no restart.
   call's. The limit is per gateway process.
 - The names a team member authors (template, node, human step title) can still carry text that tries to
   steer a model. They are length-limited and stripped of control characters, not made safe.
-- Fastify registers a `HEAD` twin of each `GET` route, so the five routes' `HEAD` forms also accept a
-  bridged call. They return no body.
+- Fastify registers a `HEAD` twin of each `GET` route, so the `HEAD` forms also accept a bridged call
+  (no body). The human-steps routes are also mounted as `/api/v1/inbox`, which opts in the same way.
 - Only OAuth tokens are accepted. A personal access token cannot be used, so a headless agent with no
   browser has no way to connect.
 - Browser-hosted MCP clients are not supported: the endpoint's `Origin` check admits only the

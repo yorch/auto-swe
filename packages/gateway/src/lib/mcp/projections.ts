@@ -14,16 +14,19 @@ import { isValidTicketId } from '../ticketId.js';
  * characters.
  */
 
-/** C0 and C1 controls and the Unicode line and paragraph separators. */
-const isControl = (code: number) =>
-  code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
+/**
+ * What a model reads but a person reviewing the transcript does not see: format characters (zero
+ * width, bidi overrides), private use, the tag block (U+E0000-E007F, "ASCII smuggling") and
+ * unpaired surrogates are removed. Control characters and line separators become spaces.
+ */
+const INVISIBLE = /[\p{Cf}\p{Co}\p{Cs}\u{E0000}-\u{E007F}]/gu;
+const SPACING_CONTROLS = /[\p{Cc}\u2028\u2029]/gu;
 
-const withoutControls = (s: string) =>
-  [...s].map((ch) => (isControl(ch.codePointAt(0) as number) ? ' ' : ch)).join('');
+const cleaned = (s: string) => s.replace(INVISIBLE, '').replace(SPACING_CONTROLS, ' ').trim();
 
-/** A short name authored by a team member: no control characters, at most `max` characters. */
+/** A short name authored by a team member: cleaned, at most `max` code points. */
 export const shortName = (max: number) =>
-  z.string().transform((s) => withoutControls(s).trim().slice(0, max));
+  z.string().transform((s) => [...cleaned(s)].slice(0, max).join(''));
 
 /** An enum-like status from the REST body; anything that is not one is reported as UNKNOWN. */
 const status = z.string().transform((s) => (/^[A-Z][A-Z_]{0,31}$/.test(s) ? s : 'UNKNOWN'));
@@ -220,18 +223,27 @@ export const humanStepsOutput = z.object({
       title: z.string(),
     })
   ),
+  /** True when the route's cap was reached, so more may be waiting. */
+  truncated: z.boolean(),
 });
 
 const MAX_PR_URL_LENGTH = 500;
+const PR_PATH =
+  /^\/([A-Za-z0-9][A-Za-z0-9._-]{0,99})\/([A-Za-z0-9._-]{1,100})\/pull\/([1-9][0-9]{0,9})$/;
 
 /**
  * A run's outcome, reduced to exactly `{ prUrl, prNumber }` or null.
  *
- * `result` is whatever the workflow's terminate node mapped, so it is an arbitrary object. Only a
- * positive integer and an `https` URL with no credentials in it pass; the rest, however plausible,
- * is dropped.
+ * `result` is whatever the workflow's terminate node mapped, so it is an arbitrary object, and a
+ * URL in it is attacker-influenced text. Only a pull request link on a GitHub host this platform
+ * is configured for passes: `https://<host>/<owner>/<repo>/pull/<prNumber>`, no credentials, query
+ * or fragment, and the number in the path is `prNumber`. The URL returned is rebuilt from those
+ * validated parts, never the input echoed.
  */
-export function projectRunResult(result: unknown): { prNumber: number; prUrl: string } | null {
+export function projectRunResult(
+  result: unknown,
+  githubHosts: readonly string[]
+): { prNumber: number; prUrl: string } | null {
   if (typeof result !== 'object' || result === null) {
     return null;
   }
@@ -250,10 +262,24 @@ export function projectRunResult(result: unknown): { prNumber: number; prUrl: st
   } catch {
     return null;
   }
-  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') {
+  const host = url.host.toLowerCase();
+  const path = PR_PATH.exec(url.pathname);
+  if (
+    url.protocol !== 'https:' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.search !== '' ||
+    url.hash !== '' ||
+    !githubHosts.includes(host) ||
+    !path ||
+    Number(path[3]) !== prNumber
+  ) {
     return null;
   }
-  return { prNumber: prNumber as number, prUrl: url.href };
+  return {
+    prNumber: prNumber as number,
+    prUrl: `https://${host}/${path[1]}/${path[2]}/pull/${path[3]}`,
+  };
 }
 
 export type RepositoriesOutput = z.infer<typeof repositoriesOutput>;

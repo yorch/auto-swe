@@ -93,6 +93,7 @@ describe('MCP endpoint', () => {
     await app.register(mcpRoutes, {
       allowedOriginHostnames: ['localhost'],
       dashboardOrigin: 'http://localhost:3000',
+      getGitHubHosts: async () => ['github.com'],
       getSettings: async () => {
         if (settingsFail) {
           throw new Error('registry unavailable');
@@ -280,6 +281,7 @@ describe('MCP endpoint', () => {
       await broken.register(mcpRoutes, {
         allowedOriginHostnames: [],
         dashboardOrigin: 'http://localhost:3000',
+        getGitHubHosts: async () => ['github.com'],
         getSettings: async () => ({ enabled: true, writeToolsEnabled: false }),
         issuer: TEST_ISSUER,
         resource: TEST_RESOURCE,
