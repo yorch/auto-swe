@@ -16,6 +16,9 @@ import {
  * Both must approve (failed == 0) before the PR opens. If either rejects,
  * the agent fixes and the consensus check retries (up to 3 total attempts).
  *
+ * CI runs after the consensus. A failing CI is fixed by the agent (up to 3 times, like
+ * default-engineering); the fix re-enters the two-reviewer consensus, then updates the pull request.
+ *
  * Demonstrates: fanOut for quality aggregation (not work splitting),
  * with onBranchFail: 'continue' so a single rejection doesn't abort early.
  */
@@ -24,6 +27,8 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
     'Run two independent agent review-network calls in parallel (fanOut with concurrency=2). ' +
     'Both reviewers must approve before the PR opens; if either rejects the agent ' +
     'addresses the combined feedback and tries again (up to 3 rounds). ' +
+    'Then wait for CI; a CI failure is fixed by the agent (up to 3 times) and the fix goes back ' +
+    'through both reviewers before the PR is updated. ' +
     'Demonstrates fanOut for parallel quality gates rather than parallel work.',
   entry: 'setValidating',
   name: 'consensus-review',
@@ -75,7 +80,7 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
         title: 'Implement the ticket',
         type: 'step',
       },
-      initCounters: initCounters('fanOutReview', { ci: false, group: 'implement' }),
+      initCounters: initCounters('fanOutReview', { group: 'implement' }),
       // The consensus review: two reviewer slots, both must approve.
       fanOutReview: {
         // Two reviewer slots — each branch runs runBranchReview independently.
@@ -157,8 +162,9 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
       setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     },
     openPullRequest({ next: ciWaitEntry() }),
-    // A bare CI gate: this template does not loop on CI failures.
-    ciLoop({ fix: false, passed: 'done' }),
+    // A CI failure is fixed and the fixed code goes back through both reviewers before it is
+    // pushed, so the consensus always describes the code that is pushed.
+    ciLoop({ fix: { handoff: { rereview: 'fanOutReview' } }, passed: 'done' }),
     {
       done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
     }

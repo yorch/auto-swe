@@ -68,32 +68,120 @@ function removePassThrough(spec: WorkflowSpec, id: string): WorkflowSpec {
 }
 
 /**
+ * The CI fix loop `consensus-review` and `four-eyes` gained: a failing CI is no longer terminal
+ * but fetches the logs, asks the implementer for a fix (3 attempts, as in default-engineering),
+ * and sends the fixed code back through `rereview` (their review gate, so an approval never
+ * covers code it did not see) before the pull request is updated. Also initialises the counter.
+ */
+function withCiFixLoop(g: WorkflowSpec, rereview: string, description: string): WorkflowSpec {
+  const nodes: Record<string, unknown> = { ...g.nodes };
+  const init = nodes.initCounters as { values: Record<string, unknown> };
+  nodes.initCounters = {
+    ...init,
+    values: { 'context.ciRetries': { literal: 0 }, ...init.values },
+  };
+  nodes.checkCI = { ...(nodes.checkCI as object), onFalse: 'incCIRetries' };
+  Object.assign(nodes, {
+    checkCILimit: {
+      expr: 'context.ciRetries >= 3',
+      onFalse: 'fetchLogs',
+      onTrue: 'terminateCIFailed',
+      type: 'cond',
+    },
+    ciFix: {
+      inputs: {
+        failureContext: { from: 'context.lastCILogs' },
+        previousCodeResult: { from: 'context.currentCodeResult' },
+      },
+      next: 'updateCodeAfterCIFix',
+      step: 'executeCIFixImplementation',
+      type: 'step',
+    },
+    clearCiResult: {
+      next: rereview,
+      type: 'set',
+      values: { 'context.ciResultPayload': { literal: null } },
+    },
+    fetchLogs: {
+      inputs: { logsUrl: { from: 'context.ciResultPayload.logsUrl' } },
+      next: 'storeLogs',
+      step: 'fetchCILogs',
+      type: 'step',
+    },
+    incCIRetries: {
+      next: 'checkCILimit',
+      type: 'set',
+      values: { 'context.ciRetries': { expr: 'context.ciRetries + 1' } },
+    },
+    storeLogs: {
+      next: 'ciFix',
+      type: 'set',
+      values: { 'context.lastCILogs': { from: 'nodes.fetchLogs.output' } },
+    },
+    updateCodeAfterCIFix: {
+      next: 'clearCiResult',
+      type: 'set',
+      values: { 'context.currentCodeResult': { from: 'nodes.ciFix.output' } },
+    },
+  });
+  return { ...g, description, nodes: nodes as WorkflowSpec['nodes'] };
+}
+
+/**
  * Deliberate departures from the golden, keyed by template name. Anything not
  * listed here must match exactly.
  */
 const INTENDED_CHANGES: Record<
   string,
   { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec }
-> = Object.fromEntries(
+> = {
   // Seven templates stamped COMPLETED just before their SUCCESS terminate. The finalizer
   // (`finalizeWorkflowRun`) already writes COMPLETED on a SUCCESS run, so the node was a
   // second write of the same fact. Removing it retargets what pointed at it to `done`.
-  [
-    'agent-reviewed-pr',
-    'code-and-ci',
-    'consensus-review',
-    'default-engineering',
-    'dependency-update',
-    'four-eyes',
-    'pr-approval-gate',
-  ].map((name) => [
-    name,
-    {
-      apply: (g: WorkflowSpec) => removePassThrough(g, 'setCompleted'),
-      reason: 'the finalizer already writes COMPLETED on SUCCESS',
-    },
-  ])
-);
+  ...Object.fromEntries(
+    [
+      'agent-reviewed-pr',
+      'code-and-ci',
+      'default-engineering',
+      'dependency-update',
+      'pr-approval-gate',
+    ].map((name) => [
+      name,
+      {
+        apply: (g: WorkflowSpec) => removePassThrough(g, 'setCompleted'),
+        reason: 'the finalizer already writes COMPLETED on SUCCESS',
+      },
+    ])
+  ),
+  // The two templates that ended the run on the first CI failure now fix and retry like
+  // their siblings, in addition to the setCompleted removal above.
+  'consensus-review': {
+    apply: (g: WorkflowSpec) => withCiFixLoop(
+        removePassThrough(g, 'setCompleted'),
+        'fanOutReview',
+        g.description.replace(
+          ' Demonstrates',
+          ' Then wait for CI; a CI failure is fixed by the agent (up to 3 times) and the fix goes back through both reviewers before the PR is updated. Demonstrates'
+        )
+      ),
+    reason:
+      'the finalizer already writes COMPLETED on SUCCESS; a CI failure is fixed and the fix ' +
+      're-enters the two-reviewer consensus (up to 3 attempts) instead of failing the run',
+  },
+  'four-eyes': {
+    apply: (g: WorkflowSpec) => withCiFixLoop(
+        removePassThrough(g, 'setCompleted'),
+        'setReviewing',
+        g.description.replace(
+          ' Models a',
+          ' Then wait for CI; a CI failure is fixed by the agent (up to 3 times) and the fix goes back through the review and both sign-offs before the PR is updated. Models a'
+        )
+      ),
+    reason:
+      'the finalizer already writes COMPLETED on SUCCESS; a CI failure is fixed and the fix ' +
+      're-enters the agent review and both sign-offs (up to 3 attempts) instead of failing the run',
+  },
+};
 
 describe('built-in templates match their pre-helper golden specs', () => {
   it('has a golden file for every built-in template, and no stray ones', () => {

@@ -16,11 +16,17 @@ import {
  * Two-person rule: two independent humanApproval gates before the PR opens.
  * Models a change-management process where the author (or team lead) signs off
  * first, then a second independent reviewer must also approve.
+ *
+ * CI runs after the sign-offs. A failing CI is fixed by the agent (up to 3 times, like
+ * default-engineering); the fix re-enters the review loop and both sign-offs, then updates
+ * the pull request, so the approvals always describe the code that is pushed.
  */
 export const FOUR_EYES_SPEC: WorkflowSpec = {
   description:
     'Implement, run the agent review loop, then require two sequential human approvals ' +
     '(e.g. author sign-off followed by independent reviewer sign-off) before opening the PR. ' +
+    'Then wait for CI; a CI failure is fixed by the agent (up to 3 times) and the fix goes back ' +
+    'through the review and both sign-offs before the PR is updated. ' +
     'Models a four-eyes / two-person-rule change-management requirement.',
   entry: 'setValidating',
   name: 'four-eyes',
@@ -35,7 +41,7 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
         title: 'Implement the ticket',
         type: 'step',
       },
-      initCounters: initCounters('setReviewing', { ci: false, group: 'implement' }),
+      initCounters: initCounters('setReviewing', { group: 'implement' }),
     },
     reviewLoop({ approved: 'firstSignoff' }),
     {
@@ -65,8 +71,9 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
       setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     },
     openPullRequest({ next: ciWaitEntry() }),
-    // A bare CI gate: this template does not loop on CI failures.
-    ciLoop({ fix: false, passed: 'done' }),
+    // A CI failure is fixed and the fixed code goes back through the agent review and BOTH
+    // sign-offs before it is pushed, so no approval ever covers code it did not see.
+    ciLoop({ fix: { handoff: { rereview: 'setReviewing' } }, passed: 'done' }),
     {
       done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
     }

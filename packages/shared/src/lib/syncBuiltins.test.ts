@@ -284,6 +284,18 @@ describe('syncBuiltins — rolling the helper-built templates out', () => {
     }
   });
 
+  it('consensus-review and four-eyes gain the CI fix loop only in the new version', async () => {
+    const { prisma, tables } = await seedFromPreviousRelease();
+    await seedSweStarter(prisma);
+    for (const name of ['consensus-review', 'four-eyes']) {
+      const [v1, v2] = versionsOf(tables, template(tables, name).id) as [Row, Row];
+      // A run pinned to v1 keeps failing on the first CI failure; new runs fix and retry.
+      expect('ciFix' in (v1.spec as Spec).nodes, name).toBe(false);
+      expect('ciFix' in (v2.spec as Spec).nodes, name).toBe(true);
+      expect(template(tables, name).activeVersion, name).toBe(2);
+    }
+  });
+
   it('is a no-op once rolled out, and for a stored spec that differs only in key order', async () => {
     const { prisma, tables } = makeFake();
     await seedSweStarter(prisma);
