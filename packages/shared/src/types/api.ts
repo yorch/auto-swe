@@ -513,8 +513,17 @@ export interface WorkflowStepRecord {
 /** One captured tool call, LLM response, or activity event from an agent activity. */
 export interface AgentTraceRecord {
   id: string;
-  /** Temporal activity type, e.g. "executeImplementation". */
+  /** Temporal activity type, e.g. "executeImplementation". Not a workflow node id. */
   nodeId: string;
+  /** Workflow-spec node (key in `spec.nodes`) the activity ran for; null on older rows. */
+  specNodeId: string | null;
+  /**
+   * The interpreter's id for that execution: the spec key, branch-prefixed inside a
+   * fan-out (`fan[0]/impl`). Equals `WorkflowStepRecord.nodeId`. Null on older rows.
+   */
+  recordingId: string | null;
+  /** Interpreter attempt at the node (`onFail.retry` re-dispatches); null on older rows. */
+  stepAttempt: number | null;
   agentKey: string;
   /** Temporal activity attempt number (1-based); separates retry attempts. */
   attempt: number;

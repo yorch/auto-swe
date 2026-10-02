@@ -222,6 +222,46 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(prisma.agentTrace.findMany).toHaveBeenCalled();
   });
 
+  it('projects which spec node, branch and attempt each trace belongs to', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    const base = {
+      agentKey: 'implementer',
+      attempt: 1,
+      costUsd: 0,
+      createdAt: new Date(),
+      durationMs: 1,
+      error: null,
+      inputJson: null,
+      inputTokens: null,
+      model: null,
+      nodeId: 'executeImplementation',
+      otelSpanId: null,
+      otelTraceId: null,
+      outputJson: null,
+      outputTokens: null,
+      seq: 0,
+      toolName: null,
+      type: 'activity_event',
+    };
+    prisma.agentTrace.findMany.mockResolvedValue([
+      { ...base, id: 't-new', recordingId: 'fan[1]/impl', specNodeId: 'impl', stepAttempt: 2 },
+      // A row written before the columns existed.
+      { ...base, id: 't-old', recordingId: null, specNodeId: null, stepAttempt: null },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}?includeTraces=true`,
+    });
+    expect(res.statusCode).toBe(200);
+    const traces = res.json().data.traces as Array<Record<string, unknown>>;
+    expect(traces.map((t) => [t.id, t.specNodeId, t.recordingId, t.stepAttempt])).toEqual([
+      ['t-new', 'impl', 'fan[1]/impl', 2],
+      ['t-old', null, null, null],
+    ]);
+  });
+
   it('implies includeTraces=true when only fullTraces=true is set', async () => {
     const { app, prisma } = await buildApp();
     mockRun(prisma);
