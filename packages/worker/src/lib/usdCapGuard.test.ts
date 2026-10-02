@@ -12,6 +12,9 @@ vi.mock('./activityContext.js', () => ({
   currentWorkflowId: () => currentWorkflowIdMock(),
 }));
 
+const getModelSpecMock = vi.fn();
+vi.mock('./models.js', () => ({ getModelSpec: (...args: unknown[]) => getModelSpecMock(...args) }));
+
 const getModelPriceMock = vi.fn();
 vi.mock('./costTracking.js', () => ({
   getModelPrice: (...args: unknown[]) => getModelPriceMock(...args),
@@ -21,7 +24,9 @@ import { prisma } from '@auto-swe/shared/db';
 import { ApplicationFailure } from '@temporalio/activity';
 import {
   assertModelPricedForUsdCap,
+  assertRolePricedForUsdCap,
   isUnpricedModelRefusal,
+  MODEL_PRICE_UNAVAILABLE,
   MODEL_UNPRICED,
 } from './usdCapGuard.js';
 
@@ -37,7 +42,12 @@ function ledgerRowWithOrgCap(cents: number | null) {
 beforeEach(() => {
   vi.clearAllMocks();
   currentWorkflowIdMock.mockReturnValue('wf-1');
-  getModelPriceMock.mockResolvedValue({ known: false, price: {}, source: 'unknown' });
+  getModelPriceMock.mockResolvedValue({
+    catalogAvailable: true,
+    known: false,
+    price: {},
+    source: 'unknown',
+  });
   findLedgerRow.mockResolvedValue(null as never);
   findChannel.mockResolvedValue(null as never);
 });
@@ -68,6 +78,32 @@ describe('assertModelPricedForUsdCap', () => {
     expect(err.message).toContain(UNPRICED);
     expect(err.message).toContain('model catalog');
     expect(err.message).toContain('organization');
+  });
+
+  it('does not tell the admin to add a price while the catalog is merely unreadable', async () => {
+    // Cold worker, first catalog read failed: the price may well exist.
+    getModelPriceMock.mockResolvedValue({
+      catalogAvailable: false,
+      known: false,
+      price: {},
+      source: 'unknown',
+    });
+    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(100_000));
+    const err = await refusal(assertModelPricedForUsdCap(UNPRICED));
+    expect(err.type).toBe(MODEL_PRICE_UNAVAILABLE);
+    expect(err.nonRetryable).toBe(false);
+    expect(err.message).not.toContain('Add the model');
+  });
+
+  it('still proceeds on an uncapped path while the catalog is unreadable', async () => {
+    getModelPriceMock.mockResolvedValue({
+      catalogAvailable: false,
+      known: false,
+      price: {},
+      source: 'unknown',
+    });
+    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(null));
+    await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
   });
 
   it('refuses under a channel cap the caller already holds', async () => {
@@ -106,6 +142,23 @@ describe('assertModelPricedForUsdCap', () => {
       throw new Error('outside an activity');
     });
     await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
+  });
+});
+
+describe('assertRolePricedForUsdCap', () => {
+  it('prices the role the way the ledger will, and refuses under an org cap', async () => {
+    getModelSpecMock.mockResolvedValue(UNPRICED);
+    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(100_000));
+    const err = await refusal(assertRolePricedForUsdCap('implementer'));
+    expect(getModelSpecMock).toHaveBeenCalledWith('implementer');
+    expect(err.type).toBe(MODEL_UNPRICED);
+    expect(err.message).toContain(UNPRICED);
+  });
+
+  it('proceeds under an uncapped organization', async () => {
+    getModelSpecMock.mockResolvedValue(UNPRICED);
+    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(null));
+    await expect(assertRolePricedForUsdCap('implementer')).resolves.toBeUndefined();
   });
 });
 

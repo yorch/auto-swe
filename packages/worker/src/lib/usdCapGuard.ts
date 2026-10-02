@@ -2,9 +2,16 @@ import { prisma } from '@auto-swe/shared/db';
 import { ApplicationFailure } from '@temporalio/activity';
 import { currentWorkflowId } from './activityContext.js';
 import { getModelPrice } from './costTracking.js';
+import { getModelSpec } from './models.js';
 
 /** The `ApplicationFailure` type of a refused call; the run viewer keys on it. */
 export const MODEL_UNPRICED = 'MODEL_UNPRICED';
+
+/**
+ * The failure type when the catalog could not be read, so "no price" cannot be
+ * told from "price not loaded yet". Retryable, unlike {@link MODEL_UNPRICED}.
+ */
+export const MODEL_PRICE_UNAVAILABLE = 'MODEL_PRICE_UNAVAILABLE';
 
 /** Which USD cap a call would be counted against. */
 export type UsdCapKind = 'channel' | 'organization';
@@ -83,12 +90,26 @@ export async function assertModelPricedForUsdCap(
   modelSpec: string,
   scope: { channelId?: string; channelCapCents?: number | null } = {}
 ): Promise<void> {
-  if ((await getModelPrice(modelSpec)).known) {
+  const price = await getModelPrice(modelSpec);
+  if (price.known) {
     return;
   }
   const cap = await findUsdCap(scope);
   if (!cap) {
     return;
+  }
+  if (!price.catalogAvailable) {
+    // A cold worker whose first catalog read failed prices nothing from the
+    // catalog for about one cache window, so "unknown" here may be a price that
+    // exists. Telling the admin to add it would be wrong, and a non-retryable
+    // refusal would turn a database blip into a permanent failure. Fail closed
+    // all the same (the cap cannot be trusted to count this call), but retryably.
+    throw ApplicationFailure.retryable(
+      `The model catalog could not be read, so the price of "${modelSpec}" is not known and ` +
+        `${CAP_LABEL[cap]} is a USD cap. Retrying; this clears when the catalog is readable.`,
+      MODEL_PRICE_UNAVAILABLE,
+      { cap, modelSpec }
+    );
   }
   throw ApplicationFailure.nonRetryable(
     `Model "${modelSpec}" has no price in the model catalog, and ${CAP_LABEL[cap]} is a USD ` +
@@ -98,6 +119,17 @@ export async function assertModelPricedForUsdCap(
     MODEL_UNPRICED,
     { cap, modelSpec }
   );
+}
+
+/**
+ * {@link assertModelPricedForUsdCap} for a call about to be made as agent `role`
+ * on the ambient run context. The one entry point for the paths that bind their
+ * model by role (implementer and its fix sessions, the reviewers, planner,
+ * decomposers, security gate, memory passes), so none of them can drift in how
+ * it asks.
+ */
+export async function assertRolePricedForUsdCap(role: string): Promise<void> {
+  await assertModelPricedForUsdCap(await getModelSpec(role));
 }
 
 /** The {@link MODEL_UNPRICED} refusal `err` is, or wraps in its cause chain; else `null`. */

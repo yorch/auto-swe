@@ -55,6 +55,11 @@ const FAILURES: Record<string, Omit<AgentRunFailureView, 'code'>> = {
       'The branch was pushed, but this repository cannot hold draft pull requests, so none was opened (a ready-for-review one is never opened instead). Open a pull request from the branch yourself, or re-run with "Push a branch".',
     title: 'Draft pull requests are not supported here',
   },
+  MODEL_PRICE_UNAVAILABLE: {
+    explanation:
+      "The model catalog could not be read, so the price of the agent's model was not known while a monthly USD budget applies. Nothing ran. Re-run in a minute.",
+    title: 'Model price unavailable',
+  },
   MODEL_UNPRICED: {
     explanation:
       "The model this agent is bound to has no price in the model catalog, and a monthly USD budget applies, so its spend could not be counted. Nothing ran. Add the model's price in the model catalog (or bind a priced model), then re-run.",
