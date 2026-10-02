@@ -2,6 +2,8 @@
 
 Step-by-step for wiring **GitHub**, **Google**, and **Okta** (enterprise SSO) sign-in via better-auth. Magic-link works out of the box and needs no provider registration.
 
+This page also covers the opposite direction: the platform acting as an OAuth 2.1 authorization server for MCP clients ([below](#the-platform-as-an-oauth-server-for-mcp-clients)).
+
 All three providers follow the same shape: register an OAuth app on the provider's developer console, put the client id + secret in the gateway's environment, restart the gateway, and the buttons appear on `/login` automatically. The login page reads `GET /api/v1/auth/providers` at load time and only renders buttons for providers whose credentials are present.
 
 > **Environment only.** Sign-in credentials are read from `GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`, and `OKTA_ISSUER` / `OKTA_CLIENT_ID` / `OKTA_CLIENT_SECRET`. There is no admin-UI form for them: better-auth reads them once at gateway startup, so an editable copy could never take effect without a restart anyway. See [`configuration.md`](./configuration.md) for where the line between environment and admin UI falls.
@@ -213,6 +215,81 @@ If Okta is unreachable at that moment, the gateway still boots — the discovery
 
 ---
 
+## The platform as an OAuth server for MCP clients
+
+Sign-in above is the platform *consuming* OAuth. The gateway is also an OAuth 2.1 authorization
+server, so an MCP client (an editor, a coding agent) can obtain a token that names this
+deployment's MCP resource. It is better-auth's `@better-auth/oauth-provider` plus its `jwt` plugin,
+mounted under the same `/api/auth` prefix as sign-in, and off until an admin turns it on.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `mcp.enabled` | `false` | The OAuth endpoints listed below and the discovery document return 404 while it is off. |
+| `mcp.writeToolsEnabled` | `false` | The `mcp:write` scope is refused at authorization while it is off. |
+
+Both are ADMIN-only, GLOBAL-only registry settings read per request through the settings cache, so a
+change applies on every replica within about 30 seconds and needs no restart.
+
+Everything else derives from `BETTER_AUTH_URL` and the first `CORS_ORIGIN` entry, and is fixed when the
+gateway starts:
+
+| | Value |
+|---|---|
+| Issuer (`iss`) | `{BETTER_AUTH_URL}/api/auth` |
+| Discovery (RFC 8414) | `{BETTER_AUTH_URL}/.well-known/oauth-authorization-server/api/auth` |
+| Resource (RFC 8707) and token audience (`aud`) | `{BETTER_AUTH_URL}/api/v1/mcp` |
+| Scopes | `mcp:read`, `mcp:write` (implies read), `offline_access` |
+| Client registration | Dynamic (RFC 7591), anonymous, public clients only, PKCE `S256` required |
+| Grants | `authorization_code` and `refresh_token` |
+| Access token | JWT (`typ: at+jwt`, `EdDSA`), 10 minutes |
+| Refresh token | Opaque, stored hashed, rotates on use, 14 days; issued only for `offline_access` |
+| Login and consent pages | `{CORS_ORIGIN}/login` and `{CORS_ORIGIN}/oauth/consent` |
+
+Policy is applied by one Fastify plugin (`mcpOAuthGate.ts`) in front of better-auth, not by better-auth
+hooks:
+
+- **Allowlist.** Only `authorize`, `consent`, `continue`, `token`, `register`, `revoke` and `public-client`
+  under `/api/auth/oauth2/`, the RFC 8414 document and `/api/auth/jwks` are served. Every other path of the
+  provider (client management, `introspect`, `userinfo`, `end-session`, consent management, the
+  `/admin/oauth2/*` endpoints, the OIDC discovery document) and the `jwt` plugin's `GET /api/auth/token`
+  are 404. A path is matched in its most generous reading (percent-decoded, case-folded, slashes
+  collapsed) and served only on an exact allowlist match; a path that is not in canonical form is 400.
+- **Authorization requests** must carry a `resource` that is exactly the MCP resource (otherwise
+  `invalid_target`), must be for an active account, and may name `mcp:write` only while
+  `mcp.writeToolsEnabled` is on (otherwise `invalid_scope`). With writes off a `scope` is required, because
+  an absent one means the scopes the client registered. The same checks run again on `consent` and
+  `continue`, and on `resource` at the token endpoint.
+- **Registration** is forced to a public client (`token_endpoint_auth_method` `none`; any other value is
+  rejected), refuses a back-channel logout target, and defaults `application_type` to `native` when every
+  redirect URI is a loopback `http` address or a private-use scheme (the plugin's default, `web`, rejects
+  those). It is limited to 10 requests per minute per client IP.
+- **No client management.** `clientPrivileges` and `resourcePrivileges` deny every action, so no signed-in
+  user can create, change or delete a client or a resource through the plugin.
+- **No session JWT.** The `jwt` plugin does not add a `set-auth-jwt` header to `/get-session`.
+
+The `jwt` plugin signs with an `EdDSA` key stored in `jwks`, encrypted with `BETTER_AUTH_SECRET`. A key signs
+for 30 days; it stays published for one more hour so a token signed in its last moments still verifies.
+
+### Limitations
+
+- The web app has no `/oauth/consent` page and nothing lists or revokes a user's grants, so a browser
+  cannot complete an authorization. Deleting a consent through the plugin is not reachable (404).
+- No MCP endpoint accepts these tokens; the resource identifier is reserved for it.
+- Open registration is an anonymous write endpoint. Clients are public, unverified and rate limited, but
+  nothing removes expired clients, expired tokens or `oauth_client_assertions` rows, so those tables grow.
+- A client that registers without `grant_types` receives only `authorization_code` (the RFC 7591 default) and
+  cannot refresh; MCP clients register with both grants.
+- The discovery document advertises endpoints the allowlist refuses (`introspect`) and capabilities that are
+  not used (`private_key_jwt`, back-channel logout); a client that follows it there gets a 404 or a 400.
+- A write grant that was requested while `mcp.writeToolsEnabled` was on and completes after it is turned off
+  is stopped at `consent`, but one that has already been issued keeps the scope on its token until a resource
+  server drops it.
+- A magic-link sign-in that completes in a different browser than the one that started the authorization
+  loses the authorization request.
+- Rate limits are per gateway replica.
+
+---
+
 ## Production checklist
 
 Before flipping a deployment from dev to prod, confirm:
@@ -228,6 +305,7 @@ Before flipping a deployment from dev to prod, confirm:
 | `RESEND_API_KEY` + `AUTH_FROM_EMAIL`       | Required for magic-link emails outside development (dev prints to stdout) |
 | OAuth callbacks point at the prod URL      | GitHub, Google, and Okta consoles must list the right callback URL       |
 | Okta discovery URL reachable from the gateway | Fetched at boot; an unreachable issuer leaves Okta sign-in broken until the next restart |
+| `BETTER_AUTH_URL` is the public HTTPS URL, if MCP clients will connect | The token issuer and audience derive from it; changing it invalidates every issued token and every registered client's resource link |
 | Google consent screen published            | Else sign-ins are limited to the test-user list                          |
 
 ---
