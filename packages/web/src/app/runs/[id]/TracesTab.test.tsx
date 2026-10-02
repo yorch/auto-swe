@@ -1,9 +1,24 @@
 // @vitest-environment jsdom
 
 import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
+import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow/spec';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { buildTraceLinker, EMPTY_LINKER } from '@/lib/traceLinkage';
 import { TracesTab } from './TracesTab';
+
+// Nodes named after their step, as the existing cases assume.
+const LINKER = buildTraceLinker(
+  parseWorkflowSpec({
+    entry: 'implement',
+    name: 't',
+    nodes: {
+      implement: { next: 'review', step: 'implement', type: 'step' },
+      review: { step: 'review', type: 'step' },
+    },
+    schemaVersion: SPEC_SCHEMA_VERSION,
+  })
+);
 
 const makeTrace = (nodeId: string, id = nodeId): AgentTraceRecord => ({
   agentKey: 'implementer',
@@ -21,7 +36,10 @@ const makeTrace = (nodeId: string, id = nodeId): AgentTraceRecord => ({
   otelTraceId: null,
   outputJson: null,
   outputTokens: null,
+  recordingId: null,
   seq: 0,
+  specNodeId: null,
+  stepAttempt: null,
   toolName: null,
   trimmed: false,
   type: 'llm_response',
@@ -32,8 +50,8 @@ describe('TracesTab', () => {
     const traces = [makeTrace('implement'), makeTrace('review')];
     render(
       <TracesTab
-        activityToNodeId={{}}
         filterNodeId={null}
+        linker={EMPTY_LINKER}
         onClearFilter={() => {}}
         traces={traces}
       />
@@ -47,8 +65,8 @@ describe('TracesTab', () => {
     const traces = [makeTrace('implement'), makeTrace('review')];
     render(
       <TracesTab
-        activityToNodeId={{ implement: 'implement', review: 'review' }}
         filterNodeId="implement"
+        linker={LINKER}
         onClearFilter={() => {}}
         traces={traces}
       />
@@ -62,14 +80,113 @@ describe('TracesTab', () => {
     const traces = [makeTrace('implement')];
     render(
       <TracesTab
-        activityToNodeId={{ implement: 'implement' }}
         compact
         filterNodeId="implement"
+        linker={LINKER}
         onClearFilter={() => {}}
         traces={traces}
       />
     );
     expect(screen.queryByText(/Filtered to/)).toBeNull();
+  });
+});
+
+describe('TracesTab node linkage', () => {
+  // `lintA` and `lintB` share a step; `fan` runs `impl` per branch.
+  const linker = buildTraceLinker(
+    parseWorkflowSpec({
+      entry: 'lintA',
+      name: 'linkage',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: { join: 'done', over: { literal: [1, 2] }, subgraph: 'impl', type: 'fanOut' },
+        impl: { next: 'done', step: 'executeImplementation', type: 'step' },
+        lintA: { next: 'lintB', step: 'runLint', type: 'step' },
+        lintB: { next: 'fan', step: 'runLint', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    })
+  );
+  const rec = (
+    id: string,
+    nodeId: string,
+    specNodeId: string,
+    recordingId: string,
+    extra: Partial<AgentTraceRecord> = {}
+  ): AgentTraceRecord => ({
+    ...makeTrace(nodeId, id),
+    recordingId,
+    specNodeId,
+    stepAttempt: 1,
+    ...extra,
+  });
+  const show = (filterNodeId: string | null, traces: AgentTraceRecord[]) =>
+    render(
+      <TracesTab
+        filterNodeId={filterNodeId}
+        linker={linker}
+        onClearFilter={() => {}}
+        traces={traces}
+      />
+    );
+
+  it('shows only the selected node when two nodes share a step', () => {
+    show('lintB', [rec('a', 'runLint', 'lintA', 'lintA'), rec('b', 'runLint', 'lintB', 'lintB')]);
+    expect(screen.getAllByText('lintB').length).toBeGreaterThan(0);
+    expect(screen.queryByText('lintA')).toBeNull();
+  });
+
+  const branchTraces = [
+    rec('b0', 'executeImplementation', 'impl', 'fan[0]/impl'),
+    rec('b1', 'executeImplementation', 'impl', 'fan[1]/impl'),
+    rec('b1retry', 'executeImplementation', 'impl', 'fan[1]/impl', { stepAttempt: 2 }),
+  ];
+
+  it('groups a fan-out selection by branch, one section per branch', () => {
+    show('fan', branchTraces);
+    const headers = screen.getAllByTestId('trace-branch').map((el) => el.textContent);
+    expect(headers).toEqual(['Branch fan[0]', 'Branch fan[1]']);
+    // The retried execution of a branch is its own group.
+    expect(screen.getAllByText('fan[1]/impl')).toHaveLength(2);
+    expect(screen.getByText(/node attempt 2/)).toBeTruthy();
+  });
+
+  it('shows only that branch when a branch recording id is selected', () => {
+    show('fan[1]/impl', branchTraces);
+    expect(screen.getAllByTestId('trace-branch').map((el) => el.textContent)).toEqual([
+      'Branch fan[1]',
+    ]);
+    expect(screen.queryByText('fan[0]/impl')).toBeNull();
+  });
+
+  it('shows every branch when the spec node itself is selected', () => {
+    show('impl', branchTraces);
+    expect(screen.getAllByTestId('trace-branch')).toHaveLength(2);
+  });
+
+  it('lists an old, ambiguous trace under every candidate node and labels it', () => {
+    const old = makeTrace('runLint', 'old');
+    const { unmount } = show('lintA', [old]);
+    expect(screen.getAllByText('lintA | lintB').length).toBeGreaterThan(0);
+    expect(screen.getByText('ambiguous')).toBeTruthy();
+    unmount();
+    show('lintB', [old]);
+    expect(screen.getByText('ambiguous')).toBeTruthy();
+  });
+
+  it('does not label an old trace that maps to a single node', () => {
+    show('impl', [makeTrace('executeImplementation', 'old-impl')]);
+    expect(screen.queryByText('ambiguous')).toBeNull();
+  });
+
+  it('flags an old trace as ambiguous when a branch is selected, since it cannot name one', () => {
+    show('fan[0]/impl', [makeTrace('executeImplementation', 'old-impl')]);
+    expect(screen.getByText('ambiguous')).toBeTruthy();
+  });
+
+  it('shows no branch headers for traces outside any fan-out', () => {
+    show(null, [rec('a', 'runLint', 'lintA', 'lintA')]);
+    expect(screen.queryByTestId('trace-branch')).toBeNull();
   });
 });
 
@@ -83,8 +200,8 @@ describe('TraceOutput', () => {
   function expand(trace: AgentTraceRecord) {
     render(
       <TracesTab
-        activityToNodeId={{}}
         filterNodeId={null}
+        linker={EMPTY_LINKER}
         onClearFilter={() => {}}
         traces={[trace]}
       />

@@ -3,11 +3,16 @@
 import type { AgentTraceRecord, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import {
+  recordingMatchesSelection,
+  specNodeIdOfRecording,
+  type TraceLinker,
+} from '@/lib/traceLinkage';
 import { cn, formatDate } from '@/lib/utils';
 import { TracesTab } from './TracesTab';
 
 interface SplitRunPanelProps {
-  activityToNodeId: Record<string, string>;
+  linker: TraceLinker;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string | null) => void;
   steps: WorkflowStepRecord[];
@@ -15,7 +20,7 @@ interface SplitRunPanelProps {
 }
 
 export function SplitRunPanel({
-  activityToNodeId,
+  linker,
   selectedNodeId,
   onSelectNode,
   steps,
@@ -37,7 +42,12 @@ export function SplitRunPanel({
         ) : (
           <div className="divide-y divide-ink-600/30">
             {steps.map((s) => {
-              const isSelected = selectedNodeId === s.nodeId;
+              const isSelected =
+                selectedNodeId !== null &&
+                recordingMatchesSelection(s.nodeId, selectedNodeId, linker);
+              const specId = specNodeIdOfRecording(s.nodeId, linker);
+              // The branch path (`fan[0]/`), set apart from the node it ran.
+              const branchPrefix = s.nodeId.slice(0, s.nodeId.length - specId.length);
               return (
                 <button
                   className={cn(
@@ -59,7 +69,8 @@ export function SplitRunPanel({
                           isSelected ? 'text-ember-300' : 'text-paper-200'
                         )}
                       >
-                        {s.nodeId}
+                        {branchPrefix && <span className="text-paper-600">{branchPrefix}</span>}
+                        {specId}
                       </span>
                       <span className="shrink-0 font-mono text-[9px] text-paper-600">
                         ×{s.attempt}
@@ -87,8 +98,8 @@ export function SplitRunPanel({
       {/* Trace stream column */}
       <div className="flex-1 overflow-y-auto">
         <TracesTab
-          activityToNodeId={activityToNodeId}
           filterNodeId={selectedNodeId}
+          linker={linker}
           onClearFilter={() => onSelectNode(null)}
           traces={traces}
         />
