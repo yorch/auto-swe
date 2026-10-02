@@ -195,7 +195,8 @@ nothing.
 
 The settled cost is priced at the model the call was **bound to**: `runAgent` passes its resolved
 `modelSpec` to `recordLlmUsage`, so a CHANNEL-scope override is charged at the override's rate. The
-three channel-memory passes are the exception (see Limitations).
+three channel-memory passes do the same: each binds `commitToMemory` once through `getBoundModel`
+and settles at that bound spec.
 
 A bound model with no known price measures as $0. Settling that would net the whole hold back off the
 ledger and leave the cap with nothing to count, so a turn whose pricing is unknown settles at no less
@@ -204,7 +205,7 @@ held turns; the run-level tier ledger and an agent run's organization USD cap ha
 fall back on and record the $0.
 
 Every channel pass resolves its agent at the **CHANNEL tier** — `{ channelId, orgId, teamId }`
-threaded explicitly into `resolveAgent`, `getModel` and `loadAgentSkills`. The ambient Temporal
+threaded explicitly into `resolveAgent`, `getModel` / `getBoundModel` and `loadAgentSkills`. The ambient Temporal
 context carries no `channelId`, so a pass that priced its hold at that tier and bound its model
 without it would charge for a channel-scoped override it never used.
 
@@ -315,13 +316,6 @@ unproven on real traffic, and turn them on one channel at a time.
   admits. `finalizeChannelTaskRun` spends on the ledger with no hold at all. A hold lost to a worker
   crash over-counts the channel until the sweep reclaims it — which only happens once the channel
   reaches its cap, or an admin calls `/:id/budget/reset` (API-only; there is no UI control).
-- **The channel-memory passes settle at the ambient model's price.** `passiveIngestChannelMemory`,
-  `consolidateChannelMemory` and `sweepChannelOpenItems` bind `commitToMemory` at the CHANNEL tier and
-  size their hold at that tier, but call `recordLlmUsage` without the bound spec. The call runs on the
-  channel's override; the cost they settle is priced at the model the ambient Temporal context
-  resolves, which has no `channelId`. For a channel whose `commitToMemory` override is dearer than the
-  ambient model they under-charge, and the hold-versus-settle drift §7 describes as closed for turns
-  remains for these passes.
 - **A model with no known price is not charged to the run-level ledger.** A held channel turn keeps
   its reservation (§7), but the run's tier ledger and an agent run's organization USD cap record $0
   for an unpriced model. Add the model to the model catalog.

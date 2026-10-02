@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getModel } from '../lib/models.js';
+import { getBoundModel } from '../lib/models.js';
 import { fetchChannelHistory, postSlackChannelMessage } from '../lib/slackNotify.js';
 import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 
@@ -187,10 +187,11 @@ export async function sweepChannelOpenItems(
     const agentCtx = { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId };
 
     // LLM call with structured output.
+    const bound = await getBoundModel('commitToMemory', agentCtx);
     const agent = new Agent({
       id: 'channel-open-item-sweeper',
       instructions: CHANNEL_OPEN_ITEM_SWEEPER_PROMPT,
-      model: await getModel('commitToMemory', agentCtx),
+      model: bound.model,
       name: 'channel-open-item-sweeper',
     });
 
@@ -223,7 +224,8 @@ export async function sweepChannelOpenItems(
           'sweepChannelOpenItems',
           'commitToMemory',
           result.usage,
-          'llm.channel_open_items_sweep'
+          'llm.channel_open_items_sweep',
+          bound.spec
         );
         totalCostUsd += attribution.costUsd;
         tracer.addLlmResponse({

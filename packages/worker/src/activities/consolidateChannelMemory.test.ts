@@ -37,7 +37,11 @@ vi.mock('@mastra/core/agent', () => ({
   }),
 }));
 
-vi.mock('../lib/models.js', () => ({ getModel: vi.fn().mockResolvedValue({}) }));
+vi.mock('../lib/models.js', () => ({
+  getBoundModel: vi
+    .fn()
+    .mockResolvedValue({ model: {}, spec: 'openrouter/channel-override' }),
+}));
 vi.mock('../lib/config/agentSkills.js', () => ({ loadAgentSkills: vi.fn().mockResolvedValue([]) }));
 vi.mock('../lib/activityContext.js', () => ({
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
@@ -72,7 +76,8 @@ vi.mock('../lib/embeddings.js', () => ({
 
 import { prisma } from '@auto-swe/shared/db';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
-import { getModel } from '../lib/models.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
+import { getBoundModel } from '../lib/models.js';
 import { consolidateChannelMemory } from './consolidateChannelMemory.js';
 
 const findChannel = vi.mocked(prisma.slackChannel.findUnique);
@@ -183,8 +188,39 @@ describe('consolidateChannelMemory', () => {
     // The pass must bind at the tier its hold was priced at. The ambient
     // Temporal context has no channelId, so a channel-scoped `commitToMemory`
     // override would otherwise be priced against but never actually used.
-    expect(vi.mocked(getModel)).toHaveBeenCalledWith('commitToMemory', channelCtx);
+    expect(vi.mocked(getBoundModel)).toHaveBeenCalledWith('commitToMemory', channelCtx);
     expect(vi.mocked(loadAgentSkills)).toHaveBeenCalledWith('commitToMemory', channelCtx);
+  });
+
+  it('prices each cluster call at the model bound at the channel tier', async () => {
+    findChannel.mockResolvedValue({
+      consolidationEnabled: true,
+      consolidationMinClusterSize: 2,
+      consolidationSimilarityThreshold: null,
+      monthlyBudgetUsdCents: 100_000,
+      orgId: 'org-1',
+      teamId: 'team-1',
+    } as never);
+    findUsage.mockResolvedValue({ costUsdAccrued: 0 } as never);
+    queryRaw.mockResolvedValue([
+      { ...memoryRows(1)[0], embeddingJson: JSON.stringify([1, 0, 0]), id: 'a' },
+      { ...memoryRows(1)[0], embeddingJson: JSON.stringify([1, 0, 0]), id: 'b' },
+    ] as never);
+    upsertUsage.mockResolvedValue({ costUsdAccrued: 0.1 } as never);
+    agentGenerateMock.mockResolvedValue({
+      object: { memories: [{ lessonSummary: 'merged', rationale: 'why' }] },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+
+    await consolidateChannelMemory({ channelId: CHANNEL_ID });
+
+    expect(vi.mocked(recordLlmUsage)).toHaveBeenCalledWith(
+      'consolidateChannelMemory',
+      'commitToMemory',
+      expect.anything(),
+      'llm.consolidate_channel_memory',
+      'openrouter/channel-override'
+    );
   });
 
   it('writes no usage row for an uncapped channel that spent nothing', async () => {
