@@ -127,6 +127,15 @@ describe('runWorkRequestsCommand', () => {
     expect(out).not.toContain('runs tail <runId>');
   });
 
+  it('rejects an empty --idempotency-key instead of silently dropping it', async () => {
+    const code = await runWorkRequestsCommand(
+      ['--ticket=T-1', '--description=foo', '--repo=org/repo', '--idempotency-key='],
+      ENV
+    );
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('--idempotency-key');
+  });
+
   it('sends --idempotency-key as a header and reports a replay', async () => {
     const seen: Array<{ url: string; headers: Record<string, string> }> = [];
     globalThis.fetch = vi

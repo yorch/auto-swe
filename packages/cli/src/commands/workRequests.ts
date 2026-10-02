@@ -16,8 +16,9 @@ const SUB_HELP = `auto-swe run — submit a work request
     --budget=STANDARD|LARGE|EPIC
                             Budget tier for the run (default: STANDARD)
     --idempotency-key=<key> Make a retried submission return the run it already started
-                            instead of a second one (same key, same ticket, repo and
-                            description; a key is scoped to you)
+                            instead of a second one (same key, ticket, repo,
+                            description and budget tier, else it is refused; a key
+                            is scoped to you and never expires)
 
   The run uses the repository's team default template (or the global default).
   To start a specific template with an arbitrary payload, use \`workflows run\`.
@@ -98,6 +99,11 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   );
   if (bare) {
     process.stderr.write(`--${bare} requires a value\n`);
+    return 1;
+  }
+
+  if (flags['idempotency-key'] === '') {
+    process.stderr.write('--idempotency-key requires a non-empty value\n');
     return 1;
   }
 

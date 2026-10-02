@@ -699,6 +699,17 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **`Idempotency-Key` on `POST /work-requests` has an in-progress window and never expires.** The
+  ledger rows are written before the Temporal start, so a same-key request that arrives while the
+  start is in flight gets `409 IDEMPOTENCY_KEY_IN_PROGRESS` (`Retry-After`), not success: the key only
+  replays once `RunInput.startedActiveWorkflowId` is stamped after a successful start. If the start
+  fails the rows are deleted and the key is free. If that cleanup itself fails, or the gateway dies
+  between the start and the stamp, the key stays `IN_PROGRESS` indefinitely and its `RunInput` has to be
+  removed (or the ticket's `ActiveWorkflow` marked terminal) by an operator; it never turns into a false
+  success. Keys are never expired or swept, so a key is permanently bound to its first ticket,
+  repository, description and budget tier. A concurrent same-key loser whose winner then failed to start
+  gets `409 IDEMPOTENCY_KEY_RETRY`. Only this route honours the key on `RunInput`; the generic triggers
+  hash it into a workflow ID instead.
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
   the database will catch. The shared Prisma singleton carries a `tenantGuard` extension — applied
