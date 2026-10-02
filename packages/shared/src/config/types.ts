@@ -26,7 +26,6 @@ export const SETTING_GROUPS = [
   'github',
   'mcp',
   'memory',
-  'models',
   'repoAccess',
   'repoDependency',
   'workflow',

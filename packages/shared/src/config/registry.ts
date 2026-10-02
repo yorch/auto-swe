@@ -256,20 +256,6 @@ export const SETTING_DEFINITIONS = {
     unit: '0–1',
   }),
 
-  // ── Model catalog ──────────────────────────────────────────────────────────
-  'models.discoveryInterval': defineSetting<'off' | 'daily' | 'weekly'>({
-    defaultValue: 'daily',
-    description:
-      "How often the platform asks each configured provider which models it lists, and records the ones the catalog does not price (and priced ones the provider no longer lists) as suggestions. Discovery never adds a catalog row or a price. 'off' pauses the schedule; the Check providers now button still works. The schedule is created when the gateway starts, so a change applies after a gateway restart.",
-    group: 'models',
-    label: 'Model discovery schedule',
-    overridableAt: [],
-    requiredRole: 'ADMIN',
-    restartRequired: true,
-    runPinned: false,
-    schema: z.enum(['off', 'daily', 'weekly']),
-  }),
-
   // ── Repository permission gating ───────────────────────────────────────────
   // Team membership says which repositories a user may reach; these decide
   // whether the source-control host has to agree. Deployment-wide, because a

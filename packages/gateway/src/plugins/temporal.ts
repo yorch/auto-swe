@@ -163,6 +163,13 @@ export interface RepoAccessSyncScheduleConfig {
   cronExpression: string;
 }
 
+export interface RepoDependencyScanScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
 /**
  * The provider model-discovery sweep. The workflow lists each GLOBAL provider
  * credential's models itself, so the schedule carries no arguments.
@@ -170,25 +177,6 @@ export interface RepoAccessSyncScheduleConfig {
 export interface ModelDiscoveryScheduleConfig {
   enabled: boolean;
   cronExpression: string;
-}
-
-const MODEL_DISCOVERY_CRON = { daily: '17 3 * * *', weekly: '17 3 * * 1' } as const;
-
-/** The schedule a `models.discoveryInterval` value means. `off` keeps it, paused. */
-export function modelDiscoveryScheduleConfig(
-  interval: 'off' | 'daily' | 'weekly'
-): ModelDiscoveryScheduleConfig {
-  return {
-    cronExpression: MODEL_DISCOVERY_CRON[interval === 'off' ? 'daily' : interval],
-    enabled: interval !== 'off',
-  };
-}
-
-export interface RepoDependencyScanScheduleStatus {
-  exists: boolean;
-  paused: boolean;
-  nextRunAt: string | null;
-  lastRunAt: string | null;
 }
 
 declare module 'fastify' {

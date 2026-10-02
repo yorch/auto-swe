@@ -32,21 +32,7 @@ vi.mock('@temporalio/client', () => ({
   WorkflowNotFoundError: class extends Error {},
 }));
 
-import temporalPlugin, {
-  MODEL_DISCOVERY_SCHEDULE_ID,
-  modelDiscoveryScheduleConfig,
-} from './temporal.js';
-
-describe('modelDiscoveryScheduleConfig', () => {
-  it('maps each interval to a cron, and off to a paused schedule', () => {
-    expect(modelDiscoveryScheduleConfig('daily')).toEqual({
-      cronExpression: '17 3 * * *',
-      enabled: true,
-    });
-    expect(modelDiscoveryScheduleConfig('weekly')).toMatchObject({ enabled: true });
-    expect(modelDiscoveryScheduleConfig('off').enabled).toBe(false);
-  });
-});
+import temporalPlugin, { MODEL_DISCOVERY_SCHEDULE_ID } from './temporal.js';
 
 describe('syncModelDiscoverySchedule', () => {
   async function build() {
@@ -56,10 +42,10 @@ describe('syncModelDiscoverySchedule', () => {
     return app;
   }
 
-  it('creates the system-wide schedule, no arguments, paused when off', async () => {
+  it('creates the system-wide schedule, no arguments, paused when disabled', async () => {
     exists = false;
     const app = await build();
-    await app.temporal.syncModelDiscoverySchedule(modelDiscoveryScheduleConfig('off'));
+    await app.temporal.syncModelDiscoverySchedule({ cronExpression: '17 3 * * *', enabled: false });
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         action: expect.objectContaining({
@@ -78,7 +64,7 @@ describe('syncModelDiscoverySchedule', () => {
     exists = true;
     create.mockClear();
     const app = await build();
-    await app.temporal.syncModelDiscoverySchedule(modelDiscoveryScheduleConfig('weekly'));
+    await app.temporal.syncModelDiscoverySchedule({ cronExpression: '17 3 * * 1', enabled: true });
     expect(create).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledTimes(1);
   });

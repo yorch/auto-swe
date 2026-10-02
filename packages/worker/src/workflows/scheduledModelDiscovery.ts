@@ -13,7 +13,7 @@ export type ScheduledModelDiscoveryResult = Awaited<ReturnType<typeof discoverMo
 
 /**
  * Ask each configured provider which models it lists, on the cadence set by
- * `models.discoveryInterval`. One activity: the provider calls run in parallel
+ * `MODEL_DISCOVERY_ENABLED` and `MODEL_DISCOVERY_CRON`. One activity: the provider calls run in parallel
  * inside it and each already survives its own failure.
  */
 export async function ScheduledModelDiscoveryWorkflow(): Promise<ScheduledModelDiscoveryResult> {

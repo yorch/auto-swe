@@ -112,10 +112,11 @@ listing failed, an **Add** prefilled with the id, kind and display name, and a *
 discovered model is not "known" until an admin adds it with a price, and the pricing path never reads
 a suggestion.
 
-The run's cadence is the `models.discoveryInterval` setting (`off`, `daily` or `weekly`; default
-`daily`; ADMIN, GLOBAL only), which sets the `auto-swe-model-discovery` Temporal Schedule. The
-gateway applies it once at startup, so a change takes effect after a gateway restart; `off` leaves
-the schedule paused, and **Check providers now** still works.
+The run's cadence is environment-only, like the other gateway sweeps: `MODEL_DISCOVERY_ENABLED`
+(default `true`) and `MODEL_DISCOVERY_CRON` (five-field cron, UTC, default `17 3 * * *`). The gateway
+applies them to the `auto-swe-model-discovery` Temporal Schedule once, at startup, so a change needs
+a gateway restart, and it refuses to start on a value it cannot use. Disabled, the schedule stays but
+is paused, and **Check providers now** still works.
 
 A provider whose listing fails — a bad key, a timeout, an unreadable answer — is logged, and its
 error and last-success time are recorded for the tab; its existing suggestions are left exactly as
@@ -419,8 +420,8 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   a priced model can be flagged while it still works, and a model a provider stops serving but keeps
   listing is not flagged. The flag is cleared when the provider lists the model again or an admin
   retires it.
-- **The schedule is read at gateway startup.** Changing `models.discoveryInterval` needs a restart
-  to take effect.
+- **The schedule is read at gateway startup.** Changing `MODEL_DISCOVERY_ENABLED` or
+  `MODEL_DISCOVERY_CRON` needs a gateway restart to take effect.
 - **The model pickers suggest; they do not restrict.** A spec the catalog lacks can be typed and
   saved, and is recorded at $0 until it is added — the save's `catalogWarnings` and the unpriced
   panel say so, but nothing blocks it.

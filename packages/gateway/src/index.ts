@@ -4,7 +4,6 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
 const otel = initTelemetry('auto-swe-gateway');
 
-import { resolveSetting } from '@auto-swe/shared/config';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import {
@@ -42,7 +41,7 @@ import authPlugin, {
   requireUser,
 } from './plugins/auth.js';
 import prismaPlugin from './plugins/prisma.js';
-import temporalPlugin, { modelDiscoveryScheduleConfig } from './plugins/temporal.js';
+import temporalPlugin from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrary.js';
 import { agentRunRoutes } from './routes/agentRuns.js';
@@ -170,14 +169,10 @@ async function start() {
     .syncRepoAccessSyncSchedule(sweeps.repoAccess)
     .catch((err) => app.log.warn({ err }, 'repo access sync schedule sync failed at startup'));
 
-  // Same for provider model discovery. Its cadence is a registry setting, but a
-  // schedule is applied once, here, so a change takes effect on the next boot.
-  // `off` leaves the schedule paused rather than deleting it, so an existing run
-  // history and the handle stay.
-  resolveSetting('models.discoveryInterval')
-    .then((interval) =>
-      app.temporal.syncModelDiscoverySchedule(modelDiscoveryScheduleConfig(interval))
-    )
+  // Same for provider model discovery: it only lists models, so it is on by
+  // default; disabled, the schedule stays but is paused.
+  app.temporal
+    .syncModelDiscoverySchedule(sweeps.modelDiscovery)
     .catch((err) => app.log.warn({ err }, 'model discovery schedule sync failed at startup'));
 
   // Same for the eval-regression Temporal Schedule (the nightly benchmark).
