@@ -115,7 +115,7 @@ describe('authStore.login hand-off to an MCP authorization', () => {
   };
 
   function stubSignIn(signInBody: unknown) {
-    const spy = vi.fn(async (input: RequestInfo | URL) => {
+    const spy = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/api/auth/sign-in/email')) {
         return jsonResponse(200, signInBody);

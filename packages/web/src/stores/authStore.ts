@@ -44,8 +44,9 @@ interface AuthState {
    *  `sign-in/social` returns `{ url, redirect: true }` — we navigate the
    *  browser to that provider auth URL; the round-trip lands back on
    *  /login?bridge=1 → hydrateFromSession. Throws on failure so the login
-   *  page can surface the error. */
-  signInWithProvider: (provider: SocialProviderId) => Promise<void>;
+   *  page can surface the error. `oauthQuery`: see `login`; the authorization
+   *  resumes when the provider's callback signs the user in. */
+  signInWithProvider: (provider: SocialProviderId, oauthQuery?: string) => Promise<void>;
   /** Link an additional OAuth provider to the signed-in account. Same
    *  fetch-then-navigate dance as signInWithProvider, against better-auth's
    *  `link-social`; the round-trip lands back on /settings with the new
