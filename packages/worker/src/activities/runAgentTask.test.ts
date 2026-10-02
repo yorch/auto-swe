@@ -127,6 +127,7 @@ vi.mock('./agentRunFinalize.js', () => ({
   pushGatedCommit: m.push,
 }));
 
+import { resolveAgent } from '../lib/config/agentResolver.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
 import { runAgentTask } from './runAgentTask.js';
 import { createWorkspace } from './workspace.js';
@@ -341,6 +342,29 @@ describe('tool grants and agent scope', () => {
     m.toolKeys = ['readFile'];
     await runAgentTask({ request: request() });
     expect(granted()).toEqual(['readFile']);
+  });
+
+  it('hands runAgent the org/pinned model, so every step is priced at it and not at a team override', async () => {
+    // The owning team (team-1, on the ambient context) overrides the model; the run
+    // resolves without a team, so it gets the org-scope model. runAgent prices each
+    // step at spec.modelSpec, which is therefore the org model.
+    vi.mocked(resolveAgent).mockImplementation((async (key: string, ctx: { teamId?: string }) => ({
+      key,
+      model: {
+        apiBase: undefined,
+        apiKey: 'k',
+        spec: ctx.teamId ? 'anthropic/team-override' : 'anthropic/org-model',
+        systemPrompt: null,
+      },
+      skills: [],
+      toolKeys: m.toolKeys,
+      version: 3,
+    })) as never);
+
+    await runAgentTask({ request: request() });
+
+    const spec = m.runAgent.mock.calls[0]?.[0] as { modelSpec: string };
+    expect(spec.modelSpec).toBe('anthropic/org-model');
   });
 
   it('resolves the agent with no team, template or channel scope (shared-team launch safe)', async () => {
