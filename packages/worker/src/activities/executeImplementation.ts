@@ -14,17 +14,17 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { buildImplementerForActivity } from '../agents/implementer.js';
+import { mastraRuntime, runImplementerTurn } from '../agents/implementerRuntime.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentAttempt, currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { abortSignalOption, throwIfActivityCancelled } from '../lib/cancellation.js';
+import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
-import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import {
   type CrossRepoStepOptions,
@@ -174,6 +174,7 @@ export async function executeImplementation(
       skills,
     } = await buildImplementerForActivity(workspace, tracer, activityCtx);
     closeMcp = cm;
+    const runtime = mastraRuntime(agent, maxSteps);
 
     tracer.addActivityEvent({
       name: 'skills.loaded',
@@ -306,40 +307,14 @@ export async function executeImplementation(
           : {}),
       });
       await assertBudgetAvailable(`implementer.iteration_${iteration}`);
-      const genResult = await agent.generate(
-        [
-          { content: llmSystemPrompt, role: 'system' },
-          { content: llmUserMessage, role: 'user' },
-        ],
-        { maxSteps, toolChoice: 'auto', ...abortSignalOption() }
-      );
-
-      let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
-      if (genResult.usage) {
-        attribution = await recordLlmUsage(
-          currentWorkflowId(),
-          'implementer',
-          genResult.usage,
-          `llm.implementer.iteration_${iteration}`
-        );
-      }
-
-      // LLM output scanner — advisory, non-blocking (the helper never throws).
-      await recordSuspiciousLlmOutput(tracer, genResult.text ?? '', { inputJson: { iteration } });
-
-      // Always record the LLM call per TDD iteration, even when the model only
-      // makes tool calls and produces no text output.
-      tracer.addLlmResponse({
-        costUsd: attribution.costUsd,
-        durationMs: 0,
-        inputJson: { iteration, systemPrompt: llmSystemPrompt, userMessage: llmUserMessage },
-        inputTokens: attribution.inputTokens,
-        model: attribution.modelSpec || undefined,
-        outputJson: genResult.text
-          ? { text: genResult.text }
-          : { toolCallCount: genResult.steps?.length ?? 0 },
-        outputTokens: attribution.outputTokens,
+      await runImplementerTurn({
+        context: { iteration },
         role: 'implementer',
+        runtime,
+        system: llmSystemPrompt,
+        tracer,
+        usageEvent: `llm.implementer.iteration_${iteration}`,
+        user: llmUserMessage,
       });
 
       // Run tests

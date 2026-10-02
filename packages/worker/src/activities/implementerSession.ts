@@ -6,15 +6,15 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { buildImplementerForActivity } from '../agents/implementer.js';
+import { mastraRuntime, runImplementerTurn } from '../agents/implementerRuntime.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
-import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { abortSignalOption, throwIfActivityCancelled } from '../lib/cancellation.js';
+import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
-import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -170,45 +170,18 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       ...input.userPayload,
     });
 
-    const agentStart = Date.now();
     await assertBudgetAvailable(input.usageEventName);
-    const genResult = await agent.generate(
-      [
-        { content: fullSystemPrompt, role: 'system' },
-        { content: userMessage, role: 'user' },
-      ],
-      { maxSteps, toolChoice: 'auto', ...abortSignalOption() }
-    );
+    await runImplementerTurn({
+      context: { mode },
+      role: input.agentKey,
+      runtime: mastraRuntime(agent, maxSteps),
+      system: fullSystemPrompt,
+      tracer,
+      usageEvent: input.usageEventName,
+      user: userMessage,
+    });
 
     heartbeat(`${mode} agent completed`);
-
-    let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
-    if (genResult.usage) {
-      attribution = await recordLlmUsage(
-        currentWorkflowId(),
-        input.agentKey,
-        genResult.usage,
-        input.usageEventName
-      );
-    }
-
-    // LLM output scanner — advisory, non-blocking (the helper never throws).
-    await recordSuspiciousLlmOutput(tracer, genResult.text ?? '', { inputJson: { mode } });
-
-    // Always record the LLM call, even when the model only makes tool calls
-    // and produces no text output.
-    tracer.addLlmResponse({
-      costUsd: attribution.costUsd,
-      durationMs: Date.now() - agentStart,
-      inputJson: { systemPrompt: fullSystemPrompt, userMessage },
-      inputTokens: attribution.inputTokens,
-      model: attribution.modelSpec || undefined,
-      outputJson: genResult.text
-        ? { text: genResult.text }
-        : { toolCallCount: genResult.steps?.length ?? 0 },
-      outputTokens: attribution.outputTokens,
-      role: input.agentKey,
-    });
 
     let extraNote: string | null = null;
     if (input.afterGenerate) {

@@ -339,7 +339,8 @@ describe('runImplementerFixSession', () => {
       'wf-1',
       'ciFixer',
       expect.anything(),
-      'llm.ci_fix'
+      'llm.ci_fix',
+      undefined
     );
   });
 
