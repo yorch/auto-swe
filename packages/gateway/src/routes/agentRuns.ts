@@ -4,6 +4,7 @@ import { resolveSettings } from '@auto-swe/shared/config';
 import {
   AGENT_REF_RE,
   AGENT_RUN_DELIVERIES,
+  AGENT_RUN_MAX_PROMPT_CHARS,
   AGENT_RUN_MAX_WALL_CLOCK_SECONDS,
   AGENT_RUN_TEMPLATE_NAME,
   AGENT_RUN_TEMPLATE_ORIGIN,
@@ -28,7 +29,6 @@ import { isOrgMember } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { reachableConnections } from '../lib/tenantScope.js';
-import { MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -51,7 +51,7 @@ const CreateAgentRunBody = z.object({
   /** Can only lower the platform ceiling. */
   maxSteps: z.number().int().min(1).max(500).optional(),
   maxWallClockSeconds: z.number().int().min(60).max(14_400).optional(),
-  prompt: z.string().min(1).max(MAX_DESCRIPTION_LENGTH),
+  prompt: z.string().min(1).max(AGENT_RUN_MAX_PROMPT_CHARS),
   repoId: z.string().uuid(),
 });
 type CreateAgentRunBody = z.infer<typeof CreateAgentRunBody>;
@@ -451,7 +451,9 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
           })
       );
       const byKey = new Map<string, typeof rows>();
-      for (const r of rows) {
+      // A key the launch grammar cannot express (a bundle-installed one may be) would be
+      // offered and then refused with a 400.
+      for (const r of rows.filter((r) => AGENT_REF_RE.test(r.key))) {
         byKey.set(r.key, [...(byKey.get(r.key) ?? []), r]);
       }
       const data = [...byKey.entries()].map(([key, versions]) => {

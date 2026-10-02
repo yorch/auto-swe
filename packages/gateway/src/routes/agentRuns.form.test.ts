@@ -23,6 +23,8 @@ vi.mock('@auto-swe/shared/config', () => ({
   }),
 }));
 
+import { AGENT_RUN_MAX_PROMPT_CHARS } from '@auto-swe/shared/lib/agentRun';
+import { MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { agentRunRoutes } from './agentRuns.js';
 
 const REPO = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
@@ -146,6 +148,22 @@ describe('agent run form support (agents, limits)', () => {
           version: 1,
         },
       ]);
+    });
+
+    it('does not offer a key the launch grammar would refuse', async () => {
+      agentRows = [
+        { description: null, key: 'has space', name: 'Odd', scope: 'GLOBAL', version: 1 },
+        ...agentRows,
+      ];
+      const keys = (await get('/api/v1/agent-runs/agents'))
+        .json()
+        .data.map((a: { key: string }) => a.key);
+      expect(keys).not.toContain('has space');
+      expect(keys).toContain('contentWriter');
+    });
+
+    it('bounds the prompt by the same limit as the work request description', () => {
+      expect(AGENT_RUN_MAX_PROMPT_CHARS).toBe(MAX_DESCRIPTION_LENGTH);
     });
 
     it('excludes every non-launchable key in the query itself', async () => {

@@ -1,5 +1,6 @@
 'use client';
 
+import { AGENT_RUN_MAX_OUTPUT_DIFF_CHARS } from '@auto-swe/shared/lib/agentRun';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import {
@@ -94,8 +95,10 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
             {o.filesChanged.length} file{o.filesChanged.length === 1 ? '' : 's'} changed
           </div>
           <ul className="space-y-0.5 font-mono text-[11px]">
-            {o.filesChanged.map((f) => (
-              <li className="flex gap-1.5" key={f.path}>
+            {o.filesChanged.map((f, i) => (
+              // Index in the key: a path is not guaranteed unique (a missing one reads "(unknown)").
+              // biome-ignore lint/suspicious/noArrayIndexKey: see above
+              <li className="flex gap-1.5" key={`${i}:${f.path}`}>
                 <span className="text-paper-500">{OPERATION_MARK[f.operation] ?? '~'}</span>
                 <span className="min-w-0 break-all text-paper-300">{f.path}</span>
                 <span className="ml-auto shrink-0 text-moss-400">+{f.linesAdded}</span>
@@ -121,7 +124,8 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
           </pre>
           {o.diffTruncated && (
             <p className="mt-1 text-[11px] text-paper-500">
-              The diff is cut at 100,000 characters.
+              The diff is cut at {AGENT_RUN_MAX_OUTPUT_DIFF_CHARS.toLocaleString('en-US')}{' '}
+              characters.
             </p>
           )}
         </details>
@@ -130,7 +134,7 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
   );
 }
 
-/** Why a failed agent run failed, named by the PR 1 error code, above the generic failure card. */
+/** Why a failed agent run failed, named by its error type, above the generic failure card. */
 export function AgentRunFailureNote({ failure }: { failure: AgentRunFailureView }) {
   return (
     <div className="rounded border border-amber-400/40 bg-amber-400/10 p-3 text-[12px]" role="note">

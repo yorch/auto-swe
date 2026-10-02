@@ -106,6 +106,8 @@ export function agentRunTicketId(workRequestId: string): string {
  * branch and a FAILED run. Three copies of the returned diff stay well under
  * 2 MB at this cap even at 3 bytes per character.
  */
+/** Longest launch prompt. It travels as the work request's description, which has the same bound. */
+export const AGENT_RUN_MAX_PROMPT_CHARS = 20_000;
 export const AGENT_RUN_MAX_OUTPUT_DIFF_CHARS = 100_000;
 /** A delivered change whose diff exceeds this cannot be gated and is refused. */
 export const AGENT_RUN_MAX_GATED_DIFF_CHARS = 300_000;

@@ -44,6 +44,7 @@ export function AgentRunForm() {
   const [attempted, setAttempted] = useState(false);
   // One idempotency key per distinct submission; see `idempotencyFor`.
   const idempotency = useRef<IdempotencyState | null>(null);
+  const submitting = useRef(false);
 
   const repos = useRepositories({ limit: 500 });
   const repoId = values.repoId || null;
@@ -84,15 +85,21 @@ export function AgentRunForm() {
 
   const submit = () => {
     setAttempted(true);
-    if (Object.keys(errors).length > 0 || !canSubmit) {
+    // `isPending` lags a click by a render, so a double click needs its own guard: a
+    // second mutate would replace the first's observer and could show "already started".
+    if (Object.keys(errors).length > 0 || !canSubmit || submitting.current) {
       return;
     }
+    submitting.current = true;
     const body = buildLaunchBody(effective);
     idempotency.current = idempotencyFor(idempotency.current, body);
     launch.mutate(
       { body, idempotencyKey: idempotency.current.key },
       {
         // A launched run is done with its key: launching the same text again is a new run.
+        onSettled: () => {
+          submitting.current = false;
+        },
         onSuccess: () => {
           idempotency.current = null;
         },
