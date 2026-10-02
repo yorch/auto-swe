@@ -330,9 +330,17 @@ are fields, not node types. The four human nodes already carry a required `title
 inbox heading, up to 200 characters), so they take only `group`, and their `title` is what the canvas
 shows as their name.
 
-`validateSpec` raises an advisory `GROUP_NOT_CONTIGUOUS` warning when the nodes sharing a `group` are
-not one connected piece of the graph, because a view that folds the group into one card would then
-hide a path leaving and re-entering it.
+`validateSpec` raises an advisory `GROUP_NOT_CONTIGUOUS` warning when the edges between the nodes
+sharing a `group` (direction ignored) do not join them into one connected piece, because a card
+standing in for members with no edge between them would misdraw the graph. It checks connectedness
+only: it does not require a single entry or exit, and a connected group with a path that leaves and
+re-enters it passes. Both `group` and `title` are trimmed when a spec is read, so `ci` and `ci ` are
+one group, and a value that is not a non-blank string within the limits is treated as absent on read
+while the save API rejects it.
+
+Reading is tolerant by design: a stored or bundle-installed spec may carry a `title` or `group` in any
+shape, because before these fields existed such a key was ignored. A bad value therefore drops that
+field and nothing else, and never fails run creation or hides a run's graph.
 
 #### Reading a large graph
 

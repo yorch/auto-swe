@@ -103,8 +103,14 @@ function InnerDag({
   const [folded, setFolded] = useState(
     () => foldDefault ?? Object.keys(fullSpec.nodes).length > AUTO_FOLD_NODE_COUNT
   );
-  // Groups the viewer has collapsed into cards. Nothing starts collapsed.
+  // Groups the viewer has collapsed into cards. Nothing starts collapsed, and a different
+  // spec (another version) starts over: its labels mean other groups.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const specContentKey = JSON.stringify(fullSpec);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the spec's content is the trigger
+  useEffect(() => {
+    setCollapsed(new Set());
+  }, [specContentKey]);
   // What the viewer is looking at is never folded away: a node that failed, is
   // running or waiting, was changed in a diff, or is selected stays on the canvas.
   const keepKey = JSON.stringify([
@@ -184,6 +190,9 @@ function InnerDag({
   );
 
   const containerRef = useRef<HTMLDivElement>(null);
+  // Where keyboard focus goes once an expanded group's members are on the canvas: the
+  // card that had it is unmounted, which would otherwise drop focus to <body>.
+  const pendingFocus = useRef<string | null>(null);
 
   /** Open one collapsed group. A card is not a node, so it is never "selected". */
   const expandGroup = useCallback(
@@ -192,6 +201,7 @@ function InnerDag({
       if (!card) {
         return;
       }
+      pendingFocus.current = card.memberIds[0] ?? null;
       setCollapsed((prev) => {
         const next = new Set(prev);
         next.delete(card.group);
@@ -221,6 +231,14 @@ function InnerDag({
     );
     el?.focus();
   }, []);
+
+  useEffect(() => {
+    const id = pendingFocus.current;
+    if (id && nodes.some((n) => n.id === id)) {
+      pendingFocus.current = null;
+      requestAnimationFrame(() => focusNodeEl(id));
+    }
+  }, [nodes, focusNodeEl]);
 
   // Keyboard graph traversal: arrows walk the edges, Home jumps to the entry
   // node, Enter/Space opens the anchored node in the inspector (or expands a
@@ -279,6 +297,9 @@ function InnerDag({
 
   const collapsibleCount = groupFold.collapsible.length;
   const collapseAll = () => setCollapsed(new Set(groupFold.collapsible));
+  // How many cards are actually on the canvas: a collapsed group holding something the
+  // viewer is looking for stays open, so this can be fewer than `collapsed.size`.
+  const foldedCount = Object.keys(groupFold.folded).length;
   const showToolbar =
     outline || fold.hidden.length > 0 || collapsibleCount > 0 || collapsed.size > 0;
 
@@ -317,7 +338,9 @@ function InnerDag({
               type="button"
             >
               {collapsed.size > 0
-                ? `Expand ${collapsed.size} group${collapsed.size === 1 ? '' : 's'}`
+                ? foldedCount > 0
+                  ? `Expand ${foldedCount} group${foldedCount === 1 ? '' : 's'}`
+                  : 'Expand groups'
                 : `Collapse ${collapsibleCount} group${collapsibleCount === 1 ? '' : 's'}`}
             </button>
           )}

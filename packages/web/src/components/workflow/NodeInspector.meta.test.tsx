@@ -114,7 +114,7 @@ describe('NodeInspector title and group', () => {
 
   it('offers the groups already in the spec as suggestions', () => {
     renderInspector(STEP);
-    const options = [...document.querySelectorAll('#workflow-groups option')].map((o) =>
+    const options = [...document.querySelectorAll('datalist option')].map((o) =>
       o.getAttribute('value')
     );
     expect(options).toEqual(['review loop', 'approval']);

@@ -14,7 +14,7 @@ import {
   readNodeEdge,
   setNodeEdge,
 } from '@auto-swe/shared/workflow';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { Input } from '@/components/ui/Input';
@@ -283,6 +283,7 @@ function NodeMetaFields({
   onChange: (next: SpecNode) => void;
 }) {
   const isHuman = HUMAN_TYPES.has(node.type);
+  const listId = useId();
   const [title, setTitle] = useState(node.title ?? '');
   const [group, setGroup] = useState(node.group ?? '');
   // biome-ignore lint/correctness/useExhaustiveDependencies: resync when another node is selected or the value changes underneath
@@ -328,13 +329,13 @@ function NodeMetaFields({
         compact
         hint="steps with the same group are listed together and can be collapsed"
         label="Group"
-        list="workflow-groups"
+        list={listId}
         maxLength={MAX_NODE_GROUP_LENGTH}
         onBlur={(e) => commit('group', e.target.value)}
         onChange={(e) => setGroup(e.target.value)}
         value={group}
       />
-      <datalist id="workflow-groups">
+      <datalist id={listId}>
         {(knownGroups ?? []).map((g) => (
           <option key={g} value={g} />
         ))}

@@ -109,7 +109,8 @@ describe('built-in templates match their pre-helper golden specs', () => {
     (name, spec) => {
       const change = INTENDED_CHANGES[name];
       const expected = change ? change.apply(golden(name)) : golden(name);
-      expect(stripPresentation(spec)).toEqual(expected);
+      // Strict: a key left as `undefined` would pass toEqual but is not the golden's bytes.
+      expect(stripPresentation(spec)).toStrictEqual(expected);
     }
   );
 

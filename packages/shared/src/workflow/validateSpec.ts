@@ -23,9 +23,10 @@
  *                          where a terminate ends one branch, not the run
  *     - IGNORED_FIELD      a node sets `retry` / `startToCloseTimeout` / `heartbeatTimeout`,
  *                          which the interpreter never reads (use `onFail: { retry }`)
- *     - GROUP_NOT_CONTIGUOUS  nodes sharing a `group` label are not one connected piece of the
- *                          graph, so a view that folds the group into a card would hide a
- *                          detour through nodes outside it
+ *     - GROUP_NOT_CONTIGUOUS  the edges between nodes sharing a `group` label do not join them
+ *                          into one connected piece (edges are taken as undirected). It does NOT
+ *                          check single entry or exit, and a group that is connected but also has a
+ *                          path leaving and re-entering it passes
  *
  * Pure + I/O-free so it runs identically in the worker (pre-run / repair loop),
  * the gateway, and the web canvas (live lint). Wiring differs by caller: the
@@ -138,15 +139,20 @@ export function findInternalSteps(spec: WorkflowSpec): Array<{ nodeId: string; s
 
 /**
  * The connected pieces of each `group` label, counting only edges between two
- * nodes that share the label. A group that is one piece is "contiguous": a
- * reader can fold it into one card without hiding a path that leaves and
- * re-enters it. Returns only the groups that fall apart, each as its pieces.
+ * nodes that share the label (direction ignored). A group that is one piece is
+ * "contiguous": folding it into one card does not stand a card in for members
+ * with no edge between them. That is all this checks; it says nothing about how
+ * many entries or exits the group has, and a connected group may still have a
+ * path that leaves and re-enters it. Returns only the groups that fall apart,
+ * each as its pieces.
  */
 export function splitGroups(spec: WorkflowSpec): Map<string, string[][]> {
   const members = new Map<string, string[]>();
   for (const [id, node] of Object.entries(spec.nodes)) {
-    const group = node.group;
-    if (group !== undefined) {
+    // The schema trims on read; trimming again keeps a hand-built spec in agreement
+    // with the web views, which group by the trimmed label.
+    const group = node.group?.trim();
+    if (group) {
       members.set(group, [...(members.get(group) ?? []), id]);
     }
   }
