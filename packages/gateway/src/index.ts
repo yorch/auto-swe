@@ -22,6 +22,7 @@ import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
+import { isCanonicalRequestPath } from './lib/canonicalPath.js';
 import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
@@ -218,6 +219,14 @@ async function start() {
   // better-auth session for a short-lived JWT the rest of the API
   // already understands. ──
   const betterAuthHandler: RouteHandlerMethod = async (request, reply) => {
+    // The URL below is resolved before better-auth dispatches on it, but the
+    // route that matched — and the rate limit it carries — was chosen on the
+    // raw path. Serve only a path that resolves to itself.
+    if (!isCanonicalRequestPath(request.url)) {
+      return reply.status(400).send({
+        error: { code: 'NON_CANONICAL_PATH', message: 'Request path is not in canonical form' },
+      });
+    }
     try {
       const url = new URL(request.url, `http://${request.headers.host}`);
       const headers = fromNodeHeaders(request.headers);
