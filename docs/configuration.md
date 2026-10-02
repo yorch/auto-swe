@@ -33,6 +33,10 @@ organization because a team on an isolated network may need its own mirror. The 
 `workspace.agentRunAllowWorkflowChanges`) are registry settings too, all ADMIN-only; see
 [agent-runs.md](./agent-runs.md#6-bounds).
 
+The `mcp` group holds the two switches for the MCP server: `mcp.enabled` and `mcp.writeToolsEnabled`,
+both ADMIN-only and read per request, so they take effect within the settings cache's ~30 s with no
+restart; see [mcp-server.md](./mcp-server.md#settings).
+
 This doc covers the third tier. For integration credentials see
 [model-configuration.md](./model-configuration.md) and the admin pages themselves; for the
 environment see [deployment.md](./deployment.md).

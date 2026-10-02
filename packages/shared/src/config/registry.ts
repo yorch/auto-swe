@@ -193,7 +193,7 @@ export const SETTING_DEFINITIONS = {
   'mcp.enabled': defineSetting({
     defaultValue: false,
     description:
-      "Whether the platform acts as an OAuth authorization server for MCP clients. Off, the authorization server's endpoints and its discovery document return 404. Read through a ~30 s cache, so turning it off takes up to that long to apply on every replica.",
+      "Whether the platform serves MCP clients: the OAuth authorization server and the MCP endpoint. Off, the authorization server's endpoints, its discovery document, the MCP endpoint and its protected resource metadata return 404. Read through a ~30 s cache, so turning it off takes up to that long to apply on every replica.",
     group: 'mcp',
     label: 'Enable MCP access',
     overridableAt: [],
@@ -205,7 +205,7 @@ export const SETTING_DEFINITIONS = {
   'mcp.writeToolsEnabled': defineSetting({
     defaultValue: false,
     description:
-      'Whether MCP clients may be granted write access. Off, the mcp:write scope is refused at authorization and no access token that carries it is issued, on either the authorization-code or the refresh grant. A token already issued keeps the scope until it expires. Reads stay available while this is off.',
+      'Whether MCP clients may be granted write access. Off, the mcp:write scope is refused at authorization and no access token that carries it is issued, on either the authorization-code or the refresh grant. A token already issued keeps the scope in its claims, but the MCP endpoint ignores it while this is off. Reads stay available while this is off.',
     group: 'mcp',
     label: 'Allow MCP write access',
     overridableAt: [],

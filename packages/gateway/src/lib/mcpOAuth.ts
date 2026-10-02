@@ -27,6 +27,21 @@ export const MCP_REFRESH_TOKEN_TTL_SECONDS = 14 * 24 * 3600;
 export const MCP_JWKS_ROTATION_SECONDS = 30 * 24 * 3600;
 export const MCP_JWKS_GRACE_SECONDS = 3600;
 
+/**
+ * How long a resource server may keep the published signing keys before re-reading them.
+ * A key that is rotated out stays published for `MCP_JWKS_GRACE_SECONDS`, which has to cover
+ * this, the access-token lifetime and clock skew; a token signed by a key the cache has not
+ * seen yet is handled by a refresh on the unknown `kid`, not by waiting.
+ */
+export const MCP_JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
+/** Floor between two forced JWKS reads, so a stream of random `kid`s cannot turn into a stream of reads. */
+export const MCP_JWKS_MIN_REFRESH_MS = 10_000;
+/**
+ * A consent row and the token issued under it are stamped by (possibly) different replicas, so
+ * a token may carry an `iat` slightly earlier than the consent it was issued under.
+ */
+export const MCP_CONSENT_SKEW_SECONDS = 5;
+
 /** Where the authorization server's endpoints live (better-auth's default base path). */
 export const AUTH_BASE_PATH = '/api/auth';
 
