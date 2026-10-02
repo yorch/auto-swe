@@ -10,10 +10,12 @@ import {
   type OAuthMetadata,
   type OAuthTokenVerifier,
   originValidationResponse,
+  ProtocolError,
+  UnsupportedProtocolVersionError,
   verifyBearerToken,
 } from '@modelcontextprotocol/server';
 import { fromNodeHeaders } from 'better-auth/node';
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 
 /**
@@ -24,6 +26,8 @@ import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
  * authenticated client can `initialize` and list an empty tool set and nothing else.
  */
 
+type McpSettings = { enabled: boolean; writeToolsEnabled: boolean };
+
 export interface McpRouteOptions {
   /** The RFC 8707 resource identifier, which is also this endpoint's public URL. */
   resource: string;
@@ -32,7 +36,7 @@ export interface McpRouteOptions {
   /** Validates a bearer token; see `createMcpTokenVerifier`. */
   verifier: OAuthTokenVerifier;
   /** Read per request through the settings cache; a failure answers 503 rather than guessing. */
-  getSettings: () => Promise<{ enabled: boolean; writeToolsEnabled: boolean }>;
+  getSettings: () => Promise<McpSettings>;
   /** Hostnames a browser `Origin` may carry (DNS-rebinding and CSRF defence). No `Origin` passes. */
   allowedOriginHostnames: string[];
   serverVersion: string;
@@ -62,6 +66,25 @@ async function sendWebResponse(reply: FastifyReply, response: Response) {
   return reply.send(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]));
 }
 
+/**
+ * Errors the SDK reports through `onerror` that are a client's fault (a request it refused),
+ * not ours. They stay at debug so they cannot flood the log; anything else is a fault inside
+ * the handler that answered 500, and is logged at error. Only the error is logged, never the
+ * request: its body and `Authorization` header stay out of the log.
+ */
+const CLIENT_REJECTION = /^(Rejected |Unsupported Media Type|subscriptions\/listen refused)/;
+export function logSdkError(log: Pick<FastifyBaseLogger, 'debug' | 'error'>, err: Error) {
+  if (
+    err instanceof ProtocolError ||
+    err instanceof UnsupportedProtocolVersionError ||
+    CLIENT_REJECTION.test(err.message)
+  ) {
+    log.debug({ err }, 'mcp: request refused by the transport');
+  } else {
+    log.error({ err }, 'mcp: the transport failed');
+  }
+}
+
 export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) {
   const resourceUrl = new URL(options.resource);
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resourceUrl);
@@ -78,7 +101,7 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
       // No subscription capability is advertised, and `subscriptions/listen` is an SSE stream the
       // gateway would have to hold open per client: refuse every one.
       maxSubscriptions: 0,
-      onerror: (err) => app.log.debug({ err }, 'mcp transport'),
+      onerror: (err) => logSdkError(app.log, err),
       // The default (2025-era) stateless fallback stays on: GET and DELETE are 405 there.
       responseMode: 'json',
     }
@@ -87,12 +110,19 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
     await handler.close();
   });
 
-  /** The settings when MCP is on; otherwise the refusal has been sent and this is null. */
-  async function gate(request: FastifyRequest, reply: FastifyReply) {
+  const settingsByRequest = new WeakMap<FastifyRequest, McpSettings>();
+
+  /**
+   * Runs before the body is parsed, so a disabled endpoint answers 404 whatever the request
+   * carries (not 415, 400 or 413). If MCP is on the settings are kept for the handler; otherwise
+   * the refusal has been sent.
+   */
+  async function requireEnabled(request: FastifyRequest, reply: FastifyReply) {
     try {
       const settings = await options.getSettings();
       if (settings.enabled) {
-        return settings;
+        settingsByRequest.set(request, settings);
+        return;
       }
       notFound(reply);
     } catch (err) {
@@ -101,16 +131,13 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
         .status(503)
         .send({ error: 'temporarily_unavailable', error_description: 'Try again shortly' });
     }
-    return null;
+    return reply;
   }
 
   // RFC 9728 Protected Resource Metadata, at the path-inserted URL clients derive from the
   // resource identifier and at the root.
   const metadataHandler = async (request: FastifyRequest, reply: FastifyReply) => {
-    const settings = await gate(request, reply);
-    if (!settings) {
-      return reply;
-    }
+    const settings = settingsByRequest.get(request) as McpSettings;
     try {
       const document = buildOAuthProtectedResourceMetadata({
         // Only the issuer is read from this.
@@ -128,14 +155,14 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
       });
     }
   };
-  app.get(`/.well-known/oauth-protected-resource${resourcePath}`, metadataHandler);
-  app.get('/.well-known/oauth-protected-resource', metadataHandler);
+  app.get(
+    `/.well-known/oauth-protected-resource${resourcePath}`,
+    { onRequest: requireEnabled },
+    metadataHandler
+  );
+  app.get('/.well-known/oauth-protected-resource', { onRequest: requireEnabled }, metadataHandler);
 
   const serve = async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!(await gate(request, reply))) {
-      return reply;
-    }
-
     const abort = new AbortController();
     reply.raw.once('close', () => {
       if (!reply.raw.writableFinished) {
@@ -151,22 +178,32 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
         : typeof request.body === 'string'
           ? request.body
           : JSON.stringify(request.body);
-    const webRequest = new Request(
-      `http://${request.headers.host ?? new URL(options.resource).host}${request.url}`,
-      {
-        ...(body !== undefined && request.method !== 'GET' && request.method !== 'DELETE'
-          ? { body }
-          : {}),
-        headers,
-        method: request.method,
-        signal: abort.signal,
-      }
-    );
+    // The URL comes from configuration, never from the `Host` header: a client-chosen host that
+    // is not a valid URL authority would make this constructor throw.
+    const webRequest = new Request(`${resourceUrl.origin}${request.url}`, {
+      ...(body !== undefined && request.method !== 'GET' && request.method !== 'DELETE'
+        ? { body }
+        : {}),
+      headers,
+      method: request.method,
+      signal: abort.signal,
+    });
 
     // A browser Origin that is not ours is refused before anything else is learned about it.
     const badOrigin = originValidationResponse(webRequest, options.allowedOriginHostnames);
     if (badOrigin) {
       return sendWebResponse(reply, badOrigin);
+    }
+
+    // RFC 6750 section 3.1: a request with no credentials gets a challenge without an error code.
+    if (!request.headers.authorization) {
+      return reply
+        .status(401)
+        .header(
+          'www-authenticate',
+          `Bearer scope="${MCP_SCOPE_READ}", resource_metadata="${resourceMetadataUrl}"`
+        )
+        .send({ error: 'invalid_request', error_description: 'Missing Authorization header' });
     }
 
     let authInfo: AuthInfo;
@@ -187,5 +224,10 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
 
     return sendWebResponse(reply, await handler.fetch(webRequest, { authInfo }));
   };
-  app.route({ handler: serve, method: ['GET', 'POST', 'DELETE'], url: resourcePath });
+  app.route({
+    handler: serve,
+    method: ['GET', 'POST', 'DELETE'],
+    onRequest: requireEnabled,
+    url: resourcePath,
+  });
 }

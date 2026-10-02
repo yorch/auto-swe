@@ -18,7 +18,7 @@ import {
   TEST_RESOURCE,
   type TestKey,
 } from '../test/mcpTokens.js';
-import { mcpRoutes } from './mcp.js';
+import { logSdkError, mcpRoutes } from './mcp.js';
 
 const PRM_PATH = '/.well-known/oauth-protected-resource/api/v1/mcp';
 const PRM_URL = `http://localhost:8080${PRM_PATH}`;
@@ -139,6 +139,30 @@ describe('MCP endpoint', () => {
       expect(res.headers['www-authenticate']).toContain(`resource_metadata="${PRM_URL}"`);
       expect(res.headers['www-authenticate']).toContain('scope="mcp:read"');
       expect(res.headers['www-authenticate']).toMatch(/^Bearer /);
+      // RFC 6750 section 3.1: no credentials, no error code.
+      expect(res.headers['www-authenticate']).not.toContain('error=');
+    });
+
+    it('gives a refused token the invalid_token error code', async () => {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer garbage' },
+        method: 'POST',
+        payload: {},
+        url: '/api/v1/mcp',
+      });
+      expect(res.headers['www-authenticate']).toContain('error="invalid_token"');
+    });
+
+    it('answers a malformed Host header like any other request, not 500', async () => {
+      const res = await app.inject({
+        headers: { host: 'a@b' },
+        method: 'POST',
+        payload: {},
+        url: '/api/v1/mcp',
+      });
+      expect(res.statusCode).toBe(401);
+      const authed = await post(initializeLegacy, { host: 'a@b' });
+      expect(authed.statusCode).toBe(200);
     });
 
     it.each([
@@ -417,10 +441,47 @@ describe('MCP endpoint', () => {
       expect(await probe()).toEqual({ mcp: 200, mcpAnonymous: 401, prm: 200, prmRoot: 200 });
     });
 
+    it('answers 404, not 415, 400 or 413, for a body the parser would refuse while off', async () => {
+      settings.enabled = false;
+      const send = (headers: Record<string, string>, payload: string) =>
+        app.inject({ headers, method: 'POST', payload, url: '/api/v1/mcp' });
+      expect((await send({ 'content-type': 'application/xml' }, '<a/>')).statusCode).toBe(404);
+      expect((await send({ 'content-type': 'application/json' }, '{not json')).statusCode).toBe(
+        404
+      );
+      const big = JSON.stringify({ pad: 'x'.repeat(2 * 1024 * 1024) });
+      expect((await send({ 'content-type': 'application/json' }, big)).statusCode).toBe(404);
+    });
+
     it('fails closed with 503 when the setting cannot be read', async () => {
       settingsFail = true;
       expect((await post(initializeLegacy)).statusCode).toBe(503);
       expect((await app.inject({ method: 'GET', url: PRM_PATH })).statusCode).toBe(503);
+    });
+  });
+
+  describe('transport error logging', () => {
+    const logger = () => {
+      const calls: string[] = [];
+      return {
+        calls,
+        debug: () => calls.push('debug'),
+        error: () => calls.push('error'),
+      };
+    };
+
+    it('keeps a request the transport refused at debug', () => {
+      const log = logger();
+      logSdkError(log, new Error('Rejected inbound request (x): y'));
+      logSdkError(log, new Error('Unsupported Media Type: Content-Type must be application/json'));
+      logSdkError(log, new Error('subscriptions/listen refused: subscription limit reached (0)'));
+      expect(log.calls).toEqual(['debug', 'debug', 'debug']);
+    });
+
+    it('logs any other fault inside the handler at error', () => {
+      const log = logger();
+      logSdkError(log, new Error('factory exploded'));
+      expect(log.calls).toEqual(['error']);
     });
   });
 });

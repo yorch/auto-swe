@@ -31,9 +31,11 @@ A client needs only the endpoint URL. Without a token the endpoint answers 401 w
 `WWW-Authenticate` challenge that names the protected resource metadata and the default scope:
 
 ```
-WWW-Authenticate: Bearer error="invalid_token", error_description="Missing Authorization header",
-  scope="mcp:read", resource_metadata="https://auto-swe.example.com/.well-known/oauth-protected-resource/api/v1/mcp"
+WWW-Authenticate: Bearer scope="mcp:read",
+  resource_metadata="https://auto-swe.example.com/.well-known/oauth-protected-resource/api/v1/mcp"
 ```
+
+A request that presents a token the server refuses gets the same challenge with `error="invalid_token"`.
 
 The client follows the metadata to the authorization server, registers itself (anonymous Dynamic Client
 Registration, public client, PKCE `S256`), sends the user to sign in, and receives a JWT access token
@@ -50,7 +52,7 @@ on its authorization and token requests; the authorization server refuses a requ
 
 Every request to the endpoint passes these checks, in this order, before the MCP protocol sees it:
 
-1. **MCP is on.** Otherwise 404. The setting is read per request.
+1. **MCP is on.** Otherwise 404, before the body is read, so a disabled endpoint answers 404 whatever the request carries. The setting is read per request.
 2. **Origin.** A request carrying an `Origin` header whose host is not a configured `CORS_ORIGIN` host
    or the gateway's own host is refused with 403. A request with no `Origin` (every non-browser client)
    passes.
