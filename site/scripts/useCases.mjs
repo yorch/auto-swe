@@ -154,7 +154,7 @@ export const USE_CASES = {
     summary:
       'Two independent review-network passes run in parallel, and both must approve before ' +
       'the pull request opens. Either one rejecting sends the combined feedback back to the ' +
-      'implementer.',
+      'implementer. A CI failure is fixed by the agent and goes back through both reviewers.',
     title: 'Two-reviewer consensus',
   },
   'parallel-fan-out': {
@@ -217,7 +217,8 @@ export const USE_CASES = {
     source: 'packages/shared/src/workflow/templates/fourEyes.ts',
     summary:
       'Two sequential, independent approvals after the agent review loop — the two-person ' +
-      'rule that change-management processes ask for.',
+      'rule that change-management processes ask for. A CI failure is fixed by the agent and ' +
+      'goes back through the review and both approvals.',
     title: 'Four-eyes change',
   },
   migration: {

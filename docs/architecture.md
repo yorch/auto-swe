@@ -374,6 +374,14 @@ with a `group` and `title`; nothing in a stored spec, a run snapshot, or a bundl
 cannot alter a template unnoticed. An edit to a template or helper is released like any other change
 to a built-in: `syncBuiltins` compares specs key-order-insensitively and appends a new version.
 
+Every built-in that opens a pull request and waits on CI fixes a CI failure the same way: the CI
+fixer runs on the failure logs, and a third failing check ends the run `FAILED` (two fix attempts).
+Where the template has a review gate, the fixed code goes back through it before the pull request is
+updated — `default-engineering`, `consensus-review` (both reviewers) and `four-eyes` (the agent
+review and both human sign-offs) — so an approval never covers code it did not see. `agent-reviewed-pr`
+and `code-and-ci` push the fix straight to the pull request. A CI failure therefore spends agent time
+and tokens, and in `four-eyes` asks the approvers again, before the run can fail.
+
 #### Limitations
 
 - A group collapses only when it has two or more members and they form one connected piece; otherwise
