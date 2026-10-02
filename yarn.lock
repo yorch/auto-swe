@@ -508,6 +508,7 @@ __metadata:
   resolution: "@auto-swe/gateway@workspace:packages/gateway"
   dependencies:
     "@auto-swe/shared": "workspace:*"
+    "@better-auth/oauth-provider": "npm:1.7.7"
     "@fastify/cookie": "npm:11.1.2"
     "@fastify/cors": "npm:11.3.0"
     "@fastify/rate-limit": "npm:11.2.0"
@@ -1041,6 +1042,22 @@ __metadata:
     mongodb:
       optional: true
   checksum: 10c0/e6d6c7809dc03914bbef2328f3d728fd78dbd4b13fdfefc29bb72e6ce92b0a7c216d7c430dd19c94fdefb6f5210573e69060082d0f5835fe2984c44c38852f82
+  languageName: node
+  linkType: hard
+
+"@better-auth/oauth-provider@npm:1.7.7":
+  version: 1.7.7
+  resolution: "@better-auth/oauth-provider@npm:1.7.7"
+  dependencies:
+    jose: "npm:^6.2.3"
+    zod: "npm:^4.5.4"
+  peerDependencies:
+    "@better-auth/core": ^1.7.7
+    "@better-auth/utils": 0.4.2
+    "@better-fetch/fetch": 1.3.2
+    better-auth: ^1.7.7
+    better-call: 1.4.0
+  checksum: 10c0/182680f8b98ce9bc6f03930a0bde4ef99540a57817323c1585e4fdabbd596e3620b22d0453a6037cfea6768099c48a43b28bf73a4fe6d14f0773aac64351650f
   languageName: node
   linkType: hard
 

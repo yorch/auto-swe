@@ -14,7 +14,18 @@ const state = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
+// Building the auth instance seeds the MCP resource through the Prisma adapter, so every model
+// delegate the adapter touches must exist: an empty database that never returns a row will do.
+vi.mock('@auto-swe/shared/db', () => {
+  const emptyModel = {
+    count: async () => 0,
+    create: async ({ data }: { data: unknown }) => data,
+    findFirst: async () => null,
+    findMany: async () => [],
+    findUnique: async () => null,
+  };
+  return { prisma: new Proxy({}, { get: () => emptyModel }) };
+});
 vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
   resolveBetterAuthConfig: () => ({
