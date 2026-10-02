@@ -264,7 +264,14 @@ export async function passiveIngestChannelMemory(
       // Unconditional: an ingest that spent nothing still has to give its hold back.
       await hold.settle(totalCostUsd, { countRun: false });
     }
-  } catch {
+  } catch (err) {
+    // Best-effort, so the pass no-ops — but never silently: a refused model (no
+    // price under the channel's USD cap) would otherwise stop memory ingest with
+    // nothing anywhere saying why.
+    console.error(
+      `[passiveIngestChannelMemory] pass skipped for ${channelId}:`,
+      err instanceof Error ? err.message : err
+    );
     return EMPTY;
   }
 }

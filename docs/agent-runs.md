@@ -411,7 +411,7 @@ hidden template's own link is not shown.
 - **A model with no known price is refused only under a USD cap.** When the run's organization has a
   monthly USD budget and the agent's model has no catalog price, the run fails before it starts (before
   the container is created) with `MODEL_UNPRICED`, naming the model and the model catalog; the run
-  viewer explains it. With no organization cap the run proceeds and records $0
+  viewer explains it. The same refusal applies to any `agent` node in a workflow template and to the engineering steps under an organization cap. With no organization cap the run proceeds and records $0
   (`llm.cost_pricing_known=false`): the token tier budgets still bind, since they count tokens.
 - **There is no Slack entry point.** An agent run is launched from the dashboard, CLI or REST API only;
   the channel assistant cannot start one and a delegated channel task is a different workflow (§9).

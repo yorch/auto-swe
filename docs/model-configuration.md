@@ -130,12 +130,19 @@ as a `ModelCatalogEntry`.
 | `GET /model-catalog/unpriced` | Specs in use that nothing prices, each with where it is used and the spec it most likely meant |
 | `POST /model-catalog/discover` | Lists models through each GLOBAL credential and returns, per provider, the ones nothing prices — or why that provider could not be listed. Writes nothing |
 
-**Unpriced models are reported, never refused.** Saving an agent version or the embedding config
+**Unpriced models are reported on save, and refused at run time only under a USD cap.** Saving an agent version or the embedding config
 returns `catalogWarnings` beside `scanWarnings` when its model is not priced (with a did-you-mean
 such as `gpt-5-5` → `gpt-5.5`), is DEPRECATED or RETIRED, or is the wrong `kind`. The save still
 succeeds: a model released today, a self-hosted endpoint or a pinned version must not be blocked on a
 price. `/model-catalog/unpriced` collects the same gap across every active agent, the embedding
 config, and the models recorded LLM calls used in the last 30 days.
+
+At run time a model with no price is refused only where a USD-denominated cap would otherwise stop
+counting: an organization with a monthly budget (every run whose ledger row reaches that
+organization: the implementer and its fix sessions, the review network, planner, decomposers,
+security gate, memory passes, and generic `agent` nodes) and a channel with a monthly budget. The
+refusal is a non-retryable `MODEL_UNPRICED` naming the model; while the catalog cannot be read it is
+a retryable `MODEL_PRICE_UNAVAILABLE`. Without such a cap the call proceeds at $0.
 
 `MODEL_PRICE_<PROVIDER>_<MODEL>` environment overrides are not read. The worker names any that are
 set at startup.
@@ -370,10 +377,11 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   a ~30 s TTL (`CONFIG_CACHE_TTL_MS`) and gateway and worker are separate processes, so the two can
   briefly disagree after an edit. A `generate()` call already in flight keeps the model it bound.
 - **Pricing is keyed on the resolved `provider/model` spec.** A model with no catalog row and no
-  `BUILTIN_MODELS` entry records usage at **zero cost** rather than failing — the span carries
-  `llm.cost_pricing_known=false`. Per-run budget tiers are enforced on tokens, so an
-  unpriced model is still capped there, but every USD-denominated limit — the organization monthly
-  budget, channel budgets and the channel hold estimate — reads its spend as $0 and never stops it.
+  `BUILTIN_MODELS` entry records usage at **zero cost** — the span carries
+  `llm.cost_pricing_known=false` — wherever no USD cap applies. Per-run budget tiers are enforced on
+  tokens, so an unpriced model is still capped there. Where an organization or channel monthly
+  budget applies, the call is refused instead (see above). Embedding calls and the eval harness are
+  not covered by that refusal, and a cost shown for a run on an unpriced model is $0.
 - **The editor's cost estimate prices GLOBAL defaults.** It uses the model each role's GLOBAL agent
   runs, so a team, organization or template override of that agent's model is not reflected, and
   token counts come from each step's static `costHint`, not from measured runs.

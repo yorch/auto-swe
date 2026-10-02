@@ -203,10 +203,16 @@ would net the whole hold back off the ledger and leave the cap with nothing to c
 channel has a monthly budget and its bound model has no price, `reserveChannelTurn` refuses before
 anything is held or spent, with a non-retryable `MODEL_UNPRICED` failure naming the model and the
 model catalog. A mention turn replies in the thread with that message instead of the generic error
-text; a background pass (digest, memory, open items, flagging) fails its activity and the workflow
-treats it as best-effort. The same check runs in `runAgent`, so a delegated channel task refuses too
-(the failure surfaces from the task's branch rather than as an empty answer). An uncapped channel
-proceeds and records $0 with `llm.cost_pricing_known=false`.
+text. A background pass (digest, memory, open items, flagging) catches its own error and no-ops, so
+the refusal appears only as a logged line (`[<pass>] ... no price in the model catalog`) and the
+feature quietly stops until the model is priced; check the worker log when ambient output, memory or
+flagging goes missing on a capped channel. The memory summarizer inside a mention turn runs under
+the channel scope, so it is guarded too; a refusal there stores the raw exchange instead and spends
+nothing. The same check runs in `runAgent`, so a delegated channel task refuses too (the failure
+surfaces from the task's branch rather than as an empty answer). An uncapped channel proceeds and
+records $0 with `llm.cost_pricing_known=false`. While the catalog itself cannot be read the refusal
+is a retryable `MODEL_PRICE_UNAVAILABLE` instead, so a database blip never tells an admin to add a
+price that exists.
 
 The settle-time floor remains as a second line of defence: should a held turn still measure as
 unpriced (the catalog changed between reserve and settle), it settles at no less than its

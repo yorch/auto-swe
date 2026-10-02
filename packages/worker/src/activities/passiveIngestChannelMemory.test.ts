@@ -275,6 +275,25 @@ describe('passiveIngestChannelMemory', () => {
     expect(persistActivityTraceMock).toHaveBeenCalledTimes(1);
   });
 
+  it('logs why when the pass is refused or fails, instead of no-oping silently', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchChannelHistoryMock.mockResolvedValue([makeMsg('hello', '1700000001.000')]);
+    reserveChannelTurnMock.mockRejectedValueOnce(
+      Object.assign(new Error('Model "x" has no price in the model catalog'), {
+        type: 'MODEL_UNPRICED',
+      })
+    );
+
+    const result = await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
+
+    expect(result).toEqual({ factsExtracted: 0, factsWritten: 0, messagesRead: 0 });
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(CHANNEL_ID),
+      expect.stringContaining('no price in the model catalog')
+    );
+    errorSpy.mockRestore();
+  });
+
   it('uses cursor from DB when fetching history', async () => {
     prismaMock.slackChannel.findUnique.mockResolvedValue({
       ...CHANNEL_ROW,
