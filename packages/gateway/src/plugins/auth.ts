@@ -193,7 +193,7 @@ class TokenUserLookupError extends Error {
 }
 
 /** The live user fields an access token's claims are re-checked against. */
-interface TokenUserState {
+export interface TokenUserState {
   isActive: boolean;
   role: Role;
   slackId: string | null;
@@ -210,7 +210,7 @@ const TOKEN_USER_CACHE_TTL_MS = 30_000;
 const TOKEN_USER_CACHE_MAX = 2000;
 const tokenUserCache = new Map<string, { state: TokenUserState | null; expiresAt: number }>();
 
-async function loadTokenUser(
+export async function loadTokenUser(
   prisma: FastifyInstance['prisma'],
   userId: string
 ): Promise<TokenUserState | null> {

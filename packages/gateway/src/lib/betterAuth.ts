@@ -54,6 +54,8 @@ const CLIENT_ORIGIN = betterAuthBootstrap.clientOrigin;
 /// The MCP resource server's identifier (RFC 8707): the `aud` of every access token this
 /// authorization server issues for MCP clients.
 export const MCP_RESOURCE = mcpResourceFor(BASE_URL);
+/// The `iss` of those tokens, and the authorization server a client is pointed at.
+export const MCP_ISSUER = mcpIssuerFor(BASE_URL);
 
 // Guard: never let the in-source dev fallback ship. The fallback is allowed
 // only when NODE_ENV explicitly opts into development/test — an unset NODE_ENV
