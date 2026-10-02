@@ -331,6 +331,9 @@ gateway, so the entry point would be too.
 - **The real-Docker check is opt-in.** The trusted-container shell is exercised against real containers
   by `agentRunFinalize.docker.test.ts` only when `AGENT_RUN_DOCKER_TEST=1`; the default suite exercises
   the same code against a fake workspace.
+- **A model with no known price is recorded at $0.** The tier ledger counts tokens, so the token
+  budgets still bind, but the organization USD cap does not see an unpriced model's spend. Add the
+  model to the model catalog.
 - **There is no Slack entry point.** An agent run is launched from the dashboard, CLI or REST API only;
   the channel assistant cannot start one and a delegated channel task is a different workflow (§9).
 - **Cost estimates are absent.** The workflow cost estimator has no hint for `runAgentTask`, so an

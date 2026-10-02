@@ -95,6 +95,8 @@ The general route is repo-less, so its run has no `ActiveWorkflow` row for the a
 derive a team from. Its agent nodes, planner and fan-out therefore take the channel's own team and
 org (`withChannelScope`), which puts a TEAM or ORGANIZATION override of `channelAssistant` in force
 for the delegated task exactly as it is for the reply. This is resolution only: it grants nothing.
+The same scope reaches `runAgent`, so a TEAM- or ORGANIZATION-scope `workspace.agentMaxSteps` (the
+setting has no CHANNEL tier) bounds the tool loop of mention turns and delegated tasks.
 
 **Not an agent run.** A delegated task is a `RunnableWorkflow`; it is not a library
 [agent run](./agent-runs.md), which is a repository-bound, container-bound step that requires an
@@ -192,11 +194,14 @@ run ledger prices real calls with — so an Opus channel holds ~$0.078 per call 
 nothing.
 
 The settled cost is priced at the model the call was **bound to**: `runAgent` passes its resolved
-`modelSpec` to `recordLlmUsage`, so a CHANNEL-scope override is charged at the override's rate. A
-caller that does not pass one has its role re-resolved from the ambient Temporal context, which has no
-`channelId`, and is priced at the model that context resolves instead — the channel-memory passes
-(`passiveIngestChannelMemory`, `consolidateChannelMemory`, `sweepChannelOpenItems`) are in that
-position (see Limitations).
+`modelSpec` to `recordLlmUsage`, so a CHANNEL-scope override is charged at the override's rate. The
+three channel-memory passes are the exception (see Limitations).
+
+A bound model with no known price measures as $0. Settling that would net the whole hold back off the
+ledger and leave the cap with nothing to count, so a turn whose pricing is unknown settles at no less
+than its reservation (`llm.cost_pricing_known=false` is still recorded). The floor applies to
+held turns; the run-level tier ledger and an agent run's organization USD cap have no reservation to
+fall back on and record the $0.
 
 Every channel pass resolves its agent at the **CHANNEL tier** — `{ channelId, orgId, teamId }`
 threaded explicitly into `resolveAgent`, `getModel` and `loadAgentSkills`. The ambient Temporal
@@ -310,10 +315,16 @@ unproven on real traffic, and turn them on one channel at a time.
   admits. `finalizeChannelTaskRun` spends on the ledger with no hold at all. A hold lost to a worker
   crash over-counts the channel until the sweep reclaims it — which only happens once the channel
   reaches its cap, or an admin calls `/:id/budget/reset` (API-only; there is no UI control).
-- **The channel-memory passes are priced at the ambient model.** `passiveIngestChannelMemory`,
-  `consolidateChannelMemory` and `sweepChannelOpenItems` bind `commitToMemory` at the CHANNEL tier
-  but call `recordLlmUsage` without that spec, so a CHANNEL-scope override of `commitToMemory` is
-  used for the call and charged at the model the ambient context resolves.
+- **The channel-memory passes settle at the ambient model's price.** `passiveIngestChannelMemory`,
+  `consolidateChannelMemory` and `sweepChannelOpenItems` bind `commitToMemory` at the CHANNEL tier and
+  size their hold at that tier, but call `recordLlmUsage` without the bound spec. The call runs on the
+  channel's override; the cost they settle is priced at the model the ambient Temporal context
+  resolves, which has no `channelId`. For a channel whose `commitToMemory` override is dearer than the
+  ambient model they under-charge, and the hold-versus-settle drift §7 describes as closed for turns
+  remains for these passes.
+- **A model with no known price is not charged to the run-level ledger.** A held channel turn keeps
+  its reservation (§7), but the run's tier ledger and an agent run's organization USD cap record $0
+  for an unpriced model. Add the model to the model catalog.
 - **A channel's turn runs are visible to its owning team, not to everyone in the Slack channel.**
   A turn run links its channel (`WorkflowRun.channelId`), and run visibility admits members of the
   channel's owning team — the same people who can open the channel's settings and audit feed.

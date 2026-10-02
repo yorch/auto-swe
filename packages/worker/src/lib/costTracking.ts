@@ -199,6 +199,11 @@ export interface LlmAttribution {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /**
+   * False when the model had no known price, so `costUsd` is a recorded $0 rather
+   * than a measured zero. Absent on a hand-built attribution (no call was made).
+   */
+  pricingKnown?: boolean;
 }
 
 /**
@@ -464,7 +469,7 @@ export async function recordLlmUsage(
             throw err;
           }
           span.setAttribute('llm.workflow_found', false);
-          return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
+          return { costUsd: callCost, inputTokens, modelSpec, outputTokens, pricingKnown: known };
         }
 
         const newInput = Number(updated.tokensInputUsed);
@@ -507,7 +512,7 @@ export async function recordLlmUsage(
           );
         }
 
-        return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
+        return { costUsd: callCost, inputTokens, modelSpec, outputTokens, pricingKnown: known };
       } catch (e) {
         span.recordException(e as Error);
         throw e;

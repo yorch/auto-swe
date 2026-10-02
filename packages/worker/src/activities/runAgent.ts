@@ -67,6 +67,8 @@ export interface RunAgentResult<T = unknown> {
    * rather than re-pricing `usage` to stay consistent with the run ledger.
    */
   costUsd?: number;
+  /** False when the model had no known price, so `costUsd` is an unpriced $0. */
+  pricingKnown?: boolean;
   /** Input tokens attributed by `recordLlmUsage` (0 when there was no usage). */
   inputTokens?: number;
   /** Output tokens attributed by `recordLlmUsage` (0 when there was no usage). */
@@ -234,6 +236,7 @@ export async function runAgent<T = unknown>(
           inputTokens: attribution.inputTokens,
           object,
           outputTokens: attribution.outputTokens,
+          pricingKnown: attribution.pricingKnown,
           stepCount,
           stoppedReason,
           text,

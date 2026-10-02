@@ -78,6 +78,7 @@ export function createStepAccounting(
           totals.inputTokens += a.inputTokens;
           totals.outputTokens += a.outputTokens;
           totals.modelSpec = a.modelSpec || totals.modelSpec;
+          totals.pricingKnown = (totals.pricingKnown ?? true) && a.pricingKnown !== false;
         }
         // The next step must have something left to spend.
         await assertBudgetAvailable(`agent.${agentKey}`);

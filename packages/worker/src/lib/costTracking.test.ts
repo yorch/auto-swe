@@ -377,6 +377,27 @@ describe('recordLlmUsage', () => {
       expect(priced.costUsd).toBeCloseTo(await calculateCostUsd(bound, 100_000, 100_000), 6);
     });
 
+    it('says when the bound model has no known price, still recording $0', async () => {
+      ledger({});
+      const unpriced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        usage,
+        'llm.usage',
+        'openrouter/nobody-priced-this'
+      );
+      expect(unpriced.costUsd).toBe(0);
+      expect(unpriced.pricingKnown).toBe(false);
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        usage,
+        'llm.usage',
+        bound
+      );
+      expect(priced.pricingKnown).toBe(true);
+    });
+
     it('still re-resolves from the role when no spec is passed', async () => {
       ledger({});
       const priced = await recordLlmUsage('wf-temporal-1', 'implementer', usage);

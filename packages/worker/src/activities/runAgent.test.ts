@@ -118,15 +118,23 @@ describe('runAgent', () => {
     );
   });
 
-  it('prices at the bound model even when the spec was resolved at another scope', async () => {
+  it('reports an unpriced model to the caller, so a cap can still count the call', async () => {
     generateMock.mockResolvedValue({
       object: { ok: true },
       usage: { inputTokens: 1, outputTokens: 2 },
     });
+    mockedRecordUsage.mockResolvedValueOnce({
+      costUsd: 0,
+      inputTokens: 1,
+      modelSpec: 'x/unpriced',
+      outputTokens: 2,
+      pricingKnown: false,
+    });
 
-    await runAgent(makeSpec({ modelSpec: 'anthropic/claude-opus-5-5' }), 'M');
+    const result = await runAgent(makeSpec(), 'M');
 
-    expect(mockedRecordUsage.mock.calls[0]?.[4]).toBe('anthropic/claude-opus-5-5');
+    expect(result.costUsd).toBe(0);
+    expect(result.pricingKnown).toBe(false);
   });
 
   it('skips usage recording when the provider reports none', async () => {
