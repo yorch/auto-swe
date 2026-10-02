@@ -268,7 +268,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
     'get_run',
     {
       description:
-        'Get one workflow run: status, cost, token totals, timing, each step as node, status and attempt, the pull request it opened (when it did), and a dashboard link. Step errors, inputs, outputs and traces are not returned; open the dashboard link for those.',
+        'Get one workflow run: status, cost, token totals, timing, each step as node, status and attempt, the pull request it opened (when it did), and a dashboard link. Step errors, inputs, outputs and traces are not returned; open the dashboard link for those. For a work request you just submitted, get the run id from list_runs with its workRequestId.',
       input: { runId: z.string().uuid().describe('The run id') },
       notFound: 'Run not found.',
       output: runOutput,
@@ -395,7 +395,7 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
     {
       annotations: { ...WRITE, title: 'Submit a work request' },
       description:
-        "Submit a work request: the platform's agents implement the ticket in the repository and open a pull request for a person to review and merge. This tool never merges or approves anything. The run launches under YOUR identity, not a service account: it is recorded as launched by you, and where per-user GitHub credentials are enabled it may push branches and open pull requests with your own GitHub token. The description is read by the platform's agents as their instructions. Always the standard budget tier, and you may have only a few runs in flight at once. idempotencyKey is required: use a new random key for each distinct request, and reuse the same key only to retry that same request, which then returns the run it started instead of starting another. Use list_repositories for repoId.",
+        "Submit a work request: the platform's agents implement the ticket in the repository and open a pull request for a person to review and merge. This tool never merges or approves anything. The run launches under YOUR identity, not a service account: it is recorded as launched by you, and where per-user GitHub credentials are enabled it may push branches and open pull requests with your own GitHub token. The description is read by the platform's agents as their instructions. Always the standard budget tier, and you may have only a few runs in flight at once. idempotencyKey is required: use a new random key for each distinct request, and reuse the same key only to retry that same request, which then returns the work request it started instead of starting another. Use list_repositories for repoId. The result carries workRequestId: pass it to cancel_run to stop the run, or to list_runs and get_run to follow it. The run itself appears a moment after the submit, so a list_runs for the work request can be empty at first.",
       inputSchema: z
         .object({
           description: z
@@ -444,7 +444,6 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
         return ok(
           submitOutput.parse({
             status: parsed.data.data.deduplicated ? 'already_submitted' : 'started',
-            workflowIds: parsed.data.data.workflowIds.filter((id) => id !== null),
             workRequestId: parsed.data.data.workRequestId,
           })
         );
@@ -454,6 +453,25 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
       }
     }
   );
+
+  /** Cancel one run through the route; the route decides whether the caller may. */
+  async function cancelOne(runId: string): Promise<ToolResult | null> {
+    const response = await bridge.post(app, caller, `/api/v1/workflow-runs/${runId}/cancel`);
+    if (response.status === 409) {
+      return failure('The run is not running, so it cannot be cancelled.');
+    }
+    if (response.status === 502) {
+      return failure('The platform could not cancel the run. Try again.');
+    }
+    if (response.status !== 200) {
+      return writeFailure(response, 'Run not found.');
+    }
+    if (!restCancelled.safeParse(response.body).success) {
+      app.log.error({ tool: 'cancel_run' }, 'mcp: a route returned an unreadable body');
+      return failure('The platform returned an unexpected response.');
+    }
+    return null;
+  }
 
   server.registerTool(
     'cancel_run',
@@ -466,33 +484,57 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
         title: 'Cancel a run',
       },
       description:
-        'Cancel a workflow run that is still running. Only runs you may control can be cancelled, the same as in the dashboard; a run you can see but do not own may be refused. Cancelling stops the run and cannot be undone. It does not approve, reject or answer any human step.',
-      inputSchema: z.object({ runId: z.string().uuid().describe('The run id') }).strict(),
+        "Cancel a workflow run that is still running. Give runId (from list_runs or get_run), or the workRequestId that submit_work_request returned, which cancels that work request's running run; right after a submit the run may not exist yet, and the tool says so, so retry in a few seconds. Only runs you may control can be cancelled, the same as in the dashboard; a run you can see but do not own may be refused. Cancelling stops the run and cannot be undone. It does not approve, reject or answer any human step.",
+      inputSchema: z
+        .object({
+          runId: z.string().uuid().optional().describe('The run id, from list_runs or get_run'),
+          workRequestId: z
+            .string()
+            .uuid()
+            .optional()
+            .describe('The workRequestId submit_work_request returned'),
+        })
+        .strict(),
       outputSchema: cancelOutput,
       title: 'Cancel a run',
     },
     async (args): Promise<ToolResult> => {
       try {
-        const response = await bridge.post(
-          app,
-          caller,
-          `/api/v1/workflow-runs/${args.runId}/cancel`
-        );
-        if (response.status === 409) {
-          return failure('The run is not running, so it cannot be cancelled.');
+        if ((args.runId === undefined) === (args.workRequestId === undefined)) {
+          return failure('Give exactly one of runId or workRequestId.');
         }
-        if (response.status === 502) {
-          return failure('The platform could not cancel the run. Try again.');
+        let runIds: string[];
+        if (args.runId !== undefined) {
+          runIds = [args.runId];
+        } else {
+          const listed = await bridge.get(
+            app,
+            caller,
+            '/api/v1/workflow-runs',
+            query({ limit: 20, status: 'RUNNING', workRequestId: args.workRequestId })
+          );
+          if (listed.status !== 200) {
+            return writeFailure(listed, 'Work request not found.');
+          }
+          const parsed = restRuns.safeParse(listed.body);
+          if (!parsed.success) {
+            app.log.error({ tool: 'cancel_run' }, 'mcp: a route returned an unreadable body');
+            return failure('The platform returned an unexpected response.');
+          }
+          runIds = parsed.data.data.map((r) => r.id);
+          if (runIds.length === 0) {
+            return failure(
+              'No running run was found for that work request. It may not have started yet (try again in a few seconds) or it has already finished; list_runs shows its state.'
+            );
+          }
         }
-        if (response.status !== 200) {
-          return writeFailure(response, 'Run not found.');
+        for (const runId of runIds) {
+          const refused = await cancelOne(runId);
+          if (refused) {
+            return refused;
+          }
         }
-        const parsed = restCancelled.safeParse(response.body);
-        if (!parsed.success) {
-          app.log.error({ tool: 'cancel_run' }, 'mcp: a route returned an unreadable body');
-          return failure('The platform returned an unexpected response.');
-        }
-        return ok(cancelOutput.parse({ runId: parsed.data.data.id, status: 'CANCELLED' }));
+        return ok(cancelOutput.parse({ runIds, status: 'CANCELLED' }));
       } catch (err) {
         app.log.error({ err, tool: 'cancel_run' }, 'mcp: a tool failed');
         return failureFor(500);

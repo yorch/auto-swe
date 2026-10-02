@@ -305,8 +305,13 @@ export const submitOutput = z.object({
     .describe(
       'started: a run was launched. already_submitted: this idempotency key had already launched a run, which is returned. already_running: this ticket already has a run in flight, and nothing was launched.'
     ),
-  workflowIds: z.array(z.string().uuid()).optional(),
-  workRequestId: z.string().uuid().optional(),
+  workRequestId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Identifies the submission. Pass it to cancel_run to stop its run, or to list_runs (workRequestId) to find the run id, which appears a moment after the submit.'
+    ),
 });
 
 /** `POST /workflow-runs/:id/cancel`. */
@@ -315,6 +320,6 @@ export const restCancelled = z.object({
 });
 
 export const cancelOutput = z.object({
-  runId: z.string().uuid(),
+  runIds: z.array(z.string().uuid()),
   status: z.literal('CANCELLED'),
 });

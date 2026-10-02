@@ -104,6 +104,27 @@ async function build(
         return reply.status(route.status).send(route.body);
       }
     );
+  // What `cancel_run { workRequestId }` asks first: the work request's running runs.
+  const listed = { runs: [] as string[], url: '' };
+  app.get(
+    '/api/v1/workflow-runs',
+    { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+    async (request) => {
+      listed.url = request.url;
+      return {
+        data: listed.runs.map((id) => ({
+          costUsdAccrued: '0',
+          endedAt: null,
+          id,
+          startedAt: '2026-10-01T10:00:00.000Z',
+          status: 'RUNNING',
+          templateName: 'Default',
+          workRequest: { externalTicketId: 'T-1', id: WR_ID },
+        })),
+        meta: { limit: 20, offset: 0, total: listed.runs.length },
+      };
+    }
+  );
   standIn('/api/v1/work-requests');
   standIn('/api/v1/workflow-runs/:id/cancel');
   await app.ready();
@@ -135,7 +156,7 @@ async function build(
   };
   const writeToken = await mintToken({ claims: { scope: 'mcp:read mcp:write' }, key });
   const readToken = await mintToken({ key });
-  return { app, callTool, readToken, route, rpc, sent, writeToken };
+  return { app, callTool, listed, readToken, route, rpc, sent, writeToken };
 }
 
 const submitArgs = {
@@ -268,7 +289,6 @@ describe('the write tools', () => {
       expect(json.result.isError).toBeUndefined();
       expect(json.result.structuredContent).toEqual({
         status: 'started',
-        workflowIds: [WF_ID],
         workRequestId: WR_ID,
       });
     });
@@ -280,7 +300,6 @@ describe('the write tools', () => {
       const { json } = await s.callTool(s.writeToken, 'submit_work_request', { ...submitArgs });
       expect(json.result.structuredContent).toEqual({
         status: 'already_submitted',
-        workflowIds: [WF_ID],
         workRequestId: WR_ID,
       });
     });
@@ -360,7 +379,7 @@ describe('the write tools', () => {
       s.route.body = { data: { id: RUN_ID, status: 'CANCELLED' } };
       const { json } = await s.callTool(s.writeToken, 'cancel_run', { runId: RUN_ID });
       expect(s.sent[0].url).toBe(`/api/v1/workflow-runs/${RUN_ID}/cancel`);
-      expect(json.result.structuredContent).toEqual({ runId: RUN_ID, status: 'CANCELLED' });
+      expect(json.result.structuredContent).toEqual({ runIds: [RUN_ID], status: 'CANCELLED' });
     });
 
     it.each([
@@ -379,9 +398,38 @@ describe('the write tools', () => {
       expect(JSON.stringify(json.result)).not.toContain('IGNORE');
     });
 
-    it('rejects a missing, malformed or extra argument', async () => {
+    it('cancels the running run of the work request submit_work_request returned', async () => {
       const s = await setup();
-      for (const args of [{}, { runId: 'x' }, { force: true, runId: RUN_ID }]) {
+      s.listed.runs = [RUN_ID];
+      s.route.status = 200;
+      s.route.body = { data: { id: RUN_ID, status: 'CANCELLED' } };
+      const { json } = await s.callTool(s.writeToken, 'cancel_run', { workRequestId: WR_ID });
+      expect(s.listed.url).toContain(`workRequestId=${WR_ID}`);
+      expect(s.listed.url).toContain('status=RUNNING');
+      expect(s.sent.map((x) => x.url)).toEqual([`/api/v1/workflow-runs/${RUN_ID}/cancel`]);
+      expect(json.result.structuredContent).toEqual({ runIds: [RUN_ID], status: 'CANCELLED' });
+    });
+
+    it('says so when the work request has no running run yet, and cancels nothing', async () => {
+      const s = await setup();
+      const { json } = await s.callTool(s.writeToken, 'cancel_run', { workRequestId: WR_ID });
+      expect(json.result.isError).toBe(true);
+      expect(json.result.content[0].text).toContain('may not have started yet');
+      expect(s.sent).toEqual([]);
+    });
+
+    it('needs exactly one of runId and workRequestId', async () => {
+      const s = await setup();
+      for (const args of [{}, { runId: RUN_ID, workRequestId: WR_ID }]) {
+        const { json } = await s.callTool(s.writeToken, 'cancel_run', args);
+        expect(json.result.isError).toBe(true);
+      }
+      expect(s.sent).toEqual([]);
+    });
+
+    it('rejects a malformed or extra argument', async () => {
+      const s = await setup();
+      for (const args of [{ runId: 'x' }, { workRequestId: 'x' }, { force: true, runId: RUN_ID }]) {
         const { json } = await s.callTool(s.writeToken, 'cancel_run', args);
         expect(json.error ?? json.result?.isError).toBeTruthy();
       }
