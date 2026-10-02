@@ -14,6 +14,7 @@
  */
 
 import crypto from 'node:crypto';
+import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
@@ -26,6 +27,7 @@ import {
 import { oauthProvider } from '@better-auth/oauth-provider';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { APIError } from 'better-auth/api';
 import { jwt, magicLink } from 'better-auth/plugins';
 import { type GenericOAuthConfig, genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import { authEmailAvailable, deliverAuthEmail } from './authEmail.js';
@@ -37,6 +39,7 @@ import {
   MCP_JWKS_ROTATION_SECONDS,
   MCP_REFRESH_TOKEN_TTL_SECONDS,
   MCP_SCOPES,
+  mcpIssuanceRefusal,
   mcpIssuerFor,
   mcpResourceFor,
 } from './mcpOAuth.js';
@@ -482,6 +485,23 @@ function buildAuth() {
         // enforcement off instead.
         clientRegistrationDefaultResources: [MCP_RESOURCE],
         consentPage: `${CLIENT_ORIGIN}/oauth/consent`,
+        // Runs on every access-token mint, for the code and the refresh grant, before any
+        // refresh token is stored or rotated, so a throw here issues nothing. This is the one
+        // place every path crosses, including an authorization resumed after sign-in.
+        customAccessTokenClaims: async ({ scopes, user }) => {
+          const settings = await resolveSettings(['mcp.enabled', 'mcp.writeToolsEnabled']);
+          const refusal = mcpIssuanceRefusal(user, scopes, {
+            enabled: settings['mcp.enabled'],
+            writeToolsEnabled: settings['mcp.writeToolsEnabled'],
+          });
+          if (refusal) {
+            throw new APIError('BAD_REQUEST', {
+              error: 'invalid_grant',
+              error_description: refusal,
+            });
+          }
+          return {};
+        },
         // Public clients only, so the default `client_credentials` grant goes.
         grantTypes: ['authorization_code', 'refresh_token'],
         loginPage: `${CLIENT_ORIGIN}/login`,
@@ -490,6 +510,9 @@ function buildAuth() {
         // The plugin intersects requested scopes with the resource's list, so
         // `offline_access` must be listed here or the refresh-token scope is filtered back out.
         // An absent list means "unrestricted" and an empty one "nothing allowed".
+        // The configuration is the only source of truth (no admin editing of resources), so a
+        // change to the scopes must reach a row that already exists.
+        resourceSeedMode: 'overwrite',
         resources: [
           { allowedScopes: [...MCP_SCOPES], identifier: MCP_RESOURCE, name: 'auto-swe MCP' },
         ],

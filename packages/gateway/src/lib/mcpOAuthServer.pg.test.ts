@@ -6,10 +6,11 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import rateLimit from '@fastify/rate-limit';
 import { hashPassword } from 'better-auth/crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ipRateLimitKey } from '../plugins/auth.js';
 import { getAuth, initAuth, MCP_RESOURCE } from './betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from './betterAuthHandler.js';
+import { registerFormBodyParser } from './formBody.js';
 import { MCP_JWKS_GRACE_SECONDS, mcpIssuerFor } from './mcpOAuth.js';
 import { mcpOAuthGate } from './mcpOAuthGate.js';
 import { mcpOAuthGateOptions } from './mcpOAuthGateOptions.js';
@@ -50,6 +51,24 @@ const decodePart = (jwt: string, index: 0 | 1) =>
 describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
   let app: FastifyInstance;
   const settings = { enabled: true, writeToolsEnabled: false };
+
+  // GLOBAL settings belong to no tenant, which is the point of this fixture. They are written
+  // to the database because both the gate and the token-issuance guard read the registry.
+  const globalSettings = <T>(fn: () => Promise<T>) =>
+    runUnscoped('test fixture: GLOBAL mcp.* settings have no tenant', ['ConfigSetting'], fn);
+  async function setSettings(next: Partial<typeof settings>) {
+    Object.assign(settings, next);
+    await globalSettings(async () => {
+      await prisma.configSetting.deleteMany({ where: { key: { startsWith: 'mcp.' } } });
+      await prisma.configSetting.createMany({
+        data: [
+          { key: 'mcp.enabled', scope: 'GLOBAL', value: settings.enabled },
+          { key: 'mcp.writeToolsEnabled', scope: 'GLOBAL', value: settings.writeToolsEnabled },
+        ],
+      });
+    });
+    invalidateSettingsCache();
+  }
   let userSeq = 0;
 
   const call = (
@@ -195,9 +214,7 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
   }
 
   async function reset() {
-    invalidateSettingsCache();
-    settings.enabled = true;
-    settings.writeToolsEnabled = false;
+    await setSettings({ enabled: true, writeToolsEnabled: false });
     await prisma.oauthAccessToken.deleteMany();
     await prisma.oauthRefreshToken.deleteMany();
     await prisma.oauthConsent.deleteMany();
@@ -207,22 +224,13 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
   beforeAll(async () => {
     await initAuth();
     app = Fastify();
-    app.addContentTypeParser(
-      'application/x-www-form-urlencoded',
-      { parseAs: 'string' },
-      (_r, body, done) => {
-        done(null, Object.fromEntries(new URLSearchParams(body as string)));
-      }
-    );
+    registerFormBodyParser(app);
     await app.register(rateLimit, {
       keyGenerator: ipRateLimitKey,
       max: 10_000,
       timeWindow: '1 minute',
     });
-    await app.register(mcpOAuthGate, {
-      ...mcpOAuthGateOptions(),
-      getSettings: async () => ({ ...settings }),
-    });
+    await app.register(mcpOAuthGate, mcpOAuthGateOptions());
     registerBetterAuthRoutes(app, createBetterAuthHandler());
     await app.ready();
   }, 60_000);
@@ -465,11 +473,7 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
 
     it('is rate limited per IP', async () => {
       const limited = Fastify();
-      limited.addContentTypeParser(
-        'application/x-www-form-urlencoded',
-        { parseAs: 'string' },
-        (_r, _body, done) => done(null, {})
-      );
+      registerFormBodyParser(limited);
       await limited.register(rateLimit, {
         keyGenerator: ipRateLimitKey,
         max: 10_000,
@@ -512,7 +516,7 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
     });
 
     it('lets the user narrow the grant to read only', async () => {
-      settings.writeToolsEnabled = true;
+      await setSettings({ writeToolsEnabled: true });
       const user = await makeUser();
       const { body: client } = await registerClient();
       const { redirect, verifier } = await grant(user.cookie, client.client_id, {
@@ -537,7 +541,7 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
       expect(refused.statusCode).toBe(400);
       expect(refused.json().error).toBe('invalid_scope');
 
-      settings.writeToolsEnabled = true;
+      await setSettings({ writeToolsEnabled: true });
       const { redirect, verifier } = await grant(user.cookie, client.client_id, {
         scope: 'mcp:read mcp:write',
       });
@@ -590,7 +594,7 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
     it('with mcp.enabled off 404s every allowlisted endpoint and the discovery document', async () => {
       const user = await makeUser();
       const { body: client } = await registerClient();
-      settings.enabled = false;
+      await setSettings({ enabled: false });
       const probes: Array<['GET' | 'POST', string]> = [
         ['GET', '/.well-known/oauth-authorization-server/api/auth'],
         ['GET', '/api/auth/.well-known/oauth-authorization-server'],
@@ -629,6 +633,7 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
         ['POST', '/api/auth/oauth2/create-client'],
         ['POST', '/api/auth/admin/oauth2/create-client'],
         ['GET', '/api/auth/.well-known/openid-configuration'],
+        ['GET', '/api/auth/.well-known/oauth-authorization-server'],
       ] as const) {
         const res = await call(method, url, {
           cookie: user.cookie,
@@ -663,9 +668,6 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
     });
 
     it('reads the real settings: off on a fresh deployment, on when an admin saves it', async () => {
-      // GLOBAL settings belong to no tenant, which is the point of the fixture.
-      const globalSettings = <T>(fn: () => Promise<T>) =>
-        runUnscoped('test fixture: GLOBAL mcp.* settings have no tenant', ['ConfigSetting'], fn);
       await globalSettings(() =>
         prisma.configSetting.deleteMany({ where: { key: { startsWith: 'mcp.' } } })
       );
@@ -781,6 +783,226 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
       const keys = await prisma.jwks.findMany();
       expect(keys.length).toBeGreaterThan(0);
       expect(keys.every((k) => k.expiresAt !== null)).toBe(true);
+    });
+  });
+  describe('write scope and resource on POST authorize', () => {
+    const formPost = (cookie: string, query: string, body: string) =>
+      app.inject({
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie,
+          host: HOST,
+          origin: ORIGIN,
+        },
+        method: 'POST',
+        payload: body,
+        url: `/api/auth/oauth2/authorize${query}`,
+      });
+    const authorizeBody = (clientId: string, o: Record<string, string | null> = {}) =>
+      authorizeUrl(clientId, o).split('?')[1] as string;
+
+    /** A user with a standing write consent, after which writes are switched off. */
+    async function standingWriteConsent() {
+      await setSettings({ writeToolsEnabled: true });
+      const user = await makeUser();
+      const { body: client } = await registerClient();
+      await grant(user.cookie, client.client_id, { scope: 'mcp:read mcp:write offline_access' });
+      await setSettings({ writeToolsEnabled: false });
+      return { client, user };
+    }
+
+    it('refuses a body that asks for write while the query says read', async () => {
+      const { client, user } = await standingWriteConsent();
+      const res = await formPost(
+        user.cookie,
+        `?scope=mcp:read&resource=${encodeURIComponent(MCP_RESOURCE)}`,
+        authorizeBody(client.client_id, { scope: 'mcp:read mcp:write' })
+      );
+      expect(res.statusCode).toBe(400);
+      expect(res.headers.location).toBeUndefined();
+    });
+
+    it('refuses a body with no scope for a client registered with write, however the query reads', async () => {
+      const { client, user } = await standingWriteConsent();
+      const res = await formPost(
+        user.cookie,
+        '?scope=mcp:read',
+        authorizeBody(client.client_id, { scope: null })
+      );
+      expect(res.statusCode).toBe(400);
+      expect(res.headers.location).toBeUndefined();
+    });
+
+    it('refuses a POST whose resource is only in the query, which would mint an audience-less token', async () => {
+      const { client, user } = await standingWriteConsent();
+      const res = await formPost(
+        user.cookie,
+        `?resource=${encodeURIComponent(MCP_RESOURCE)}`,
+        authorizeBody(client.client_id, { resource: null })
+      );
+      expect(res.statusCode).toBe(400);
+      expect(res.headers.location).toBeUndefined();
+    });
+
+    it('still completes a well-formed POST authorize into a JWT for the MCP resource', async () => {
+      const user = await makeUser();
+      const { body: client } = await registerClient();
+      await grant(user.cookie, client.client_id);
+      const { challenge, verifier } = pkce();
+      const res = await formPost(
+        user.cookie,
+        '',
+        authorizeBody(client.client_id, { code_challenge: challenge })
+      );
+      expect(res.statusCode, res.body).toBe(302);
+      const code = new URL(String(res.headers.location)).searchParams.get('code') as string;
+      const tokens = await exchange(client.client_id, code, verifier);
+      expect(decodePart(tokens.json().access_token, 1).aud).toEqual(MCP_RESOURCE);
+    });
+  });
+
+  describe('token issuance guard (paths the gate never sees)', () => {
+    /** An authorization the client started anonymously: the signed query the login page carries. */
+    async function pendingAuthorization(clientId: string, scope: string) {
+      const { challenge, verifier } = pkce();
+      const res = await call('GET', authorizeUrl(clientId, { code_challenge: challenge, scope }));
+      expect(res.statusCode, res.body).toBe(302);
+      return { oauthQuery: new URL(String(res.headers.location)).search.slice(1), verifier };
+    }
+    /** Sign-in with `oauth_query`: the plugin resumes the authorization from the sign-in response. */
+    const signInResuming = (email: string, oauthQuery: string) =>
+      call('POST', '/api/auth/sign-in/email', {
+        json: { email, oauth_query: oauthQuery, password: PASSWORD },
+      });
+    const codeOf = (res: { json: () => { url?: string } }) =>
+      res.json().url ? new URL(res.json().url as string).searchParams.get('code') : null;
+    const refresh = (clientId: string, token: string) =>
+      call('POST', '/api/auth/oauth2/token', {
+        form: {
+          client_id: clientId,
+          grant_type: 'refresh_token',
+          refresh_token: token,
+          resource: MCP_RESOURCE,
+        },
+      });
+
+    it('refuses a token to an account deactivated after consenting, on the sign-in hand-off', async () => {
+      const user = await makeUser();
+      const { body: client } = await registerClient();
+      await grant(user.cookie, client.client_id, { scope: 'mcp:read' });
+      const pending = await pendingAuthorization(client.client_id, 'mcp:read');
+      await prisma.user.update({ data: { isActive: false }, where: { id: user.id } });
+
+      const resumed = await signInResuming(user.email, pending.oauthQuery);
+      const code = codeOf(resumed);
+      expect(code, resumed.body).toBeTruthy(); // the hand-off itself is not gated
+      const res = await exchange(client.client_id, code as string, pending.verifier);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('invalid_grant');
+      expect(res.json().access_token).toBeUndefined();
+    });
+
+    it('refuses mcp:write on a resumed authorization while writes are off', async () => {
+      await setSettings({ writeToolsEnabled: true });
+      const user = await makeUser();
+      const { body: client } = await registerClient();
+      await grant(user.cookie, client.client_id, { scope: 'mcp:read mcp:write' });
+      const pending = await pendingAuthorization(client.client_id, 'mcp:read mcp:write');
+      await setSettings({ writeToolsEnabled: false });
+
+      const code = codeOf(await signInResuming(user.email, pending.oauthQuery));
+      expect(code).toBeTruthy();
+      const res = await exchange(client.client_id, code as string, pending.verifier);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().access_token).toBeUndefined();
+      expect(await prisma.oauthRefreshToken.count()).toBe(0);
+    });
+
+    it('does not resume an authorization while MCP is off: sign-in just signs in', async () => {
+      const user = await makeUser();
+      const { body: client } = await registerClient();
+      await grant(user.cookie, client.client_id, { scope: 'mcp:read' });
+      const pending = await pendingAuthorization(client.client_id, 'mcp:read');
+      await setSettings({ enabled: false });
+      const res = await signInResuming(user.email, pending.oauthQuery);
+      expect(res.statusCode).toBe(200);
+      expect(codeOf(res)).toBeNull();
+    });
+
+    it('refuses a refresh once write is no longer allowed, and leaves the refresh token usable', async () => {
+      await setSettings({ writeToolsEnabled: true });
+      const user = await makeUser();
+      const { body: client } = await registerClient();
+      const { redirect, verifier } = await grant(user.cookie, client.client_id, {
+        scope: 'mcp:read mcp:write offline_access',
+      });
+      const first = await exchange(
+        client.client_id,
+        redirect.searchParams.get('code') as string,
+        verifier
+      );
+      expect(first.statusCode, first.body).toBe(200);
+      const held = first.json().refresh_token as string;
+      const rowsBefore = await prisma.oauthRefreshToken.findMany();
+
+      await setSettings({ writeToolsEnabled: false });
+      const refused = await refresh(client.client_id, held);
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json().access_token).toBeUndefined();
+      // Nothing was rotated or stored: the same single, unrevoked row.
+      const rowsAfter = await prisma.oauthRefreshToken.findMany();
+      expect(rowsAfter.map((r) => [r.id, r.revoked, r.rotatedAt])).toEqual(
+        rowsBefore.map((r) => [r.id, r.revoked, r.rotatedAt])
+      );
+      // So re-enabling writes lets the client carry on without re-authorizing.
+      await setSettings({ writeToolsEnabled: true });
+      expect((await refresh(client.client_id, held)).statusCode).toBe(200);
+    });
+
+    it('refuses a refresh for a deactivated account and issues nothing', async () => {
+      const { client, tokens, user } = await fullFlow('mcp:read offline_access');
+      const rowsBefore = await prisma.oauthRefreshToken.count();
+      await prisma.user.update({ data: { isActive: false }, where: { id: user.id } });
+      const res = await refresh(client.client_id, tokens.refresh_token);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().access_token).toBeUndefined();
+      expect(await prisma.oauthRefreshToken.count()).toBe(rowsBefore);
+      expect(await prisma.oauthRefreshToken.count({ where: { revoked: null } })).toBe(rowsBefore);
+    });
+
+    it('refuses a refresh while MCP is off', async () => {
+      const { client, tokens } = await fullFlow('mcp:read offline_access');
+      await setSettings({ enabled: false });
+      // The gate answers 404; the issuance guard is what remains if a request ever got past it.
+      expect((await refresh(client.client_id, tokens.refresh_token)).statusCode).toBe(404);
+    });
+  });
+
+  describe('resource seed', () => {
+    it('corrects an existing resource row to the configured scopes at boot', async () => {
+      await prisma.oauthResource.update({
+        data: { allowedScopes: ['mcp:read'] },
+        where: { identifier: MCP_RESOURCE },
+      });
+      vi.resetModules();
+      const fresh = await import('./betterAuth.js');
+      await fresh.initAuth();
+      await fresh.getAuth().$context;
+      const row = await prisma.oauthResource.findUniqueOrThrow({
+        where: { identifier: MCP_RESOURCE },
+      });
+      expect(row.allowedScopes).toEqual(['mcp:read', 'mcp:write', 'offline_access']);
+    });
+  });
+
+  describe('discovery narrowing', () => {
+    it('advertises only what the gate serves', async () => {
+      const doc = (await call('GET', '/.well-known/oauth-authorization-server/api/auth')).json();
+      expect(doc.introspection_endpoint).toBeUndefined();
+      expect(doc.backchannel_logout_supported).toBeUndefined();
+      expect(doc.token_endpoint_auth_methods_supported).toEqual(['none']);
+      expect(doc.code_challenge_methods_supported).toEqual(['S256']);
+      expect(doc.registration_endpoint).toBe(`${ISSUER}/oauth2/register`);
     });
   });
 });

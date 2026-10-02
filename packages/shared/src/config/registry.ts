@@ -205,7 +205,7 @@ export const SETTING_DEFINITIONS = {
   'mcp.writeToolsEnabled': defineSetting({
     defaultValue: false,
     description:
-      'Whether MCP clients may be granted write access. Off, the mcp:write scope is refused at authorization and is never honoured on a token that already carries it. Reads stay available while this is off.',
+      'Whether MCP clients may be granted write access. Off, the mcp:write scope is refused at authorization and no access token that carries it is issued, on either the authorization-code or the refresh grant. A token already issued keeps the scope until it expires. Reads stay available while this is off.',
     group: 'mcp',
     label: 'Allow MCP write access',
     overridableAt: [],
