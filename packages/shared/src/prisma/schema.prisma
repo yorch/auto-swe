@@ -1132,6 +1132,10 @@ model RunInput {
   /// webhook-originated requests without a platform user.
   requestedById    String?     @map("requested_by_id") @db.Uuid
   requestedBy      User?       @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  /// Caller-supplied `Idempotency-Key` on `POST /work-requests`. Unique per
+  /// submitter; null (every key-less launch) never collides, since Postgres
+  /// treats nulls as distinct in a unique index.
+  idempotencyKey   String?     @map("idempotency_key")
   createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   contextSnapshot       ContextSnapshot?
@@ -1142,6 +1146,7 @@ model RunInput {
   @@index([connectionId])
   @@index([requestedById])
   @@index([externalTicketId])
+  @@unique([requestedById, idempotencyKey])
   @@map("run_inputs")
 }
 
