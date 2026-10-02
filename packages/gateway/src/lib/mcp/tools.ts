@@ -454,23 +454,74 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
     }
   );
 
-  /** Cancel one run through the route; the route decides whether the caller may. */
-  async function cancelOne(runId: string): Promise<ToolResult | null> {
+  /**
+   * Cancel one run through the route; the route decides whether the caller may. A refusal comes
+   * back as the fixed message for it, and `stop` when it says no further write will be taken (the
+   * write switch is off, or the burst limit is reached).
+   */
+  async function cancelOne(
+    runId: string
+  ): Promise<{ ok: true } | { ok: false; failure: ToolResult; stop: boolean }> {
     const response = await bridge.post(app, caller, `/api/v1/workflow-runs/${runId}/cancel`);
+    if (response.status === 200) {
+      if (restCancelled.safeParse(response.body).success) {
+        return { ok: true };
+      }
+      app.log.error({ tool: 'cancel_run' }, 'mcp: a route returned an unreadable body');
+      return {
+        failure: failure('The platform returned an unexpected response.'),
+        ok: false,
+        stop: false,
+      };
+    }
+    const stop =
+      response.status === 429 ||
+      (response.status === 403 && errorCode(response.body) === 'MCP_WRITE_DISABLED');
     if (response.status === 409) {
-      return failure('The run is not running, so it cannot be cancelled.');
+      return {
+        failure: failure('The run is not running, so it cannot be cancelled.'),
+        ok: false,
+        stop,
+      };
     }
     if (response.status === 502) {
-      return failure('The platform could not cancel the run. Try again.');
+      return {
+        failure: failure('The platform could not cancel the run. Try again.'),
+        ok: false,
+        stop,
+      };
     }
-    if (response.status !== 200) {
-      return writeFailure(response, 'Run not found.');
+    return { failure: writeFailure(response, 'Run not found.'), ok: false, stop };
+  }
+
+  const reasonOf = (r: ToolResult) => r.content[0]?.text ?? 'The platform refused the request.';
+
+  /** The running runs of a work request, every page of them, with who launched each. */
+  async function runningRunsOf(workRequestId: string) {
+    const rows: Array<{ id: string; launchedById: string | null }> = [];
+    for (let offset = 0; ; ) {
+      const listed = await bridge.get(
+        app,
+        caller,
+        '/api/v1/workflow-runs',
+        query({ limit: 100, offset, status: 'RUNNING', workRequestId })
+      );
+      if (listed.status !== 200) {
+        return { failure: writeFailure(listed, 'Work request not found.') };
+      }
+      const parsed = restRuns.safeParse(listed.body);
+      if (!parsed.success) {
+        app.log.error({ tool: 'cancel_run' }, 'mcp: a route returned an unreadable body');
+        return { failure: failure('The platform returned an unexpected response.') };
+      }
+      rows.push(
+        ...parsed.data.data.map((r) => ({ id: r.id, launchedById: r.launchedById ?? null }))
+      );
+      offset += parsed.data.data.length;
+      if (parsed.data.data.length === 0 || offset >= parsed.data.meta.total) {
+        return { rows };
+      }
     }
-    if (!restCancelled.safeParse(response.body).success) {
-      app.log.error({ tool: 'cancel_run' }, 'mcp: a route returned an unreadable body');
-      return failure('The platform returned an unexpected response.');
-    }
-    return null;
   }
 
   server.registerTool(
@@ -484,7 +535,7 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
         title: 'Cancel a run',
       },
       description:
-        "Cancel a workflow run that is still running. Give runId (from list_runs or get_run), or the workRequestId that submit_work_request returned, which cancels that work request's running run; right after a submit the run may not exist yet, and the tool says so, so retry in a few seconds. Only runs you may control can be cancelled, the same as in the dashboard; a run you can see but do not own may be refused. Cancelling stops the run and cannot be undone. It does not approve, reject or answer any human step.",
+        "Cancel a workflow run that is still running. Give runId (from list_runs or get_run), or the workRequestId that submit_work_request returned. A workRequestId cancels only the running runs YOU launched for that work request, every one of them; a teammate's run on the same work request is left running and listed in notCancelled, and is cancelled only by giving its runId. Right after a submit the run may not exist yet, and the tool says so, so retry in a few seconds. The result lists what was cancelled (runIds) and what was not (notCancelled, each with its reason); status PARTIAL means some were not. Each run costs one write call against the per-minute limit. Only runs you may control can be cancelled, the same as in the dashboard. Cancelling stops the run and cannot be undone. It does not approve, reject or answer any human step.",
       inputSchema: z
         .object({
           runId: z.string().uuid().optional().describe('The run id, from list_runs or get_run'),
@@ -503,38 +554,59 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
         if ((args.runId === undefined) === (args.workRequestId === undefined)) {
           return failure('Give exactly one of runId or workRequestId.');
         }
-        let runIds: string[];
         if (args.runId !== undefined) {
-          runIds = [args.runId];
-        } else {
-          const listed = await bridge.get(
-            app,
-            caller,
-            '/api/v1/workflow-runs',
-            query({ limit: 20, status: 'RUNNING', workRequestId: args.workRequestId })
+          const outcome = await cancelOne(args.runId);
+          return outcome.ok
+            ? ok(
+                cancelOutput.parse({ notCancelled: [], runIds: [args.runId], status: 'CANCELLED' })
+              )
+            : outcome.failure;
+        }
+        const found = await runningRunsOf(args.workRequestId as string);
+        if (found.failure) {
+          return found.failure;
+        }
+        const rows = found.rows ?? [];
+        if (rows.length === 0) {
+          return failure(
+            'No running run was found for that work request. It may not have started yet (try again in a few seconds) or it has already finished; list_runs shows its state.'
           );
-          if (listed.status !== 200) {
-            return writeFailure(listed, 'Work request not found.');
-          }
-          const parsed = restRuns.safeParse(listed.body);
-          if (!parsed.success) {
-            app.log.error({ tool: 'cancel_run' }, 'mcp: a route returned an unreadable body');
-            return failure('The platform returned an unexpected response.');
-          }
-          runIds = parsed.data.data.map((r) => r.id);
-          if (runIds.length === 0) {
-            return failure(
-              'No running run was found for that work request. It may not have started yet (try again in a few seconds) or it has already finished; list_runs shows its state.'
-            );
+        }
+        const cancelled: string[] = [];
+        const notCancelled: Array<{ reason: string; runId: string }> = [];
+        let stopped: string | null = null;
+        for (const row of rows) {
+          if (row.launchedById !== caller.userId) {
+            notCancelled.push({
+              reason: 'Launched by someone else; cancel it with its own runId.',
+              runId: row.id,
+            });
+          } else if (stopped !== null) {
+            notCancelled.push({ reason: `Not attempted: ${stopped}`, runId: row.id });
+          } else {
+            const outcome = await cancelOne(row.id);
+            if (outcome.ok) {
+              cancelled.push(row.id);
+            } else {
+              notCancelled.push({ reason: reasonOf(outcome.failure), runId: row.id });
+              if (outcome.stop) {
+                stopped = reasonOf(outcome.failure);
+              }
+            }
           }
         }
-        for (const runId of runIds) {
-          const refused = await cancelOne(runId);
-          if (refused) {
-            return refused;
-          }
+        if (cancelled.length === 0) {
+          return failure(
+            `Nothing was cancelled. ${notCancelled.map((n) => `${n.runId}: ${n.reason}`).join(' ')}`
+          );
         }
-        return ok(cancelOutput.parse({ runIds, status: 'CANCELLED' }));
+        return ok(
+          cancelOutput.parse({
+            notCancelled,
+            runIds: cancelled,
+            status: notCancelled.length === 0 ? 'CANCELLED' : 'PARTIAL',
+          })
+        );
       } catch (err) {
         app.log.error({ err, tool: 'cancel_run' }, 'mcp: a tool failed');
         return failureFor(500);

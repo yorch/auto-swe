@@ -74,6 +74,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
   let beforeReplySend: (() => Promise<void>) | null = null;
   const started: Array<{ id: string; launchedById?: string; budgetTier?: string }> = [];
   const cancelled: string[] = [];
+  const failCancel = new Set<string>();
 
   const call = (
     method: 'GET' | 'POST',
@@ -449,6 +450,9 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     await app.register(prismaPlugin);
     app.decorate('temporal', {
       cancelWorkflow: async (id: string) => {
+        if (failCancel.has(id)) {
+          throw new Error('temporal unavailable');
+        }
         cancelled.push(id);
       },
       startRunnableWorkflow: async (
@@ -495,6 +499,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     beforeReplySend = null;
     started.length = 0;
     cancelled.length = 0;
+    failCancel.clear();
     await clearRuns();
   });
 
@@ -925,7 +930,11 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     it('cancels a run the caller may control, and frees the slot', async () => {
       const { runId, workflowId } = await runFor(people.dave.id, people.dave.id);
       const { result } = await callTool(people.dave.token, 'cancel_run', { runId });
-      expect(result.structuredContent).toEqual({ runIds: [runId], status: 'CANCELLED' });
+      expect(result.structuredContent).toEqual({
+        notCancelled: [],
+        runIds: [runId],
+        status: 'CANCELLED',
+      });
       expect(cancelled).toEqual([workflowId]);
       expect((await prisma.workflowRun.findUniqueOrThrow({ where: { id: runId } })).status).toBe(
         'CANCELLED'
@@ -965,12 +974,129 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       const { result } = await callTool(people.dave.token, 'cancel_run', {
         workRequestId: out.workRequestId,
       });
-      expect(result.structuredContent).toEqual({ runIds: [run.id], status: 'CANCELLED' });
+      expect(result.structuredContent).toEqual({
+        notCancelled: [],
+        runIds: [run.id],
+        status: 'CANCELLED',
+      });
       expect(cancelled).toEqual([active.temporalWorkflowId]);
       expect((await prisma.workflowRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe(
         'CANCELLED'
       );
       expect(await inFlight(people.dave.id)).toBe(0);
+    });
+
+    /** One work request with several running runs, oldest first, each launched by the given user. */
+    async function runsOnOneRequest(requesterId: string, launchers: string[]) {
+      const input = await prisma.runInput.create({
+        data: {
+          connectionId: ids.repo as string,
+          description: 'x',
+          externalTicketId: ticket('MULTI'),
+          requestedById: requesterId,
+          requestPayload: '{}',
+        },
+      });
+      const template = await prisma.workflowTemplate.findFirstOrThrow({
+        where: { name: { startsWith: MARK }, teamId: ids.team },
+      });
+      const runs: Array<{ id: string; workflowId: string }> = [];
+      for (const [i, launchedById] of launchers.entries()) {
+        const workflowId = `${MARK}-run-${++seq}`;
+        const run = await prisma.workflowRun.create({
+          data: {
+            launchedById,
+            specSnapshot: {},
+            startedAt: new Date(Date.now() - (launchers.length - i) * 60_000),
+            status: 'RUNNING',
+            templateId: template.id,
+            templateVersion: 1,
+            workflowId,
+            workRequestId: input.id,
+          },
+        });
+        runs.push({ id: run.id, workflowId });
+      }
+      return { runs, workRequestId: input.id };
+    }
+    const statusOf = async (id: string) =>
+      (await prisma.workflowRun.findUniqueOrThrow({ where: { id } })).status;
+
+    it("by work request cancels only the caller's runs; a newer teammate run is reported and left running", async () => {
+      const { runs, workRequestId } = await runsOnOneRequest(people.dave.id, [
+        people.dave.id,
+        people.carol.id,
+      ]);
+      const { result } = await callTool(people.dave.token, 'cancel_run', { workRequestId });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent.status).toBe('PARTIAL');
+      expect(result.structuredContent.runIds).toEqual([runs[0].id]);
+      expect(result.structuredContent.notCancelled).toEqual([
+        { reason: 'Launched by someone else; cancel it with its own runId.', runId: runs[1].id },
+      ]);
+      expect(await statusOf(runs[0].id)).toBe('CANCELLED');
+      expect(await statusOf(runs[1].id)).toBe('RUNNING');
+      // The teammate's run is cancellable by id, where the REST control filter allows it.
+      const direct = await callTool(people.carol.token, 'cancel_run', { runId: runs[1].id });
+      expect(direct.result.structuredContent.status).toBe('CANCELLED');
+    });
+
+    it('continues past a run that fails to cancel and reports both outcomes', async () => {
+      const { runs, workRequestId } = await runsOnOneRequest(people.dave.id, [
+        people.dave.id,
+        people.dave.id,
+      ]);
+      failCancel.add(runs[1].workflowId); // the newer run is tried first
+      const { result } = await callTool(people.dave.token, 'cancel_run', { workRequestId });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent.status).toBe('PARTIAL');
+      expect(result.structuredContent.runIds).toEqual([runs[0].id]);
+      expect(result.structuredContent.notCancelled).toEqual([
+        { reason: 'The platform could not cancel the run. Try again.', runId: runs[1].id },
+      ]);
+      expect(await statusOf(runs[0].id)).toBe('CANCELLED');
+      expect(await statusOf(runs[1].id)).toBe('RUNNING');
+    });
+
+    it('reports a burst-limit stop mid-way: what was cancelled and what was not attempted', async () => {
+      await settingsOn({ 'mcp.writeCallsPerMinute': 2 });
+      const { runs, workRequestId } = await runsOnOneRequest(people.dave.id, [
+        people.dave.id,
+        people.dave.id,
+        people.dave.id,
+      ]);
+      const { result } = await callTool(people.dave.token, 'cancel_run', { workRequestId });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent.status).toBe('PARTIAL');
+      expect(result.structuredContent.runIds).toHaveLength(2);
+      const [left] = result.structuredContent.notCancelled;
+      expect(result.structuredContent.notCancelled).toHaveLength(1);
+      expect(left.reason).toContain('Too many write calls');
+      const states = await Promise.all(runs.map((r) => statusOf(r.id)));
+      expect(states.filter((x) => x === 'CANCELLED')).toHaveLength(2);
+      expect(states.filter((x) => x === 'RUNNING')).toHaveLength(1);
+    });
+
+    it('pages through every running run: none is left behind past a page of 20', async () => {
+      await settingsOn({ 'mcp.writeCallsPerMinute': 600 });
+      const { runs, workRequestId } = await runsOnOneRequest(
+        people.dave.id,
+        Array.from({ length: 25 }, () => people.dave.id)
+      );
+      const { result } = await callTool(people.dave.token, 'cancel_run', { workRequestId });
+      expect(result.structuredContent.status).toBe('CANCELLED');
+      expect(result.structuredContent.runIds).toHaveLength(25);
+      const states = await Promise.all(runs.map((r) => statusOf(r.id)));
+      expect(states.every((x) => x === 'CANCELLED')).toBe(true);
+    });
+
+    it('is an error only when nothing was cancelled, and says why for each run', async () => {
+      const { runs, workRequestId } = await runsOnOneRequest(people.dave.id, [people.carol.id]);
+      const { result } = await callTool(people.dave.token, 'cancel_run', { workRequestId });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(runs[0].id);
+      expect(result.content[0].text).toContain('Launched by someone else');
+      expect(await statusOf(runs[0].id)).toBe('RUNNING');
     });
 
     it('refuses a shared-team non-owner exactly as REST does', async () => {

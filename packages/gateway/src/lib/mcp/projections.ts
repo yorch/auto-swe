@@ -98,6 +98,8 @@ export const restRuns = z.object({
       costUsdAccrued: money,
       endedAt: nullableTimestamp,
       id: z.string().uuid(),
+      /** Read by `cancel_run` to cancel only runs the caller launched; never returned by a tool. */
+      launchedById: z.string().nullable().optional(),
       startedAt: timestamp,
       status,
       templateName: shortName(200).nullable(),
@@ -320,6 +322,13 @@ export const restCancelled = z.object({
 });
 
 export const cancelOutput = z.object({
-  runIds: z.array(z.string().uuid()),
-  status: z.literal('CANCELLED'),
+  notCancelled: z
+    .array(z.object({ reason: z.string(), runId: z.string().uuid() }))
+    .describe('Runs found for the work request that were not cancelled, each with the reason.'),
+  runIds: z.array(z.string().uuid()).describe('The runs that were cancelled.'),
+  status: z
+    .enum(['CANCELLED', 'PARTIAL'])
+    .describe(
+      'CANCELLED: every run asked about was cancelled. PARTIAL: some were not; see notCancelled.'
+    ),
 });

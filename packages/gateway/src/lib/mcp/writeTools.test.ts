@@ -14,6 +14,7 @@ import {
   mintToken,
   TEST_ISSUER,
   TEST_RESOURCE,
+  TEST_USER,
   type TestKey,
 } from '../../test/mcpTokens.js';
 import { createMcpTokenVerifier } from '../mcpTokenVerifier.js';
@@ -105,17 +106,18 @@ async function build(
       }
     );
   // What `cancel_run { workRequestId }` asks first: the work request's running runs.
-  const listed = { runs: [] as string[], url: '' };
+  const listed = { runs: [] as Array<string | [string, string]>, url: '' };
   app.get(
     '/api/v1/workflow-runs',
     { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
     async (request) => {
       listed.url = request.url;
       return {
-        data: listed.runs.map((id) => ({
+        data: listed.runs.map((entry) => ({
           costUsdAccrued: '0',
           endedAt: null,
-          id,
+          id: Array.isArray(entry) ? entry[0] : entry,
+          launchedById: Array.isArray(entry) ? entry[1] : TEST_USER,
           startedAt: '2026-10-01T10:00:00.000Z',
           status: 'RUNNING',
           templateName: 'Default',
@@ -379,7 +381,11 @@ describe('the write tools', () => {
       s.route.body = { data: { id: RUN_ID, status: 'CANCELLED' } };
       const { json } = await s.callTool(s.writeToken, 'cancel_run', { runId: RUN_ID });
       expect(s.sent[0].url).toBe(`/api/v1/workflow-runs/${RUN_ID}/cancel`);
-      expect(json.result.structuredContent).toEqual({ runIds: [RUN_ID], status: 'CANCELLED' });
+      expect(json.result.structuredContent).toEqual({
+        notCancelled: [],
+        runIds: [RUN_ID],
+        status: 'CANCELLED',
+      });
     });
 
     it.each([
@@ -407,7 +413,30 @@ describe('the write tools', () => {
       expect(s.listed.url).toContain(`workRequestId=${WR_ID}`);
       expect(s.listed.url).toContain('status=RUNNING');
       expect(s.sent.map((x) => x.url)).toEqual([`/api/v1/workflow-runs/${RUN_ID}/cancel`]);
-      expect(json.result.structuredContent).toEqual({ runIds: [RUN_ID], status: 'CANCELLED' });
+      expect(json.result.structuredContent).toEqual({
+        notCancelled: [],
+        runIds: [RUN_ID],
+        status: 'CANCELLED',
+      });
+    });
+
+    it("cancels only the caller's own runs and lists a teammate's as not cancelled", async () => {
+      const s = await setup();
+      const OTHER = '99999999-9999-4999-8999-999999999999';
+      s.listed.runs = [
+        [OTHER, 'someone-else'],
+        [RUN_ID, TEST_USER],
+      ];
+      s.route.status = 200;
+      s.route.body = { data: { id: RUN_ID, status: 'CANCELLED' } };
+      const { json } = await s.callTool(s.writeToken, 'cancel_run', { workRequestId: WR_ID });
+      expect(s.sent.map((x) => x.url)).toEqual([`/api/v1/workflow-runs/${RUN_ID}/cancel`]);
+      expect(json.result.isError).toBeUndefined();
+      expect(json.result.structuredContent.status).toBe('PARTIAL');
+      expect(json.result.structuredContent.runIds).toEqual([RUN_ID]);
+      expect(json.result.structuredContent.notCancelled).toEqual([
+        { reason: 'Launched by someone else; cancel it with its own runId.', runId: OTHER },
+      ]);
     });
 
     it('says so when the work request has no running run yet, and cancels nothing', async () => {
