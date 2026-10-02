@@ -28,9 +28,40 @@ async function getJson(api: string, path: string, accessToken: string): Promise<
     signal: AbortSignal.timeout(PROFILE_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
-    throw new Error(`GET ${path} answered ${res.status}`);
+    throw new Error(await describeFailure(path, res));
   }
   return res.json();
+}
+
+const MAX_DETAIL_CHARS = 200;
+
+const EMAIL_HINT =
+  'the token cannot read email addresses: for a GitHub App grant Account permissions -> Email addresses (Read-only); for an OAuth App the user:email scope must be granted';
+
+// Why GHE refused, for the operator reading the log. Only GitHub's response is quoted (its JSON
+// `message` and the headers it sets to say what a token needed), never anything from the request.
+async function describeFailure(path: string, res: Response): Promise<string> {
+  const parts = [`GET ${path} answered ${res.status}`];
+  try {
+    const body: unknown = JSON.parse(await res.text());
+    if (isRecord(body) && typeof body.message === 'string' && body.message) {
+      parts.push(body.message.slice(0, MAX_DETAIL_CHARS));
+    }
+  } catch {
+    // Not JSON (a proxy's HTML page, say): the status above is all there is.
+  }
+  const needed = res.headers.get('x-accepted-github-permissions');
+  const granted = res.headers.get('x-oauth-scopes');
+  if (needed) {
+    parts.push(`needs ${needed}`);
+  }
+  if (granted) {
+    parts.push(`token scopes: ${granted}`);
+  }
+  if (path === '/user/emails' && (res.status === 403 || res.status === 404)) {
+    parts.push(EMAIL_HINT);
+  }
+  return parts.join('; ');
 }
 
 function refuse(host: string, reason: string): null {
