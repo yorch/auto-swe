@@ -128,19 +128,36 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
         title: config.title,
       },
       async (args: z.infer<z.ZodObject<Shape>>): Promise<ToolResult> => {
-        const response = await run(args);
-        if (response.status !== 200) {
-          return failureFor(response.status, config.notFound);
+        // Nothing thrown below may reach the agent: the SDK would pass an error's message through
+        // as the tool result, and an internal error can name hosts, ports and queries.
+        try {
+          const response = await run(args);
+          if (response.status !== 200) {
+            return failureFor(response.status, config.notFound);
+          }
+          const projected = await project(response.body, args);
+          if (projected === null) {
+            app.log.error({ tool: name }, 'mcp: a route returned a body the tool could not read');
+            return failure('The platform returned an unexpected response.');
+          }
+          return ok(config.output.parse(projected) as Record<string, unknown>);
+        } catch (err) {
+          app.log.error({ err, tool: name }, 'mcp: a tool failed');
+          return failureFor(500);
         }
-        const projected = await project(response.body, args);
-        if (projected === null) {
-          app.log.error({ tool: name }, 'mcp: a route returned a body the tool could not read');
-          return failure('The platform returned an unexpected response.');
-        }
-        return ok(config.output.parse(projected) as Record<string, unknown>);
       }
     );
   }
+
+  /** The hosts a PR link may be on. If they cannot be read the run is still returned, without its result. */
+  const githubHosts = async (): Promise<readonly string[]> => {
+    try {
+      return await deps.getGitHubHosts();
+    } catch (err) {
+      app.log.error({ err }, 'mcp: could not read the configured GitHub hosts');
+      return [];
+    }
+  };
 
   const get = (path: string, params?: URLSearchParams) => bridge.get(app, caller, path, params);
 
@@ -263,7 +280,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
         dashboardUrl: `${origin}/runs/${data.id}`,
         endedAt: data.endedAt,
         id: data.id,
-        result: projectRunResult(data.result, await deps.getGitHubHosts()),
+        result: projectRunResult(data.result, await githubHosts()),
         startedAt: data.startedAt,
         status: data.status,
         steps: data.steps.map((s) => ({

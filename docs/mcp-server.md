@@ -137,7 +137,7 @@ rules:
    no header the client sent is forwarded, and the only thing taken from the outer request is the
    client's address, so the call is rate limited as the client is. A route accepts a bridged MCP token
    only if it declares `config: { mcpScope: 'read' | 'write' }`, and exactly the five routes in the table
-   above do, all `read`.
+   above do (six paths, counting the `/api/v1/inbox` alias of the human-steps route), all `read`.
 
 `requireAuth` applies these rules, in this order, to any request that carries the bridge header (its
 presence, in whatever form, is enough to take this path, so no other credential is tried after it):
@@ -211,6 +211,9 @@ and needs no restart.
   call's. The limit is per gateway process.
 - The names a team member authors (template, node, human step title) can still carry text that tries to
   steer a model. They are length-limited and stripped of control characters, not made safe.
+- On a configured GitHub host, the owner and repository segments of `get_run`'s `prUrl` can still carry
+  up to about 200 characters of text chosen by whoever controls the run's result; that is inherent to
+  returning any pull request link.
 - Fastify registers a `HEAD` twin of each `GET` route, so the `HEAD` forms also accept a bridged call
   (no body). The human-steps routes are also mounted as `/api/v1/inbox`, which opts in the same way.
 - Only OAuth tokens are accepted. A personal access token cannot be used, so a headless agent with no

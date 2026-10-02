@@ -254,7 +254,7 @@ async function build(options: {
   await app.register(mcpRoutes, {
     allowedOriginHostnames: [],
     dashboardOrigin: 'https://app.example.com/',
-    getGitHubHosts: async () => ['github.com', 'ghe.example.com'],
+    getGitHubHosts: options.hosts ?? (async () => ['github.com', 'ghe.example.com']),
     getSettings: async () => ({ enabled: true, writeToolsEnabled: false }),
     issuer: TEST_ISSUER,
     resource: TEST_RESOURCE,
@@ -643,6 +643,44 @@ describe('the read tools', () => {
     expect(json.result.structuredContent.truncated).toBe(true);
   });
 
+  describe('an internal failure never reaches the agent', () => {
+    const INTERNAL = 'INTERNAL connection refused 10.0.0.5:5432';
+
+    it('returns the run without its result when the GitHub hosts cannot be read', async () => {
+      const { callTool } = await setup({
+        hosts: async () => {
+          throw new Error(INTERNAL);
+        },
+      });
+      const { json } = await callTool('get_run', { runId: RUN_ID });
+      expect(json.result.isError).toBeUndefined();
+      expect(json.result.structuredContent.result).toBeNull();
+      expect(json.result.structuredContent.id).toBe(RUN_ID);
+      expect(JSON.stringify(json)).not.toContain('INTERNAL');
+    });
+
+    it('answers any tool whose call throws with the fixed message, never the thrown text', async () => {
+      const { app, callTool } = await setup();
+      (app.mcpBridge as { get: unknown }).get = async () => {
+        throw new Error(INTERNAL);
+      };
+      for (const name of [
+        'list_repositories',
+        'list_work_requests',
+        'list_runs',
+        'list_pending_human_steps',
+      ]) {
+        const { json } = await callTool(name);
+        expect(json.result.isError, name).toBe(true);
+        expect(json.result.content[0].text).toContain('unavailable');
+        expect(JSON.stringify(json), name).not.toContain('INTERNAL');
+      }
+      const run = await callTool('get_run', { runId: RUN_ID });
+      expect(run.json.result.isError).toBe(true);
+      expect(JSON.stringify(run.json)).not.toContain('10.0.0.5');
+    });
+  });
+
   describe('errors', () => {
     it('answers a route error with a fixed message, never the route text', async () => {
       const { callTool, route } = await setup();
@@ -789,18 +827,59 @@ describe('the read tools', () => {
 
 describe('which routes an MCP token may reach', () => {
   it('registers mcpScope on the five read routes of the real route table and nowhere else', async () => {
-    // Every route plugin the gateway mounts with a prefix, discovered from `index.ts` itself so a
-    // plugin added there is covered without anyone editing this test.
-    const src = (name: string) =>
-      readFileSync(fileURLToPath(new URL(name, import.meta.url)), 'utf8');
-    const index = src('../../index.ts');
+    // Every plugin `index.ts` registers. Each `.register(` call is cut out whole by matching its
+    // parentheses, so a call split over several lines reads like any other; one that is neither a
+    // route plugin with a literal prefix nor known infrastructure fails the test rather than being
+    // skipped.
+    const indexPath = fileURLToPath(new URL('../../index.ts', import.meta.url));
+    const source = readFileSync(indexPath, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
     const modules = new Map<string, string>();
-    for (const m of index.matchAll(/import \{([^}]+)\} from '(\.\/routes\/[^']+)'/g)) {
-      for (const name of (m[1] as string).split(',').map((n) => n.trim())) {
+    for (const m of source.matchAll(/import\s*\{([^}]+)\}\s*from\s*'(\.\/routes\/[^']+)'/g)) {
+      for (const name of (m[1] as string)
+        .split(',')
+        .map((n) => n.trim())
+        .filter(Boolean)) {
         modules.set(name, m[2] as string);
       }
     }
-    const mounts = [...index.matchAll(/app\.register\((\w+), \{ prefix: '([^']+)' \}\)/g)];
+    const infrastructure = new Set([
+      'cors',
+      'fastifyRawBody',
+      'cookie',
+      'rateLimit',
+      'prismaPlugin',
+      'temporalPlugin',
+      'authPlugin',
+      'mcpOAuthGate',
+      'mcpConsentAudit',
+      'mcpBridgePlugin',
+      'mcpRoutes',
+    ]);
+    const mounts: Array<[string, string]> = [];
+    const unaccounted: string[] = [];
+    for (const m of source.matchAll(/\.register\s*\(/g)) {
+      let depth = 0;
+      let end = m.index + m[0].length - 1;
+      for (; end < source.length; end++) {
+        depth += source[end] === '(' ? 1 : source[end] === ')' ? -1 : 0;
+        if (depth === 0) {
+          break;
+        }
+      }
+      const call = source.slice(m.index + m[0].length, end);
+      const route = /^\s*(\w+)\s*,\s*\{\s*prefix:\s*'([^']+)'\s*,?\s*\}\s*$/.exec(call);
+      const name = /^\s*(\w+)/.exec(call)?.[1];
+      if (route && modules.has(route[1] as string)) {
+        mounts.push([route[1] as string, route[2] as string]);
+      } else if (!(name && infrastructure.has(name))) {
+        unaccounted.push(call.replace(/\s+/g, ' ').slice(0, 80));
+      }
+    }
+    expect(unaccounted, 'register() calls this test does not understand').toEqual([]);
+    // An inline route in index.ts would bypass the plugins above.
+    expect(source).not.toContain('mcpScope');
     expect(mounts.length).toBeGreaterThan(50);
 
     const app = Fastify();
@@ -817,7 +896,7 @@ describe('which routes an MCP token may reach', () => {
         seen.push(`${[route.method].flat().join(',')} ${route.url.replace(/\/$/, '')} ${scope}`);
       }
     });
-    for (const [, name, prefix] of mounts) {
+    for (const [name, prefix] of mounts) {
       const path = modules.get(name as string);
       expect(path, `${name} is imported from ./routes`).toBeDefined();
       const mod = await import(

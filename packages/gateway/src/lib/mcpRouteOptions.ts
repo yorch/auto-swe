@@ -1,6 +1,5 @@
 import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { JSONWebKeySet } from 'jose';
 import { loadTokenUser } from '../plugins/auth.js';
@@ -34,17 +33,19 @@ function githubHostsReader() {
       return cached.hosts;
     }
     const [config, rows] = await Promise.all([
-      resolveGitHubConfig(),
+      // Only the base URL: resolving the whole config would decrypt every GitHub secret.
+      prisma.gitHubConfig.findUnique({ select: { baseUrl: true }, where: { id: 'default' } }),
       runUnscoped('the set of GitHub hosts is platform-wide, not a tenant', ['Connection'], () =>
         prisma.connection.findMany({
           distinct: ['githubUrl'],
           select: { githubUrl: true },
-          where: { githubUrl: { not: null } },
+          where: { githubUrl: { not: null }, isActive: true },
         })
       ),
     ]);
     const hosts = new Set<string>();
-    for (const url of [config.baseUrl, ...rows.map((r) => r.githubUrl)]) {
+    const instanceUrl = config?.baseUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+    for (const url of [instanceUrl, ...rows.map((r) => r.githubUrl)]) {
       try {
         hosts.add(new URL(url as string).host.toLowerCase());
       } catch {
