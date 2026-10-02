@@ -485,9 +485,11 @@ function buildAuth() {
         // enforcement off instead.
         clientRegistrationDefaultResources: [MCP_RESOURCE],
         consentPage: `${CLIENT_ORIGIN}/oauth/consent`,
-        // Runs on every access-token mint, for the code and the refresh grant, before any
+        // Runs on every JWT access-token mint, for the code and the refresh grant, before any
         // refresh token is stored or rotated, so a throw here issues nothing. This is the one
-        // place every path crosses, including an authorization resumed after sign-in.
+        // place every path crosses, including an authorization resumed after sign-in. The
+        // plugin's opaque, audience-less token path skips it; the gate makes that path
+        // unreachable by requiring `resource` at authorize and at the token endpoint.
         customAccessTokenClaims: async ({ scopes, user }) => {
           const settings = await resolveSettings(['mcp.enabled', 'mcp.writeToolsEnabled']);
           const refusal = mcpIssuanceRefusal(user, scopes, {

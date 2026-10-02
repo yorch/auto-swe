@@ -261,8 +261,10 @@ hooks:
   use: the body of a `POST` and the query of a `GET`. A `POST` that also carries `scope` or `resource` in its
   query, and any request that repeats either, is refused. The same checks run again on `consent` and
   `continue`, and on `resource` at the token endpoint.
-- **Token issuance** is guarded where every access token is minted, because the plugin also resumes an
-  authorization from a sign-in response, which no `/oauth2/*` rule sees. On the code and the refresh grant
+- **Token issuance** is guarded where every audience-bound (JWT) access token is minted, because the
+  plugin also resumes an authorization from a sign-in response, which no `/oauth2/*` rule sees. The
+  plugin's opaque, audience-less tokens skip that hook, and are unreachable here: `resource` is
+  required at authorize and at the token endpoint. On the code and the refresh grant
   alike, issuance is refused (`invalid_grant`) when the account is inactive, when `mcp.enabled` is off, or
   when the scope holds `mcp:write` while `mcp.writeToolsEnabled` is off. The refusal comes before any
   refresh token is stored or rotated, so a refused refresh leaves the client's refresh token usable. While
