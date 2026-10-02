@@ -185,3 +185,14 @@ jobs:
 
       - name: Re-apply migrations (idempotency check)
         run: yarn db:deploy
+
+      # The OAuth authorization server for MCP clients, end to end against the
+      # schema the migrations just built: the real better-auth provider through
+      # the Prisma adapter. The unit-test job cannot run it (no database), and
+      # the memory adapter hides what it covers: the NULL-versus-empty array
+      # columns, the boot-time resource seed, and the urlencoded body bridge the
+      # token endpoint depends on. Opt-in because it writes and deletes rows.
+      - name: OAuth authorization server (database-backed tests)
+        env:
+          MCP_OAUTH_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/mcpOAuthServer.pg.test.ts

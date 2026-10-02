@@ -215,9 +215,10 @@ command above rather than by appending a third migration — the split is by *ki
 when it was written. Once deployed, new changes append normal Prisma migrations after these;
 `prisma migrate deploy` applies whatever is pending.
 
-The `oauth_*` and `jwks` tables are a **boot dependency**, not only a feature dependency: the gateway
-seeds the MCP resource into `oauth_resources` while it initialises authentication, so it cannot start
-against a database that lacks them even when `mcp.enabled` is off. The OAuth provider distinguishes a
+The `oauth_*` and `jwks` tables must exist before MCP clients can use the gateway, so deploy the migration
+first. The gateway does boot without them: it seeds the MCP resource into `oauth_resources` while
+initialising authentication, and tolerates a missing table by deferring that seed to the first use of the
+resource. Until the migration is applied the OAuth endpoints fail, and sign-in is unaffected. The OAuth provider distinguishes a
 `NULL` array column from an empty one, so only the array columns it requires are `NOT NULL`
 (`oauth_clients.redirect_uris` and `scopes` on the access-token, refresh-token and consent tables); every
 other array there stays nullable on purpose.

@@ -249,7 +249,7 @@ Policy is applied by one Fastify plugin (`mcpOAuthGate.ts`) in front of better-a
 hooks:
 
 - **Allowlist.** Only `authorize`, `consent`, `continue`, `token`, `register`, `revoke` and `public-client`
-  under `/api/auth/oauth2/`, the RFC 8414 document and `/api/auth/jwks` are served. Every other path of the
+  under `/api/auth/oauth2/`, the RFC 8414 document (at the root path above only) and `/api/auth/jwks` are served. Every other path of the
   provider (client management, `introspect`, `userinfo`, `end-session`, consent management, the
   `/admin/oauth2/*` endpoints, the OIDC discovery document) and the `jwt` plugin's `GET /api/auth/token`
   are 404. A path is matched in its most generous reading (percent-decoded, case-folded, slashes
@@ -257,8 +257,16 @@ hooks:
 - **Authorization requests** must carry a `resource` that is exactly the MCP resource (otherwise
   `invalid_target`), must be for an active account, and may name `mcp:write` only while
   `mcp.writeToolsEnabled` is on (otherwise `invalid_scope`). With writes off a `scope` is required, because
-  an absent one means the scopes the client registered. The same checks run again on `consent` and
+  an absent one means the scopes the client registered. The gate checks the parameters the plugin will
+  use: the body of a `POST` and the query of a `GET`. A `POST` that also carries `scope` or `resource` in its
+  query, and any request that repeats either, is refused. The same checks run again on `consent` and
   `continue`, and on `resource` at the token endpoint.
+- **Token issuance** is guarded where every access token is minted, because the plugin also resumes an
+  authorization from a sign-in response, which no `/oauth2/*` rule sees. On the code and the refresh grant
+  alike, issuance is refused (`invalid_grant`) when the account is inactive, when `mcp.enabled` is off, or
+  when the scope holds `mcp:write` while `mcp.writeToolsEnabled` is off. The refusal comes before any
+  refresh token is stored or rotated, so a refused refresh leaves the client's refresh token usable. While
+  `mcp.enabled` is off a sign-in that carries a pending `oauth_query` ignores it and just signs in.
 - **Registration** is forced to a public client (`token_endpoint_auth_method` `none`; any other value is
   rejected), refuses a back-channel logout target, and defaults `application_type` to `native` when every
   redirect URI is a loopback `http` address or a private-use scheme (the plugin's default, `web`, rejects
@@ -279,11 +287,11 @@ for 30 days; it stays published for one more hour so a token signed in its last 
   nothing removes expired clients, expired tokens or `oauth_client_assertions` rows, so those tables grow.
 - A client that registers without `grant_types` receives only `authorization_code` (the RFC 7591 default) and
   cannot refresh; MCP clients register with both grants.
-- The discovery document advertises endpoints the allowlist refuses (`introspect`) and capabilities that are
-  not used (`private_key_jwt`, back-channel logout); a client that follows it there gets a 404 or a 400.
-- A write grant that was requested while `mcp.writeToolsEnabled` was on and completes after it is turned off
-  is stopped at `consent`, but one that has already been issued keeps the scope on its token until a resource
-  server drops it.
+- Turning `mcp.writeToolsEnabled` off stops new tokens that carry `mcp:write`, on both grants. A token
+  already issued keeps the scope until it expires (10 minutes), and no resource server drops it, because
+  none exists.
+- The discovery document is the provider's with introspection, back-channel logout and every client
+  authentication method but `none` removed.
 - A magic-link sign-in that completes in a different browser than the one that started the authorization
   loses the authorization request.
 - Rate limits are per gateway replica.
