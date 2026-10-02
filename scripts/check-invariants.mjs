@@ -250,10 +250,73 @@ function checkLayoutRendersPerRequest() {
 }
 
 // ---------------------------------------------------------------------------
+// INVARIANT 4 — MCP code reaches data only through a REST route.
+//
+// An MCP tool is an in-process call to the same route a REST client would use, so the route's
+// role check, visibility filter, tenant guard, rate limit and audit apply to it unchanged. A tool
+// that read the database itself would be a second permission path, written by hand and reviewed
+// by nobody: it type-checks, its own tests pass, and it ignores a visibility rule the route has.
+//
+// So the MCP transport and tools (`lib/mcp/**`, `routes/mcp.ts`) take no database access, by
+// import or by reaching for the `prisma` decoration on the Fastify instance. The wiring that does
+// need the database (`lib/mcpRouteOptions.ts`, `lib/mcpTokenVerifier.ts`, the grants) lives
+// outside those paths and hands the MCP code plain functions.
+//
+// Unlike the rules above, this is a standing constraint on a new surface, not a past incident.
+// ---------------------------------------------------------------------------
+
+const MCP_CODE_DIR = 'packages/gateway/src/lib/mcp';
+const MCP_ROUTE_FILE = 'packages/gateway/src/routes/mcp.ts';
+/** Each pattern is a way to reach the database; comments are stripped before matching. */
+const DATABASE_ACCESS = [
+  [/from\s+['"][^'"]*@auto-swe\/shared\/db(?:\.js)?['"]/, 'imports @auto-swe/shared/db'],
+  [/from\s+['"][^'"]*\/plugins\/prisma(?:\.js)?['"]/, 'imports the prisma plugin'],
+  [/from\s+['"]@prisma\//, 'imports @prisma/*'],
+  [/from\s+['"][^'"]*generated\/prisma/, 'imports the generated Prisma client'],
+  [/\bPrismaClient\b/, 'names PrismaClient'],
+  [/\.prisma\b/, 'reads the `prisma` decoration (app.prisma / request.server.prisma)'],
+  [/\bprisma\s*\.\s*[$\w]/, 'calls a `prisma` client'],
+  [/\$queryRaw|\$executeRaw/, 'runs raw SQL'],
+];
+
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/^\s*\/\/.*$/gm, '');
+}
+
+function checkMcpCodeHasNoDatabaseAccess() {
+  const files = [
+    ...walk(MCP_CODE_DIR, (f) => f.endsWith('.ts') && !f.endsWith('.test.ts')),
+    MCP_ROUTE_FILE,
+  ];
+  for (const file of files) {
+    const lines = stripComments(read(file)).split('\n');
+    lines.forEach((text, i) => {
+      for (const [pattern, what] of DATABASE_ACCESS) {
+        if (pattern.test(text)) {
+          fail(
+            file,
+            i + 1,
+            'mcp-no-database-access',
+            `MCP code ${what}`,
+            "MCP tools must reach data only through a REST route, by the bridge, so the route's " +
+              'role check, visibility filter, tenant guard and audit apply to them. Direct access is a ' +
+              'second, weaker permission path. Move the database work to a route, or hand this code a ' +
+              'plain function from the wiring in lib/mcpRouteOptions.ts.'
+          );
+        }
+      }
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 checkWorkspaceImageLiterals();
 checkDockerfileYarnProvisioning();
 checkLayoutRendersPerRequest();
+checkMcpCodeHasNoDatabaseAccess();
 
 if (failures.length > 0) {
   console.error(`Invariant check failed — ${failures.length} violation(s).\n`);
@@ -268,7 +331,8 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('Invariant check passed — 3 invariants, no violations.');
+console.log('Invariant check passed — 4 invariants, no violations.');
 console.log('  workspace image is inherited, never written inline at a call site');
 console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
 console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
+console.log('  MCP code takes no database access: it reaches data only through a REST route');
