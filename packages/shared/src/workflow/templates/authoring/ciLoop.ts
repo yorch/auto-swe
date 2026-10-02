@@ -205,7 +205,9 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
         }
       : {
           clearCiResult: {
-            group: loop,
+            // It belongs to the review it leads into: the implementation enters it too, so a
+            // reader meets it as the first step of the review, not as part of the CI loop.
+            group: 'review loop',
             next: handoff.rereview,
             title: 'Clear the stale CI result',
             type: 'set',

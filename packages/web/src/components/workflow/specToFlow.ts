@@ -10,8 +10,10 @@
 import type { Node as SpecNode, WorkflowSpec } from '@auto-swe/shared/workflow';
 import type { Edge as RFEdge, Node as RFNode } from '@xyflow/react';
 import { TOKEN } from '@/lib/palette';
-import { type DiffKind, type EdgeKind, layoutSpec } from '@/lib/workflowLayout';
+import { type DiffKind, type EdgeKind, type LayoutEdge, layoutSpec } from '@/lib/workflowLayout';
 import type { DagNodeData } from './dagNode';
+import type { FoldedGroup } from './foldGroups';
+import { hasDisplayTitle, nodeDisplayName, nodeGroupOf } from './nodeDisplay';
 
 /**
  * How far "fit view" may zoom, for both the initial view and the toolbar's fit
@@ -48,7 +50,7 @@ const EDGE_STROKE: Record<EdgeKind, string> = {
   subgraph: TOKEN.violet400,
 };
 
-function subLabelFor(node: SpecNode): string | undefined {
+function subLabelFor(node: SpecNode, id: string): string | undefined {
   switch (node.type) {
     case 'step':
       return node.step;
@@ -80,7 +82,8 @@ function subLabelFor(node: SpecNode): string | undefined {
     case 'humanDecision':
     case 'humanInput':
     case 'humanReview':
-      return node.title || undefined;
+      // The title is the card's name, so the id goes underneath.
+      return id;
     default: {
       // Exhaustiveness sentinel. The return type is `string | undefined`, so a
       // missing case is legal and silently drops the node's sublabel from the
@@ -97,22 +100,51 @@ interface ConvertOpts {
   statuses?: { byNodeId: Record<string, { status: string; attempt: number } | undefined> };
   diffMarkers?: Record<string, DiffKind>;
   editable?: boolean;
+  /** The collapsed-group cards in `spec`, and the edges that leave them (see `foldGroups`). */
+  folded?: Record<string, FoldedGroup>;
+  extraEdges?: readonly LayoutEdge[];
 }
 
 export function specToFlow(
   spec: WorkflowSpec,
   opts: ConvertOpts = {}
 ): { nodes: RFNode<DagNodeData>[]; edges: RFEdge[] } {
-  const layout = layoutSpec(spec);
+  const layout = layoutSpec(spec, opts.extraEdges);
 
   const nodes: RFNode<DagNodeData>[] = layout.nodes.map((n) => {
-    const subLabel = subLabelFor(n.node);
+    const card = opts.folded?.[n.id];
+    const subLabel = card ? undefined : subLabelFor(n.node, n.id);
     const status = opts.statuses?.byNodeId[n.id];
+    if (card) {
+      // A collapsed group: one card for several steps. Report how many ran, so a
+      // run viewer's graph still says something about what is inside.
+      const ran = opts.statuses
+        ? card.memberIds.filter((id) => opts.statuses?.byNodeId[id]).length
+        : undefined;
+      return {
+        ariaLabel: [
+          `${card.group} group, ${card.memberIds.length} steps, collapsed`,
+          ran !== undefined ? `${ran} ran` : null,
+          'press Enter to expand',
+        ]
+          .filter(Boolean)
+          .join(', '),
+        data: { editable: false, folded: { ...card, ran }, node: n.node },
+        id: n.id,
+        position: { x: n.x, y: n.y },
+        type: 'dag',
+      };
+    }
     // Descriptive label for React Flow's focusable node wrapper, so keyboard /
-    // screen-reader traversal announces "<type> node <id>[, <subLabel>][,
-    // status <status>]" instead of React Flow's generic default.
+    // screen-reader traversal announces "<type> node <name>[ (<id>)][, group
+    // <group>][, <subLabel>][, status <status>]" instead of React Flow's
+    // generic default.
+    const group = nodeGroupOf(n.node);
     const ariaLabel = [
-      `${n.node.type} node ${n.id}`,
+      `${n.node.type} node ${nodeDisplayName(n.node, n.id)}${
+        hasDisplayTitle(n.node, n.id) ? ` (${n.id})` : ''
+      }`,
+      group ? `group ${group}` : null,
       subLabel,
       status ? `status ${status.status.toLowerCase()}` : null,
     ]

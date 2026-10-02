@@ -34,8 +34,9 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
 import { TOKEN } from '@/lib/palette';
 import { formatCost } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
@@ -46,6 +47,7 @@ import { NodeInspector } from './NodeInspector';
 import { NodePalette, PALETTE_MIME, type PaletteDragKind, PaletteDragSchema } from './NodePalette';
 import { deleteNodeFromSpec, renameNodeInSpec, setSpecEdge } from './specEdits';
 import { FIT_VIEW_OPTIONS, specToFlow } from './specToFlow';
+import { WorkflowOutline } from './WorkflowOutline';
 
 const NODE_TYPES = { dag: DagNode };
 
@@ -82,6 +84,9 @@ function EditorInner({
   actions,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  // The outline is a rail beside the canvas, not a replacement for it, so the
+  // canvas (and where the author has dragged things) stays mounted.
+  const [showOutline, setShowOutline] = useState(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const { screenToFlowPosition } = useReactFlow();
 
@@ -392,6 +397,10 @@ function EditorInner({
     [spec, onChange, onSelect]
   );
 
+  const knownGroups = useMemo(
+    () => [...new Set(Object.values(spec.nodes).flatMap((n) => (n.group ? [n.group] : [])))],
+    [spec]
+  );
   const selectedNode = selectedNodeId ? spec.nodes[selectedNodeId] : null;
   const selectedStepMeta =
     selectedNode && selectedNode.type === 'step' ? stepRegistryByName.get(selectedNode.step) : null;
@@ -421,7 +430,17 @@ function EditorInner({
             </>
           )}
         </div>
-        <div className="flex items-center gap-2">{actions}</div>
+        <div className="flex items-center gap-2">
+          <Button
+            aria-pressed={showOutline}
+            onClick={() => setShowOutline((v) => !v)}
+            size="sm"
+            variant={showOutline ? 'primary' : 'ghost'}
+          >
+            Outline
+          </Button>
+          {actions}
+        </div>
       </div>
 
       {parseError && (
@@ -470,6 +489,21 @@ function EditorInner({
       <div className="flex flex-1 overflow-hidden" ref={wrapperRef}>
         <NodePalette onAdd={handlePaletteAdd} steps={stepRegistry} />
 
+        {showOutline && (
+          <aside
+            aria-label="Outline"
+            className="flex w-72 shrink-0 flex-col border-r border-ink-600 bg-ink-900"
+          >
+            <WorkflowOutline
+              className="flex-1"
+              height="100%"
+              onSelect={onSelect}
+              selectedNodeId={selectedNodeId}
+              spec={spec}
+            />
+          </aside>
+        )}
+
         {/* Canvas — this wrapper is the HTML5 drag-and-drop target; the React Flow
             canvas inside it is the interactive surface. */}
         <div
@@ -508,6 +542,7 @@ function EditorInner({
         <NodeInspector
           allNodeIds={Object.keys(spec.nodes)}
           isEntry={selectedNodeId === spec.entry}
+          knownGroups={knownGroups}
           node={selectedNode}
           nodeId={selectedNodeId}
           onChangeNode={(next) => {

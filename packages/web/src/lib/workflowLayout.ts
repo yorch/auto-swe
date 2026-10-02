@@ -79,7 +79,14 @@ function collectEdges(node: Node, id: string): LayoutEdge[] {
   }));
 }
 
-export function layoutSpec(spec: WorkflowSpec): LayoutResult {
+/**
+ * @param extraEdges Edges that exist only in the picture — the exits of a
+ *   collapsed group's card, which no spec node carries. Drawn and laid out like any other.
+ */
+export function layoutSpec(
+  spec: WorkflowSpec,
+  extraEdges: readonly LayoutEdge[] = []
+): LayoutResult {
   const nodeIds = Object.keys(spec.nodes);
   if (nodeIds.length === 0) {
     return { edges: [], height: 0, nodes: [], width: 0 };
@@ -95,6 +102,12 @@ export function layoutSpec(spec: WorkflowSpec): LayoutResult {
       if (e.to in spec.nodes) {
         allEdges.push(e);
       }
+    }
+  }
+
+  for (const e of extraEdges) {
+    if (e.from in spec.nodes && e.to in spec.nodes) {
+      allEdges.push(e);
     }
   }
 

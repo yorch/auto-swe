@@ -885,6 +885,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 <WorkflowDag
                   height="calc(100vh - 360px)"
                   onSelect={setSelectedNodeId}
+                  outline
                   selectedNodeId={selectedNodeId}
                   spec={visualSpec}
                 />
