@@ -7,8 +7,10 @@ and talks to the endpoint over Streamable HTTP. The server is a resource server 
 accepts only access tokens that the authorization server issued for it, and it re-checks on every
 request that the grant behind the token still stands.
 
-The server registers no tools, resources or prompts. An authenticated client can `initialize` and list
-an empty tool set; it cannot read or change anything on the platform.
+The server exposes five read-only tools (below) and no resources or prompts. A tool is a call to the
+same REST route a dashboard or CLI user would call, made in-process as the signed-in user, so what a tool
+returns is what that user is allowed to see, reduced to a short allowlist of fields. Nothing can be
+changed through it.
 
 It is off until an admin turns on `mcp.enabled`.
 
@@ -84,6 +86,74 @@ Because step 5 reads the database on every call, deleting a consent, disabling a
 a user stops that token on its next request instead of when it expires. The user lookup is cached for
 30 seconds per gateway process, as for the REST API.
 
+## Tools
+
+Five tools, all read-only (`readOnlyHint`), all needing the `mcp:read` scope. Every input is a strict
+object: an argument the tool does not declare is refused, not ignored.
+
+| Tool | Calls | Returns |
+|---|---|---|
+| `list_repositories` | `GET /api/v1/repositories` | `id`, `organizationName`, `repoName`, `defaultBranch`, `isActive`, `team` (`id`, `name`, `slug`). Git repositories only. Inputs: `limit`, `offset`. |
+| `list_work_requests` | `GET /api/v1/work-requests` | `id`, `externalTicketId`, `createdAt`, `isMine`, and the work request's workflows as `id` and `status`. No description and no requester's name. Inputs: `limit`, `offset`, `ticket` (substring of the ticket id). |
+| `list_runs` | `GET /api/v1/workflow-runs` | `id`, `status`, `templateName`, `startedAt`, `endedAt`, `costUsdAccrued`, `workRequest` (`id`, `externalTicketId`). Inputs: `limit`, `offset`, `status`, `workRequestId`. |
+| `get_run` | `GET /api/v1/workflow-runs/:id` | `id`, `status`, `templateName`, timestamps, `costUsdAccrued`, token totals, `steps` as `nodeId`, `status`, `attempt`, `failed`, `result`, `workRequest` and `dashboardUrl`. Input: `runId` (a UUID). |
+| `list_pending_human_steps` | `GET /api/v1/human-steps` | `id`, `runId`, `kind`, `nodeId`, `title`, `requestedAt`, `timeoutAt`, `requiredApprovers`, `currentApprovers`, `inboxUrl`. No inputs. |
+
+A list tool returns `total`, `limit` and `offset` beside its rows. `get_run.result` is exactly
+`{ prUrl, prNumber }`: an `https` URL without credentials and a positive integer, or `null`. A tool
+returns `structuredContent` that matches its `outputSchema`, and the same JSON as text.
+
+**What is never returned.** Output is built from an explicit allowlist, because a tool result lands in a
+model's context and anything another person wrote is a prompt-injection channel. A tool never returns a
+work request's description, a requester's name or email, a step's error, inputs or outputs, a run's
+context or spec snapshot, traces, a human step's context, fields or options, a repository's
+description, configuration or credentials, or a link other than the dashboard's and the pull request's.
+A ticket id that is outside the characters the submit route accepts is returned as `null`. The few names
+a team member authors (a template, a workflow node, a human step's title) are clipped and stripped of
+control characters, and are still text a person wrote.
+
+Not exposed: answering or approving a human step, merging, retrying, any write, templates, traces, and
+every administrative surface. `list_pending_human_steps` shows that a person is needed and where to go;
+the answer is given in the dashboard.
+
+A route's refusal reaches the agent as a fixed message per status (not found, not permitted, rate
+limited, unavailable), never the route's own text. A run the caller cannot see is answered exactly as one
+that does not exist.
+
+### How a tool is authorized
+
+A tool never reads the database. It makes one in-process `GET` to the REST route above, so that route's
+role check, visibility filter, tenant guard, rate limit and audit apply to it unchanged, for a team
+member, an outsider and an ADMIN alike. Two properties keep that from becoming a way around REST's own
+rules:
+
+1. **The inner call re-presents the caller's own access token**, and the route verifies it again with the
+   same verifier the endpoint used (signature, audience, consent, client, user, scopes). Identity is
+   never asserted in a header. A token revoked, or a user deactivated, between the endpoint admitting the
+   request and the inner call stops the tool call at the route.
+2. **Only a bridged call may use an MCP token on REST, and only on a route that opted in.** Each gateway
+   process draws a random secret at boot (32 bytes, never configured, never stored) and the bridge sets
+   it in `X-Auto-Swe-Mcp-Bridge` on its inner calls. The inner request's headers are built from nothing:
+   no header the client sent is forwarded, and the only thing taken from the outer request is the
+   client's address, so the call is rate limited as the client is. A route accepts a bridged MCP token
+   only if it declares `config: { mcpScope: 'read' | 'write' }`, and exactly the five routes in the table
+   above do, all `read`.
+
+`requireAuth` applies these rules, in this order, to any request that carries the bridge header (its
+presence, in whatever form, is enough to take this path, so no other credential is tried after it):
+
+| # | Rule | Otherwise |
+|---|---|---|
+| 1 | The header is exactly this process's secret (compared in constant time; a repeated, empty, truncated or lengthened value is not it) | 403 |
+| 2 | The route declares `mcpScope` | 403 |
+| 3 | The credential is an `Authorization: Bearer` access token, not a personal access token | 401 |
+| 4 | The shared MCP verifier accepts the token | 401 (500 if the verifier's keys or database cannot be read) |
+| 5 | The token's effective scopes include the one the route declares | 403 `INSUFFICIENT_SCOPE` |
+
+The request then runs as the token's user with their current role, and the route's own role check follows.
+A request with no bridge header is unchanged: an MCP token on a REST route is neither a personal access
+token nor an API JWT, so it is refused 401, and the secret alone, without a valid token, grants nothing.
+
 ## Transport
 
 The endpoint is stateless: every request is served by a fresh server instance, nothing is kept between
@@ -91,7 +161,7 @@ requests, and there is no session id. It serves two protocol eras from one defin
 
 | Era | Recognised by | Response |
 |---|---|---|
-| Revision `2026-07-28` | A per-request `_meta` envelope naming the protocol version | A single `application/json` body |
+| Revision `2026-07-28` | A per-request `_meta` envelope naming the protocol version | A single `application/json` body, as long as no handler emits a message before its result (no tool does) |
 | 2025-era (`initialize` handshake) | No envelope | A one-frame `text/event-stream` body, which is how the SDK's stateless fallback frames it |
 
 - A `POST` whose body is not `application/json` is answered 415; a body that is not valid JSON, 400.
@@ -99,6 +169,11 @@ requests, and there is no session id. It serves two protocol eras from one defin
 - `subscriptions/listen` is refused (JSON-RPC error `-32603`, not a stream). The server advertises no
   subscription capability and holds no connection open for a client.
 - A notification is answered 202 with no body.
+
+The response mode is the SDK's `auto`, not `json`: `json` drops any mid-call message (progress, logging)
+without a word and warns at boot that it does, while `auto` answers a plain JSON body and only streams if
+a handler emits one. The tools emit none, so clients see JSON either way, and a later tool that reports
+progress will work instead of losing it.
 
 The transport is `@modelcontextprotocol/server` 2.0.0, mounted as a Fastify route. The route builds a web
 `Request` from the body Fastify has already parsed, calls the SDK's `fetch` handler, and streams the
@@ -127,7 +202,17 @@ and needs no restart.
 
 ## Limitations
 
-- No tools, resources or prompts are exposed, so a connected client can do nothing beyond connect.
+- The tools are read-only: a client cannot submit a work request, cancel a run or answer a human step.
+- Resources and prompts are not exposed.
+- Consent is read or write, not per repository or per tool: a token reads everything its user can read.
+- `list_repositories` filters out the connections that are not git repositories after the route has
+  counted them, so its `total` can exceed the rows a client can ever page through.
+- A tool call costs two requests against the gateway's per-IP rate limit: the endpoint's and the inner
+  call's. The limit is per gateway process.
+- The names a team member authors (template, node, human step title) can still carry text that tries to
+  steer a model. They are length-limited and stripped of control characters, not made safe.
+- Fastify registers a `HEAD` twin of each `GET` route, so the five routes' `HEAD` forms also accept a
+  bridged call. They return no body.
 - Only OAuth tokens are accepted. A personal access token cannot be used, so a headless agent with no
   browser has no way to connect.
 - Browser-hosted MCP clients are not supported: the endpoint's `Origin` check admits only the
