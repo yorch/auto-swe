@@ -1,4 +1,15 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  ciWaitEntry,
+  openPullRequest,
+  prResult,
+  qualityGate,
+  statusStamp,
+  storeCodeResult,
+  terminate,
+  validatePhase,
+  waitForCi,
+} from './authoring/index.js';
 
 /**
  * Simplest supervised flow: implement → tests → human approve → open PR.
@@ -12,8 +23,22 @@ export const PR_APPROVAL_GATE_SPEC: WorkflowSpec = {
   entry: 'setValidating',
   name: 'pr-approval-gate',
   nodes: {
+    ...validatePhase({ next: 'setImplementing', successCriteria: false }),
+
+    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+    implement: {
+      group: 'implement',
+      next: 'runTests',
+      step: 'executeImplementation',
+      title: 'Implement the ticket',
+      type: 'step',
+    },
+    runTests: qualityGate('runTests', 'storeCodeResult', { group: 'verify' }),
+    storeCodeResult: storeCodeResult('approve', { group: 'verify' }),
+
     approve: {
       description: 'Tests passed. Approve to open the PR or reject to discard.',
+      group: 'approval',
       onApprove: 'setAwaitingCi',
       onReject: 'terminateRejected',
       onTimeout: 'terminateTimedOut',
@@ -21,98 +46,25 @@ export const PR_APPROVAL_GATE_SPEC: WorkflowSpec = {
       title: 'Approve implementation before opening PR',
       type: 'humanApproval',
     },
+    terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
+    terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),
+
+    setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
+    ...openPullRequest({ next: ciWaitEntry() }),
+
+    // CI is observed, not enforced: both outcomes complete the run.
+    ...waitForCi(),
     checkCI: {
       expr: 'context.ciResultPayload.passed == true',
+      group: 'CI wait',
       onFalse: 'setCompleted',
       onTrue: 'setCompleted',
+      title: 'CI passed?',
       type: 'cond',
     },
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
-      },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
-    implement: {
-      next: 'runTests',
-      step: 'executeImplementation',
-      type: 'step',
-    },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'savePrInfo',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
-    runTests: {
-      next: 'storeCodeResult',
-      onFail: 'warn',
-      step: 'runTests',
-      type: 'step',
-    },
-    savePrInfo: {
-      next: 'waitForCI',
-      type: 'set',
-      values: {
-        'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
-        'context.prUrl': { from: 'nodes.openPR.output.prUrl' },
-      },
-    },
-    setAwaitingCi: {
-      config: { status: 'AWAITING_CI' },
-      next: 'openPR',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setCompleted: {
-      config: { status: 'COMPLETED' },
-      next: 'done',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'implement',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setValidating: {
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    storeCodeResult: {
-      next: 'approve',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.implement.output' } },
-    },
-    terminateCITimedOut: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
-      },
-      status: 'TIMED_OUT',
-      type: 'terminate',
-    },
-    terminateRejected: { status: 'FAILED', type: 'terminate' },
-    terminateTimedOut: { status: 'TIMED_OUT', type: 'terminate' },
-    validate: {
-      next: 'setImplementing',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
-    waitForCI: {
-      name: 'ciPipelineSignal',
-      onReceive: 'checkCI',
-      onTimeout: 'terminateCITimedOut',
-      storeAs: 'context.ciResultPayload',
-      timeout: '4h',
-      type: 'signal',
-    },
+
+    setCompleted: statusStamp('COMPLETED', 'done', { group: 'finish' }),
+    done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

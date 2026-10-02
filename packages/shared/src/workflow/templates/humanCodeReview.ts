@@ -1,4 +1,13 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  openPullRequest,
+  prResult,
+  qualityGate,
+  statusStamp,
+  storeCodeResult,
+  terminate,
+  validatePhase,
+} from './authoring/index.js';
 
 /**
  * Show the diff to a human reviewer; optionally apply their feedback before PR.
@@ -10,16 +19,40 @@ export const HUMAN_CODE_REVIEW_SPEC: WorkflowSpec = {
   entry: 'setValidating',
   name: 'human-code-review',
   nodes: {
-    addressFeedback: {
-      inputs: {
-        previousCodeResult: { from: 'context.currentCodeResult' },
-        rejectionSummary: { from: 'context.reviewFeedback' },
-      },
-      next: 'updateCodeAfterFeedback',
-      step: 'executeReviewFixImplementation',
+    ...validatePhase({ next: 'setImplementing', successCriteria: false }),
+
+    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+    implement: {
+      group: 'implement',
+      next: 'runLint',
+      step: 'executeImplementation',
+      title: 'Implement the ticket',
       type: 'step',
     },
+    runLint: qualityGate('runLint', 'runTypecheck', { group: 'implement' }),
+    runTypecheck: qualityGate('runTypecheck', 'storeCodeResult', { group: 'implement' }),
+    storeCodeResult: storeCodeResult('humanReview', { group: 'implement' }),
+
+    humanReview: {
+      contentFrom: 'context.currentCodeResult.diff',
+      description: 'Review the diff and leave notes for the agent. Submit to continue.',
+      group: 'human review',
+      onSubmit: 'storeFeedback',
+      onTimeout: 'openPR',
+      storeAs: 'context.reviewFeedback',
+      timeout: '8h',
+      title: 'Review the implementation diff',
+      type: 'humanReview',
+    },
+    storeFeedback: {
+      group: 'human review',
+      next: 'applyFeedbackDecision',
+      title: 'Keep the reviewer notes',
+      type: 'set',
+      values: { 'context.reviewFeedback': { from: 'nodes.humanReview.output.feedback' } },
+    },
     applyFeedbackDecision: {
+      group: 'human review',
       onTimeout: 'openPR',
       options: [
         { label: 'Yes — apply the notes', next: 'addressFeedback', value: 'apply' },
@@ -29,88 +62,27 @@ export const HUMAN_CODE_REVIEW_SPEC: WorkflowSpec = {
       title: 'Apply the reviewer notes before opening the PR?',
       type: 'humanDecision',
     },
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
+    addressFeedback: {
+      group: 'human review',
+      inputs: {
+        previousCodeResult: { from: 'context.currentCodeResult' },
+        rejectionSummary: { from: 'context.reviewFeedback' },
       },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
-    humanReview: {
-      contentFrom: 'context.currentCodeResult.diff',
-      description: 'Review the diff and leave notes for the agent. Submit to continue.',
-      onSubmit: 'storeFeedback',
-      onTimeout: 'openPR',
-      storeAs: 'context.reviewFeedback',
-      timeout: '8h',
-      title: 'Review the implementation diff',
-      type: 'humanReview',
-    },
-    implement: {
-      next: 'runLint',
-      step: 'executeImplementation',
+      next: 'updateCodeAfterFeedback',
+      step: 'executeReviewFixImplementation',
+      title: 'Address the reviewer notes',
       type: 'step',
-    },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'savePrInfo',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
-    runLint: {
-      next: 'runTypecheck',
-      onFail: 'warn',
-      step: 'runLint',
-      type: 'step',
-    },
-    runTypecheck: {
-      next: 'storeCodeResult',
-      onFail: 'warn',
-      step: 'runTypecheck',
-      type: 'step',
-    },
-    savePrInfo: {
-      next: 'done',
-      type: 'set',
-      values: {
-        'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
-        'context.prUrl': { from: 'nodes.openPR.output.prUrl' },
-      },
-    },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'implement',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setValidating: {
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    storeCodeResult: {
-      next: 'humanReview',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.implement.output' } },
-    },
-    storeFeedback: {
-      next: 'applyFeedbackDecision',
-      type: 'set',
-      values: { 'context.reviewFeedback': { from: 'nodes.humanReview.output.feedback' } },
     },
     updateCodeAfterFeedback: {
+      group: 'human review',
       next: 'openPR',
+      title: 'Keep the revised code',
       type: 'set',
       values: { 'context.currentCodeResult': { from: 'nodes.addressFeedback.output' } },
     },
-    validate: {
-      next: 'setImplementing',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
+
+    ...openPullRequest({ next: 'done' }),
+    done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

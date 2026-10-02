@@ -1,4 +1,11 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  openPullRequest,
+  prResult,
+  statusStamp,
+  terminate,
+  validatePhase,
+} from './authoring/index.js';
 
 /**
  * Splits the ticket into parallel sub-task branches using fanOut, integrates
@@ -32,12 +39,20 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
   entry: 'setValidating',
   name: 'parallel-fan-out',
   nodes: {
+    ...validatePhase({ next: 'setImplementing' }),
+
+    setImplementing: statusStamp('IMPLEMENTING', 'buildSubtasks', { group: 'implement' }),
+
     branchDone: {
+      group: 'fan-out',
+      title: 'Branch done',
       result: { branch: { from: 'context.currentCodeResult.branch' } },
       status: 'SUCCESS',
       type: 'terminate',
     },
     buildIntegratedResult: {
+      group: 'merge',
+      title: 'Describe the integrated change',
       next: 'openPR',
       type: 'set',
       values: {
@@ -69,6 +84,8 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
       },
     },
     buildSubtasks: {
+      group: 'implement',
+      title: 'Split into subtasks',
       next: 'fanOutImpl',
       type: 'set',
       values: {
@@ -96,32 +113,32 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
       },
     },
     checkFanOutResult: {
+      group: 'fan-out',
+      title: 'All branches succeeded?',
       expr: 'nodes.fanOutImpl.output.failed == 0',
       onFalse: 'terminatePartialFail',
       onTrue: 'recordIntegrationBranch',
       type: 'cond',
     },
     checkMerge: {
+      group: 'merge',
+      title: 'Merged cleanly?',
       expr: 'nodes.merge.output.passed == true',
       onFalse: 'resolveConflict',
       onTrue: 'buildIntegratedResult',
       type: 'cond',
     },
     checkResolved: {
+      group: 'merge',
+      title: 'Conflicts resolved?',
       expr: 'nodes.resolveConflict.output.passed == true',
       onFalse: 'terminateMergeFailed',
       onTrue: 'buildIntegratedResult',
       type: 'cond',
     },
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
-      },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
     fanOutImpl: {
+      group: 'fan-out',
+      title: 'Implement each subtask in parallel',
       concurrency: 3,
       exports: ['context.currentCodeResult'],
       itemKey: 'subtask',
@@ -134,12 +151,16 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
       type: 'fanOut',
     },
     implementBranch: {
+      group: 'fan-out',
+      title: 'Implement one subtask',
       inputs: { subtask: { from: 'subtask' } },
       next: 'recordBranchResult',
       step: 'executeImplementation',
       type: 'step',
     },
     merge: {
+      group: 'merge',
+      title: 'Merge the branches',
       inputs: {
         sourceBranches: { from: 'nodes.fanOutImpl.output.plucked' },
         targetBranch: { from: 'context.integrationBranch' },
@@ -149,25 +170,25 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
       step: 'mergeBranches',
       type: 'step',
     },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'savePrInfo',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
     // Stash the branch's implementer output: the fanOut `exports` list reads
     // it at join time, and `branchDone` reports its branch for the pluck.
     recordBranchResult: {
+      group: 'fan-out',
+      title: 'Keep the branch result',
       next: 'branchDone',
       type: 'set',
       values: { 'context.currentCodeResult': { from: 'nodes.implementBranch.output' } },
     },
     recordIntegrationBranch: {
+      group: 'merge',
+      title: 'Name the integration branch',
       next: 'merge',
       type: 'set',
       values: { 'context.integrationBranch': { from: 'workflow.id' } },
     },
     resolveConflict: {
+      group: 'merge',
+      title: 'Resolve merge conflicts',
       inputs: {
         // Every branch, not just the unmerged tail: `mergeBranches` pushes
         // nothing when it hits a conflict, so the branches it merged before
@@ -180,53 +201,29 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
       step: 'resolveMergeConflict',
       type: 'step',
     },
-    savePrInfo: {
-      next: 'done',
-      type: 'set',
-      values: {
-        'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
-        'context.prUrl': { from: 'nodes.openPR.output.prUrl' },
-      },
-    },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'buildSubtasks',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setSuccessCriteria: {
-      next: 'setImplementing',
-      type: 'set',
-      values: {
-        'context.successCriteria': { default: [], from: 'nodes.validate.output.successCriteria' },
-      },
-    },
-    setValidating: {
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-      step: 'updateDomainState',
-      type: 'step',
-    },
     storeResults: {
+      group: 'fan-out',
+      title: 'Keep the branch results',
       next: 'checkFanOutResult',
       type: 'set',
       values: { 'context.fanOutResults': { from: 'nodes.fanOutImpl.output' } },
     },
     terminateMergeFailed: {
+      group: 'merge',
+      title: 'Merge failed',
       result: { conflicts: { from: 'nodes.resolveConflict.output.conflicts' } },
       status: 'FAILED',
       type: 'terminate',
     },
     terminatePartialFail: {
+      group: 'fan-out',
+      title: 'A branch failed',
       status: 'FAILED',
       type: 'terminate',
     },
-    validate: {
-      next: 'setSuccessCriteria',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
+
+    ...openPullRequest({ next: 'done' }),
+    done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

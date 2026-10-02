@@ -1,6 +1,55 @@
 import { describe, expect, it } from 'vitest';
 import { NodeSchema } from '../../spec.js';
-import { inGroup, prResult, statusStamp, storeCodeResult, terminate } from './common.js';
+import {
+  inGroup,
+  initCounters,
+  prResult,
+  qualityGate,
+  statusStamp,
+  storeCodeResult,
+  terminate,
+} from './common.js';
+
+describe('initCounters', () => {
+  it('initialises both retry counters and keeps the implementation, by default', () => {
+    expect(initCounters('setReviewing')).toMatchObject({
+      next: 'setReviewing',
+      type: 'set',
+      values: {
+        'context.ciRetries': { literal: 0 },
+        'context.currentCodeResult': { from: 'nodes.implement.output' },
+        'context.reviewRetries': { literal: 0 },
+      },
+    });
+  });
+
+  it('only initialises the loops a template has', () => {
+    const noCi = initCounters('n', { ci: false }) as { values: Record<string, unknown> };
+    expect(Object.keys(noCi.values).sort()).toEqual([
+      'context.currentCodeResult',
+      'context.reviewRetries',
+    ]);
+    const noReview = initCounters('n', { review: false }) as { values: Record<string, unknown> };
+    expect(Object.keys(noReview.values)).not.toContain('context.reviewRetries');
+  });
+});
+
+describe('qualityGate', () => {
+  it('is a warn-mode step: a failure is recorded and the run goes on', () => {
+    expect(qualityGate('runLint', 'runTypecheck', { group: 'verify' })).toMatchObject({
+      group: 'verify',
+      next: 'runTypecheck',
+      onFail: 'warn',
+      step: 'runLint',
+      title: 'Lint',
+      type: 'step',
+    });
+  });
+
+  it('titles an unknown gate from its step name', () => {
+    expect(qualityGate('runMutation', 'n').title).toBe('Run runMutation');
+  });
+});
 
 describe('statusStamp', () => {
   it('is an updateDomainState step carrying the status and the next node', () => {

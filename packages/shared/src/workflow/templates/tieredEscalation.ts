@@ -1,4 +1,12 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  openPullRequest,
+  prResult,
+  statusStamp,
+  storeCodeResult,
+  terminate,
+  validatePhase,
+} from './authoring/index.js';
 
 /**
  * Human categorises risk level; higher risk → stricter approval chain.
@@ -11,36 +19,21 @@ export const TIERED_ESCALATION_SPEC: WorkflowSpec = {
   entry: 'setValidating',
   name: 'tiered-escalation',
   nodes: {
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
-      },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
+    ...validatePhase({ next: 'setImplementing', successCriteria: false }),
+
+    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
     implement: {
+      group: 'implement',
       next: 'storeCodeResult',
       step: 'executeImplementation',
+      title: 'Implement the ticket',
       type: 'step',
     },
-    leadApproval: {
-      description: 'High-risk change — this touches auth, payments, or data migration.',
-      onApprove: 'openPR',
-      onReject: 'terminateRejected',
-      onTimeout: 'terminateTimedOut',
-      timeout: '48h',
-      title: 'Team lead sign-off required',
-      type: 'humanApproval',
-    },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'savePrInfo',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
+    storeCodeResult: storeCodeResult('riskDecision', { group: 'implement' }),
+
     riskDecision: {
       description: 'This helps route the change to the right approval chain.',
+      group: 'approval',
       onTimeout: 'seniorApproval',
       options: [
         { label: 'Low risk (docs, config, typos)', next: 'openPR', value: 'low' },
@@ -52,15 +45,8 @@ export const TIERED_ESCALATION_SPEC: WorkflowSpec = {
       title: 'What is the risk level of this change?',
       type: 'humanDecision',
     },
-    savePrInfo: {
-      next: 'done',
-      type: 'set',
-      values: {
-        'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
-        'context.prUrl': { from: 'nodes.openPR.output.prUrl' },
-      },
-    },
     seniorApproval: {
+      group: 'approval',
       onApprove: 'openPR',
       onReject: 'terminateRejected',
       onTimeout: 'terminateTimedOut',
@@ -68,31 +54,21 @@ export const TIERED_ESCALATION_SPEC: WorkflowSpec = {
       title: 'Senior developer sign-off required',
       type: 'humanApproval',
     },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'implement',
-      step: 'updateDomainState',
-      type: 'step',
+    leadApproval: {
+      description: 'High-risk change — this touches auth, payments, or data migration.',
+      group: 'approval',
+      onApprove: 'openPR',
+      onReject: 'terminateRejected',
+      onTimeout: 'terminateTimedOut',
+      timeout: '48h',
+      title: 'Team lead sign-off required',
+      type: 'humanApproval',
     },
-    setValidating: {
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    storeCodeResult: {
-      next: 'riskDecision',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.implement.output' } },
-    },
-    terminateRejected: { status: 'FAILED', type: 'terminate' },
-    terminateTimedOut: { status: 'TIMED_OUT', type: 'terminate' },
-    validate: {
-      next: 'setImplementing',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
+    terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
+    terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),
+
+    ...openPullRequest({ next: 'done' }),
+    done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

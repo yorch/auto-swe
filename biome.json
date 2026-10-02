@@ -99,6 +99,19 @@
       "includes": ["**/package.json"]
     },
     {
+      "assist": {
+        "actions": {
+          "source": {
+            "useSortedKeys": "off"
+          }
+        }
+      },
+      "includes": [
+        "packages/shared/src/workflow/templates/*.ts",
+        "packages/shared/src/workflow/defaultEngineeringSpec.ts"
+      ]
+    },
+    {
       "includes": ["packages/worker/src/workflows/**"],
       "linter": {
         "rules": {

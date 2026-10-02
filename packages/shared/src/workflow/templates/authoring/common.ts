@@ -84,6 +84,50 @@ export function storeCodeResult(next: string, p: Presentation = {}, from = 'impl
   };
 }
 
+const GATE_TITLES: Record<string, string> = {
+  runLint: 'Lint',
+  runTests: 'Run the tests',
+  runTypecheck: 'Typecheck',
+  runVulnScan: 'Scan for vulnerabilities',
+};
+
+/**
+ * A local quality gate (`runLint`, `runTypecheck`, `runTests`, `runVulnScan`).
+ * In warn mode (`onFail: 'warn'`) a failure is recorded and the run goes on, so
+ * the gate informs the reviewers rather than blocking.
+ */
+export function qualityGate(step: string, next: string, p: Presentation = {}): Node {
+  return {
+    next,
+    onFail: 'warn',
+    step,
+    ...present({ title: GATE_TITLES[step] ?? `Run ${step}`, ...p }),
+    type: 'step',
+  };
+}
+
+/**
+ * The `set` node that opens the implement-then-review flow: it initialises the
+ * retry counters and keeps the implementer's output as `context.currentCodeResult`.
+ * `ci` / `review` choose which counters exist (both by default); a template only
+ * initialises the loops it has.
+ */
+export function initCounters(
+  next: string,
+  opts: { ci?: boolean; review?: boolean } & Presentation = {}
+): Node {
+  return {
+    next,
+    ...present({ title: 'Initialise the counters', ...opts }),
+    type: 'set',
+    values: {
+      ...(opts.ci === false ? {} : { 'context.ciRetries': { literal: 0 } }),
+      'context.currentCodeResult': { from: 'nodes.implement.output' },
+      ...(opts.review === false ? {} : { 'context.reviewRetries': { literal: 0 } }),
+    },
+  };
+}
+
 /**
  * Stamp a group on every node of a map that has none, leaving the rest alone.
  * For the hand-authored nodes that sit between the helpers' output.

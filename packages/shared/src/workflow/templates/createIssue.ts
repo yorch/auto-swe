@@ -1,4 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import { policyGatedWrite, terminate } from './authoring/index.js';
 
 /**
  * Create an issue in Linear or Jira from a title and description.
@@ -12,75 +13,40 @@ export const CREATE_ISSUE_SPEC: WorkflowSpec = {
   entry: 'publishOutcome',
   name: 'create-issue',
   nodes: {
-    autoWrite: {
-      inputs: {
-        connectionId: { from: 'request.payload.connectionId' },
-        description: { from: 'request.payload.description' },
-        projectKey: { from: 'request.payload.projectKey' },
-        title: { from: 'request.payload.title' },
+    ...policyGatedWrite({
+      action: 'external_write',
+      approval: {
+        contextFrom: 'request.payload.title',
+        description: 'An issue is ready to be created. Approve to create it, reject to discard.',
+        title: 'Approve issue creation',
       },
-      next: 'done',
-      step: 'writeOutcome',
-      type: 'step',
-    },
-    checkAuto: {
-      expr: "nodes.publishOutcome.output.decision == 'require_approval'",
-      onFalse: 'autoWrite',
-      onTrue: 'humanApproval',
-      type: 'cond',
-    },
-    done: {
-      result: {
-        description: { from: 'request.payload.description' },
-        issueUrl: { from: 'nodes.writeOutcome.output.reference' },
-        projectKey: { from: 'request.payload.projectKey' },
-        title: { from: 'request.payload.title' },
-      },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
-    doneRejected: {
-      result: {
+      describeFrom: 'request.payload.title',
+      rejectedResult: {
         approved: { literal: false },
         created: { literal: false },
         description: { from: 'request.payload.description' },
         projectKey: { from: 'request.payload.projectKey' },
         title: { from: 'request.payload.title' },
       },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
-    humanApproval: {
-      approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
-      contextFrom: 'request.payload.title',
-      description: 'An issue is ready to be created. Approve to create it, reject to discard.',
-      onApprove: 'manualWrite',
-      onReject: 'doneRejected',
-      onTimeout: 'doneRejected',
-      timeout: '24h',
-      title: 'Approve issue creation',
-      type: 'humanApproval',
-    },
-    manualWrite: {
-      inputs: {
-        connectionId: { from: 'request.payload.connectionId' },
+      write: {
+        inputs: {
+          connectionId: { from: 'request.payload.connectionId' },
+          description: { from: 'request.payload.description' },
+          projectKey: { from: 'request.payload.projectKey' },
+          title: { from: 'request.payload.title' },
+        },
+      },
+      writes: 'split',
+    }),
+    done: terminate('SUCCESS', {
+      result: {
         description: { from: 'request.payload.description' },
+        issueUrl: { from: 'nodes.writeOutcome.output.reference' },
         projectKey: { from: 'request.payload.projectKey' },
         title: { from: 'request.payload.title' },
       },
-      next: 'done',
-      step: 'writeOutcome',
-      type: 'step',
-    },
-    publishOutcome: {
-      config: { action: 'external_write' },
-      inputs: {
-        description: { from: 'request.payload.title' },
-      },
-      next: 'checkAuto',
-      step: 'publishOutcome',
-      type: 'step',
-    },
+      title: 'Issue created',
+    }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

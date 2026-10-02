@@ -15,9 +15,13 @@ describe.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
       expect(report.errors).toEqual([]);
       expect(
         report.warnings.filter((i) =>
-          ['UNREACHABLE', 'FANOUT_LEAK', 'TERMINAL_IN_SUBGRAPH_ONLY', 'IGNORED_FIELD'].includes(
-            i.code
-          )
+          [
+            'UNREACHABLE',
+            'FANOUT_LEAK',
+            'TERMINAL_IN_SUBGRAPH_ONLY',
+            'IGNORED_FIELD',
+            'GROUP_NOT_CONTIGUOUS',
+          ].includes(i.code)
         )
       ).toEqual([]);
     });

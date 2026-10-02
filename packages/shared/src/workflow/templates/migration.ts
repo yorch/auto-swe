@@ -1,4 +1,12 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  openPullRequest,
+  prResult,
+  statusStamp,
+  storeCodeResult,
+  terminate,
+  validatePhase,
+} from './authoring/index.js';
 
 /**
  * Database migration workflow: implement → dry-run migration in a shell
@@ -18,14 +26,18 @@ export const MIGRATION_SPEC: WorkflowSpec = {
   entry: 'setValidating',
   name: 'migration',
   nodes: {
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
-      },
-      status: 'SUCCESS',
-      type: 'terminate',
+    ...validatePhase({ next: 'setImplementing', successCriteria: false }),
+
+    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+    implement: {
+      group: 'implement',
+      next: 'storeMigrationCode',
+      step: 'executeImplementation',
+      title: 'Implement the migration',
+      type: 'step',
     },
+    storeMigrationCode: storeCodeResult('dryRunMigration', { group: 'implement' }),
+
     dryRunMigration: {
       // Customise image + command for your stack; the image must be on the
       // team's shell allowlist or the node is rejected when its container
@@ -34,25 +46,25 @@ export const MIGRATION_SPEC: WorkflowSpec = {
       // The shell node returns { passed, summary, exitCode } — summary is shown
       // to the approver.
       command: 'yarn db:migrate --dry-run 2>&1',
+      group: 'dry run',
       image: 'node:24-alpine',
       next: 'storeDryRunResult',
       onFail: 'warn',
+      title: 'Dry-run the migration',
       type: 'shell',
     },
-    implement: {
-      next: 'storeMigrationCode',
-      step: 'executeImplementation',
-      type: 'step',
+    storeDryRunResult: {
+      group: 'dry run',
+      next: 'reviewMigrationPlan',
+      title: 'Keep the dry-run summary',
+      type: 'set',
+      values: { 'context.dryRunSummary': { from: 'nodes.dryRunMigration.output.summary' } },
     },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'savePrInfo',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
+
     reviewMigrationPlan: {
       contextFrom: 'context.dryRunSummary',
       description: 'Review the dry-run output above. Approve to open the PR, reject to discard.',
+      group: 'approval',
       onApprove: 'openPR',
       onReject: 'terminateRejected',
       onTimeout: 'terminateTimedOut',
@@ -60,46 +72,11 @@ export const MIGRATION_SPEC: WorkflowSpec = {
       title: 'Approve migration plan before opening PR',
       type: 'humanApproval',
     },
-    savePrInfo: {
-      next: 'done',
-      type: 'set',
-      values: {
-        'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
-        'context.prUrl': { from: 'nodes.openPR.output.prUrl' },
-      },
-    },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'implement',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setValidating: {
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    storeDryRunResult: {
-      next: 'reviewMigrationPlan',
-      type: 'set',
-      values: {
-        'context.dryRunSummary': { from: 'nodes.dryRunMigration.output.summary' },
-      },
-    },
-    storeMigrationCode: {
-      next: 'dryRunMigration',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.implement.output' } },
-    },
-    terminateRejected: { status: 'FAILED', type: 'terminate' },
-    terminateTimedOut: { status: 'TIMED_OUT', type: 'terminate' },
-    validate: {
-      next: 'setImplementing',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
+    terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
+    terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),
+
+    ...openPullRequest({ next: 'done' }),
+    done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,
 };

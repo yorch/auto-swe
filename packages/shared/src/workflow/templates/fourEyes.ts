@@ -1,4 +1,15 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import {
+  ciLoop,
+  ciWaitEntry,
+  initCounters,
+  openPullRequest,
+  prResult,
+  reviewLoop,
+  statusStamp,
+  terminate,
+  validatePhase,
+} from './authoring/index.js';
 
 /**
  * Two-person rule: two independent humanApproval gates before the PR opens.
@@ -13,35 +24,24 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
   entry: 'setValidating',
   name: 'four-eyes',
   nodes: {
-    checkApproval: {
-      expr: 'nodes.review.output.approved == true',
-      onFalse: 'incReviewRetries',
-      onTrue: 'firstSignoff',
-      type: 'cond',
+    ...validatePhase({ next: 'setImplementing' }),
+
+    setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
+    implement: {
+      group: 'implement',
+      next: 'initCounters',
+      step: 'executeImplementation',
+      title: 'Implement the ticket',
+      type: 'step',
     },
-    checkCI: {
-      expr: 'context.ciResultPayload.passed == true',
-      onFalse: 'terminateCIFailed',
-      onTrue: 'setCompleted',
-      type: 'cond',
-    },
-    checkReviewLimit: {
-      expr: 'context.reviewRetries >= 3',
-      onFalse: 'reviewFix',
-      onTrue: 'terminateReviewFailed',
-      type: 'cond',
-    },
-    done: {
-      result: {
-        prNumber: { from: 'context.prNumber' },
-        prUrl: { from: 'context.prUrl' },
-      },
-      status: 'SUCCESS',
-      type: 'terminate',
-    },
+    initCounters: initCounters('setReviewing', { ci: false, group: 'implement' }),
+
+    ...reviewLoop({ approved: 'firstSignoff' }),
+
     firstSignoff: {
       description:
         'Confirm you have read the implementation and are satisfied it meets the requirements.',
+      group: 'approval',
       onApprove: 'secondSignoff',
       onReject: 'terminateRejected',
       onTimeout: 'terminateTimedOut',
@@ -49,58 +49,9 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
       title: 'First sign-off — author / team-lead review',
       type: 'humanApproval',
     },
-    implement: {
-      next: 'initCounters',
-      step: 'executeImplementation',
-      type: 'step',
-    },
-    incReviewRetries: {
-      next: 'storeRejection',
-      type: 'set',
-      values: { 'context.reviewRetries': { expr: 'context.reviewRetries + 1' } },
-    },
-    initCounters: {
-      next: 'setReviewing',
-      type: 'set',
-      values: {
-        'context.currentCodeResult': { from: 'nodes.implement.output' },
-        'context.reviewRetries': { literal: 0 },
-      },
-    },
-    openPR: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'savePrInfo',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
-    review: {
-      inputs: {
-        codeResult: { from: 'context.currentCodeResult' },
-        successCriteria: { from: 'context.successCriteria' },
-      },
-      next: 'checkApproval',
-      step: 'runReviewNetwork',
-      type: 'step',
-    },
-    reviewFix: {
-      inputs: {
-        previousCodeResult: { from: 'context.currentCodeResult' },
-        rejectionSummary: { from: 'context.lastRejectionSummary' },
-      },
-      next: 'updateCodeAfterReviewFix',
-      step: 'executeReviewFixImplementation',
-      type: 'step',
-    },
-    savePrInfo: {
-      next: 'waitForCI',
-      type: 'set',
-      values: {
-        'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
-        'context.prUrl': { from: 'nodes.openPR.output.prUrl' },
-      },
-    },
     secondSignoff: {
       description: 'You are a second, independent reviewer. Confirm the change is safe to merge.',
+      group: 'approval',
       onApprove: 'setAwaitingCi',
       onReject: 'terminateRejected',
       onTimeout: 'terminateTimedOut',
@@ -108,85 +59,16 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
       title: 'Second sign-off — independent reviewer',
       type: 'humanApproval',
     },
-    setAwaitingCi: {
-      config: { status: 'AWAITING_CI' },
-      next: 'openPR',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setCompleted: {
-      config: { status: 'COMPLETED' },
-      next: 'done',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setImplementing: {
-      config: { status: 'IMPLEMENTING' },
-      next: 'implement',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setReviewing: {
-      config: { status: 'IN_REVIEW' },
-      next: 'review',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    setSuccessCriteria: {
-      next: 'setImplementing',
-      type: 'set',
-      values: {
-        'context.successCriteria': { default: [], from: 'nodes.validate.output.successCriteria' },
-      },
-    },
-    setValidating: {
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    storeRejection: {
-      next: 'checkReviewLimit',
-      type: 'set',
-      values: {
-        'context.lastRejectionSummary': {
-          default: '',
-          from: 'nodes.review.output.rejectionSummary',
-        },
-      },
-    },
-    terminateCIFailed: {
-      result: { prNumber: { from: 'context.prNumber' }, prUrl: { from: 'context.prUrl' } },
-      status: 'FAILED',
-      type: 'terminate',
-    },
-    terminateCITimedOut: {
-      result: { prNumber: { from: 'context.prNumber' }, prUrl: { from: 'context.prUrl' } },
-      status: 'TIMED_OUT',
-      type: 'terminate',
-    },
-    terminateRejected: { status: 'FAILED', type: 'terminate' },
-    terminateReviewFailed: { status: 'FAILED', type: 'terminate' },
-    terminateTimedOut: { status: 'TIMED_OUT', type: 'terminate' },
-    updateCodeAfterReviewFix: {
-      next: 'setReviewing',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.reviewFix.output' } },
-    },
-    validate: {
-      next: 'setSuccessCriteria',
-      onError: 'continue',
-      step: 'validateContext',
-      type: 'step',
-    },
-    waitForCI: {
-      name: 'ciPipelineSignal',
-      onReceive: 'checkCI',
-      onTimeout: 'terminateCITimedOut',
-      storeAs: 'context.ciResultPayload',
-      timeout: '4h',
-      type: 'signal',
-    },
+    terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
+    terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),
+
+    setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
+    ...openPullRequest({ next: ciWaitEntry() }),
+    // A bare CI gate: this template does not loop on CI failures.
+    ...ciLoop({ fix: false, passed: 'setCompleted' }),
+
+    setCompleted: statusStamp('COMPLETED', 'done', { group: 'finish' }),
+    done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
   },
   schemaVersion: SPEC_SCHEMA_VERSION,
 };
