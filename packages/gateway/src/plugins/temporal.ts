@@ -894,21 +894,21 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
-    // ── Repo-access permission sweep (one system-wide Temporal Schedule) ──
-
-    async syncRepoAccessSyncSchedule(config: RepoAccessSyncScheduleConfig): Promise<void> {
-      await upsertSchedule(REPO_ACCESS_SYNC_SCHEDULE_ID, {
-        action: makeRepoAccessSyncScheduleAction(),
-        cronExpression: config.cronExpression,
-        paused: !config.enabled,
-      });
-    },
-
     // ── Provider model discovery (one system-wide Temporal Schedule) ──
 
     async syncModelDiscoverySchedule(config: ModelDiscoveryScheduleConfig): Promise<void> {
       await upsertSchedule(MODEL_DISCOVERY_SCHEDULE_ID, {
         action: makeModelDiscoveryScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Repo-access permission sweep (one system-wide Temporal Schedule) ──
+
+    async syncRepoAccessSyncSchedule(config: RepoAccessSyncScheduleConfig): Promise<void> {
+      await upsertSchedule(REPO_ACCESS_SYNC_SCHEDULE_ID, {
+        action: makeRepoAccessSyncScheduleAction(),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

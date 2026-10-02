@@ -16,9 +16,9 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   type CatalogEntryInput,
+  type ModelSuggestion,
   useCreateCatalogEntry,
   useDeleteCatalogEntry,
-  type ModelSuggestion,
   useDiscoverModels,
   useDismissSuggestion,
   useModelCatalog,

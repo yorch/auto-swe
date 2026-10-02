@@ -27,7 +27,7 @@ function fakeDb() {
   const statuses: Status[] = [];
   let seq = 0;
   const notIn = (where: { provider?: { notIn: string[] } }, provider: string) =>
-    !where.provider || !where.provider.notIn.includes(provider);
+    !where.provider?.notIn.includes(provider);
   const prisma = {
     modelDiscoveryProviderStatus: {
       deleteMany: async ({ where }: { where: { provider: { notIn: string[] } } }) => {
@@ -88,6 +88,14 @@ function fakeDb() {
   return { prisma: prisma as unknown as PrismaClient, rows, statuses };
 }
 
+function dismiss(rows: Row[], at: Date) {
+  const [row] = rows;
+  if (!row) {
+    throw new Error('no row to dismiss');
+  }
+  row.dismissedAt = at;
+}
+
 const spec = (provider: string, modelId: string): DiscoveredSpec => ({
   displayName: null,
   kind: 'CHAT',
@@ -139,7 +147,7 @@ describe('recordDiscovery', () => {
     const { prisma, rows } = fakeDb();
     await recordDiscovery(prisma, [ok('openai', ['gpt-9'])], T1);
     const dismissedAt = new Date('2026-10-01T09:00:00Z');
-    rows[0]!.dismissedAt = dismissedAt;
+    dismiss(rows, dismissedAt);
     await recordDiscovery(prisma, [ok('openai', ['gpt-9'])], T2);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ dismissedAt, firstSeenAt: T1, lastSeenAt: T2 });
@@ -176,7 +184,7 @@ describe('recordDiscovery', () => {
   it('a model that changes type starts undismissed', async () => {
     const { prisma, rows } = fakeDb();
     await recordDiscovery(prisma, [ok('openai', ['gpt-9'])], T1);
-    rows[0]!.dismissedAt = T1;
+    dismiss(rows, T1);
     await recordDiscovery(prisma, [ok('openai', [], ['gpt-9'])], T2);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({

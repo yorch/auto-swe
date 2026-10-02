@@ -92,6 +92,8 @@ export type {
   DetectRepoDependenciesResult,
 } from './detectRepoDependencies.js';
 export { detectRepoDependencies } from './detectRepoDependencies.js';
+export type { DiscoverModelsResult } from './discoverModels.js';
+export { discoverModels } from './discoverModels.js';
 export { runEvalHarnessActivity } from './evalHarness.js';
 export { revalidateDatasetActivity } from './evalRevalidate.js';
 export { executeImplementation } from './executeImplementation.js';
@@ -202,8 +204,6 @@ export {
   resolveHumanStep,
   updateDomainState,
 } from './state.js';
-export type { DiscoverModelsResult } from './discoverModels.js';
-export { discoverModels } from './discoverModels.js';
 export type { SyncRepoAccessInput, SyncRepoAccessResult } from './syncRepoAccess.js';
 export { syncRepoAccess } from './syncRepoAccess.js';
 export {

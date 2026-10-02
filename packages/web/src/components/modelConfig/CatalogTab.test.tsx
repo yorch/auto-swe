@@ -73,14 +73,15 @@ const { ENTRIES, discoverMutate, dismissMutate, mutation, suggestion } = vi.hois
     };
   }
 
-  return { ENTRIES, discoverMutate: vi.fn(), dismissMutate: vi.fn(), mutation, suggestion };
+  return { discoverMutate: vi.fn(), dismissMutate: vi.fn(), ENTRIES, mutation, suggestion };
 });
 
 vi.mock('@/hooks/useModelCatalog', () => ({
   useCreateCatalogEntry: mutation,
   useDeleteCatalogEntry: mutation,
-  useDismissSuggestion: () => ({ isPending: false, mutate: dismissMutate }),
   useDiscoverModels: () => ({ error: null, isPending: false, mutate: discoverMutate }),
+  useDismissSuggestion: () => ({ isPending: false, mutate: dismissMutate }),
+  useModelCatalog: () => ({ data: ENTRIES, error: null, isError: false, isLoading: false }),
   useModelSuggestions: () => ({
     data: {
       providers: [
@@ -117,7 +118,6 @@ vi.mock('@/hooks/useModelCatalog', () => ({
     },
     error: null,
   }),
-  useModelCatalog: () => ({ data: ENTRIES, error: null, isError: false, isLoading: false }),
   useResetCatalogEntry: mutation,
   useUnpricedModels: () => ({
     data: [{ spec: 'openai/gpt-5-5', suggestion: 'openai/gpt-5.5', usedBy: ['agent:reviewer'] }],

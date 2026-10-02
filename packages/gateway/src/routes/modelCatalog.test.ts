@@ -77,11 +77,11 @@ function seedSuggestions() {
     { ...base, id: 'b', modelId: 'claude-opus-5-5', provider: 'anthropic', type: 'NEW' },
     {
       ...base,
+      dismissedAt: new Date(),
       id: 'c',
       modelId: 'old-1',
       provider: 'openai',
       type: 'NEW',
-      dismissedAt: new Date(),
     },
   ];
 }
@@ -95,28 +95,6 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     agentTrace: { findMany: vi.fn().mockResolvedValue([{ model: 'openai/gpt-5-5' }]) },
     configAuditLog: { create: audit },
     embeddingConfig: { findUnique: vi.fn().mockResolvedValue(null) },
-    modelDiscoveryProviderStatus: {
-      findMany: vi
-        .fn()
-        .mockResolvedValue([
-          { checkedAt: new Date(), error: 'HTTP 401', lastSuccessAt: null, provider: 'anthropic' },
-        ]),
-    },
-    modelSuggestion: {
-      findMany: vi.fn(async ({ where }: { where: { dismissedAt?: null } }) =>
-        suggestions.filter((r) => !('dismissedAt' in where) || r.dismissedAt === null)
-      ),
-      update: vi.fn(
-        async ({ data, where }: { data: { dismissedAt: Date | null }; where: { id: string } }) => {
-          const row = suggestions.find((r) => r.id === where.id);
-          if (!row) {
-            throw Object.assign(new Error('not found'), { code: 'P2025' });
-          }
-          row.dismissedAt = data.dismissedAt;
-          return { ...row };
-        }
-      ),
-    },
     modelCatalogEntry: {
       create: vi.fn(
         async ({ data }: { data: Omit<Row, 'id' | 'kind' | 'status'> & Partial<Row> }) => {
@@ -154,6 +132,28 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
         Object.assign(row ?? {}, data);
         return { ...row };
       }),
+    },
+    modelDiscoveryProviderStatus: {
+      findMany: vi
+        .fn()
+        .mockResolvedValue([
+          { checkedAt: new Date(), error: 'HTTP 401', lastSuccessAt: null, provider: 'anthropic' },
+        ]),
+    },
+    modelSuggestion: {
+      findMany: vi.fn(async ({ where }: { where: { dismissedAt?: null } }) =>
+        suggestions.filter((r) => !('dismissedAt' in where) || r.dismissedAt === null)
+      ),
+      update: vi.fn(
+        async ({ data, where }: { data: { dismissedAt: Date | null }; where: { id: string } }) => {
+          const row = suggestions.find((r) => r.id === where.id);
+          if (!row) {
+            throw Object.assign(new Error('not found'), { code: 'P2025' });
+          }
+          row.dismissedAt = data.dismissedAt;
+          return { ...row };
+        }
+      ),
     },
   };
   const app = Fastify();
