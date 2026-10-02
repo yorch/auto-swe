@@ -11,6 +11,7 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { isOkResponse, probeGateway } from '@/hooks/useGatewayStatus';
 import { api } from '@/lib/api';
+import { describeAuthError } from '@/lib/authErrors';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
 import { resolveLoginTab } from '@/lib/loginTab';
@@ -145,7 +146,8 @@ function LoginPageInner() {
   const gatewayDown = gateway === 'down';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  // A failed OAuth callback returns here as ?error=<code> (see errorCallbackURL in authStore).
+  const [error, setError] = useState(() => describeAuthError(searchParams.get('error')) ?? '');
   const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
   // Set after hydrate when the resolved user has isActive=false. Renders
