@@ -11,6 +11,7 @@ import { assertWorkspaceInfraEnv, resolveWorkspaceInfra } from '@auto-swe/shared
 import { assertBuiltinStepsRegistered } from '@auto-swe/shared/workflow';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
+import { activityNodeTagInterceptor } from './lib/activityNodeTag.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
 import { ignoredPriceOverrideVars } from './lib/costTracking.js';
@@ -84,12 +85,21 @@ async function run() {
   const workflowsTs = path.resolve(__dirname, './workflows/index.ts');
   const workflowsJs = path.resolve(__dirname, './workflows/index.js');
   const workflowsPath = existsSync(workflowsTs) ? workflowsTs : workflowsJs;
+  // Same dev/prod split for the workflow interceptor that stamps each dispatched
+  // activity with its spec node (see workflows/nodeTagInterceptor.ts).
+  const nodeTagTs = path.resolve(__dirname, './workflows/nodeTagInterceptor.ts');
+  const nodeTagJs = path.resolve(__dirname, './workflows/nodeTagInterceptor.js');
+  const nodeTagInterceptorPath = existsSync(nodeTagTs) ? nodeTagTs : nodeTagJs;
 
   const worker = await Worker.create({
     activities,
     connection,
     // One span + duration sample per activity attempt; see lib/activitySpans.ts.
-    interceptors: { activity: [activitySpanInterceptor] },
+    // The node-tag pair attributes AgentTrace rows to the spec node that ran them.
+    interceptors: {
+      activity: [activitySpanInterceptor, activityNodeTagInterceptor],
+      workflowModules: [nodeTagInterceptorPath],
+    },
     // Most activities hold a Docker workspace (clone + container) — an
     // explicit cap keeps a burst of workflows from exhausting the Docker
     // host. The Temporal default (100) is far past what one host can serve.

@@ -1,4 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
+import type { NodeTag } from '../workflows/nodeTag.js';
+import { nodeTagColumns } from './activityNodeTag.js';
 
 // Raised from 4 KB — a single bash output or file read commonly exceeds the
 // old limit and was silently destroyed. 32 KB preserves almost all real
@@ -201,14 +203,18 @@ export class AgentTracer {
     ids: { runId: string | undefined; workflowId: string },
     nodeId: string,
     agentKey: string,
-    attempt = 1
+    attempt = 1,
+    /** The spec node the activity was dispatched for; absent outside the interpreter. */
+    nodeTag?: NodeTag
   ): Promise<void> {
     if (this.records.length === 0) {
       return;
     }
+    const node = nodeTagColumns(nodeTag);
     try {
       await prisma.agentTrace.createMany({
         data: this.records.map((r) => ({
+          ...node,
           agentKey,
           attempt,
           costUsd: r.costUsd ?? null,

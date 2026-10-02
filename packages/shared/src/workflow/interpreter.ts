@@ -128,6 +128,15 @@ export interface Dispatcher {
     config: Record<string, unknown>;
     inputs: Record<string, unknown>;
     ctx: Context;
+    /**
+     * The node's key in `spec.nodes`. `nodeId` above is the recording id, which a
+     * fan-out branch prefixes (`fan[0]/impl`); this is always the bare key. A
+     * dispatcher that tags what the activity produces (trace attribution) needs
+     * both: the key says which node, the recording id says which branch.
+     */
+    specNodeId?: string;
+    /** 1-based interpreter attempt for this node (`onFail.retry` re-dispatches). */
+    stepAttempt?: number;
     cancellation?: { token?: CancellationToken };
   }): Promise<unknown>;
 
@@ -146,6 +155,15 @@ export interface Dispatcher {
     node: ShellNode;
     inputs: Record<string, unknown>;
     ctx: Context;
+    /**
+     * The node's key in `spec.nodes`. `nodeId` above is the recording id, which a
+     * fan-out branch prefixes (`fan[0]/impl`); this is always the bare key. A
+     * dispatcher that tags what the activity produces (trace attribution) needs
+     * both: the key says which node, the recording id says which branch.
+     */
+    specNodeId?: string;
+    /** 1-based interpreter attempt for this node (`onFail.retry` re-dispatches). */
+    stepAttempt?: number;
     cancellation?: { token?: CancellationToken };
   }): Promise<unknown>;
 
@@ -551,14 +569,16 @@ async function runStep(
     ctx,
     dispatcher,
     inputs,
-    invoke: () =>
+    invoke: (stepAttempt) =>
       dispatcher.dispatchStep({
         ...(cancellationSink ? { cancellation: cancellationSink } : {}),
         config,
         ctx,
         inputs,
         nodeId,
+        specNodeId,
         step: node.step,
+        stepAttempt,
       }),
     next: node.next,
     nodeId,
@@ -604,14 +624,16 @@ async function runAgentNode(
     ctx,
     dispatcher,
     inputs,
-    invoke: () =>
+    invoke: (stepAttempt) =>
       dispatcher.dispatchStep({
         ...(cancellationSink ? { cancellation: cancellationSink } : {}),
         config,
         ctx,
         inputs,
         nodeId,
+        specNodeId,
         step: 'runAgentNode',
+        stepAttempt,
       }),
     next: node.next,
     nodeId,
@@ -651,14 +673,16 @@ async function runEvalNode(
     ctx,
     dispatcher,
     inputs,
-    invoke: () =>
+    invoke: (stepAttempt) =>
       dispatcher.dispatchStep({
         ...(cancellationSink ? { cancellation: cancellationSink } : {}),
         config,
         ctx,
         inputs,
         nodeId,
+        specNodeId,
         step: 'runEvalNode',
+        stepAttempt,
       }),
     next: node.next,
     nodeId,
@@ -690,14 +714,16 @@ async function runMcpNode(
     ctx,
     dispatcher,
     inputs,
-    invoke: () =>
+    invoke: (stepAttempt) =>
       dispatcher.dispatchStep({
         ...(cancellationSink ? { cancellation: cancellationSink } : {}),
         config,
         ctx,
         inputs,
         nodeId,
+        specNodeId,
         step: 'mcpCallTool',
+        stepAttempt,
       }),
     next: node.next,
     nodeId,
@@ -746,14 +772,16 @@ async function runContainerStep(
     ctx,
     dispatcher,
     inputs,
-    invoke: () =>
+    invoke: (stepAttempt) =>
       dispatcher.dispatchStep({
         ...(cancellationSink ? { cancellation: cancellationSink } : {}),
         config,
         ctx,
         inputs,
         nodeId,
+        specNodeId,
         step: 'runContainerStep',
+        stepAttempt,
       }),
     next: node.next,
     nodeId,
@@ -783,13 +811,15 @@ async function runShell(
     ctx,
     dispatcher,
     inputs,
-    invoke: () =>
+    invoke: (stepAttempt) =>
       dispatchShell({
         ...(cancellationSink ? { cancellation: cancellationSink } : {}),
         ctx,
         inputs,
         node,
         nodeId,
+        specNodeId,
+        stepAttempt,
       }),
     next: node.next,
     nodeId,
@@ -831,7 +861,7 @@ async function runRetryable(args: {
   specNodeId: string;
   inputs: Record<string, unknown>;
   ctx: Context;
-  invoke: () => Promise<unknown>;
+  invoke: (stepAttempt: number) => Promise<unknown>;
   next: string | undefined;
   onFail: StepNode['onFail'];
   onError: StepNode['onError'];
@@ -872,7 +902,7 @@ async function runRetryable(args: {
       throw cancelled;
     }
     try {
-      const output = await invoke();
+      const output = await invoke(attempt);
 
       if (isGateFailure(output)) {
         lastOutput = output;

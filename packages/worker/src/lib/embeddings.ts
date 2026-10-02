@@ -4,6 +4,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { embed } from 'ai';
 import { currentActivityType, currentAttempt, currentWorkflowId } from './activityContext.js';
+import { currentNodeTag, nodeTagColumns } from './activityNodeTag.js';
 import { resolveEmbeddingConfig } from './config/resolver.js';
 import { calculateCostUsd } from './costTracking.js';
 import { recordLlmCallMetrics } from './metrics.js';
@@ -161,6 +162,7 @@ async function recordEmbeddingUsage(
     });
     await prisma.agentTrace.create({
       data: {
+        ...nodeTagColumns(currentNodeTag()),
         agentKey: EMBEDDING_AGENT_KEY,
         attempt,
         costUsd,

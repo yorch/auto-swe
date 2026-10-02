@@ -29,6 +29,8 @@ import {
   runSpec,
   SignalSlots,
 } from '../lib/workflowEngine.js';
+import type { NodeTag } from './nodeTag.js';
+import { runWithNodeTag } from './nodeTagScope.js';
 import {
   RETRY_AGENT,
   RETRY_LLM_LIGHT,
@@ -361,23 +363,38 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   // when one branch fails, which aborts the underlying Temporal activity
   // instead of letting it drain.
   const dispatcher: Dispatcher = {
-    async dispatchShell({ node, inputs, cancellation }) {
-      return runWithCancellation(cancellation, () =>
-        shellActivities.runShellStep({
-          ...(typeof node.cpus === 'number' ? { cpus: node.cpus } : {}),
-          ...(node.memory ? { memory: node.memory } : {}),
-          ...(node.network ? { network: node.network } : {}),
-          ...(typeof node.timeoutMs === 'number' ? { timeoutMs: node.timeoutMs } : {}),
-          ...(typeof inputs.branch === 'string' ? { branch: inputs.branch } : {}),
-          command: typeof inputs.command === 'string' ? inputs.command : node.command,
-          image: typeof inputs.image === 'string' ? inputs.image : node.image,
-          request: input.request,
-        })
+    async dispatchShell({ node, inputs, cancellation, nodeId, specNodeId, stepAttempt }) {
+      return runWithNodeTag(nodeTagOf(nodeId, specNodeId, stepAttempt), () =>
+        runWithCancellation(cancellation, () =>
+          shellActivities.runShellStep({
+            ...(typeof node.cpus === 'number' ? { cpus: node.cpus } : {}),
+            ...(node.memory ? { memory: node.memory } : {}),
+            ...(node.network ? { network: node.network } : {}),
+            ...(typeof node.timeoutMs === 'number' ? { timeoutMs: node.timeoutMs } : {}),
+            ...(typeof inputs.branch === 'string' ? { branch: inputs.branch } : {}),
+            command: typeof inputs.command === 'string' ? inputs.command : node.command,
+            image: typeof inputs.image === 'string' ? inputs.image : node.image,
+            request: input.request,
+          })
+        )
       );
     },
-    async dispatchStep({ step, ctx, inputs, config, cancellation }) {
-      return runWithCancellation(cancellation, () =>
-        dispatchStepImpl(step, ctx, input.request, config, inputs)
+    async dispatchStep({
+      step,
+      ctx,
+      inputs,
+      config,
+      cancellation,
+      nodeId,
+      specNodeId,
+      stepAttempt,
+    }) {
+      // Tag the activity this dispatch schedules with the node it runs for; the
+      // outbound interceptor (nodeTagInterceptor.ts) turns it into a header.
+      return runWithNodeTag(nodeTagOf(nodeId, specNodeId, stepAttempt), () =>
+        runWithCancellation(cancellation, () =>
+          dispatchStepImpl(step, ctx, input.request, config, inputs)
+        )
       );
     },
     drainSteering() {
@@ -1045,6 +1062,17 @@ function resolveMergeBindings(
     throw new Error(`${step}: inputs.sourceBranches must be a string[]`);
   }
   return { sourceBranches: raw as string[], targetBranch };
+}
+
+/** The attribution for one dispatch; undefined for a dispatcher caller that supplies no spec node. */
+function nodeTagOf(
+  recordingId: string,
+  specNodeId: string | undefined,
+  stepAttempt: number | undefined
+): NodeTag | undefined {
+  return specNodeId === undefined
+    ? undefined
+    : { recordingId, specNodeId, stepAttempt: stepAttempt ?? 1 };
 }
 
 /**

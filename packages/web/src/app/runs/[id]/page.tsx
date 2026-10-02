@@ -37,6 +37,12 @@ import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
+import {
+  buildTraceLinker,
+  specNodeIdOfRecording,
+  type TraceLinker,
+  traceBelongsToStep,
+} from '@/lib/traceLinkage';
 import { cn, formatClock, formatDuration, formatRelativeTime } from '@/lib/utils';
 import { SplitRunPanel } from './SplitRunPanel';
 import { TracesTab } from './TracesTab';
@@ -55,7 +61,7 @@ const CONSOLE_MODE_OPTIONS: SegmentedOption<'split' | 'stream'>[] = [
 // ── Direction A — Split Console ────────────────────────────────────────────────
 
 function LayoutA({
-  activityToNodeId,
+  linker,
   dagOverlay,
   failedStep,
   onJumpToFailure,
@@ -67,7 +73,7 @@ function LayoutA({
   traces,
   pendingSteps,
 }: {
-  activityToNodeId: Record<string, string>;
+  linker: TraceLinker;
   dagOverlay: { byNodeId: Record<string, { status: string; attempt: number }> } | undefined;
   failedStep: WorkflowStepRecord | null;
   onJumpToFailure: () => void;
@@ -106,7 +112,7 @@ function LayoutA({
             <WorkflowDag
               height="100%"
               onSelect={setSelectedNodeId}
-              selectedNodeId={selectedNodeId}
+              selectedNodeId={selectedNodeId ? specNodeIdOfRecording(selectedNodeId, linker) : null}
               spec={spec}
               statuses={dagOverlay}
             />
@@ -149,7 +155,7 @@ function LayoutA({
             )}
             {consoleMode === 'split' ? (
               <SplitRunPanel
-                activityToNodeId={activityToNodeId}
+                linker={linker}
                 onSelectNode={setSelectedNodeId}
                 selectedNodeId={selectedNodeId}
                 steps={run.steps}
@@ -158,8 +164,8 @@ function LayoutA({
             ) : (
               <div className="h-full overflow-y-auto">
                 <TracesTab
-                  activityToNodeId={activityToNodeId}
                   filterNodeId={selectedNodeId}
+                  linker={linker}
                   onClearFilter={() => setSelectedNodeId(null)}
                   traces={traces}
                 />
@@ -240,14 +246,14 @@ function StepSpine({
 }
 
 function LayoutB({
-  activityToNodeId,
+  linker,
   failedStep,
   onJumpToFailure,
   onReRun,
   run,
   traces,
 }: {
-  activityToNodeId: Record<string, string>;
+  linker: TraceLinker;
   failedStep: WorkflowStepRecord | null;
   onJumpToFailure: () => void;
   onReRun?: () => void;
@@ -286,7 +292,7 @@ function LayoutB({
 
         {/* Steps as narrative sections */}
         {run.steps.map((step: WorkflowStepRecord, i: number) => {
-          const stepTraces = traces.filter((t) => activityToNodeId[t.nodeId] === step.nodeId);
+          const stepTraces = traces.filter((t) => traceBelongsToStep(t, step, linker));
           const isFailedStep = step.status === 'FAILED';
 
           return (
@@ -349,11 +355,12 @@ function LayoutB({
               {stepTraces.length > 0 && (
                 <div className="rounded border border-ink-600/40 bg-ink-700">
                   <TracesTab
-                    activityToNodeId={activityToNodeId}
                     compact
-                    filterNodeId={step.nodeId}
+                    filterNodeId={null}
+                    linker={linker}
                     onClearFilter={() => {}}
-                    traces={traces}
+                    traces={stepTraces}
+                    untaggedAmbiguous={step.nodeId !== specNodeIdOfRecording(step.nodeId, linker)}
                   />
                 </div>
               )}
@@ -440,7 +447,7 @@ function WaterfallBar({
 }
 
 function LayoutC({
-  activityToNodeId,
+  linker,
   dagOverlay,
   failedStep,
   onJumpToFailure,
@@ -449,7 +456,7 @@ function LayoutC({
   spec,
   traces,
 }: {
-  activityToNodeId: Record<string, string>;
+  linker: TraceLinker;
   dagOverlay: { byNodeId: Record<string, { status: string; attempt: number }> } | undefined;
   failedStep: WorkflowStepRecord | null;
   onJumpToFailure: () => void;
@@ -657,8 +664,8 @@ function LayoutC({
             </div>
             <div className="flex-1 overflow-y-auto" ref={feedRef}>
               <TracesTab
-                activityToNodeId={activityToNodeId}
                 filterNodeId={null}
+                linker={linker}
                 onClearFilter={() => {}}
                 traces={visibleTraces}
               />
@@ -672,7 +679,9 @@ function LayoutC({
             <WorkflowDag
               height="100%"
               onSelect={() => {}}
-              selectedNodeId={currentStepName}
+              selectedNodeId={
+                currentStepName ? specNodeIdOfRecording(currentStepName, linker) : null
+              }
               spec={spec}
               statuses={dagOverlay}
             />
@@ -743,18 +752,7 @@ export default function RunDetailPage({ params }: PageProps) {
     }
   }, [run?.specSnapshot]);
 
-  const activityToNodeId = useMemo<Record<string, string>>(() => {
-    if (!spec?.nodes) {
-      return {};
-    }
-    const map: Record<string, string> = {};
-    for (const [nodeId, node] of Object.entries(spec.nodes)) {
-      if (node.type === 'step' && node.step) {
-        map[node.step] = nodeId;
-      }
-    }
-    return map;
-  }, [spec]);
+  const linker = useMemo(() => buildTraceLinker(spec), [spec]);
 
   const securityEvents = useMemo<SecurityEvent[]>(
     () =>
@@ -930,9 +928,9 @@ export default function RunDetailPage({ params }: PageProps) {
       <div className="flex-1 flex overflow-hidden" ref={traceAnchorRef}>
         {layout === 'A' && (
           <LayoutA
-            activityToNodeId={activityToNodeId}
             dagOverlay={dagOverlay}
             failedStep={failedStep}
+            linker={linker}
             onJumpToFailure={handleJumpToFailure}
             onReRun={failureCardReRun}
             pendingSteps={pendingSteps}
@@ -945,8 +943,8 @@ export default function RunDetailPage({ params }: PageProps) {
         )}
         {layout === 'B' && (
           <LayoutB
-            activityToNodeId={activityToNodeId}
             failedStep={failedStep}
+            linker={linker}
             onJumpToFailure={handleJumpToFailure}
             onReRun={failureCardReRun}
             run={run}
@@ -955,9 +953,9 @@ export default function RunDetailPage({ params }: PageProps) {
         )}
         {layout === 'C' && (
           <LayoutC
-            activityToNodeId={activityToNodeId}
             dagOverlay={dagOverlay}
             failedStep={failedStep}
+            linker={linker}
             onJumpToFailure={handleJumpToFailure}
             onReRun={failureCardReRun}
             run={run}

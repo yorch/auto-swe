@@ -1,10 +1,11 @@
 'use client';
 
 import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
-import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useId, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { attributeTrace, type TraceLinker, traceMatchesSelection } from '@/lib/traceLinkage';
 import { cn, formatCount, formatDuration, formatTokens } from '@/lib/utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -492,24 +493,39 @@ function TraceEventList({
 
 interface TraceGroup {
   activityName: string;
-  dagNodeId: string | null;
+  /** What the group is attributed to: a recording id when recorded, else the candidate node ids. */
+  nodeLabels: string[];
+  /** Fan-out branch path (`fan[0]`) when the execution was recorded inside one. */
+  branch: string | null;
+  /** Inferred from the activity name rather than recorded; the node may be another candidate. */
+  ambiguous: boolean;
   attempt: number;
+  stepAttempt: number | null;
   traces: AgentTraceRecord[];
+}
+
+interface TraceSection {
+  branch: string | null;
+  groups: TraceGroup[];
 }
 
 export function TracesTab({
   traces,
   filterNodeId,
-  activityToNodeId,
+  linker,
   onClearFilter,
   compact = false,
+  untaggedAmbiguous = false,
 }: {
   traces: AgentTraceRecord[];
   filterNodeId: string | null;
-  activityToNodeId: Record<string, string>;
+  linker: TraceLinker;
   onClearFilter: () => void;
   compact?: boolean;
+  /** The traces were picked for one branch execution, which an untagged trace cannot confirm. */
+  untaggedAmbiguous?: boolean;
 }) {
+  const noteId = useId();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const handleToggle = useCallback(
     (id: string) => setExpandedId((prev) => (prev === id ? null : id)),
@@ -518,26 +534,52 @@ export function TracesTab({
 
   const filtered = useMemo(
     () =>
-      filterNodeId ? traces.filter((t) => activityToNodeId[t.nodeId] === filterNodeId) : traces,
-    [traces, filterNodeId, activityToNodeId]
+      filterNodeId ? traces.filter((t) => traceMatchesSelection(t, filterNodeId, linker)) : traces,
+    [traces, filterNodeId, linker]
   );
 
-  const groups = useMemo<TraceGroup[]>(() => {
-    const seen = new Map<string, TraceGroup>();
+  // A recording-id selection names one branch; an old trace cannot say which.
+  const selectionNamesBranch =
+    filterNodeId !== null && !linker.specNodeIds.has(filterNodeId) && filterNodeId.includes('[');
+
+  const sections = useMemo<TraceSection[]>(() => {
+    const groups = new Map<string, TraceGroup>();
     for (const t of filtered) {
-      const key = `${t.nodeId}::${t.attempt}`;
-      if (!seen.has(key)) {
-        seen.set(key, {
+      const at = attributeTrace(t, linker);
+      const key = `${at.recordingId ?? t.nodeId}::${t.stepAttempt ?? ''}::${t.attempt}`;
+      let group = groups.get(key);
+      if (!group) {
+        group = {
           activityName: t.nodeId,
+          ambiguous:
+            at.ambiguous ||
+            (!at.exact && (selectionNamesBranch || untaggedAmbiguous) && at.candidates.length > 0),
           attempt: t.attempt,
-          dagNodeId: activityToNodeId[t.nodeId] ?? null,
+          branch: at.branch,
+          nodeLabels: at.recordingId ? [at.recordingId] : [...at.candidates],
+          stepAttempt: t.stepAttempt,
           traces: [],
-        });
+        };
+        groups.set(key, group);
       }
-      seen.get(key)?.traces.push(t);
+      group.traces.push(t);
     }
-    return [...seen.values()];
-  }, [filtered, activityToNodeId]);
+    // Branches in first-seen order, each holding its groups in first-seen order.
+    const bySection = new Map<string, TraceSection>();
+    for (const group of groups.values()) {
+      const key = group.branch ?? '';
+      let section = bySection.get(key);
+      if (!section) {
+        section = { branch: group.branch, groups: [] };
+        bySection.set(key, section);
+      }
+      section.groups.push(group);
+    }
+    return [...bySection.values()];
+  }, [filtered, linker, selectionNamesBranch, untaggedAmbiguous]);
+
+  const showBranchHeaders = sections.some((s) => s.branch !== null);
+  const anyAmbiguous = sections.some((sec) => sec.groups.some((g) => g.ambiguous));
 
   if (traces.length === 0) {
     return <EmptyState className="py-12" title="No trace events recorded for this run." />;
@@ -563,6 +605,13 @@ export function TracesTab({
         </div>
       )}
 
+      {anyAmbiguous && (
+        <p className="border-ink-600/40 border-b px-4 py-2 text-[11px] text-amber-400" id={noteId}>
+          Traces marked ambiguous were recorded before traces named their node. They are matched by
+          activity name, so they may belong to another node or fan-out branch.
+        </p>
+      )}
+
       {filtered.length === 0 ? (
         <EmptyState
           action={
@@ -581,36 +630,68 @@ export function TracesTab({
         />
       ) : (
         <div className="divide-y divide-ink-600/30">
-          {groups.map((group) => (
-            <div key={`${group.activityName}-${group.attempt}`}>
-              {/* Group header */}
-              <div
-                className={cn(
-                  'sticky z-[5] flex items-center gap-2 bg-ink-800 px-4 py-2',
-                  !compact && filterNodeId ? 'top-[33px]' : 'top-0'
-                )}
-              >
-                <span className="font-mono text-[11px] font-medium text-paper-200">
-                  {group.dagNodeId ?? group.activityName}
-                </span>
-                {group.dagNodeId && group.dagNodeId !== group.activityName && (
-                  <span className="font-mono text-[10px] text-paper-600">
-                    ({group.activityName})
-                  </span>
-                )}
-                <span className="font-mono text-[10px] text-paper-600">
-                  attempt {group.attempt}
-                </span>
-                <span className="ml-auto font-mono text-[10px] text-paper-600">
-                  {group.traces.length} event{group.traces.length !== 1 ? 's' : ''}
-                </span>
-              </div>
-              <div className="py-0.5">
-                <TraceEventList
-                  expandedId={expandedId}
-                  onToggle={handleToggle}
-                  traces={group.traces}
-                />
+          {sections.map((section) => (
+            <div key={section.branch ?? 'no-branch'}>
+              {showBranchHeaders && section.branch !== null && (
+                <div
+                  className="border-ink-600/40 border-y bg-ink-900 px-4 py-1.5 font-mono text-[10px] text-ember-300 uppercase tracking-wider"
+                  data-testid="trace-branch"
+                >
+                  Branch {section.branch}
+                </div>
+              )}
+              <div className="divide-y divide-ink-600/30">
+                {section.groups.map((group) => (
+                  <div
+                    key={`${group.nodeLabels.join('|')}-${group.activityName}-${group.stepAttempt}-${group.attempt}`}
+                  >
+                    {/* Group header */}
+                    <div
+                      className={cn(
+                        'sticky z-[5] flex items-center gap-2 bg-ink-800 px-4 py-2',
+                        !compact && filterNodeId ? 'top-[33px]' : 'top-0'
+                      )}
+                    >
+                      <span className="font-mono text-[11px] font-medium text-paper-200">
+                        {group.nodeLabels.length > 0
+                          ? group.nodeLabels.join(' | ')
+                          : group.activityName}
+                      </span>
+                      {group.nodeLabels.length > 0 &&
+                        !group.nodeLabels.includes(group.activityName) && (
+                          <span className="font-mono text-[10px] text-paper-600">
+                            ({group.activityName})
+                          </span>
+                        )}
+                      {group.ambiguous && (
+                        <span
+                          aria-describedby={noteId}
+                          className="rounded-[5px] bg-amber-400/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-400"
+                        >
+                          ambiguous
+                        </span>
+                      )}
+                      <span className="font-mono text-[10px] text-paper-600">
+                        attempt {group.attempt}
+                      </span>
+                      {group.stepAttempt !== null && group.stepAttempt > 1 && (
+                        <span className="font-mono text-[10px] text-paper-600">
+                          · node attempt {group.stepAttempt}
+                        </span>
+                      )}
+                      <span className="ml-auto font-mono text-[10px] text-paper-600">
+                        {group.traces.length} event{group.traces.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div className="py-0.5">
+                      <TraceEventList
+                        expandedId={expandedId}
+                        onToggle={handleToggle}
+                        traces={group.traces}
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ))}
