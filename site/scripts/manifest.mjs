@@ -12,6 +12,12 @@
 export const BASE = '/auto-swe';
 export const REPO_URL = 'https://github.com/yorch/auto-swe';
 
+/** Standalone code-grounded HTML, generated into public/ rather than a docs page. */
+export const PLATFORM_EXPLORER = {
+  label: 'Interactive platform explorer',
+  slug: 'platform-explorer',
+};
+
 /**
  * The ref that GitHub fallback links point at.
  *

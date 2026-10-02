@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import starlight from '@astrojs/starlight';
 import { defineConfig } from 'astro/config';
 import mermaid from 'astro-mermaid';
-import { BASE, REPO_URL, SIDEBAR } from './scripts/manifest.mjs';
+import { BASE, PLATFORM_EXPLORER, REPO_URL, SIDEBAR } from './scripts/manifest.mjs';
 import { useCaseSidebar } from './scripts/useCases.mjs';
 
 /**
@@ -14,6 +14,11 @@ const sidebar = SIDEBAR.map((group) => ({
   items: group.slugs.map((slug) => ({ slug })),
   label: group.label,
 }));
+sidebar[0].items.splice(3, 0, {
+  label: PLATFORM_EXPLORER.label,
+  // Starlight prefixes BASE itself; landing-page URLs use siteUrl instead.
+  link: `/${PLATFORM_EXPLORER.slug}/`,
+});
 sidebar.splice(1, 0, { items: useCaseSidebar(), label: 'Use cases' });
 
 /**

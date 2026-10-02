@@ -6,8 +6,9 @@
   "type": "module",
   "scripts": {
     "sync": "tsx scripts/syncDocs.mjs",
+    "explorer:review": "tsx scripts/reviewPlatformExplorer.mjs",
     "dev": "yarn sync && astro dev",
-    "build": "yarn sync && astro build",
+    "build": "yarn sync && astro build && node scripts/verifyPlatformExplorer.mjs",
     "preview": "astro preview"
   },
   "dependencies": {

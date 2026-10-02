@@ -9,7 +9,9 @@ on:
     paths:
       - 'docs/**'
       - 'README.md'
-      - 'packages/cli/README.md'
+      # Explorer inventories/evidence are derived from package source, not only docs.
+      - 'packages/**'
+      - 'docker-compose.app.yml'
       - 'site/**'
       - '.github/workflows/pages.yml'
       - 'yarn.lock'
