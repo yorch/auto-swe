@@ -346,8 +346,8 @@ a file in the container, because it travels on a command line capped at 128 KiB 
 
 **Usage.** The harness reports usage per model as running totals, and a resumed session starts from
 its saved totals, so a turn records the change since the last. Each model is priced at its own spec
-(a harness may delegate small tasks to a cheaper model), and cache reads and writes count as input
-tokens.
+(a harness may delegate small tasks to a cheaper model). Cache reads and writes count as input
+tokens toward the budget and are priced at the model's cache rates.
 
 **Sessions and cleanup.** Turns after the first resume the same session, so a TDD loop keeps its
 context and prompt cache. Every process the harness starts carries the exec tag
@@ -734,7 +734,7 @@ Writes cut a new immutable `version`.
   `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
   evade them.
 - **Harness usage is metered conservatively and priced by the model it names.** Cache reads and
-  writes count as input tokens, which overstates cost and never understates it. The budget is
+  writes count in full against the token budget, though they are priced at the cache rates. The budget is
   checked before a turn and accrued after it, so one turn can overshoot by up to its step budget; the
   SDK's own cost cap is not used because it is a client-side estimate. A model the harness picks that
   has no catalog price records $0 with a warning; the organization-USD-cap guard checks only the

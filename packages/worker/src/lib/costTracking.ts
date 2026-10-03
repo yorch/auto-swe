@@ -1,6 +1,11 @@
 import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
-import { BUILTIN_MODELS, builtinModelSpec } from '@auto-swe/shared/lib/builtinModels';
+import {
+  BUILTIN_MODELS,
+  builtinModelSpec,
+  type CacheMultipliers,
+  cacheMultipliers,
+} from '@auto-swe/shared/lib/builtinModels';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { type Span, trace } from '@opentelemetry/api';
@@ -180,13 +185,46 @@ export async function calculateCostUsd(
   return costFromPrice((await getModelPrice(modelSpec)).price, inputTokens, outputTokens);
 }
 
-function costFromPrice(price: ModelPrice, inputTokens: number, outputTokens: number): number {
-  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
+function costFromPrice(
+  price: ModelPrice,
+  inputTokens: number,
+  outputTokens: number,
+  cache: { read: number; write: number; rates: CacheMultipliers } = {
+    rates: { read: 1, write: 1 },
+    read: 0,
+    write: 0,
+  }
+): number {
+  // `inputTokens` is the provider's total, cached input included (the AI SDK's
+  // v3 usage shape). Clamped so a provider that reports cache tokens outside
+  // that total is costed at no less than its plain input.
+  const read = Math.min(cache.read, inputTokens);
+  const write = Math.min(cache.write, inputTokens - read);
+  const uncached = inputTokens - read - write;
+  const inputCost = (uncached + read * cache.rates.read + write * cache.rates.write) * price.input;
+  return (inputCost + outputTokens * price.output) / 1_000_000;
 }
 
 export interface TokenUsage {
+  /** Total input tokens, including any read from or written to the prompt cache. */
   inputTokens: number | undefined;
   outputTokens: number | undefined;
+  /** Of `inputTokens`, how many were read from the prompt cache (Mastra's usage shape). */
+  cachedInputTokens?: number;
+  /** Of `inputTokens`, how many were written to the prompt cache (Mastra's usage shape). */
+  cacheCreationInputTokens?: number;
+  /** The AI SDK's own shape for the same two counts. */
+  inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+}
+
+/** Cache read/write counts from either usage shape; 0 when the provider reported none. */
+export function cacheTokens(usage: TokenUsage): { read: number; write: number } {
+  const count = (n: number | undefined) =>
+    Number.isFinite(n) && (n as number) > 0 ? (n as number) : 0;
+  return {
+    read: count(usage.cachedInputTokens ?? usage.inputTokenDetails?.cacheReadTokens),
+    write: count(usage.cacheCreationInputTokens ?? usage.inputTokenDetails?.cacheWriteTokens),
+  };
 }
 
 /**
@@ -398,7 +436,11 @@ export async function recordLlmUsage(
   // they're available for the fallback return path (no workflow found).
   const inputTokens = usage.inputTokens ?? 0;
   const outputTokens = usage.outputTokens ?? 0;
-  const callCost = costFromPrice(price, inputTokens, outputTokens);
+  const cache = cacheTokens(usage);
+  const callCost = costFromPrice(price, inputTokens, outputTokens, {
+    ...cache,
+    rates: cacheMultipliers(modelSpec),
+  });
   // Before the ledger: a call with no ledger row (channel, PRD, authoring) was
   // still made and paid for.
   recordLlmCallMetrics({
@@ -421,6 +463,8 @@ export async function recordLlmUsage(
         // is touched: a run with no ledger row (channel, PRD, authoring) still
         // spent tokens, and its span should say so.
         span.setAttributes({
+          'llm.cache_read_tokens': cache.read,
+          'llm.cache_write_tokens': cache.write,
           'llm.cost_price_source': source,
           'llm.cost_pricing_known': known,
           'llm.cost_usd': callCost,

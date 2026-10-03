@@ -92,6 +92,15 @@ skipped. The worker reads the catalog once per config-cache window, so an edit l
 If the catalog cannot be read, pricing uses the last good read, else the built-in table, and retries
 after one window — a pricing failure never fails a call.
 
+**Prompt caching is priced from the usage the provider reports.** A call's input total includes the
+tokens it read from or wrote to the provider's prompt cache; those are costed at multiples of the
+model's input price (`cacheMultipliers` in `builtinModels.ts`), and the rest at the input price.
+Anthropic models read at 0.1× and write at 1.25×, on every Claude spec including catalog-only ones;
+`openai/gpt-5` reads at 0.1×. Any other model's cached input is priced as ordinary input. The
+multipliers scale whatever input price the catalog holds, so a customized price needs no second
+edit. The budget tiers still meter every input token, cached or not. The span records the counts as
+`llm.cache_read_tokens` and `llm.cache_write_tokens`.
+
 **In the dashboard**, `/studio/models` → **Catalog** lists every model with its price, status and
 source — *built-in*, *customized* (an admin's edit, which startup keeps), or *custom* — and, on a
 customized row whose shipped values have since changed, what code now ships beside a **Reset**.
@@ -397,9 +406,13 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 - **Unpriced-model detection is exact-match plus a heuristic.** The did-you-mean only proposes a
   priced spec that differs by `.`/`-` or case, or the single nearest spec from the same provider
   within two edits; a model it cannot match is reported with no suggestion.
-- **Prices are base rates.** Prompt-caching multipliers, batch discounts, data-residency and
-  fast-mode premiums, and long-context surcharges are not modelled, so a call that used them is
-  recorded at the base rate.
+- **Prices are base rates apart from prompt caching.** Data-residency and fast-mode premiums and
+  long-context surcharges are not modelled, so a call that used them is recorded at the base rate.
+- **Cache rates are code, not catalog data.** They cannot be edited from the dashboard. Only the
+  models named above carry a discount, so a cached read on any other model is recorded at the full
+  input price, which overstates it. Anthropic one-hour cache writes (2× input) are priced at the
+  five-minute rate.
+- **No batch pricing.** Nothing calls a provider's batch API, so the batch discount never applies.
 - **Credential resolution has no fallback past GLOBAL.** The TEAM → ORGANIZATION → GLOBAL cascade
   ends there; a missing GLOBAL row is a `ConfigMissingError`, not a silent skip.
 - **Embeddings are locked to 1536 dimensions.** `memory_items.embedding` is `vector(1536)`, so a

@@ -10,10 +10,11 @@
  * so USD budgets never see its spend — `builtinModels.test.ts` fails the build
  * if any model this repo seeds is missing.
  *
- * Caveats these prices do NOT account for — set a customized catalog price if
- * any apply to your deployment:
- *  - Prompt caching multipliers (0.1x reads, 1.25x/2x writes)
- *  - Batch API discount (50%)
+ * Prompt caching is priced separately, as multiples of these input prices
+ * (`cacheMultipliers` below). Caveats these prices do NOT account for — set a
+ * customized catalog price if any apply to your deployment:
+ *  - Anthropic 1-hour cache writes (2x input; priced at the 5-minute 1.25x)
+ *  - Batch API discount (50%) — nothing in this repo calls a batch API
  *  - Anthropic data-residency premium (1.1x for `inference_geo: us`)
  *  - Anthropic fast-mode premium (6x on Opus 4.6)
  *  - Gemini 2.5 Pro / 3.1 Pro >200K-token surcharge (input doubles)
@@ -37,6 +38,48 @@ export interface BuiltinModel {
 
 export function builtinModelSpec(model: Pick<BuiltinModel, 'provider' | 'modelId'>): string {
   return `${model.provider}/${model.modelId}`;
+}
+
+/**
+ * Prompt-cache rates as multiples of a model's input price: `read` for input
+ * served from the provider's cache, `write` for input written into it. They
+ * apply to whatever input price the call is costed at — a customized catalog
+ * price included — so a catalog edit never needs a second edit here.
+ */
+export interface CacheMultipliers {
+  read: number;
+  write: number;
+}
+
+/** Cached input priced as ordinary input: no published discount is known. */
+const NO_CACHE_DISCOUNT: CacheMultipliers = { read: 1, write: 1 };
+
+/** Vendors that publish one caching rule for every model. */
+const PROVIDER_CACHE_MULTIPLIERS: Readonly<Record<string, CacheMultipliers>> = {
+  // Reads 0.1x input, 5-minute writes 1.25x input, on every Claude model.
+  anthropic: { read: 0.1, write: 1.25 },
+};
+
+/**
+ * Vendors that price caching model by model. OpenAI caches automatically and
+ * charges nothing to write, so only the read rate differs from 1.
+ */
+const MODEL_CACHE_MULTIPLIERS: Readonly<Record<string, CacheMultipliers>> = {
+  'openai/gpt-5': { read: 0.1, write: 1 },
+};
+
+/**
+ * The cache rates for a `<provider>/<model-id>` spec: the model's own entry,
+ * then its provider's rule, else no discount. Defaulting to 1 overstates the
+ * cost of a cached read rather than understating it, so a USD budget errs
+ * toward stopping early.
+ */
+export function cacheMultipliers(spec: string): CacheMultipliers {
+  return (
+    MODEL_CACHE_MULTIPLIERS[spec] ??
+    PROVIDER_CACHE_MULTIPLIERS[spec.slice(0, spec.indexOf('/'))] ??
+    NO_CACHE_DISCOUNT
+  );
 }
 
 export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [

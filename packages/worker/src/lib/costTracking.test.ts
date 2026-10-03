@@ -366,6 +366,71 @@ describe('recordLlmUsage', () => {
     expect(row.tokensOutputUsed).toBe(50);
   });
 
+  describe('prompt-cache pricing', () => {
+    // opus-4-8 is $5 / $25 per MTok; Anthropic reads cost 0.1x input, writes 1.25x.
+    const opus = 'anthropic/claude-opus-4-8';
+
+    it('prices cache reads and writes (Mastra usage shape) at the cache rates', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        {
+          cacheCreationInputTokens: 200_000,
+          cachedInputTokens: 600_000,
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+        },
+        'llm.usage',
+        opus
+      );
+      // 200k uncached × $5 + 600k × $0.5 + 200k × $6.25 = $1 + $0.3 + $1.25
+      expect(priced.costUsd).toBeCloseTo(2.55, 6);
+      // The budget still meters every input token.
+      expect(priced.inputTokens).toBe(1_000_000);
+    });
+
+    it('reads the AI SDK usage shape too', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        {
+          inputTokenDetails: { cacheReadTokens: 1_000_000, cacheWriteTokens: undefined },
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+        },
+        'llm.usage',
+        opus
+      );
+      expect(priced.costUsd).toBeCloseTo(0.5, 6);
+    });
+
+    it('prices cached input at the full input rate when no discount is published', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { cachedInputTokens: 1_000_000, inputTokens: 1_000_000, outputTokens: 0 },
+        'llm.usage',
+        'google/gemini-2.5-pro'
+      );
+      expect(priced.costUsd).toBeCloseTo(1.25, 6);
+    });
+
+    it('never prices below plain input when cache counts exceed the input total', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { cacheCreationInputTokens: 5_000_000, inputTokens: 1_000_000, outputTokens: 0 },
+        'llm.usage',
+        opus
+      );
+      expect(priced.costUsd).toBeCloseTo(6.25, 6);
+    });
+  });
+
   describe('with a bound model spec', () => {
     // The mocked GLOBAL `implementer` Agent resolves to anthropic/claude-opus-4-8; the
     // caller bound a different model (a CHANNEL override, an owning-team override the
