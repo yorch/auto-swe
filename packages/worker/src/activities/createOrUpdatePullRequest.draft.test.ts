@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
   createPr: vi.fn(),
+  isDraft: vi.fn(),
   prisma: {
     activeWorkflow: { findFirst: vi.fn() },
     connection: { findUniqueOrThrow: vi.fn() },
@@ -28,12 +29,19 @@ vi.mock('@temporalio/activity', async (orig) => ({
 }));
 vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: vi.fn() }));
 vi.mock('../lib/scm/index.js', () => ({
-  getScmProvider: () => ({ createOrUpdatePullRequest: m.createPr }),
+  getScmProvider: () => ({
+    createOrUpdatePullRequest: m.createPr,
+    isDraftPullRequest: m.isDraft,
+    prUrl: async () => 'https://example.test/pull/5',
+  }),
   toRepoRef: () => ({ organizationName: 'acme', repoName: 'api' }),
 }));
 vi.mock('../lib/slackNotify.js', () => ({ notifySlackPrReady: vi.fn() }));
 
-import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
+import {
+  DraftPullRequestUnsupportedError,
+  ExistingPullRequestNotDraftError,
+} from '../lib/scm/types.js';
 import { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
 
 const request = {
@@ -87,5 +95,42 @@ describe('createOrUpdatePullRequest draft option', () => {
     await expect(createOrUpdatePullRequest(request, codeResult, { draft: true })).rejects.toBe(
       boom
     );
+  });
+});
+
+describe('createOrUpdatePullRequest with a PR already recorded for the work request', () => {
+  beforeEach(() => {
+    m.prisma.pullRequest.findFirst.mockResolvedValue({ id: 'pr-row', prNumber: 5 });
+  });
+
+  it('refuses, non-retryably, to add commits to one that is ready for review', async () => {
+    m.isDraft.mockResolvedValue(false);
+    await expect(
+      createOrUpdatePullRequest(request, codeResult, { draft: true })
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'EXISTING_PR_NOT_DRAFT' });
+    expect(m.prisma.pullRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('carries on with one that is still a draft', async () => {
+    m.isDraft.mockResolvedValue(true);
+    await expect(
+      createOrUpdatePullRequest(request, codeResult, { draft: true })
+    ).resolves.toMatchObject({ prNumber: 5 });
+    expect(m.prisma.pullRequest.update).toHaveBeenCalled();
+  });
+
+  it('does not spend an API call on the draft state when no draft was asked for', async () => {
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.isDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe('createOrUpdatePullRequest when the host would reuse a ready PR', () => {
+  it('fails non-retryably instead of pushing onto it', async () => {
+    m.createPr.mockRejectedValue(new ExistingPullRequestNotDraftError('acme/api#9 is open'));
+    await expect(
+      createOrUpdatePullRequest(request, codeResult, { draft: true })
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'EXISTING_PR_NOT_DRAFT' });
+    expect(m.prisma.pullRequest.create).not.toHaveBeenCalled();
   });
 });

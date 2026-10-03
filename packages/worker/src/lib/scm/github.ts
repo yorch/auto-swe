@@ -36,6 +36,7 @@ import {
   type CloneCredentials,
   type CreatePullRequestInput,
   DraftPullRequestUnsupportedError,
+  ExistingPullRequestNotDraftError,
   type PermissionLookup,
   type PullRequestRef,
   type RepoRef,
@@ -317,6 +318,12 @@ export class GitHubScmProvider implements ScmProvider {
         throw err;
       }
     };
+    // The list response already says whether it is a draft, so this costs no call.
+    if (input.draft && priorOpenPr && priorOpenPr.draft !== true) {
+      throw new ExistingPullRequestNotDraftError(
+        `${repo.organizationName}/${repo.repoName}#${priorOpenPr.number} is open and ready for review`
+      );
+    }
     const pr = priorOpenPr ?? (await create());
 
     return { prNumber: pr.number, prUrl: pr.html_url };
@@ -458,6 +465,44 @@ export class GitHubScmProvider implements ScmProvider {
       }
       throw err;
     }
+  }
+
+  async findBranchWork(
+    repo: RepoRef,
+    branch: string
+  ): Promise<{ branchExists: boolean; openPr: PullRequestRef | null }> {
+    const octokit = await octokitFor(repo);
+    let branchExists = true;
+    try {
+      await octokit.repos.getBranch({ branch, owner: repo.organizationName, repo: repo.repoName });
+    } catch (err) {
+      if ((err as { status?: number }).status !== 404) {
+        throw err;
+      }
+      branchExists = false;
+    }
+    const open = (
+      await octokit.pulls.list({
+        head: `${repo.organizationName}:${branch}`,
+        owner: repo.organizationName,
+        repo: repo.repoName,
+        state: 'open',
+      })
+    ).data[0];
+    return {
+      branchExists,
+      openPr: open ? { prNumber: open.number, prUrl: open.html_url } : null,
+    };
+  }
+
+  async isDraftPullRequest(repo: RepoRef, prNumber: number): Promise<boolean> {
+    const octokit = await octokitFor(repo);
+    const { data } = await octokit.pulls.get({
+      owner: repo.organizationName,
+      pull_number: prNumber,
+      repo: repo.repoName,
+    });
+    return data.draft === true;
   }
 
   async repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup> {

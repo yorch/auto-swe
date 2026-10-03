@@ -12,7 +12,10 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
-import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
+import {
+  DraftPullRequestUnsupportedError,
+  ExistingPullRequestNotDraftError,
+} from '../lib/scm/types.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 
 export interface CreatePullRequestOptions {
@@ -68,6 +71,12 @@ async function doCreateOrUpdatePullRequest(
       );
     }
 
+    // A draft was promised: never push agent commits onto a PR that has been marked
+    // ready for review since. One API call, only on this path.
+    if (options.draft && !(await scm.isDraftPullRequest(repoRef, existingPR.prNumber))) {
+      throw notDraftFailure(`PR #${existingPR.prNumber}`, codeResult.branch);
+    }
+
     // Re-arm the CI wait along with the head. This node always runs before the
     // workflow (re-)enters its CI wait, so `ciStatus = PENDING` means exactly
     // "no verdict has been delivered for the current head yet" — the freshness
@@ -111,6 +120,9 @@ async function doCreateOrUpdatePullRequest(
     // "Draft" is a promise to the reviewer, so a repository that cannot hold
     // drafts fails the step rather than getting a ready-for-review PR. Retrying
     // cannot change the answer.
+    if (err instanceof ExistingPullRequestNotDraftError) {
+      throw notDraftFailure(err.message, codeResult.branch);
+    }
     if (err instanceof DraftPullRequestUnsupportedError) {
       throw ApplicationFailure.nonRetryable(
         `${err.message}; the branch ${codeResult.branch} was pushed, but no pull request was opened`,
@@ -189,6 +201,14 @@ async function doCreateOrUpdatePullRequest(
   });
 
   return { prNumber, prUrl };
+}
+
+function notDraftFailure(what: string, branch: string): ApplicationFailure {
+  return ApplicationFailure.nonRetryable(
+    `${what} is open and ready for review, and this step opens drafts only, so it will not add ` +
+      `commits to it (branch ${branch}). Merge or close it and delete the branch, then run again.`,
+    'EXISTING_PR_NOT_DRAFT'
+  );
 }
 
 // ── Configurable PR Title & Body ──
