@@ -289,6 +289,19 @@ function DiscoveryPanel({
     null
   );
 
+  // Why the list is empty, because "nothing new" is only one of four reasons.
+  const providers = data?.providers ?? [];
+  const emptyMessage =
+    providers.length === 0
+      ? 'No provider has been checked. Providers are listed through a global credential: add one, then run Check providers now.'
+      : providers.every((p) => p.error)
+        ? 'No provider could be listed, so nothing is known about new models. See the errors above.'
+        : (data?.hiddenDismissed ?? 0) > 0
+          ? `Nothing to show: ${data?.hiddenDismissed} suggestion${data?.hiddenDismissed === 1 ? ' is' : 's are'} dismissed. Turn on Show dismissed to see them.`
+          : failed.length > 0
+            ? 'Nothing new from the providers that could be listed.'
+            : 'Nothing new — every listed model is priced.';
+
   const dismissButton = (s: ModelSuggestion) => (
     <Button
       disabled={dismiss.isPending}
@@ -334,7 +347,7 @@ function DiscoveryPanel({
           </p>
         ))}
         {data && fresh.length === 0 ? (
-          <p className="text-xs text-paper-500">Nothing new — every listed model is priced.</p>
+          <p className="text-xs text-paper-500">{emptyMessage}</p>
         ) : (
           <Table>
             <tbody>

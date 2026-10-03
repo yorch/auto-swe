@@ -114,9 +114,14 @@ export function useModelSuggestions(includeDismissed: boolean) {
   return useQuery({
     queryFn: () =>
       api
-        .get<{ data: { suggestions: ModelSuggestion[]; providers: DiscoveryProviderStatus[] } }>(
-          `${BASE}/suggestions${includeDismissed ? '?includeDismissed=true' : ''}`
-        )
+        .get<{
+          data: {
+            suggestions: ModelSuggestion[];
+            providers: DiscoveryProviderStatus[];
+            /** Applicable suggestions hidden because they are dismissed. */
+            hiddenDismissed: number;
+          };
+        }>(`${BASE}/suggestions${includeDismissed ? '?includeDismissed=true' : ''}`)
         .then((r) => r.data),
     queryKey: ['model-catalog-suggestions', includeDismissed],
   });
