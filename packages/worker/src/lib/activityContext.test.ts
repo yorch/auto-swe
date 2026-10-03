@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   notePersistedUsage: vi.fn(),
   rows: [] as Row[],
   runId: { value: 'run-1' as string | null },
+  runLookupFails: { value: false },
 }));
 
 vi.mock('@temporalio/activity', () => ({
@@ -26,7 +27,12 @@ vi.mock('@auto-swe/shared/db', () => ({
       },
     },
     workflowRun: {
-      findUnique: async () => (h.runId.value ? { id: h.runId.value } : null),
+      findUnique: async () => {
+        if (h.runLookupFails.value) {
+          throw new Error('connection reset');
+        }
+        return h.runId.value ? { id: h.runId.value } : null;
+      },
     },
   },
 }));
@@ -50,6 +56,7 @@ beforeEach(() => {
   h.rows.length = 0;
   h.current.ctx = {};
   h.runId.value = 'run-1';
+  h.runLookupFails.value = false;
   h.notePersistedUsage.mockClear();
 });
 
@@ -94,5 +101,18 @@ describe('persistActivityTrace — spend owner', () => {
     });
     expect(h.rows).toHaveLength(3);
     expect(h.notePersistedUsage).toHaveBeenCalledWith('wf-author-1', 'temporal-run-1', 200, 50);
+  });
+
+  it('stamps no owner when the run lookup fails, so a run is never billed as runless too', async () => {
+    h.runLookupFails.value = true;
+    await persistActivityTrace(tracerWith('a'), 'implementer');
+
+    expect(h.rows).toHaveLength(1);
+    expect(h.rows[0]).toMatchObject({ orgId: null, runId: null, teamId: null });
+  });
+
+  it('stamps the owner beside the run id on a run-backed workflow', async () => {
+    await persistActivityTrace(tracerWith('a'), 'implementer');
+    expect(h.rows[0]).toMatchObject({ orgId: 'org-1', runId: 'run-1', teamId: 'team-1' });
   });
 });

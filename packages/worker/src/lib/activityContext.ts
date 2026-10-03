@@ -55,6 +55,15 @@ export function currentTemporalRunId(): string | null {
   }
 }
 
+/** The current workflow's `WorkflowRun.id`, undefined when it has none. Throws when the read fails. */
+async function findWorkflowRunId(): Promise<string | undefined> {
+  const run = await prisma.workflowRun.findUnique({
+    select: { id: true },
+    where: { workflowId: currentWorkflowId() },
+  });
+  return run?.id;
+}
+
 /**
  * Look up the `WorkflowRun.id` row for the currently executing Temporal
  * workflow so artifacts produced by an activity link back to the run. Returns
@@ -63,12 +72,7 @@ export function currentTemporalRunId(): string | null {
  */
 export async function currentWorkflowRunId(): Promise<string | undefined> {
   try {
-    const wid = currentWorkflowId();
-    const run = await prisma.workflowRun.findUnique({
-      select: { id: true },
-      where: { workflowId: wid },
-    });
-    return run?.id;
+    return await findWorkflowRunId();
   } catch {
     return undefined;
   }
@@ -102,11 +106,22 @@ export async function persistActivityTrace(tracer: AgentTracer, agentKey: string
   if (!tracer.hasSpanContext() && spanContext?.traceId && spanContext?.spanId) {
     tracer.setSpanContext(spanContext.traceId, spanContext.spanId);
   }
-  const [runId, owner] = await Promise.all([currentWorkflowRunId(), currentSpendOwner()]);
+  const [run, owner] = await Promise.all([
+    findWorkflowRunId().then(
+      (id) => ({ id }),
+      () => null
+    ),
+    currentSpendOwner(),
+  ]);
   const workflowId = currentWorkflowId();
   const temporalRunId = currentTemporalRunId();
+  // A failed run lookup cannot tell a runless workflow from one with a run, so
+  // its rows carry no owner. `orgMonthSpend` counts an owner-stamped row with no
+  // run as runless spend, and a run's spend is already counted from its ledger:
+  // stamping the owner here would bill that run to its org twice.
+  const tags = run ? { ...owner, runId: run.id } : { runId: undefined };
   await tracer.persist(
-    { ...owner, runId, temporalRunId, workflowId },
+    { ...tags, temporalRunId, workflowId },
     currentActivityType(),
     agentKey,
     currentAttempt(),

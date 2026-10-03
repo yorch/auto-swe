@@ -952,8 +952,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   logs arrive through the SDK's sink after the activation that produced them, so they carry no
   trace context.
 - **Usage is attributed at write time, not by repository.** The team and org breakdowns read the
-  owner each trace row was written with, so rows older than those columns, and spend with no
-  derivable owner, land under "no team". There is no per-repository breakdown. The page is open to
+  owner each trace row was written with, so rows older than those columns, spend with no
+  derivable owner, and rows written while the run lookup failed land under "no team". The last are
+  left ownerless on purpose: a row with an org and no run counts toward the org cap as runless
+  spend, which would bill a run already counted from its ledger a second time. There is no per-repository breakdown. The page is open to
   platform ADMINs and LEADs; an ORG_ADMIN or team LEAD with a lower platform role can call the
   endpoint but not open the page. The daily series is one aggregate per UTC day, so a 90-day window
   costs 90 small queries.
