@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { safePatAuditFields } from '../lib/patAuditFields.js';
 import { invalidateSessionCache, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -16,7 +17,7 @@ import { invalidateSessionCache, requireAuth, requireUser } from '../plugins/aut
  *   DELETE /api/v1/platform/access-tokens/:id      — revoke any PAT
  *   GET    /api/v1/platform/sessions               — list active browser sessions
  *   DELETE /api/v1/platform/sessions/:id           — revoke a session
- *   GET    /api/v1/platform/audit-log               — recent config-audit rows
+ *   GET    /api/v1/platform/audit-log               — config-audit rows, filtered + paginated
  *   POST   /api/v1/platform/shell-audit/prune      — delete old WorkflowShellAudit rows
  */
 
@@ -25,11 +26,21 @@ const SessionIdParam = z.object({ id: z.string().uuid() });
 const PruneQuery = z.object({
   days: z.coerce.number().int().min(1).max(3650).default(90),
 });
+const DAY_MS = 24 * 60 * 60 * 1000;
+const AuditLogQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend({
+  action: z.enum(['CREATE', 'DELETE', 'UPDATE']).optional(),
+  actorId: z.string().uuid().optional(),
+  entityType: z.string().min(1).max(100).optional(),
+  /** Inclusive UTC calendar days, `YYYY-MM-DD` — what a date input produces. */
+  since: z.iso.date().optional(),
+  until: z.iso.date().optional(),
+});
 const AuditJsonSchema = z.json();
 const AuditLogResponseSchema = z.object({
   data: z.array(
     z.object({
       action: z.string(),
+      actor: z.object({ email: z.string(), name: z.string().nullable() }).nullable(),
       actorId: z.string().nullable(),
       afterJson: AuditJsonSchema.nullable().optional(),
       beforeJson: AuditJsonSchema.nullable().optional(),
@@ -39,6 +50,13 @@ const AuditLogResponseSchema = z.object({
       id: z.string(),
     })
   ),
+  meta: z.object({
+    /** Every entity type the log holds, for the filter control. */
+    entityTypes: z.array(z.string()),
+    limit: z.number(),
+    offset: z.number(),
+    total: z.number(),
+  }),
 });
 
 /// Auditable subset of a browser session row. The full session token is a bearer
@@ -197,20 +215,58 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     '/audit-log',
     {
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { response: { 200: AuditLogResponseSchema } },
+      schema: { querystring: AuditLogQuery, response: { 200: AuditLogResponseSchema } },
     },
-    async () => {
-      const rows = await fastify.prisma.configAuditLog.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 200,
-      });
+    async (request) => {
+      const { action, actorId, entityType, limit, offset, since, until } = request.query;
+      const createdAt = {
+        ...(since ? { gte: new Date(`${since}T00:00:00.000Z`) } : {}),
+        // `until` names a whole day, so the bound is the start of the next one.
+        ...(until ? { lt: new Date(Date.parse(`${until}T00:00:00.000Z`) + DAY_MS) } : {}),
+      };
+      const where = {
+        ...(action ? { action } : {}),
+        ...(actorId ? { actorId } : {}),
+        ...(entityType ? { entityType } : {}),
+        ...(since || until ? { createdAt } : {}),
+      };
+      const [rows, total, entityTypeGroups] = await Promise.all([
+        fastify.prisma.configAuditLog.findMany({
+          orderBy: { createdAt: 'desc' },
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.configAuditLog.count({ where }),
+        fastify.prisma.configAuditLog.groupBy({
+          by: ['entityType'],
+          orderBy: { entityType: 'asc' },
+        }),
+      ]);
+      // A second lookup rather than a relation: the log has no foreign key to
+      // User, so a deleted actor's rows keep their id and render without an email.
+      const actorIds = [...new Set(rows.flatMap((r) => (r.actorId ? [r.actorId] : [])))];
+      const actors = actorIds.length
+        ? await fastify.prisma.user.findMany({
+            select: { email: true, id: true, name: true },
+            where: { id: { in: actorIds } },
+          })
+        : [];
+      const actorById = new Map(actors.map((a) => [a.id, { email: a.email, name: a.name }]));
       return {
         data: rows.map((row) => ({
           ...row,
+          actor: row.actorId ? (actorById.get(row.actorId) ?? null) : null,
           afterJson: row.afterJson as z.infer<typeof AuditJsonSchema> | null,
           beforeJson: row.beforeJson as z.infer<typeof AuditJsonSchema> | null,
           createdAt: row.createdAt.toISOString(),
         })),
+        meta: {
+          entityTypes: entityTypeGroups.map((g) => g.entityType),
+          limit,
+          offset,
+          total,
+        },
       };
     }
   );

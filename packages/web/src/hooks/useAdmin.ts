@@ -139,20 +139,42 @@ export interface AuditLogRow {
   id: string;
   entityType: string;
   entityId: string;
-  action: 'CREATE' | 'DELETE' | 'UPDATE';
+  action: AuditAction;
   actorId: string | null;
+  /** Null for a system write, or an actor whose user row no longer exists. */
+  actor: { email: string; name: string | null } | null;
   beforeJson: unknown;
   afterJson: unknown;
   createdAt: string;
 }
 
-export function useAuditLog(limit = 200) {
+export type AuditAction = 'CREATE' | 'DELETE' | 'UPDATE';
+
+export interface AuditLogFilters {
+  action?: AuditAction;
+  actorId?: string;
+  entityType?: string;
+  /** Inclusive UTC days, `YYYY-MM-DD`. */
+  since?: string;
+  until?: string;
+}
+
+export interface AuditLogPage {
+  data: AuditLogRow[];
+  meta: { entityTypes: string[]; limit: number; offset: number; total: number };
+}
+
+export function useAuditLog(filters: AuditLogFilters & { limit: number; offset: number }) {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      qs.set(key, String(value));
+    }
+  }
   return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: AuditLogRow[] }>(`/api/v1/platform/audit-log?limit=${limit}`)
-        .then((r) => r.data),
-    queryKey: ['audit-log', limit],
+    placeholderData: keepPreviousData,
+    queryFn: () => api.get<AuditLogPage>(`/api/v1/platform/audit-log?${qs}`),
+    queryKey: ['audit-log', filters],
     refetchInterval: 30_000,
   });
 }
