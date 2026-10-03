@@ -61,6 +61,36 @@ describe('OtelForwardingLogger', () => {
     expect(record?.spanContext?.spanId).toBe(span.spanContext().spanId);
   });
 
+  it("exports an Error's type, message and stack instead of {}, at any depth", () => {
+    const logger = new OtelForwardingLogger(inner);
+    const cause = new Error('socket hang up');
+    const error = new TypeError('fetch failed', { cause });
+    // Temporal's shape for a failed activity.
+    logger.warn('Activity failed', { activityType: 'runLint', error, nested: { inner: cause } });
+
+    const attrs = records.getFinishedLogRecords()[0]?.attributes ?? {};
+    expect(attrs['exception.type']).toBe('TypeError');
+    expect(attrs['exception.message']).toBe('fetch failed');
+    expect(attrs['exception.stacktrace']).toBe(error.stack);
+    const serialized = JSON.parse(attrs.error as string);
+    expect(serialized).toMatchObject({
+      cause: { message: 'socket hang up', name: 'Error' },
+      message: 'fetch failed',
+      name: 'TypeError',
+    });
+    expect(serialized.stack).toBe(error.stack);
+    expect(JSON.parse(attrs.nested as string)).toMatchObject({
+      inner: { message: 'socket hang up' },
+    });
+  });
+
+  it("does not export Temporal's opaque task token", () => {
+    const logger = new OtelForwardingLogger(inner);
+    logger.info('Activity started', { activityType: 'runLint', taskToken: 'CiQ2YjE0…' });
+
+    expect(records.getFinishedLogRecords()[0]?.attributes).toEqual({ activityType: 'runLint' });
+  });
+
   it("exports nothing below the inner logger's level", () => {
     const write = vi.fn();
     new OtelForwardingLogger(new DefaultLogger('INFO', write)).debug('noise');
