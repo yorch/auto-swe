@@ -147,9 +147,13 @@ price. `/model-catalog/unpriced` collects the same gap across every active agent
 config, and the models recorded LLM calls used in the last 30 days.
 
 At run time a model with no price is refused only where a USD-denominated cap would otherwise stop
-counting: an organization with a monthly budget (every run whose ledger row reaches that
-organization: the implementer and its fix sessions, the review network, planner, decomposers,
-security gate, memory passes, and generic `agent` nodes) and a channel with a monthly budget. The
+counting: an organization with a monthly budget and a channel with a monthly budget. The
+organization's cap covers every run whose ledger row reaches it (the implementer and its fix
+sessions, the review network, planner, decomposers, security gate, memory passes, and generic
+`agent` nodes) and every runless workflow whose spend owner is it (lesson consolidation, and
+workflow authoring and explaining through `runAgent`), since runless spend counts toward the cap
+through the owner stamped on its trace rows. A run with no ledger row — a channel task — reaches
+the organization's cap through neither, so only a channel budget refuses it. The
 refusal is a non-retryable `MODEL_UNPRICED` naming the model; while the catalog cannot be read it is
 a retryable `MODEL_PRICE_UNAVAILABLE`. Without such a cap the call proceeds at $0.
 
