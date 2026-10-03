@@ -706,14 +706,19 @@ once the cap is reached, and `recordLlmUsage` fails the call that passes it with
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
 mandatory `finally` — is in [AGENTS.md §6](../AGENTS.md#agent-observability-agenttracer).
 
-**Platform usage.** Every LLM call and every successful embedding call writes one `llm_response`
-row carrying its model, tokens, and cost — including calls from workflows that keep no `WorkflowRun`
-— so those rows are the one complete record of spend. `GET /api/v1/platform/usage?window=7|30|90` (ADMIN) aggregates them
-into totals, a per-UTC-day series, breakdowns by model, agent, and activity (calls, tokens, average
-latency of the calls that succeeded, error rate, cost), the spend from workflows without a run,
-and the ten runs that spent most inside the window. The
-dashboard renders it at `/govern/usage`. It is ADMIN-only because rows without a run carry no team to
-scope them by.
+**Usage.** Every LLM call and every successful embedding call writes one `llm_response` row
+carrying its model, tokens, cost, and the team and organization whose spend it is
+([agents.md §8.5](./agents.md#85-spend-attribution)) — including calls from workflows that keep no
+`WorkflowRun` — so those rows are the one complete record of spend.
+`GET /api/v1/platform/usage?window=7|30|90[&teamId=…|&orgId=…]` aggregates them into totals, a
+per-UTC-day series, breakdowns by team, organization, model, agent, and activity (calls, tokens,
+average latency of the calls that succeeded, error rate, cost), the spend from workflows without a
+run, and the ten runs that spent most inside the window. With no filter the report is
+platform-wide and ADMIN-only, since it includes spend no team owns; a team LEAD (by team
+membership) may read their team and an ORG_ADMIN their organization, and every query of a scoped
+report carries the `teamId`/`orgId` predicate the tenant guard checks. The dashboard renders it at
+`/govern/usage` with a scope picker: the whole platform for an ADMIN, otherwise the teams the
+caller leads and the organizations they administer.
 
 ### Workspace hardening
 
@@ -892,9 +897,12 @@ Current constraints of the system as built. Deliberate product boundaries are in
   interceptor inside the V8 isolate, and the official Temporal package for it pins the 1.x
   OpenTelemetry SDK beside this repo's 2.x one. The gateway emits HTTP spans but none link to the
   workflows a request starts. Logs go to stdout, not OTLP.
-- **The usage report is platform-wide only.** It has no per-team, per-org, or per-repository
-  breakdown: a trace reaches its team only through run → request → connection, which Prisma cannot
-  group by. Its daily series is one aggregate per UTC day, so a 90-day window costs 90 small queries.
+- **Usage is attributed at write time, not by repository.** The team and org breakdowns read the
+  owner each trace row was written with, so rows older than those columns, and spend with no
+  derivable owner, land under "no team". There is no per-repository breakdown. The page is open to
+  platform ADMINs and LEADs; an ORG_ADMIN or team LEAD with a lower platform role can call the
+  endpoint but not open the page. The daily series is one aggregate per UTC day, so a 90-day window
+  costs 90 small queries.
   A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call
   succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
   so it counts as a failure.
