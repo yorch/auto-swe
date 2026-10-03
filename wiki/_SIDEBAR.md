@@ -1,6 +1,6 @@
 # auto-swe Wiki
 
-> Commit `147d054a`
+> Commit `ae416937`
 
 - [Overview](./README.md)
 - [Glossary](./glossary.md)
@@ -24,6 +24,7 @@
   - [3.2 Authentication and RBAC](./3.2-authentication-and-rbac.md)
   - [3.3 GitHub and Webhooks](./3.3-github-and-webhooks.md)
   - [3.4 Repository Access and Credentials](./3.4-repository-access-and-credentials.md)
+  - [3.5 MCP Server and OAuth](./3.5-mcp-server-and-oauth.md)
 
 ## 4. @auto-swe/worker
 
@@ -33,6 +34,8 @@
   - [4.3 Agent Layer](./4.3-agent-layer.md)
   - [4.4 Docker Workspaces](./4.4-docker-workspaces.md)
   - [4.5 Observability and Cost](./4.5-observability-and-cost.md)
+  - [4.6 Agent Runs and Implementer Runtimes](./4.6-agent-runs-and-implementer-runtimes.md)
+  - [4.7 Model Catalog and Pricing](./4.7-model-catalog-and-pricing.md)
 
 ## 5. @auto-swe/web
 
