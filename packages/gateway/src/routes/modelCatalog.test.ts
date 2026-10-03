@@ -83,6 +83,17 @@ function seedSuggestions() {
       provider: 'openai',
       type: 'NEW',
     },
+    // Flagged, and still priced and active: shown.
+    {
+      ...base,
+      id: 'd',
+      modelId: 'claude-opus-5-5',
+      provider: 'anthropic',
+      type: 'RETIREMENT_CANDIDATE',
+    },
+    // Flagged, but retired since, or deleted: not shown.
+    { ...base, id: 'e', modelId: 'llama-4', provider: 'ollama', type: 'RETIREMENT_CANDIDATE' },
+    { ...base, id: 'f', modelId: 'gone-1', provider: 'openai', type: 'RETIREMENT_CANDIDATE' },
   ];
 }
 
@@ -141,9 +152,11 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
         ]),
     },
     modelSuggestion: {
-      findMany: vi.fn(async ({ where }: { where: { dismissedAt?: null } }) =>
-        suggestions.filter((r) => !('dismissedAt' in where) || r.dismissedAt === null)
-      ),
+      findMany: vi.fn(async () => suggestions.map((r) => ({ ...r }))),
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+        const row = suggestions.find((r) => r.id === where.id);
+        return row ? { ...row } : null;
+      }),
       update: vi.fn(
         async ({ data, where }: { data: { dismissedAt: Date | null }; where: { id: string } }) => {
           const row = suggestions.find((r) => r.id === where.id);
@@ -346,10 +359,14 @@ describe('POST /model-catalog/discover', () => {
   });
 
   it('returns what each provider lists that nothing prices', async () => {
-    const { call } = await buildApp();
+    const { audit, call } = await buildApp();
     const res = await call('POST', '/model-catalog/discover');
     expect(res.statusCode).toBe(200);
     expect(res.json().data[0]).toMatchObject({ ok: true, provider: 'openai' });
+    // It refreshes stored suggestions, so it is audited like the other writes.
+    expect(audit).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: 'UPDATE', entityType: 'ModelSuggestion' }),
+    });
   });
 });
 
@@ -366,9 +383,12 @@ describe('model suggestions', () => {
     const { call } = await buildApp();
     const res = await call('GET', '/model-catalog/suggestions');
     expect(res.statusCode).toBe(200);
+    // Not the priced NEW row, nor a flag on a model that is retired or gone.
     expect(res.json().data.suggestions.map((s: { spec: string }) => s.spec)).toEqual([
       'openai/gpt-6.2',
+      'anthropic/claude-opus-5-5',
     ]);
+    expect(res.json().data.hiddenDismissed).toBe(1);
     expect(res.json().data.providers[0]).toMatchObject({
       error: 'HTTP 401',
       provider: 'anthropic',
@@ -376,13 +396,22 @@ describe('model suggestions', () => {
   });
 
   it('dismisses and undismisses one, and 404s on an unknown id', async () => {
-    const { call } = await buildApp();
+    const { audit, call } = await buildApp();
     const dismissed = await call('POST', `/model-catalog/suggestions/${SUGGESTION_ID}/dismiss`);
     expect(dismissed.statusCode).toBe(200);
     expect(dismissed.json().data.dismissedAt).not.toBeNull();
-    expect((await call('GET', '/model-catalog/suggestions')).json().data.suggestions).toEqual([]);
+    expect(audit).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'UPDATE',
+        entityId: SUGGESTION_ID,
+        entityType: 'ModelSuggestion',
+      }),
+    });
+    const hidden = (await call('GET', '/model-catalog/suggestions')).json().data;
+    expect(hidden.suggestions.map((s: { id: string }) => s.id)).toEqual(['d']);
+    expect(hidden.hiddenDismissed).toBe(2);
     const all = await call('GET', '/model-catalog/suggestions?includeDismissed=true');
-    expect(all.json().data.suggestions).toHaveLength(2);
+    expect(all.json().data.suggestions).toHaveLength(3);
     const undone = await call('POST', `/model-catalog/suggestions/${SUGGESTION_ID}/undismiss`);
     expect(undone.json().data.dismissedAt).toBeNull();
     const missing = await call(
