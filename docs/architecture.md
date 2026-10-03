@@ -182,10 +182,14 @@ component reaches past the theme into a default Tailwind colour scale.
 **Data fetching.** All server state lives in TanStack Query (staleTime 30 s, retry 1). Running
 workflows poll on an adaptive 3 s interval; terminal-state queries use 30 s. The run page loads its
 traces once, then each poll reads the run without traces and only the traces created since the
-newest one it holds (`GET /api/v1/workflow-runs/:id/traces?since=`), appending them. The cursor
-trails the newest trace by 10 s and the page merges by trace id, because a trace's `createdAt` is
-its insert transaction's start — a slow insert can commit a row older than one already read.
-Nothing streams: updates arrive on the poll, not as they are written.
+newest one it holds (`GET /api/v1/workflow-runs/:id/traces?since=`), appending them. A trace's
+`createdAt` is the writing worker's clock, at millisecond precision, when it built the insert — not
+when the row committed — so a slow insert or a lagging worker clock can commit a row older than one
+already read. The cursor trails the newest trace by 10 s and the page merges by trace id, which
+covers the common case. For the rest, the tail also returns `total`, the run's trace count read in
+the same snapshot as the rows: when the merged set does not match it, that poll re-reads every
+trimmed trace instead. The page also re-reads them all once when the run turns terminal. Nothing
+streams: updates arrive on the poll, not as they are written.
 
 ---
 
@@ -962,4 +966,6 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **The run page polls; nothing is pushed.** A running run's page learns of a new trace, step, or
   status up to 3 s after it is written. Only traces are fetched incrementally: each poll still
   re-reads the run's steps and spec snapshot whole, and the 10 s overlap re-reads that window's
-  traces every poll.
+  traces every poll. A trace that commits behind the cursor is not lost, but it costs a full
+  re-read of every trimmed trace on the poll that notices it; a worker whose clock lags the others
+  by more than 10 s triggers one on every poll it writes during.

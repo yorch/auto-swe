@@ -35,10 +35,11 @@ export function useWorkflow(id: string) {
 
 /**
  * How far behind the newest trace the live-tail cursor sits. A trace's
- * `createdAt` is its insert transaction's start, so a slow insert can commit
- * a row older than one already read; and the cursor is a millisecond
- * truncation of a microsecond column. Re-reading this window each poll covers
- * both, and merging by id drops the overlap.
+ * `createdAt` is the writing worker's clock, at millisecond precision, when it
+ * built the insert — not when the row committed. A slow insert (a large batch,
+ * a wait for a pool connection) or a worker whose clock lags can therefore
+ * commit a row older than one already read. The overlap catches the common
+ * case cheaply; the trace count (see `useWorkflowRun`) catches the rest.
  */
 export const TRACE_TAIL_OVERLAP_MS = 10_000;
 
@@ -77,7 +78,11 @@ export function mergeTraces(
  *
  * The trimmed view loads every trace once, then each poll reads the run
  * without traces (status, steps, totals) and only the traces created since the
- * newest one held, appending them to the cached run.
+ * newest one held, appending them to the cached run. No cursor can promise that
+ * every row behind it has been read (see `TRACE_TAIL_OVERLAP_MS`), so the tail
+ * also reports how many traces the run has: when the merged set does not match
+ * that count, the poll re-reads every (trimmed) trace instead. It does the same
+ * once when the run turns terminal, so the finished run is never left short.
  */
 export function useWorkflowRun(id: string, includeTraces = true, fullTraces = false) {
   const qc = useQueryClient();
@@ -90,20 +95,28 @@ export function useWorkflowRun(id: string, includeTraces = true, fullTraces = fa
     placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === id ? prev : undefined),
     queryFn: async () => {
       const held = qc.getQueryData<WorkflowRunDetail>(queryKey);
-      if (fullTraces || !includeTraces || !held) {
-        return api
+      const readAll = () =>
+        api
           .get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}${query}`)
           .then((r) => r.data);
+      if (fullTraces || !includeTraces || !held) {
+        return readAll();
       }
       const heldTraces = held.traces ?? [];
       const since = traceTailCursor(heldTraces);
       const [run, tail] = await Promise.all([
         api.get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}`),
-        api.get<{ data: AgentTraceRecord[] }>(
+        api.get<{ data: AgentTraceRecord[]; total: number }>(
           `/api/v1/workflow-runs/${id}/traces${since ? `?since=${encodeURIComponent(since)}` : ''}`
         ),
       ]);
-      return { ...run.data, traces: mergeTraces(heldTraces, tail.data) };
+      const traces = mergeTraces(heldTraces, tail.data);
+      const justFinished =
+        isTerminalWorkflowRunStatus(run.data.status) && !isTerminalWorkflowRunStatus(held.status);
+      if (traces.length !== tail.total || justFinished) {
+        return readAll();
+      }
+      return { ...run.data, traces };
     },
     queryKey,
     refetchInterval: (q) => {

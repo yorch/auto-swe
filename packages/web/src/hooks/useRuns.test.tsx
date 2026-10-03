@@ -125,6 +125,7 @@ describe('trace live tail', () => {
       }),
       'GET /api/v1/workflow-runs/run-1/traces': () => ({
         data: [trace('t1', '2026-09-01T10:00:00.000Z'), trace('t2', '2026-09-01T10:00:04.000Z')],
+        total: 2,
       }),
     });
     const { wrapper } = setup();
@@ -145,6 +146,87 @@ describe('trace live tail', () => {
       ])
     );
     await waitFor(() => expect(result.current.data?.traces.map((t) => t.id)).toEqual(['t1', 't2']));
+  });
+
+  /**
+   * A fake gateway holding `server.traces` and `server.status`: the detail
+   * route returns every trace only with `?includeTraces=true`, and the tail
+   * returns what the test hands it, plus the run's true count.
+   */
+  function fakeGateway(server: {
+    status: string;
+    traces: AgentTraceRecord[];
+    tail: () => AgentTraceRecord[];
+  }) {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/traces')) {
+        return json({ data: server.tail(), total: server.traces.length });
+      }
+      const traces = url.includes('includeTraces=true') ? server.traces : [];
+      return json({ data: { id: 'run-1', status: server.status, steps: [], traces } });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const fullReads = () =>
+      fetchSpy.mock.calls.filter(([u]) => String(u).includes('includeTraces=true')).length;
+    return { fetchSpy, fullReads };
+  }
+
+  it('re-reads every trace when one landed behind the cursor', async () => {
+    const t1 = trace('t1', '2026-09-01T10:00:00.000Z');
+    const t3 = trace('t3', '2026-09-01T10:00:30.000Z');
+    // Written by a slow insert: committed after t3, stamped long before it.
+    const late = trace('late', '2026-09-01T09:59:00.000Z');
+    const server = { status: 'RUNNING', tail: () => [t3], traces: [t1] };
+    const { fullReads } = fakeGateway(server);
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useWorkflowRun('run-1'), { wrapper });
+    await waitFor(() => expect(result.current.data?.traces).toHaveLength(1));
+    expect(fullReads()).toBe(1);
+
+    // The tail only returns t3, outside whose window `late` sits.
+    server.traces = [late, t1, t3];
+    await act(() => result.current.refetch());
+
+    expect(fullReads()).toBe(2);
+    await waitFor(() =>
+      expect(result.current.data?.traces.map((t) => t.id)).toEqual(['late', 't1', 't3'])
+    );
+  });
+
+  it('does not re-read every trace while the tail accounts for them all', async () => {
+    const t1 = trace('t1', '2026-09-01T10:00:00.000Z');
+    const t2 = trace('t2', '2026-09-01T10:00:04.000Z');
+    const server = { status: 'RUNNING', tail: () => [t2], traces: [t1] };
+    const { fullReads } = fakeGateway(server);
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useWorkflowRun('run-1'), { wrapper });
+    await waitFor(() => expect(result.current.data?.traces).toHaveLength(1));
+
+    server.traces = [t1, t2];
+    await act(() => result.current.refetch());
+    await act(() => result.current.refetch());
+
+    expect(fullReads()).toBe(1);
+    expect(result.current.data?.traces.map((t) => t.id)).toEqual(['t1', 't2']);
+  });
+
+  it('re-reads every trace once when the run turns terminal', async () => {
+    const t1 = trace('t1', '2026-09-01T10:00:00.000Z');
+    const server = { status: 'RUNNING', tail: () => [t1], traces: [t1] };
+    const { fullReads } = fakeGateway(server);
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useWorkflowRun('run-1'), { wrapper });
+    await waitFor(() => expect(result.current.data?.traces).toHaveLength(1));
+
+    server.status = 'SUCCESS';
+    await act(() => result.current.refetch());
+    expect(fullReads()).toBe(2);
+    await waitFor(() => expect(result.current.data?.status).toBe('SUCCESS'));
+
+    // Already terminal when held: later polls go back to the tail.
+    await act(() => result.current.refetch());
+    expect(fullReads()).toBe(2);
   });
 
   it('never tails the full-payload view', async () => {
@@ -197,7 +279,7 @@ describe('useRunDetail', () => {
         String(input).includes('fullTraces=true')
           ? json({ error: { message: 'too big' } }, 500)
           : String(input).includes('/traces')
-            ? json({ data: [] })
+            ? json({ data: [], total: 0 })
             : json({ data: { id: 'run-1', status: 'RUNNING' } })
       )
     );

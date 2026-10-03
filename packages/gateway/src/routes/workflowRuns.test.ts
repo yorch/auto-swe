@@ -8,10 +8,12 @@ vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
 
 function newMockPrisma() {
   return {
+    $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     activeWorkflow: {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     agentTrace: {
+      count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
     },
     configAuditLog: {
@@ -405,6 +407,25 @@ describe('workflowRunRoutes GET /:id/traces (live tail)', () => {
     expect(trace.id).toBe('t-new');
     expect(trace.trimmed).toBe(true);
     expect(trace.specNodeId).toBe('impl');
+  });
+
+  it('counts every trace of the run in the same snapshot as the page', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    prisma.agentTrace.findMany.mockResolvedValue([traceRow('t-new', 'x')]);
+    prisma.agentTrace.count.mockResolvedValue(7);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/traces?since=2026-09-01T10:00:00.123Z`,
+    });
+    expect(res.json().total).toBe(7);
+    // The count ignores the cursor: it is the run's whole trace, so a caller
+    // can compare it with what it holds.
+    expect(prisma.agentTrace.count).toHaveBeenCalledWith({ where: { runId } });
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Array), {
+      isolationLevel: 'RepeatableRead',
+    });
   });
 
   it('returns every trace when no cursor is given', async () => {

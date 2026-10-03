@@ -39,10 +39,11 @@ const RunDetailQuery = z.object({
 
 const RunTracesQuery = z.object({
   /**
-   * Return only traces created at or after this instant. Inclusive on purpose:
-   * the cursor a client holds is a JS Date, a millisecond truncation of the
-   * column's microseconds, so a strict `>` could skip rows in the cursor's own
-   * millisecond. Callers merge by trace id, so the overlap is harmless.
+   * Return only traces created at or after this instant. Inclusive so a row in
+   * the cursor's own millisecond is not skipped; callers merge by trace id, so
+   * the overlap is harmless. `createdAt` is the writing worker's clock when it
+   * built the insert, not the commit time, so no cursor can promise every row
+   * behind it has been read — `total` is what lets a caller notice a gap.
    */
   since: z.iso.datetime({ offset: true }).optional(),
 });
@@ -57,7 +58,11 @@ const RunListResponseSchema = z.object({
 });
 
 const RunDetailResponseSchema = z.object({ data: z.unknown() });
-const RunTracesResponseSchema = z.object({ data: z.array(z.unknown()) });
+const RunTracesResponseSchema = z.object({
+  data: z.array(z.unknown()),
+  /** Every trace the run has, counted in the same snapshot as `data`. */
+  total: z.number().int(),
+});
 
 const CancelRunResponseSchema = z.object({
   data: z.object({ id: z.string().uuid(), status: z.string() }),
@@ -385,7 +390,9 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   // A running run's page polls this plus the trace-free detail instead of
   // re-downloading every trace each tick. Payloads are always trimmed, like the
   // polled detail view; `?fullTraces=true` on the detail route is the one-shot
-  // way to get them whole.
+  // way to get them whole. `total` is counted in the same snapshot as the
+  // page, so a caller holding fewer traces than `total` after merging knows a
+  // row landed behind its cursor and must re-read them all.
   app.get(
     '/:id/traces',
     {
@@ -411,11 +418,19 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const { since } = request.query;
-      const traces = await fastify.prisma.agentTrace.findMany({
-        orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
-        where: { runId: run.id, ...(since ? { createdAt: { gte: new Date(since) } } : {}) },
-      });
-      return { data: traces.map((t) => projectTrace(t, false)) };
+      // One REPEATABLE READ snapshot, so a row committed between the two
+      // statements cannot be counted without being returned (or vice versa).
+      const [traces, total] = await fastify.prisma.$transaction(
+        [
+          fastify.prisma.agentTrace.findMany({
+            orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+            where: { runId: run.id, ...(since ? { createdAt: { gte: new Date(since) } } : {}) },
+          }),
+          fastify.prisma.agentTrace.count({ where: { runId: run.id } }),
+        ],
+        { isolationLevel: 'RepeatableRead' }
+      );
+      return { data: traces.map((t) => projectTrace(t, false)), total };
     }
   );
 
