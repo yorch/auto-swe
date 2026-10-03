@@ -257,10 +257,8 @@ export async function finalizeChannelRun(input: FinalizeChannelRunInput): Promis
   }
 
   const totals = await sumRunTraceUsage(run.id);
-  const data = {
+  const usage = {
     costUsdAccrued: totals.costUsd,
-    endedAt: new Date(),
-    status: input.status,
     tokensInputTotal: totals.inputTokens,
     tokensOutputTotal: totals.outputTokens,
   };
@@ -269,13 +267,16 @@ export async function finalizeChannelRun(input: FinalizeChannelRunInput): Promis
   // retried attempt or a run the dashboard already cancelled, so only the
   // first is counted — atomically, whichever writer lands first.
   const { count } = await prisma.workflowRun.updateMany({
-    data,
+    data: { ...usage, endedAt: new Date(), status: input.status },
     where: { endedAt: null, id: run.id },
   });
   if (count > 0) {
     recordRunFinalized(input.status, 'channel');
     return;
   }
-  // Already ended: re-write the same summed totals, as every attempt does.
-  await prisma.workflowRun.update({ data, where: { id: run.id } });
+  // Already ended — by an earlier attempt or by a dashboard cancel. Refresh
+  // only the summed usage: the status and end time belong to whichever write
+  // ended the run, and re-writing them would flip a cancelled run to this
+  // attempt's SUCCESS or FAILED.
+  await prisma.workflowRun.update({ data: usage, where: { id: run.id } });
 }

@@ -208,7 +208,13 @@ describe('finalizeChannelRun', () => {
     expect(recordRunFinalized).not.toHaveBeenCalled();
     const call = p.workflowRun.update.mock.calls.at(-1)?.[0];
     expect(call.where).toEqual({ id: 'run-4' });
-    expect(call.data.costUsdAccrued).toBe(0.5);
+    // Only the usage: a dashboard-cancelled run must not flip to this attempt's
+    // FAILED, nor have its end time moved.
+    expect(call.data).toEqual({
+      costUsdAccrued: 0.5,
+      tokensInputTotal: 0n,
+      tokensOutputTotal: 0n,
+    });
   });
 
   it('is a no-op when the run row is missing', async () => {
