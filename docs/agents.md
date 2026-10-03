@@ -591,9 +591,9 @@ interface TraceRecord {
 ```
 
 String values are stored up to 32 000 characters per field. The run page polls, so
-`GET /api/v1/workflow-runs/:id` trims each field to 4 000 characters (head and tail) and marks the
-trace `trimmed`; the page then offers **Load full payloads**, which refetches with
-`?fullTraces=true`. The `writeFile` tool records only the file `path` in `inputJson` (not the full
+`GET /api/v1/workflow-runs/:id` and its live tail `GET /api/v1/workflow-runs/:id/traces` trim each
+field to 4 000 characters (head and tail) and mark the trace `trimmed`; the page then offers
+**Load full payloads**, which refetches once with `?fullTraces=true` and stops polling. The `writeFile` tool records only the file `path` in `inputJson` (not the full
 content) to keep trace sizes manageable.
 
 ### 8.3 AgentTrace Table

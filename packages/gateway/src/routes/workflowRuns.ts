@@ -36,6 +36,16 @@ const RunDetailQuery = z.object({
   includeTraces: booleanQueryParam(false),
 });
 
+const RunTracesQuery = z.object({
+  /**
+   * Return only traces created at or after this instant. Inclusive on purpose:
+   * the cursor a client holds is a JS Date, a millisecond truncation of the
+   * column's microseconds, so a strict `>` could skip rows in the cursor's own
+   * millisecond. Callers merge by trace id, so the overlap is harmless.
+   */
+  since: z.iso.datetime({ offset: true }).optional(),
+});
+
 const ErrorResponseSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
@@ -46,6 +56,7 @@ const RunListResponseSchema = z.object({
 });
 
 const RunDetailResponseSchema = z.object({ data: z.unknown() });
+const RunTracesResponseSchema = z.object({ data: z.array(z.unknown()) });
 
 const CancelRunResponseSchema = z.object({
   data: z.object({ id: z.string().uuid(), status: z.string() }),
@@ -109,6 +120,32 @@ function trimTracePayloads(
     trimmed,
   };
 }
+/** The run page's view of one trace row; payloads trimmed unless `full`. */
+function projectTrace(t: Prisma.AgentTraceGetPayload<object>, full: boolean) {
+  return {
+    ...trimTracePayloads(t, full),
+    agentKey: t.agentKey,
+    attempt: t.attempt,
+    costUsd: t.costUsd,
+    createdAt: t.createdAt,
+    durationMs: t.durationMs,
+    error: t.error,
+    id: t.id,
+    inputTokens: t.inputTokens,
+    model: t.model,
+    nodeId: t.nodeId,
+    otelSpanId: t.otelSpanId,
+    otelTraceId: t.otelTraceId,
+    outputTokens: t.outputTokens,
+    recordingId: t.recordingId,
+    seq: t.seq,
+    specNodeId: t.specNodeId,
+    stepAttempt: t.stepAttempt,
+    toolName: t.toolName,
+    type: t.type,
+  };
+}
+
 /**
  * Names of the GLOBAL templates whose runs are conversational/assistant chatter,
  * not engineering work: the per-mention "Channel Assistant" turn/ambient-digest
@@ -338,6 +375,44 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // ── Traces created since a cursor (the run page's live tail) ──
+  // A running run's page polls this plus the trace-free detail instead of
+  // re-downloading every trace each tick. Payloads are always trimmed, like the
+  // polled detail view; `?fullTraces=true` on the detail route is the one-shot
+  // way to get them whole.
+  app.get(
+    '/:id/traces',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: {
+        params: RunIdParam,
+        querystring: RunTracesQuery,
+        response: { 200: RunTracesResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
+      });
+      if (!run) {
+        return reply.status(404).send({
+          error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
+        });
+      }
+      const { since } = request.query;
+      const traces = await fastify.prisma.agentTrace.findMany({
+        orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+        where: { runId: run.id, ...(since ? { createdAt: { gte: new Date(since) } } : {}) },
+      });
+      return { data: traces.map((t) => projectTrace(t, false)) };
+    }
+  );
+
   // ── Get run detail (with steps + spec snapshot) ──
   app.get(
     '/:id',
@@ -408,28 +483,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateVersion: run.templateVersion,
           tokensInputTotal: Number(run.tokensInputTotal),
           tokensOutputTotal: Number(run.tokensOutputTotal),
-          traces: traces.map((t) => ({
-            ...trimTracePayloads(t, fullTraces),
-            agentKey: t.agentKey,
-            attempt: t.attempt,
-            costUsd: t.costUsd,
-            createdAt: t.createdAt,
-            durationMs: t.durationMs,
-            error: t.error,
-            id: t.id,
-            inputTokens: t.inputTokens,
-            model: t.model,
-            nodeId: t.nodeId,
-            otelSpanId: t.otelSpanId,
-            otelTraceId: t.otelTraceId,
-            outputTokens: t.outputTokens,
-            recordingId: t.recordingId,
-            seq: t.seq,
-            specNodeId: t.specNodeId,
-            stepAttempt: t.stepAttempt,
-            toolName: t.toolName,
-            type: t.type,
-          })),
+          traces: traces.map((t) => projectTrace(t, fullTraces)),
           workflowId: run.workflowId,
           workRequest: run.workRequest,
         },

@@ -180,7 +180,12 @@ do not resolve `var()`, so those read hex literals from `lib/palette.ts`; `palet
 component reaches past the theme into a default Tailwind colour scale.
 
 **Data fetching.** All server state lives in TanStack Query (staleTime 30 s, retry 1). Running
-workflows poll on an adaptive 3 s interval; terminal-state queries use 30 s.
+workflows poll on an adaptive 3 s interval; terminal-state queries use 30 s. The run page loads its
+traces once, then each poll reads the run without traces and only the traces created since the
+newest one it holds (`GET /api/v1/workflow-runs/:id/traces?since=`), appending them. The cursor
+trails the newest trace by 10 s and the page merges by trace id, because a trace's `createdAt` is
+its insert transaction's start — a slow insert can commit a row older than one already read.
+Nothing streams: updates arrive on the poll, not as they are written.
 
 ---
 
@@ -912,3 +917,7 @@ Current constraints of the system as built. Deliberate product boundaries are in
   not duplicate external writes. Notion, Zendesk, Slack, and issue-tracker outcomes are concrete;
   `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
   activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
+- **The run page polls; nothing is pushed.** A running run's page learns of a new trace, step, or
+  status up to 3 s after it is written. Only traces are fetched incrementally: each poll still
+  re-reads the run's steps and spec snapshot whole, and the 10 s overlap re-reads that window's
+  traces every poll.

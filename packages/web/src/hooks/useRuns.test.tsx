@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 
+import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { type ReactNode, useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock } from '@/test/rtl-helpers';
-import { RETRIED_RUN_WAIT_MS, useRetriedRun, useRunDetail, useWorkflowRun } from './useRuns';
+import {
+  mergeTraces,
+  RETRIED_RUN_WAIT_MS,
+  TRACE_TAIL_OVERLAP_MS,
+  traceTailCursor,
+  useRetriedRun,
+  useRunDetail,
+  useWorkflowRun,
+} from './useRuns';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -69,6 +78,93 @@ describe('useWorkflowRun', () => {
   });
 });
 
+function trace(id: string, createdAt: string, seq = 0): AgentTraceRecord {
+  return { createdAt, id, seq, trimmed: false } as AgentTraceRecord;
+}
+
+describe('trace live tail', () => {
+  it('sets the cursor a fixed overlap behind the newest trace', () => {
+    expect(traceTailCursor([])).toBeNull();
+    const cursor = traceTailCursor([
+      trace('a', '2026-09-01T10:00:30.000Z'),
+      trace('b', '2026-09-01T10:00:00.000Z'),
+    ]);
+    expect(Date.parse('2026-09-01T10:00:30.000Z') - Date.parse(cursor as string)).toBe(
+      TRACE_TAIL_OVERLAP_MS
+    );
+  });
+
+  it('appends only unseen traces, in createdAt then seq order', () => {
+    const held = [
+      trace('a', '2026-09-01T10:00:00.000Z', 0),
+      trace('b', '2026-09-01T10:00:05.000Z'),
+    ];
+    const merged = mergeTraces(held, [
+      trace('b', '2026-09-01T10:00:05.000Z'),
+      // Committed late: older than a trace already held.
+      trace('late', '2026-09-01T10:00:00.000Z', 1),
+      trace('c', '2026-09-01T10:00:06.000Z'),
+    ]);
+    expect(merged.map((t) => t.id)).toEqual(['a', 'late', 'b', 'c']);
+  });
+
+  it('keeps the held array when nothing is new, so the page does not re-render', () => {
+    const held = [trace('a', '2026-09-01T10:00:00.000Z')];
+    expect(mergeTraces(held, [trace('a', '2026-09-01T10:00:00.000Z')])).toBe(held);
+  });
+
+  it('after the first load, polls the trace-free run and only new traces, then appends them', async () => {
+    const fetchSpy = setupFetchMock({
+      'GET /api/v1/workflow-runs/run-1': () => ({
+        data: {
+          id: 'run-1',
+          status: 'RUNNING',
+          steps: [],
+          traces: fetchSpy.mock.calls.length === 1 ? [trace('t1', '2026-09-01T10:00:00.000Z')] : [],
+        },
+      }),
+      'GET /api/v1/workflow-runs/run-1/traces': () => ({
+        data: [trace('t1', '2026-09-01T10:00:00.000Z'), trace('t2', '2026-09-01T10:00:04.000Z')],
+      }),
+    });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useWorkflowRun('run-1'), { wrapper });
+    await waitFor(() => expect(result.current.data?.traces).toHaveLength(1));
+
+    await act(() => result.current.refetch());
+
+    const urls = fetchSpy.mock.calls.map(([u]) => String(u));
+    expect(urls[0]).toContain('/api/v1/workflow-runs/run-1?includeTraces=true');
+    // The poll: the run without traces, and the tail from the cursor.
+    expect(urls.slice(1)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/\/api\/v1\/workflow-runs\/run-1$/),
+        expect.stringContaining(
+          `/api/v1/workflow-runs/run-1/traces?since=${encodeURIComponent('2026-09-01T09:59:50.000Z')}`
+        ),
+      ])
+    );
+    await waitFor(() => expect(result.current.data?.traces.map((t) => t.id)).toEqual(['t1', 't2']));
+  });
+
+  it('never tails the full-payload view', async () => {
+    const fetchSpy = setupFetchMock({
+      'GET /api/v1/workflow-runs/run-1': () => ({
+        data: { id: 'run-1', status: 'RUNNING', traces: [trace('t1', '2026-09-01T10:00:00.000Z')] },
+      }),
+    });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useWorkflowRun('run-1', true, true), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    await act(() => result.current.refetch());
+
+    const urls = fetchSpy.mock.calls.map(([u]) => String(u));
+    expect(urls).toHaveLength(2);
+    expect(urls.every((u) => u.endsWith('?fullTraces=true'))).toBe(true);
+  });
+});
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     headers: { 'content-type': 'application/json' },
@@ -100,7 +196,9 @@ describe('useRunDetail', () => {
       vi.fn(async (input: RequestInfo | URL) =>
         String(input).includes('fullTraces=true')
           ? json({ error: { message: 'too big' } }, 500)
-          : json({ data: { id: 'run-1', status: 'RUNNING' } })
+          : String(input).includes('/traces')
+            ? json({ data: [] })
+            : json({ data: { id: 'run-1', status: 'RUNNING' } })
       )
     );
 
