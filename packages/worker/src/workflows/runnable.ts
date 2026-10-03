@@ -548,6 +548,14 @@ function resolveConnectionId(step: string, ctx: Context, inputs: Record<string, 
  * through, so `undefined` reaches the activity as "unset" and the activity's own
  * default applies.
  */
+/** `config.allowedPaths` when it is a non-empty array of strings, else undefined. */
+function allowedPathsConfig(config: Record<string, unknown>): string[] | undefined {
+  const raw = config.allowedPaths;
+  return Array.isArray(raw) && raw.length > 0 && raw.every((p) => typeof p === 'string')
+    ? (raw as string[])
+    : undefined;
+}
+
 function crossRepoOptions(config: Record<string, unknown>): {
   crossRepoCheckout?: boolean;
   crossRepoContext?: boolean;
@@ -674,17 +682,29 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       // `subtask` is already `Subtask | undefined`, so both arms of the ternary
       // this replaced passed the same thing.
       const guidance = formatGuidance(inputs.guidance);
-      return agentActivities.executeImplementation(
-        guidance
-          ? {
-              ...request,
-              description: `${request.description}\n\n## Guidance from the requester\n${guidance}`,
-            }
-          : request,
-        subtask,
-        systemPromptOverride,
-        crossRepo
-      );
+      const effectiveRequest = guidance
+        ? {
+            ...request,
+            description: `${request.description}\n\n## Guidance from the requester\n${guidance}`,
+          }
+        : request;
+      const allowedPaths = allowedPathsConfig(config);
+      // The fifth argument is passed only when set, so a step that does not set it
+      // calls the activity exactly as before.
+      return allowedPaths
+        ? agentActivities.executeImplementation(
+            effectiveRequest,
+            subtask,
+            systemPromptOverride,
+            crossRepo,
+            allowedPaths
+          )
+        : agentActivities.executeImplementation(
+            effectiveRequest,
+            subtask,
+            systemPromptOverride,
+            crossRepo
+          );
     },
   ],
   [
@@ -710,11 +730,19 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         (lookupPath(ctx, 'context.lastRejectionSummary') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
-      return agentActivities.executeReviewFixImplementation(
-        rejection,
-        prev,
-        config.systemPrompt as string | undefined
-      );
+      const allowedPaths = allowedPathsConfig(config);
+      return allowedPaths
+        ? agentActivities.executeReviewFixImplementation(
+            rejection,
+            prev,
+            config.systemPrompt as string | undefined,
+            allowedPaths
+          )
+        : agentActivities.executeReviewFixImplementation(
+            rejection,
+            prev,
+            config.systemPrompt as string | undefined
+          );
     },
   ],
   [
@@ -742,14 +770,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         : githubActivities.createOrUpdatePullRequest(request, codeResult);
     },
   ],
-  [
-    'listProviderModels',
-    ({ request, config }) =>
-      catalogActivities.listProviderModels({
-        ...(typeof config.catalogPath === 'string' ? { catalogPath: config.catalogPath } : {}),
-        request,
-      }),
-  ],
+  ['listProviderModels', ({ request }) => catalogActivities.listProviderModels({ request })],
   [
     'fetchCILogs',
     ({ request, inputs }) =>

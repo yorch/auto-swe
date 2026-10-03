@@ -20,6 +20,13 @@
  *  - Gemini 2.5 Pro / 3.1 Pro >200K-token surcharge (input doubles)
  */
 
+/**
+ * Where this table lives in the repository. The `model-catalog-refresh` template, its
+ * precondition step, its changed-files guard and its gate all name this one constant;
+ * `builtinModels.test.ts` fails if the file is moved without updating it.
+ */
+export const BUILTIN_MODELS_PATH = 'packages/shared/src/lib/builtinModels.ts';
+
 export type BuiltinModelKind = 'CHAT' | 'EMBEDDING';
 
 /** RETIRED models are still priced: pinned agent versions and history bill against them. */

@@ -19,6 +19,7 @@ import { getExecErrorStdout } from '../lib/errors.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
+import { assertDiffWithinAllowedPaths } from './allowedPaths.js';
 import {
   detectTestCommand,
   parseDiffToFileChanges,
@@ -60,6 +61,8 @@ export interface FixSessionInput {
   /** Built-in system prompt for this mode (resolveSystemPrompt handles DB/step overrides). */
   defaultSystemPrompt: string;
   systemPromptOverride?: string;
+  /** When set, the change may touch only these paths; anything else fails before the push. */
+  allowedPaths?: string[];
   /** Conventional commit message for the fix commit. */
   commitMessage: string;
   /** OTel/cost event name, e.g. 'llm.ci_fix'. */
@@ -230,6 +233,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // Commit and push the fix (skip the commit if the agent made no changes
     // to avoid empty CI cycles; push is still safe — it's a no-op then).
     await workspace.exec('git add -A');
+    await assertDiffWithinAllowedPaths(workspace, repo.defaultBranch, input.allowedPaths);
     await workspace.exec(
       `git diff --cached --quiet || git commit -m ${shellQuote(input.commitMessage)}`
     );

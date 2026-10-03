@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_MODELS, builtinModelSpec, cacheMultipliers } from './builtinModels.js';
+import {
+  BUILTIN_MODELS,
+  BUILTIN_MODELS_PATH,
+  builtinModelSpec,
+  cacheMultipliers,
+} from './builtinModels.js';
 import { parseProviderModelSpec } from './modelSpec.js';
 import { PREVIOUS_DEFAULT_MODEL_SPECS, SWE_AGENTS } from './syncBuiltins.js';
 
@@ -81,6 +86,15 @@ function priceSourceProblem(m: { provider: string; priceSourceUrl?: string }): s
   }
   return url.hostname === host ? null : `priceSourceUrl host ${url.hostname} is not ${host}`;
 }
+
+describe('BUILTIN_MODELS_PATH', () => {
+  it('is where this file lives, relative to the repository root', () => {
+    const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+    expect(fileURLToPath(new URL('./builtinModels.ts', import.meta.url))).toBe(
+      `${repoRoot}${BUILTIN_MODELS_PATH}`
+    );
+  });
+});
 
 describe('priceSourceUrl', () => {
   it('matches the fixed provider -> host map in the file header, exactly', () => {

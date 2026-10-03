@@ -43,6 +43,10 @@ const calls: {
   implementations: unknown[];
   /** The arguments each `createOrUpdatePullRequest` call received, after the request. */
   pullRequestArgs: unknown[][];
+  /** The arguments after (request, subtask) of each `executeImplementation` call. */
+  implementationExtraArgs: unknown[][];
+  /** The arguments each `executeReviewFixImplementation` call received. */
+  reviewFixArgs: unknown[][];
   recordedSteps: Array<{ error?: string; nodeId: string; status: string }>;
 } = {
   cancelledHumanSteps: [],
@@ -51,12 +55,14 @@ const calls: {
   createWorkflowRun: [],
   domainStates: [],
   finalize: [],
+  implementationExtraArgs: [],
   implementationRequests: [],
   implementations: [],
   pullRequestArgs: [],
   readSource: [],
   recordedSteps: [],
   resolveWorkspace: [],
+  reviewFixArgs: [],
   runTool: [],
   writeOutcome: [],
 };
@@ -108,10 +114,19 @@ const fakeActivities = {
     }
     return { pinnedSettings: currentPinnedSettings, runId: 'run-test-1', spec: currentSpec };
   },
-  executeImplementation: async (request: { description: string }, subtask: unknown) => {
+  executeImplementation: async (
+    request: { description: string },
+    subtask: unknown,
+    ...rest: unknown[]
+  ) => {
+    calls.implementationExtraArgs.push(rest);
     calls.implementationRequests.push(request);
     calls.implementations.push(subtask);
     return { branch: 'auto/T-1', headSha: 'sha' };
+  },
+  executeReviewFixImplementation: async (...args: unknown[]) => {
+    calls.reviewFixArgs.push(args);
+    return { branch: 'auto/T-1', headSha: 'sha2' };
   },
   finalizeWorkflowRun: async (runId: string, status: string) => {
     calls.finalize.push({ runId, status });
@@ -558,6 +573,48 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.implementationRequests[0]?.description).toBe(
       'test\n\n## Guidance from the requester\n- approach: use a queue'
     );
+  }, 120_000);
+
+  it('passes allowedPaths to the implementer and the review fix only when the node sets it', async () => {
+    const paths = ['docs/a.md'];
+    const specWith = (config?: Record<string, unknown>) =>
+      makeSpec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          fix: {
+            ...(config ? { config } : {}),
+            inputs: {
+              previousCodeResult: { literal: { branch: 'auto/T-1' } },
+              rejectionSummary: { literal: 'fix it' },
+            },
+            next: 'done',
+            step: 'executeReviewFixImplementation',
+            type: 'step',
+          },
+          impl: {
+            ...(config ? { config } : {}),
+            next: 'fix',
+            step: 'executeImplementation',
+            type: 'step',
+          },
+        },
+        'impl'
+      );
+    calls.implementationExtraArgs.length = 0;
+    calls.reviewFixArgs.length = 0;
+    currentSpec = specWith({ allowedPaths: paths, systemPrompt: 'sp' });
+    await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-allowed-paths'));
+    currentSpec = specWith();
+    await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-no-allowed-paths'));
+    // Set: (systemPrompt, crossRepo, allowedPaths). Unset: the four-argument call as before.
+    expect(calls.implementationExtraArgs).toEqual([
+      ['sp', {}, paths],
+      [undefined, {}],
+    ]);
+    expect(calls.reviewFixArgs).toEqual([
+      ['fix it', { branch: 'auto/T-1' }, 'sp', paths],
+      ['fix it', { branch: 'auto/T-1' }, undefined],
+    ]);
   }, 120_000);
 
   it('opens the pull request as a draft only when the node says so', async () => {

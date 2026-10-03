@@ -210,6 +210,44 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe('runImplementerFixSession allowedPaths', () => {
+  const stage = (names: string) => {
+    const base = execMock.getMockImplementation() as (cmd: string) => Promise<string>;
+    execMock.mockImplementation(async (cmd: string) =>
+      cmd.startsWith('git diff --cached --name-only') ? names : base(cmd)
+    );
+    return base;
+  };
+
+  it('fails non-retryably before the commit or the push when a file outside the list changed', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    const base = stage('a.ts\0package.json\0');
+    try {
+      await expect(
+        runImplementerFixSession(input({ allowedPaths: ['a.ts'] }))
+      ).rejects.toMatchObject({ nonRetryable: true, type: 'DIFF_OUTSIDE_ALLOWED_PATHS' });
+      const cmds = execMock.mock.calls.map((c) => c[0]);
+      expect(cmds.some((c) => c.startsWith('git diff --cached --quiet'))).toBe(false);
+      expect(cmds.some((c) => c.includes('push origin'))).toBe(false);
+    } finally {
+      execMock.mockImplementation(base);
+    }
+  });
+
+  it('pushes a change inside the list', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    const base = stage('a.ts\0');
+    try {
+      await runImplementerFixSession(input({ allowedPaths: ['a.ts'] }));
+      expect(execMock.mock.calls.map((c) => c[0]).some((c) => c.includes('push origin'))).toBe(
+        true
+      );
+    } finally {
+      execMock.mockImplementation(base);
+    }
+  });
+});
+
 describe('runImplementerFixSession', () => {
   it('refuses an unpriced model before any workspace exists, for the role it runs as', async () => {
     assertRolePricedMock.mockRejectedValueOnce(unpriced());

@@ -285,6 +285,36 @@ describe('executeImplementation shell hygiene', () => {
   });
 });
 
+describe('executeImplementation allowedPaths', () => {
+  const commands = () => workspaceMock.exec.mock.calls.map((c) => c[0]);
+  const withStaged = (names: string) =>
+    workspaceMock.exec.mockImplementation(async (cmd: string) =>
+      cmd.startsWith('git diff --cached --name-only') ? names : ''
+    );
+
+  it('fails non-retryably before the commit or the push when a file outside the list changed', async () => {
+    withStaged('docs/a.md\0.github/workflows/x.yml\0');
+    await expect(
+      executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md'])
+    ).rejects.toThrow(/may not change \(\.github\/workflows\/x\.yml\)/);
+    expect(commands().some((c) => c.startsWith('git diff --cached --quiet'))).toBe(false);
+    expect(workspaceMock.gitAuthed).not.toHaveBeenCalledWith(expect.stringContaining('push'));
+  });
+
+  it('commits and pushes a change inside the list', async () => {
+    withStaged('docs/a.md\0');
+    await executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md']);
+    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith(expect.stringContaining('push origin'));
+  });
+
+  it('changes nothing for a step that sets no list', async () => {
+    withStaged('anything/at/all.ts\0');
+    await executeImplementation(REQUEST);
+    expect(commands().some((c) => c.startsWith('git diff --cached --name-only'))).toBe(false);
+    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith(expect.stringContaining('push origin'));
+  });
+});
+
 describe('executeImplementation retry safety', () => {
   const execCommands = () => workspaceMock.exec.mock.calls.map((c) => c[0]);
 

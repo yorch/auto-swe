@@ -65,10 +65,12 @@ export async function executeCIFixImplementation(
 export async function executeReviewFixImplementation(
   rejectionSummary: string,
   previousCodeResult: CodeResult,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  allowedPaths?: string[]
 ): Promise<CodeResult> {
   return runImplementerFixSession({
     agentKey: 'reviewFixer',
+    allowedPaths,
     commitMessage: `auto: address review findings for ${previousCodeResult.branch}`,
     defaultSystemPrompt: REVIEW_FIX_SYSTEM_PROMPT,
     mode: 'REVIEW_FIX',

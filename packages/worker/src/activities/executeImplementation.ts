@@ -37,6 +37,7 @@ import {
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
+import { assertDiffWithinAllowedPaths } from './allowedPaths.js';
 import {
   detectTestCommand,
   parseDiffToFileChanges,
@@ -102,7 +103,9 @@ export async function executeImplementation(
   request: RepoWorkRequest,
   subtask?: Subtask,
   systemPromptOverride?: string,
-  crossRepoOptions?: CrossRepoStepOptions
+  crossRepoOptions?: CrossRepoStepOptions,
+  /** When set, the change may touch only these paths; anything else fails before the push. */
+  allowedPaths?: string[]
 ): Promise<CodeResult> {
   // First, before a clone or a container exists: an unpriced model under a USD
   // cap is refused here, not after the workspace has been built.
@@ -369,6 +372,7 @@ export async function executeImplementation(
       ? `auto: ${subtask.id} — ${subtask.title} (${request.externalTicketId})`
       : `auto: implement ${request.externalTicketId}`;
     await workspace.exec('git add -A');
+    await assertDiffWithinAllowedPaths(workspace, repo.defaultBranch, allowedPaths);
     // Skip the commit when there is nothing staged: on a retry that resumed from
     // the pushed branch the agent may have had nothing left to change, and an
     // empty `git commit` exits non-zero.
