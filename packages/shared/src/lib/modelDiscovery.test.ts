@@ -32,7 +32,7 @@ describe('parseModelListPage', () => {
         has_more: true,
         last_id: 'claude-opus-6',
       })
-    ).toEqual({
+    ).toMatchObject({
       ids: ['claude-opus-6'],
       models: [{ displayName: 'Claude Opus 6', kind: 'CHAT', modelId: 'claude-opus-6' }],
       next: { after_id: 'claude-opus-6' },
@@ -67,7 +67,7 @@ describe('parseModelListPage', () => {
         data: [{ id: 'gpt-6.2' }, { id: 'text-embedding-4' }],
         object: 'list',
       })
-    ).toEqual({
+    ).toMatchObject({
       ids: ['gpt-6.2', 'text-embedding-4'],
       models: [
         { displayName: null, kind: 'CHAT', modelId: 'gpt-6.2' },
@@ -78,12 +78,15 @@ describe('parseModelListPage', () => {
   });
 
   it('yields nothing for a shape it does not recognise', () => {
-    expect(parseModelListPage('openai', { unexpected: true })).toEqual({
-      ids: [],
-      models: [],
-      next: null,
-    });
-    expect(parseModelListPage('google', null)).toEqual({ ids: [], models: [], next: null });
+    for (const body of [{ unexpected: true }, null, [], '<html>']) {
+      expect(parseModelListPage('openai', body)).toMatchObject({
+        ids: [],
+        models: [],
+        next: null,
+        recognised: false,
+      });
+    }
+    expect(parseModelListPage('google', null)).toMatchObject({ models: [], recognised: false });
   });
 });
 
@@ -251,7 +254,7 @@ describe('discoverProviderModels', () => {
     it('flags nothing when the listing is empty or cut short — absence proves nothing', async () => {
       vi.stubGlobal(
         'fetch',
-        vi.fn(async () => jsonResponse({ unexpected: true }))
+        vi.fn(async () => jsonResponse({ data: [] }))
       );
       const [empty] = await discoverProviderModels(fakePrisma([credential('openai')], []));
       expect(empty).toMatchObject({ complete: false, ok: true, retirementCandidates: [] });
@@ -264,5 +267,140 @@ describe('discoverProviderModels', () => {
       const [partial] = await discoverProviderModels(fakePrisma([credential('anthropic')], []));
       expect(partial).toMatchObject({ complete: false, ok: true, retirementCandidates: [] });
     });
+  });
+});
+
+describe('listProviderModels failures', () => {
+  const SECRET = 'sk-TOPSECRET-1234';
+
+  it('never lets a key or URL credential from a fetch error reach the result', async () => {
+    // Node quotes the offending header value or URL, userinfo included.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError(
+          `Headers.append: "Bearer ${SECRET}\r\nX-Evil: 1" is an invalid header value. bob:hunter2@host`
+        );
+      })
+    );
+    const result = await listProviderModels({
+      apiKey: `${SECRET}\r\nX-Evil: 1`,
+      provider: 'openai',
+    });
+    expect(result).toEqual({ error: 'request failed (TypeError)', ok: false });
+    expect(JSON.stringify(result)).not.toMatch(/TOPSECRET|hunter2|Bearer/);
+  });
+
+  it('reports a timeout as a fixed string and keeps only a clean error code', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw Object.assign(new Error('x'), { name: 'TimeoutError' });
+      })
+    );
+    expect(await listProviderModels({ apiKey: 'k', provider: 'openai' })).toEqual({
+      error: 'timed out',
+      ok: false,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw Object.assign(new TypeError('fetch failed sk-LEAK'), {
+          cause: { code: 'ECONNREFUSED', message: 'connect sk-LEAK' },
+        });
+      })
+    );
+    expect(await listProviderModels({ apiKey: 'k', provider: 'openai' })).toEqual({
+      error: 'request failed (TypeError, ECONNREFUSED)',
+      ok: false,
+    });
+  });
+
+  it('refuses an apiBase with userinfo without echoing it, and a private one as blocked', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const withUserinfo = await listProviderModels({
+      apiBase: 'https://bob:hunter2@openrouter.ai/api/v1',
+      apiKey: 'k',
+      provider: 'openrouter',
+    });
+    expect(withUserinfo).toEqual({ error: 'blocked address', ok: false });
+    const local = await listProviderModels({
+      apiBase: 'http://localhost:11434/v1',
+      apiKey: 'k',
+      provider: 'ollama',
+    });
+    expect(local).toEqual({ error: 'blocked address', ok: false });
+    expect(await listProviderModels({ apiKey: 'k', provider: 'ollama' })).toEqual({
+      error: 'apiBase required',
+      ok: false,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('treats a 200 that is not a list as a failure, not an empty success', async () => {
+    for (const body of ['<html>login</html>', '{}', '[]', '{"data":"x"}']) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(body))
+      );
+      expect(await listProviderModels({ apiKey: 'k', provider: 'openai' })).toEqual({
+        error: 'unrecognised response',
+        ok: false,
+      });
+    }
+  });
+
+  it('is incomplete when the provider signals more pages it gave no cursor for', async () => {
+    const cases: Array<[string, unknown]> = [
+      ['openai', { data: [{ id: 'gpt-x' }], has_more: true, last_id: 'gpt-x' }],
+      ['anthropic', { data: [{ id: 'claude-x' }], has_more: true }],
+      ['openrouter', { data: [{ id: 'm' }], next_page_token: 'abc' }],
+    ];
+    for (const [provider, body] of cases) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => jsonResponse(body))
+      );
+      const result = await listProviderModels({
+        apiBase: 'https://example.com/v1',
+        apiKey: 'k',
+        provider,
+      });
+      expect(result).toMatchObject({ complete: false, ok: true });
+    }
+  });
+});
+
+describe('discoverProviderModels secrecy', () => {
+  it('keeps a key out of the discovery result when fetch rejects with it in the message', async () => {
+    const sealed = encryptSecret('sk-TOPSECRET-1234\r\nX-Evil: 1');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError(
+          'Headers.append: "Bearer sk-TOPSECRET-1234" is an invalid header value.'
+        );
+      })
+    );
+    const prisma = {
+      modelCatalogEntry: { findMany: vi.fn().mockResolvedValue([]) },
+      providerCredential: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            apiBase: null,
+            apiKeyAuthTag: sealed.authTag,
+            apiKeyCiphertext: sealed.ciphertext,
+            apiKeyNonce: sealed.nonce,
+            keyVersion: sealed.keyVersion,
+            provider: 'openai',
+            scope: 'GLOBAL',
+          },
+        ]),
+      },
+    } as unknown as PrismaClient;
+    const results = await discoverProviderModels(prisma);
+    expect(results[0]).toMatchObject({ error: 'request failed (TypeError)', ok: false });
+    expect(JSON.stringify(results)).not.toContain('TOPSECRET');
   });
 });

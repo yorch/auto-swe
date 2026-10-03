@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import {
   createCredential,
+  credentialInputProblem,
   redactCredential,
   testStoredCredential,
   updateCredential,
@@ -74,7 +75,13 @@ const IdParams = z.object({ id: z.string().uuid() });
 const AuditQuery = z.object({
   entityId: z.string().uuid().optional(),
   entityType: z
-    .enum(['Agent', 'ProviderCredential', 'EmbeddingConfig', 'ModelCatalogEntry'])
+    .enum([
+      'Agent',
+      'ProviderCredential',
+      'EmbeddingConfig',
+      'ModelCatalogEntry',
+      'ModelSuggestion',
+    ])
     .optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
@@ -90,6 +97,10 @@ async function createCredentialAndAudit(
   input: Parameters<typeof createCredential>[1],
   messages: { conflict: (existingId: string) => string; conflictRace: string }
 ): Promise<unknown> {
+  const problem = credentialInputProblem(input);
+  if (problem) {
+    return reply.status(400).send({ error: { code: 'INVALID_CREDENTIAL', message: problem } });
+  }
   if (input.apiBase) {
     const safety = isSafeProbeUrl(input.apiBase);
     if (!safety.ok) {
@@ -126,6 +137,10 @@ async function updateCredentialAndAudit(
   existing: Parameters<typeof redactCredential>[0],
   body: { apiBase?: string | null; apiKey?: string }
 ): Promise<unknown> {
+  const problem = credentialInputProblem(body);
+  if (problem) {
+    return reply.status(400).send({ error: { code: 'INVALID_CREDENTIAL', message: problem } });
+  }
   if (body.apiBase) {
     const safety = isSafeProbeUrl(body.apiBase);
     if (!safety.ok) {

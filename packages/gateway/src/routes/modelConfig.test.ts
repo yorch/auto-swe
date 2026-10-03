@@ -123,6 +123,29 @@ describe('modelConfigRoutes — admin', () => {
       expect(JSON.stringify(auditCall)).not.toContain('sk-anthropic-secret');
     });
 
+    it('refuses a key with whitespace or control characters, and an apiBase with userinfo', async () => {
+      for (const payload of [
+        { apiKey: 'sk-abc\r\nX-Evil: 1', provider: 'openai' },
+        { apiKey: 'sk abc', provider: 'openai' },
+        {
+          apiBase: 'https://bob:hunter2@openrouter.ai/api/v1',
+          apiKey: 'sk-abc',
+          provider: 'openrouter',
+        },
+      ]) {
+        const res = await ctx.app.inject({
+          headers: AUTH,
+          method: 'POST',
+          payload: { ...payload, scope: 'GLOBAL' },
+          url: '/api/v1/platform/credentials',
+        });
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.payload).error.code).toBe('INVALID_CREDENTIAL');
+        expect(res.payload).not.toMatch(/hunter2|sk-abc/);
+      }
+      expect(ctx.mockPrisma.providerCredential.create).not.toHaveBeenCalled();
+    });
+
     it('rejects non-admin', async () => {
       const { app } = await buildAdminApp('ENGINEER');
       const res = await app.inject({

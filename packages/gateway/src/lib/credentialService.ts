@@ -1,6 +1,10 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
-import { modelListRequest } from '@auto-swe/shared/lib/modelDiscovery';
+import {
+  modelListRequest,
+  safeFetchError,
+  safeRequestError,
+} from '@auto-swe/shared/lib/modelDiscovery';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 // Re-exported for back-compat: existing tests (and any other importers) reach
@@ -68,7 +72,7 @@ export async function probeCredential(args: {
 }): Promise<{ ok: boolean; status?: number; error?: string }> {
   const request = modelListRequest(args);
   if ('error' in request) {
-    return { error: request.error, ok: false };
+    return { error: safeRequestError(request.error), ok: false };
   }
   try {
     const res = await fetch(request.url, {
@@ -77,8 +81,35 @@ export async function probeCredential(args: {
     });
     return { ok: res.ok, status: res.status };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err), ok: false };
+    // Never the message: Node puts header values and URL userinfo in it.
+    return { error: safeFetchError(err), ok: false };
   }
+}
+
+/// Why a credential's key or `apiBase` cannot be saved, or null. A key with a
+/// control character or whitespace can never be a valid header value, and the
+/// resulting fetch error would quote it; userinfo in `apiBase` would be sent on.
+export function credentialInputProblem(input: {
+  apiKey?: string | null;
+  apiBase?: string | null;
+}): string | null {
+  if (
+    input.apiKey != null &&
+    [...input.apiKey].some((c) => /\s/.test(c) || c < ' ' || c === '\u007f')
+  ) {
+    return 'apiKey must not contain whitespace or control characters';
+  }
+  if (input.apiBase) {
+    try {
+      const url = new URL(input.apiBase);
+      if (url.username || url.password) {
+        return 'apiBase must not contain a username or password';
+      }
+    } catch {
+      // Not a URL: the route's own validation reports that.
+    }
+  }
+  return null;
 }
 
 /// Best-effort credential probe for a stored row. Decrypts the key in-memory

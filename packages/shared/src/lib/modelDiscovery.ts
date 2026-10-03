@@ -58,12 +58,53 @@ export function modelListRequest(args: {
   if (!safety.ok) {
     return { error: `apiBase rejected: ${safety.reason}` };
   }
+  if (safety.url.username || safety.url.password) {
+    return { error: 'apiBase rejected: credentials in the URL are not allowed' };
+  }
   const base = safety.url.toString().replace(/\/+$/, '');
   return {
     // The guard checked `apiBase`, not wherever it redirects to.
     init: { headers: { Authorization: `Bearer ${apiKey}` }, redirect: 'manual' },
     url: withQuery(`${base}/models`),
   };
+}
+
+/**
+ * What a failed list-models call may say. Node puts header values and URL
+ * userinfo into fetch's error messages, so no message text from fetch or from
+ * the provider's body ever leaves this module: every failure is one of a fixed
+ * set of strings, which is what reaches the status row, the API, the logs and
+ * the activity result in Temporal history.
+ */
+export const DISCOVERY_ERRORS = {
+  blocked: 'blocked address',
+  missingBase: 'apiBase required',
+  timeout: 'timed out',
+  unrecognised: 'unrecognised response',
+} as const;
+
+const SAFE_TOKEN = /^[A-Za-z0-9_]{1,40}$/;
+
+/** A thrown fetch error as a fixed string: its name and error code, never its message. */
+export function safeFetchError(err: unknown): string {
+  const name = (err as { name?: unknown } | null)?.name;
+  if (name === 'TimeoutError' || name === 'AbortError') {
+    return DISCOVERY_ERRORS.timeout;
+  }
+  const e = err as { cause?: { code?: unknown }; code?: unknown } | null;
+  const code = e?.cause?.code ?? e?.code;
+  const parts = [
+    typeof name === 'string' && SAFE_TOKEN.test(name) ? name : 'Error',
+    ...(typeof code === 'string' && SAFE_TOKEN.test(code) ? [code] : []),
+  ];
+  return `request failed (${parts.join(', ')})`;
+}
+
+/** A refusal from {@link modelListRequest} as a fixed string. */
+export function safeRequestError(message: string): string {
+  return message.startsWith('apiBase required')
+    ? DISCOVERY_ERRORS.missingBase
+    : DISCOVERY_ERRORS.blocked;
 }
 
 /** What nothing may ever hold a price for: the catalog's rows plus the built-in table. */
@@ -155,6 +196,10 @@ interface Page {
   ids: string[];
   /** Query parameters for the next page, or null when this was the last. */
   next: Record<string, string> | null;
+  /** False when the body is not a list in the shape this provider returns. */
+  recognised: boolean;
+  /** The provider says more pages exist but gives a continuation this code cannot follow. */
+  unfollowable: boolean;
 }
 
 /** Parses one page of a provider's list-models response. Unknown shapes yield no models. */
@@ -162,6 +207,10 @@ export function parseModelListPage(provider: string, body: unknown): Page {
   const b = (body ?? {}) as Record<string, unknown>;
   if (provider === 'google') {
     const models = Array.isArray(b.models) ? (b.models as Array<Record<string, unknown>>) : [];
+    const next =
+      typeof b.nextPageToken === 'string' && b.nextPageToken
+        ? { pageToken: b.nextPageToken }
+        : null;
     return {
       ids: models.flatMap((m) =>
         typeof m.name === 'string' && m.name ? [m.name.replace(/^models\//, '')] : []
@@ -184,10 +233,9 @@ export function parseModelListPage(provider: string, body: unknown): Page {
           },
         ];
       }),
-      next:
-        typeof b.nextPageToken === 'string' && b.nextPageToken
-          ? { pageToken: b.nextPageToken }
-          : null,
+      next,
+      recognised: Array.isArray(b.models),
+      unfollowable: false,
     };
   }
   const data = Array.isArray(b.data) ? (b.data as Array<Record<string, unknown>>) : [];
@@ -207,10 +255,14 @@ export function parseModelListPage(provider: string, body: unknown): Page {
     provider === 'anthropic' && b.has_more === true && typeof b.last_id === 'string'
       ? { after_id: b.last_id }
       : null;
+  const claimsMore =
+    b.has_more === true || (typeof b.next_page_token === 'string' && b.next_page_token !== '');
   return {
     ids: data.flatMap((m) => (typeof m.id === 'string' && m.id ? [m.id] : [])),
     models,
     next,
+    recognised: Array.isArray(b.data),
+    unfollowable: claimsMore && next === null,
   };
 }
 
@@ -231,9 +283,9 @@ export type ProviderListing =
       /** Every id listed, speech and image models included — what "still listed" means. */
       listedIds: Set<string>;
       /**
-       * False when paging stopped with more left to read, or when the provider
-       * answered with nothing recognisable. Only a complete listing can say a
-       * model is gone.
+       * False when paging stopped with more left to read, when the provider
+       * signalled more pages it gave no cursor for, or when it listed nothing.
+       * Only a complete listing can say a model is gone.
        */
       complete: boolean;
     }
@@ -246,11 +298,12 @@ export async function listProviderModels(args: {
 }): Promise<ProviderListing> {
   const models: DiscoveredModel[] = [];
   const listedIds = new Set<string>();
+  let unfollowable = false;
   let query: Record<string, string> | null = firstPageQuery(args.provider);
   for (let page = 0; query && page < MAX_PAGES; page++) {
     const request = modelListRequest({ ...args, query });
     if ('error' in request) {
-      return { error: request.error, ok: false };
+      return { error: safeRequestError(request.error), ok: false };
     }
     let res: Response;
     try {
@@ -259,12 +312,22 @@ export async function listProviderModels(args: {
         signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
       });
     } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err), ok: false };
+      return { error: safeFetchError(err), ok: false };
     }
     if (!res.ok) {
       return { error: `HTTP ${res.status}`, ok: false };
     }
-    const parsed = parseModelListPage(args.provider, await res.json().catch(() => null));
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      return { error: DISCOVERY_ERRORS.unrecognised, ok: false };
+    }
+    const parsed = parseModelListPage(args.provider, body);
+    if (!parsed.recognised) {
+      return { error: DISCOVERY_ERRORS.unrecognised, ok: false };
+    }
+    unfollowable ||= parsed.unfollowable;
     models.push(...parsed.models);
     for (const id of parsed.ids) {
       listedIds.add(id);
@@ -272,7 +335,7 @@ export async function listProviderModels(args: {
     query = parsed.next;
   }
   return {
-    complete: query === null && listedIds.size > 0,
+    complete: query === null && !unfollowable && listedIds.size > 0,
     listedIds,
     models: models.filter((m) => !NON_TEXT_MODEL.test(m.modelId)),
     ok: true,
