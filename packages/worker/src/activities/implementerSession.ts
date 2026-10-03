@@ -132,8 +132,6 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   let closeMcp: (() => Promise<void>) | undefined;
 
   try {
-    // Before anything the agent can touch: the commit the guarded change is measured from.
-    const pathGuard = await startPathGuard(workspace, repo.defaultBranch, input.allowedPaths);
     heartbeat(`${mode} workspace provisioned`);
 
     // createWorkspace clones the default branch and creates a fresh local
@@ -148,6 +146,17 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       // Branch may not exist remotely yet; proceed against the local clone.
       heartbeat(`${mode}: remote branch not found, using clone HEAD`);
     }
+
+    // After the sync to the work branch, before any agent turn: this session's change is
+    // checked against the branch tip it started from, so an older branch base never matters.
+    // The whole change is reported against the original run's base when the previous result
+    // carries it.
+    const pathGuard = await startPathGuard(
+      workspace,
+      repo.defaultBranch,
+      input.allowedPaths,
+      previousCodeResult.baseSha
+    );
 
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson, repo.gateCommands);
@@ -289,6 +298,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     }
 
     return {
+      // Carried forward for a guarded step only, so the next session can report the whole
+      // change against the same base; an unguarded step returns exactly what it always did.
+      ...(pathGuard && previousCodeResult.baseSha ? { baseSha: previousCodeResult.baseSha } : {}),
       branch: previousCodeResult.branch,
       codeSecurityFindings: codeSecurityFindings.length > 0 ? codeSecurityFindings : undefined,
       diff,

@@ -8,15 +8,20 @@
  * commands the steps always ran.
  *
  * The repository is writable by the agent, so the check cannot trust anything in it:
- *  - it measures what is actually pushed — the committed range from the commit the
- *    workspace started at (`baseSha`, read by the worker before the agent ran, and
- *    held in worker memory) to HEAD — not the index, which a hook can change between
- *    the check and the commit;
+ *  - it measures what is actually pushed, not the index (which a hook can change
+ *    between the check and the commit): the TREE at HEAD against the tree of
+ *    `sessionBase`, a commit sha the worker read before the agent ran and holds in
+ *    its own memory. Two trees, not a range: a range is anchored at a merge base, and
+ *    the agent chooses HEAD's history, so rebuilding HEAD on an older ancestor would
+ *    move the anchor and hide any path restored to its older content;
+ *  - `sessionBase` is the HEAD the session started at — the default branch's tip for
+ *    a fresh branch, the work branch's tip for a fix session or a retry — so each
+ *    session answers only for its own changes, and an older branch base never matters;
  *  - the commit runs with hooks off, and every git call here runs with the same
  *    hardening `gitAuthed` uses (`gitWithAuthHeader`: no hooks, no system or global
  *    config) plus `GIT_NO_REPLACE_OBJECTS`, so `git replace` cannot hide a file;
- *  - `refs/remotes/origin/<default>` is never read after the agent starts, so
- *    `update-ref` on it moves nothing the check looks at.
+ *  - no ref is read after the agent starts, so `update-ref` moves nothing the check
+ *    looks at.
  * What remains is outside the agent's reach in this model: replacing the `git`
  * binary itself, which needs root in the container and is the limit the workspace
  * hardening already documents.
@@ -35,47 +40,73 @@ const guardedGit = (subcommand: string): string =>
 
 /** What the guard measures against, and what it allows. Present only for a guarded step. */
 export interface PathGuard {
-  baseSha: string;
+  /** HEAD when the session started, before the agent ran: what this session's change is checked against. */
+  sessionBase: string;
   allowedPaths: readonly string[];
+  /**
+   * What `CodeResult.diff` and `filesChanged` (read by the template's `checkScope`) are
+   * measured against, as a sha read before the agent ran, never a ref. `twoTree` diffs the
+   * trees directly; otherwise it is the change since the merge base, for a session that
+   * started on an existing branch with nothing better recorded. That one is informational:
+   * the per-session check above is what confines the change.
+   */
+  report: { sha: string; twoTree: boolean };
+}
+
+const SHA = /^[0-9a-f]{40,64}$/;
+
+async function readSha(workspace: Exec, rev: string): Promise<string> {
+  try {
+    const sha = (
+      await workspace.exec(guardedGit(`rev-parse --verify ${shellQuote(`${rev}^{commit}`)}`))
+    ).trim();
+    return SHA.test(sha) ? sha : '';
+  } catch {
+    return '';
+  }
 }
 
 /**
- * Read the commit the workspace started from, before the agent runs. Returns
- * undefined, running nothing, when the step sets no `allowedPaths`. Fails closed
- * (non-retryably) when it cannot be read: a guarded step with no base would be an
- * unguarded one.
+ * Read, before the agent runs, the shas the guard measures from. Call it once the
+ * workspace is on the tree the session starts from (after any sync to a pushed branch)
+ * and before any agent turn. Returns undefined, running nothing, when the step sets no
+ * `allowedPaths`. Fails closed (non-retryably) when a sha cannot be read: a guarded
+ * step with no base would be an unguarded one.
+ *
+ * `reportBase` is the sha the whole change should be reported against when it is known
+ * (the commit a fix session's branch was originally cut from, carried on the previous
+ * result). Otherwise the default branch's tip is used.
  */
 export async function startPathGuard(
   workspace: Exec,
   defaultBranch: string,
-  allowedPaths: readonly string[] | undefined
+  allowedPaths: readonly string[] | undefined,
+  reportBase?: string
 ): Promise<PathGuard | undefined> {
   if (!allowedPaths) {
     return undefined;
   }
-  let baseSha = '';
-  try {
-    baseSha = (
-      await workspace.exec(
-        guardedGit(`rev-parse --verify ${shellQuote(`origin/${defaultBranch}^{commit}`)}`)
-      )
-    ).trim();
-  } catch {
-    // fall through to the failure below
-  }
-  if (!/^[0-9a-f]{40,64}$/.test(baseSha)) {
+  const [sessionBase, defaultSha] = [
+    await readSha(workspace, 'HEAD'),
+    await readSha(workspace, `origin/${defaultBranch}`),
+  ];
+  if (!sessionBase || !defaultSha) {
     throw ApplicationFailure.nonRetryable(
       'Could not read the commit the workspace started from, so the change cannot be confined to ' +
         `${allowedPaths.join(', ')}. Nothing was committed or pushed.`,
       'DIFF_BASE_UNREADABLE'
     );
   }
-  return { allowedPaths, baseSha };
+  const report =
+    reportBase && SHA.test(reportBase)
+      ? { sha: reportBase, twoTree: true }
+      : { sha: defaultSha, twoTree: sessionBase === defaultSha };
+  return { allowedPaths, report, sessionBase };
 }
 
 /**
  * Commit what is staged (a no-op when nothing is) and, for a guarded step, check the
- * committed range before returning, so the caller's push never carries a path outside
+ * committed tree before returning, so the caller's push never carries a path outside
  * `allowedPaths`. Without a guard it runs the original command unchanged.
  */
 export async function commitStaged(
@@ -93,32 +124,30 @@ export async function commitStaged(
     `${guardedGit('diff --cached --quiet')} || ` +
       guardedGit(`${IDENTITY} -c commit.gpgsign=false commit --no-verify -m ${shellQuote(message)}`)
   );
-  await assertCommittedRangeWithinAllowedPaths(workspace, guard);
+  await assertCommittedTreeWithinAllowedPaths(workspace, guard);
 }
 
 /**
- * Fail non-retryably if the commits between the starting commit and HEAD touch a path
- * outside `allowedPaths`. The range is `base...HEAD`, the changes since the merge base,
- * so a fix session on a branch cut when the default branch was older still measures only
- * its own history. A HEAD that shares no history with the base fails: a rewritten branch
- * is not a change to measure. Renames count both ends.
+ * Fail non-retryably if the tree at HEAD differs from the session's starting tree at a
+ * path outside `allowedPaths`. A direct tree comparison, so what HEAD's history looks
+ * like is irrelevant. Renames count both ends.
  */
-export async function assertCommittedRangeWithinAllowedPaths(
+export async function assertCommittedTreeWithinAllowedPaths(
   workspace: Exec,
   guard: PathGuard
 ): Promise<void> {
+  let out: string;
   try {
-    await workspace.exec(guardedGit(`merge-base ${guard.baseSha} HEAD`));
+    out = await workspace.exec(
+      guardedGit(`diff --name-only --no-renames --no-ext-diff -z ${guard.sessionBase} HEAD`)
+    );
   } catch {
     throw ApplicationFailure.nonRetryable(
-      'The branch no longer shares history with the commit the workspace started from, so its ' +
-        'change cannot be checked. Nothing was pushed.',
-      'DIFF_BASE_UNRELATED'
+      'The change could not be compared with the commit the workspace started from, so it ' +
+        'cannot be checked. Nothing was pushed.',
+      'DIFF_CHECK_FAILED'
     );
   }
-  const out = await workspace.exec(
-    guardedGit(`diff --name-only --no-renames --no-ext-diff -z ${guard.baseSha}...HEAD`)
-  );
   const outside = out.split('\0').filter((p) => p !== '' && !guard.allowedPaths.includes(p));
   if (outside.length > 0) {
     throw ApplicationFailure.nonRetryable(
@@ -133,16 +162,18 @@ export async function assertCommittedRangeWithinAllowedPaths(
 /**
  * The diff the step reports (`CodeResult.diff`, and from it `filesChanged`, which the
  * template's `checkScope` reads). Unguarded: the original `git diff origin/<default>`.
- * Guarded: measured from the starting commit with the same hardening, no external diff
- * driver and no text conversion, so neither a rewritten `origin/<default>` nor a config
- * key can change what is reported or what the security scan sees.
+ * Guarded: measured from a recorded sha with the same hardening, no external diff driver
+ * and no text conversion, so neither a rewritten ref nor a config key changes what is
+ * reported or what the security scan sees.
  */
 export async function diffForResult(
   workspace: Exec,
   defaultBranch: string,
   guard: PathGuard | undefined
 ): Promise<string> {
-  return guard
-    ? workspace.exec(guardedGit(`diff --no-ext-diff --no-textconv ${guard.baseSha}...HEAD`))
-    : workspace.exec(`git diff origin/${shellQuote(defaultBranch)}`);
+  if (!guard) {
+    return workspace.exec(`git diff origin/${shellQuote(defaultBranch)}`);
+  }
+  const range = guard.report.twoTree ? `${guard.report.sha} HEAD` : `${guard.report.sha}...HEAD`;
+  return workspace.exec(guardedGit(`diff --no-ext-diff --no-textconv ${range}`));
 }

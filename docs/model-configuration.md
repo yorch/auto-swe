@@ -240,21 +240,26 @@ The run, in order:
    reaches the agent under the heading *Guidance from the requester*, which every guidance input
    shares; the prompt says what it really is.
 5. **Confine the change.** The implementer step and the review fix carry `allowedPaths`, listing
-   only the catalog file. Before the agent runs, the worker reads the commit the workspace started
-   from (`baseSha`) and keeps it in its own memory. After the commit and before the push, it checks
-   the committed range from that commit to `HEAD` (`git diff --name-only --no-renames -z
-   <baseSha>...HEAD`), and the step fails, non-retryably, on any path outside the list, or if `HEAD`
-   no longer shares history with that commit. The check runs with the hardening `gitAuthed` uses
-   (no hooks, no system or global git config) and with replace objects off, and the commit itself
-   runs with hooks disabled, so neither a repository hook nor `git replace` nor a rewritten
-   `origin/<default>` ref changes what is measured. The diff the step reports, and the
-   `filesChanged` the `checkScope` condition reads, come from the same range. The guard has to sit
-   ahead of the push because a push can itself start work on the host (a workflow file runs on
-   `push`). Its remaining trust limit is the agent replacing the `git` binary, which needs root in
-   the container, the limit the workspace hardening already documents. A `checkScope` condition
-   before the pull request asserts the same thing about the cumulative change, and a miss fails
-   the run. `allowedPaths` is an optional config field on both steps; unset, nothing changes and
-   the original commands run.
+   only the catalog file. Before the agent runs, the worker reads the commit the session starts
+   from and keeps it in its own memory: the default branch's tip for a fresh branch, the work
+   branch's tip for a review fix or a retry, so each session answers only for its own changes. After
+   the commit and before the push it compares the tree at `HEAD` directly with that commit's tree
+   (`git diff --name-only --no-renames -z <start> HEAD`, two trees and no range), and the step fails,
+   non-retryably, on any path outside the list. A direct tree comparison does not depend on the
+   branch's history, which the agent controls, so rebuilding `HEAD` on an older commit cannot hide a
+   path restored to its older content. The check runs with the hardening `gitAuthed` uses (no hooks,
+   no system or global git config) and with replace objects off, and the commit itself runs with
+   hooks disabled, so neither a repository hook nor `git replace` nor a rewritten
+   `origin/<default>` ref changes what is measured; no ref is read after the agent starts. The diff
+   the step reports, and the `filesChanged` the `checkScope` condition reads, are measured the same
+   way from a recorded sha: the original run's base when the previous result carries it, otherwise
+   the default branch's tip as recorded at the start. That report is informational; it is the
+   per-session check that confines the change. The guard has to sit ahead of the push because a push
+   can itself start work on the host (a workflow file runs on `push`). Its remaining trust limit is
+   the agent replacing the `git` binary, which needs root in the container, the limit the workspace
+   hardening already documents. A `checkScope` condition before the pull request asserts the same
+   thing about the cumulative change, and a miss fails the run. `allowedPaths` is an optional config
+   field on both steps; unset, nothing changes and the original commands run.
 6. **Check and open.** If the diff is empty the run ends `SUCCESS` with no pull request. Otherwise
    the `runTests` gate runs `builtinModels.test.ts`, the review network judges the change against the
    success criterion *every changed price cites an official URL; no invented figures*, the review

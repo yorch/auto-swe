@@ -244,7 +244,32 @@ describe('runImplementerFixSession allowedPaths', () => {
     try {
       await runImplementerFixSession(input({ allowedPaths: ['a.ts'] }));
       expect(cmds().some((c) => c.includes('push origin'))).toBe(true);
-      expect(cmds().some((c) => c.includes(`${BASE}...HEAD`))).toBe(true);
+      expect(cmds().some((c) => c.includes(`${BASE} HEAD`))).toBe(true);
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
+  it('starts the session at the work branch tip (after the sync), and carries the original base forward', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    const base = stage('a.ts\0');
+    try {
+      const result = await runImplementerFixSession(
+        input({
+          allowedPaths: ['a.ts'],
+          previousCodeResult: codeResult({ baseSha: 'c'.repeat(40), repoId: 'repo-1' }),
+        })
+      );
+      const all = cmds();
+      const reset = all.findIndex((c) => c.includes('reset --hard origin/'));
+      const startHead = all.findIndex((c) => c.includes("rev-parse --verify 'HEAD^{commit}'"));
+      expect(reset).toBeGreaterThanOrEqual(0);
+      expect(startHead).toBeGreaterThan(reset);
+      // The whole change is reported against the original run's base, as two trees.
+      expect(
+        all.some((c) => c.includes(`diff --no-ext-diff --no-textconv ${'c'.repeat(40)} HEAD`))
+      ).toBe(true);
+      expect(result.baseSha).toBe('c'.repeat(40));
     } finally {
       execMock.mockImplementation(base as never);
     }

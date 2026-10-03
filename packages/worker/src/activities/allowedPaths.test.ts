@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  assertCommittedRangeWithinAllowedPaths,
+  assertCommittedTreeWithinAllowedPaths,
   commitStaged,
   diffForResult,
   startPathGuard,
@@ -110,13 +110,48 @@ describe('the committed-range guard', () => {
     ).rejects.toMatchObject({ type: 'DIFF_OUTSIDE_ALLOWED_PATHS' });
   });
 
-  it('fails a branch that was rewritten to share no history with the starting commit', async () => {
+  it('fails a branch rewritten to share no history, by what its tree changes', async () => {
     await expect(
       runGuarded(() => {
-        sh('git checkout -q --orphan fresh');
+        sh('git checkout -q --orphan fresh && git rm -rfq ci.yml');
         write('catalog.ts', 'export const BUILTIN_MODELS = [5];\n');
       })
-    ).rejects.toMatchObject({ nonRetryable: true, type: 'DIFF_BASE_UNRELATED' });
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'DIFF_OUTSIDE_ALLOWED_PATHS' });
+  });
+
+  it('bypass C: rebuilding HEAD on an OLDER ancestor cannot hide a path restored to its older content', async () => {
+    // history: older (ci.yml = v1) <- base (ci.yml = v2), and the workspace starts at base.
+    const older = sh('git rev-parse HEAD').trim();
+    write('ci.yml', 'name: v2\n');
+    sh('git commit -qam v2 && git update-ref refs/remotes/origin/main HEAD');
+    await expect(
+      runGuarded(() => {
+        // The agent re-roots its branch on `older` and changes only the catalog. Measured as a
+        // range from the merge base (`older`) that is catalog-only, and ci.yml (v1 again) is
+        // missed; against the starting TREE, ci.yml differs from v2 and is caught.
+        sh(`git checkout -q -B auto/x ${older}`);
+        write('catalog.ts', 'export const BUILTIN_MODELS = [9];\n');
+      })
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('ci.yml'),
+      type: 'DIFF_OUTSIDE_ALLOWED_PATHS',
+    });
+  });
+
+  it('a fix session answers only for its own changes, whatever its branch was cut from', async () => {
+    // An earlier session already pushed a catalog change on top of an older base.
+    write('catalog.ts', 'export const BUILTIN_MODELS = [1];\n');
+    sh('git commit -qam earlier');
+    // The default branch has since moved on, so the branch base is older than origin/main.
+    sh('git checkout -q main 2>/dev/null || git checkout -q -b main');
+    write('ci.yml', 'name: newer default\n');
+    sh(
+      'git commit -qam newer && git update-ref refs/remotes/origin/main HEAD && git checkout -q auto/x'
+    );
+    const guard = await startPathGuard(workspace, 'main', ALLOWED);
+    write('catalog.ts', 'export const BUILTIN_MODELS = [2];\n');
+    sh('git add -A');
+    await expect(commitStaged(workspace, 'auto: fix', guard)).resolves.toBeUndefined();
   });
 
   it('catches an out-of-scope file the agent committed itself, from any commit in the range', async () => {
@@ -147,8 +182,38 @@ describe('the committed-range guard', () => {
     sh('git add -A');
     await commitStaged(workspace, 'auto: implement', guard);
     await expect(
-      assertCommittedRangeWithinAllowedPaths(workspace, guard as NonNullable<typeof guard>)
+      assertCommittedTreeWithinAllowedPaths(workspace, guard as NonNullable<typeof guard>)
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('what the step reports (cumulative)', () => {
+  it('uses the original run base, as two trees, when it is supplied', async () => {
+    const original = sh('git rev-parse HEAD').trim();
+    write('catalog.ts', 'export const BUILTIN_MODELS = [1];\n');
+    sh('git commit -qam first');
+    const guard = await startPathGuard(workspace, 'main', ALLOWED, original);
+    write('catalog.ts', 'export const BUILTIN_MODELS = [2];\n');
+    sh('git add -A');
+    await commitStaged(workspace, 'auto: fix', guard);
+    // Even with origin/main dragged forward by the agent, the report covers both sessions.
+    sh('git update-ref refs/remotes/origin/main HEAD');
+    const diff = await diffForResult(workspace, 'main', guard);
+    expect(diff).toContain('[2]');
+    expect(diff).toContain('diff --git a/catalog.ts b/catalog.ts');
+  });
+
+  it('falls back to the recorded default-branch sha, never the ref, when no base is carried', async () => {
+    write('catalog.ts', 'export const BUILTIN_MODELS = [1];\n');
+    sh('git commit -qam first');
+    const guard = await startPathGuard(workspace, 'main', ALLOWED);
+    expect(guard?.report.sha).toBe(sh('git rev-parse refs/remotes/origin/main').trim());
+    sh('git update-ref refs/remotes/origin/main HEAD');
+    write('catalog.ts', 'export const BUILTIN_MODELS = [2];\n');
+    sh('git add -A');
+    await commitStaged(workspace, 'auto: fix', guard);
+    // The branch carried a commit ahead of the default tip: reported as a merge-base range.
+    expect(await diffForResult(workspace, 'main', guard)).toContain('catalog.ts');
   });
 });
 

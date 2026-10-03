@@ -148,7 +148,6 @@ export async function executeImplementation(
   }
 
   try {
-    pathGuard = await startPathGuard(workspace, repo.defaultBranch, allowedPaths);
     heartbeat('workspace provisioned');
 
     // Retry safety. This activity can fail AFTER its push (the diff read, the
@@ -165,6 +164,11 @@ export async function executeImplementation(
         heartbeat('retry: remote branch not found, starting from clone HEAD');
       }
     }
+
+    // After any sync to a previous attempt's pushed branch, and before any agent turn:
+    // this session answers for its own changes from here. `baseSha` (the default branch's
+    // tip, read before the agent) is what the whole change is reported against.
+    pathGuard = await startPathGuard(workspace, repo.defaultBranch, allowedPaths, baseSha);
 
     // Detect test framework
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');

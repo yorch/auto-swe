@@ -300,14 +300,14 @@ describe('executeImplementation allowedPaths', () => {
       return cmd.includes('diff --name-only') ? names : '';
     });
 
-  it('reads the starting commit before the agent runs, and checks the committed range before the push', async () => {
+  it('reads the starting commit before the agent runs, and checks the committed tree before the push', async () => {
     withRange('docs/a.md\0');
     await executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md']);
     const cmds = commands();
     const start = cmds.findIndex((c) => c.includes('rev-parse --verify'));
     const commit = cmds.findIndex((c) => c.includes('commit --no-verify'));
     const range = cmds.findIndex((c) =>
-      c.includes(`diff --name-only --no-renames --no-ext-diff -z ${BASE}...HEAD`)
+      c.includes(`diff --name-only --no-renames --no-ext-diff -z ${BASE} HEAD`)
     );
     expect(start).toBeGreaterThanOrEqual(0);
     expect(generateMock.mock.invocationCallOrder[0]).toBeGreaterThan(
@@ -333,7 +333,7 @@ describe('executeImplementation allowedPaths', () => {
     withRange('docs/a.md\0');
     await executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md']);
     expect(
-      commands().some((c) => c.includes(`diff --no-ext-diff --no-textconv ${BASE}...HEAD`))
+      commands().some((c) => c.includes(`diff --no-ext-diff --no-textconv ${BASE} HEAD`))
     ).toBe(true);
     expect(commands()).not.toContain("git diff origin/'main'");
   });
