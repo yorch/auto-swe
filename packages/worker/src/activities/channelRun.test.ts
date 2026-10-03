@@ -164,7 +164,7 @@ describe('finalizeChannelRun', () => {
     );
     expect(p.workflowRun.updateMany).toHaveBeenCalledTimes(1);
     const call = p.workflowRun.updateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ endedAt: null, id: 'run-1' });
+    expect(call.where).toEqual({ endedAt: null, id: 'run-1', status: { not: 'CANCELLED' } });
     expect(call.data.status).toBe('SUCCESS');
     expect(call.data.costUsdAccrued).toBe(0.0123);
     expect(call.data.tokensInputTotal).toBe(4200n);
@@ -197,8 +197,27 @@ describe('finalizeChannelRun', () => {
     expect(p.workflowRun.update).not.toHaveBeenCalled();
   });
 
+  it('ends a dashboard-cancelled run as CANCELLED without counting it again', async () => {
+    // The cancel route sets CANCELLED and leaves endedAt to this write.
+    p.workflowRun.findUnique.mockResolvedValue({ id: 'run-5' });
+    p.agentTrace.aggregate.mockResolvedValue({ _sum: { costUsd: 0.25 } });
+    p.workflowRun.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    await finalizeChannelRun({ status: 'SUCCESS', workflowId: 'w' });
+
+    const call = p.workflowRun.updateMany.mock.calls.at(-1)?.[0];
+    expect(call.where).toEqual({ endedAt: null, id: 'run-5', status: 'CANCELLED' });
+    expect(call.data.status).toBe('CANCELLED');
+    expect(call.data.costUsdAccrued).toBe(0.25);
+    expect(call.data.endedAt).toBeInstanceOf(Date);
+    expect(recordRunFinalized).not.toHaveBeenCalled();
+    expect(p.workflowRun.update).not.toHaveBeenCalled();
+  });
+
   it('re-writes the totals but does not count again when the run had already ended', async () => {
-    // A retried attempt, or a run the dashboard cancelled first.
+    // A retried attempt, or a run the dashboard closed itself.
     p.workflowRun.findUnique.mockResolvedValue({ id: 'run-4' });
     p.agentTrace.aggregate.mockResolvedValue({ _sum: { costUsd: 0.5 } });
     p.workflowRun.updateMany.mockResolvedValue({ count: 0 });

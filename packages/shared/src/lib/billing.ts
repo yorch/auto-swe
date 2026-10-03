@@ -77,6 +77,8 @@ async function readOrgMonthSpend(
     select: { costUsdAccrued: true },
     where: { orgId_yearMonth: { orgId, yearMonth } },
   });
+  // Unfinalized by `endedAt`, not status: a dashboard-cancelled run is
+  // CANCELLED with `endedAt` null until its workflow finalizes and bills it.
   const runs = await db.workflowRun.findMany({
     select: { id: true, workflowId: true },
     where: {

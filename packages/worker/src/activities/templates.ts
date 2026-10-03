@@ -11,6 +11,7 @@ import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/s
 import { Context } from '@temporalio/activity';
 import { currentTemporalRunId } from '../lib/activityContext.js';
 import { logError } from '../lib/activityLog.js';
+import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import {
   notifySlackRunComplete,
@@ -502,14 +503,17 @@ export async function finalizeWorkflowRun(
   // reaches its org through its own ledger row's repository instead.
   const orgId =
     run?.workRequest?.connection?.team?.orgId ?? ownWorkflows[0]?.repository?.team?.orgId;
-  const runsIncrement = status === 'SUCCESS' ? 1 : 0;
 
+  // A run the dashboard cancelled ends CANCELLED whatever the workflow reports
+  // (`endWorkflowRun`), and everything below follows the status it ended with.
+  const endedStatus = (o: EndRunOutcome) => (o === 'cancelled' ? 'CANCELLED' : status);
   // Write the terminal status back to the ActiveWorkflow row. Templates only
   // advance currentStatus through happy-path states, so without this a
   // failed/timed-out/cancelled run leaves its row "active" forever and the
   // dashboard KPIs drift. SUCCESS maps to COMPLETED (a no-op on specs that
   // already set it); SKIPPED has no ActiveWorkflow equivalent and is left as-is.
-  const terminalStatus = status === 'SUCCESS' ? 'COMPLETED' : status === 'SKIPPED' ? null : status;
+  const activeWorkflowStatus = (s: typeof status) =>
+    s === 'SUCCESS' ? 'COMPLETED' : s === 'SKIPPED' ? null : s;
 
   const terminalUpdate = {
     contextSnapshot: contextSnapshot as object | undefined,
@@ -524,10 +528,10 @@ export async function finalizeWorkflowRun(
     wasAutonomous,
   };
 
-  let didFinalize = false;
+  let outcome: EndRunOutcome;
   if (orgId) {
     const yearMonth = currentYearMonth();
-    await prisma.$transaction(async (tx) => {
+    outcome = await prisma.$transaction(async (tx) => {
       // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises
       // concurrent finalisations for one org; Prisma has no API for it.
       // `$executeRaw`, not `$queryRaw`: the lock function returns void, which
@@ -535,20 +539,19 @@ export async function finalizeWorkflowRun(
       await tx.$executeRaw`
         SELECT pg_advisory_xact_lock(hashtextextended(${orgId}, 0))
       `;
-      const { count } = await tx.workflowRun.updateMany({
-        data: terminalUpdate,
-        where: { endedAt: null, id: runId },
-      });
-      if (count === 0) {
-        return; // already finalized by a concurrent attempt
+      const ended = await endWorkflowRun(tx, runId, terminalUpdate);
+      if (ended === 'alreadyEnded') {
+        return ended; // already finalized by a concurrent attempt
       }
-      didFinalize = true;
+      const endedWith = endedStatus(ended);
+      const terminalStatus = activeWorkflowStatus(endedWith);
       if (terminalStatus && run?.workflowId) {
         await tx.activeWorkflow.updateMany({
           data: { currentStatus: terminalStatus },
           where: { temporalWorkflowId: run.workflowId },
         });
       }
+      const runsIncrement = endedWith === 'SUCCESS' ? 1 : 0;
       await tx.orgMonthlyUsage.upsert({
         create: {
           costUsdAccrued,
@@ -566,31 +569,35 @@ export async function finalizeWorkflowRun(
         },
         where: { orgId_yearMonth: { orgId, yearMonth } },
       });
+      return ended;
     });
   } else {
-    await prisma.$transaction(async (tx) => {
-      const { count } = await tx.workflowRun.updateMany({
-        data: terminalUpdate,
-        where: { endedAt: null, id: runId },
-      });
-      if (count === 0) {
-        return; // already finalized by a concurrent attempt
+    outcome = await prisma.$transaction(async (tx) => {
+      const ended = await endWorkflowRun(tx, runId, terminalUpdate);
+      if (ended === 'alreadyEnded') {
+        return ended; // already finalized by a concurrent attempt
       }
-      didFinalize = true;
+      const terminalStatus = activeWorkflowStatus(endedStatus(ended));
       if (terminalStatus && run?.workflowId) {
         await tx.activeWorkflow.updateMany({
           data: { currentStatus: terminalStatus },
           where: { temporalWorkflowId: run.workflowId },
         });
       }
+      return ended;
     });
   }
 
-  if (!didFinalize) {
+  if (outcome === 'alreadyEnded') {
     return;
   }
-  // Counted only by the attempt that finalized, so a retried activity cannot double it.
-  recordRunFinalized(status, 'worker');
+  // Counted only by the attempt that finalized, so a retried activity cannot
+  // double it — and not for a run the dashboard cancelled, which the cancel
+  // route already counted.
+  if (outcome === 'ended') {
+    recordRunFinalized(status, 'worker');
+  }
+  const finalStatus = endedStatus(outcome);
 
   // The side effects below (Slack notifications + channel task finalization +
   // tracker sync) are non-idempotent. Only fire them when we actually finalized
@@ -603,7 +610,7 @@ export async function finalizeWorkflowRun(
   // SWE runs this still fires (gated on the team's `slackNotifySuccess` opt-in).
   const channelTaskPayload = readChannelTaskPayload(run?.workRequest?.payload);
   if (!channelTaskPayload) {
-    await notifySlackRunComplete({ runId, status });
+    await notifySlackRunComplete({ runId, status: finalStatus });
   }
 
   // Channel assistant (Phase A): for a channel-launched task run, (a) accrue its
@@ -614,21 +621,24 @@ export async function finalizeWorkflowRun(
   // opt-in (these runs are user-requested in-thread). Both best-effort. We pass the
   // already-summed trace cost (general route) + the in-hand contextSnapshot so it
   // re-reads neither.
-  await finalizeChannelTaskRun(runId, status, run?.workRequest, channelTaskPayload, {
+  await finalizeChannelTaskRun(runId, finalStatus, run?.workRequest, channelTaskPayload, {
     contextSnapshot,
     traceCostUsd: channelTraceCostUsd,
   });
 
   // Best-effort tracker sync on workflow terminal status.
   const externalTicketId = run?.workRequest?.externalTicketId;
-  if (externalTicketId && (status === 'SUCCESS' || status === 'FAILED' || status === 'TIMED_OUT')) {
+  if (
+    externalTicketId &&
+    (finalStatus === 'SUCCESS' || finalStatus === 'FAILED' || finalStatus === 'TIMED_OUT')
+  ) {
     const trackerConfig = await resolveIssueTrackerConfig();
     await syncTrackerOnEvent(
-      status === 'SUCCESS'
+      finalStatus === 'SUCCESS'
         ? { issueId: externalTicketId, type: 'workflow_completed' }
         : {
             issueId: externalTicketId,
-            summary: `Workflow ended with status: ${status}`,
+            summary: `Workflow ended with status: ${finalStatus}`,
             type: 'workflow_failed',
           },
       trackerConfig

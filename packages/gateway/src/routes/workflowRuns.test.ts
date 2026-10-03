@@ -545,7 +545,11 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
       url: `/api/v1/workflow-runs/${runId}/cancel`,
     });
     expect(res.statusCode).toBe(200);
-    expect(prisma.workflowRun.updateMany).toHaveBeenCalled();
+    // No execution is left to finalize the run, so this write ends it.
+    const update = prisma.workflowRun.updateMany.mock.calls[0][0];
+    expect(update.where).toEqual({ id: runId, status: 'RUNNING' });
+    expect(update.data.status).toBe('CANCELLED');
+    expect(update.data.endedAt).toBeInstanceOf(Date);
   });
 
   it('cancels the Temporal workflow when the guarded update transitions exactly one row', async () => {
@@ -564,6 +568,12 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(temporal.cancelWorkflow).toHaveBeenCalledWith('wf-1');
+    // The workflow finalizes the run, so the row keeps endedAt null: it stays
+    // in flight for the org cap until finalizeWorkflowRun bills its spend.
+    expect(prisma.workflowRun.updateMany).toHaveBeenCalledWith({
+      data: { status: 'CANCELLED' },
+      where: { id: runId, status: 'RUNNING' },
+    });
     expect(recordRunFinalized).toHaveBeenCalledExactlyOnceWith('CANCELLED', 'gateway');
     expect(prisma.configAuditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({

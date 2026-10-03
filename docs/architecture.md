@@ -595,9 +595,13 @@ erDiagram
 | Scanners | `ScannerPattern` | DB-backed regex patterns across five scanner types |
 
 **Billing idempotency.** `finalizeWorkflowRun` performs the run-denormalize update and the
-`OrgMonthlyUsage` increment-upsert in one transaction, guarded by a pre-read of `endedAt`, so a
-Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost and tokens
-accrue for every terminal status. `Organization.monthlyBudgetUsdCents` caps monthly spend —
+`OrgMonthlyUsage` increment-upsert in one transaction, and only the write that sets `endedAt`
+bills, so a Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost
+and tokens accrue for every terminal status. A dashboard cancel that Temporal accepts sets the run
+`CANCELLED` and leaves `endedAt` null: the workflow's cancellation path then finalizes it, keeping
+`CANCELLED` whatever outcome it reports, and bills everything the run spent — what it spent while
+stopping included. A cancel that finds no execution left to stop (it never started, or closed
+without finalizing) sets `endedAt` itself, since nothing else will, and bills nothing. `Organization.monthlyBudgetUsdCents` caps monthly spend —
 every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap.
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
@@ -605,7 +609,8 @@ repository access, then membership of every org the launch spends against, then 
 The spend the cap reads is `orgMonthSpend` (`@auto-swe/shared/lib/billing`): `OrgMonthlyUsage`, plus
 what each unfinalized run billed to the org has accrued so far (its own ledger row, or its trace
 rows when it has none), plus this month's trace rows of runless workflows attributed to the org.
-An in-flight run counts whenever it started, because finalization bills it to the month it ends in.
+An in-flight run counts whenever it started, because finalization bills it to the month it ends in,
+and "in flight" means `endedAt` is null — a cancelled run counts there until it finalizes.
 All three are read in one REPEATABLE READ snapshot, so a run finalizing at that moment is counted
 on exactly one side. When the connection pool cannot start that transaction in time (Prisma
 `P2028`), the same reads run without the snapshot rather than failing the launch: a run finalizing
@@ -723,7 +728,7 @@ status, source, tier — never a run or ticket:
 | Metric (Prometheus name) | Labels | Recorded by |
 |---|---|---|
 | `llm_calls_total`, `llm_tokens_total`, `llm_cost_usd_total` | `model`, `agent` (+ `direction` on tokens) | `recordLlmUsage`, embedding usage |
-| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel). The worker, channel and eval-verdict writes are conditional on `endedAt` still being null and the dashboard cancel on `status` still being `RUNNING`, so a retried activity or a cancel racing the workflow's own finalisation counts once. The gateway's eval start-failure write is unconditional: no workflow exists to finalise that row, so nothing else writes it |
+| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel). The worker, channel and eval-verdict writes are conditional on `endedAt` still being null and the dashboard cancel on `status` still being `RUNNING`, so a retried activity or a cancel racing the workflow's own finalisation counts once. A run the dashboard cancelled is counted by the cancel; the worker or channel write that later sets its `endedAt` keeps it `CANCELLED` and does not count it again. The gateway's eval start-failure write is unconditional: no workflow exists to finalise that row, so nothing else writes it |
 | `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, on each call that ends over the tier |
 | `activity_duration_seconds` (histogram) | `activity`, `outcome` (`success` / `failure` / `cancelled`) | the activity interceptor |
 
@@ -971,7 +976,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
   so it counts as a failure.
 - **The org cap counts unfinalized runs until they finalize.** A run that never finalizes (a
-  workflow terminated outside the worker) keeps its accrued cost in every month's in-flight figure.
+  workflow terminated outside the worker, or a cancelled one whose worker never runs its
+  cancellation path) keeps its accrued cost in every month's in-flight figure. A dashboard cancel
+  that finds the run's execution already gone ends the run without billing it, so that run's spend
+  leaves the cap.
   Spend with no org on it — a runless workflow with no derivable owner, an epic's own planning ledger
   row, which no run finalizes — is outside the cap.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a

@@ -66,9 +66,11 @@ describe('orgMonthSpend', () => {
     });
   });
 
-  it("selects only unfinalized runs billed to the org, and runless rows from this month's start", async () => {
+  it("selects unfinalized runs billed to the org by endedAt, not status, and runless rows from this month's start", async () => {
     const f = fakeDb({});
     await orgMonthSpend(f.db, ORG);
+    // No status predicate: a run the dashboard cancelled keeps `endedAt` null
+    // until its workflow finalizes and bills it, so it is counted here until then.
     expect(f.tx.workflowRun.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {

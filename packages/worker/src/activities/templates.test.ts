@@ -41,6 +41,11 @@ vi.mock('../lib/slackNotify.js', () => ({
   postSlackThreadMessage: vi.fn(),
 }));
 
+vi.mock('../lib/metrics.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/metrics.js')>()),
+  recordRunFinalized: vi.fn(),
+}));
+
 vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
   syncTrackerOnEvent: vi.fn(),
 }));
@@ -128,6 +133,7 @@ vi.mock('@auto-swe/shared/db', () => {
 
 import { prisma } from '@auto-swe/shared/db';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import { recordRunFinalized } from '../lib/metrics.js';
 import { notifySlackRunComplete, notifySlackStepFailure } from '../lib/slackNotify.js';
 import { assertScheduledFireAuthorized } from './scheduledFireAuthorization.js';
 import {
@@ -531,7 +537,7 @@ describe('finalizeWorkflowRun', () => {
     updateManyRuns.mockResolvedValue({ count: 1 } as never);
     await finalizeWorkflowRun('run-1', 'SUCCESS', { foo: 'bar' });
     const args = updateManyRuns.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(args.where).toEqual({ endedAt: null, id: 'run-1' });
+    expect(args.where).toEqual({ endedAt: null, id: 'run-1', status: { not: 'CANCELLED' } });
     const data = args.data as Record<string, unknown>;
     expect(data.status).toBe('SUCCESS');
     expect(data.endedAt).toBeInstanceOf(Date);
@@ -544,7 +550,7 @@ describe('finalizeWorkflowRun', () => {
   it('writes zero cost when there is no work request attached', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     findRun.mockResolvedValue({ workRequest: null } as never);
-    updateManyRuns.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
     await finalizeWorkflowRun('run-2', 'FAILED');
     const args = updateManyRuns.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     const data = args.data as Record<string, unknown>;
@@ -556,7 +562,7 @@ describe('finalizeWorkflowRun', () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const updateActive = vi.mocked(prisma.activeWorkflow.updateMany);
     findRun.mockResolvedValue({ workflowId: 'eng-acme-repo-T-1', workRequest: null } as never);
-    updateManyRuns.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
     updateActive.mockResolvedValue({ count: 1 } as never);
 
     await finalizeWorkflowRun('run-3', 'FAILED');
@@ -579,7 +585,7 @@ describe('finalizeWorkflowRun', () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const updateActive = vi.mocked(prisma.activeWorkflow.updateMany);
     findRun.mockResolvedValue({ workflowId: 'eng-acme-repo-T-2', workRequest: null } as never);
-    updateManyRuns.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
 
     await finalizeWorkflowRun('run-4', 'SKIPPED');
     expect(updateActive).not.toHaveBeenCalled();
@@ -600,7 +606,7 @@ describe('finalizeWorkflowRun', () => {
         connection: { team: { orgId: 'org-1' } },
       },
     } as never);
-    updateManyRuns.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
 
     await finalizeWorkflowRun('run-5', 'SUCCESS');
 
@@ -634,7 +640,7 @@ describe('finalizeWorkflowRun', () => {
         connection: { team: { orgId: 'org-1' } },
       },
     } as never);
-    updateManyRuns.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
 
     await finalizeWorkflowRun('run-6', 'FAILED');
 
@@ -648,6 +654,79 @@ describe('finalizeWorkflowRun', () => {
 
     findRun.mockReset();
     orgUpsert.mockReset();
+  });
+
+  it('bills a dashboard-cancelled run to the org once and keeps it CANCELLED', async () => {
+    // The cancel route set CANCELLED and left endedAt null, so the run stayed
+    // in flight for the org cap until this write moves its spend across.
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+    const updateActive = vi.mocked(prisma.activeWorkflow.updateMany);
+    const notify = vi.mocked(notifySlackRunComplete);
+    const recorded = vi.mocked(recordRunFinalized);
+    orgUpsert.mockClear();
+    updateActive.mockClear();
+    notify.mockClear();
+    recorded.mockClear();
+    findRun.mockResolvedValue({
+      endedAt: null,
+      workflowId: 'eng-acme-repo-T-9',
+      workRequest: {
+        activeWorkflows: [
+          {
+            costUsdAccrued: 4,
+            temporalWorkflowId: 'eng-acme-repo-T-9',
+            tokensInputUsed: 7n,
+            tokensOutputUsed: 3n,
+          },
+        ],
+        connection: { team: { orgId: 'org-1' } },
+        payload: null,
+      },
+    } as never);
+    // The first write skips a cancelled row; the second ends it.
+    updateManyRuns.mockResolvedValueOnce({ count: 0 } as never);
+    updateManyRuns.mockResolvedValueOnce({ count: 1 } as never);
+
+    // A cancel that landed after the spec finished: the workflow reports SUCCESS.
+    await finalizeWorkflowRun('run-cancelled', 'SUCCESS');
+
+    const ended = updateManyRuns.mock.calls[1]?.[0] as {
+      data: Record<string, unknown>;
+      where: Record<string, unknown>;
+    };
+    expect(ended.where).toEqual({ endedAt: null, id: 'run-cancelled', status: 'CANCELLED' });
+    expect(ended.data.status).toBe('CANCELLED');
+    expect(ended.data.endedAt).toBeInstanceOf(Date);
+    expect(orgUpsert).toHaveBeenCalledTimes(1);
+    const usage = orgUpsert.mock.calls[0]?.[0] as { create: Record<string, unknown> };
+    expect(usage.create.costUsdAccrued).toBe(4);
+    expect(usage.create.runsCompleted).toBe(0);
+    expect(updateActive).toHaveBeenCalledWith({
+      data: { currentStatus: 'CANCELLED' },
+      where: { temporalWorkflowId: 'eng-acme-repo-T-9' },
+    });
+    expect(notify).toHaveBeenCalledWith({ runId: 'run-cancelled', status: 'CANCELLED' });
+    // The cancel route counted the run when it cancelled it.
+    expect(recorded).not.toHaveBeenCalled();
+
+    findRun.mockReset();
+    orgUpsert.mockReset();
+    updateActive.mockReset();
+  });
+
+  it('counts the run finalized when its own write ended it', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const recorded = vi.mocked(recordRunFinalized);
+    recorded.mockClear();
+    findRun.mockResolvedValue({ endedAt: null, workRequest: null } as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+
+    await finalizeWorkflowRun('run-8', 'FAILED');
+
+    expect(updateManyRuns).toHaveBeenCalledTimes(1);
+    expect(recorded).toHaveBeenCalledExactlyOnceWith('FAILED', 'worker');
+    findRun.mockReset();
   });
 
   it('is a no-op on retry when the run was already finalized (idempotency)', async () => {
@@ -664,7 +743,7 @@ describe('finalizeWorkflowRun', () => {
         connection: { team: { orgId: 'org-1' } },
       },
     } as never);
-    updateManyRuns.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
 
     await finalizeWorkflowRun('run-7', 'SUCCESS');
 
@@ -695,7 +774,7 @@ describe('finalizeWorkflowRun', () => {
         slackMessageTs: null,
       },
     } as never);
-    updateManyRuns.mockResolvedValue({} as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
 
     await finalizeWorkflowRun('run-already-done', 'SUCCESS');
 

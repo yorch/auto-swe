@@ -299,9 +299,14 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // (never started, or already closed) has nothing left to cancel, so that
       // failure counts as success; any other failure leaves the row RUNNING
       // and reports 502 so the caller can retry.
+      // Whether the workflow will finalize the run: true once Temporal has
+      // accepted the cancel, since the workflow's cancellation path finalizes
+      // it as CANCELLED; false when no execution is left to do that.
+      let workflowFinalizes = false;
       if (run.workflowId) {
         try {
           await fastify.temporal.cancelWorkflow(run.workflowId);
+          workflowFinalizes = true;
         } catch (err) {
           if (!isTerminalSignalError(err)) {
             request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel failed');
@@ -317,14 +322,24 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // Guard the update with a status=RUNNING predicate so a race against a
       // concurrent terminal-state write (e.g. the workflow finishing, or its
       // own cancellation finalisation landing first) can't clobber it.
+      //
+      // When the workflow will finalize the run, leave `endedAt` to it: the
+      // run stays in flight for the org cap until `finalizeWorkflowRun` bills
+      // its spend — including what it spends while it stops — to the org's
+      // month, keeping this CANCELLED. Ending it here would drop that spend
+      // from both sides of the cap. With no execution left, nothing else will
+      // end the run, so this write does.
       const { count } = await fastify.prisma.workflowRun.updateMany({
-        data: { endedAt: new Date(), status: 'CANCELLED' },
+        data: workflowFinalizes
+          ? { status: 'CANCELLED' }
+          : { endedAt: new Date(), status: 'CANCELLED' },
         where: { id: run.id, status: 'RUNNING' },
       });
       if (count > 0) {
-        // This write ended the run. When the workflow's own finalisation lands
-        // first, it counts the run instead (finalizeWorkflowRun's endedAt guard
-        // then skips it the other way round), so each run counts once.
+        // This write cancelled the run, so it counts it; the workflow's
+        // finalisation keeps the status and does not count it again. When
+        // that finalisation lands first, it counts the run instead and this
+        // guard skips it, so each run counts once.
         recordRunFinalized('CANCELLED', 'gateway');
       } else {
         // The workflow's own cancellation handler can finalise the run as

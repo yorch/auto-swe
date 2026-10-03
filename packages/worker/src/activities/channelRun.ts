@@ -2,6 +2,7 @@ import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME } from '@auto-swe/shared/lib/channelTask';
 import { logError } from '../lib/activityLog.js';
+import { endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
 
@@ -263,20 +264,23 @@ export async function finalizeChannelRun(input: FinalizeChannelRunInput): Promis
     tokensOutputTotal: totals.outputTokens,
   };
 
-  // The `endedAt: null` guard tells the write that ended the run apart from a
-  // retried attempt or a run the dashboard already cancelled, so only the
-  // first is counted — atomically, whichever writer lands first.
-  const { count } = await prisma.workflowRun.updateMany({
-    data: { ...usage, endedAt: new Date(), status: input.status },
-    where: { endedAt: null, id: run.id },
+  // Only the write that ended the run counts it; a retried attempt finds it
+  // ended, and a run the dashboard cancelled keeps CANCELLED and was counted
+  // by the cancel route (`endWorkflowRun`).
+  const outcome = await endWorkflowRun(prisma, run.id, {
+    ...usage,
+    endedAt: new Date(),
+    status: input.status,
   });
-  if (count > 0) {
+  if (outcome === 'ended') {
     recordRunFinalized(input.status, 'channel');
+  }
+  if (outcome !== 'alreadyEnded') {
     return;
   }
-  // Already ended — by an earlier attempt or by a dashboard cancel. Refresh
-  // only the summed usage: the status and end time belong to whichever write
-  // ended the run, and re-writing them would flip a cancelled run to this
-  // attempt's SUCCESS or FAILED.
+  // Already ended by an earlier attempt, or by a dashboard cancel whose
+  // workflow was already gone. Refresh only the summed usage: the status and
+  // end time belong to whichever write ended the run, and re-writing them
+  // would flip a cancelled run to this attempt's SUCCESS or FAILED.
   await prisma.workflowRun.update({ data: usage, where: { id: run.id } });
 }
