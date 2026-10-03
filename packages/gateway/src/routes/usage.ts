@@ -2,6 +2,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -116,20 +117,6 @@ function addGroup(accs: Acc[], g: Group, failed: Group | undefined): void {
 function utcDayStart(ms: number): number {
   const d = new Date(ms);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-}
-
-async function mapLimited<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>) {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i] as T);
-      }
-    })
-  );
-  return out;
 }
 
 /** May `user` read the report for `scope`? See the module comment. */
