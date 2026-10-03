@@ -686,6 +686,13 @@ subscribes to Node's diagnostics channels and needs no patching.
 | `llm.cost_pricing_known` | `false` when the model has no price entry — usage is still recorded at zero cost, except that a call under an organization or channel monthly USD budget is refused before it is made (`MODEL_UNPRICED`) |
 | `workflow.budget_remaining_input` / `_output` | Remaining token budget for the run |
 
+**Logs.** The worker's Temporal Runtime logger (`lib/otelLogger.ts`) writes every line to stderr as
+before and also emits it as an OpenTelemetry log record, exported over OTLP to Loki. That covers
+the SDK's own logging and everything activities log through `@temporalio/activity`'s `log`
+(`lib/activityLog.ts`). An activity logs inside its own async context, so its records carry the
+`activity.<type>` span's trace and span id, and Temporal's metadata — workflow id, activity type,
+attempt — becomes their attributes.
+
 The worker also exports metrics (`lib/metrics.ts`), labelled only by low-cardinality keys — model,
 agent, activity, status, tier — never a run or ticket:
 
@@ -906,7 +913,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   run; nothing represents the workflow itself or the time between activities, since producing one
   would mean running OpenTelemetry inside the isolate. Signals and updates sent to a running
   workflow (approvals, steering) carry no trace context, and runs started by a Temporal schedule
-  have no starting span, so each of their activities is its own trace. Logs go to stdout, not OTLP.
+  have no starting span, so each of their activities is its own trace.
+- **Only the worker's Temporal logger reaches Loki.** Plain `console` output — the `[bash:audit]`
+  and `[mcp:audit]` lines among it — and all of the gateway's logging stay on stdout. Workflow-code
+  logs arrive through the SDK's sink after the activation that produced them, so they carry no
+  trace context.
 - **The usage report is platform-wide only.** It has no per-team, per-org, or per-repository
   breakdown: a trace reaches its team only through run → request → connection, which Prisma cannot
   group by. Its daily series is one aggregate per UTC day, so a 90-day window costs 90 small queries.

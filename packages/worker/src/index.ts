@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { assertWorkspaceInfraEnv, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertBuiltinStepsRegistered } from '@auto-swe/shared/workflow';
-import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
+import { DefaultLogger, NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 import { otel } from './instrument.js';
 import { activityNodeTagInterceptor } from './lib/activityNodeTag.js';
@@ -12,6 +12,7 @@ import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
 import { ignoredPriceOverrideVars } from './lib/costTracking.js';
 import { initMetrics } from './lib/metrics.js';
+import { OtelForwardingLogger } from './lib/otelLogger.js';
 import { initTemporalClient } from './lib/temporalClient.js';
 
 async function run() {
@@ -22,10 +23,12 @@ async function run() {
   // After the instrument.ts preload, so the instruments bind to the real provider.
   initMetrics();
 
-  // Install Temporal runtime with OTel metrics if endpoint is available
+  // Install Temporal runtime with OTel metrics if endpoint is available, and a
+  // logger that also exports every SDK and activity log line over OTLP.
   const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   if (otelEndpoint) {
     Runtime.install({
+      logger: new OtelForwardingLogger(new DefaultLogger('INFO')),
       telemetryOptions: {
         metrics: {
           otel: { headers: {}, url: otelEndpoint },

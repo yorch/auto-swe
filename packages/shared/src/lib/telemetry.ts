@@ -10,6 +10,7 @@ export interface InitTelemetryOptions {
   traceExporter?: NodeSDKConfig['traceExporter'];
   metricReader?: NodeSDKConfig['metricReader'];
   instrumentations?: NodeSDKConfig['instrumentations'];
+  logRecordProcessors?: NodeSDKConfig['logRecordProcessors'];
   /**
    * Modules the instrumentations patch that the app reaches through ESM
    * `import` (`http`, `fastify`). Instrumentations patch through
@@ -55,6 +56,7 @@ export function initTelemetry(opts: InitTelemetryOptions): { shutdown: () => Pro
 
   const sdk = new NodeSDK({
     instrumentations: opts.instrumentations ?? [],
+    logRecordProcessors: opts.logRecordProcessors,
     metricReader: opts.metricReader,
     resource,
     traceExporter: opts.traceExporter,
