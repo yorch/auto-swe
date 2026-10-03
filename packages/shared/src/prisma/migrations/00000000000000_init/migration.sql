@@ -1652,6 +1652,9 @@ CREATE INDEX "eval_results_scorer_created_at_idx" ON "eval_results"("scorer", "c
 CREATE INDEX "eval_results_source_created_at_idx" ON "eval_results"("source", "created_at");
 
 -- CreateIndex
+CREATE INDEX "eval_results_created_at_idx" ON "eval_results"("created_at");
+
+-- CreateIndex
 CREATE INDEX "eval_datasets_scope_team_id_idx" ON "eval_datasets"("scope", "team_id");
 
 -- CreateIndex
@@ -1668,6 +1671,9 @@ CREATE INDEX "eval_rubrics_scope_slug_idx" ON "eval_rubrics"("scope", "slug");
 
 -- CreateIndex
 CREATE INDEX "agent_traces_run_id_node_id_idx" ON "agent_traces"("run_id", "node_id");
+
+-- CreateIndex
+CREATE INDEX "agent_traces_run_id_created_at_idx" ON "agent_traces"("run_id", "created_at");
 
 -- CreateIndex
 CREATE INDEX "agent_traces_created_at_idx" ON "agent_traces"("created_at");
@@ -1782,6 +1788,9 @@ CREATE INDEX "config_audit_log_entity_type_entity_id_idx" ON "config_audit_log"(
 
 -- CreateIndex
 CREATE INDEX "config_audit_log_actor_id_idx" ON "config_audit_log"("actor_id");
+
+-- CreateIndex
+CREATE INDEX "config_audit_log_created_at_idx" ON "config_audit_log"("created_at");
 
 -- CreateIndex
 CREATE INDEX "skills_scope_team_id_idx" ON "skills"("scope", "team_id");

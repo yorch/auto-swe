@@ -1436,6 +1436,7 @@ model EvalResult {
   @@index([evalRunId])
   @@index([scorer, createdAt])
   @@index([source, createdAt])
+  @@index([createdAt])
   @@map("eval_results")
 }
 
@@ -1612,6 +1613,7 @@ model AgentTrace {
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([runId, nodeId])
+  @@index([runId, createdAt])
   @@index([createdAt])
   @@index([workflowId, temporalRunId])
   @@index([teamId, createdAt])
@@ -2262,6 +2264,7 @@ model ConfigAuditLog {
 
   @@index([entityType, entityId])
   @@index([actorId])
+  @@index([createdAt])
   @@map("config_audit_log")
 }
 
