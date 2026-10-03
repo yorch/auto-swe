@@ -1,6 +1,11 @@
 import { currentWorkflowId } from './activityContext.js';
 import { activityCancellationSignal } from './cancellation.js';
-import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from './costTracking.js';
+import {
+  assertBudgetAvailable,
+  type LlmAttribution,
+  recordLlmUsage,
+  type TokenUsage,
+} from './costTracking.js';
 
 /**
  * Per-step budget accounting for a long tool loop (see `RunAgentOptions.perStepAccounting`).
@@ -33,7 +38,12 @@ export interface StepAccounting {
 
 /** The slice of Mastra's step result this depends on. */
 export interface StepLike {
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  /**
+   * Passed to `recordLlmUsage` whole: Mastra's step usage also carries the
+   * prompt-cache counts (`cachedInputTokens` / `cacheCreationInputTokens`), and
+   * dropping them prices every cached read at the full input rate.
+   */
+  usage?: Partial<TokenUsage> & { totalTokens?: number };
   text?: string;
 }
 
@@ -70,7 +80,11 @@ export function createStepAccounting(
           const a = await recordLlmUsage(
             currentWorkflowId(),
             agentKey,
-            { inputTokens: step.usage.inputTokens, outputTokens: step.usage.outputTokens },
+            {
+              ...step.usage,
+              inputTokens: step.usage.inputTokens,
+              outputTokens: step.usage.outputTokens,
+            },
             spanName,
             modelSpec
           );
