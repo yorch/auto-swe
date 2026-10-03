@@ -72,13 +72,17 @@ export const HERO_ROUTES = [
     template: 'zendesk-ticket-reply',
   },
   {
-    done: 'Run complete. Two people signed off before anyone on GitHub saw the change.',
+    done: 'Run complete. Two people signed off on a change that had already passed CI.',
     id: 'four-eyes',
-    note: 'Two approvals in sequence, each with its own 24-hour window, before the pull request exists.',
+    note: 'Two approvals in sequence, each with its own 24-hour window, on the green pull request.',
     stations: [
       { detail: 'From the dashboard, Slack, the CLI, or the REST API', label: 'Work request' },
       { detail: 'In an isolated Docker sandbox, until the tests pass', label: 'Implement' },
       { detail: 'Agent review loop, up to three attempts', label: 'Review network' },
+      {
+        detail: 'Opened, then CI; the agent fixes a failing check',
+        label: 'Pull request and CI',
+      },
       {
         detail: 'Author or team lead',
         gate: {
@@ -97,7 +101,6 @@ export const HERO_ROUTES = [
         },
         label: 'Second sign-off',
       },
-      { detail: 'Opened only now, then CI', label: 'Pull request' },
     ],
     tab: 'Four-eyes change',
     template: 'four-eyes',
