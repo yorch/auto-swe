@@ -2,14 +2,19 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('../lib/modelDiscovery.js', () => ({
-  discoverProviderModels: vi.fn(async () => [
-    {
-      models: [{ displayName: null, kind: 'CHAT', modelId: 'gpt-6.2', spec: 'openai/gpt-6.2' }],
-      ok: true,
-      provider: 'openai',
-    },
-  ]),
+vi.mock('@auto-swe/shared/lib/modelSuggestions', () => ({
+  runModelDiscovery: vi.fn(async () => ({
+    results: [
+      {
+        complete: true,
+        models: [{ displayName: null, kind: 'CHAT', modelId: 'gpt-6.2', spec: 'openai/gpt-6.2' }],
+        ok: true,
+        provider: 'openai',
+        retirementCandidates: [],
+      },
+    ],
+    summary: { providers: [] },
+  })),
 }));
 
 import { modelCatalogRoutes } from './modelCatalog.js';
@@ -56,8 +61,55 @@ function seedRows(): Row[] {
   ];
 }
 
+const SUGGESTION_ID = '00000000-0000-4000-a000-0000000000e1';
+
+function seedSuggestions() {
+  const base = {
+    dismissedAt: null,
+    displayName: null,
+    firstSeenAt: new Date('2026-10-01T00:00:00Z'),
+    kind: 'CHAT',
+    lastSeenAt: new Date('2026-10-02T00:00:00Z'),
+  };
+  return [
+    { ...base, id: SUGGESTION_ID, modelId: 'gpt-6.2', provider: 'openai', type: 'NEW' },
+    // Priced since the last run: the list must not show it as new.
+    { ...base, id: 'b', modelId: 'claude-opus-5-5', provider: 'anthropic', type: 'NEW' },
+    {
+      ...base,
+      dismissedAt: new Date(),
+      id: 'c',
+      modelId: 'old-1',
+      provider: 'openai',
+      type: 'NEW',
+    },
+    // Dismissed, and last seen before its provider's last complete listing: gone.
+    {
+      ...base,
+      dismissedAt: new Date(),
+      id: 'g',
+      lastSeenAt: new Date('2026-09-01T00:00:00Z'),
+      modelId: 'stale-1',
+      provider: 'openai',
+      type: 'NEW',
+    },
+    // Flagged, and still priced and active: shown.
+    {
+      ...base,
+      id: 'd',
+      modelId: 'claude-opus-5-5',
+      provider: 'anthropic',
+      type: 'RETIREMENT_CANDIDATE',
+    },
+    // Flagged, but retired since, or deleted: not shown.
+    { ...base, id: 'e', modelId: 'llama-4', provider: 'ollama', type: 'RETIREMENT_CANDIDATE' },
+    { ...base, id: 'f', modelId: 'gone-1', provider: 'openai', type: 'RETIREMENT_CANDIDATE' },
+  ];
+}
+
 async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   const rows = seedRows();
+  const suggestions = seedSuggestions();
   const audit = vi.fn().mockResolvedValue({});
   const prisma = {
     agent: { findMany: vi.fn().mockResolvedValue([]) },
@@ -101,6 +153,34 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
         Object.assign(row ?? {}, data);
         return { ...row };
       }),
+    },
+    modelDiscoveryProviderStatus: {
+      findMany: vi.fn().mockResolvedValue([
+        { checkedAt: new Date(), error: 'HTTP 401', lastSuccessAt: null, provider: 'anthropic' },
+        {
+          checkedAt: new Date(),
+          error: null,
+          lastSuccessAt: new Date('2026-10-02T00:00:00Z'),
+          provider: 'openai',
+        },
+      ]),
+    },
+    modelSuggestion: {
+      findMany: vi.fn(async () => suggestions.map((r) => ({ ...r }))),
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+        const row = suggestions.find((r) => r.id === where.id);
+        return row ? { ...row } : null;
+      }),
+      update: vi.fn(
+        async ({ data, where }: { data: { dismissedAt: Date | null }; where: { id: string } }) => {
+          const row = suggestions.find((r) => r.id === where.id);
+          if (!row) {
+            throw Object.assign(new Error('not found'), { code: 'P2025' });
+          }
+          row.dismissedAt = data.dismissedAt;
+          return { ...row };
+        }
+      ),
     },
   };
   const app = Fastify();
@@ -293,10 +373,66 @@ describe('POST /model-catalog/discover', () => {
   });
 
   it('returns what each provider lists that nothing prices', async () => {
-    const { call } = await buildApp();
+    const { audit, call } = await buildApp();
     const res = await call('POST', '/model-catalog/discover');
     expect(res.statusCode).toBe(200);
     expect(res.json().data[0]).toMatchObject({ ok: true, provider: 'openai' });
+    // It refreshes stored suggestions, so it is audited like the other writes.
+    expect(audit).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: 'UPDATE', entityType: 'ModelSuggestion' }),
+    });
+  });
+});
+
+describe('model suggestions', () => {
+  it('are ADMIN-only to read and to dismiss', async () => {
+    const { call } = await buildApp('ENGINEER');
+    expect((await call('GET', '/model-catalog/suggestions')).statusCode).toBe(403);
+    expect(
+      (await call('POST', `/model-catalog/suggestions/${SUGGESTION_ID}/dismiss`)).statusCode
+    ).toBe(403);
+  });
+
+  it('lists undismissed ones with last-run status, and drops a NEW one that is priced now', async () => {
+    const { call } = await buildApp();
+    const res = await call('GET', '/model-catalog/suggestions');
+    expect(res.statusCode).toBe(200);
+    // Not the priced NEW row, nor a flag on a model that is retired or gone.
+    expect(res.json().data.suggestions.map((s: { spec: string }) => s.spec)).toEqual([
+      'openai/gpt-6.2',
+      'anthropic/claude-opus-5-5',
+    ]);
+    expect(res.json().data.hiddenDismissed).toEqual({ NEW: 1, RETIREMENT_CANDIDATE: 0 });
+    expect(res.json().data.providers[0]).toMatchObject({
+      error: 'HTTP 401',
+      provider: 'anthropic',
+    });
+  });
+
+  it('dismisses and undismisses one, and 404s on an unknown id', async () => {
+    const { audit, call } = await buildApp();
+    const dismissed = await call('POST', `/model-catalog/suggestions/${SUGGESTION_ID}/dismiss`);
+    expect(dismissed.statusCode).toBe(200);
+    expect(dismissed.json().data.dismissedAt).not.toBeNull();
+    expect(audit).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'UPDATE',
+        entityId: SUGGESTION_ID,
+        entityType: 'ModelSuggestion',
+      }),
+    });
+    const hidden = (await call('GET', '/model-catalog/suggestions')).json().data;
+    expect(hidden.suggestions.map((s: { id: string }) => s.id)).toEqual(['d']);
+    expect(hidden.hiddenDismissed).toEqual({ NEW: 2, RETIREMENT_CANDIDATE: 0 });
+    const all = await call('GET', '/model-catalog/suggestions?includeDismissed=true');
+    expect(all.json().data.suggestions).toHaveLength(3);
+    const undone = await call('POST', `/model-catalog/suggestions/${SUGGESTION_ID}/undismiss`);
+    expect(undone.json().data.dismissedAt).toBeNull();
+    const missing = await call(
+      'POST',
+      '/model-catalog/suggestions/00000000-0000-4000-a000-0000000000ff/dismiss'
+    );
+    expect(missing.statusCode).toBe(404);
   });
 });
 

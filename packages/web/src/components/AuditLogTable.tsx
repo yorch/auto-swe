@@ -41,6 +41,7 @@ const ENTITY_LABELS: Record<string, string> = {
   IssueTrackerConfig: 'Issue tracker',
   KnowledgeBaseConfig: 'Knowledge base',
   ModelRoleConfig: 'Model config',
+  ModelSuggestion: 'Model suggestion',
   ProviderCredential: 'Provider credential',
   RevalidationConfig: 'Revalidation schedule',
   Skill: 'Skill',

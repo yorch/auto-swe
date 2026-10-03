@@ -123,6 +123,55 @@ describe('modelConfigRoutes — admin', () => {
       expect(JSON.stringify(auditCall)).not.toContain('sk-anthropic-secret');
     });
 
+    it('trims a pasted trailing newline or space from the key and apiBase before storing', async () => {
+      ctx.mockPrisma.providerCredential.create.mockImplementationOnce(
+        async (args: { data: Record<string, unknown> }) => ({
+          ...args.data,
+          createdAt: new Date(),
+          id: 'cred-2',
+          updatedAt: new Date(),
+        })
+      );
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: {
+          apiBase: ' https://openrouter.ai/api/v1 \n',
+          apiKey: '  sk-or-pasted-1234\n',
+          provider: 'openrouter',
+          scope: 'GLOBAL',
+        },
+        url: '/api/v1/platform/credentials',
+      });
+      expect(res.statusCode).toBe(201);
+      const data = ctx.mockPrisma.providerCredential.create.mock.calls[0][0].data;
+      expect(data.apiBase).toBe('https://openrouter.ai/api/v1');
+      expect(JSON.parse(res.payload).data.lastFour).toBe('1234');
+    });
+
+    it('refuses a key with whitespace or control characters, and an apiBase with userinfo', async () => {
+      for (const payload of [
+        { apiKey: 'sk-abc\r\nX-Evil: 1', provider: 'openai' },
+        { apiKey: 'sk abc', provider: 'openai' },
+        {
+          apiBase: 'https://bob:hunter2@openrouter.ai/api/v1',
+          apiKey: 'sk-abc',
+          provider: 'openrouter',
+        },
+      ]) {
+        const res = await ctx.app.inject({
+          headers: AUTH,
+          method: 'POST',
+          payload: { ...payload, scope: 'GLOBAL' },
+          url: '/api/v1/platform/credentials',
+        });
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.payload).error.code).toBe('INVALID_CREDENTIAL');
+        expect(res.payload).not.toMatch(/hunter2|sk-abc/);
+      }
+      expect(ctx.mockPrisma.providerCredential.create).not.toHaveBeenCalled();
+    });
+
     it('rejects non-admin', async () => {
       const { app } = await buildAdminApp('ENGINEER');
       const res = await app.inject({

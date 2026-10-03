@@ -1,10 +1,11 @@
+import { knownModels } from '@auto-swe/shared/lib/modelDiscovery';
+import { runModelDiscovery } from '@auto-swe/shared/lib/modelSuggestions';
 import { DEFAULT_ROLE_PRICING } from '@auto-swe/shared/workflow/costEstimator';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { builtinModelFor, findUnpricedSpecs, rolePricing } from '../lib/modelCatalogService.js';
-import { discoverProviderModels } from '../lib/modelDiscovery.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -56,6 +57,11 @@ const ListQuery = z.object({
 });
 
 const IdParams = z.object({ id: z.string().uuid() });
+
+/** Audit entity id for a discovery run, which touches many suggestions at once. */
+const DISCOVERY_AUDIT_ID = '00000000-0000-4000-a000-000000000002';
+
+const SuggestionQuery = z.object({ includeDismissed: booleanQueryParam(false) });
 
 type CatalogRow = {
   id: string;
@@ -117,11 +123,110 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
     data: await findUnpricedSpecs(fastify.prisma),
   }));
 
+  // The suggestions the last discovery run stored, and when each provider was
+  // last asked. Each row is checked against the catalog again on read, so a model
+  // an admin has since priced is never shown as new, and one they have since
+  // retired or deleted is never shown as possibly retired, before the next run.
+  app.get(
+    '/model-catalog/suggestions',
+    { onRequest: adminOnly, schema: { querystring: SuggestionQuery } },
+    async (request) => {
+      const [rows, providers, known] = await Promise.all([
+        fastify.prisma.modelSuggestion.findMany({
+          orderBy: [{ provider: 'asc' }, { modelId: 'asc' }],
+        }),
+        fastify.prisma.modelDiscoveryProviderStatus.findMany({ orderBy: { provider: 'asc' } }),
+        knownModels(fastify.prisma),
+      ]);
+      const lastComplete = new Map(providers.map((p) => [p.provider, p.lastSuccessAt]));
+      const applicable = rows
+        .map((r) => ({ ...r, spec: `${r.provider}/${r.modelId}` }))
+        .filter((r) => {
+          const model = known.get(r.spec);
+          if (!(r.type === 'NEW' ? !model : model !== undefined && !model.retired)) {
+            return false;
+          }
+          // A dismissed row is kept so a dismissal outlives the model leaving and
+          // returning, but one not seen since its provider's last complete listing
+          // describes a model that listing did not show: it no longer applies.
+          const complete = lastComplete.get(r.provider);
+          return !(r.dismissedAt && complete && r.lastSeenAt < complete);
+        });
+      const hiddenDismissed = { NEW: 0, RETIREMENT_CANDIDATE: 0 };
+      if (!request.query.includeDismissed) {
+        for (const r of applicable) {
+          if (r.dismissedAt) {
+            hiddenDismissed[r.type]++;
+          }
+        }
+      }
+      return {
+        data: {
+          // Per kind, so the UI can tell "everything is dismissed" from "nothing found".
+          hiddenDismissed,
+          providers,
+          suggestions: request.query.includeDismissed
+            ? applicable
+            : applicable.filter((r) => r.dismissedAt === null),
+        },
+      };
+    }
+  );
+
+  for (const [action, dismissedAt] of [
+    ['dismiss', () => new Date()],
+    ['undismiss', () => null],
+  ] as const) {
+    app.post(
+      `/model-catalog/suggestions/:id/${action}`,
+      { onRequest: adminOnly, schema: { params: IdParams } },
+      async (request, reply) => {
+        try {
+          const actor = requireUser(request);
+          const before = await fastify.prisma.modelSuggestion.findUnique({
+            where: { id: request.params.id },
+          });
+          const row = await fastify.prisma.modelSuggestion.update({
+            data: { dismissedAt: dismissedAt() },
+            where: { id: request.params.id },
+          });
+          await writeAuditLog(fastify, {
+            action: 'UPDATE',
+            actor,
+            after: row,
+            before,
+            entityId: row.id,
+            entityType: 'ModelSuggestion',
+          });
+          return { data: row };
+        } catch (err) {
+          if ((err as { code?: string } | null)?.code === 'P2025') {
+            return reply
+              .status(404)
+              .send({ error: { code: 'NOT_FOUND', message: 'Suggestion not found' } });
+          }
+          throw err;
+        }
+      }
+    );
+  }
+
   // POST, not GET: it calls every provider with a decrypted key, so it must not
-  // be cacheable or triggered by following a link. It writes nothing.
-  app.post('/model-catalog/discover', { onRequest: adminOnly }, async () => ({
-    data: await discoverProviderModels(fastify.prisma),
-  }));
+  // be cacheable or triggered by following a link. It writes no catalog row; it
+  // does refresh the stored suggestions, exactly as the scheduled run does, so
+  // the list an admin reads afterwards agrees with what this returned.
+  app.post('/model-catalog/discover', { onRequest: adminOnly }, async (request) => {
+    const actor = requireUser(request);
+    const { results, summary } = await runModelDiscovery(fastify.prisma);
+    await writeAuditLog(fastify, {
+      action: 'UPDATE',
+      actor,
+      after: summary,
+      entityId: DISCOVERY_AUDIT_ID,
+      entityType: 'ModelSuggestion',
+    });
+    return { data: results };
+  });
 
   app.post(
     '/model-catalog',

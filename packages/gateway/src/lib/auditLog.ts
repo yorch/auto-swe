@@ -18,6 +18,7 @@ export type AuditEntityType =
   | 'McpToolCall'
   | 'MemoryItem'
   | 'ModelCatalogEntry'
+  | 'ModelSuggestion'
   | 'OktaOAuthConfig'
   | 'PersonalAccessToken'
   | 'ProviderCredential'

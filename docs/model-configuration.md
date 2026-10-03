@@ -101,11 +101,44 @@ and embedding model-spec fields are pickers over the catalog — chat models for
 models for the embedding config — showing each model's price; a deprecated one is labelled and a
 retired one is not offered.
 
-**Discovering new models.** *New from providers* → **Check providers for new models** lists models
-through each GLOBAL provider credential — the same list-models endpoints, auth and SSRF guard as the
-credential **Test** — and shows the ones nothing prices, each with an **Add** prefilled with its
-id, kind and display name. Discovery only suggests: it writes nothing, so a discovered model is not
-"known" until an admin adds it with a price.
+**Discovering new models.** A scheduled run lists models through each GLOBAL provider credential —
+the same list-models endpoints, auth and SSRF guard as the credential **Test** — and stores two
+kinds of flag in `model_suggestions`, apart from the catalog: models a provider lists that nothing
+prices (*new*), and priced models a provider no longer lists (*possibly retired*). The catalog tab's
+*New from providers* shows the new ones with a last-checked time, each provider's error if its
+listing failed, an **Add** prefilled with the id, kind and display name, and a **Dismiss**;
+**Check providers now** runs the same pass on demand. *Possibly retired* lists the other kind with an
+**Edit** that opens the row; nothing retires a model for you. Discovery only suggests, so a
+discovered model is not "known" until an admin adds it with a price, and the pricing path never reads
+a suggestion.
+
+The run's cadence is environment-only, like the other gateway sweeps: `MODEL_DISCOVERY_ENABLED`
+(default `true`) and `MODEL_DISCOVERY_CRON` (five-field cron, UTC, default `17 3 * * *`). The gateway
+applies them to the `auto-swe-model-discovery` Temporal Schedule once, at startup, so a change needs
+a gateway restart, and it refuses to start on a value it cannot use. Disabled, the schedule stays but
+is paused, and **Check providers now** still works.
+
+A provider whose listing fails — a bad key, a timeout, a 200 that is not a model list — is logged,
+and its error and last-success time are recorded for the tab; its existing suggestions are left
+exactly as they were, and it produces no retirement candidates. The recorded error is always one of a
+fixed set of strings (`HTTP <status>`, `timed out`, `request failed (<error name>)`, `blocked
+address`, `apiBase required`, `unrecognised response`): Node puts header values and URL userinfo in
+its error messages, so no message text from the request or the provider reaches the status row, the
+API, the logs or the activity result in workflow history. The same holds for a listing cut short by
+the page cap, one that signals more pages it gives no cursor for, or one that came back empty,
+because absence from a partial list proves nothing. A *new* suggestion disappears once the model is
+priced or the provider stops listing it. A dismissed row is never deleted for being absent, so a
+dismissal survives the model leaving a listing and coming back. While it is absent the API does not
+serve it: a dismissed row last seen before its provider's last complete listing describes a model
+that listing did not show, so it is hidden (a `RETIREMENT_CANDIDATE` the provider lists again is
+hidden the same way) and reappears, still dismissed, when the model is next seen. The rows stay
+stored for as long as the provider's credential exists. A row that changes type (new to possibly
+retired) starts undismissed.
+
+Saving a credential trims surrounding whitespace from the key and `apiBase` (a pasted trailing
+newline is harmless), then refuses a key still containing whitespace or control characters and an
+`apiBase` containing a username or password, each with a `400` (`INVALID_CREDENTIAL`). A dismissal, an
+undismissal and an on-demand run are each written to the config audit log (`ModelSuggestion`).
 
 **The workflow editor's cost estimate** prices each step from the same source. A step's
 `costHint` names a role; `GET /model-catalog/role-pricing` — readable by any signed-in user, since
@@ -128,7 +161,9 @@ as a `ModelCatalogEntry`.
 | `POST /model-catalog/:id/reset` | Restores a built-in row to the values code ships and clears customized |
 | `DELETE /model-catalog/:id` | Removes a custom row. A built-in row is a `409` — startup would re-create it; set it RETIRED |
 | `GET /model-catalog/unpriced` | Specs in use that nothing prices, each with where it is used and the spec it most likely meant |
-| `POST /model-catalog/discover` | Lists models through each GLOBAL credential and returns, per provider, the ones nothing prices — or why that provider could not be listed. Writes nothing |
+| `GET /model-catalog/suggestions` | ADMIN. The stored suggestions (`type` `NEW` or `RETIREMENT_CANDIDATE`) and, per provider, when it was last checked and its last error. Dismissed ones only with `?includeDismissed=true`, with `hiddenDismissed` counting those hidden, per type (`NEW`, `RETIREMENT_CANDIDATE`). A `NEW` one the catalog now prices, and a `RETIREMENT_CANDIDATE` whose model is now retired or gone from the catalog, are omitted |
+| `POST /model-catalog/suggestions/:id/dismiss`, `…/undismiss` | ADMIN. Hides or restores one suggestion. Dismissal is kept across runs |
+| `POST /model-catalog/discover` | ADMIN. Runs a discovery pass now and returns, per provider, the unpriced models it lists, the priced ones it no longer lists, or why it could not be listed. Writes no catalog row, but refreshes the stored suggestions exactly as the scheduled run does |
 
 **Unpriced models are reported on save, and refused at run time only under a USD cap.** Saving an agent version or the embedding config
 returns `catalogWarnings` beside `scanWarnings` when its model is not priced (with a did-you-mean
@@ -325,7 +360,11 @@ curl -X POST http://localhost:8080/api/v1/platform/model-catalog/<entry-id>/rese
 curl http://localhost:8080/api/v1/platform/model-catalog/unpriced \
   -H "Authorization: Bearer $TOKEN"
 
-# What do the providers offer that the catalog lacks?
+# What did the last discovery run find, and when was each provider checked?
+curl http://localhost:8080/api/v1/platform/model-catalog/suggestions \
+  -H "Authorization: Bearer $TOKEN"
+
+# Ask the providers now (also refreshes the stored suggestions)
 curl -X POST http://localhost:8080/api/v1/platform/model-catalog/discover \
   -H "Authorization: Bearer $TOKEN"
 ```
@@ -385,12 +424,25 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 - **The editor's cost estimate prices GLOBAL defaults.** It uses the model each role's GLOBAL agent
   runs, so a team, organization or template override of that agent's model is not reflected, and
   token counts come from each step's static `costHint`, not from measured runs.
-- **Discovery runs only on demand, through GLOBAL credentials.** Nothing checks providers on a
-  schedule, and a model reachable only through a team or organization credential is not listed.
-  It suggests by name, not by capability: speech, transcription, image, video and moderation models
-  are dropped by a name filter that can miss one or drop one it should not, and outside Google —
-  which says which methods a model serves — whether a model is chat or embedding is read from its
-  id. Up to five pages per provider are followed.
+- **Discovery finds ids, not prices.** No provider's list-models endpoint exposes prices, so an admin
+  still enters every number that feeds USD budgets. It reaches only models listed through a GLOBAL
+  credential; one reachable only through a team or organization credential is not found. It suggests
+  by name, not by capability: speech, transcription, image, video and moderation models are dropped
+  by a name filter that can miss one or drop one it should not, and outside Google — which says which
+  methods a model serves — whether a model is chat or embedding is read from its id. Up to five
+  pages per provider are followed.
+- **A local `apiBase` is always refused.** Credentials have no `allowPrivateNetwork` flag, so an
+  Ollama or other private-address endpoint is reported as `blocked address`, in discovery and in the
+  credential **Test** alike. The guard reads the URL text and does not resolve DNS, and the scheduled
+  run makes these calls from the worker.
+- **Retirement flags reflect what one key can see.** A key restricted to some models (an OpenAI
+  project key, say) flags every other priced model of that provider as possibly retired.
+- **A retirement flag is a hint.** A provider may serve an alias or a pinned id it does not list, so
+  a priced model can be flagged while it still works, and a model a provider stops serving but keeps
+  listing is not flagged. The flag is cleared when the provider lists the model again or an admin
+  retires it.
+- **The schedule is read at gateway startup.** Changing `MODEL_DISCOVERY_ENABLED` or
+  `MODEL_DISCOVERY_CRON` needs a gateway restart to take effect.
 - **The model pickers suggest; they do not restrict.** A spec the catalog lacks can be typed and
   saved, and is recorded at $0 until it is added — the save's `catalogWarnings` and the unpriced
   panel say so, but nothing blocks it.

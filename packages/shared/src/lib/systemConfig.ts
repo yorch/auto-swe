@@ -878,6 +878,8 @@ export interface SweepSchedule {
 }
 
 export interface ScheduledSweepsConfig {
+  /// Asks each provider which models it lists and records the unpriced ones as suggestions.
+  modelDiscovery: SweepSchedule;
   /// Refreshes the cached source-control permission answers.
   repoAccess: SweepSchedule;
   /// Refreshes the repo dependency graph from manifests and git signals.
@@ -896,7 +898,7 @@ function envCron(name: string, fallback: string): string {
   return raw && CRON_RE.test(raw) ? raw : fallback;
 }
 
-/// The two Temporal Schedules the gateway creates at boot. They are applied
+/// The Temporal Schedules the gateway creates at boot. They are applied
 /// once, at start-up, so they are environment variables: a value saved in a form
 /// could not take effect without a restart, and a control that looks live but
 /// is not is worse than none.
@@ -906,11 +908,17 @@ function envCron(name: string, fallback: string): string {
 ///   REPO_ACCESS_SYNC_CRON         default `23 * * * *`
 ///   REPO_DEPENDENCY_SCAN_ENABLED  default true
 ///   REPO_DEPENDENCY_SCAN_CRON     default `0 4 * * *`
+///   MODEL_DISCOVERY_ENABLED       default true — it only lists models
+///   MODEL_DISCOVERY_CRON          default `17 3 * * *`
 ///
 /// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
 export function resolveScheduledSweeps(): ScheduledSweepsConfig {
   return {
+    modelDiscovery: {
+      cronExpression: envCron('MODEL_DISCOVERY_CRON', '17 3 * * *'),
+      enabled: envFlag('MODEL_DISCOVERY_ENABLED', true),
+    },
     repoAccess: {
       cronExpression: envCron('REPO_ACCESS_SYNC_CRON', '23 * * * *'),
       enabled: envFlag('REPO_ACCESS_SYNC_ENABLED', false),
@@ -940,6 +948,8 @@ export function validateScheduledSweepsEnv(): string[] {
   check('REPO_ACCESS_SYNC_CRON', cron, 'a five-field cron expression such as "23 * * * *"');
   check('REPO_DEPENDENCY_SCAN_ENABLED', flag, "'true' or 'false'");
   check('REPO_DEPENDENCY_SCAN_CRON', cron, 'a five-field cron expression such as "0 4 * * *"');
+  check('MODEL_DISCOVERY_ENABLED', flag, "'true' or 'false'");
+  check('MODEL_DISCOVERY_CRON', cron, 'a five-field cron expression such as "17 3 * * *"');
   return problems;
 }
 

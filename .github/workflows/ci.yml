@@ -238,3 +238,11 @@ jobs:
         env:
           MCP_OAUTH_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/mcp/writeTools.pg.test.ts
+
+      # Model-discovery suggestions: the upserts are keyed on the
+      # (provider, model_id) unique index, and a refresh racing another must
+      # neither duplicate a row nor lose a dismissal.
+      - name: Model suggestions (database-backed tests)
+        env:
+          MODEL_SUGGESTIONS_PG_TEST: '1'
+        run: yarn test packages/shared/src/lib/modelSuggestions.pg.test.ts

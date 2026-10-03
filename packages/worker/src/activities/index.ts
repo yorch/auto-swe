@@ -92,6 +92,8 @@ export type {
   DetectRepoDependenciesResult,
 } from './detectRepoDependencies.js';
 export { detectRepoDependencies } from './detectRepoDependencies.js';
+export type { DiscoverModelsResult } from './discoverModels.js';
+export { discoverModels } from './discoverModels.js';
 export { runEvalHarnessActivity } from './evalHarness.js';
 export { revalidateDatasetActivity } from './evalRevalidate.js';
 export { executeImplementation } from './executeImplementation.js';

@@ -1,93 +1,136 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ModelCatalogEntry } from '@/lib/modelCatalog';
 
 // vi.mock is hoisted above the file's declarations, so its fixtures are too.
-const { ENTRIES, mutation } = vi.hoisted(() => {
-  const BUILTIN = {
-    inputUsdPerMTok: 4,
-    kind: 'CHAT' as const,
-    outputUsdPerMTok: 20,
-    status: 'ACTIVE' as const,
-  };
-
-  function entry(over: Partial<ModelCatalogEntry>): ModelCatalogEntry {
-    return {
-      builtin: null,
-      displayName: null,
-      id: 'id',
+const { DEFAULT_DATA, ENTRIES, discoverMutate, dismissMutate, mutation, suggestionState } =
+  vi.hoisted(() => {
+    const BUILTIN = {
       inputUsdPerMTok: 4,
-      isBuiltIn: false,
-      isCustomized: false,
-      kind: 'CHAT',
-      modelId: 'm',
-      notes: null,
+      kind: 'CHAT' as const,
       outputUsdPerMTok: 20,
-      provider: 'p',
-      status: 'ACTIVE',
-      ...over,
+      status: 'ACTIVE' as const,
     };
-  }
 
-  const ENTRIES = [
-    entry({
-      builtin: BUILTIN,
-      id: 'a',
-      isBuiltIn: true,
-      modelId: 'claude-opus-5-5',
-      provider: 'anthropic',
-    }),
-    entry({
-      builtin: BUILTIN,
-      id: 'b',
-      inputUsdPerMTok: 3.5,
-      isBuiltIn: true,
-      isCustomized: true,
-      modelId: 'claude-sonnet-5-5',
-      outputUsdPerMTok: 17,
-      provider: 'anthropic',
-    }),
-    entry({
-      id: 'c',
-      inputUsdPerMTok: 0,
-      modelId: 'llama-4',
-      outputUsdPerMTok: 0,
-      provider: 'ollama',
-    }),
-  ];
+    function entry(over: Partial<ModelCatalogEntry>): ModelCatalogEntry {
+      return {
+        builtin: null,
+        displayName: null,
+        id: 'id',
+        inputUsdPerMTok: 4,
+        isBuiltIn: false,
+        isCustomized: false,
+        kind: 'CHAT',
+        modelId: 'm',
+        notes: null,
+        outputUsdPerMTok: 20,
+        provider: 'p',
+        status: 'ACTIVE',
+        ...over,
+      };
+    }
 
-  const mutation = () => ({ isPending: false, mutate: vi.fn(), mutateAsync: vi.fn() });
-  return { ENTRIES, mutation };
-});
+    const ENTRIES = [
+      entry({
+        builtin: BUILTIN,
+        id: 'a',
+        isBuiltIn: true,
+        modelId: 'claude-opus-5-5',
+        provider: 'anthropic',
+      }),
+      entry({
+        builtin: BUILTIN,
+        id: 'b',
+        inputUsdPerMTok: 3.5,
+        isBuiltIn: true,
+        isCustomized: true,
+        modelId: 'claude-sonnet-5-5',
+        outputUsdPerMTok: 17,
+        provider: 'anthropic',
+      }),
+      entry({
+        id: 'c',
+        inputUsdPerMTok: 0,
+        modelId: 'llama-4',
+        outputUsdPerMTok: 0,
+        provider: 'ollama',
+      }),
+    ];
+
+    const mutation = () => ({ isPending: false, mutate: vi.fn(), mutateAsync: vi.fn() });
+
+    function suggestion(over: Record<string, unknown>) {
+      return {
+        dismissedAt: null,
+        displayName: null,
+        firstSeenAt: '2026-10-01T04:00:00Z',
+        kind: 'CHAT',
+        lastSeenAt: '2026-10-02T04:00:00Z',
+        type: 'NEW',
+        ...over,
+        spec: `${over.provider}/${over.modelId}`,
+      };
+    }
+
+    function DEFAULT_DATA(): Record<string, unknown> {
+      return {
+        hiddenDismissed: { NEW: 0, RETIREMENT_CANDIDATE: 0 },
+        providers: [
+          {
+            checkedAt: '2026-10-02T04:00:00Z',
+            error: 'HTTP 401',
+            lastSuccessAt: '2026-10-01T04:00:00Z',
+            provider: 'anthropic',
+          },
+          {
+            checkedAt: '2026-10-02T04:00:00Z',
+            error: null,
+            lastSuccessAt: '2026-10-02T04:00:00Z',
+            provider: 'ollama',
+          },
+        ],
+        suggestions: [
+          // Already in the catalog: added since the last run, so it is hidden.
+          suggestion({ id: 's0', modelId: 'llama-4', provider: 'ollama' }),
+          suggestion({
+            displayName: 'Nomic Embed',
+            id: 's1',
+            kind: 'EMBEDDING',
+            modelId: 'nomic-embed-2',
+            provider: 'ollama',
+          }),
+          suggestion({
+            id: 's2',
+            modelId: 'claude-sonnet-5-5',
+            provider: 'anthropic',
+            type: 'RETIREMENT_CANDIDATE',
+          }),
+        ],
+      };
+    }
+
+    const suggestionState: { data: Record<string, unknown> } = { data: {} };
+    suggestionState.data = DEFAULT_DATA();
+    return {
+      DEFAULT_DATA,
+      discoverMutate: vi.fn(),
+      dismissMutate: vi.fn(),
+      ENTRIES,
+      mutation,
+
+      suggestionState,
+    };
+  });
 
 vi.mock('@/hooks/useModelCatalog', () => ({
   useCreateCatalogEntry: mutation,
   useDeleteCatalogEntry: mutation,
-  useDiscoverModels: () => ({
-    data: [
-      { error: 'HTTP 401', models: [], ok: false, provider: 'anthropic' },
-      {
-        models: [
-          // Already in the catalog: added since the check, so it is hidden.
-          { displayName: null, kind: 'CHAT', modelId: 'llama-4', spec: 'ollama/llama-4' },
-          {
-            displayName: 'Nomic Embed',
-            kind: 'EMBEDDING',
-            modelId: 'nomic-embed-2',
-            spec: 'ollama/nomic-embed-2',
-          },
-        ],
-        ok: true,
-        provider: 'ollama',
-      },
-    ],
-    error: null,
-    isPending: false,
-    mutate: vi.fn(),
-  }),
+  useDiscoverModels: () => ({ error: null, isPending: false, mutate: discoverMutate }),
+  useDismissSuggestion: () => ({ isPending: false, mutate: dismissMutate }),
   useModelCatalog: () => ({ data: ENTRIES, error: null, isError: false, isLoading: false }),
+  useModelSuggestions: () => ({ data: suggestionState.data, error: null }),
   useResetCatalogEntry: mutation,
   useUnpricedModels: () => ({
     data: [{ spec: 'openai/gpt-5-5', suggestion: 'openai/gpt-5.5', usedBy: ['agent:reviewer'] }],
@@ -108,8 +151,12 @@ beforeAll(() => {
   };
 });
 
+/** The row for a spec; a possibly-retired model also appears in the flag list, which this skips. */
 function rowFor(spec: string): HTMLElement {
-  const row = screen.getByText(spec).closest('tr');
+  const row = screen
+    .getAllByText(spec)
+    .map((el) => el.closest('tr'))
+    .find((tr) => tr && !tr.textContent?.includes('not listed since'));
   if (!row) {
     throw new Error(`no row for ${spec}`);
   }
@@ -153,12 +200,37 @@ describe('CatalogTab', () => {
     expect(screen.getByLabelText(/^Model id/)).toHaveProperty('value', 'gpt-5-5');
   });
 
-  it("shows each provider's discovery result, hiding what the catalog already has", () => {
+  it('shows stored suggestions with last-checked and a failed provider’s error, hiding what the catalog has', () => {
     render(<CatalogTab />);
-    expect(screen.getByText(/Could not list models: HTTP 401/)).toBeTruthy();
+    expect(screen.getByText(/anthropic: could not list models \(HTTP 401\)/)).toBeTruthy();
+    expect(screen.getByText(/Last checked/)).toBeTruthy();
     expect(screen.getByText('ollama/nomic-embed-2')).toBeTruthy();
     // ollama/llama-4 appears once — in the catalog table, not again as "new".
     expect(screen.getAllByText('ollama/llama-4')).toHaveLength(1);
+  });
+
+  it('runs a check on demand and dismisses a suggestion', () => {
+    render(<CatalogTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'Check providers now' }));
+    expect(discoverMutate).toHaveBeenCalled();
+    fireEvent.click(
+      within(rowFor('ollama/nomic-embed-2')).getByRole('button', { name: 'Dismiss' })
+    );
+    expect(dismissMutate).toHaveBeenCalledWith({ dismiss: true, id: 's1' });
+  });
+
+  it('lists possibly retired models apart, with an edit and no retire action', () => {
+    render(<CatalogTab />);
+    expect(screen.getByText('Priced, but no longer listed')).toBeTruthy();
+    // The flagged row appears in the catalog table and in the flag list.
+    const flagged = screen
+      .getAllByText('anthropic/claude-sonnet-5-5')
+      .map((el) => el.closest('tr'))
+      .find((tr) => tr && within(tr).queryByText(/not listed since/));
+    expect(flagged).toBeTruthy();
+    expect(within(flagged as HTMLElement).queryByRole('button', { name: /retire/i })).toBeNull();
+    fireEvent.click(within(flagged as HTMLElement).getByRole('button', { name: 'Edit' }));
+    expect(screen.getByText('Edit anthropic/claude-sonnet-5-5')).toBeTruthy();
   });
 
   it('prefills an add from a discovered model, keeping its kind and display name', () => {
@@ -168,5 +240,59 @@ describe('CatalogTab', () => {
     expect(screen.getByLabelText(/^Model id/)).toHaveProperty('value', 'nomic-embed-2');
     expect(screen.getByLabelText(/^Display name/)).toHaveProperty('value', 'Nomic Embed');
     expect(screen.getByText('Embedding models bill input only — use 0.')).toBeTruthy();
+  });
+});
+
+describe('CatalogTab empty discovery states', () => {
+  const failedStatus = (provider: string) => ({
+    checkedAt: '2026-10-02T04:00:00Z',
+    error: 'HTTP 401',
+    lastSuccessAt: null,
+    provider,
+  });
+  const okStatus = (provider: string) => ({
+    checkedAt: '2026-10-02T04:00:00Z',
+    error: null,
+    lastSuccessAt: '2026-10-02T04:00:00Z',
+    provider,
+  });
+
+  function show(data: Record<string, unknown>) {
+    suggestionState.data = {
+      hiddenDismissed: { NEW: 0, RETIREMENT_CANDIDATE: 0 },
+      suggestions: [],
+      ...data,
+    };
+    render(<CatalogTab />);
+  }
+
+  afterEach(() => {
+    suggestionState.data = DEFAULT_DATA();
+  });
+
+  it('says no provider has been checked when there are no statuses', () => {
+    show({ providers: [] });
+    expect(screen.getByText(/add one, then run Check providers now/)).toBeTruthy();
+  });
+
+  it('says nothing is known when every provider failed', () => {
+    show({ providers: [failedStatus('openai'), failedStatus('anthropic')] });
+    expect(screen.getByText(/No provider could be listed/)).toBeTruthy();
+    expect(screen.queryByText(/every listed model is priced/)).toBeNull();
+  });
+
+  it('says suggestions are dismissed rather than that nothing was found', () => {
+    show({ hiddenDismissed: { NEW: 2, RETIREMENT_CANDIDATE: 0 }, providers: [okStatus('openai')] });
+    expect(screen.getByText(/2 suggestions are dismissed/)).toBeTruthy();
+  });
+
+  it('does not blame dismissals when only retirement flags are dismissed', () => {
+    show({ hiddenDismissed: { NEW: 0, RETIREMENT_CANDIDATE: 3 }, providers: [okStatus('openai')] });
+    expect(screen.getByText('Nothing new — every listed model is priced.')).toBeTruthy();
+  });
+
+  it('says nothing is new only when providers listed fine and nothing is hidden', () => {
+    show({ providers: [okStatus('openai')] });
+    expect(screen.getByText('Nothing new — every listed model is priced.')).toBeTruthy();
   });
 });

@@ -1,6 +1,10 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
-import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import {
+  modelListRequest,
+  safeFetchError,
+  safeRequestError,
+} from '@auto-swe/shared/lib/modelDiscovery';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 // Re-exported for back-compat: existing tests (and any other importers) reach
@@ -9,6 +13,8 @@ import { isUniqueConstraintError } from './prismaErrors.js';
 // (mcp Connections, connector base URLs, bundle install-from-URL, worker MCP
 // refs) shares one definition.
 export { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+// The list-models request builder lives with discovery, which the worker also runs.
+export { modelListRequest };
 
 /**
  * Provider-credential service: redaction, SSRF-guarded probing, and the
@@ -55,56 +61,6 @@ export function redactCredential(row: {
 
 const PROBE_TIMEOUT_MS = 5_000;
 
-/// A provider's list-models request: URL plus auth. `query` adds parameters
-/// (page size, cursor). Shared by the credential probe and model discovery, so
-/// both hit the same endpoint with the same auth behind the same SSRF guard.
-/// Returns why the request cannot be made instead, for an OpenAI-compatible
-/// provider without a usable `apiBase`.
-export function modelListRequest(args: {
-  provider: string;
-  apiKey: string;
-  apiBase?: string | null;
-  query?: Record<string, string>;
-}): { url: string; init: RequestInit } | { error: string } {
-  const { provider, apiKey, apiBase, query = {} } = args;
-  const withQuery = (base: string, extra: Record<string, string> = {}) => {
-    const params = new URLSearchParams({ ...extra, ...query });
-    return params.size ? `${base}?${params}` : base;
-  };
-  if (provider === 'anthropic') {
-    return {
-      init: { headers: { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey } },
-      url: withQuery('https://api.anthropic.com/v1/models'),
-    };
-  }
-  if (provider === 'openai') {
-    return {
-      init: { headers: { Authorization: `Bearer ${apiKey}` } },
-      url: withQuery('https://api.openai.com/v1/models'),
-    };
-  }
-  if (provider === 'google') {
-    return {
-      init: {},
-      url: withQuery('https://generativelanguage.googleapis.com/v1beta/models', { key: apiKey }),
-    };
-  }
-  // OpenAI-compatible: `<base>/models`. SSRF guards run here.
-  if (!apiBase) {
-    return { error: 'apiBase required to list models from an OpenAI-compatible provider' };
-  }
-  const safety = isSafeProbeUrl(apiBase);
-  if (!safety.ok) {
-    return { error: `apiBase rejected: ${safety.reason}` };
-  }
-  const base = safety.url.toString().replace(/\/+$/, '');
-  return {
-    // The guard checked `apiBase`, not wherever it redirects to.
-    init: { headers: { Authorization: `Bearer ${apiKey}` }, redirect: 'manual' },
-    url: withQuery(`${base}/models`),
-  };
-}
-
 /// Issues a minimal HTTP probe against the configured provider to verify the
 /// credential works. Returns `{ ok, status, error? }`. Best-effort — not all
 /// providers expose a cheap "list models" endpoint, so failures here are not
@@ -116,7 +72,7 @@ export async function probeCredential(args: {
 }): Promise<{ ok: boolean; status?: number; error?: string }> {
   const request = modelListRequest(args);
   if ('error' in request) {
-    return { error: request.error, ok: false };
+    return { error: safeRequestError(request.error), ok: false };
   }
   try {
     const res = await fetch(request.url, {
@@ -125,8 +81,35 @@ export async function probeCredential(args: {
     });
     return { ok: res.ok, status: res.status };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err), ok: false };
+    // Never the message: Node puts header values and URL userinfo in it.
+    return { error: safeFetchError(err), ok: false };
   }
+}
+
+/// Why a credential's key or `apiBase` cannot be saved, or null. A key with a
+/// control character or whitespace can never be a valid header value, and the
+/// resulting fetch error would quote it; userinfo in `apiBase` would be sent on.
+export function credentialInputProblem(input: {
+  apiKey?: string | null;
+  apiBase?: string | null;
+}): string | null {
+  if (
+    input.apiKey != null &&
+    [...input.apiKey].some((c) => /\s/.test(c) || c < ' ' || c === '\u007f')
+  ) {
+    return 'apiKey must not contain whitespace or control characters';
+  }
+  if (input.apiBase) {
+    try {
+      const url = new URL(input.apiBase);
+      if (url.username || url.password) {
+        return 'apiBase must not contain a username or password';
+      }
+    } catch {
+      // Not a URL: the route's own validation reports that.
+    }
+  }
+  return null;
 }
 
 /// Best-effort credential probe for a stored row. Decrypts the key in-memory

@@ -29,6 +29,7 @@ export const EVAL_SCHEDULE_ID = 'auto-swe-eval-regression';
 export const REVALIDATION_SCHEDULE_ID = 'auto-swe-eval-revalidation';
 export const REPO_DEPENDENCY_SCAN_SCHEDULE_ID = 'auto-swe-repo-dependency-scan';
 export const REPO_ACCESS_SYNC_SCHEDULE_ID = 'auto-swe-repo-access-sync';
+export const MODEL_DISCOVERY_SCHEDULE_ID = 'auto-swe-model-discovery';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -169,6 +170,15 @@ export interface RepoDependencyScanScheduleStatus {
   lastRunAt: string | null;
 }
 
+/**
+ * The provider model-discovery sweep. The workflow lists each GLOBAL provider
+ * credential's models itself, so the schedule carries no arguments.
+ */
+export interface ModelDiscoveryScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     temporal: {
@@ -241,6 +251,7 @@ declare module 'fastify' {
       triggerRevalidationNow: () => Promise<void>;
       syncRepoDependencyScanSchedule: (config: RepoDependencyScanScheduleConfig) => Promise<void>;
       syncRepoAccessSyncSchedule: (config: RepoAccessSyncScheduleConfig) => Promise<void>;
+      syncModelDiscoverySchedule: (config: ModelDiscoveryScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
       triggerRepoDependencyScanNow: () => Promise<void>;
       syncWorkRequestSchedule: (input: WorkRequestScheduleInput) => Promise<void>;
@@ -302,6 +313,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledRepoAccessSyncWorkflow',
+    };
+  }
+
+  // Model-discovery action. The workflow lists the providers itself, so the
+  // schedule carries no arguments.
+  function makeModelDiscoveryScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledModelDiscoveryWorkflow',
     };
   }
 
@@ -855,6 +877,16 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       };
       await upsertSchedule(EVAL_SCHEDULE_ID, {
         action: makeEvalScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Provider model discovery (one system-wide Temporal Schedule) ──
+
+    async syncModelDiscoverySchedule(config: ModelDiscoveryScheduleConfig): Promise<void> {
+      await upsertSchedule(MODEL_DISCOVERY_SCHEDULE_ID, {
+        action: makeModelDiscoveryScheduleAction(),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

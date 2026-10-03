@@ -169,6 +169,12 @@ async function start() {
     .syncRepoAccessSyncSchedule(sweeps.repoAccess)
     .catch((err) => app.log.warn({ err }, 'repo access sync schedule sync failed at startup'));
 
+  // Same for provider model discovery: it only lists models, so it is on by
+  // default; disabled, the schedule stays but is paused.
+  app.temporal
+    .syncModelDiscoverySchedule(sweeps.modelDiscovery)
+    .catch((err) => app.log.warn({ err }, 'model discovery schedule sync failed at startup'));
+
   // Same for the eval-regression Temporal Schedule (the nightly benchmark).
   // Off by default — needs a seeded dataset + a worker that can reach Docker.
   resolveEvalScheduleConfig()

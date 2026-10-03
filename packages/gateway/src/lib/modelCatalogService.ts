@@ -4,6 +4,7 @@ import {
   type BuiltinModel,
   builtinModelSpec,
 } from '@auto-swe/shared/lib/builtinModels';
+import { pricedSpecs } from '@auto-swe/shared/lib/modelDiscovery';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
@@ -82,17 +83,6 @@ export function suggestSpec(spec: string, priced: Iterable<string>): string | nu
 
 function kindPhrase(kind: ModelKind): string {
   return kind === 'EMBEDDING' ? 'an embedding' : 'a chat';
-}
-
-/** Every spec the worker can price: catalog rows plus the built-in table. */
-export async function pricedSpecs(prisma: PrismaClient): Promise<Set<string>> {
-  const rows = await prisma.modelCatalogEntry.findMany({
-    select: { modelId: true, provider: true },
-  });
-  return new Set([
-    ...rows.map((r) => `${r.provider}/${r.modelId}`),
-    ...BUILTIN_MODELS.map(builtinModelSpec),
-  ]);
 }
 
 /**

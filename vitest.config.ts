@@ -186,6 +186,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ssrfGuard.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/modelDiscovery',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/modelDiscovery.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/modelSuggestions',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/modelSuggestions.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/scannerCache',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/scannerCache.ts'),
       },
