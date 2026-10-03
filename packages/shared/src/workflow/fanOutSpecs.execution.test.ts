@@ -66,7 +66,7 @@ describe('CONSENSUS_REVIEW_SPEC executes', () => {
     validateContext: { successCriteria: ['works'] },
   });
 
-  it('both reviewers approve → PR opens → CI passes → SUCCESS', async () => {
+  it('PR opens → CI passes → both reviewers approve → SUCCESS', async () => {
     const { dispatcher, calls } = makeDispatcher(script([]), {
       ciPipelineSignal: [{ passed: true }],
     });
@@ -75,6 +75,9 @@ describe('CONSENSUS_REVIEW_SPEC executes', () => {
     expect(result.result).toEqual({ prNumber: 7, prUrl: 'https://example/pr/7' });
     expect(calls.filter((c) => c.step === 'runReviewNetwork')).toHaveLength(2);
     expect(calls.some((c) => c.step === 'executeReviewFixImplementation')).toBe(false);
+    // CI comes first: the reviewers only ever see code that is already green.
+    const order = calls.map((c) => c.step);
+    expect(order.indexOf('createOrUpdatePullRequest')).toBeLessThan(order.indexOf('runReviewNetwork'));
   });
 
   it('one rejection routes through the fix loop, exporting the branch rejection summary', async () => {
@@ -84,8 +87,9 @@ describe('CONSENSUS_REVIEW_SPEC executes', () => {
       { approved: true },
       { approved: true },
     ];
+    // One CI wait before the first consensus round and one more after the fix.
     const { dispatcher, calls } = makeDispatcher(script(reviews), {
-      ciPipelineSignal: [{ passed: true }],
+      ciPipelineSignal: [{ passed: true }, { passed: true }],
     });
     const result = await runSpec(parsed(CONSENSUS_REVIEW_SPEC), baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');

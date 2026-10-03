@@ -110,11 +110,12 @@ export function qualityGate(step: string, next: string, p: Presentation = {}): N
  * The `set` node that opens the implement-then-review flow: it initialises the
  * retry counters and keeps the implementer's output as `context.currentCodeResult`.
  * `ci` / `review` choose which counters exist (both by default); a template only
- * initialises the loops it has.
+ * initialises the loops it has. `counters` names extra context paths to start at 0, for a
+ * template with a loop of its own (`four-eyes` counts sign-off rejections).
  */
 export function initCounters(
   next: string,
-  opts: { ci?: boolean; review?: boolean } & Presentation = {}
+  opts: { ci?: boolean; review?: boolean; counters?: string[] } & Presentation = {}
 ): Node {
   return {
     next,
@@ -124,6 +125,7 @@ export function initCounters(
       ...(opts.ci === false ? {} : { 'context.ciRetries': { literal: 0 } }),
       'context.currentCodeResult': { from: 'nodes.implement.output' },
       ...(opts.review === false ? {} : { 'context.reviewRetries': { literal: 0 } }),
+      ...Object.fromEntries((opts.counters ?? []).map((path) => [path, { literal: 0 }])),
     },
   };
 }

@@ -32,6 +32,13 @@ describe('initCounters', () => {
     const noReview = initCounters('n', { review: false }) as { values: Record<string, unknown> };
     expect(Object.keys(noReview.values)).not.toContain('context.reviewRetries');
   });
+
+  it('starts a template-specific counter at 0', () => {
+    const node = initCounters('n', { counters: ['context.signoffRetries'] }) as {
+      values: Record<string, unknown>;
+    };
+    expect(node.values['context.signoffRetries']).toEqual({ literal: 0 });
+  });
 });
 
 describe('qualityGate', () => {
