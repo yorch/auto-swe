@@ -1,9 +1,14 @@
-import { resolveOtelExporterEndpoint } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveOtelExporterEndpoint,
+  resolveOtelMetricExportInterval,
+} from '@auto-swe/shared/lib/systemConfig';
 import { initTelemetry as initSharedTelemetry } from '@auto-swe/shared/lib/telemetry';
+import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
 import { FastifyInstrumentation } from '@opentelemetry/instrumentation-fastify';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
+import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 
 export function initTelemetry(serviceName: string): { shutdown: () => Promise<void> } {
   const endpoint = resolveOtelExporterEndpoint();
@@ -16,6 +21,13 @@ export function initTelemetry(serviceName: string): { shutdown: () => Promise<vo
       new FastifyInstrumentation(),
       new UndiciInstrumentation(),
     ],
+    // Same reader as the worker's; the gateway's metrics are in lib/metrics.ts.
+    metricReader: endpoint
+      ? new PeriodicExportingMetricReader({
+          exporter: new OTLPMetricExporter({ url: endpoint }),
+          exportIntervalMillis: resolveOtelMetricExportInterval(),
+        })
+      : undefined,
     serviceName,
     traceExporter: endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined,
   });

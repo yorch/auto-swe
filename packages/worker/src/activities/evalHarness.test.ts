@@ -45,7 +45,14 @@ vi.mock('../lib/costTracking.js', () => ({
   recordLlmUsage: (...args: unknown[]) => recordLlmUsage(...(args as [])),
 }));
 vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput: vi.fn(async () => {}) }));
-vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
+const evalRunUpdateMany = vi.fn();
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: { evalRun: { updateMany: (...a: unknown[]) => evalRunUpdateMany(...(a as [])) } },
+}));
+const recordRunFinalized = vi.fn();
+vi.mock('../lib/metrics.js', () => ({
+  recordRunFinalized: (...a: unknown[]) => recordRunFinalized(...(a as [])),
+}));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({ maxEvalIterations: 3 })),
 }));
@@ -61,6 +68,7 @@ vi.mock('@auto-swe/shared/config', () => ({
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import {
+  _defaults,
   type EvalCaseRow,
   type HarnessDeps,
   runCaseDefault,
@@ -121,6 +129,34 @@ const input = {
   datasetId: 'd1',
   evalRunId: 'run-1',
 };
+
+describe('defaultFinalize', () => {
+  beforeEach(() => {
+    evalRunUpdateMany.mockReset();
+    recordRunFinalized.mockReset();
+  });
+
+  it('finalizes only a run that has not ended, and counts the verdict once', async () => {
+    evalRunUpdateMany.mockResolvedValue({ count: 1 });
+
+    await _defaults.defaultFinalize('run-1', 'REGRESSION', { overall: 1 });
+
+    expect(evalRunUpdateMany).toHaveBeenCalledWith({
+      data: { endedAt: expect.any(Date), status: 'REGRESSION', summary: { overall: 1 } },
+      where: { endedAt: null, id: 'run-1' },
+    });
+    expect(recordRunFinalized).toHaveBeenCalledExactlyOnceWith('REGRESSION', 'eval');
+  });
+
+  it('counts nothing when the run had already ended or the write failed', async () => {
+    evalRunUpdateMany.mockResolvedValueOnce({ count: 0 });
+    await _defaults.defaultFinalize('run-1', 'FAILED', {});
+    evalRunUpdateMany.mockRejectedValueOnce(new Error('db down'));
+    await _defaults.defaultFinalize('run-1', 'FAILED', {});
+
+    expect(recordRunFinalized).not.toHaveBeenCalled();
+  });
+});
 
 describe('runEvalHarness', () => {
   it('records one gate row per case (candidate arm) and finalizes', async () => {

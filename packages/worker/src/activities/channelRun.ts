@@ -2,6 +2,7 @@ import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME } from '@auto-swe/shared/lib/channelTask';
 import { logError } from '../lib/activityLog.js';
+import { recordRunFinalized } from '../lib/metrics.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
 
 /**
@@ -256,15 +257,25 @@ export async function finalizeChannelRun(input: FinalizeChannelRunInput): Promis
   }
 
   const totals = await sumRunTraceUsage(run.id);
+  const data = {
+    costUsdAccrued: totals.costUsd,
+    endedAt: new Date(),
+    status: input.status,
+    tokensInputTotal: totals.inputTokens,
+    tokensOutputTotal: totals.outputTokens,
+  };
 
-  await prisma.workflowRun.update({
-    data: {
-      costUsdAccrued: totals.costUsd,
-      endedAt: new Date(),
-      status: input.status,
-      tokensInputTotal: totals.inputTokens,
-      tokensOutputTotal: totals.outputTokens,
-    },
-    where: { id: run.id },
+  // The `endedAt: null` guard tells the write that ended the run apart from a
+  // retried attempt or a run the dashboard already cancelled, so only the
+  // first is counted — atomically, whichever writer lands first.
+  const { count } = await prisma.workflowRun.updateMany({
+    data,
+    where: { endedAt: null, id: run.id },
   });
+  if (count > 0) {
+    recordRunFinalized(input.status, 'channel');
+    return;
+  }
+  // Already ended: re-write the same summed totals, as every attempt does.
+  await prisma.workflowRun.update({ data, where: { id: run.id } });
 }

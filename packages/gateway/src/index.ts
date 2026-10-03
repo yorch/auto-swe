@@ -25,6 +25,7 @@ import { mcpConsentAudit } from './lib/mcpConsentAudit.js';
 import { mcpOAuthGate } from './lib/mcpOAuthGate.js';
 import { mcpConsentAuditOptions, mcpOAuthGateOptions } from './lib/mcpOAuthGateOptions.js';
 import { mcpRouteOptions } from './lib/mcpRouteOptions.js';
+import { initMetrics } from './lib/metrics.js';
 import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
@@ -89,6 +90,8 @@ async function start() {
   // The sweep schedules below are environment-only and applied once, here. A
   // value the resolver would silently replace with a default is a failed boot.
   assertScheduledSweepsEnv();
+  // After the instrument.ts preload, so the instruments bind to the real provider.
+  initMetrics();
 
   // Must run before betterAuth.handler is called — reads OAuth creds from DB.
   await initAuth();

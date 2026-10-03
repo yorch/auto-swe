@@ -3,6 +3,9 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { workflowRunRoutes } from './workflowRuns.js';
 
+const { recordRunFinalized } = vi.hoisted(() => ({ recordRunFinalized: vi.fn() }));
+vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
+
 function newMockPrisma() {
   return {
     activeWorkflow: {
@@ -385,6 +388,7 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     });
     prisma.workflowRun.updateMany.mockResolvedValue({ count: 0 });
     prisma.workflowRun.findUnique.mockResolvedValue({ status: 'CANCELLED' });
+    recordRunFinalized.mockClear();
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -392,6 +396,8 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ data: { id: runId, status: 'CANCELLED' } });
+    // The workflow's own finalisation ended the run, and counted it.
+    expect(recordRunFinalized).not.toHaveBeenCalled();
   });
 
   it('returns 502 and leaves the run RUNNING when Temporal refuses the cancel', async () => {
@@ -441,6 +447,7 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
       workflowId: 'wf-1',
     });
     prisma.workflowRun.updateMany.mockResolvedValue({ count: 1 });
+    recordRunFinalized.mockClear();
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -448,6 +455,7 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(temporal.cancelWorkflow).toHaveBeenCalledWith('wf-1');
+    expect(recordRunFinalized).toHaveBeenCalledExactlyOnceWith('CANCELLED', 'gateway');
     expect(prisma.configAuditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

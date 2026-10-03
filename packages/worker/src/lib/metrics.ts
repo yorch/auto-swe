@@ -6,7 +6,7 @@ import { metrics } from '@opentelemetry/api';
  * MeterProvider is registered and every instrument here is a no-op.
  *
  * Attributes are deliberately low-cardinality: model spec, agent key, activity
- * type, status. Never a run, workflow, or ticket ID — those belong on spans and
+ * type, status, source. Never a run, workflow, or ticket ID — those belong on spans and
  * trace rows, where cardinality is free.
  *
  * Units in braces are annotations, so Prometheus names come out as
@@ -16,8 +16,19 @@ import { metrics } from '@opentelemetry/api';
  * own runtime metrics' prefix).
  */
 
-/** Every status `finalizeWorkflowRun` writes, and every budget tier. */
-const RUN_STATUSES = ['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED', 'CANCELLED'] as const;
+/**
+ * Every `(source, status)` pair this process can finalize, and every budget
+ * tier. `source` names the path that finalized the run: `worker` is
+ * `finalizeWorkflowRun`, `channel` is `finalizeChannelRun`, `eval` is an
+ * `EvalRun` verdict. The gateway records `gateway` (a dashboard cancel) and
+ * `eval` (an eval run that failed to start) itself.
+ */
+const RUN_SOURCES = {
+  channel: ['SUCCESS', 'FAILED'],
+  eval: ['SUCCESS', 'REGRESSION', 'FAILED'],
+  worker: ['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED', 'CANCELLED'],
+} as const;
+export type RunFinalizedSource = keyof typeof RUN_SOURCES;
 const BUDGET_TIERS = ['STANDARD', 'LARGE', 'EPIC'] as const;
 
 function createInstruments() {
@@ -55,8 +66,8 @@ function createInstruments() {
     }),
     runsFinalized: meter.createCounter('workflow.runs.finalized', {
       description:
-        'Workflow runs the worker finalized, by status. Runs cancelled from the dashboard ' +
-        'are finalized by the gateway, and channel and eval runs by other paths; none count.',
+        'Runs finalized, by status and by the path that finalized them (source): worker, ' +
+        'channel, eval, or gateway (a dashboard cancel). Each run counts once.',
       unit: '{run}',
     }),
   };
@@ -65,8 +76,10 @@ function createInstruments() {
   // restart would never appear. Exporting a zero first gives it a baseline.
   // Only label sets known up front can be seeded; a model or agent's first
   // call after a restart is still invisible to `increase()`.
-  for (const status of RUN_STATUSES) {
-    instruments.runsFinalized.add(0, { status });
+  for (const [source, statuses] of Object.entries(RUN_SOURCES)) {
+    for (const status of statuses) {
+      instruments.runsFinalized.add(0, { source, status });
+    }
   }
   for (const tier of BUDGET_TIERS) {
     instruments.budgetExceeded.add(0, { tier });
@@ -123,8 +136,9 @@ export function recordLlmCallMetrics(opts: {
   i.llmCost.add(opts.costUsd, attrs);
 }
 
-export function recordRunFinalized(status: string): void {
-  instruments().runsFinalized.add(1, { status });
+/** Call only from the attempt that actually finalized the run, so a retry cannot count it twice. */
+export function recordRunFinalized(status: string, source: RunFinalizedSource): void {
+  instruments().runsFinalized.add(1, { source, status });
 }
 
 export function recordBudgetExceeded(tier: string): void {
