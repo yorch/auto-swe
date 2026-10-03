@@ -144,4 +144,5 @@ ENV NODE_ENV=production
 # is still created by root, so chown that one directory (single inode).
 RUN chown node:node /app
 USER node
-CMD ["node", "packages/worker/dist/index.js"]
+# The OpenTelemetry preload must load before the app's imports; see src/instrument.ts.
+CMD ["node", "--import", "./packages/worker/dist/instrument.js", "packages/worker/dist/index.js"]

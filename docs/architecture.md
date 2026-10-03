@@ -652,6 +652,16 @@ interceptor (`lib/activitySpans.ts`), so an attempt's `llm.*` spans share one tr
 `temporal.workflow_id` attribute finds a run's traces in Tempo. The same trace ID is what
 `AgentTrace.otelTraceId` records, which is how the run viewer links an LLM call to Tempo.
 
+**Instrumentation.** The gateway and worker start the OpenTelemetry SDK from a preload,
+`src/instrument.ts`, passed to `node --import` — the Dockerfile `CMD`, `yarn start` and `yarn dev`
+all pass it. Both services are ESM, and an ESM entry point evaluates every static import before its
+own first statement, so an SDK started from `index.ts` would find `http` already bound and patch
+nothing. The preload also registers the `import-in-the-middle` loader hook for exactly the modules
+the instrumentations patch (`http` and `https`, plus `fastify` on the gateway), because the
+instrumentations' own `require` hook never sees an ESM import. Outbound `fetch` — model providers,
+Octokit, the tracker and knowledge-base connectors — is traced by the undici instrumentation, which
+subscribes to Node's diagnostics channels and needs no patching.
+
 | Span attribute | Value |
 |-----------|-------|
 | `llm.cost_usd` | USD cost computed from the model catalog, falling back to `BUILTIN_MODELS` |
@@ -870,6 +880,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   Prometheus `increase()` reads a new series' first sample as its baseline; status and tier series
   are seeded with a zero at boot, but a model's or agent's first call after a worker restart does
   not appear in increase-based panels.
+- **HTTP instrumentation depends on the preload.** A service started without
+  `--import ./dist/instrument.js` (a hand-written `node dist/index.js`) still initialises the SDK
+  and exports spans and metrics, but `http` and `fastify` go unpatched. With telemetry enabled, Node
+  prints a `DEP0205` warning at boot: `import-in-the-middle` registers through `module.register()`,
+  which Node 26 deprecates in favour of `module.registerHooks()`.
 - **Traces start at the activity, not the workflow.** There is no workflow interceptor, so an
   activity span has no parent and the spans of one run are separate traces tied together only by
   their `temporal.workflow_id` attribute. Propagating context from the workflow means running an

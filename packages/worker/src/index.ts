@@ -1,8 +1,3 @@
-import { initTelemetry } from './lib/telemetry.js';
-
-// Initialize OTel BEFORE any other imports that need instrumentation
-const otel = initTelemetry('auto-swe-worker');
-
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +6,7 @@ import { assertWorkspaceInfraEnv, resolveWorkspaceInfra } from '@auto-swe/shared
 import { assertBuiltinStepsRegistered } from '@auto-swe/shared/workflow';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
+import { otel } from './instrument.js';
 import { activityNodeTagInterceptor } from './lib/activityNodeTag.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
@@ -23,7 +19,7 @@ async function run() {
   // key; without it the first LLM call fails inside an activity instead of
   // the process refusing to start. Check before anything else is initialised.
   assertEncryptionKeyConfigured();
-  // After initTelemetry() above, so the instruments bind to the real provider.
+  // After the instrument.ts preload, so the instruments bind to the real provider.
   initMetrics();
 
   // Install Temporal runtime with OTel metrics if endpoint is available
