@@ -16,7 +16,7 @@ import {
  * that is already green. Both must approve (failed == 0) for the run to succeed.
  *
  * Order: implement, open the pull request (ready for review: the
- * `createOrUpdatePullRequest` step has no draft option), wait for CI and fix a failing
+ * `createOrUpdatePullRequest` step's `draft` option is left at its default, off), wait for CI and fix a failing
  * CI (2 fix attempts, a third failure fails the run), then the two-reviewer consensus
  * on the code that passed CI. The implementer's fix session pushes its own commit, so
  * the `repushAfterFix` step only re-arms the PR's CI wait, seconds later.
