@@ -1,4 +1,7 @@
-import type { Duration, RetryPolicy } from '@temporalio/common';
+import type { ActivityOptions, RetryPolicy } from '@temporalio/workflow';
+
+/** Derive the SDK duration type through the worker's declared workflow dependency. */
+export type Duration = NonNullable<ActivityOptions['startToCloseTimeout']>;
 
 /**
  * Shared `proxyActivities` option presets for the worker's workflow files.

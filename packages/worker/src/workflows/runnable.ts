@@ -7,10 +7,10 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
-import type { Duration } from '@temporalio/common';
-import { ApplicationFailure, CancelledFailure } from '@temporalio/common';
 import {
+  ApplicationFailure,
   CancellationScope,
+  CancelledFailure,
   condition,
   defineSignal,
   isCancellation,
@@ -31,6 +31,7 @@ import {
 } from '../lib/workflowEngine.js';
 import type { NodeTag } from './nodeTag.js';
 import { runWithNodeTag } from './nodeTagScope.js';
+import type { Duration } from './proxyOptions.js';
 import {
   RETRY_AGENT,
   RETRY_LLM_LIGHT,
