@@ -37,8 +37,9 @@ export interface BuiltinModel {
   /**
    * The official pricing page these prices were read from: the provider's page
    * cited in this file's header, not a per-model anchor (anchors rot; the page is
-   * what a reviewer opens). `builtinModels.test.ts` requires an https URL on that
-   * provider's header host, so a row for a provider the header does not cite fails.
+   * what a reviewer opens). `builtinModels.test.ts` requires an https URL on a host
+   * it fixes per provider, and that the header cites exactly those pages, so neither a
+   * row nor the header can widen the allowlist.
    */
   priceSourceUrl: string;
 }
