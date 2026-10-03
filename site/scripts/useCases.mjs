@@ -152,9 +152,10 @@ export const USE_CASES = {
     maturity: 'composed',
     source: 'packages/shared/src/workflow/templates/consensusReview.ts',
     summary:
-      'Two independent review-network passes run in parallel, and both must approve before ' +
-      'the pull request opens. Either one rejecting sends the combined feedback back to the ' +
-      'implementer.',
+      'The pull request opens and CI runs first, with the agent fixing a failing check. Then ' +
+      'two independent review-network passes run in parallel on the green code, and both must ' +
+      'approve. Either one rejecting sends the combined feedback back to the implementer, ' +
+      'and CI runs again before the reviewers do.',
     title: 'Two-reviewer consensus',
   },
   'parallel-fan-out': {
@@ -216,8 +217,10 @@ export const USE_CASES = {
     maturity: 'composed',
     source: 'packages/shared/src/workflow/templates/fourEyes.ts',
     summary:
-      'Two sequential, independent approvals after the agent review loop — the two-person ' +
-      'rule that change-management processes ask for.',
+      'Two sequential, independent approvals, asked once the agent review loop has passed and ' +
+      'the pull request is green on CI — the two-person rule that change-management ' +
+      'processes ask for. A rejection asks why, sends the change back for a fix and CI, then ' +
+      'both people sign off again.',
     title: 'Four-eyes change',
   },
   migration: {

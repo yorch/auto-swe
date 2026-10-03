@@ -12,18 +12,32 @@ import {
 } from './authoring/index.js';
 
 /**
- * Two independent agent review network calls run in parallel via fanOut.
- * Both must approve (failed == 0) before the PR opens. If either rejects,
- * the agent fixes and the consensus check retries (up to 3 total attempts).
+ * Two independent agent review network calls run in parallel via fanOut, on code
+ * that is already green. Both must approve (failed == 0) for the run to succeed.
+ *
+ * Order: implement, open the pull request (ready for review: the
+ * `createOrUpdatePullRequest` step has no draft option), wait for CI and fix a failing
+ * CI (2 fix attempts, a third failure fails the run), then the two-reviewer consensus
+ * on the code that passed CI. The implementer's fix session pushes its own commit, so
+ * the `repushAfterFix` step only re-arms the PR's CI wait, seconds later.
+ *
+ * If either reviewer rejects, the agent fixes (the fix session pushes), CI runs again
+ * with a fresh CI budget, and both reviewers run again on the new code. Up to 3
+ * consensus attempts in all. The reviewers are agents whose rejection text feeds the fix,
+ * so there is no human rejection to ask a reason of. A fix that changes nothing makes no
+ * commit and no CI event would follow, so the unchanged code goes straight back to the
+ * reviewers; the rejection was already counted, so repeated no-ops hit the same limit.
  *
  * Demonstrates: fanOut for quality aggregation (not work splitting),
  * with onBranchFail: 'continue' so a single rejection doesn't abort early.
  */
 export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
   description:
-    'Run two independent agent review-network calls in parallel (fanOut with concurrency=2). ' +
-    'Both reviewers must approve before the PR opens; if either rejects the agent ' +
-    'addresses the combined feedback and tries again (up to 3 rounds). ' +
+    'Implement, open the PR and wait for CI (a failing CI is fixed by the agent: 2 fix ' +
+    'attempts, and a third failure fails the run), then run two independent agent ' +
+    'review-network calls in parallel (fanOut with concurrency=2) on the code that passed CI. ' +
+    'Both reviewers must approve; if either rejects the agent addresses the combined feedback, ' +
+    'CI runs again, and both reviewers run again (up to 3 rounds). ' +
     'Demonstrates fanOut for parallel quality gates rather than parallel work.',
   entry: 'setValidating',
   name: 'consensus-review',
@@ -75,7 +89,10 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
         title: 'Implement the ticket',
         type: 'step',
       },
-      initCounters: initCounters('fanOutReview', { ci: false, group: 'implement' }),
+      initCounters: initCounters('setAwaitingCi', { group: 'implement' }),
+      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
+      // CI passed: the reviewers see exactly the code that is on the pull request.
+      setReviewing: statusStamp('IN_REVIEW', 'fanOutReview', { group: 'consensus review' }),
       // The consensus review: two reviewer slots, both must approve.
       fanOutReview: {
         // Two reviewer slots — each branch runs runBranchReview independently.
@@ -101,7 +118,7 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
         expr: 'nodes.fanOutReview.output.failed == 0',
         group: 'consensus review',
         onFalse: 'incReviewRetries',
-        onTrue: 'setAwaitingCi',
+        onTrue: 'done',
         title: 'Both approved?',
         type: 'cond',
       },
@@ -138,27 +155,50 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
           previousCodeResult: { from: 'context.currentCodeResult' },
           rejectionSummary: { from: 'context.lastRejectionSummary' },
         },
-        next: 'updateCodeAfterFix',
+        next: 'checkConsensusFixChanged',
         step: 'executeReviewFixImplementation',
         title: 'Fix the review findings',
         type: 'step',
       },
+      checkConsensusFixChanged: {
+        // `context.currentCodeResult` still holds the green head the reviewers rejected; it is
+        // replaced by `updateCodeAfterFix`, which only a changed fix reaches. An unchanged fix
+        // makes no commit, so no CI event would come: the reviewers see the same code again,
+        // and the rejection was already counted, so repeated no-ops hit the attempt limit.
+        expr: 'nodes.consensusFix.output.headSha == context.currentCodeResult.headSha',
+        group: 'consensus review',
+        onFalse: 'updateCodeAfterFix',
+        onTrue: 'setReviewing',
+        title: 'Did the fix change nothing?',
+        type: 'cond',
+      },
       updateCodeAfterFix: {
         group: 'consensus review',
-        next: 'fanOutReview',
-        title: 'Keep the fixed code',
+        next: 'setAwaitingCiAfterFix',
+        title: 'Keep the fixed code and reset the CI attempts',
         type: 'set',
-        values: { 'context.currentCodeResult': { from: 'nodes.consensusFix.output' } },
+        values: {
+          'context.ciRetries': { literal: 0 },
+          'context.currentCodeResult': { from: 'nodes.consensusFix.output' },
+        },
       },
+      setAwaitingCiAfterFix: statusStamp('AWAITING_CI', 'repushAfterFix', {
+        group: 'consensus review',
+      }),
       terminateReviewFailed: terminate('FAILED', {
         group: 'consensus review',
+        result: prResult(),
         title: 'Review failed',
       }),
-      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     },
     openPullRequest({ next: ciWaitEntry() }),
-    // A bare CI gate: this template does not loop on CI failures.
-    ciLoop({ fix: false, passed: 'done' }),
+    // The pull request is open, so a CI fix is pushed by the fix session itself and
+    // `repushAfterFix` only re-arms the CI wait for the new head. The reviewers run after.
+    // A CI fix that changed nothing is counted as a spent attempt instead of waiting.
+    ciLoop({
+      fix: { handoff: { repush: 'repushAfterFix' }, retryIfUnchanged: true },
+      passed: 'setReviewing',
+    }),
     {
       done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
     }

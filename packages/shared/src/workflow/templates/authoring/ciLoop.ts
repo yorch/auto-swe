@@ -101,8 +101,16 @@ export interface CiLoopOptions {
    * (`checkCI -> terminateCIFailed`) with no fix attempt. Otherwise a failure
    * fetches the logs and asks the implementer for a fix, up to `limit` times
    * (default 3), then `handoff` decides where the fixed code goes.
+   *
+   * `retryIfUnchanged` guards a fix that changed nothing. The fix session commits only
+   * when there is a diff, so a no-op leaves the head the failed CI already judged, no new
+   * CI event ever arrives for it, and a signal wait would run to its timeout. With the
+   * option, `checkCiFixChanged` compares the fix's head with the one that failed and sends
+   * an unchanged fix back to `incCIRetries`: it counts as a spent attempt and the loop
+   * tries again until the limit, instead of waiting. Off by default, so the other
+   * templates keep the nodes they were seeded with.
    */
-  fix: false | { limit?: number; handoff: CiFixHandoff };
+  fix: false | { limit?: number; handoff: CiFixHandoff; retryIfUnchanged?: boolean };
 }
 
 /**
@@ -158,7 +166,7 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
           failureContext: { from: 'context.lastCILogs' },
           previousCodeResult: { from: 'context.currentCodeResult' },
         },
-        next: 'updateCodeAfterCIFix',
+        next: fix.retryIfUnchanged ? 'checkCiFixChanged' : 'updateCodeAfterCIFix',
         step: 'executeCIFixImplementation',
         title: 'Fix the CI failure',
         type: 'step',
@@ -193,6 +201,20 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
         values: { 'context.currentCodeResult': { from: 'nodes.ciFix.output' } },
       },
     },
+    fix.retryIfUnchanged
+      ? {
+          checkCiFixChanged: {
+            // `context.currentCodeResult` still holds the head CI failed on: it is replaced
+            // by `updateCodeAfterCIFix`, which only a changed fix reaches.
+            expr: 'nodes.ciFix.output.headSha == context.currentCodeResult.headSha',
+            group: loop,
+            onFalse: 'updateCodeAfterCIFix',
+            onTrue: 'incCIRetries',
+            title: 'Did the fix change nothing?',
+            type: 'cond',
+          },
+        }
+      : undefined,
     'repush' in handoff
       ? {
           [handoff.repush]: {

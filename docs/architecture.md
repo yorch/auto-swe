@@ -384,8 +384,60 @@ with a `group` and `title`; nothing in a stored spec, a run snapshot, or a bundl
 cannot alter a template unnoticed. An edit to a template or helper is released like any other change
 to a built-in: `syncBuiltins` compares specs key-order-insensitively and appends a new version.
 
+The built-ins that wait on CI handle a failing check in one of two ways, both with the same limit:
+the CI fixer runs on the failure logs, and a third failing check ends the run `FAILED` (two fix
+attempts). The implementer's fix session pushes its own commit to the branch; the
+`createOrUpdatePullRequest` step that follows only re-arms the pull request's CI wait for the new
+head, which is what lets the CI webhook match a verdict to it. `agent-reviewed-pr`, `code-and-ci`,
+`dependency-update`, `canary-rollout`, `signal-gated-rollout`, `consensus-review` and `four-eyes`
+go straight from the fix back to the CI wait. `default-engineering` instead sends the fixed code
+back through its review loop first. `pr-approval-gate` only observes CI: both outcomes end the run.
+A CI failure therefore spends agent time and tokens before the run can fail.
+
+`consensus-review` and `four-eyes` put CI ahead of their gate, so the gate sees code that is already
+green and identical to the pull request head. Both open the pull request (ready for review; the
+step has no draft option) and run CI with the fix loop first. `four-eyes` then asks two people, who
+see the head commit, the pull request URL, how many rejections came before, whether the code
+changed since, and whether the last fix made no change; `consensus-review` then runs its two
+reviewers. A rejection goes to a fix (the fix session pushes), CI again with a fresh two-attempt
+budget, and the gate again. Nothing carries over between rounds: each round creates new pending
+human steps, so an approval never covers different code. The agent-review attempts and the sign-off
+rejections of `four-eyes` are separate budgets of three; in `consensus-review` the consensus attempts
+are the one review budget, shared across CI rounds.
+
+A `four-eyes` rejection first asks the reviewer what should change, in a one-hour text question. The
+answer becomes the fix session's rejection summary; an empty answer or a timeout falls back to a
+generic "rejected, no written reason" text. `consensus-review` has no such question because its
+reviewers are agents whose rejection text already feeds the fix.
+
+A fix that changes nothing makes no commit, so the head stays the one CI already judged and no CI
+event can follow. These two templates never wait for one:
+
+- a no-op CI fix counts as a spent attempt and the loop goes round again (fetch logs, fix) until the
+  two-attempt limit ends the run `FAILED`;
+- a no-op sign-off fix goes straight back to both people for the same code, shown with
+  `noChangeMade` true and `changedSinceLastSignoff` false. The rejection was already counted, so
+  repeated no-ops end in the same third-rejection `FAILED`;
+- a no-op consensus fix goes straight back to the two reviewers, bounded the same way.
+
 #### Limitations
 
+- A CI fix is pushed by the fix session before the step that re-arms the pull request's CI wait runs.
+  A verdict that completes in that gap, a few seconds, has no matching head and is dropped by the CI
+  webhook, and a signal-mode wait then runs to its 4 h timeout. `default-engineering` can route to
+  polling to avoid it; `four-eyes` and `consensus-review` wait on the signal only.
+- The pull request in `four-eyes` and `consensus-review` is opened ready for review before any person
+  (`four-eyes`) or any reviewer (`consensus-review`) has judged the change. Opening it posts the Slack
+  "ready for review" message, syncs the tracker and the knowledge base, and lets GitHub request
+  reviewers from CODEOWNERS. A run that ends `FAILED` or `TIMED_OUT` leaves that pull request open:
+  nothing in the platform merges or closes pull requests. The SCM layer can open a draft, but no
+  activity passes `draft` and there is no step that marks a draft ready, so a draft-first flow is not
+  available.
+- Only `four-eyes` and `consensus-review` guard a fix that changed nothing. In the other repush
+  templates a no-op CI fix leaves the head CI already judged, no new event arrives, and the CI wait
+  runs to its 4 h timeout.
+- A `humanApproval` itself records no written reason; `four-eyes` asks for one in a separate question,
+  and a skipped or timed-out question gives the fix session no detail.
 - A group collapses only when it has two or more members and they form one connected piece; otherwise
   it is left open and the contiguity warning says why.
 - Collapsing is a read-only canvas feature. The editor shows every node, and offers the outline
