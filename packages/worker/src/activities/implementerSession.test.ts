@@ -212,10 +212,9 @@ afterEach(() => {
 
 describe('runImplementerFixSession allowedPaths', () => {
   const stage = (names: string) => {
-    const base = execMock.getMockImplementation() as (cmd: string) => Promise<string>;
-    execMock.mockImplementation(async (cmd: string) =>
-      cmd.startsWith('git diff --cached --name-only') ? names : base(cmd)
-    );
+    const base = execMock.getMockImplementation();
+    execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) =>
+      cmd.startsWith('git diff --cached --name-only') ? names : base?.(cmd, options)) as never);
     return base;
   };
 
@@ -230,7 +229,7 @@ describe('runImplementerFixSession allowedPaths', () => {
       expect(cmds.some((c) => c.startsWith('git diff --cached --quiet'))).toBe(false);
       expect(cmds.some((c) => c.includes('push origin'))).toBe(false);
     } finally {
-      execMock.mockImplementation(base);
+      execMock.mockImplementation(base as never);
     }
   });
 
@@ -243,7 +242,7 @@ describe('runImplementerFixSession allowedPaths', () => {
         true
       );
     } finally {
-      execMock.mockImplementation(base);
+      execMock.mockImplementation(base as never);
     }
   });
 });
