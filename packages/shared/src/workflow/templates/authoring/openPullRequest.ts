@@ -9,6 +9,12 @@ export interface OpenPullRequestOptions {
    * template with no `initCounters` ahead of its CI loop. Default false.
    */
   resetCiRetries?: boolean;
+  /**
+   * Open the pull request as a draft. A repository that cannot hold drafts fails
+   * the step; it is never opened ready for review instead. Default false, and then
+   * the node carries no `config` at all, so existing templates are unchanged.
+   */
+  draft?: boolean;
 }
 
 /**
@@ -25,6 +31,7 @@ export function openPullRequest(opts: OpenPullRequestOptions): NodeMap {
   };
   return {
     openPR: {
+      ...(opts.draft ? { config: { draft: true } } : {}),
       group,
       inputs: { codeResult: { from: 'context.currentCodeResult' } },
       next: 'savePrInfo',

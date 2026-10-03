@@ -41,6 +41,8 @@ const calls: {
   runTool: unknown[];
   implementationRequests: Array<{ description: string }>;
   implementations: unknown[];
+  /** The arguments each `createOrUpdatePullRequest` call received, after the request. */
+  pullRequestArgs: unknown[][];
   recordedSteps: Array<{ error?: string; nodeId: string; status: string }>;
 } = {
   cancelledHumanSteps: [],
@@ -51,6 +53,7 @@ const calls: {
   finalize: [],
   implementationRequests: [],
   implementations: [],
+  pullRequestArgs: [],
   readSource: [],
   recordedSteps: [],
   resolveWorkspace: [],
@@ -94,7 +97,10 @@ const fakeActivities = {
   // The activities the seeded default-engineering template needs on its happy path.
   commitToMemory: async () => 'lesson-1',
   createHumanStep: async () => {},
-  createOrUpdatePullRequest: async () => ({ prNumber: 42, prUrl: 'https://example.test/pr/42' }),
+  createOrUpdatePullRequest: async (_request: unknown, ...rest: unknown[]) => {
+    calls.pullRequestArgs.push(rest);
+    return { prNumber: 42, prUrl: 'https://example.test/pr/42' };
+  },
   createWorkflowRun: async (input: unknown) => {
     calls.createWorkflowRun.push(input);
     if (createRunError) {
@@ -551,6 +557,37 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.implementationRequests[0]?.description).toBe(
       'test\n\n## Guidance from the requester\n- approach: use a queue'
     );
+  }, 120_000);
+
+  it('opens the pull request as a draft only when the node says so', async () => {
+    const codeResult = { branch: 'auto/T-1', headSha: 'sha' };
+    const specWith = (config?: Record<string, unknown>) =>
+      makeSpec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          openPR: {
+            ...(config ? { config } : {}),
+            inputs: { codeResult: { literal: codeResult } },
+            next: 'done',
+            step: 'createOrUpdatePullRequest',
+            type: 'step',
+          },
+        },
+        'openPR'
+      );
+    calls.pullRequestArgs.length = 0;
+    currentSpec = specWith({ draft: true });
+    await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-pr-draft'));
+    currentSpec = specWith();
+    await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-pr-ready'));
+    currentSpec = specWith({ draft: false });
+    await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-pr-explicit-ready'));
+    // The default call is the two-argument call every existing template makes.
+    expect(calls.pullRequestArgs).toEqual([
+      [codeResult, { draft: true }],
+      [codeResult],
+      [codeResult],
+    ]);
   }, 120_000);
 
   it('answers a HITL node inside each fanOut branch through its own signal', async () => {

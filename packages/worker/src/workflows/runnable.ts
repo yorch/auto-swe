@@ -726,9 +726,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'createOrUpdatePullRequest',
-    ({ ctx, request, inputs }) => {
+    ({ ctx, request, config, inputs }) => {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
-      return githubActivities.createOrUpdatePullRequest(request, codeResult);
+      // Passed only when set, so every existing template calls the activity exactly as before.
+      return config.draft === true
+        ? githubActivities.createOrUpdatePullRequest(request, codeResult, { draft: true })
+        : githubActivities.createOrUpdatePullRequest(request, codeResult);
     },
   ],
   [

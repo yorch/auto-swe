@@ -154,7 +154,15 @@ register({
 
 register({
   category: 'vcs',
-  configFields: [],
+  configFields: [
+    {
+      description:
+        'Open the PR as a draft. A repository that cannot hold drafts fails the step; it never gets a ready-for-review PR instead. Off by default.',
+      key: 'draft',
+      label: 'Open as draft',
+      type: 'boolean',
+    },
+  ],
   description: 'Create or update the PR for this work request.',
   label: 'Create or update PR',
   name: 'createOrUpdatePullRequest',

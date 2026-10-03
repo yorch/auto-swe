@@ -12,18 +12,25 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
+
+export interface CreatePullRequestOptions {
+  /** Open the PR as a draft; a host that cannot fails the step, never falls back. */
+  draft?: boolean;
+}
 
 export async function createOrUpdatePullRequest(
   request: RepoWorkRequest,
-  codeResult: CodeResult
+  codeResult: CodeResult,
+  options: CreatePullRequestOptions = {}
 ): Promise<{ prNumber: number; prUrl: string }> {
   const tracer = new AgentTracer();
   // Persist in a finally block so a failed GitHub call still leaves trace
   // rows for the run viewer — persisting only on the success paths silently
   // drops all records for failed attempts.
   try {
-    return await doCreateOrUpdatePullRequest(request, codeResult, tracer);
+    return await doCreateOrUpdatePullRequest(request, codeResult, tracer, options);
   } finally {
     await persistActivityTrace(tracer, 'pr');
   }
@@ -32,7 +39,8 @@ export async function createOrUpdatePullRequest(
 async function doCreateOrUpdatePullRequest(
   request: RepoWorkRequest,
   codeResult: CodeResult,
-  tracer: AgentTracer
+  tracer: AgentTracer,
+  options: CreatePullRequestOptions
 ): Promise<{ prNumber: number; prUrl: string }> {
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { installationId: true } } },
@@ -88,14 +96,30 @@ async function doCreateOrUpdatePullRequest(
   // on the host but crashed before persisting the DB row — the tracking row is
   // still written below). Only a prior attempt could have orphaned a PR, so
   // the extra lookup round-trip is skipped on the first attempt.
-  const { prNumber, prUrl } = await scm.createOrUpdatePullRequest({
-    baseBranch: repo.defaultBranch,
-    body: formatPRBody(request, codeResult, workflowDefaults.prBodyTemplate || undefined),
-    headBranch: codeResult.branch,
-    repo: repoRef,
-    reuseExisting: activityInfo().attempt > 1,
-    title: formatPRTitle(request, workflowDefaults.prTitleTemplate),
-  });
+  let created: { prNumber: number; prUrl: string };
+  try {
+    created = await scm.createOrUpdatePullRequest({
+      baseBranch: repo.defaultBranch,
+      body: formatPRBody(request, codeResult, workflowDefaults.prBodyTemplate || undefined),
+      ...(options.draft ? { draft: true } : {}),
+      headBranch: codeResult.branch,
+      repo: repoRef,
+      reuseExisting: activityInfo().attempt > 1,
+      title: formatPRTitle(request, workflowDefaults.prTitleTemplate),
+    });
+  } catch (err) {
+    // "Draft" is a promise to the reviewer, so a repository that cannot hold
+    // drafts fails the step rather than getting a ready-for-review PR. Retrying
+    // cannot change the answer.
+    if (err instanceof DraftPullRequestUnsupportedError) {
+      throw ApplicationFailure.nonRetryable(
+        `${err.message}; the branch ${codeResult.branch} was pushed, but no pull request was opened`,
+        'DRAFT_PR_UNSUPPORTED'
+      );
+    }
+    throw err;
+  }
+  const { prNumber, prUrl } = created;
 
   const workflow = await prisma.activeWorkflow.findFirst({
     where: { workRequestId: request.workRequestId },
