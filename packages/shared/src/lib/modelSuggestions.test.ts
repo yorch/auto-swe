@@ -216,4 +216,11 @@ describe('recordDiscovery', () => {
     await recordDiscovery(prisma, [ok('openai', ['gpt-9'])], T2);
     expect(rows[0]).toMatchObject({ dismissedAt: T1, firstSeenAt: T1 });
   });
+
+  it('moves lastSuccessAt only for a complete listing', async () => {
+    const { prisma, statuses } = fakeDb();
+    await recordDiscovery(prisma, [ok('openai', ['gpt-9'])], T1);
+    await recordDiscovery(prisma, [ok('openai', ['gpt-9'], [], false)], T2);
+    expect(statuses[0]).toMatchObject({ checkedAt: T2, error: null, lastSuccessAt: T1 });
+  });
 });

@@ -128,11 +128,16 @@ API, the logs or the activity result in workflow history. The same holds for a l
 the page cap, one that signals more pages it gives no cursor for, or one that came back empty,
 because absence from a partial list proves nothing. A *new* suggestion disappears once the model is
 priced or the provider stops listing it. A dismissed row is never deleted for being absent, so a
-dismissal survives the model leaving a listing and coming back; the API hides a row that no longer
-applies, and a row that changes type (new to possibly retired) starts undismissed.
+dismissal survives the model leaving a listing and coming back. While it is absent the API does not
+serve it: a dismissed row last seen before its provider's last complete listing describes a model
+that listing did not show, so it is hidden (a `RETIREMENT_CANDIDATE` the provider lists again is
+hidden the same way) and reappears, still dismissed, when the model is next seen. The rows stay
+stored for as long as the provider's credential exists. A row that changes type (new to possibly
+retired) starts undismissed.
 
-Saving a credential refuses a key containing whitespace or control characters and an `apiBase`
-containing a username or password, each with a `400` (`INVALID_CREDENTIAL`). A dismissal, an
+Saving a credential trims surrounding whitespace from the key and `apiBase` (a pasted trailing
+newline is harmless), then refuses a key still containing whitespace or control characters and an
+`apiBase` containing a username or password, each with a `400` (`INVALID_CREDENTIAL`). A dismissal, an
 undismissal and an on-demand run are each written to the config audit log (`ModelSuggestion`).
 
 **The workflow editor's cost estimate** prices each step from the same source. A step's
@@ -156,7 +161,7 @@ as a `ModelCatalogEntry`.
 | `POST /model-catalog/:id/reset` | Restores a built-in row to the values code ships and clears customized |
 | `DELETE /model-catalog/:id` | Removes a custom row. A built-in row is a `409` — startup would re-create it; set it RETIRED |
 | `GET /model-catalog/unpriced` | Specs in use that nothing prices, each with where it is used and the spec it most likely meant |
-| `GET /model-catalog/suggestions` | ADMIN. The stored suggestions (`type` `NEW` or `RETIREMENT_CANDIDATE`) and, per provider, when it was last checked and its last error. Dismissed ones only with `?includeDismissed=true`, with `hiddenDismissed` counting those hidden. A `NEW` one the catalog now prices, and a `RETIREMENT_CANDIDATE` whose model is now retired or gone from the catalog, are omitted |
+| `GET /model-catalog/suggestions` | ADMIN. The stored suggestions (`type` `NEW` or `RETIREMENT_CANDIDATE`) and, per provider, when it was last checked and its last error. Dismissed ones only with `?includeDismissed=true`, with `hiddenDismissed` counting those hidden, per type (`NEW`, `RETIREMENT_CANDIDATE`). A `NEW` one the catalog now prices, and a `RETIREMENT_CANDIDATE` whose model is now retired or gone from the catalog, are omitted |
 | `POST /model-catalog/suggestions/:id/dismiss`, `…/undismiss` | ADMIN. Hides or restores one suggestion. Dismissal is kept across runs |
 | `POST /model-catalog/discover` | ADMIN. Runs a discovery pass now and returns, per provider, the unpriced models it lists, the priced ones it no longer lists, or why it could not be listed. Writes no catalog row, but refreshes the stored suggestions exactly as the scheduled run does |
 

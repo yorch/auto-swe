@@ -41,8 +41,8 @@ const ProviderSchema = z
 
 const CredentialCreateSchema = z
   .object({
-    apiBase: z.string().url().max(500).optional(),
-    apiKey: z.string().min(1).max(10_000),
+    apiBase: z.string().trim().url().max(500).optional(),
+    apiKey: z.string().trim().min(1).max(10_000),
     orgId: z.string().uuid().optional(),
     provider: ProviderSchema,
     scope: z.enum(['GLOBAL', 'ORGANIZATION', 'TEAM']),
@@ -66,8 +66,8 @@ const CredentialCreateSchema = z
   );
 
 const CredentialUpdateSchema = z.object({
-  apiBase: z.string().url().max(500).nullable().optional(),
-  apiKey: z.string().min(1).max(10_000).optional(),
+  apiBase: z.string().trim().url().max(500).nullable().optional(),
+  apiKey: z.string().trim().min(1).max(10_000).optional(),
 });
 
 const IdParams = z.object({ id: z.string().uuid() });
@@ -363,8 +363,8 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
 // ── Team-scoped credential routes (exported for `teams.ts` to mount) ───────
 
 const TeamCredentialCreate = z.object({
-  apiBase: z.string().url().max(500).optional(),
-  apiKey: z.string().min(1).max(10_000),
+  apiBase: z.string().trim().url().max(500).optional(),
+  apiKey: z.string().trim().min(1).max(10_000),
   provider: ProviderSchema,
 });
 

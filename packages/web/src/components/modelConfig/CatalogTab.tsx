@@ -291,13 +291,14 @@ function DiscoveryPanel({
 
   // Why the list is empty, because "nothing new" is only one of four reasons.
   const providers = data?.providers ?? [];
+  const hiddenNew = data?.hiddenDismissed.NEW ?? 0;
   const emptyMessage =
     providers.length === 0
       ? 'No provider has been checked. Providers are listed through a global credential: add one, then run Check providers now.'
       : providers.every((p) => p.error)
         ? 'No provider could be listed, so nothing is known about new models. See the errors above.'
-        : (data?.hiddenDismissed ?? 0) > 0
-          ? `Nothing to show: ${data?.hiddenDismissed} suggestion${data?.hiddenDismissed === 1 ? ' is' : 's are'} dismissed. Turn on Show dismissed to see them.`
+        : hiddenNew > 0
+          ? `Nothing to show: ${hiddenNew} suggestion${hiddenNew === 1 ? ' is' : 's are'} dismissed. Turn on Show dismissed to see them.`
           : failed.length > 0
             ? 'Nothing new from the providers that could be listed.'
             : 'Nothing new — every listed model is priced.';
@@ -342,8 +343,8 @@ function DiscoveryPanel({
           <p className="mb-2 text-xs text-brick-400" key={p.provider}>
             {p.provider}: could not list models ({p.error}) at {formatDate(p.checkedAt)}.{' '}
             {p.lastSuccessAt
-              ? `Its suggestions are from ${formatDate(p.lastSuccessAt)}.`
-              : 'It has never been listed.'}
+              ? `Its last complete listing was ${formatDate(p.lastSuccessAt)}.`
+              : 'It has never been listed completely.'}
           </p>
         ))}
         {data && fresh.length === 0 ? (

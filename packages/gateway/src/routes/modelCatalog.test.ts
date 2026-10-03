@@ -83,6 +83,16 @@ function seedSuggestions() {
       provider: 'openai',
       type: 'NEW',
     },
+    // Dismissed, and last seen before its provider's last complete listing: gone.
+    {
+      ...base,
+      dismissedAt: new Date(),
+      id: 'g',
+      lastSeenAt: new Date('2026-09-01T00:00:00Z'),
+      modelId: 'stale-1',
+      provider: 'openai',
+      type: 'NEW',
+    },
     // Flagged, and still priced and active: shown.
     {
       ...base,
@@ -145,11 +155,15 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       }),
     },
     modelDiscoveryProviderStatus: {
-      findMany: vi
-        .fn()
-        .mockResolvedValue([
-          { checkedAt: new Date(), error: 'HTTP 401', lastSuccessAt: null, provider: 'anthropic' },
-        ]),
+      findMany: vi.fn().mockResolvedValue([
+        { checkedAt: new Date(), error: 'HTTP 401', lastSuccessAt: null, provider: 'anthropic' },
+        {
+          checkedAt: new Date(),
+          error: null,
+          lastSuccessAt: new Date('2026-10-02T00:00:00Z'),
+          provider: 'openai',
+        },
+      ]),
     },
     modelSuggestion: {
       findMany: vi.fn(async () => suggestions.map((r) => ({ ...r }))),
@@ -388,7 +402,7 @@ describe('model suggestions', () => {
       'openai/gpt-6.2',
       'anthropic/claude-opus-5-5',
     ]);
-    expect(res.json().data.hiddenDismissed).toBe(1);
+    expect(res.json().data.hiddenDismissed).toEqual({ NEW: 1, RETIREMENT_CANDIDATE: 0 });
     expect(res.json().data.providers[0]).toMatchObject({
       error: 'HTTP 401',
       provider: 'anthropic',
@@ -409,7 +423,7 @@ describe('model suggestions', () => {
     });
     const hidden = (await call('GET', '/model-catalog/suggestions')).json().data;
     expect(hidden.suggestions.map((s: { id: string }) => s.id)).toEqual(['d']);
-    expect(hidden.hiddenDismissed).toBe(2);
+    expect(hidden.hiddenDismissed).toEqual({ NEW: 2, RETIREMENT_CANDIDATE: 0 });
     const all = await call('GET', '/model-catalog/suggestions?includeDismissed=true');
     expect(all.json().data.suggestions).toHaveLength(3);
     const undone = await call('POST', `/model-catalog/suggestions/${SUGGESTION_ID}/undismiss`);

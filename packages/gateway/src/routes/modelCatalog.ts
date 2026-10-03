@@ -138,18 +138,32 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.modelDiscoveryProviderStatus.findMany({ orderBy: { provider: 'asc' } }),
         knownModels(fastify.prisma),
       ]);
+      const lastComplete = new Map(providers.map((p) => [p.provider, p.lastSuccessAt]));
       const applicable = rows
         .map((r) => ({ ...r, spec: `${r.provider}/${r.modelId}` }))
         .filter((r) => {
           const model = known.get(r.spec);
-          return r.type === 'NEW' ? !model : model !== undefined && !model.retired;
+          if (!(r.type === 'NEW' ? !model : model !== undefined && !model.retired)) {
+            return false;
+          }
+          // A dismissed row is kept so a dismissal outlives the model leaving and
+          // returning, but one not seen since its provider's last complete listing
+          // describes a model that listing did not show: it no longer applies.
+          const complete = lastComplete.get(r.provider);
+          return !(r.dismissedAt && complete && r.lastSeenAt < complete);
         });
+      const hiddenDismissed = { NEW: 0, RETIREMENT_CANDIDATE: 0 };
+      if (!request.query.includeDismissed) {
+        for (const r of applicable) {
+          if (r.dismissedAt) {
+            hiddenDismissed[r.type]++;
+          }
+        }
+      }
       return {
         data: {
-          // So the UI can tell "everything is dismissed" from "nothing found".
-          hiddenDismissed: request.query.includeDismissed
-            ? 0
-            : applicable.filter((r) => r.dismissedAt !== null).length,
+          // Per kind, so the UI can tell "everything is dismissed" from "nothing found".
+          hiddenDismissed,
           providers,
           suggestions: request.query.includeDismissed
             ? applicable

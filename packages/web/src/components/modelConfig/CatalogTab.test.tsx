@@ -76,7 +76,7 @@ const { DEFAULT_DATA, ENTRIES, discoverMutate, dismissMutate, mutation, suggesti
 
     function DEFAULT_DATA(): Record<string, unknown> {
       return {
-        hiddenDismissed: 0,
+        hiddenDismissed: { NEW: 0, RETIREMENT_CANDIDATE: 0 },
         providers: [
           {
             checkedAt: '2026-10-02T04:00:00Z',
@@ -258,7 +258,11 @@ describe('CatalogTab empty discovery states', () => {
   });
 
   function show(data: Record<string, unknown>) {
-    suggestionState.data = { hiddenDismissed: 0, suggestions: [], ...data };
+    suggestionState.data = {
+      hiddenDismissed: { NEW: 0, RETIREMENT_CANDIDATE: 0 },
+      suggestions: [],
+      ...data,
+    };
     render(<CatalogTab />);
   }
 
@@ -278,8 +282,13 @@ describe('CatalogTab empty discovery states', () => {
   });
 
   it('says suggestions are dismissed rather than that nothing was found', () => {
-    show({ hiddenDismissed: 2, providers: [okStatus('openai')] });
+    show({ hiddenDismissed: { NEW: 2, RETIREMENT_CANDIDATE: 0 }, providers: [okStatus('openai')] });
     expect(screen.getByText(/2 suggestions are dismissed/)).toBeTruthy();
+  });
+
+  it('does not blame dismissals when only retirement flags are dismissed', () => {
+    show({ hiddenDismissed: { NEW: 0, RETIREMENT_CANDIDATE: 3 }, providers: [okStatus('openai')] });
+    expect(screen.getByText('Nothing new — every listed model is priced.')).toBeTruthy();
   });
 
   it('says nothing is new only when providers listed fine and nothing is hidden', () => {

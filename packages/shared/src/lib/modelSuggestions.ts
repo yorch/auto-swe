@@ -60,8 +60,15 @@ export async function recordDiscovery(
       continue;
     }
     await prisma.modelDiscoveryProviderStatus.upsert({
-      create: { checkedAt: now, error: null, lastSuccessAt: now, provider: r.provider },
-      update: { checkedAt: now, error: null, lastSuccessAt: now },
+      // `lastSuccessAt` moves only for a complete listing: it is the moment before
+      // which a dismissed row not seen since no longer applies (see the read route).
+      create: {
+        checkedAt: now,
+        error: null,
+        lastSuccessAt: r.complete ? now : null,
+        provider: r.provider,
+      },
+      update: { checkedAt: now, error: null, ...(r.complete && { lastSuccessAt: now }) },
       where: { provider: r.provider },
     });
 

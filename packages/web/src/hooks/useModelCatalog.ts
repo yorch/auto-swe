@@ -118,8 +118,8 @@ export function useModelSuggestions(includeDismissed: boolean) {
           data: {
             suggestions: ModelSuggestion[];
             providers: DiscoveryProviderStatus[];
-            /** Applicable suggestions hidden because they are dismissed. */
-            hiddenDismissed: number;
+            /** Applicable suggestions hidden because they are dismissed, by kind. */
+            hiddenDismissed: { NEW: number; RETIREMENT_CANDIDATE: number };
           };
         }>(`${BASE}/suggestions${includeDismissed ? '?includeDismissed=true' : ''}`)
         .then((r) => r.data),

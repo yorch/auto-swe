@@ -1890,8 +1890,8 @@ enum ModelSuggestionType {
 /// row disappears once the model is priced, a RETIREMENT_CANDIDATE once the
 /// provider lists it again or the model is retired; nothing here retires a model.
 /// A dismissed row is never deleted for being absent from a listing, so a
-/// dismissal survives the model leaving and returning; the API hides a row that
-/// no longer applies.
+/// dismissal survives the model leaving and returning; the API hides a dismissed row
+/// last seen before its provider's last complete listing.
 model ModelSuggestion {
   id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   provider    String
@@ -1913,7 +1913,8 @@ model ModelSuggestion {
 model ModelDiscoveryProviderStatus {
   provider      String    @id
   checkedAt     DateTime  @map("checked_at") @db.Timestamptz
-  /// Last run whose listing succeeded; null until one has.
+  /// Last run whose listing was complete; null until one was. A dismissed row last seen
+  /// before this no longer applies, and the API hides it.
   lastSuccessAt DateTime? @map("last_success_at") @db.Timestamptz
   /// Null when the last listing succeeded.
   error         String?

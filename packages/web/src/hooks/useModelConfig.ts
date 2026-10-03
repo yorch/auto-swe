@@ -27,7 +27,12 @@ export interface ProviderCredentialRow {
 
 export interface ConfigAuditRow {
   id: string;
-  entityType: 'Agent' | 'ProviderCredential' | 'EmbeddingConfig' | 'ModelCatalogEntry';
+  entityType:
+    | 'Agent'
+    | 'ProviderCredential'
+    | 'EmbeddingConfig'
+    | 'ModelCatalogEntry'
+    | 'ModelSuggestion';
   entityId: string;
   action: 'CREATE' | 'UPDATE' | 'DELETE';
   actorId: string | null;
@@ -106,7 +111,12 @@ export function useAdminTestCredential() {
 }
 
 export function useAdminConfigAuditLog(filter?: {
-  entityType?: 'Agent' | 'ProviderCredential' | 'EmbeddingConfig' | 'ModelCatalogEntry';
+  entityType?:
+    | 'Agent'
+    | 'ProviderCredential'
+    | 'EmbeddingConfig'
+    | 'ModelCatalogEntry'
+    | 'ModelSuggestion';
   entityId?: string;
   limit?: number;
 }) {
