@@ -607,7 +607,10 @@ what each unfinalized run billed to the org has accrued so far (its own ledger r
 rows when it has none), plus this month's trace rows of runless workflows attributed to the org.
 An in-flight run counts whenever it started, because finalization bills it to the month it ends in.
 All three are read in one REPEATABLE READ snapshot, so a run finalizing at that moment is counted
-on exactly one side. The scheduled-fire check reads the same figure, and the org budget endpoint
+on exactly one side. When the connection pool cannot start that transaction in time (Prisma
+`P2028`), the same reads run without the snapshot rather than failing the launch: a run finalizing
+during them then counts twice or not at all, which is off by one run rather than every in-flight
+run. The scheduled-fire check reads the same figure, and the org budget endpoint
 returns it as `currentMonthSpend` beside the finalized `currentMonthUsage`. The cap is still
 best-effort under concurrency: launches that arrive together see the same total, and a running
 run keeps spending after the cap is reached — it stops new work, not work already started.

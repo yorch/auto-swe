@@ -27,7 +27,9 @@ function fakeDb(opts: {
     workflowRun: { findMany: vi.fn(async () => opts.runs ?? []) },
   };
   const $transaction = vi.fn(async (fn: (t: typeof tx) => unknown, _o: unknown) => fn(tx));
-  return { $transaction, aggregate, db: { $transaction } as unknown as PrismaClient, tx };
+  // The same models off the client itself, for the reads outside a transaction.
+  const db = { ...tx, $transaction } as unknown as PrismaClient;
+  return { $transaction, aggregate, db, tx };
 }
 
 describe('orgMonthSpend', () => {
@@ -84,6 +86,30 @@ describe('orgMonthSpend', () => {
     };
     expect(runlessWhere.orgId).toBe(ORG);
     expect(runlessWhere.createdAt.gte.toISOString()).toMatch(/^\d{4}-\d{2}-01T00:00:00\.000Z$/);
+  });
+
+  it('runs the same reads without the snapshot when the pool cannot start it in time', async () => {
+    const f = fakeDb({ finalized: 10, runlessCost: 0.5 });
+    f.$transaction.mockRejectedValueOnce(
+      Object.assign(new Error('Unable to start a transaction in the given time.'), {
+        code: 'P2028',
+      })
+    );
+
+    expect(await orgMonthSpend(f.db, ORG)).toEqual({
+      finalizedUsd: 10,
+      inFlightUsd: 0,
+      runlessUsd: 0.5,
+      totalUsd: 10.5,
+    });
+    expect(f.tx.workflowRun.findMany).toHaveBeenCalledOnce();
+  });
+
+  it('rethrows any other failure', async () => {
+    const f = fakeDb({});
+    f.$transaction.mockRejectedValueOnce(new Error('db down'));
+    await expect(orgMonthSpend(f.db, ORG)).rejects.toThrow('db down');
+    expect(f.tx.workflowRun.findMany).not.toHaveBeenCalled();
   });
 
   it('is zero for an org with no spend', async () => {
