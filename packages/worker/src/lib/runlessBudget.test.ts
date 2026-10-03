@@ -111,6 +111,21 @@ describe('recordRunlessUsage', () => {
     await expect(recordRunlessUsage('wf', 'r1', call(5000, 500), 'l')).resolves.toBeUndefined();
   });
 
+  it("still adds a call whose run lookup failed, so persisting it takes nothing from another arm's tokens", async () => {
+    // Arm B's call is in flight, unpersisted.
+    await recordRunlessUsage('wf', 'r1', call(500, 10), 'l');
+    // Arm A's call: the run lookup fails, so the call is not capped...
+    h.run.mockRejectedValueOnce(new Error('db blip'));
+    await expect(recordRunlessUsage('wf', 'r1', call(400, 10), 'l')).resolves.toBeUndefined();
+    // ...but arm A's trace write still subtracts its 400 tokens.
+    takePersistingUsage('wf', 'r1', 400, 10);
+    persisted(400, 10);
+    // Arm B's 500 are still counted: 400 persisted + 500 in flight + 200 > 1000.
+    await expect(recordRunlessUsage('wf', 'r1', call(200, 10), 'l')).rejects.toMatchObject({
+      type: 'BUDGET_EXCEEDED',
+    });
+  });
+
   it('does nothing outside an activity', async () => {
     await expect(recordRunlessUsage('wf', null, call(5000, 500), 'l')).resolves.toBeUndefined();
     expect(h.run).not.toHaveBeenCalled();

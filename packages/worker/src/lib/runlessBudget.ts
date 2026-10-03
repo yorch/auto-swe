@@ -119,6 +119,8 @@ async function runlessState(
   temporalRunId: string,
   pending: { input: number; output: number }
 ): Promise<RunlessState | null> {
+  const key = keyOf(workflowId, temporalRunId);
+  let added = false;
   try {
     const run = await prisma.workflowRun.findUnique({
       select: { id: true },
@@ -127,7 +129,7 @@ async function runlessState(
     if (run) {
       return null;
     }
-    const key = keyOf(workflowId, temporalRunId);
+    added = true;
     if (pending.input > 0 || pending.output > 0) {
       addUnpersisted(key, pending.input, pending.output);
     }
@@ -158,6 +160,14 @@ async function runlessState(
       usedOutput: (persisted._sum.outputTokens ?? 0) + inFlight.output,
     };
   } catch (err) {
+    // A failed run lookup still adds the call: `takePersistingUsage` subtracts
+    // the activity's full token totals when its rows are written, so tokens
+    // never added here would be taken from another activity's in-flight spend
+    // on this execution (the other arm of an eval case). Should the execution
+    // have a run after all, that subtraction removes them again.
+    if (!added && (pending.input > 0 || pending.output > 0)) {
+      addUnpersisted(key, pending.input, pending.output);
+    }
     logWarn('Runless workflow budget unreadable — the call is not capped', {
       error: err instanceof Error ? err.message : String(err),
       workflowId,
