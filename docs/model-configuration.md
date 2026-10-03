@@ -131,7 +131,7 @@ A provider whose listing fails — a bad key, a timeout, a 200 that is not a mod
 and its error and last-success time are recorded for the tab; its existing suggestions are left
 exactly as they were, and it produces no retirement candidates. The recorded error is always one of a
 fixed set of strings (`HTTP <status>`, `timed out`, `request failed (<error name>[, <error code>])`, `blocked
-address`, `apiBase required`, `unrecognised response`): Node puts header values and URL userinfo in
+address`, `apiBase required`, `unrecognised response`, `credential could not be decrypted`): Node puts header values and URL userinfo in
 its error messages, so no message text from the request or the provider reaches the status row, the
 API, the logs or the activity result in workflow history. A listing cut short by
 the page cap, one that signals more pages it gives no cursor for, or one that came back empty is
