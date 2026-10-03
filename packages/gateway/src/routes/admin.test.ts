@@ -343,7 +343,7 @@ describe('adminRoutes', () => {
         total: 120,
       });
       expect(ctx.mockPrisma.configAuditLog.findMany).toHaveBeenCalledWith({
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: 0,
         take: 50,
         where: {},
@@ -372,7 +372,7 @@ describe('adminRoutes', () => {
         entityType: 'Session',
       };
       expect(ctx.mockPrisma.configAuditLog.findMany).toHaveBeenCalledWith({
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: 50,
         take: 25,
         where,

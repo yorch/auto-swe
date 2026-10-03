@@ -269,7 +269,11 @@ describe('evalRoutes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(prisma.evalResult.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ skip: 50, where: { scorer: 'policy:x', source: 'POLICY' } })
+      expect.objectContaining({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: 50,
+        where: { scorer: 'policy:x', source: 'POLICY' },
+      })
     );
   });
 
@@ -375,7 +379,7 @@ describe('evalRoutes', () => {
       expect(body.meta).toEqual({ limit: 20, offset: 20, total: 21 });
       expect(body.data[0]).toMatchObject({ endedAt: null, id: 'run-a', status: 'RUNNING' });
       expect(prisma.evalRun.findMany).toHaveBeenCalledWith({
-        orderBy: { startedAt: 'desc' },
+        orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
         skip: 20,
         take: 20,
         where: { datasetId: '11111111-1111-4111-8111-111111111111' },

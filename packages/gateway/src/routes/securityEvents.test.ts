@@ -155,7 +155,11 @@ describe('GET /security-events pagination', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(prisma.agentTrace.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ skip: 100, take: 50 })
+      expect.objectContaining({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: 100,
+        take: 50,
+      })
     );
     expect(JSON.parse(res.payload).meta).toEqual({ limit: 50, offset: 100, total: 240 });
   });

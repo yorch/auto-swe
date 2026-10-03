@@ -232,7 +232,9 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       };
       const [rows, total, entityTypeGroups] = await Promise.all([
         fastify.prisma.configAuditLog.findMany({
-          orderBy: { createdAt: 'desc' },
+          // `id` breaks ties: rows written together share `createdAt`, and an
+          // offset page boundary inside a tie would repeat or skip rows.
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,

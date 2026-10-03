@@ -291,7 +291,8 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       };
       const [rows, total] = await Promise.all([
         fastify.prisma.evalResult.findMany({
-          orderBy: { createdAt: 'desc' },
+          // `id` breaks ties so offset pages neither repeat nor skip rows.
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,
@@ -377,7 +378,8 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       const where = datasetId ? { datasetId } : {};
       const [rows, total] = await Promise.all([
         fastify.prisma.evalRun.findMany({
-          orderBy: { startedAt: 'desc' },
+          // `id` breaks ties so offset pages neither repeat nor skip rows.
+          orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,

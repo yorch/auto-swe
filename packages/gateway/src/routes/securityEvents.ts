@@ -122,7 +122,9 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
                   },
                 },
               },
-              orderBy: { createdAt: 'desc' },
+              // `id` breaks ties so offset pages neither repeat nor skip rows
+              // written in one batch with the same `createdAt`.
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
               skip: offset,
               take: limit,
               where,
