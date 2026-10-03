@@ -1288,7 +1288,7 @@
       "id": "template",
       "refs": ["schema", "pins"],
       "status": "Implemented",
-      "title": "Template ≠ run"
+      "title": "Template \u2260 run"
     },
     {
       "body": "A node is a graph instruction; an activity is a side-effect boundary.",
@@ -1297,7 +1297,7 @@
       "id": "node",
       "refs": ["spec", "runnable"],
       "status": "Implemented",
-      "title": "Node ≠ activity"
+      "title": "Node \u2260 activity"
     },
     {
       "body": "An agent is a versioned persona/config; a skill is prompt text; a tool executes code.",
@@ -1306,7 +1306,7 @@
       "id": "agent",
       "refs": ["agents", "agentNode"],
       "status": "Implemented",
-      "title": "Agent ≠ skill ≠ tool"
+      "title": "Agent \u2260 skill \u2260 tool"
     },
     {
       "body": "A connection identifies a team-owned external target; a workspace materializes its execution context.",
@@ -1315,16 +1315,16 @@
       "id": "connection",
       "refs": ["generic", "schema"],
       "status": "Implemented",
-      "title": "Connection ≠ workspace"
+      "title": "Connection \u2260 workspace"
     },
     {
       "body": "A stored input can be reused across executions; the acting launcher can change.",
       "category": "Identity",
-      "detail": "RunInput.requestedById is submission history. WorkflowRun.launchedById identifies this launch; temporalRunId prevents trusting a reused workflow ID across executions. An Idempotency-Key on a work request binds to that user’s first submission and replays the run it started.",
+      "detail": "RunInput.requestedById is submission history. WorkflowRun.launchedById identifies this launch; temporalRunId prevents trusting a reused workflow ID across executions. An Idempotency-Key on a work request binds to that user\u2019s first submission and replays the run it started.",
       "id": "request",
       "refs": ["schema", "agentRun", "idempotencyKey"],
       "status": "Implemented",
-      "title": "Request ≠ launch identity"
+      "title": "Request \u2260 launch identity"
     },
     {
       "body": "Spec and run-pinned settings are captured, but not every configuration read is frozen.",
@@ -1333,7 +1333,7 @@
       "id": "version",
       "refs": ["agents", "pins"],
       "status": "Implemented",
-      "title": "Snapshots ≠ total immutability"
+      "title": "Snapshots \u2260 total immutability"
     },
     {
       "body": "Temporal persists execution history; PostgreSQL persists application state and searchable evidence.",
@@ -1351,7 +1351,7 @@
       "id": "outcome",
       "refs": ["policy", "write"],
       "status": "Implemented",
-      "title": "Decision ≠ side effect"
+      "title": "Decision \u2260 side effect"
     },
     {
       "body": "Signals measure specific axes; passing one does not guarantee the task is correct.",
@@ -1360,7 +1360,7 @@
       "id": "eval",
       "refs": ["scorers", "eval"],
       "status": "Implemented",
-      "title": "Score ≠ correctness proof"
+      "title": "Score \u2260 correctness proof"
     },
     {
       "body": "A trusted signature proves publisher/content integrity, not safe execution or correct prompts.",
@@ -1369,7 +1369,7 @@
       "id": "bundle",
       "refs": ["bundles", "sdk"],
       "status": "Implemented",
-      "title": "Trust ≠ verification of behavior"
+      "title": "Trust \u2260 verification of behavior"
     }
   ],
   "features": [
@@ -1403,7 +1403,7 @@
     {
       "body": "Agent identity, model, prompt, skills, tool keys and optional MCP connection are data.",
       "category": "Agents",
-      "detail": "Template → channel → team → organization → global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live.",
+      "detail": "Template \u2192 channel \u2192 team \u2192 organization \u2192 global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live.",
       "id": "agentLibrary",
       "refs": ["agents", "pins"],
       "status": "Implemented",
@@ -1421,7 +1421,7 @@
     {
       "body": "Validate context, implement with test feedback, review, fix CI failures, wait for human merge and learn.",
       "category": "Engineering",
-      "detail": "The default spec repeats review after CI fixes. Its CI wait can use webhook signals or active polling; human merge is an external signal, not an automatic merge. A run-pinned setting chooses whether implementer and fixer turns run the platform’s Mastra tool loop or the Claude Code harness inside the workspace; under the harness a worker-side policy decides every tool call.",
+      "detail": "The default spec repeats review after CI fixes. Its CI wait can use webhook signals or active polling; human merge is an external signal, not an automatic merge. A run-pinned setting chooses whether implementer and fixer turns run the platform\u2019s Mastra tool loop or the Claude Code harness inside the workspace; under the harness a worker-side policy decides every tool call.",
       "id": "engineering",
       "refs": ["default", "tdd", "review", "harness", "harnessPolicy"],
       "status": "Implemented",
@@ -1565,7 +1565,7 @@
     {
       "body": "Scope resources by organization/team, share repositories with teams and apply role-based permissions.",
       "category": "Governance",
-      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization. A repository on another approved GitHub host is reached with that host’s own credentials, not the instance’s (see per-host GitHub credentials).",
+      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization. A repository on another approved GitHub host is reached with that host\u2019s own credentials, not the instance\u2019s (see per-host GitHub credentials).",
       "id": "tenancy",
       "refs": ["tenant", "auth", "schema", "hostCredential"],
       "status": "Implemented",
@@ -1610,7 +1610,7 @@
     {
       "body": "Price models from a catalog, and on a schedule ask each provider which models it lists, storing unreviewed suggestions instead of catalog rows.",
       "category": "Operations",
-      "detail": "The gateway upserts one Temporal schedule, auto-swe-model-discovery, at startup; it runs ScheduledModelDiscoveryWorkflow, a single discoverModels activity that lists models through every GLOBAL provider credential. It is on by default (MODEL_DISCOVERY_ENABLED, MODEL_DISCOVERY_CRON, read at startup); disabling pauses the schedule rather than deleting it. Results go to model_suggestions (NEW: listed but priced nowhere; RETIREMENT_CANDIDATE: a priced model missing from a complete listing) and model_discovery_provider_status, never to catalog rows, so a suggestion cannot make a model known at $0. A failed provider changes only its status row; an incomplete listing (page cap, empty result, an unfollowable continuation) deletes and flags nothing; a dismissal survives refreshes; removing a provider’s GLOBAL credential removes its rows. Every failure is reduced to a fixed string (HTTP <status>, timed out, request failed (<name>, <code>), blocked address, apiBase required, unrecognised response), so no fetch or provider text reaches the status row, logs or Temporal history, and a credential save rejects a key with whitespace or control characters and an apiBase carrying a username or password. Admins read the suggestions in the Catalog tab, where the on-demand discover route refreshes the same rows. Nothing is added to the catalog or retired automatically.",
+      "detail": "The gateway upserts one Temporal schedule, auto-swe-model-discovery, at startup; it runs ScheduledModelDiscoveryWorkflow, a single discoverModels activity that lists models through every GLOBAL provider credential. It is on by default (MODEL_DISCOVERY_ENABLED, MODEL_DISCOVERY_CRON, read at startup); disabling pauses the schedule rather than deleting it. Results go to model_suggestions (NEW: listed but priced nowhere; RETIREMENT_CANDIDATE: a priced model missing from a complete listing) and model_discovery_provider_status, never to catalog rows, so a suggestion cannot make a model known at $0. A failed provider changes only its status row; an incomplete listing (page cap, empty result, an unfollowable continuation) still records new suggestions but deletes nothing and flags no retirement candidates; a dismissal survives refreshes; deleting a provider\u2019s GLOBAL credential removes only the credential: the next discovery pass, scheduled or on demand, removes that provider\u2019s suggestion and status rows, and until then the suggestions endpoint still serves them. Every failure is reduced to a fixed string (HTTP <status>, timed out, request failed (<name>, <code>; the code is omitted when absent), credential could not be decrypted, blocked address, apiBase required, unrecognised response), so no fetch or provider text reaches the status row, logs or Temporal history, and a credential save rejects a key with whitespace or control characters and an apiBase carrying a username or password. Admins read the suggestions in the Catalog tab, where the on-demand discover route refreshes the same rows. Nothing is added to the catalog or retired automatically.",
       "id": "modelCatalog",
       "refs": [
         "modelDiscoverySchedule",
@@ -1626,9 +1626,9 @@
       "title": "Model catalog & scheduled discovery"
     },
     {
-      "body": "Reach repositories on other approved GitHub hosts with that host’s own PAT or App, and never send a platform credential to a host it does not belong to.",
+      "body": "Reach repositories on other approved GitHub hosts with that host\u2019s own PAT or App, and never send a platform credential to a host it does not belong to.",
       "category": "Governance",
-      "detail": "GitHubHostCredential holds, per approved non-instance host family, an optional PAT and/or a GitHub App (id and private key), encrypted with the platform envelope and managed by ADMINs through routes that return only whether a secret is set and its last four characters. resolvePlatformCredential returns instance, host, mismatch, misconfigured or installation-mismatch. A launcher’s own saved token still wins; a host’s set is built from its row alone (no instance PAT, App, auth mode or singleton installation) and lapses when the host leaves github.repositoryHosts. resolveGitHubToken refuses any API host outside the set’s credentialHost as a last line, for the PAT, installation tokens and the App JWT. GitHubInstallation is identified by (host, installationId) with the host fixed at creation, and a repository may point only at an installation on its own host: checked when the repository is written and again when a run token is minted (REPO_INSTALLATION_HOST_MISMATCH). The login-ownership check asks the host the account belongs to with that host’s credential and reports a host with none as unverifiable, keeping the login.",
+      "detail": "GitHubHostCredential holds, per approved non-instance host family, an optional PAT and/or a GitHub App (id and private key), encrypted with the platform envelope and managed by ADMINs through routes that return only whether a secret is set and its last four characters. resolvePlatformCredential returns instance, host, mismatch, misconfigured or installation-mismatch. A launcher\u2019s own saved token still wins; a host\u2019s set is built from its row alone (no instance PAT, App, auth mode or singleton installation) and lapses when the host leaves github.repositoryHosts. resolveGitHubToken refuses any API host outside the set\u2019s credentialHost as a last line, for the PAT, installation tokens and the App JWT. GitHubInstallation is identified by (host, installationId) with the host fixed at creation, and a repository may point only at an installation on its own host: checked when the repository is written and again when a run token is minted (REPO_INSTALLATION_HOST_MISMATCH). The login-ownership check asks the host the account belongs to with that host\u2019s credential and reports a non-github.com host with none as unverifiable, keeping the login; github.com is asked unauthenticated, so it is rate-limited, but a confirmed mismatch still clears the login and records a takeover.",
       "id": "githubHosts",
       "refs": [
         "hostCredentialRow",
@@ -1657,7 +1657,7 @@
     {
       "body": "A failed post-diff security gate can leave code on a remote branch.",
       "category": "Publication order",
-      "detail": "executeImplementation commits/pushes first, then scans the diff and may throw SECURITY_GATE_FAILURE. Exhausted TDD iterations can also return failing tests. Do not interpret activity failure as “nothing was published.” Agent Run delivery uses a different trusted-container path.",
+      "detail": "executeImplementation commits/pushes first, then scans the diff and may throw SECURITY_GATE_FAILURE. Exhausted TDD iterations can also return failing tests. Do not interpret activity failure as \u201cnothing was published.\u201d Agent Run delivery uses a different trusted-container path.",
       "id": "publishOrder",
       "refs": ["push", "tdd", "agentRun"],
       "status": "Confirmed boundary",
@@ -1720,7 +1720,7 @@
     {
       "body": "Agent Run has per-step debits; ordinary multi-step generate loops often debit at completion.",
       "category": "Cost control",
-      "detail": "A model call can overshoot a checked budget before returning, and the Claude Code harness reports usage only when its turn ends. Workflows with no run have no ActiveWorkflow ledger; a per-execution token cap summed from their trace rows and this worker’s unpersisted calls bounds them instead. It cannot see calls still in flight on another worker, and a failed budget read lets the call through.",
+      "detail": "A model call can overshoot a checked budget before returning, and the Claude Code harness reports usage only when its turn ends. Workflows with no run have no ActiveWorkflow ledger; a per-execution token cap summed from their trace rows and this worker\u2019s unpersisted calls bounds them instead. It cannot see calls still in flight on another worker, and a failed budget read lets the call through.",
       "id": "budgetGranularity",
       "refs": ["trace", "tdd", "eval", "runlessBudget", "harness"],
       "status": "Code-derived caveat",
@@ -1745,9 +1745,9 @@
       "title": "Usage is attributed when a trace is written"
     },
     {
-      "body": "A run’s trace has no workflow span, and not every entry point or log line carries trace context.",
+      "body": "A run\u2019s trace has no workflow span, and not every entry point or log line carries trace context.",
       "category": "Observability",
-      "detail": "Activities hang off the span that started the run. Signals and schedule-started runs carry no starting context. Only the worker’s Temporal logger exports over OTLP; plain console output and gateway logs stay on stdout. HTTP instrumentation requires the --import preload.",
+      "detail": "Activities hang off the span that started the run. Signals and schedule-started runs carry no starting context. Only the worker\u2019s Temporal logger exports over OTLP; plain console output and gateway logs stay on stdout. HTTP instrumentation requires the --import preload.",
       "id": "telemetryGaps",
       "refs": ["traceProp", "otel", "otelLogs"],
       "status": "Confirmed boundary",
@@ -1756,7 +1756,7 @@
     {
       "body": "With the claude-code runtime, the harness receives the model key inside the container the agent controls.",
       "category": "Isolation",
-      "detail": "The key stays off command lines and every tool call passes the worker-side policy, but what the agent runs in that container can read it. The repository’s own Claude Code settings and hooks apply there. Only anthropic/<model> specs are supported; a credential base URL can route through a gateway.",
+      "detail": "The key stays off command lines and every tool call passes the worker-side policy, but what the agent runs in that container can read it. The repository\u2019s own Claude Code settings and hooks apply there. Only anthropic/<model> specs are supported; a credential base URL can route through a gateway.",
       "id": "harnessKey",
       "refs": ["harnessKey", "harness", "settings"],
       "status": "Confirmed boundary",
@@ -1783,7 +1783,7 @@
     {
       "body": "Discovery lists ids from the keys the platform holds; it supplies no prices and judges retirement by what one key can see.",
       "category": "Coverage",
-      "detail": "No list-models response carries a price, so an admin still enters every number that feeds USD budgets. Only GLOBAL credentials are asked, so a model reachable through a team or organization key is not found. Listings follow a bounded number of pages and drop non-text models by a name filter; a listing past the cap, empty, or with a continuation it cannot follow is incomplete and flags nothing. A retirement flag is a hint measured against one key’s view, and an OpenAI-compatible apiBase on a private address is refused as blocked address. The schedule’s cron and enabled flag take effect only after a gateway restart.",
+      "detail": "No list-models response carries a price, so an admin still enters every number that feeds USD budgets. Only GLOBAL credentials are asked, so a model reachable through a team or organization key is not found. Listings follow a bounded number of pages and drop non-text models by a name filter; a listing past the cap, empty, or with a continuation it cannot follow is incomplete: it still records new suggestions but deletes nothing and flags no retirement candidates. A retirement flag is a hint measured against one key\u2019s view, and an OpenAI-compatible apiBase on a private address is refused as blocked address. The schedule\u2019s cron and enabled flag take effect only after a gateway restart.",
       "id": "modelDiscoveryBounds",
       "refs": ["discoveryAll", "discoveryList", "modelDiscoveryEnv"],
       "status": "Confirmed boundary",
@@ -1792,14 +1792,14 @@
     {
       "body": "The refresh agent reads untrusted pricing pages; the guards confine where it can write, not whether it can be wrong.",
       "category": "Trust boundary",
-      "detail": "The workspace has network access and a shell. The path guard and checkScope keep the diff to the catalog file, and the prompt treats fetched text as data, but a hostile or misread page can still put a wrong price inside that file. The runTests gate runs in warn mode, so a failing test is recorded and the run continues to a draft PR; CI on the draft is the hard check. A run that stops because the previous refresh is still open ends SUCCESS, so a stuck schedule looks green, and the guard trusts the git binary in the container.",
+      "detail": "The workspace has network access and a shell. The path guard and checkScope keep the diff to the catalog file, the prompt treats fetched text as data, and a failed provider listing reaches the agent only as fixed words, but a hostile or misread page can still put a wrong price inside that file. The runTests gate runs in warn mode, so a failing test is recorded and the run continues to a draft PR; CI on the draft is the hard check. A run that stops because the previous refresh is still open ends SUCCESS, so a stuck schedule looks green, and the guard trusts the git binary in the container.",
       "id": "catalogRefreshTrust",
-      "refs": ["catalogRefresh", "catalogScope", "pathGuard", "pathCommit"],
+      "refs": ["catalogRefresh", "catalogScope", "pathGuard", "pathCommit", "catalogListFail"],
       "status": "Confirmed boundary",
       "title": "The catalog refresh contains untrusted input, not prevents it"
     },
     {
-      "body": "The pull request exists, ready for review, before any person or reviewer has judged the change.",
+      "body": "The pull request exists, ready for review, before any person has signed off; in consensus-review it also precedes every reviewer agent (four-eyes runs its agent review loop first).",
       "category": "Publication order",
       "detail": "four-eyes and consensus-review open a non-draft pull request and run CI before their gate, so opening it can notify Slack, sync trackers and request CODEOWNERS reviewers early, and a run that ends FAILED or TIMED_OUT leaves it open. Of the built-in templates only model-catalog-refresh requests a draft pull request, and there is no step that marks a draft ready. Only these two templates guard a no-op CI fix with retryIfUnchanged; the other repush templates can still wait out a CI signal that never comes.",
       "id": "readyPrBeforeGate",
@@ -1808,9 +1808,9 @@
       "title": "Gated templates open a ready PR before the gate"
     },
     {
-      "body": "A host has one PAT and one App, and a repository on a host with none is reachable only with a user’s own token.",
+      "body": "A host has one PAT and one App, and a repository on a host with none is reachable only with a user\u2019s own token.",
       "category": "Coverage",
-      "detail": "A repository on another host with no recorded credentials fails with REPO_CREDENTIAL_HOST_MISMATCH unless its launcher saved their own token; two Apps or per-organization PATs on one host are not expressible. A user with several linked GitHub accounts is unverifiable for the takeover check because the stored login does not record its host, so no takeover is detected for them, and a host with no credential gets none either.",
+      "detail": "A repository on another host with no recorded credentials fails with REPO_CREDENTIAL_HOST_MISMATCH unless its launcher saved their own token; two Apps or per-organization PATs on one host are not expressible. A user with several linked GitHub accounts is unverifiable for the takeover check because the stored login does not record its host, so no takeover is detected for them, and a non-github.com host with no credential gets none either (github.com is asked unauthenticated, rate-limited).",
       "id": "githubHostCoverage",
       "refs": ["hostCredential", "hostRunToken", "hostIdentity"],
       "status": "Confirmed boundary",
@@ -2416,7 +2416,7 @@
       "title": "Workflow library UI"
     },
     {
-      "anchor": "describe('RunnableWorkflow — history replay'",
+      "anchor": "describe('RunnableWorkflow \u2014 history replay'",
       "before": 0,
       "id": "replay",
       "lines": 90,
@@ -2496,7 +2496,7 @@
       "title": "Worker log export over OTLP"
     },
     {
-      "anchor": "// ── Traces created since a cursor (the run page's live tail) ──",
+      "anchor": "// \u2500\u2500 Traces created since a cursor (the run page's live tail) \u2500\u2500",
       "before": 0,
       "id": "runTail",
       "lines": 60,
@@ -2576,7 +2576,7 @@
       "title": "Judge call cost and model"
     },
     {
-      "anchor": "// ── Per-scorer daily trend ──",
+      "anchor": "// \u2500\u2500 Per-scorer daily trend \u2500\u2500",
       "before": 0,
       "id": "evalTrends",
       "lines": 40,
@@ -2584,7 +2584,7 @@
       "title": "Eval scorer trends"
     },
     {
-      "anchor": "// ── Audit log ──",
+      "anchor": "// \u2500\u2500 Audit log \u2500\u2500",
       "before": 0,
       "id": "auditLog",
       "lines": 60,
@@ -2832,7 +2832,7 @@
       "title": "Run-token host checks at mint time"
     },
     {
-      "anchor": "// Only github.com has accounts anyone can look up without credentials,",
+      "anchor": "return { final, target: host === 'github.com'",
       "before": 10,
       "id": "hostIdentity",
       "lines": 14,
@@ -2852,7 +2852,7 @@
     {
       "body": "A developer submits a repository, ticket and description, then receives reviewed code and a PR.",
       "category": "Engineering",
-      "detail": "Default path: context → TDD implementation → three-persona review → PR → CI fixes → human merge signal → memory. Other engineering templates shorten or add approval steps.",
+      "detail": "Default path: context \u2192 TDD implementation \u2192 three-persona review \u2192 PR \u2192 CI fixes \u2192 human merge signal \u2192 memory. Other engineering templates shorten or add approval steps.",
       "id": "ticket",
       "refs": ["default", "tdd", "review"],
       "status": "Seeded + executable",
@@ -2879,7 +2879,7 @@
     {
       "body": "Plan work per repository, run independent work concurrently and respect dependency order.",
       "category": "Engineering",
-      "detail": "Epic children resolve each repository team’s default template. A failed/timed-out upstream skips downstream repositories; default-template success can require a human merge.",
+      "detail": "Epic children resolve each repository team\u2019s default template. A failed/timed-out upstream skips downstream repositories; default-template success can require a human merge.",
       "id": "crossRepo",
       "refs": ["epic", "dependency"],
       "status": "Dedicated launch path",
@@ -2888,7 +2888,7 @@
     {
       "body": "Analyze readiness, solicit clarification, decompose epics/stories, review a plan, create tickets and submit work requests.",
       "category": "Product",
-      "detail": "The PRD decomposition activity set differs from the simpler product-prd-draft Notion template. Tracker creation is best-effort. Story dependencies in the decomposition should not be assumed to be the epic orchestrator’s execution scheduler.",
+      "detail": "The PRD decomposition activity set differs from the simpler product-prd-draft Notion template. Tracker creation is best-effort. Story dependencies in the decomposition should not be assumed to be the epic orchestrator\u2019s execution scheduler.",
       "id": "prd",
       "refs": ["prd", "templates"],
       "status": "Seeded + executable",
@@ -2958,9 +2958,9 @@
       "title": "Build a custom governed automation"
     },
     {
-      "body": "Keep auto-swe’s own built-in model price table current through a draft pull request that a person reviews.",
+      "body": "Keep auto-swe\u2019s own built-in model price table current through a draft pull request that a person reviews.",
       "category": "Engineering",
-      "detail": "model-catalog-refresh is installed everywhere but runs only when launched or scheduled against a repository holding the catalog file, normally a fork. Before any workspace exists, the listProviderModels step fails if the file is missing and ends the run SUCCESS when the previous refresh’s branch has commits or an open pull request. It then lists model ids in the worker through GLOBAL credentials, only for providers already in the file, and hands the agent text with no key. The agent edits only the catalog file: allowedPaths compares the committed tree with the session’s starting commit before the push, and checkScope re-asserts the single path before a draft PR opens. There is no CI loop or approval inside the run; the draft and its cited price sources are the human gate.",
+      "detail": "model-catalog-refresh is installed everywhere but runs only when launched or scheduled against a repository holding the catalog file, normally a fork. Before any workspace exists, the listProviderModels step fails if the file is missing and ends the run SUCCESS when the previous refresh\u2019s branch has commits or an open pull request. It then lists model ids in the worker through GLOBAL credentials, only for providers already in the file, and hands the agent text with no key. The agent edits only the catalog file: allowedPaths compares the committed tree with the session\u2019s starting commit before the push, and checkScope re-asserts the single path before a draft PR opens. There is no CI loop or approval inside the run; the draft and its cited price sources are the human gate.",
       "id": "catalogRefresh",
       "refs": ["catalogRefresh", "catalogScope", "catalogList", "pathGuard", "draftPr"],
       "status": "Seeded + executable",
