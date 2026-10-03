@@ -40,13 +40,14 @@ function ScoreCell({ value }: { value: number | null }) {
 
 export default function GovernEvalsPage() {
   const [windowDays, setWindowDays] = useState(30);
-  // One scorer drives both the trend chart and the results filter.
+  // One scorer drives both the trend chart and the results filter: the chart
+  // shows only the selected scorer, never a stand-in the results do not match.
   const [scorer, setScorer] = useState('');
   const trendsQuery = useEvalTrends(windowDays);
   const datasetsQuery = useEvalDatasets();
   const trends = trendsQuery.data?.scorers ?? [];
   const datasets = datasetsQuery.data;
-  const charted = trends.find((t) => t.scorer === scorer) ?? trends[0];
+  const charted = scorer ? trends.find((t) => t.scorer === scorer) : undefined;
 
   return (
     <div className="space-y-8">
@@ -67,7 +68,7 @@ export default function GovernEvalsPage() {
       <Card>
         <CardHeader>
           <CardTitle eyebrow={`Daily mean · last ${windowDays} days`}>
-            {charted ? charted.scorer : 'Scorer trends'}
+            {scorer || 'Scorer trends'}
           </CardTitle>
         </CardHeader>
         <QueryBoundary
@@ -76,11 +77,17 @@ export default function GovernEvalsPage() {
           isLoading={trendsQuery.isLoading}
           label="eval trends"
         >
-          {trends.length === 0 || !charted ? (
+          {trends.length === 0 ? (
             <EmptyState title="No eval signals in this window." />
           ) : (
             <div className="space-y-6">
-              <ScorerTrendChart data={charted.daily} />
+              {charted ? (
+                <ScorerTrendChart data={charted.daily} />
+              ) : scorer ? (
+                <EmptyState title={`No ${scorer} signals in this window.`} />
+              ) : (
+                <EmptyState title="Pick a scorer to chart its daily mean and filter the results." />
+              )}
               <Table>
                 <THead>
                   <Th variant="dense">Scorer</Th>
@@ -99,10 +106,10 @@ export default function GovernEvalsPage() {
                     <TRow hover key={t.scorer}>
                       <Td className="px-4 py-2">
                         <button
-                          aria-pressed={t.scorer === charted.scorer}
+                          aria-pressed={t.scorer === scorer}
                           className={cn(
                             'font-mono text-xs hover:text-ember-400',
-                            t.scorer === charted.scorer ? 'text-ember-400' : 'text-paper-300'
+                            t.scorer === scorer ? 'text-ember-400' : 'text-paper-300'
                           )}
                           onClick={() => setScorer(t.scorer)}
                           title="Chart this scorer and filter the results to it"

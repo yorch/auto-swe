@@ -42,7 +42,7 @@ function result(over: Record<string, unknown>) {
   };
 }
 
-function mock() {
+function mock(trendScorers: () => string[] = () => ['gate:runTests', 'merge']) {
   return setupFetchMock({
     'GET /api/v1/platform/evals': () => ({
       data: [
@@ -79,7 +79,7 @@ function mock() {
             n: 3,
             scorer: 'merge',
           },
-        ],
+        ].filter((t) => trendScorers().includes(t.scorer)),
         since: '2026-09-01T00:00:00.000Z',
         until: '2026-09-03T00:00:00.000Z',
         windowDays: 30,
@@ -91,27 +91,30 @@ function mock() {
 const urls = (spy: ReturnType<typeof vi.fn>) => spy.mock.calls.map(([u]) => String(u));
 
 describe('GovernEvalsPage', () => {
-  it('charts the first scorer by day and lists each scorer with window and latest means', async () => {
+  it('lists each scorer with window and latest means, and charts none until one is picked', async () => {
     mock();
     render(withQuery(<GovernEvalsPage />));
 
-    await screen.findByTestId('trend-chart');
-    expect(chartData).toHaveBeenLastCalledWith([
-      day('2026-09-01', 2, 1),
-      day('2026-09-02', 0, null),
-    ]);
+    await screen.findByText('Window mean');
     // gate:runTests had no signal on the last day, so "latest" falls back a day.
-    expect(screen.getByRole('button', { name: 'gate:runTests' })).toBeTruthy();
     expect(screen.getAllByText('0.25')).toHaveLength(2);
+    // The results show every scorer, so no scorer's chart may stand in for them.
+    expect(screen.getByText(/Pick a scorer to chart/)).toBeTruthy();
+    expect(screen.queryByTestId('trend-chart')).toBeNull();
+    for (const name of ['gate:runTests', 'merge']) {
+      expect(screen.getByRole('button', { name }).getAttribute('aria-pressed')).toBe('false');
+    }
   });
 
   it('charts a clicked scorer and filters the results table to it', async () => {
     const spy = mock();
     render(withQuery(<GovernEvalsPage />));
 
-    await screen.findByTestId('trend-chart');
+    await screen.findByText('Window mean');
     fireEvent.click(screen.getByRole('button', { name: 'merge' }));
 
+    await screen.findByTestId('trend-chart');
+    expect(screen.getByRole('button', { name: 'merge' }).getAttribute('aria-pressed')).toBe('true');
     expect(chartData).toHaveBeenLastCalledWith([
       day('2026-09-01', 0, null),
       day('2026-09-02', 3, 0.25),
@@ -123,10 +126,26 @@ describe('GovernEvalsPage', () => {
     );
   });
 
+  it('names the selected scorer instead of charting another when it has no trend', async () => {
+    let scorers = ['gate:runTests', 'merge'];
+    mock(() => scorers);
+    render(withQuery(<GovernEvalsPage />));
+    await screen.findByText('Window mean');
+    fireEvent.click(screen.getByRole('button', { name: 'merge' }));
+    await screen.findByTestId('trend-chart');
+
+    // A window in which merge recorded nothing.
+    scorers = ['gate:runTests'];
+    fireEvent.click(screen.getByRole('button', { name: '90d' }));
+
+    await screen.findByText('No merge signals in this window.');
+    expect(screen.queryByTestId('trend-chart')).toBeNull();
+  });
+
   it('switches the trend window', async () => {
     const spy = mock();
     render(withQuery(<GovernEvalsPage />));
-    await screen.findByTestId('trend-chart');
+    await screen.findByText('Window mean');
 
     fireEvent.click(screen.getByRole('button', { name: '90d' }));
 
