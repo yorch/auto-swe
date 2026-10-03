@@ -710,7 +710,11 @@ before and also emits it as an OpenTelemetry log record, exported over OTLP to L
 the SDK's own logging and everything activities log through `@temporalio/activity`'s `log`
 (`lib/activityLog.ts`). An activity logs inside its own async context, so its records carry the
 `activity.<type>` span's trace and span id, and Temporal's metadata — workflow id, activity type,
-attempt — becomes their attributes.
+attempt — becomes their attributes. An `Error` in that metadata, at any depth and including its
+`cause`, is exported with its name, message and stack rather than as `{}`, and the first top-level
+one also sets the OpenTelemetry `exception.type`, `exception.message` and `exception.stacktrace`
+attributes. Temporal's `taskToken` is not exported: it is an opaque per-attempt token nobody
+searches by.
 
 The worker exports metrics (`lib/metrics.ts`), and the gateway exports its share of the run counter
 (`gateway/src/lib/metrics.ts`), labelled only by low-cardinality keys — model, agent, activity,
@@ -719,7 +723,7 @@ status, source, tier — never a run or ticket:
 | Metric (Prometheus name) | Labels | Recorded by |
 |---|---|---|
 | `llm_calls_total`, `llm_tokens_total`, `llm_cost_usd_total` | `model`, `agent` (+ `direction` on tokens) | `recordLlmUsage`, embedding usage |
-| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel). Each path guards its write on the run not having ended yet, so a retried activity or a cancel racing the workflow's own finalisation counts once |
+| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel). The worker, channel and eval-verdict writes are conditional on `endedAt` still being null and the dashboard cancel on `status` still being `RUNNING`, so a retried activity or a cancel racing the workflow's own finalisation counts once. The gateway's eval start-failure write is unconditional: no workflow exists to finalise that row, so nothing else writes it |
 | `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, on each call that ends over the tier |
 | `activity_duration_seconds` (histogram) | `activity`, `outcome` (`success` / `failure` / `cancelled`) | the activity interceptor |
 
