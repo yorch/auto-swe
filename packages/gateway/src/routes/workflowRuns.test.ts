@@ -587,6 +587,46 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
       })
     );
   });
+
+  it('ends a cancelled channel turn itself: its workflow finalizes in a cancellable scope', async () => {
+    const { app, prisma, temporal } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: runId,
+      status: 'RUNNING',
+      template: { name: 'Channel Assistant', teamId: null },
+      workflowId: 'channel-turn-1',
+    });
+    prisma.workflowRun.updateMany.mockResolvedValue({ count: 1 });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${runId}/cancel`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(temporal.cancelWorkflow).toHaveBeenCalledWith('channel-turn-1');
+    // The cancel rejects the channel workflow's finalizeChannelRun call, so
+    // leaving endedAt null would leave the run open forever.
+    const update = prisma.workflowRun.updateMany.mock.calls[0][0];
+    expect(update.data.status).toBe('CANCELLED');
+    expect(update.data.endedAt).toBeInstanceOf(Date);
+  });
+
+  it('leaves endedAt to the workflow for a team template named like the channel one', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: runId,
+      status: 'RUNNING',
+      template: { name: 'Channel Assistant', teamId: 'team-1' },
+      workflowId: 'wf-2',
+    });
+    prisma.workflowRun.updateMany.mockResolvedValue({ count: 1 });
+    await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${runId}/cancel`,
+    });
+    expect(prisma.workflowRun.updateMany.mock.calls[0][0].data).toEqual({ status: 'CANCELLED' });
+  });
 });
 
 describe('workflowRunRoutes GET / (status and templateVersion filters)', () => {

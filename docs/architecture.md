@@ -597,11 +597,14 @@ erDiagram
 **Billing idempotency.** `finalizeWorkflowRun` performs the run-denormalize update and the
 `OrgMonthlyUsage` increment-upsert in one transaction, and only the write that sets `endedAt`
 bills, so a Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost
-and tokens accrue for every terminal status. A dashboard cancel that Temporal accepts sets the run
-`CANCELLED` and leaves `endedAt` null: the workflow's cancellation path then finalizes it, keeping
-`CANCELLED` whatever outcome it reports, and bills everything the run spent — what it spent while
-stopping included. A cancel that finds no execution left to stop (it never started, or closed
-without finalizing) sets `endedAt` itself, since nothing else will, and bills nothing. `Organization.monthlyBudgetUsdCents` caps monthly spend —
+and tokens accrue for every terminal status. A dashboard cancel that Temporal accepts sets a
+`RunnableWorkflow` run `CANCELLED` and leaves `endedAt` null: the workflow's cancellation path then
+finalizes it in a non-cancellable scope, keeping `CANCELLED` whatever outcome it reports, and bills
+everything the run spent — what it spent while stopping included. A channel turn (the global
+Channel Assistant template) finalizes in a cancellable scope, so the cancel would reject its
+finalization; the cancel ends it directly, which costs the org cap nothing because channel turns
+bill their channel, not an org. A cancel that finds no execution left to stop (it never started,
+or closed without finalizing) sets `endedAt` itself, since nothing else will, and bills nothing. `Organization.monthlyBudgetUsdCents` caps monthly spend —
 every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap.
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
@@ -977,7 +980,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   so it counts as a failure.
 - **The org cap counts unfinalized runs until they finalize.** A run that never finalizes (a
   workflow terminated outside the worker, or a cancelled one whose worker never runs its
-  cancellation path) keeps its accrued cost in every month's in-flight figure. A dashboard cancel
+  cancellation path) keeps its accrued cost in every month's in-flight figure. That includes a run
+  cancelled in the moment between its first activity creating the row and Temporal recording that
+  activity's completion: the workflow exits before the step that finalizes on cancellation, so the
+  row stays `CANCELLED` with no `endedAt`. A dashboard cancel
   that finds the run's execution already gone ends the run without billing it, so that run's spend
   leaves the cap.
   Spend with no org on it — a runless workflow with no derivable owner, an epic's own planning ledger

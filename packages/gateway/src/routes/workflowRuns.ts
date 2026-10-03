@@ -277,6 +277,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         return mcpWrite.refused;
       }
       const run = await fastify.prisma.workflowRun.findFirst({
+        include: { template: { select: { name: true, teamId: true } } },
         where: {
           id: request.params.id,
           ...buildWorkflowRunControlFilter(user, request.repoAccessGate),
@@ -300,13 +301,19 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // failure counts as success; any other failure leaves the row RUNNING
       // and reports 502 so the caller can retry.
       // Whether the workflow will finalize the run: true once Temporal has
-      // accepted the cancel, since the workflow's cancellation path finalizes
-      // it as CANCELLED; false when no execution is left to do that.
+      // accepted the cancel of a RunnableWorkflow run, whose cancellation path
+      // finalizes it as CANCELLED in a non-cancellable scope; false when no
+      // execution is left to do that. Channel turns (the global Channel
+      // Assistant template) finalize in a cancellable scope, so a cancel
+      // rejects their finalization outright — and they bill no org, so ending
+      // them here loses nothing from the cap.
+      const isChannelTurn =
+        run.template?.teamId === null && run.template?.name === CHANNEL_ASSISTANT_TEMPLATE_NAME;
       let workflowFinalizes = false;
       if (run.workflowId) {
         try {
           await fastify.temporal.cancelWorkflow(run.workflowId);
-          workflowFinalizes = true;
+          workflowFinalizes = !isChannelTurn;
         } catch (err) {
           if (!isTerminalSignalError(err)) {
             request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel failed');
