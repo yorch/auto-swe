@@ -205,28 +205,37 @@ export interface SecurityEvent {
   workRequestId: string | null;
 }
 
-export function useSecurityEvents(params?: {
-  limit?: number;
-  runId?: string;
+export function useSecurityEvents(params: {
+  limit: number;
+  offset: number;
   type?: SecurityEventType;
 }) {
-  const qs = new URLSearchParams();
-  if (params?.limit) {
-    qs.set('limit', String(params.limit));
-  }
-  if (params?.runId) {
-    qs.set('runId', params.runId);
-  }
-  if (params?.type) {
+  const qs = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
+  if (params.type) {
     qs.set('type', params.type);
   }
   return useQuery({
+    placeholderData: keepPreviousData,
     queryFn: () =>
-      api
-        .get<{ data: SecurityEvent[] }>(`/api/v1/platform/security-events?${qs}`)
-        .then((r) => r.data),
+      api.get<{ data: SecurityEvent[]; meta: { limit: number; offset: number; total: number } }>(
+        `/api/v1/platform/security-events?${qs}`
+      ),
     queryKey: ['security-events', params],
     refetchInterval: 30_000,
+  });
+}
+
+/** Per-type totals across every security event, independent of the page shown. */
+export function useSecurityEventSummary() {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: Record<SecurityEventType, number> }>(
+          '/api/v1/platform/security-events/summary'
+        )
+        .then((r) => r.data),
+    queryKey: ['security-events', 'summary'],
+    refetchInterval: 60_000,
   });
 }
 

@@ -2,6 +2,7 @@ import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { mapLimited } from '../lib/mapLimited.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth } from '../plugins/auth.js';
 
@@ -61,6 +62,12 @@ function classifyEvent(trace: {
   // Remaining rows that passed the OR filter must be code_security.scan activity events
   return 'CODE_SECURITY';
 }
+
+/**
+ * The gateway's pg pool holds 10 connections; the per-type counts run this many
+ * at a time so the summary never holds most of it against auth traffic.
+ */
+const COUNT_CONCURRENCY = 3;
 
 const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend({
   runId: z.string().uuid().optional(),
@@ -137,6 +144,25 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
       }));
 
       return { data: events, meta: { limit, offset, total } };
+    }
+  );
+
+  // Per-type totals across every event, not just the page on screen. Each type
+  // is its own predicate, so this is one count per type; it is a separate route
+  // so paging through the list does not re-run them.
+  app.get(
+    '/security-events/summary',
+    { onRequest: requireAuth({ requiredRole: 'ADMIN' }) },
+    async () => {
+      const types = Object.keys(TYPE_PREDICATES) as SecurityEventType[];
+      const totals = await mapLimited(types, COUNT_CONCURRENCY, (type) =>
+        fastify.prisma.agentTrace.count({ where: TYPE_PREDICATES[type] })
+      );
+      const counts = Object.fromEntries(types.map((t, i) => [t, totals[i]])) as Record<
+        SecurityEventType,
+        number
+      >;
+      return { data: counts };
     }
   );
 };

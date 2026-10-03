@@ -105,3 +105,57 @@ describe('securityEventRoutes', () => {
     expect(body.data[0].eventType).toBe('CHANNEL_SUSPICIOUS');
   });
 });
+
+describe('GET /security-events/summary', () => {
+  it('counts every type across all events with its own DB predicate', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agentTrace.count.mockImplementation(async ({ where }: { where: object }) =>
+      JSON.stringify(where).includes('code_security.scan') ? 12 : 1
+    );
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/security-events/summary',
+    });
+    expect(res.statusCode).toBe(200);
+    const { data } = JSON.parse(res.payload);
+    expect(data).toEqual({
+      CHANNEL_SUSPICIOUS: 1,
+      CODE_SECURITY: 12,
+      CONTENT_SECURITY_BLOCK: 1,
+      CONTENT_SECURITY_WARN: 1,
+      FILE_BLOCK: 1,
+      LLM_SUSPICIOUS: 1,
+      SHELL_BLOCK: 1,
+    });
+    expect(prisma.agentTrace.count).toHaveBeenCalledTimes(7);
+    expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-admins', async () => {
+    const { app } = await buildApp('ENGINEER');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/security-events/summary',
+    });
+    expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('GET /security-events pagination', () => {
+  it('passes offset and limit through and reports the total', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agentTrace.count.mockResolvedValueOnce(240);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/security-events?limit=50&offset=100',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.agentTrace.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 100, take: 50 })
+    );
+    expect(JSON.parse(res.payload).meta).toEqual({ limit: 50, offset: 100, total: 240 });
+  });
+});
