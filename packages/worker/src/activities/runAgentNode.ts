@@ -1,6 +1,7 @@
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { boundToolKeys } from '../lib/boundToolKeys.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
@@ -88,12 +89,14 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
   const tracer = new AgentTracer();
   const mcpTarget = await resolveAgentMcpUrl(key, resolveCtx);
   let closeMcp: (() => Promise<void>) | undefined;
+  let mcpTools: AgentTools | undefined;
   if (mcpTarget) {
     const loaded = await loadMcpTools(mcpTarget.url, tracer, {
       callTimeoutMs: mcpTarget.callTimeoutMs,
       listTimeoutMs: mcpTarget.listTimeoutMs,
     });
     closeMcp = loaded.close;
+    mcpTools = loaded.tools as AgentTools;
     // Built-in/spec tools win over MCP tools on key collision.
     spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;
   }
@@ -102,9 +105,11 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
     const baseMessage = input.userMessage ?? inputsToMessage(input.inputs);
     const userMessage = prependSteering(baseMessage, input.steering);
     // One tracer for the MCP tool rows and the loop's rows, so they share one
-    // `seq` sequence and persist once.
+    // `seq` sequence and persist once. The MCP tools record their own calls;
+    // every other tool's calls are recorded from the loop's steps.
     const result = await runAgent(spec, userMessage, {
       ctx: resolveCtx,
+      selfRecordingTools: boundToolKeys(spec.tools, mcpTools),
       spanName: input.spanName ?? 'llm.agent_node',
       tracer,
     });

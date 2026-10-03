@@ -56,10 +56,18 @@ export interface RunAgentOptions {
    * Record into the caller's tracer instead of a private one, and leave
    * persisting it to the caller. For a caller whose tools record their own
    * calls on that tracer (MCP and workspace tools do): the loop's rows and the
-   * tool rows then share one `seq` sequence, in the order they happened, and
-   * the tool calls are not recorded a second time from the result's steps.
+   * tool rows then share one `seq` sequence and persist once. Name those tools
+   * in `selfRecordingTools` so their calls are not recorded a second time.
    */
   tracer?: AgentTracer;
+  /**
+   * Keys (as bound in `spec.tools`) of the tools that record their own calls on
+   * the tracer while the loop runs. Their calls are not re-read from the
+   * result's steps; every other tool call still gets a row from the steps,
+   * appended after the loop returns. Empty by default, so an unlisted tool is
+   * never left without a row — the worst case is a duplicate.
+   */
+  selfRecordingTools?: ReadonlySet<string>;
 }
 
 export interface RunAgentResult<T = unknown> {
@@ -233,9 +241,7 @@ export async function runAgent<T = unknown>(
             ? 'max_steps'
             : undefined;
 
-        if (!options.tracer) {
-          recordStepToolCalls(tracer, genResult?.steps);
-        }
+        recordStepToolCalls(tracer, genResult?.steps, options.selfRecordingTools);
 
         const object = (genResult?.object ?? undefined) as T | undefined;
         const text = genResult?.text || accounting?.lastText() || undefined;
@@ -300,7 +306,8 @@ const NO_RESULT_ERROR = 'tool call produced no result (it threw or did not compl
 /**
  * One `tool_call` row per tool call Mastra made inside the loop, paired with
  * its outcome by call id. The steps carry no timing, so `durationMs` is 0, and
- * only a `generate` that returned has steps to read.
+ * only a `generate` that returned has steps to read. Calls to a tool named in
+ * `skip` are left out, since that tool records its own row.
  *
  * A tool that THROWS never reaches `toolResults`: Mastra emits it as a separate
  * `tool-error` chunk and buffers only `tool-result` chunks there. Its message
@@ -308,13 +315,20 @@ const NO_RESULT_ERROR = 'tool call produced no result (it threw or did not compl
  * or `error-json` output), so that is read too. A call with no result and no
  * error anywhere is still recorded as failed, never as a success with no output.
  */
-function recordStepToolCalls(tracer: AgentTracer, steps: StepToolCalls[] | undefined): void {
+function recordStepToolCalls(
+  tracer: AgentTracer,
+  steps: StepToolCalls[] | undefined,
+  skip: ReadonlySet<string> = new Set()
+): void {
   const errors = stepToolErrors(steps ?? []);
   for (const step of steps ?? []) {
     const results = new Map(
       (step.toolResults ?? []).map((r) => [r.payload.toolCallId, r.payload] as const)
     );
     for (const { payload: call } of step.toolCalls ?? []) {
+      if (skip.has(call.toolName)) {
+        continue;
+      }
       const result = results.get(call.toolCallId);
       const succeeded = result !== undefined && !result.isError;
       tracer.addToolCall({

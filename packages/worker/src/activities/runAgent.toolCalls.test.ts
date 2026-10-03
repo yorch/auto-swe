@@ -108,4 +108,29 @@ describe('runAgent tool-call rows against the real Mastra loop', () => {
     ]);
     addToolCall.mockRestore();
   });
+
+  it("with a caller's tracer, records the tools that do not record themselves, once", async () => {
+    const tracer = new AgentTracer();
+    const s = spec();
+    // `ok` stands in for an MCP/workspace tool: it records its own row as it runs.
+    const selfRecordingOk = createTool({
+      description: 'records itself',
+      execute: async () => {
+        tracer.addToolCall({ durationMs: 3, inputJson: {}, outputJson: { v: 1 }, toolName: 'ok' });
+        return { v: 1 };
+      },
+      id: 'ok',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ v: z.number() }),
+    });
+    s.tools = { boom, ok: selfRecordingOk } as unknown as AgentSpec['tools'];
+    const addToolCall = vi.spyOn(tracer, 'addToolCall');
+
+    await runAgent(s, 'go', { selfRecordingTools: new Set(['ok']), tracer });
+
+    expect(addToolCall.mock.calls.map(([c]) => [c.toolName, c.error])).toEqual([
+      ['ok', undefined],
+      ['boom', 'kaboom'],
+    ]);
+  });
 });

@@ -297,12 +297,18 @@ describe('runAgent', () => {
     addLlmResponse.mockRestore();
   });
 
-  it("records into a caller's tracer, leaves persisting to it, and does not re-record its tools", async () => {
+  it("records into a caller's tracer, leaves persisting to it, and skips only self-recording tools", async () => {
     generateMock.mockResolvedValue({
       steps: [
         {
-          toolCalls: [{ payload: { args: {}, toolCallId: 'c1', toolName: 'mcp_search' } }],
-          toolResults: [{ payload: { result: {}, toolCallId: 'c1' } }],
+          toolCalls: [
+            { payload: { args: {}, toolCallId: 'c1', toolName: 'mcp_search' } },
+            { payload: { args: { q: 'x' }, toolCallId: 'c2', toolName: 'lookup' } },
+          ],
+          toolResults: [
+            { payload: { result: {}, toolCallId: 'c1' } },
+            { payload: { result: { hit: true }, toolCallId: 'c2' } },
+          ],
         },
       ],
       text: 'done',
@@ -312,12 +318,13 @@ describe('runAgent', () => {
     tracer.addToolCall({ durationMs: 5, inputJson: {}, toolName: 'mcp:search' });
     const addToolCall = vi.spyOn(tracer, 'addToolCall');
 
-    await runAgent(makeSpec(), 'M', { tracer });
+    await runAgent(makeSpec(), 'M', { selfRecordingTools: new Set(['mcp_search']), tracer });
 
     expect(mockedPersist).not.toHaveBeenCalled();
-    expect(addToolCall).not.toHaveBeenCalled();
-    // The MCP row and the loop's response, numbered in one sequence.
-    expect(tracer.size).toBe(2);
+    // The tool that does not record itself still gets its row; the MCP one is not duplicated.
+    expect(addToolCall.mock.calls.map(([c]) => c.toolName)).toEqual(['lookup']);
+    // The MCP row, the lookup row and the loop's response, numbered in one sequence.
+    expect(tracer.size).toBe(3);
   });
 
   it('does not read the step budget for a tool-free agent', async () => {
