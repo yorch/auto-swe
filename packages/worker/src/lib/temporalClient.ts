@@ -1,4 +1,5 @@
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
+import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
 import { Client, Connection } from '@temporalio/client';
 
 let _client: Client | undefined;
@@ -13,7 +14,11 @@ export async function initTemporalClient(): Promise<void> {
   const connection = await Connection.connect({
     address: resolveTemporalAddress(),
   });
-  _client = new Client({ connection });
+  // A run an activity starts (a PRD's child runs) joins that activity's trace.
+  _client = new Client({
+    connection,
+    interceptors: { workflow: [traceContextClientInterceptor()] },
+  });
 }
 
 /**

@@ -86,15 +86,21 @@ async function run() {
   const nodeTagTs = path.resolve(__dirname, './workflows/nodeTagInterceptor.ts');
   const nodeTagJs = path.resolve(__dirname, './workflows/nodeTagInterceptor.js');
   const nodeTagInterceptorPath = existsSync(nodeTagTs) ? nodeTagTs : nodeTagJs;
+  // ...and for the one that forwards the starter's trace context to every
+  // scheduled activity (see workflows/traceContextInterceptor.ts).
+  const traceTs = path.resolve(__dirname, './workflows/traceContextInterceptor.ts');
+  const traceJs = path.resolve(__dirname, './workflows/traceContextInterceptor.js');
+  const traceContextInterceptorPath = existsSync(traceTs) ? traceTs : traceJs;
 
   const worker = await Worker.create({
     activities,
     connection,
-    // One span + duration sample per activity attempt; see lib/activitySpans.ts.
+    // One span + duration sample per activity attempt, parented on the trace
+    // the workflow's starter was in; see lib/activitySpans.ts.
     // The node-tag pair attributes AgentTrace rows to the spec node that ran them.
     interceptors: {
       activity: [activitySpanInterceptor, activityNodeTagInterceptor],
-      workflowModules: [nodeTagInterceptorPath],
+      workflowModules: [nodeTagInterceptorPath, traceContextInterceptorPath],
     },
     // Most activities hold a Docker workspace (clone + container) — an
     // explicit cap keeps a burst of workflows from exhausting the Docker

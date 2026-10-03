@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { span, started, recordDuration } = vi.hoisted(() => ({
   recordDuration: vi.fn(),
   span: { end: vi.fn(), recordException: vi.fn(), setAttribute: vi.fn(), setStatus: vi.fn() },
-  started: [] as Array<{ name: string; attributes: Record<string, unknown> }>,
+  started: [] as Array<{ name: string; attributes: Record<string, unknown>; parent: unknown }>,
 }));
 
 vi.mock('@opentelemetry/api', () => ({
@@ -13,9 +13,10 @@ vi.mock('@opentelemetry/api', () => ({
       startActiveSpan: (
         name: string,
         opts: { attributes: Record<string, unknown> },
+        parent: unknown,
         fn: (s: typeof span) => unknown
       ) => {
-        started.push({ attributes: opts.attributes, name });
+        started.push({ attributes: opts.attributes, name, parent });
         return fn(span);
       },
     }),
@@ -23,6 +24,11 @@ vi.mock('@opentelemetry/api', () => ({
 }));
 
 vi.mock('./metrics.js', () => ({ recordActivityDuration: recordDuration }));
+
+// Real propagation is covered end to end in workflows/traceContext.workflow.test.ts.
+vi.mock('@auto-swe/shared/lib/temporalTracing', () => ({
+  traceContextFromHeaders: (headers: Record<string, unknown>) => ({ fromHeaders: headers }),
+}));
 
 import { CancelledFailure } from '@temporalio/activity';
 import { activitySpanInterceptor } from './activitySpans.js';
@@ -59,6 +65,7 @@ describe('activitySpanInterceptor', () => {
           'temporal.workflow_id': 'eng-acme-svc-JIRA-1',
         }),
         name: 'activity.executeImplementation',
+        parent: { fromHeaders: {} },
       },
     ]);
     expect(span.end).toHaveBeenCalled();

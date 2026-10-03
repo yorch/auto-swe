@@ -652,6 +652,23 @@ interceptor (`lib/activitySpans.ts`), so an attempt's `llm.*` spans share one tr
 `temporal.workflow_id` attribute finds a run's traces in Tempo. The same trace ID is what
 `AgentTrace.otelTraceId` records, which is how the run viewer links an LLM call to Tempo.
 
+**Trace propagation.** A run's activities join the trace of whoever started the run, in three hops
+that never load OpenTelemetry into the workflow isolate:
+
+| Hop | Where | What it does |
+|---|---|---|
+| Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start and signal-with-start |
+| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new |
+| Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the starter's span |
+
+So a gateway request — its Fastify and HTTP server spans — and every activity of the run it
+started, child workflows included, are one trace in Tempo. A workflow started without a span around
+it (a Temporal schedule) gives each activity a trace of its own. Headers are not part of the command
+stream Temporal compares on replay: `runnable.traceContext.replay.test.ts` replays every committed
+fixture with both workflow interceptors registered. `@temporalio/interceptors-opentelemetry` is not
+used: it pins the 1.x OpenTelemetry SDK beside this repo's 2.x one, and runs OpenTelemetry inside
+the isolate.
+
 **Instrumentation.** The gateway and worker start the OpenTelemetry SDK from a preload,
 `src/instrument.ts`, passed to `node --import` — the Dockerfile `CMD`, `yarn start` and `yarn dev`
 all pass it. Both services are ESM, and an ESM entry point evaluates every static import before its
@@ -885,12 +902,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   and exports spans and metrics, but `http` and `fastify` go unpatched. With telemetry enabled, Node
   prints a `DEP0205` warning at boot: `import-in-the-middle` registers through `module.register()`,
   which Node 26 deprecates in favour of `module.registerHooks()`.
-- **Traces start at the activity, not the workflow.** There is no workflow interceptor, so an
-  activity span has no parent and the spans of one run are separate traces tied together only by
-  their `temporal.workflow_id` attribute. Propagating context from the workflow means running an
-  interceptor inside the V8 isolate, and the official Temporal package for it pins the 1.x
-  OpenTelemetry SDK beside this repo's 2.x one. The gateway emits HTTP spans but none link to the
-  workflows a request starts. Logs go to stdout, not OTLP.
+- **A run's trace has no workflow span.** Activities hang directly off the span that started the
+  run; nothing represents the workflow itself or the time between activities, since producing one
+  would mean running OpenTelemetry inside the isolate. Signals and updates sent to a running
+  workflow (approvals, steering) carry no trace context, and runs started by a Temporal schedule
+  have no starting span, so each of their activities is its own trace. Logs go to stdout, not OTLP.
 - **The usage report is platform-wide only.** It has no per-team, per-org, or per-repository
   breakdown: a trace reaches its team only through run → request → connection, which Prisma cannot
   group by. Its daily series is one aggregate per UTC day, so a 90-day window costs 90 small queries.
