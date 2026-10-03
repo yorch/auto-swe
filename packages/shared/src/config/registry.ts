@@ -342,7 +342,7 @@ export const SETTING_DEFINITIONS = {
   'workflow.runlessMaxInputTokens': defineSetting({
     defaultValue: 20_000_000,
     description:
-      'Most input tokens one execution of a workflow that keeps no run may spend — workflow authoring and explaining, scheduled evals, lesson consolidation, dependency inference. The execution fails with BUDGET_EXCEEDED once it passes the cap. An eval over a large dataset is the likeliest to reach it.',
+      'Most input tokens one execution of a workflow that keeps no run may spend — workflow authoring and explaining, scheduled evals, lesson consolidation, dependency inference. The execution fails with BUDGET_EXCEEDED once it passes the cap. An eval dataset run multiplies the cap by its case count, and one that runs out part-way finishes with a partial verdict over the cases that completed.',
     group: 'workflow',
     label: 'Runless workflow: max input tokens',
     overridableAt: ['TEAM', 'ORGANIZATION'],

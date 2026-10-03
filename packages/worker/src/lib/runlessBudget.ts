@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -70,6 +71,18 @@ export function notePersistedUsage(
   }
 }
 
+const capScale = new AsyncLocalStorage<number>();
+
+/**
+ * Runs `fn` with the runless cap multiplied by `scale`. An eval execution runs
+ * every case of its dataset under one cap, so it scales the cap by its case
+ * count: the setting then reads as a per-case allowance, and a large dataset is
+ * not held to the budget of a small one.
+ */
+export function withRunlessCapScale<T>(scale: number, fn: () => Promise<T>): Promise<T> {
+  return capScale.run(Math.max(1, Math.floor(scale)), fn);
+}
+
 export function _resetRunlessBudgetForTests(): void {
   unpersisted.clear();
 }
@@ -122,9 +135,10 @@ async function runlessState(
       owner
     );
     const inFlight = unpersisted.get(key) ?? { input: 0, output: 0 };
+    const scale = capScale.getStore() ?? 1;
     return {
-      maxInput: limits['workflow.runlessMaxInputTokens'],
-      maxOutput: limits['workflow.runlessMaxOutputTokens'],
+      maxInput: limits['workflow.runlessMaxInputTokens'] * scale,
+      maxOutput: limits['workflow.runlessMaxOutputTokens'] * scale,
       usedInput: (persisted._sum.inputTokens ?? 0) + inFlight.input,
       usedOutput: (persisted._sum.outputTokens ?? 0) + inFlight.output,
     };

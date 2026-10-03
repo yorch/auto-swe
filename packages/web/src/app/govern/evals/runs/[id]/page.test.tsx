@@ -76,6 +76,41 @@ describe('EvalRunPage', () => {
     );
   });
 
+  it('marks a verdict the budget cut short as partial', async () => {
+    renderPage(
+      {
+        byTag: {},
+        overall: delta(0, -0.1, 0.1),
+        partial: {
+          completedCases: 1,
+          error: 'Runless workflow budget exceeded',
+          notRunCaseIds: ['c2'],
+          reason: 'budget',
+          totalCases: 2,
+        },
+        regression: false,
+        summary: 'pass-rate 80% → 80% — no significant regression',
+      },
+      'SUCCESS'
+    );
+    expect(
+      await screen.findByText(
+        'Partial: the budget stopped this run after 1 of 2 cases; the verdict covers only those. Runless workflow budget exceeded'
+      )
+    ).toBeTruthy();
+  });
+
+  it('shows no partial marker on a complete verdict', async () => {
+    renderPage({
+      byTag: {},
+      overall: delta(0, -0.1, 0.1),
+      regression: false,
+      summary: 'complete verdict',
+    });
+    expect(await screen.findByText('complete verdict')).toBeTruthy();
+    expect(screen.queryByText(/^Partial:/)).toBeNull();
+  });
+
   it('shows a start failure stored on the run', async () => {
     renderPage({ error: 'temporal unavailable' }, 'FAILED');
     expect(await screen.findByText('temporal unavailable')).toBeTruthy();

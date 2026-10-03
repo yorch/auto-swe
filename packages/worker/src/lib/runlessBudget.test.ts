@@ -23,6 +23,7 @@ import {
   assertRunlessBudgetAvailable,
   notePersistedUsage,
   recordRunlessUsage,
+  withRunlessCapScale,
 } from './runlessBudget.js';
 
 const call = (inputTokens: number, outputTokens: number) => ({
@@ -107,5 +108,24 @@ describe('assertRunlessBudgetAvailable', () => {
     await expect(assertRunlessBudgetAvailable('wf', 'r1', 'l')).rejects.toMatchObject({
       type: 'BUDGET_EXCEEDED',
     });
+  });
+});
+
+describe('withRunlessCapScale', () => {
+  it('multiplies the cap for calls made inside it, and only those', async () => {
+    persisted(2500, 0);
+    await expect(
+      withRunlessCapScale(3, () => assertRunlessBudgetAvailable('wf', 'r1', 'l'))
+    ).resolves.toBeUndefined();
+    await expect(assertRunlessBudgetAvailable('wf', 'r1', 'l')).rejects.toMatchObject({
+      type: 'BUDGET_EXCEEDED',
+    });
+  });
+
+  it("never shrinks the cap below one execution's worth", async () => {
+    persisted(999, 0);
+    await expect(
+      withRunlessCapScale(0, () => assertRunlessBudgetAvailable('wf', 'r1', 'l'))
+    ).resolves.toBeUndefined();
   });
 });

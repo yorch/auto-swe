@@ -91,6 +91,14 @@ code.
 marks the `EvalRun` `FAILED`; it never records a false `0` that would poison the regression verdict
 with infra noise.
 
+**A spent budget ends the run early, not in failure.** A dataset run keeps no `WorkflowRun`, so its
+calls are held to the runless cap (`workflow.runlessMaxInputTokens` /
+`workflow.runlessMaxOutputTokens`), multiplied by the dataset's case count so the setting reads as
+a per-case allowance. When the cap runs out part-way, the harness stops at that case and finishes
+the run with a verdict over the cases already paired; the summary carries a `partial` marker
+(completed and total case counts, the ids that did not run, the budget message), and the run page
+says the verdict is partial. A cap reached before any case completed fails the run.
+
 Execution is durable: `EvalRunWorkflow` runs the dataset on Temporal, so a long benchmark survives
 restarts like any other run.
 
@@ -176,6 +184,10 @@ verdicts into trends per template, model, and prompt version.
   `/govern/workflow-defaults` and gate runs, but the dashboard does not plot them over time.
 - **Trends are per scorer only.** The dashboard does not break a scorer's trend down by template,
   model, or prompt version, though `EvalResult` carries the joins to do so.
+- **A budget-limited verdict covers a prefix of the dataset.** The cap is shared by the whole run,
+  so one expensive case can spend another's allowance, and the cases that did not run are the ones
+  at the end of the dataset, not a sample. The run's status is still `SUCCESS` or `REGRESSION`; a
+  gate that must see every case has to check `summary.partial` as well.
 - **A judge is only as good as its rubric.** Suite health (flake rate, stale rate, judge/human
   kappa) is tracked precisely because an uncalibrated judge produces confident, wrong verdicts —
   check it before trusting a gate.

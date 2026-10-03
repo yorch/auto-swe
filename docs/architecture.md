@@ -745,7 +745,9 @@ spend owner). Its spend is the sum of its own `llm_response` trace rows — keye
 Temporal run id, since some of these ids are reused across executions — plus the calls this worker
 has recorded that its activities have not yet persisted. `assertBudgetAvailable` refuses a call
 once the cap is reached, and `recordLlmUsage` fails the call that passes it with a non-retryable
-`BUDGET_EXCEEDED`. Epic planning is not runless: it is debited to the epic's own ledger row.
+`BUDGET_EXCEEDED`. An eval dataset run multiplies the cap by its case count, and finishes with a
+partial verdict rather than failing when the cap runs out after some cases completed (see
+[evals.md](./evals.md)). Epic planning is not runless: it is debited to the epic's own ledger row.
 
 **Agent traces.** Each LLM-calling activity records tool calls, LLM requests/responses, and named
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the

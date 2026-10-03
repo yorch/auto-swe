@@ -1,3 +1,4 @@
+import { ApplicationFailure } from '@temporalio/activity';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mocks for the runCaseDefault path — its collaborators are the Docker + LLM
@@ -191,6 +192,69 @@ describe('runEvalHarness', () => {
     await runEvalHarness(input, d);
     expect((d.records[0] as { value: number }).value).toBe(0);
     expect((d.records[0] as { passed: boolean }).passed).toBe(false);
+  });
+
+  const budgetStop = () =>
+    ApplicationFailure.nonRetryable('Runless workflow budget exceeded', 'BUDGET_EXCEEDED');
+
+  it('finishes over the completed cases, marked partial, when the budget stops it part-way', async () => {
+    const d = deps({
+      // c1 completes; the candidate arm of c2 runs out of budget.
+      runCase: vi.fn(async (c: EvalCaseRow, ref: string) => {
+        if (c.id !== 'c1' && ref === 'cand') {
+          throw budgetStop();
+        }
+        return 1 as const;
+      }) as HarnessDeps['runCase'],
+    });
+
+    const verdict = await runEvalHarness(input, d);
+
+    expect(verdict.overall.n).toBe(1);
+    expect(d.records).toHaveLength(1);
+    expect(d.finals).toHaveLength(1);
+    expect(d.finals[0].status).toBe('SUCCESS');
+    expect(d.finals[0].summary).toMatchObject({
+      overall: { n: 1 },
+      partial: {
+        completedCases: 1,
+        error: 'Runless workflow budget exceeded',
+        notRunCaseIds: ['c2', 'c3'],
+        reason: 'budget',
+        totalCases: 3,
+      },
+    });
+    // Stops at the breach: nothing runs after c2.
+    expect(vi.mocked(d.runCase).mock.calls.map(([c]) => c.id)).toEqual(['c1', 'c1', 'c2', 'c2']);
+  });
+
+  it('fails when the budget stops it before any case completed', async () => {
+    const d = deps({
+      runCase: async () => {
+        throw budgetStop();
+      },
+    });
+    await expect(runEvalHarness(input, d)).rejects.toMatchObject({ type: 'BUDGET_EXCEEDED' });
+    expect(d.finals).toHaveLength(0);
+  });
+
+  it('still fails on an infrastructure error, even beside a budget stop', async () => {
+    const d = deps({
+      runCase: vi.fn(async (c: EvalCaseRow, ref: string) => {
+        if (c.id === 'c2') {
+          throw ref === 'cand' ? budgetStop() : new Error('docker down');
+        }
+        return 1 as const;
+      }) as HarnessDeps['runCase'],
+    });
+    await expect(runEvalHarness(input, d)).rejects.toThrow('docker down');
+    expect(d.finals).toHaveLength(0);
+  });
+
+  it('carries no partial marker on a run that completed every case', async () => {
+    const d = deps();
+    await runEvalHarness(input, d);
+    expect(d.finals[0].summary).not.toHaveProperty('partial');
   });
 });
 
