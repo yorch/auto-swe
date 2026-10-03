@@ -2,6 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeAuthedApp } from '../test/authedApp.js';
 import { orgBudgetRoutes } from './orgBudget.js';
 
+// Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../test/billingMock.js')),
+}));
+
 const ORG_ID = '00000000-0000-4000-8000-000000000001';
 const PREFIX = '/api/v1/admin/organizations';
 const USER_ID = '00000000-0000-4000-8000-0000000000aa';
@@ -56,6 +62,13 @@ describe('GET /:orgId/budget', () => {
     expect(body.budgetAlertThresholdPercent).toBe(80);
     expect(body.currentMonthUsage).not.toBeNull();
     expect(body.currentMonthUsage.runsCompleted).toBe(5);
+    // The spend the cap is compared against, with its parts.
+    expect(body.currentMonthSpend).toEqual({
+      finalizedUsd: 12.345,
+      inFlightUsd: 0,
+      runlessUsd: 0,
+      totalUsd: 12.345,
+    });
   });
 
   it('returns 403 for non-member', async () => {

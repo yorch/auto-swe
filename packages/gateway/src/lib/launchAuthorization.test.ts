@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { authorizeLaunch, type LaunchRepo } from './launchAuthorization.js';
 
+// Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../test/billingMock.js')),
+}));
+
 const USER = { role: 'ENGINEER' as const, sub: 'user-1' };
 const ADMIN = { role: 'ADMIN' as const, sub: 'admin-1' };
 

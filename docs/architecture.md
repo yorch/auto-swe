@@ -588,13 +588,19 @@ erDiagram
 `OrgMonthlyUsage` increment-upsert in one transaction, guarded by a pre-read of `endedAt`, so a
 Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost and tokens
 accrue for every terminal status. `Organization.monthlyBudgetUsdCents` caps monthly spend —
-every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's accrued cost meets the cap.
+every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap.
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
 repository access, then membership of every org the launch spends against, then each org's cap.
-The cap reads committed spend and is best-effort under concurrency: spend is recorded when a run
-finishes, so launches that arrive together all see the same total and a burst can overshoot the
-cap by the cost of the runs already in flight.
+The spend the cap reads is `orgMonthSpend` (`@auto-swe/shared/lib/billing`): `OrgMonthlyUsage`, plus
+what each unfinalized run billed to the org has accrued so far (its own ledger row, or its trace
+rows when it has none), plus this month's trace rows of runless workflows attributed to the org.
+An in-flight run counts whenever it started, because finalization bills it to the month it ends in.
+All three are read in one REPEATABLE READ snapshot, so a run finalizing at that moment is counted
+on exactly one side. The scheduled-fire check reads the same figure, and the org budget endpoint
+returns it as `currentMonthSpend` beside the finalized `currentMonthUsage`. The cap is still
+best-effort under concurrency: launches that arrive together see the same total, and a running
+run keeps spending after the cap is reached — it stops new work, not work already started.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
 `/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
 so the worker writer and the gateway reader cannot disagree about which month a run lands in.
@@ -892,6 +898,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call
   succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
   so it counts as a failure.
+- **The org cap counts unfinalized runs until they finalize.** A run that never finalizes (a
+  workflow terminated outside the worker) keeps its accrued cost in every month's in-flight figure.
+  Spend with no org on it — a runless workflow with no derivable owner, an epic's own planning ledger
+  row, which no run finalizes — is outside the cap.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a

@@ -2,6 +2,8 @@
  * Org-level budget management (P5 billing).
  * Mounted at /api/v1/platform/organizations.
  */
+
+import { type OrgMonthSpend, orgMonthSpend } from '@auto-swe/shared/lib/billing';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -27,8 +29,17 @@ const CurrentMonthUsageSchema = z.object({
   yearMonth: z.string(),
 });
 
+/** What the budget cap is compared against — see `orgMonthSpend`. */
+const CurrentMonthSpendSchema = z.object({
+  finalizedUsd: z.number(),
+  inFlightUsd: z.number(),
+  runlessUsd: z.number(),
+  totalUsd: z.number(),
+});
+
 const BudgetResponseSchema = z.object({
   budgetAlertThresholdPercent: z.number().int().min(0).max(100).nullable(),
+  currentMonthSpend: CurrentMonthSpendSchema,
   currentMonthUsage: CurrentMonthUsageSchema.nullable(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable(),
   orgId: z.string().uuid(),
@@ -52,10 +63,12 @@ function projectBudget(
     tokensInput: unknown;
     tokensOutput: unknown;
     yearMonth: string;
-  } | null
+  } | null,
+  spend: OrgMonthSpend
 ) {
   return {
     budgetAlertThresholdPercent: org.budgetAlertThresholdPercent,
+    currentMonthSpend: spend,
     currentMonthUsage: usage
       ? {
           costUsdAccrued: Number(usage.costUsdAccrued),
@@ -87,7 +100,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { orgId } = request.params;
 
-      const [org, usage] = await Promise.all([
+      const [org, usage, spend] = await Promise.all([
         fastify.prisma.organization.findUnique({
           select: {
             budgetAlertThresholdPercent: true,
@@ -100,6 +113,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.orgMonthlyUsage.findUnique({
           where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
         }),
+        orgMonthSpend(fastify.prisma, orgId),
       ]);
       if (!org) {
         return reply
@@ -107,7 +121,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
       }
 
-      return projectBudget(org, usage);
+      return projectBudget(org, usage, spend);
     }
   );
 
@@ -157,9 +171,12 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
         where: { id: orgId },
       });
 
-      const usage = await fastify.prisma.orgMonthlyUsage.findUnique({
-        where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
-      });
+      const [usage, spend] = await Promise.all([
+        fastify.prisma.orgMonthlyUsage.findUnique({
+          where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
+        }),
+        orgMonthSpend(fastify.prisma, orgId),
+      ]);
 
       try {
         await writeAuditLog(fastify, {
@@ -174,7 +191,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
         request.log.warn({ auditErr, orgId }, 'failed to write organization budget audit log');
       }
 
-      return projectBudget(updated, usage);
+      return projectBudget(updated, usage, spend);
     }
   );
 };

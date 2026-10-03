@@ -1,8 +1,14 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { webhookRoutes } from './webhooks.js';
+
+// Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../test/billingMock.js')),
+}));
 
 /**
  * `POST /api/v1/webhooks/:token` — the public, token-secured generic trigger.
