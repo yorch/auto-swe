@@ -27,7 +27,8 @@ beforeAll(async () => {
   analysis = await readAnalysis();
   shell = await readFile(join(EXPLORER_ROOT, 'platform-explorer.html'), 'utf8');
   data = await buildExplorerData({ analysis, generatedAt: '2026-08-01T00:00:00.000Z' });
-});
+  // The repo scan runs here, under hookTimeout (10 s), not under the per-test timeouts.
+}, 30_000);
 
 function browser(snapshot = data) {
   const errors = [];
@@ -83,7 +84,6 @@ describe('platform explorer source extraction', () => {
     expect(data.routes.length).toBeGreaterThan(0);
   });
 
-  // Heavy: scans the checked-out repo; a loaded full-suite run overshoots the 5 s default.
   it('matches every anchored excerpt to actual code lines and every graph edge to a node', async () => {
     for (const source of data.sources) {
       const lines = (await readFile(join(REPO_ROOT, source.path), 'utf8')).split('\n');
@@ -109,7 +109,7 @@ describe('platform explorer source extraction', () => {
         true
       );
     }
-  }, 30_000);
+  });
 
   // Heavy: runs git against the checked-out repo; a loaded full-suite run overshoots the 5 s default.
   it('detects staged, unstaged, untracked and deleted code before attesting HEAD', async () => {
