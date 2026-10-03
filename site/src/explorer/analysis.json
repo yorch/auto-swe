@@ -1540,9 +1540,9 @@
     {
       "body": "Scope resources by organization/team, share repositories with teams and apply role-based permissions.",
       "category": "Governance",
-      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization.",
+      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization. A repository on another approved GitHub host is reached with that host’s own credentials, not the instance’s (see per-host GitHub credentials).",
       "id": "tenancy",
-      "refs": ["tenant", "auth", "schema"],
+      "refs": ["tenant", "auth", "schema", "hostCredential"],
       "status": "Implemented",
       "title": "Organizations, teams & repository access"
     },
@@ -1558,9 +1558,9 @@
     {
       "body": "Launch scheduled repository work, template webhooks, GitHub event handling and maintenance sweeps.",
       "category": "Operations",
-      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration.",
+      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration. Provider model discovery is one such sweep and is on by default; the schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409.",
       "id": "schedules",
-      "refs": ["gateway", "worker", "cli"],
+      "refs": ["gateway", "worker", "cli", "modelDiscoverySync", "scheduleCas"],
       "status": "Implemented",
       "title": "Scheduled automation & webhooks"
     },
@@ -1581,6 +1581,42 @@
       "refs": ["bundles", "sdk"],
       "status": "Implemented",
       "title": "Portable signed bundles"
+    },
+    {
+      "body": "Price models from a catalog, and on a schedule ask each provider which models it lists, storing unreviewed suggestions instead of catalog rows.",
+      "category": "Operations",
+      "detail": "The gateway upserts one Temporal schedule, auto-swe-model-discovery, at startup; it runs ScheduledModelDiscoveryWorkflow, a single discoverModels activity that lists models through every GLOBAL provider credential. It is on by default (MODEL_DISCOVERY_ENABLED, MODEL_DISCOVERY_CRON, read at startup); disabling pauses the schedule rather than deleting it. Results go to model_suggestions (NEW: listed but priced nowhere; RETIREMENT_CANDIDATE: a priced model missing from a complete listing) and model_discovery_provider_status, never to catalog rows, so a suggestion cannot make a model known at $0. A failed provider changes only its status row; an incomplete listing (page cap, empty result, an unfollowable continuation) deletes and flags nothing; a dismissal survives refreshes; removing a provider’s GLOBAL credential removes its rows. Every failure is reduced to a fixed string (HTTP <status>, timed out, request failed (<name>, <code>), blocked address, apiBase required, unrecognised response), so no fetch or provider text reaches the status row, logs or Temporal history, and a credential save rejects a key with whitespace or control characters and an apiBase carrying a username or password. Admins read the suggestions in the Catalog tab, where the on-demand discover route refreshes the same rows. Nothing is added to the catalog or retired automatically.",
+      "id": "modelCatalog",
+      "refs": [
+        "modelDiscoverySchedule",
+        "modelDiscoverySync",
+        "modelDiscoveryEnv",
+        "discoveryRecord",
+        "discoveryErrors",
+        "credInput",
+        "suggestionsRoute",
+        "catalogTab"
+      ],
+      "status": "Implemented",
+      "title": "Model catalog & scheduled discovery"
+    },
+    {
+      "body": "Reach repositories on other approved GitHub hosts with that host’s own PAT or App, and never send a platform credential to a host it does not belong to.",
+      "category": "Governance",
+      "detail": "GitHubHostCredential holds, per approved non-instance host family, an optional PAT and/or a GitHub App (id and private key), encrypted with the platform envelope and managed by ADMINs through routes that return only whether a secret is set and its last four characters. resolvePlatformCredential returns instance, host, mismatch, misconfigured or installation-mismatch. A launcher’s own saved token still wins; a host’s set is built from its row alone (no instance PAT, App, auth mode or singleton installation) and lapses when the host leaves github.repositoryHosts. resolveGitHubToken refuses any API host outside the set’s credentialHost as a last line, for the PAT, installation tokens and the App JWT. GitHubInstallation is identified by (host, installationId) with the host fixed at creation, and a repository may point only at an installation on its own host: checked when the repository is written and again when a run token is minted (REPO_INSTALLATION_HOST_MISMATCH). The login-ownership check asks the host the account belongs to with that host’s credential and reports a host with none as unverifiable, keeping the login.",
+      "id": "githubHosts",
+      "refs": [
+        "hostCredentialRow",
+        "hostCredential",
+        "hostResolve",
+        "hostGuard",
+        "hostInstallScope",
+        "hostInstallRepo",
+        "hostRunToken",
+        "hostIdentity"
+      ],
+      "status": "Implemented",
+      "title": "Per-host GitHub credentials & installations"
     }
   ],
   "limits": [
@@ -1718,6 +1754,42 @@
       "refs": ["replay", "worker"],
       "status": "Evidence limit",
       "title": "Implementation is not live deployment proof"
+    },
+    {
+      "body": "Discovery lists ids from the keys the platform holds; it supplies no prices and judges retirement by what one key can see.",
+      "category": "Coverage",
+      "detail": "No list-models response carries a price, so an admin still enters every number that feeds USD budgets. Only GLOBAL credentials are asked, so a model reachable through a team or organization key is not found. Listings follow a bounded number of pages and drop non-text models by a name filter; a listing past the cap, empty, or with a continuation it cannot follow is incomplete and flags nothing. A retirement flag is a hint measured against one key’s view, and an OpenAI-compatible apiBase on a private address is refused as blocked address. The schedule’s cron and enabled flag take effect only after a gateway restart.",
+      "id": "modelDiscoveryBounds",
+      "refs": ["discoveryAll", "discoveryList", "modelDiscoveryEnv"],
+      "status": "Confirmed boundary",
+      "title": "Model discovery finds ids, not prices"
+    },
+    {
+      "body": "The refresh agent reads untrusted pricing pages; the guards confine where it can write, not whether it can be wrong.",
+      "category": "Trust boundary",
+      "detail": "The workspace has network access and a shell. The path guard and checkScope keep the diff to the catalog file, and the prompt treats fetched text as data, but a hostile or misread page can still put a wrong price inside that file. The runTests gate runs in warn mode, so a failing test is recorded and the run continues to a draft PR; CI on the draft is the hard check. A run that stops because the previous refresh is still open ends SUCCESS, so a stuck schedule looks green, and the guard trusts the git binary in the container.",
+      "id": "catalogRefreshTrust",
+      "refs": ["catalogRefresh", "catalogScope", "pathGuard", "pathCommit"],
+      "status": "Confirmed boundary",
+      "title": "The catalog refresh contains untrusted input, not prevents it"
+    },
+    {
+      "body": "The pull request exists, ready for review, before any person or reviewer has judged the change.",
+      "category": "Publication order",
+      "detail": "four-eyes and consensus-review open a non-draft pull request and run CI before their gate, so opening it can notify Slack, sync trackers and request CODEOWNERS reviewers early, and a run that ends FAILED or TIMED_OUT leaves it open. Of the built-in templates only model-catalog-refresh requests a draft pull request, and there is no step that marks a draft ready. Only these two templates guard a no-op CI fix with retryIfUnchanged; the other repush templates can still wait out a CI signal that never comes.",
+      "id": "readyPrBeforeGate",
+      "refs": ["fourEyes", "consensus", "ciNoop", "catalogScope"],
+      "status": "Confirmed boundary",
+      "title": "Gated templates open a ready PR before the gate"
+    },
+    {
+      "body": "A host has one PAT and one App, and a repository on a host with none is reachable only with a user’s own token.",
+      "category": "Coverage",
+      "detail": "A repository on another host with no recorded credentials fails with REPO_CREDENTIAL_HOST_MISMATCH unless its launcher saved their own token; two Apps or per-organization PATs on one host are not expressible. A user with several linked GitHub accounts is unverifiable for the takeover check because the stored login does not record its host, so no takeover is detected for them, and a host with no credential gets none either.",
+      "id": "githubHostCoverage",
+      "refs": ["hostCredential", "hostRunToken", "hostIdentity"],
+      "status": "Confirmed boundary",
+      "title": "Host credentials are one set per host"
     }
   ],
   "modelDescriptions": {
@@ -1747,8 +1819,9 @@
     "EvalRun": "Candidate versus baseline benchmark execution and statistical summary.",
     "FigmaConfig": "Schema entity; inspect fields and relationship declarations below.",
     "GitHubConfig": "Schema entity; inspect fields and relationship declarations below.",
+    "GitHubHostCredential": "Encrypted PAT and/or GitHub App credentials for one approved non-instance GitHub host family; sent only to that host.",
     "GitHubHostWebhookSecret": "Schema entity; inspect fields and relationship declarations below.",
-    "GitHubInstallation": "Schema entity; inspect fields and relationship declarations below.",
+    "GitHubInstallation": "A GitHub App installation, identified by its host and installation id; repositories may point only at an installation on their own host.",
     "HumanApproval": "Distinct human response linked to a human step.",
     "HumanErrorBaseline": "Schema entity; inspect fields and relationship declarations below.",
     "InstalledBundle": "Installed content identity/hash/signature trust record.",
@@ -1757,6 +1830,8 @@
     "KnowledgeBaseConfig": "Schema entity; inspect fields and relationship declarations below.",
     "MemoryItem": "Scoped semantic memory with vector embedding and run/agent lineage.",
     "ModelCatalogEntry": "Provider/model capability, price and lifecycle metadata.",
+    "ModelDiscoveryProviderStatus": "One row per provider: when discovery last asked, the fixed-string error if it failed, and the time of the last complete listing.",
+    "ModelSuggestion": "A provider-listed model the catalog lacks (NEW) or a priced model a complete listing no longer shows (RETIREMENT_CANDIDATE), unique per provider and model id, with a sticky dismissal; never read by pricing.",
     "OauthAccessToken": "Stored opaque access token; JWT access tokens are not stored.",
     "OauthClient": "OAuth client registered by an MCP client through dynamic registration.",
     "OauthClientAssertion": "Single-use ledger for private-key client assertions.",
@@ -1799,6 +1874,8 @@
       "ProviderCredential",
       "EmbeddingConfig",
       "ModelCatalogEntry",
+      "ModelDiscoveryProviderStatus",
+      "ModelSuggestion",
       "GitHubConfig",
       "SlackConfig",
       "WorkflowDefaults",
@@ -1840,6 +1917,7 @@
       "ConnectionTeamShare",
       "ConnectionCredential",
       "GitHubHostWebhookSecret",
+      "GitHubHostCredential",
       "GitHubInstallation",
       "RepoDependency",
       "Organization",
@@ -2473,6 +2551,254 @@
       "lines": 25,
       "path": "packages/gateway/src/routes/securityEvents.ts",
       "title": "Security event per-type totals"
+    },
+    {
+      "anchor": "export async function ScheduledModelDiscoveryWorkflow(",
+      "before": 6,
+      "id": "modelDiscoverySchedule",
+      "lines": 10,
+      "path": "packages/worker/src/workflows/scheduledModelDiscovery.ts",
+      "title": "Scheduled model-discovery workflow"
+    },
+    {
+      "anchor": "async syncModelDiscoverySchedule(config: ModelDiscoveryScheduleConfig)",
+      "before": 0,
+      "id": "modelDiscoverySync",
+      "lines": 9,
+      "path": "packages/gateway/src/plugins/temporal.ts",
+      "title": "Model-discovery schedule upsert (paused when disabled)"
+    },
+    {
+      "anchor": "cronExpression: envCron('MODEL_DISCOVERY_CRON', '17 3 * * *'),",
+      "before": 3,
+      "id": "modelDiscoveryEnv",
+      "lines": 8,
+      "path": "packages/shared/src/lib/systemConfig.ts",
+      "title": "Discovery schedule read from the environment"
+    },
+    {
+      "anchor": "export async function recordDiscovery(",
+      "before": 0,
+      "id": "discoveryRecord",
+      "lines": 80,
+      "path": "packages/shared/src/lib/modelSuggestions.ts",
+      "title": "Persisting suggestions and provider status"
+    },
+    {
+      "anchor": "export const DISCOVERY_ERRORS = {",
+      "before": 7,
+      "id": "discoveryErrors",
+      "lines": 36,
+      "path": "packages/shared/src/lib/modelDiscovery.ts",
+      "title": "Fixed-string discovery errors"
+    },
+    {
+      "anchor": "complete: query === null && !unfollowable && listedIds.size > 0,",
+      "before": 8,
+      "id": "discoveryList",
+      "lines": 12,
+      "path": "packages/shared/src/lib/modelDiscovery.ts",
+      "title": "What counts as a complete provider listing"
+    },
+    {
+      "anchor": "export async function discoverProviderModels(",
+      "before": 0,
+      "id": "discoveryAll",
+      "lines": 40,
+      "path": "packages/shared/src/lib/modelDiscovery.ts",
+      "title": "Discovery over GLOBAL provider credentials"
+    },
+    {
+      "anchor": "export function credentialInputProblem(",
+      "before": 3,
+      "id": "credInput",
+      "lines": 25,
+      "path": "packages/gateway/src/lib/credentialService.ts",
+      "title": "Credential save validation"
+    },
+    {
+      "anchor": "'/model-catalog/suggestions',",
+      "before": 4,
+      "id": "suggestionsRoute",
+      "lines": 40,
+      "path": "packages/gateway/src/routes/modelCatalog.ts",
+      "title": "Stored-suggestions API"
+    },
+    {
+      "anchor": "eyebrow=\"New from providers\"",
+      "before": 2,
+      "id": "catalogTab",
+      "lines": 10,
+      "path": "packages/web/src/components/modelConfig/CatalogTab.tsx",
+      "title": "Catalog tab suggestions card"
+    },
+    {
+      "anchor": "listModels: {",
+      "before": 3,
+      "id": "catalogRefresh",
+      "lines": 26,
+      "path": "packages/shared/src/workflow/templates/modelCatalogRefresh.ts",
+      "title": "Catalog-refresh preflight and implement nodes"
+    },
+    {
+      "anchor": "checkScope: {",
+      "before": 2,
+      "id": "catalogScope",
+      "lines": 30,
+      "path": "packages/shared/src/workflow/templates/modelCatalogRefresh.ts",
+      "title": "Catalog-refresh scope check and draft pull request"
+    },
+    {
+      "anchor": "export async function listProviderModels(",
+      "before": 0,
+      "id": "catalogList",
+      "lines": 60,
+      "path": "packages/worker/src/activities/listProviderModels.ts",
+      "title": "Worker-side catalog preflight and model-id listing"
+    },
+    {
+      "anchor": "const failed = `### ${label}",
+      "before": 2,
+      "id": "catalogListFail",
+      "lines": 30,
+      "path": "packages/worker/src/activities/listProviderModels.ts",
+      "title": "Provider failures reported in fixed words"
+    },
+    {
+      "anchor": "export async function assertCommittedTreeWithinAllowedPaths(",
+      "before": 0,
+      "id": "pathGuard",
+      "lines": 36,
+      "path": "packages/worker/src/activities/allowedPaths.ts",
+      "title": "Committed-tree path guard before push"
+    },
+    {
+      "anchor": "export async function commitStaged(",
+      "before": 0,
+      "id": "pathCommit",
+      "lines": 40,
+      "path": "packages/worker/src/activities/allowedPaths.ts",
+      "title": "Hooks-off commit and exact-sha push"
+    },
+    {
+      "anchor": "created = await scm.createOrUpdatePullRequest({",
+      "before": 3,
+      "id": "draftPr",
+      "lines": 36,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "Draft pull request refusals"
+    },
+    {
+      "anchor": "ciLoop({",
+      "before": 6,
+      "id": "fourEyes",
+      "lines": 45,
+      "path": "packages/shared/src/workflow/templates/fourEyes.ts",
+      "title": "four-eyes: CI fix loop before sign-off"
+    },
+    {
+      "anchor": "askRejectionReason: {",
+      "before": 0,
+      "id": "fourEyesReject",
+      "lines": 44,
+      "path": "packages/shared/src/workflow/templates/fourEyes.ts",
+      "title": "four-eyes: rejection reason, retry limit and no-op fix"
+    },
+    {
+      "anchor": "ciLoop({",
+      "before": 6,
+      "id": "consensus",
+      "lines": 12,
+      "path": "packages/shared/src/workflow/templates/consensusReview.ts",
+      "title": "consensus-review: CI fix loop before the reviewers"
+    },
+    {
+      "anchor": "checkConsensusFixChanged: {",
+      "before": 0,
+      "id": "consensusNoop",
+      "lines": 14,
+      "path": "packages/shared/src/workflow/templates/consensusReview.ts",
+      "title": "consensus-review: a no-op fix goes back to the reviewers"
+    },
+    {
+      "anchor": "checkCiFixChanged: {",
+      "before": 3,
+      "id": "ciNoop",
+      "lines": 12,
+      "path": "packages/shared/src/workflow/templates/authoring/ciLoop.ts",
+      "title": "ciLoop: a no-op CI fix counts as a spent attempt"
+    },
+    {
+      "anchor": "model GitHubHostCredential {",
+      "before": 4,
+      "id": "hostCredentialRow",
+      "lines": 22,
+      "path": "packages/shared/src/prisma/schema.prisma",
+      "title": "Per-host platform credential row"
+    },
+    {
+      "anchor": "export async function platformCredentialFor(",
+      "before": 0,
+      "id": "hostCredential",
+      "lines": 38,
+      "path": "packages/shared/src/lib/githubHostCredential.ts",
+      "title": "Which credential set a repository uses"
+    },
+    {
+      "anchor": "export async function resolveHostCredential(",
+      "before": 8,
+      "id": "hostResolve",
+      "lines": 48,
+      "path": "packages/shared/src/lib/githubHostCredential.ts",
+      "title": "A host row, only while its host is approved"
+    },
+    {
+      "anchor": "const credentialHost = config.credentialHost ?? hostFamily(config.apiUrl);",
+      "before": 8,
+      "id": "hostGuard",
+      "lines": 12,
+      "path": "packages/shared/src/lib/githubInstallation.ts",
+      "title": "Last-line host guard before any token leaves"
+    },
+    {
+      "anchor": "export function installationHostMismatch(",
+      "before": 5,
+      "id": "hostInstallScope",
+      "lines": 12,
+      "path": "packages/shared/src/lib/githubHostScope.ts",
+      "title": "Installation host mismatch rule"
+    },
+    {
+      "anchor": "async function installationHostProblem(",
+      "before": 8,
+      "id": "hostInstallRepo",
+      "lines": 36,
+      "path": "packages/gateway/src/routes/repositories.ts",
+      "title": "Repository-to-installation host check on write"
+    },
+    {
+      "anchor": "if (credential.scope === 'installation-mismatch') {",
+      "before": 8,
+      "id": "hostRunToken",
+      "lines": 18,
+      "path": "packages/worker/src/lib/scm/github.ts",
+      "title": "Run-token host checks at mint time"
+    },
+    {
+      "anchor": "// Only github.com has accounts anyone can look up without credentials,",
+      "before": 10,
+      "id": "hostIdentity",
+      "lines": 14,
+      "path": "packages/shared/src/lib/githubIdentityCheck.ts",
+      "title": "Login ownership asks the account host"
+    },
+    {
+      "anchor": "attempt >= MAX_PATCH_ATTEMPTS ||",
+      "before": 8,
+      "id": "scheduleCas",
+      "lines": 18,
+      "path": "packages/gateway/src/routes/scheduledWorkRequests.ts",
+      "title": "Schedule PATCH retry on a competing write"
     }
   ],
   "usecases": [
@@ -2583,6 +2909,24 @@
       "refs": ["spec", "sdk", "bundles"],
       "status": "Composition capability",
       "title": "Build a custom governed automation"
+    },
+    {
+      "body": "Keep auto-swe’s own built-in model price table current through a draft pull request that a person reviews.",
+      "category": "Engineering",
+      "detail": "model-catalog-refresh is installed everywhere but runs only when launched or scheduled against a repository holding the catalog file, normally a fork. Before any workspace exists, the listProviderModels step fails if the file is missing and ends the run SUCCESS when the previous refresh’s branch has commits or an open pull request. It then lists model ids in the worker through GLOBAL credentials, only for providers already in the file, and hands the agent text with no key. The agent edits only the catalog file: allowedPaths compares the committed tree with the session’s starting commit before the push, and checkScope re-asserts the single path before a draft PR opens. There is no CI loop or approval inside the run; the draft and its cited price sources are the human gate.",
+      "id": "catalogRefresh",
+      "refs": ["catalogRefresh", "catalogScope", "catalogList", "pathGuard", "draftPr"],
+      "status": "Seeded + executable",
+      "title": "Refresh the built-in model catalog"
+    },
+    {
+      "body": "Require two human sign-offs, or two reviewer agents in agreement, on a change whose CI already passed.",
+      "category": "Governance",
+      "detail": "four-eyes and consensus-review open the pull request and run CI with a fix loop first (two fix attempts, a third failure fails the run); only then do two humans, or two parallel reviewer slots, judge the head commit. A rejection goes to a fix, CI again with a fresh budget, and the gate again, with every round creating new pending steps. four-eyes asks the rejecting person what should change (optional, 1 h) and ends FAILED on a third rejection; consensus-review allows three consensus attempts. A fix that changes nothing never waits for a CI event: a no-op CI fix spends an attempt and a no-op review fix returns straight to the gate.",
+      "id": "signoff",
+      "refs": ["fourEyes", "fourEyesReject", "consensus", "consensusNoop", "ciNoop"],
+      "status": "Seeded + executable",
+      "title": "Two-person sign-off on green code"
     }
   ]
 }
