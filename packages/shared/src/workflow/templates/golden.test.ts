@@ -85,9 +85,17 @@ function ciFixNodes(): Record<string, unknown> {
         failureContext: { from: 'context.lastCILogs' },
         previousCodeResult: { from: 'context.currentCodeResult' },
       },
-      next: 'updateCodeAfterCIFix',
+      next: 'checkCiFixChanged',
       step: 'executeCIFixImplementation',
       type: 'step',
+    },
+    // A fix that changed nothing makes no commit, so no CI event would follow: it counts as a
+    // spent attempt and the loop goes round again instead of waiting.
+    checkCiFixChanged: {
+      expr: 'nodes.ciFix.output.headSha == context.currentCodeResult.headSha',
+      onFalse: 'updateCodeAfterCIFix',
+      onTrue: 'incCIRetries',
+      type: 'cond',
     },
     fetchLogs: {
       inputs: { logsUrl: { from: 'context.ciResultPayload.logsUrl' } },
@@ -119,6 +127,10 @@ function ciFixNodes(): Record<string, unknown> {
   };
 }
 
+const GENERIC_REJECTION =
+  'A human reviewer rejected this change at sign-off and left no written reason. ' +
+  'Re-check it against the success criteria and the pull request description.';
+
 const PR_RESULT = {
   prNumber: { from: 'context.prNumber' },
   prUrl: { from: 'context.prUrl' },
@@ -148,6 +160,13 @@ function consensusReviewAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
     next: 'fanOutReview',
     step: 'updateDomainState',
     type: 'step',
+  };
+  nodes.consensusFix = { ...at('consensusFix'), next: 'checkConsensusFixChanged' };
+  nodes.checkConsensusFixChanged = {
+    expr: 'nodes.consensusFix.output.headSha == context.currentCodeResult.headSha',
+    onFalse: 'updateCodeAfterFix',
+    onTrue: 'setReviewing',
+    type: 'cond',
   };
   nodes.updateCodeAfterFix = {
     next: 'setAwaitingCiAfterFix',
@@ -196,15 +215,47 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
       onTrue: 'terminateRejected',
       type: 'cond',
     },
+    askRejectionReason: {
+      description:
+        'Say what should change. The fix is told this. Leave it empty or let it time out ' +
+        'and the fix gets only the fact that the change was rejected.',
+      fields: [{ key: 'reason', label: 'What should change?', required: false, type: 'text' }],
+      onSubmit: 'checkRejectionReason',
+      onTimeout: 'incSignoffRetries',
+      storeAs: 'context.signoffRejection',
+      timeout: '1h',
+      title: 'Why was it rejected?',
+      type: 'humanInput',
+    },
+    checkRejectionReason: {
+      expr: "(context.signoffRejection.value.reason ?? '') != ''",
+      onFalse: 'incSignoffRetries',
+      onTrue: 'keepRejectionReason',
+      type: 'cond',
+    },
+    checkSignoffFixChanged: {
+      expr: 'nodes.signoffFix.output.headSha == context.currentCodeResult.headSha',
+      onFalse: 'updateCodeAfterSignoffFix',
+      onTrue: 'storeSignoffContextUnchanged',
+      type: 'cond',
+    },
     firstSignoff: {
       ...at('firstSignoff'),
       contextFrom: 'context.signoffContext',
       description:
         'CI has passed on the head commit in the context, and the pull request is open. ' +
         'Confirm you have read the implementation and are satisfied it meets the requirements. ' +
-        'If rejectedBefore is above 0, the code changed after an earlier rejection: earlier ' +
-        'sign-offs do not apply and both people sign off again.',
-      onReject: 'incSignoffRetries',
+        'If rejectedBefore is above 0 this is a repeat round and both people sign off again: ' +
+        'changedSinceLastSignoff says whether the code changed, and noChangeMade means the ' +
+        'fix made no change and this is the code that was rejected before.',
+      onReject: 'askRejectionReason',
+    },
+    keepRejectionReason: {
+      next: 'incSignoffRetries',
+      type: 'set',
+      values: {
+        'context.signoffRejectionSummary': { from: 'context.signoffRejection.value.reason' },
+      },
     },
     incSignoffRetries: {
       next: 'checkSignoffLimit',
@@ -216,10 +267,11 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
       contextFrom: 'context.signoffContext',
       description:
         'You are a second, independent reviewer. CI has passed on the head commit in the ' +
-        'context. Confirm the change is safe to merge. If rejectedBefore is above 0, the code ' +
-        'changed after an earlier rejection and the first reviewer has signed off on it again.',
+        'context. Confirm the change is safe to merge. If rejectedBefore is above 0 this is a ' +
+        'repeat round and the first reviewer has signed off again: changedSinceLastSignoff ' +
+        'says whether the code changed, and noChangeMade means the fix made no change.',
       onApprove: 'done',
-      onReject: 'incSignoffRetries',
+      onReject: 'askRejectionReason',
     },
     setAwaitingCiAfterSignoff: AWAITING_CI_STAMP('repushAfterFix'),
     setAwaitingSignoff: {
@@ -231,13 +283,9 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
     signoffFix: {
       inputs: {
         previousCodeResult: { from: 'context.currentCodeResult' },
-        rejectionSummary: {
-          literal:
-            'A human reviewer rejected this change at sign-off and left no written reason. ' +
-            'Re-check it against the success criteria and the pull request description.',
-        },
+        rejectionSummary: { from: 'context.signoffRejectionSummary' },
       },
-      next: 'updateCodeAfterSignoffFix',
+      next: 'checkSignoffFixChanged',
       step: 'executeReviewFixImplementation',
       type: 'step',
     },
@@ -248,8 +296,22 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
         'context.signoffContext.changedSinceLastSignoff': { expr: 'context.signoffRetries > 0' },
         'context.signoffContext.ciPassed': { literal: true },
         'context.signoffContext.headSha': { from: 'context.currentCodeResult.headSha' },
+        'context.signoffContext.noChangeMade': { literal: false },
         'context.signoffContext.prUrl': { from: 'context.prUrl' },
         'context.signoffContext.rejectedBefore': { from: 'context.signoffRetries' },
+        'context.signoffRejection': { literal: null },
+        'context.signoffRejectionSummary': { literal: GENERIC_REJECTION },
+      },
+    },
+    storeSignoffContextUnchanged: {
+      next: 'firstSignoff',
+      type: 'set',
+      values: {
+        'context.signoffContext.changedSinceLastSignoff': { literal: false },
+        'context.signoffContext.noChangeMade': { literal: true },
+        'context.signoffContext.rejectedBefore': { from: 'context.signoffRetries' },
+        'context.signoffRejection': { literal: null },
+        'context.signoffRejectionSummary': { literal: GENERIC_REJECTION },
       },
     },
     terminateRejected: { ...at('terminateRejected'), result: PR_RESULT },
@@ -269,9 +331,10 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
       'Implement, run the agent review loop, open the PR and wait for CI (a failing CI is ' +
       'fixed by the agent: 2 fix attempts, and a third failure fails the run), then require two ' +
       'sequential human approvals (e.g. author sign-off followed by independent reviewer sign-off) ' +
-      'on the code that passed CI. A rejection sends the change back for a fix and through CI ' +
-      'again (2 fix attempts, a third rejection fails the run), and both people sign off again. ' +
-      'Models a four-eyes / two-person-rule change-management requirement.',
+      'on the code that passed CI. A rejection asks for a reason, sends the change back for a fix ' +
+      'and through CI again (2 fix attempts, a third rejection fails the run), and both people ' +
+      'sign off again. A fix that changes nothing goes straight back to the two people, marked as ' +
+      'unchanged. Models a four-eyes / two-person-rule change-management requirement.',
     nodes: nodes as WorkflowSpec['nodes'],
   };
 }

@@ -284,16 +284,32 @@ describe('syncBuiltins — rolling the helper-built templates out', () => {
     }
   });
 
-  it('consensus-review and four-eyes gain the CI fix loop only in the new version', async () => {
+  it('consensus-review and four-eyes move to CI-first only in the new version', async () => {
     const { prisma, tables } = await seedFromPreviousRelease();
     await seedSweStarter(prisma);
+    const nodesOf = (row: Row) =>
+      (row.spec as Spec).nodes as Record<string, Record<string, unknown>>;
     for (const name of ['consensus-review', 'four-eyes']) {
       const [v1, v2] = versionsOf(tables, template(tables, name).id) as [Row, Row];
-      // A run pinned to v1 keeps failing on the first CI failure; new runs fix and retry.
-      expect('ciFix' in (v1.spec as Spec).nodes, name).toBe(false);
-      expect('ciFix' in (v2.spec as Spec).nodes, name).toBe(true);
+      // A run pinned to v1 keeps its graph, which ends on the first CI failure.
+      expect('ciFix' in nodesOf(v1), name).toBe(false);
+      expect(nodesOf(v1).checkCI?.onFalse, name).toBe('terminateCIFailed');
+      expect(nodesOf(v2).checkCI?.onFalse, name).toBe('incCIRetries');
       expect(template(tables, name).activeVersion, name).toBe(2);
     }
+    const [c1, c2] = versionsOf(tables, template(tables, 'consensus-review').id) as [Row, Row];
+    // consensus-review: v1 reviews then opens the PR; v2 opens the PR, runs CI, then reviews.
+    expect(nodesOf(c1).initCounters?.next).toBe('fanOutReview');
+    expect(nodesOf(c2).initCounters?.next).toBe('setAwaitingCi');
+    expect(nodesOf(c2).checkCI?.onTrue).toBe('setReviewing');
+    expect(nodesOf(c2).checkConsensus?.onTrue).toBe('done');
+    const [f1, f2] = versionsOf(tables, template(tables, 'four-eyes').id) as [Row, Row];
+    // four-eyes: v1 signs off then opens the PR; v2 opens the PR, runs CI, then signs off.
+    expect(nodesOf(f1).checkApproval?.onTrue).toBe('firstSignoff');
+    expect(nodesOf(f2).checkApproval?.onTrue).toBe('setAwaitingCi');
+    expect(nodesOf(f2).checkCI?.onTrue).toBe('setAwaitingSignoff');
+    expect(nodesOf(f2).secondSignoff?.onApprove).toBe('done');
+    expect(nodesOf(f2).firstSignoff?.onReject).toBe('askRejectionReason');
   });
 
   it('is a no-op once rolled out, and for a stored spec that differs only in key order', async () => {

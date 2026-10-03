@@ -74,6 +74,22 @@ describe('ciLoop', () => {
     expectWellFormed(nodes, 'waitForCI', ['finish']);
   });
 
+  it('retryIfUnchanged routes a no-op fix back to the attempt counter, never to the CI wait', () => {
+    const nodes = ciLoop({
+      fix: { handoff: { repush: 'repushAfterFix' }, retryIfUnchanged: true },
+      passed: 'finish',
+    });
+    expect(nodes.ciFix).toMatchObject({ next: 'checkCiFixChanged' });
+    expect(nodes.checkCiFixChanged).toMatchObject({
+      expr: 'nodes.ciFix.output.headSha == context.currentCodeResult.headSha',
+      onFalse: 'updateCodeAfterCIFix',
+      onTrue: 'incCIRetries',
+    });
+    const plain = ciLoop({ fix: { handoff: { repush: 'repushAfterFix' } }, passed: 'finish' });
+    expect('checkCiFixChanged' in plain).toBe(false);
+    expect(plain.ciFix).toMatchObject({ next: 'updateCodeAfterCIFix' });
+  });
+
   it('lets the repush step take a different id', () => {
     const nodes = ciLoop({ fix: { handoff: { repush: 'repushAfterFix' } }, passed: 'f' });
     expect(nodes.repushAfterCIFix).toBeUndefined();

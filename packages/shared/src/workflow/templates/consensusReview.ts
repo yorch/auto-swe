@@ -23,7 +23,10 @@ import {
  *
  * If either reviewer rejects, the agent fixes (the fix session pushes), CI runs again
  * with a fresh CI budget, and both reviewers run again on the new code. Up to 3
- * consensus attempts in all.
+ * consensus attempts in all. The reviewers are agents whose rejection text feeds the fix,
+ * so there is no human rejection to ask a reason of. A fix that changes nothing makes no
+ * commit and no CI event would follow, so the unchanged code goes straight back to the
+ * reviewers; the rejection was already counted, so repeated no-ops hit the same limit.
  *
  * Demonstrates: fanOut for quality aggregation (not work splitting),
  * with onBranchFail: 'continue' so a single rejection doesn't abort early.
@@ -152,10 +155,22 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
           previousCodeResult: { from: 'context.currentCodeResult' },
           rejectionSummary: { from: 'context.lastRejectionSummary' },
         },
-        next: 'updateCodeAfterFix',
+        next: 'checkConsensusFixChanged',
         step: 'executeReviewFixImplementation',
         title: 'Fix the review findings',
         type: 'step',
+      },
+      checkConsensusFixChanged: {
+        // `context.currentCodeResult` still holds the green head the reviewers rejected; it is
+        // replaced by `updateCodeAfterFix`, which only a changed fix reaches. An unchanged fix
+        // makes no commit, so no CI event would come: the reviewers see the same code again,
+        // and the rejection was already counted, so repeated no-ops hit the attempt limit.
+        expr: 'nodes.consensusFix.output.headSha == context.currentCodeResult.headSha',
+        group: 'consensus review',
+        onFalse: 'updateCodeAfterFix',
+        onTrue: 'setReviewing',
+        title: 'Did the fix change nothing?',
+        type: 'cond',
       },
       updateCodeAfterFix: {
         group: 'consensus review',
@@ -179,7 +194,11 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
     openPullRequest({ next: ciWaitEntry() }),
     // The pull request is open, so a CI fix is pushed by the fix session itself and
     // `repushAfterFix` only re-arms the CI wait for the new head. The reviewers run after.
-    ciLoop({ fix: { handoff: { repush: 'repushAfterFix' } }, passed: 'setReviewing' }),
+    // A CI fix that changed nothing is counted as a spent attempt instead of waiting.
+    ciLoop({
+      fix: { handoff: { repush: 'repushAfterFix' }, retryIfUnchanged: true },
+      passed: 'setReviewing',
+    }),
     {
       done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
     }
