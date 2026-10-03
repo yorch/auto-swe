@@ -134,9 +134,11 @@ verdicts into trends per template, model, and prompt version.
 
 | Surface | Where |
 |---|---|
-| Dashboard | `/govern/evals` — datasets, runs, suite health, score trends |
+| Dashboard | `/govern/evals` — each scorer's daily mean over a 7, 30, or 90-day UTC window; every captured result, paginated and filterable by scorer and source, linked to the run or harness run it scored; the datasets |
+| Dataset detail | `/govern/evals/datasets/[id]` — the cases and the dataset's harness runs |
+| Harness run detail | `/govern/evals/runs/[id]` — the paired verdict, overall and per tag, and that run's results |
 | Run detail | The eval panel on `/runs/[id]` |
-| REST | `/api/v1/platform/evals` (datasets, cases, runs, rubrics) |
+| REST | `/api/v1/platform/evals` (datasets, cases, runs, rubrics, `results`, and `trends` — one bounded aggregate per UTC day) |
 | CLI | `auto-swe evals` — list, show, and `run` a dataset |
 | Schedules | `/govern/workflow-defaults` — nightly regression and re-validation cadence |
 
@@ -167,6 +169,10 @@ verdicts into trends per template, model, and prompt version.
   gate rests on the frozen benchmark plus online scoring and canary instead.
 - **End-to-end paths need real infrastructure.** The unit suite covers orchestration against mocked
   Docker, Temporal, and LLM calls; the harness has not been exercised against a live stack.
+- **Suite health is not charted.** The flake-rate, stale-rate, and kappa thresholds are set at
+  `/govern/workflow-defaults` and gate runs, but the dashboard does not plot them over time.
+- **Trends are per scorer only.** The dashboard does not break a scorer's trend down by template,
+  model, or prompt version, though `EvalResult` carries the joins to do so.
 - **A judge is only as good as its rubric.** Suite health (flake rate, stale rate, judge/human
   kappa) is tracked precisely because an uncalibrated judge produces confident, wrong verdicts —
   check it before trusting a gate.

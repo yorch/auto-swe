@@ -10,18 +10,22 @@
 
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type {
-  EvalCaseDto,
-  EvalDatasetDetail,
-  EvalDatasetSummary,
-  EvalResultDto,
-  EvalRubricDto,
-  EvalRunDto,
+import {
+  EVAL_SIGNAL_SOURCES,
+  type EvalCaseDto,
+  type EvalDatasetDetail,
+  type EvalDatasetSummary,
+  type EvalResultDto,
+  type EvalRubricDto,
+  type EvalRunDto,
+  type EvalScorerTrend,
+  type EvalTrendsDto,
 } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { mapLimited } from '../lib/mapLimited.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { projectEvalResult } from './workflowProjections.js';
@@ -92,8 +96,55 @@ const ResultsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend
   evalRunId: z.string().uuid().optional(),
   runId: z.string().uuid().optional(),
   scorer: z.string().max(200).optional(),
-  source: z.enum(['GATE', 'ASSERT', 'REVIEW', 'MERGE', 'JUDGE', 'TRAJECTORY']).optional(),
+  source: z.enum(EVAL_SIGNAL_SOURCES).optional(),
 });
+
+const RunsQuery = paginationQuery({ defaultLimit: 20, maxLimit: 100 }).extend({
+  datasetId: z.string().uuid().optional(),
+});
+
+const TREND_WINDOWS = [7, 30, 90] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Per-day aggregates in flight at once — see `mapLimited`. */
+const TREND_CONCURRENCY = 3;
+const TrendsQuery = z.object({
+  source: z.enum(EVAL_SIGNAL_SOURCES).optional(),
+  window: z.coerce
+    .number()
+    .int()
+    .refine((n) => (TREND_WINDOWS as readonly number[]).includes(n), {
+      message: `window must be one of ${TREND_WINDOWS.join(', ')}`,
+    })
+    .default(30),
+});
+
+/** Start of the UTC day `ms` falls in. */
+function utcDayStart(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+function toRunDto(run: {
+  id: string;
+  datasetId: string;
+  candidateRef: string;
+  baselineRef: string;
+  status: string;
+  summary: unknown;
+  startedAt: Date;
+  endedAt: Date | null;
+}): EvalRunDto {
+  return {
+    baselineRef: run.baselineRef,
+    candidateRef: run.candidateRef,
+    datasetId: run.datasetId,
+    endedAt: run.endedAt?.toISOString() ?? null,
+    id: run.id,
+    startedAt: run.startedAt.toISOString(),
+    status: run.status,
+    summary: run.summary,
+  };
+}
 
 function toCaseDto(c: {
   id: string;
@@ -251,6 +302,91 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // ── Per-scorer daily trend ──
+  // Prisma cannot truncate to a day, so this is one bounded groupBy per UTC day
+  // (at most 90), a few at a time. Scorers are a small key space, and the
+  // window-wide figures are folded from the daily ones rather than re-scanned.
+  app.get(
+    '/evals/trends',
+    { onRequest: adminOnly, schema: { querystring: TrendsQuery } },
+    async (request) => {
+      const { source, window: windowDays } = request.query;
+      // Whole UTC days closed at the end of today, as the usage report does.
+      const until = utcDayStart(Date.now()) + DAY_MS;
+      const since = until - windowDays * DAY_MS;
+      const days = Array.from({ length: windowDays }, (_, i) => since + i * DAY_MS);
+      const perDay = await mapLimited(days, TREND_CONCURRENCY, (start) =>
+        fastify.prisma.evalResult.groupBy({
+          _avg: { value: true },
+          _count: { _all: true },
+          by: ['scorer'],
+          where: {
+            createdAt: { gte: new Date(start), lt: new Date(start + DAY_MS) },
+            ...(source ? { source } : {}),
+          },
+        })
+      );
+
+      const byScorer = new Map<
+        string,
+        { n: number; sum: number; daily: Map<number, { n: number; mean: number }> }
+      >();
+      perDay.forEach((groups, dayIndex) => {
+        for (const g of groups) {
+          const n = g._count._all;
+          const mean = g._avg.value ?? 0;
+          const acc = byScorer.get(g.scorer) ?? { daily: new Map(), n: 0, sum: 0 };
+          acc.n += n;
+          acc.sum += mean * n;
+          acc.daily.set(dayIndex, { mean, n });
+          byScorer.set(g.scorer, acc);
+        }
+      });
+      const scorers: EvalScorerTrend[] = [...byScorer.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([scorer, acc]) => ({
+          daily: days.map((start, i) => {
+            const day = acc.daily.get(i);
+            return {
+              date: new Date(start).toISOString().slice(0, 10),
+              mean: day?.mean ?? null,
+              n: day?.n ?? 0,
+            };
+          }),
+          mean: acc.sum / acc.n,
+          n: acc.n,
+          scorer,
+        }));
+      const data: EvalTrendsDto = {
+        scorers,
+        since: new Date(since).toISOString(),
+        until: new Date(until).toISOString(),
+        windowDays,
+      };
+      return { data };
+    }
+  );
+
+  // ── List eval runs (newest first) ──
+  app.get(
+    '/evals/runs',
+    { onRequest: adminOnly, schema: { querystring: RunsQuery } },
+    async (request) => {
+      const { datasetId, limit, offset } = request.query;
+      const where = datasetId ? { datasetId } : {};
+      const [rows, total] = await Promise.all([
+        fastify.prisma.evalRun.findMany({
+          orderBy: { startedAt: 'desc' },
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.evalRun.count({ where }),
+      ]);
+      return { data: rows.map(toRunDto), meta: { limit, offset, total } };
+    }
+  );
+
   // ── Eval run detail ──
   app.get(
     '/evals/runs/:id',
@@ -262,17 +398,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'EVAL_RUN_NOT_FOUND', message: 'Eval run not found' } });
       }
-      const data: EvalRunDto = {
-        baselineRef: run.baselineRef,
-        candidateRef: run.candidateRef,
-        datasetId: run.datasetId,
-        endedAt: run.endedAt?.toISOString() ?? null,
-        id: run.id,
-        startedAt: run.startedAt.toISOString(),
-        status: run.status,
-        summary: run.summary,
-      };
-      return { data };
+      return { data: toRunDto(run) };
     }
   );
 
@@ -318,17 +444,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'EVAL_START_FAILED', message: 'Could not start the eval run workflow' },
         });
       }
-      const data: EvalRunDto = {
-        baselineRef: run.baselineRef,
-        candidateRef: run.candidateRef,
-        datasetId: run.datasetId,
-        endedAt: null,
-        id: run.id,
-        startedAt: run.startedAt.toISOString(),
-        status: run.status,
-        summary: run.summary,
-      };
-      return reply.status(202).send({ data });
+      return reply.status(202).send({ data: toRunDto(run) });
     }
   );
 

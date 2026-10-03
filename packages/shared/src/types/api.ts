@@ -779,6 +779,10 @@ export type EvalScoreTypeValue = (typeof EVAL_SCORE_TYPES)[number];
 export interface EvalResultDto {
   id: string;
   runId: string | null;
+  /** The offline harness run that produced the row; null for online signals. */
+  evalRunId: string | null;
+  /** The dataset case an offline row scored; null for online signals. */
+  caseId: string | null;
   nodeId: string | null;
   agentKey: string | null;
   source: EvalSignalSourceValue;
@@ -851,6 +855,24 @@ export interface EvalRunDto {
   summary: unknown;
   startedAt: string;
   endedAt: string | null;
+}
+
+/** One scorer's daily mean over a trend window (GET /platform/evals/trends). */
+export interface EvalScorerTrend {
+  scorer: string;
+  /** Signals in the whole window. */
+  n: number;
+  /** Mean normalized score over the whole window. */
+  mean: number;
+  /** One entry per UTC day, oldest first; `mean` is null on a day with no signal. */
+  daily: Array<{ date: string; n: number; mean: number | null }>;
+}
+
+export interface EvalTrendsDto {
+  windowDays: number;
+  since: string;
+  until: string;
+  scorers: EvalScorerTrend[];
 }
 
 export interface EvalRubricDto {

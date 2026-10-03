@@ -19,12 +19,18 @@ function newMockPrisma() {
     evalResult: {
       count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
+      groupBy: vi.fn().mockResolvedValue([]),
     },
     evalRubric: {
       create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
     },
-    evalRun: { create: vi.fn(), findUnique: vi.fn() },
+    evalRun: {
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+    },
   };
 }
 
@@ -194,7 +200,9 @@ describe('evalRoutes', () => {
     prisma.evalResult.findMany.mockResolvedValue([
       {
         agentKey: null,
+        caseId: null,
         createdAt: new Date('2026-06-24T00:00:00Z'),
+        evalRunId: 'er1',
         id: 'e1',
         metadata: null,
         nodeId: 'runTests',
@@ -217,7 +225,141 @@ describe('evalRoutes', () => {
     const body = JSON.parse(res.payload);
     expect(body.meta).toEqual({ limit: 10, offset: 0, total: 1 });
     expect(body.data[0].scorer).toBe('gate:runTests');
+    expect(body.data[0]).toMatchObject({ caseId: null, evalRunId: 'er1', runId: 'r1' });
     // the source filter reaches the where clause
     expect(prisma.evalResult.findMany.mock.calls[0][0].where).toMatchObject({ source: 'GATE' });
+  });
+
+  it('filters results by every eval signal source, including policy signals', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/evals/results?source=POLICY&scorer=policy:x&offset=50',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.evalResult.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 50, where: { scorer: 'policy:x', source: 'POLICY' } })
+    );
+  });
+
+  describe('GET /evals/trends', () => {
+    it('buckets each scorer by UTC day and folds the window mean from the days', async () => {
+      vi.useFakeTimers({ now: new Date('2026-09-10T12:00:00Z'), toFake: ['Date'] });
+      try {
+        const { app, prisma } = await buildApp();
+        prisma.evalResult.groupBy.mockImplementation(
+          async ({ where }: { where: { createdAt: { gte: Date } } }) => {
+            const day = where.createdAt.gte.toISOString().slice(0, 10);
+            if (day === '2026-09-09') {
+              return [{ _avg: { value: 1 }, _count: { _all: 3 }, scorer: 'gate:runTests' }];
+            }
+            if (day === '2026-09-10') {
+              return [
+                { _avg: { value: 0 }, _count: { _all: 1 }, scorer: 'gate:runTests' },
+                { _avg: { value: 0.5 }, _count: { _all: 2 }, scorer: 'merge' },
+              ];
+            }
+            return [];
+          }
+        );
+        const res = await app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: '/api/v1/platform/evals/trends?window=7&source=GATE',
+        });
+        expect(res.statusCode).toBe(200);
+        const { data } = JSON.parse(res.payload);
+        // One bounded aggregate per day, each carrying the source filter.
+        expect(prisma.evalResult.groupBy).toHaveBeenCalledTimes(7);
+        expect(prisma.evalResult.groupBy.mock.calls[0][0].where).toMatchObject({
+          createdAt: {
+            gte: new Date('2026-09-04T00:00:00Z'),
+            lt: new Date('2026-09-05T00:00:00Z'),
+          },
+          source: 'GATE',
+        });
+        expect(data.windowDays).toBe(7);
+        expect(data.since).toBe('2026-09-04T00:00:00.000Z');
+        expect(data.until).toBe('2026-09-11T00:00:00.000Z');
+        const gate = data.scorers.find((s: { scorer: string }) => s.scorer === 'gate:runTests');
+        expect(gate.n).toBe(4);
+        expect(gate.mean).toBeCloseTo(0.75);
+        expect(gate.daily).toHaveLength(7);
+        expect(gate.daily[0]).toEqual({ date: '2026-09-04', mean: null, n: 0 });
+        expect(gate.daily[5]).toEqual({ date: '2026-09-09', mean: 1, n: 3 });
+        expect(gate.daily[6]).toEqual({ date: '2026-09-10', mean: 0, n: 1 });
+        expect(data.scorers.map((s: { scorer: string }) => s.scorer)).toEqual([
+          'gate:runTests',
+          'merge',
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('rejects a window outside 7/30/90', async () => {
+      const { app } = await buildApp();
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/trends?window=365',
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('is ADMIN-only', async () => {
+      const { app } = await buildApp('ENGINEER');
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/trends',
+      });
+      expect(res.statusCode).toBe(403);
+    });
+  });
+
+  describe('GET /evals/runs', () => {
+    it("lists a dataset's runs newest first with a total", async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalRun.findMany.mockResolvedValue([
+        {
+          baselineRef: 'main',
+          candidateRef: 'feat',
+          datasetId: '11111111-1111-4111-8111-111111111111',
+          endedAt: null,
+          id: 'run-a',
+          startedAt: new Date('2026-09-01T00:00:00Z'),
+          status: 'RUNNING',
+          summary: null,
+        },
+      ]);
+      prisma.evalRun.count.mockResolvedValue(21);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/runs?datasetId=11111111-1111-4111-8111-111111111111&offset=20',
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.meta).toEqual({ limit: 20, offset: 20, total: 21 });
+      expect(body.data[0]).toMatchObject({ endedAt: null, id: 'run-a', status: 'RUNNING' });
+      expect(prisma.evalRun.findMany).toHaveBeenCalledWith({
+        orderBy: { startedAt: 'desc' },
+        skip: 20,
+        take: 20,
+        where: { datasetId: '11111111-1111-4111-8111-111111111111' },
+      });
+    });
+
+    it('is ADMIN-only', async () => {
+      const { app } = await buildApp('ENGINEER');
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/runs',
+      });
+      expect(res.statusCode).toBe(403);
+    });
   });
 });

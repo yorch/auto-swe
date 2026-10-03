@@ -2,8 +2,12 @@
 
 import type {
   AdminTokenSummary,
+  EvalDatasetDetail,
   EvalDatasetSummary,
   EvalResultDto,
+  EvalRunDto,
+  EvalSignalSourceValue,
+  EvalTrendsDto,
 } from '@auto-swe/shared/types/api';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -377,20 +381,73 @@ export function useDeleteHumanErrorBaseline() {
   });
 }
 
-export function useEvalResults(params: { source?: string; limit?: number } = {}) {
+export interface EvalResultFilters {
+  evalRunId?: string;
+  scorer?: string;
+  source?: EvalSignalSourceValue;
+}
+
+export function useEvalResults(filters: EvalResultFilters & { limit: number; offset: number }) {
   const qs = new URLSearchParams();
-  if (params.source) {
-    qs.set('source', params.source);
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      qs.set(key, String(value));
+    }
   }
-  qs.set('limit', String(params.limit ?? 200));
   return useQuery({
+    placeholderData: keepPreviousData,
     queryFn: () =>
-      api
-        .get<{ data: EvalResultDto[]; meta: { total: number } }>(
-          `/api/v1/platform/evals/results?${qs.toString()}`
-        )
-        .then((r) => ({ data: r.data, meta: r.meta })),
-    queryKey: ['eval-results', params],
+      api.get<{ data: EvalResultDto[]; meta: { limit: number; offset: number; total: number } }>(
+        `/api/v1/platform/evals/results?${qs}`
+      ),
+    queryKey: ['eval-results', filters],
     refetchInterval: 30_000,
+  });
+}
+
+export function useEvalTrends(windowDays: number, source?: EvalSignalSourceValue) {
+  const qs = new URLSearchParams({ window: String(windowDays) });
+  if (source) {
+    qs.set('source', source);
+  }
+  return useQuery({
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      api.get<{ data: EvalTrendsDto }>(`/api/v1/platform/evals/trends?${qs}`).then((r) => r.data),
+    queryKey: ['eval-trends', windowDays, source],
+    refetchInterval: 60_000,
+  });
+}
+
+export function useEvalDataset(id: string | null) {
+  return useQuery({
+    enabled: !!id,
+    queryFn: () =>
+      api.get<{ data: EvalDatasetDetail }>(`/api/v1/platform/evals/${id}`).then((r) => r.data),
+    queryKey: ['eval-dataset', id],
+  });
+}
+
+export function useEvalRuns(datasetId: string | null, limit: number, offset: number) {
+  return useQuery({
+    enabled: !!datasetId,
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      api.get<{ data: EvalRunDto[]; meta: { limit: number; offset: number; total: number } }>(
+        `/api/v1/platform/evals/runs?datasetId=${datasetId}&limit=${limit}&offset=${offset}`
+      ),
+    queryKey: ['eval-runs', datasetId, limit, offset],
+    refetchInterval: 30_000,
+  });
+}
+
+/** A running harness run is polled until it reaches a verdict. */
+export function useEvalRun(id: string | null) {
+  return useQuery({
+    enabled: !!id,
+    queryFn: () =>
+      api.get<{ data: EvalRunDto }>(`/api/v1/platform/evals/runs/${id}`).then((r) => r.data),
+    queryKey: ['eval-run', id],
+    refetchInterval: (q) => (q.state.data?.status === 'RUNNING' ? 10_000 : false),
   });
 }
