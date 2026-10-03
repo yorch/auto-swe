@@ -115,6 +115,8 @@ export {
   listSteps,
   MCP_TOOL_KEY,
 } from './stepRegistry.js';
+// Exported only so the worker's workflow test can run the real specs: the package has no
+// export path for `templates/`, and (like DEFAULT_ENGINEERING_SPEC) both are pure data.
 export { CONSENSUS_REVIEW_SPEC } from './templates/consensusReview.js';
 export { FOUR_EYES_SPEC } from './templates/fourEyes.js';
 export type {

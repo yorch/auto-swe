@@ -1,13 +1,26 @@
 /**
- * `consensus-review` and `four-eyes` fix and retry on a CI failure like their siblings
- * (default-engineering, agent-reviewed-pr, code-and-ci). These run the REAL seeded specs
- * through the real RunnableWorkflow in Temporal's time-skipping test server, with every
- * activity replaced by a recording fake.
+ * `consensus-review` and `four-eyes` run CI, and fix a failing CI, BEFORE their human
+ * sign-offs / reviewer consensus, so the gate sees exactly the code that is on the pull
+ * request and CI is green on it. These run the REAL seeded specs through the real
+ * RunnableWorkflow in Temporal's time-skipping test server.
  *
- * What is pinned here, beyond "it retries":
- * - the fix is pushed only AFTER the review gate (both reviewers / both sign-offs) has run
- *   again on the fixed code, so an approval never covers code it did not see;
- * - three CI failures end the run FAILED (two fixes), the same limit as the siblings.
+ * The fakes keep the production split of duties instead of hiding it:
+ *
+ * - `executeImplementation`, `executeCIFixImplementation` and
+ *   `executeReviewFixImplementation` PUSH a new head (the real fix sessions run
+ *   `git push` themselves) and start a CI run for it, like a `pull_request`-triggered CI.
+ * - `createOrUpdatePullRequest` pushes nothing. The first call creates the PR row; every
+ *   later call only re-arms it (`headSha`, `ciStatus = PENDING`) and throws if it is
+ *   handed a head that was not the latest push.
+ * - A fake of the `/webhooks/ci` handler looks the PR row up BY HEAD SHA and drops a
+ *   verdict for a head the row does not have yet, or whose verdict is no longer awaited
+ *   (gateway/src/routes/webhooks.ts). A CI result for a head that was pushed but not yet
+ *   re-armed is therefore lost, exactly as in production.
+ *
+ * The race this guards: with human or review time between the fix push and the re-arm, the
+ * fixed head's verdict is dropped and the run waits out the 4 h CI timeout. Here the
+ * re-arm is the very next activity after the push, and the tests assert that nothing runs
+ * between them and that no verdict is ever dropped.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,18 +33,76 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, type TestContext
 const TASK_QUEUE = 'ci-fix-loop-workflow-test';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// ── World state, reset per test ──────────────────────────────────────────────
+
+interface PrRow {
+  ciStatus: 'PENDING' | 'PASSED' | 'FAILED';
+  headSha: string;
+}
+interface CiRun {
+  passed: boolean;
+  sha: string;
+}
+
 /** Everything the fakes saw, in order. */
 let events: string[] = [];
+let statuses: string[] = [];
 let finalized: Array<{ runId: string; status: string }> = [];
 let currentSpec: Record<string, unknown> = {};
+let pr: PrRow | null = null;
+let lastPushed = '';
+let pushes = 0;
+/** CI runs started by a push or the PR opening and not yet delivered, oldest first. */
+let started: CiRun[] = [];
+/** The outcome of each CI run, in the order the runs start; absent means it passes. */
+let ciOutcomes: boolean[] = [];
+/** The verdict for each reviewer slot, in call order; absent means approve. */
+let reviewVerdicts: boolean[] = [];
+/** Verdicts the webhook dropped, as "<sha>: <why>". */
+let dropped: string[] = [];
+
+function reset() {
+  events = [];
+  statuses = [];
+  finalized = [];
+  pr = null;
+  lastPushed = '';
+  pushes = 0;
+  started = [];
+  ciOutcomes = [];
+  reviewVerdicts = [];
+  dropped = [];
+}
+
+function push(event: string) {
+  pushes += 1;
+  lastPushed = `sha-${pushes}`;
+  events.push(`${event}:push`);
+  // A push starts CI only once the PR exists; before that nothing tracks the head.
+  if (pr) {
+    started.push({ passed: ciOutcomes.shift() ?? true, sha: lastPushed });
+  }
+  return { branch: 'auto/T-1', headSha: lastPushed };
+}
 
 const fakeActivities = {
   cancelPendingHumanSteps: async () => {},
   createHumanStep: async (input: { nodeId?: string }) => {
     events.push(`humanStep:${input.nodeId ?? '?'}`);
   },
-  createOrUpdatePullRequest: async () => {
-    events.push('pushPr');
+  // Pushes nothing: it creates the row, or re-arms it for the head the fix session pushed.
+  createOrUpdatePullRequest: async (_request: unknown, codeResult: { headSha: string }) => {
+    if (codeResult.headSha !== lastPushed) {
+      throw new Error(`re-arm for ${codeResult.headSha}, but the head is ${lastPushed}`);
+    }
+    if (pr) {
+      events.push('rearm');
+      pr = { ciStatus: 'PENDING', headSha: codeResult.headSha };
+    } else {
+      events.push('openPr');
+      pr = { ciStatus: 'PENDING', headSha: codeResult.headSha };
+      started.push({ passed: ciOutcomes.shift() ?? true, sha: codeResult.headSha });
+    }
     return { prNumber: 42, prUrl: 'https://example.test/pr/42' };
   },
   createWorkflowRun: async () => ({
@@ -39,18 +110,9 @@ const fakeActivities = {
     runId: 'run-test-1',
     spec: currentSpec,
   }),
-  executeCIFixImplementation: async () => {
-    events.push('ciFix');
-    return { branch: 'auto/T-1', headSha: 'sha-ci-fix' };
-  },
-  executeImplementation: async () => {
-    events.push('implement');
-    return { branch: 'auto/T-1', headSha: 'sha' };
-  },
-  executeReviewFixImplementation: async () => {
-    events.push('reviewFix');
-    return { branch: 'auto/T-1', headSha: 'sha-review-fix' };
-  },
+  executeCIFixImplementation: async () => push('ciFix'),
+  executeImplementation: async () => push('implement'),
+  executeReviewFixImplementation: async () => push('reviewFix'),
   fetchCILogs: async () => {
     events.push('fetchLogs');
     return 'lint failed';
@@ -61,13 +123,18 @@ const fakeActivities = {
   recordWorkflowStep: async () => {},
   resolveHumanStep: async () => {},
   runReviewNetwork: async () => {
-    events.push('review');
-    return { approved: true, rejectionSummary: '', verdicts: [] };
+    const approved = reviewVerdicts.shift() ?? true;
+    events.push(approved ? 'review' : 'review:reject');
+    return { approved, rejectionSummary: approved ? '' : 'needs work', verdicts: [] };
   },
   storeContextOverflowBatch: async () => [],
-  updateDomainState: async () => {},
+  updateDomainState: async (_workflowId: string, status: string) => {
+    statuses.push(status);
+  },
   validateContext: async () => ({ contextSnapshotId: 'cs-1', successCriteria: ['builds'] }),
 };
+
+// ── Harness ──────────────────────────────────────────────────────────────────
 
 let env: TestWorkflowEnvironment;
 let worker: Worker;
@@ -96,8 +163,7 @@ beforeEach((ctx: TestContext) => {
   if (!env || !worker) {
     ctx.skip();
   }
-  events = [];
-  finalized = [];
+  reset();
 });
 
 afterAll(async () => {
@@ -115,11 +181,13 @@ const REQUEST = {
   workRequestId: '00000000-0000-4000-8000-000000000002',
 } satisfies RepoWorkRequest;
 
+type Handle = Awaited<ReturnType<typeof start>>;
+
 function start(workflowId: string) {
   return env.client.workflow.start('RunnableWorkflow', {
     args: [{ request: REQUEST, templateId: 'tpl-1', templateVersion: 1 }],
     taskQueue: TASK_QUEUE,
-    workflowExecutionTimeout: '2 hours',
+    workflowExecutionTimeout: '4 days',
     workflowId,
   });
 }
@@ -134,100 +202,303 @@ async function until(label: string, cond: () => boolean): Promise<void> {
 
 const count = (name: string) => events.filter((e) => e === name).length;
 
-/** Park a run until `pushPr` has run `n` times, then deliver a CI result. */
-async function ciResult(
-  handle: Awaited<ReturnType<typeof start>>,
-  afterPushes: number,
-  passed: boolean
-) {
-  await until(`push #${afterPushes}`, () => count('pushPr') >= afterPushes);
-  // Let the interpreter reach the wait node; a signal that lands early is kept anyway.
-  await env.sleep('1 second');
-  await handle.signal('ciPipelineSignal', { logsUrl: 'https://ci.test/logs/1', passed });
-}
-
-function useTemplate(name: string) {
-  const spec = name === 'four-eyes' ? FOUR_EYES_SPEC : CONSENSUS_REVIEW_SPEC;
-  currentSpec = spec as unknown as Record<string, unknown>;
-}
-
-/** The gate each template puts between a code change and the pull request. */
-const GATES = {
-  'consensus-review': {
-    // Two reviewer slots per round.
-    perPass: ['review', 'review'],
-    signOff: async () => {},
-  },
-  'four-eyes': {
-    perPass: ['review', 'humanStep:firstSignoff', 'humanStep:secondSignoff'],
-    signOff: async (handle: Awaited<ReturnType<typeof start>>, pass: number) => {
-      await until(`first sign-off #${pass}`, () => count('humanStep:firstSignoff') >= pass);
-      await env.sleep('1 second');
-      await handle.signal('hitl_firstSignoff', { action: 'approve' });
-      await until(`second sign-off #${pass}`, () => count('humanStep:secondSignoff') >= pass);
-      await env.sleep('1 second');
-      await handle.signal('hitl_secondSignoff', { action: 'approve' });
-    },
-  },
-} as const;
-
-describe.each(Object.keys(GATES) as Array<keyof typeof GATES>)(
-  '%s fixes and retries on a CI failure',
-  (name) => {
-    const gate = GATES[name];
-
-    it('runs the CI fixer, re-reviews the fix, re-pushes, and succeeds once CI passes', async () => {
-      useTemplate(name);
-      const handle = await start(`wf-ci-fix-once-${name}`);
-      await gate.signOff(handle, 1);
-      await ciResult(handle, 1, false);
-      // The fixed code goes back through the gate before it is pushed again.
-      await gate.signOff(handle, 2);
-      await ciResult(handle, 2, true);
-      const result = (await handle.result()) as { prNumber?: number; status: string };
-
-      expect(result.status).toBe('SUCCESS');
-      expect(result.prNumber).toBe(42);
-      expect(events).toEqual([
-        'implement',
-        ...gate.perPass,
-        'pushPr',
-        'fetchLogs',
-        'ciFix',
-        ...gate.perPass,
-        'pushPr',
-      ]);
-      expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
-    }, 120_000);
-
-    it('fails the run after the same limit as the siblings when CI keeps failing', async () => {
-      useTemplate(name);
-      const handle = await start(`wf-ci-fix-limit-${name}`);
-      await gate.signOff(handle, 1);
-      await ciResult(handle, 1, false);
-      await gate.signOff(handle, 2);
-      await ciResult(handle, 2, false);
-      await gate.signOff(handle, 3);
-      await ciResult(handle, 3, false);
-      const result = (await handle.result()) as { prNumber?: number; status: string };
-
-      // Three CI failures: two fix attempts, then the third failure is terminal.
-      expect(result.status).toBe('FAILED');
-      expect(result.prNumber).toBe(42);
-      expect(count('ciFix')).toBe(2);
-      expect(count('pushPr')).toBe(3);
-      expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
-    }, 120_000);
-
-    it('does not fix anything when CI passes the first time', async () => {
-      useTemplate(name);
-      const handle = await start(`wf-ci-pass-${name}`);
-      await gate.signOff(handle, 1);
-      await ciResult(handle, 1, true);
-      const result = (await handle.result()) as { status: string };
-
-      expect(result.status).toBe('SUCCESS');
-      expect(events).toEqual(['implement', ...gate.perPass, 'pushPr']);
-    }, 120_000);
+/**
+ * The fake `/webhooks/ci` handler: finds the PR row by head sha, drops a verdict nobody is
+ * awaiting for that head, otherwise records it and signals the run.
+ */
+async function ciWebhook(handle: Handle, run: CiRun): Promise<'signalled' | 'dropped'> {
+  if (!pr || pr.headSha !== run.sha) {
+    dropped.push(`${run.sha}: no tracked PR for this commit`);
+    return 'dropped';
   }
-);
+  if (pr.ciStatus !== 'PENDING') {
+    dropped.push(`${run.sha}: verdict already recorded`);
+    return 'dropped';
+  }
+  pr.ciStatus = run.passed ? 'PASSED' : 'FAILED';
+  await handle.signal('ciPipelineSignal', {
+    logsUrl: 'https://ci.test/logs/1',
+    passed: run.passed,
+  });
+  return 'signalled';
+}
+
+/** Deliver the oldest started CI run once the PR row is armed for its head. */
+async function ci(handle: Handle) {
+  await until('a CI run to start', () => started.length > 0);
+  const run = started[0] as CiRun;
+  await until(`the PR row to be armed for ${run.sha}`, () => pr?.headSha === run.sha);
+  started.shift();
+  await env.sleep('1 second');
+  expect(await ciWebhook(handle, run)).toBe('signalled');
+}
+
+type Step = 'ci' | 'first:approve' | 'first:reject' | 'second:approve' | 'second:reject';
+
+/** Walk a run through the scripted CI results and sign-offs, in order. */
+async function drive(handle: Handle, steps: Step[]) {
+  const round = { first: 0, second: 0 };
+  for (const step of steps) {
+    if (step === 'ci') {
+      await ci(handle);
+      continue;
+    }
+    const [who, action] = step.split(':') as ['first' | 'second', 'approve' | 'reject'];
+    round[who] += 1;
+    const node = `${who}Signoff`;
+    await until(`${node} #${round[who]}`, () => count(`humanStep:${node}`) >= round[who]);
+    await env.sleep('1 second');
+    await handle.signal(`hitl_${node}`, { action });
+  }
+}
+
+/** The two reviewer slots run concurrently, so which one rejects is not ordered. */
+const normalised = () => events.map((e) => (e === 'review:reject' ? 'review' : e));
+
+const result = async (handle: Handle) =>
+  (await handle.result()) as { prNumber?: number; status: string };
+
+/** Nothing ran between a push and the re-arm that follows it. */
+function expectRearmFollowsPushImmediately() {
+  const opened = events.indexOf('openPr');
+  events.forEach((e, i) => {
+    if (e.endsWith(':push') && i > opened) {
+      expect(events[i + 1], `after ${e}`).toBe('rearm');
+    }
+  });
+}
+
+const FIRST = 'humanStep:firstSignoff';
+const SECOND = 'humanStep:secondSignoff';
+const GREEN_HUMANS = ['first:approve', 'second:approve'] as const;
+
+// ── four-eyes ────────────────────────────────────────────────────────────────
+
+describe('four-eyes: CI first, then two sign-offs on the green code', () => {
+  const run = (id: string) => {
+    currentSpec = FOUR_EYES_SPEC as unknown as Record<string, unknown>;
+    return start(id);
+  };
+
+  it('opens the PR, passes CI, then asks both people', async () => {
+    const h = await run('fe-green');
+    await drive(h, ['ci', ...GREEN_HUMANS]);
+    expect((await result(h)).status).toBe('SUCCESS');
+    expect(events).toEqual(['implement:push', 'review', 'openPr', FIRST, SECOND]);
+    expect(statuses).toEqual([
+      'VALIDATING_CONTEXT',
+      'IMPLEMENTING',
+      'IN_REVIEW',
+      'AWAITING_CI',
+      'IN_REVIEW',
+    ]);
+  }, 120_000);
+
+  it('fixes a failing CI before any human is asked, and loses no verdict', async () => {
+    ciOutcomes = [false];
+    const h = await run('fe-ci-once');
+    await drive(h, ['ci', 'ci', ...GREEN_HUMANS]);
+    const r = await result(h);
+    expect(r.status).toBe('SUCCESS');
+    expect(r.prNumber).toBe(42);
+    expect(events).toEqual([
+      'implement:push',
+      'review',
+      'openPr',
+      'fetchLogs',
+      'ciFix:push',
+      'rearm',
+      FIRST,
+      SECOND,
+    ]);
+    expectRearmFollowsPushImmediately();
+    expect(dropped).toEqual([]);
+    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
+  }, 120_000);
+
+  it('fails after 3 CI failures (2 fixes) without ever asking a human', async () => {
+    ciOutcomes = [false, false, false];
+    const h = await run('fe-ci-limit');
+    await drive(h, ['ci', 'ci', 'ci']);
+    const r = await result(h);
+    expect(r.status).toBe('FAILED');
+    expect(r.prNumber).toBe(42);
+    expect(count('ciFix:push')).toBe(2);
+    expect(events.some((e) => e.startsWith('humanStep'))).toBe(false);
+    expect(dropped).toEqual([]);
+    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+  }, 120_000);
+
+  it('a rejection goes fix -> CI -> BOTH sign-offs again, with new pending steps', async () => {
+    const h = await run('fe-reject-first');
+    await drive(h, ['ci', 'first:reject', 'ci', ...GREEN_HUMANS]);
+    expect((await result(h)).status).toBe('SUCCESS');
+    expect(events).toEqual([
+      'implement:push',
+      'review',
+      'openPr',
+      FIRST,
+      'reviewFix:push',
+      'rearm',
+      FIRST,
+      SECOND,
+    ]);
+    expectRearmFollowsPushImmediately();
+    expect(dropped).toEqual([]);
+  }, 120_000);
+
+  it('an approval never carries over: rejecting at the second gate asks the first person again', async () => {
+    const h = await run('fe-reject-second');
+    await drive(h, ['ci', 'first:approve', 'second:reject', 'ci', ...GREEN_HUMANS]);
+    expect((await result(h)).status).toBe('SUCCESS');
+    expect(count(FIRST)).toBe(2);
+    expect(count(SECOND)).toBe(2);
+    expect(events.indexOf('reviewFix:push')).toBeGreaterThan(events.indexOf(SECOND));
+    expect(dropped).toEqual([]);
+  }, 120_000);
+
+  it('gives a fix after a rejection a fresh CI budget', async () => {
+    // Round 1: CI fails once (1 of 3 used). Round 2, after a rejection: CI fails twice and
+    // passes the third time, which a leftover counter would not allow.
+    ciOutcomes = [false, true, false, false, true];
+    const h = await run('fe-budget-reset');
+    await drive(h, ['ci', 'ci', 'first:reject', 'ci', 'ci', 'ci', ...GREEN_HUMANS]);
+    expect((await result(h)).status).toBe('SUCCESS');
+    expect(count('ciFix:push')).toBe(3);
+    expect(dropped).toEqual([]);
+  }, 120_000);
+
+  it('fails on the third rejection, after 2 fixes', async () => {
+    const h = await run('fe-reject-limit');
+    await drive(h, ['ci', 'first:reject', 'ci', 'first:reject', 'ci', 'first:reject']);
+    const r = await result(h);
+    expect(r.status).toBe('FAILED');
+    expect(r.prNumber).toBe(42);
+    expect(count('reviewFix:push')).toBe(2);
+    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+  }, 120_000);
+
+  it('keeps agent-review attempts and sign-off rejections as separate budgets', async () => {
+    // Two agent rejections use 2 of the 3 review attempts before the PR exists; two human
+    // rejections still fit their own budget of 3.
+    reviewVerdicts = [false, false];
+    const h = await run('fe-budgets');
+    await drive(h, ['ci', 'first:reject', 'ci', 'first:reject', 'ci', ...GREEN_HUMANS]);
+    expect((await result(h)).status).toBe('SUCCESS');
+    expect(count('reviewFix:push')).toBe(4);
+  }, 120_000);
+
+  it('times out when nobody signs off', async () => {
+    const h = await run('fe-timeout');
+    await drive(h, ['ci']);
+    const r = await result(h);
+    expect(r.status).toBe('TIMED_OUT');
+    expect(r.prNumber).toBe(42);
+    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'TIMED_OUT' });
+  }, 120_000);
+});
+
+// ── consensus-review ─────────────────────────────────────────────────────────
+
+describe('consensus-review: CI first, then two reviewers on the green code', () => {
+  const run = (id: string) => {
+    currentSpec = CONSENSUS_REVIEW_SPEC as unknown as Record<string, unknown>;
+    return start(id);
+  };
+
+  it('opens the PR and passes CI before either reviewer runs', async () => {
+    const h = await run('cr-green');
+    await drive(h, ['ci']);
+    expect((await result(h)).status).toBe('SUCCESS');
+    expect(events).toEqual(['implement:push', 'openPr', 'review', 'review']);
+    // The status says what the run is doing: CI first, then reviewing.
+    expect(statuses).toEqual(['VALIDATING_CONTEXT', 'IMPLEMENTING', 'AWAITING_CI', 'IN_REVIEW']);
+  }, 120_000);
+
+  it('fixes a failing CI before the reviewers run, and loses no verdict', async () => {
+    ciOutcomes = [false];
+    const h = await run('cr-ci-once');
+    await drive(h, ['ci', 'ci']);
+    expect((await result(h)).status).toBe('SUCCESS');
+    expect(events).toEqual([
+      'implement:push',
+      'openPr',
+      'fetchLogs',
+      'ciFix:push',
+      'rearm',
+      'review',
+      'review',
+    ]);
+    expectRearmFollowsPushImmediately();
+    expect(dropped).toEqual([]);
+  }, 120_000);
+
+  it('fails after 3 CI failures (2 fixes) without running a reviewer', async () => {
+    ciOutcomes = [false, false, false];
+    const h = await run('cr-ci-limit');
+    await drive(h, ['ci', 'ci', 'ci']);
+    const r = await result(h);
+    expect(r.status).toBe('FAILED');
+    expect(r.prNumber).toBe(42);
+    expect(count('ciFix:push')).toBe(2);
+    expect(count('review')).toBe(0);
+    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+  }, 120_000);
+
+  it('a rejection goes fix -> CI -> both reviewers again', async () => {
+    reviewVerdicts = [true, false];
+    const h = await run('cr-reject');
+    await drive(h, ['ci', 'ci']);
+    expect((await result(h)).status).toBe('SUCCESS');
+    expect(normalised()).toEqual([
+      'implement:push',
+      'openPr',
+      'review',
+      'review',
+      'reviewFix:push',
+      'rearm',
+      'review',
+      'review',
+    ]);
+    expect(count('review:reject')).toBe(1);
+    expect(statuses).toEqual([
+      'VALIDATING_CONTEXT',
+      'IMPLEMENTING',
+      'AWAITING_CI',
+      'IN_REVIEW',
+      'AWAITING_CI',
+      'IN_REVIEW',
+    ]);
+    expectRearmFollowsPushImmediately();
+    expect(dropped).toEqual([]);
+  }, 120_000);
+
+  it('shares one 3-attempt consensus budget across CI rounds', async () => {
+    // Every round, one reviewer rejects: round 3 ends the run after only 2 fixes.
+    reviewVerdicts = [false, true, false, true, false, true];
+    const h = await run('cr-reject-limit');
+    await drive(h, ['ci', 'ci', 'ci']);
+    const r = await result(h);
+    expect(r.status).toBe('FAILED');
+    expect(r.prNumber).toBe(42);
+    expect(count('reviewFix:push')).toBe(2);
+    expect(count('review') + count('review:reject')).toBe(6);
+    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+  }, 120_000);
+});
+
+// ── the fake the race test relies on ─────────────────────────────────────────
+
+describe('the CI webhook fake', () => {
+  it('drops a verdict for a head the PR row has not been armed for', async () => {
+    // If a template let time pass between the fix push and the re-arm, this is what would
+    // happen to the fixed head's verdict, and the run would wait out the 4 h CI timeout.
+    pr = { ciStatus: 'PENDING', headSha: 'sha-1' };
+    const outcome = await ciWebhook({ signal: async () => {} } as unknown as Handle, {
+      passed: true,
+      sha: 'sha-2',
+    });
+    expect(outcome).toBe('dropped');
+    expect(dropped).toEqual(['sha-2: no tracked PR for this commit']);
+  });
+});

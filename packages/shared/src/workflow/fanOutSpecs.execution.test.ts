@@ -77,7 +77,9 @@ describe('CONSENSUS_REVIEW_SPEC executes', () => {
     expect(calls.some((c) => c.step === 'executeReviewFixImplementation')).toBe(false);
     // CI comes first: the reviewers only ever see code that is already green.
     const order = calls.map((c) => c.step);
-    expect(order.indexOf('createOrUpdatePullRequest')).toBeLessThan(order.indexOf('runReviewNetwork'));
+    expect(order.indexOf('createOrUpdatePullRequest')).toBeLessThan(
+      order.indexOf('runReviewNetwork')
+    );
   });
 
   it('one rejection routes through the fix loop, exporting the branch rejection summary', async () => {
