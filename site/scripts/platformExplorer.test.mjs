@@ -83,6 +83,7 @@ describe('platform explorer source extraction', () => {
     expect(data.routes.length).toBeGreaterThan(0);
   });
 
+  // Heavy: scans the checked-out repo; a loaded full-suite run overshoots the 5 s default.
   it('matches every anchored excerpt to actual code lines and every graph edge to a node', async () => {
     for (const source of data.sources) {
       const lines = (await readFile(join(REPO_ROOT, source.path), 'utf8')).split('\n');
@@ -108,8 +109,9 @@ describe('platform explorer source extraction', () => {
         true
       );
     }
-  });
+  }, 30_000);
 
+  // Heavy: runs git against the checked-out repo; a loaded full-suite run overshoots the 5 s default.
   it('detects staged, unstaged, untracked and deleted code before attesting HEAD', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'explorer-git-test-'));
     const file = join(repo, 'packages/example/a.ts');
@@ -156,7 +158,7 @@ describe('platform explorer source extraction', () => {
     } finally {
       await rm(repo, { force: true, recursive: true });
     }
-  });
+  }, 30_000);
 
   it('detects added, modified and removed code without needing Git history', () => {
     expect(changedCodePaths({ a: 'old', b: 'old' }, { a: 'new', c: 'new' })).toEqual([
@@ -230,6 +232,7 @@ app.register(exampleRoutes, { prefix: '/compat/example' });`;
     expect(routes[0].declarations.map((route) => route.method)).toEqual(['GET', 'POST']);
   });
 
+  // Heavy: rebuilds the snapshot from the checked-out repo; a loaded full-suite run overshoots the 5 s default.
   it('flags changed evidence rather than advancing the human-review attestation', async () => {
     const changed = structuredClone(analysis);
     const path = changed.sources[0].path;
@@ -243,7 +246,7 @@ app.register(exampleRoutes, { prefix: '/compat/example' });`;
     );
     expect(errors).toEqual([]);
     dom.window.close();
-  });
+  }, 30_000);
 });
 
 describe('public explorer interactions', () => {
@@ -262,6 +265,7 @@ describe('public explorer interactions', () => {
       assertExplorerPublication({ docs: landing, explorer: '<html></html>', landing })
     ).toThrow('Missing inert explorer snapshot');
   });
+  // Heavy: boots the explorer in jsdom; a loaded full-suite run overshoots the 5 s default.
   it('runs all nine views offline and produces public base-path and pinned GitHub links', () => {
     const { dom, errors } = browser();
     for (const hash of [
@@ -289,8 +293,9 @@ describe('public explorer interactions', () => {
     ).toHaveLength(0);
     expect(errors).toEqual([]);
     dom.window.close();
-  });
+  }, 30_000);
 
+  // Heavy: boots the explorer in jsdom; a loaded full-suite run overshoots the 5 s default.
   it('filters schema fields, navigates relations and walks real graph edges', () => {
     const { dom, errors } = browser();
     let document = visit(dom, '#models/WorkflowRun');
@@ -315,8 +320,9 @@ describe('public explorer interactions', () => {
     );
     expect(errors).toEqual([]);
     dom.window.close();
-  });
+  }, 30_000);
 
+  // Heavy: boots the explorer in jsdom; a loaded full-suite run overshoots the 5 s default.
   it('opens anchored evidence, searches, escapes input and toggles theme', () => {
     const { dom, errors } = browser();
     let document = visit(dom, '#features');
@@ -340,8 +346,9 @@ describe('public explorer interactions', () => {
     expect(document.documentElement.classList.contains('light')).not.toBe(before);
     expect(errors).toEqual([]);
     dom.window.close();
-  });
+  }, 30_000);
 
+  // Heavy: boots the explorer in jsdom; a loaded full-suite run overshoots the 5 s default.
   it('marks local previews and labels committed links before uncommitted edits', () => {
     const snapshot = structuredClone(data);
     snapshot.meta.dirtySourcePaths = ['packages/shared/src/prisma/schema.prisma'];
@@ -353,8 +360,9 @@ describe('public explorer interactions', () => {
     );
     expect(errors).toEqual([]);
     dom.window.close();
-  });
+  }, 30_000);
 
+  // Heavy: boots the explorer in jsdom; a loaded full-suite run overshoots the 5 s default.
   it('keeps hostile markup and template sequences inert inside snapshot text', () => {
     const hostile = `</template><script>window.injected = true</script> & \${unsafe}`;
     const snapshot = structuredClone(data);
@@ -367,5 +375,5 @@ describe('public explorer interactions', () => {
     expect(dom.window.injected).toBeUndefined();
     expect(errors).toEqual([]);
     dom.window.close();
-  });
+  }, 30_000);
 });
