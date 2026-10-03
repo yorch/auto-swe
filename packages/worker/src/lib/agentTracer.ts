@@ -121,6 +121,11 @@ export class AgentTracer {
     this.otelSpanId = spanId;
   }
 
+  /** Number of records collected so far. */
+  get size(): number {
+    return this.records.length;
+  }
+
   /** True once a span context has been attached; a more specific span set earlier wins. */
   hasSpanContext(): boolean {
     return this.otelTraceId !== undefined;
@@ -175,6 +180,19 @@ export class AgentTracer {
     });
   }
 
+  /** Summed tokens of the LLM calls recorded so far. */
+  llmTokenTotals(): { input: number; output: number } {
+    let input = 0;
+    let output = 0;
+    for (const r of this.records) {
+      if (r.type === 'llm_response') {
+        input += r.inputTokens ?? 0;
+        output += r.outputTokens ?? 0;
+      }
+    }
+    return { input, output };
+  }
+
   /** Record a non-LLM activity event (git operations, test runs, PR creation, etc.). */
   addActivityEvent(opts: {
     name: string;
@@ -197,18 +215,29 @@ export class AgentTracer {
   /**
    * `runId` is undefined for workflows that keep no WorkflowRun row. Their
    * traces are still written, keyed by `workflowId`, so their LLM spend is
-   * recorded somewhere rather than dropped.
+   * recorded somewhere rather than dropped. `teamId`/`orgId` name whose spend
+   * the rows are (see `currentSpendOwner`); absent, the rows belong to nobody.
+   *
+   * Never throws; resolves false when the write failed.
    */
   async persist(
-    ids: { runId: string | undefined; workflowId: string },
+    ids: {
+      runId: string | undefined;
+      workflowId: string;
+      temporalRunId?: string | null;
+      teamId?: string;
+      orgId?: string;
+    },
     nodeId: string,
     agentKey: string,
     attempt = 1,
     /** The spec node the activity was dispatched for; absent outside the interpreter. */
-    nodeTag?: NodeTag
-  ): Promise<void> {
+    nodeTag?: NodeTag,
+    /** Added to every record's `seq`, so batches persisted by one attempt do not collide. */
+    seqOffset = 0
+  ): Promise<boolean> {
     if (this.records.length === 0) {
-      return;
+      return true;
     }
     const node = nodeTagColumns(nodeTag);
     try {
@@ -224,19 +253,24 @@ export class AgentTracer {
           inputTokens: r.inputTokens ?? null,
           model: r.model ?? null,
           nodeId,
+          orgId: ids.orgId ?? null,
           otelSpanId: this.otelSpanId ?? null,
           otelTraceId: this.otelTraceId ?? null,
           outputJson: r.outputJson as object | undefined,
           outputTokens: r.outputTokens ?? null,
           runId: ids.runId ?? null,
-          seq: r.seq,
+          seq: r.seq + seqOffset,
+          teamId: ids.teamId ?? null,
+          temporalRunId: ids.temporalRunId ?? null,
           toolName: r.toolName ?? null,
           type: r.type,
           workflowId: ids.workflowId,
         })),
       });
+      return true;
     } catch {
       // Tracing is best-effort — never block the workflow
+      return false;
     }
   }
 }

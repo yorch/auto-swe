@@ -217,6 +217,32 @@ describe('runEvalsCommand', () => {
     expect(stdoutWrites.join('')).toContain('FAILED');
   });
 
+  it('run exits 2 and says so when the budget stopped a SUCCESS run part-way', async () => {
+    globalThis.fetch = runFetch('SUCCESS', {
+      partial: {
+        completedCases: 1,
+        error: 'Runless token budget exceeded',
+        notRunCaseIds: ['c2'],
+        reason: 'budget',
+        totalCases: 50,
+      },
+      summary: 'no significant regression',
+    });
+    const code = await runEvalsCommand(
+      ['run', 'golden', '--candidate=feat', '--against=main'],
+      ENV
+    );
+    expect(code).toBe(2);
+    expect(stdoutWrites.join('')).toContain(
+      'Partial verdict: 1 of 50 cases ran — Runless token budget exceeded'
+    );
+  });
+
+  it('evalRunExitCode treats a partial verdict as no pass, and a partial regression as one', () => {
+    expect(evalRunExitCode('SUCCESS', true)).toBe(2);
+    expect(evalRunExitCode('REGRESSION', true)).toBe(1);
+  });
+
   it('evalRunExitCode treats every status but SUCCESS as a failed gate', () => {
     expect(evalRunExitCode('SUCCESS')).toBe(0);
     expect(evalRunExitCode('REGRESSION')).toBe(1);

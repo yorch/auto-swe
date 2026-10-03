@@ -5,7 +5,7 @@ vi.mock('@auto-swe/shared/db', () => {
     agentTrace: { aggregate: vi.fn() },
     channelThreadSession: { deleteMany: vi.fn(), upsert: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
-    workflowRun: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+    workflowRun: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     workflowTemplate: { findFirst: vi.fn() },
   };
   return { prisma: prismaMock };
@@ -24,6 +24,9 @@ const { FakePrismaError } = vi.hoisted(() => {
   }
   return { FakePrismaError };
 });
+const { recordRunFinalized } = vi.hoisted(() => ({ recordRunFinalized: vi.fn() }));
+vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
+
 vi.mock('@auto-swe/shared', () => ({
   Prisma: { PrismaClientKnownRequestError: FakePrismaError },
 }));
@@ -143,6 +146,11 @@ describe('startChannelRun', () => {
 });
 
 describe('finalizeChannelRun', () => {
+  beforeEach(() => {
+    p.workflowRun.updateMany.mockResolvedValue({ count: 1 });
+    recordRunFinalized.mockClear();
+  });
+
   it('sets status + endedAt and denormalizes cost/tokens summed from the run traces', async () => {
     p.workflowRun.findUnique.mockResolvedValue({ id: 'run-1' });
     p.agentTrace.aggregate.mockResolvedValue({
@@ -154,9 +162,9 @@ describe('finalizeChannelRun', () => {
     expect(p.agentTrace.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({ where: { runId: 'run-1' } })
     );
-    expect(p.workflowRun.update).toHaveBeenCalledTimes(1);
-    const call = p.workflowRun.update.mock.calls[0][0];
-    expect(call.where).toEqual({ id: 'run-1' });
+    expect(p.workflowRun.updateMany).toHaveBeenCalledTimes(1);
+    const call = p.workflowRun.updateMany.mock.calls[0][0];
+    expect(call.where).toEqual({ endedAt: null, id: 'run-1', status: { not: 'CANCELLED' } });
     expect(call.data.status).toBe('SUCCESS');
     expect(call.data.costUsdAccrued).toBe(0.0123);
     expect(call.data.tokensInputTotal).toBe(4200n);
@@ -172,11 +180,60 @@ describe('finalizeChannelRun', () => {
 
     await finalizeChannelRun({ status: 'FAILED', workflowId: 'w' });
 
-    const call = p.workflowRun.update.mock.calls[0][0];
+    const call = p.workflowRun.updateMany.mock.calls[0][0];
     expect(call.data.status).toBe('FAILED');
     expect(call.data.costUsdAccrued).toBe(0);
     expect(call.data.tokensInputTotal).toBe(0n);
     expect(call.data.tokensOutputTotal).toBe(0n);
+  });
+
+  it('counts the run as finalized once, by the write that ended it', async () => {
+    p.workflowRun.findUnique.mockResolvedValue({ id: 'run-3' });
+    p.agentTrace.aggregate.mockResolvedValue({ _sum: {} });
+
+    await finalizeChannelRun({ status: 'SUCCESS', workflowId: 'w' });
+
+    expect(recordRunFinalized).toHaveBeenCalledExactlyOnceWith('SUCCESS', 'channel');
+    expect(p.workflowRun.update).not.toHaveBeenCalled();
+  });
+
+  it('ends a dashboard-cancelled run as CANCELLED without counting it again', async () => {
+    // The cancel route sets CANCELLED and leaves endedAt to this write.
+    p.workflowRun.findUnique.mockResolvedValue({ id: 'run-5' });
+    p.agentTrace.aggregate.mockResolvedValue({ _sum: { costUsd: 0.25 } });
+    p.workflowRun.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    await finalizeChannelRun({ status: 'SUCCESS', workflowId: 'w' });
+
+    const call = p.workflowRun.updateMany.mock.calls.at(-1)?.[0];
+    expect(call.where).toEqual({ endedAt: null, id: 'run-5', status: 'CANCELLED' });
+    expect(call.data.status).toBe('CANCELLED');
+    expect(call.data.costUsdAccrued).toBe(0.25);
+    expect(call.data.endedAt).toBeInstanceOf(Date);
+    expect(recordRunFinalized).not.toHaveBeenCalled();
+    expect(p.workflowRun.update).not.toHaveBeenCalled();
+  });
+
+  it('re-writes the totals but does not count again when the run had already ended', async () => {
+    // A retried attempt, or a run the dashboard closed itself.
+    p.workflowRun.findUnique.mockResolvedValue({ id: 'run-4' });
+    p.agentTrace.aggregate.mockResolvedValue({ _sum: { costUsd: 0.5 } });
+    p.workflowRun.updateMany.mockResolvedValue({ count: 0 });
+
+    await finalizeChannelRun({ status: 'FAILED', workflowId: 'w' });
+
+    expect(recordRunFinalized).not.toHaveBeenCalled();
+    const call = p.workflowRun.update.mock.calls.at(-1)?.[0];
+    expect(call.where).toEqual({ id: 'run-4' });
+    // Only the usage: a dashboard-cancelled run must not flip to this attempt's
+    // FAILED, nor have its end time moved.
+    expect(call.data).toEqual({
+      costUsdAccrued: 0.5,
+      tokensInputTotal: 0n,
+      tokensOutputTotal: 0n,
+    });
   });
 
   it('is a no-op when the run row is missing', async () => {
@@ -186,6 +243,7 @@ describe('finalizeChannelRun', () => {
 
     expect(p.agentTrace.aggregate).not.toHaveBeenCalled();
     expect(p.workflowRun.update).not.toHaveBeenCalled();
+    expect(p.workflowRun.updateMany).not.toHaveBeenCalled();
   });
 });
 

@@ -19,6 +19,7 @@ import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { loadLiveAgentRunSlots } from '../lib/agentRunSlots.js';
 import { AgentTracer, redactString } from '../lib/agentTracer.js';
+import { boundToolKeys } from '../lib/boundToolKeys.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { type AgentTools, resolveAgentSpec } from '../lib/config/agentSpec.js';
@@ -235,12 +236,14 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     // MCP per the agent's own configuration (a known exfiltration channel next
     // to a workspace; documented in docs/agent-runs.md).
     const mcpTarget = await resolveAgentMcpUrl(key, agentCtx);
+    let mcpTools: AgentTools | undefined;
     if (mcpTarget) {
       const loaded = await loadMcpTools(mcpTarget.url, tracer, {
         callTimeoutMs: mcpTarget.callTimeoutMs,
         listTimeoutMs: mcpTarget.listTimeoutMs,
       });
       closeMcp = loaded.close;
+      mcpTools = loaded.tools as AgentTools;
       spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;
     }
 
@@ -251,7 +254,11 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       ctx: settingsCtx,
       maxSteps: effective.maxSteps,
       perStepAccounting: true,
+      // The workspace and MCP tools record their own calls on this tracer; any
+      // other tool's calls are recorded from the loop's steps.
+      selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools),
       spanName: 'llm.agent_run',
+      tracer,
     });
     const text = redactString(result.text ?? '').slice(0, AGENT_RUN_MAX_TEXT_CHARS);
     const base: Omit<

@@ -367,6 +367,14 @@ describe('bounds', () => {
     expect(opts.perStepAccounting).toBe(true);
     expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
   });
+
+  it('names the workspace tools it hands the loop as self-recording, so they are not recorded twice', async () => {
+    await runAgentTask({ request: request() });
+    const spec = m.runAgent.mock.calls[0]?.[0] as { tools: Record<string, unknown> };
+    const opts = m.runAgent.mock.calls[0]?.[2] as { selfRecordingTools: Set<string> };
+    expect([...opts.selfRecordingTools].sort()).toEqual(Object.keys(spec.tools).sort());
+    expect(opts.selfRecordingTools.size).toBeGreaterThan(0);
+  });
 });
 
 describe('tool grants and agent scope', () => {

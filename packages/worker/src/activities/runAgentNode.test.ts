@@ -26,6 +26,7 @@ vi.mock('../lib/activityContext.js', () => ({
 }));
 
 import { loadMcpTools } from '../agents/mcpTools.js';
+import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
@@ -50,7 +51,9 @@ describe('runAgentNode', () => {
     );
     expect(mockedRunAgent).toHaveBeenCalledWith({ agentKey: 'reviewer' }, 'check the diff', {
       ctx: { teamId: 'team-1' },
+      selfRecordingTools: new Set(),
       spanName: 'llm.agent_node',
+      tracer: expect.any(AgentTracer),
     });
     expect(result).toEqual({ object: undefined, text: 'verdict' });
   });
@@ -67,7 +70,9 @@ describe('runAgentNode', () => {
     expect(mockedResolveSpec).toHaveBeenCalledWith(expect.anything(), scope);
     expect(mockedRunAgent).toHaveBeenCalledWith(expect.anything(), 'go', {
       ctx: scope,
+      selfRecordingTools: new Set(),
       spanName: 'llm.agent_node',
+      tracer: expect.any(AgentTracer),
     });
   });
 
@@ -87,7 +92,9 @@ describe('runAgentNode', () => {
     await runAgentNode({ agentRef: 'reviewer', inputs: { task: 'add a health endpoint' } });
     expect(mockedRunAgent).toHaveBeenCalledWith({ agentKey: 'reviewer' }, 'add a health endpoint', {
       ctx: { teamId: 'team-1' },
+      selfRecordingTools: new Set(),
       spanName: 'llm.agent_node',
+      tracer: expect.any(AgentTracer),
     });
   });
 
@@ -96,7 +103,12 @@ describe('runAgentNode', () => {
     expect(mockedRunAgent).toHaveBeenCalledWith(
       { agentKey: 'reviewer' },
       JSON.stringify({ bar: 2, foo: 'a' }),
-      { ctx: { teamId: 'team-1' }, spanName: 'llm.agent_node' }
+      {
+        ctx: { teamId: 'team-1' },
+        selfRecordingTools: new Set(),
+        spanName: 'llm.agent_node',
+        tracer: expect.any(AgentTracer),
+      }
     );
   });
 
@@ -124,13 +136,25 @@ describe('runAgentNode', () => {
       expect.any(AgentTracer),
       { callTimeoutMs: undefined, listTimeoutMs: undefined }
     );
-    // Spec/built-in tools win over MCP tools on key collision.
+    // Spec/built-in tools win over MCP tools on key collision. Only the MCP
+    // tool records itself, so only it is skipped when the loop's steps are read.
     expect(mockedRunAgent).toHaveBeenCalledWith(
       expect.objectContaining({ tools: { existing: 't', mcp_x: 'mt' } }),
       'hi',
-      { ctx: { teamId: 'team-1' }, spanName: 'llm.agent_node' }
+      {
+        ctx: { teamId: 'team-1' },
+        selfRecordingTools: new Set(['mcp_x']),
+        spanName: 'llm.agent_node',
+        tracer: expect.any(AgentTracer),
+      }
     );
     expect(close).toHaveBeenCalledTimes(1);
+    // One tracer for the MCP rows and the loop's rows, persisted once, so their
+    // seq values form one sequence instead of two that both start at 0.
+    const mcpTracer = mockedLoadMcpTools.mock.calls[0]?.[1];
+    expect(mockedRunAgent.mock.calls[0]?.[2]?.tracer).toBe(mcpTracer);
+    expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledWith(mcpTracer, 'reviewer');
   });
 
   it('threads the connection timeout overrides into loadMcpTools', async () => {
@@ -169,7 +193,12 @@ describe('runAgentNode', () => {
     expect(mockedRunAgent).toHaveBeenCalledWith(
       { agentKey: 'reviewer' },
       'implement the change\n\n[Steering update from the channel — incorporate this]:\n- use the v2 endpoint\n- keep it backwards compatible',
-      { ctx: { teamId: 'team-1' }, spanName: 'llm.agent_node' }
+      {
+        ctx: { teamId: 'team-1' },
+        selfRecordingTools: new Set(),
+        spanName: 'llm.agent_node',
+        tracer: expect.any(AgentTracer),
+      }
     );
   });
 
@@ -177,7 +206,9 @@ describe('runAgentNode', () => {
     await runAgentNode({ agentRef: 'reviewer', steering: [], userMessage: 'hi' });
     expect(mockedRunAgent).toHaveBeenCalledWith({ agentKey: 'reviewer' }, 'hi', {
       ctx: { teamId: 'team-1' },
+      selfRecordingTools: new Set(),
       spanName: 'llm.agent_node',
+      tracer: expect.any(AgentTracer),
     });
   });
 });

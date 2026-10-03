@@ -19,6 +19,7 @@
 import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { ApplicationFailure } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { selectImplementerRuntime } from '../agents/implementerRuntimeSelect.js';
@@ -32,7 +33,10 @@ import type { ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
+import { recordRunFinalized } from '../lib/metrics.js';
 import { type LanguageModel, resolveModel } from '../lib/models.js';
+import { withRunlessCapScale } from '../lib/runlessBudget.js';
+import { ownerOfDataset, withSpendOwner } from '../lib/spendOwner.js';
 import { createWorkspace, type Workspace } from './workspace.js';
 
 /**
@@ -100,12 +104,16 @@ async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
 }
 
 async function defaultFinalize(evalRunId: string, status: string, summary: unknown): Promise<void> {
-  await prisma.evalRun
-    .update({
+  // `endedAt: null`: a run is finalized once, so the verdict is counted once.
+  const { count } = await prisma.evalRun
+    .updateMany({
       data: { endedAt: new Date(), status, summary: summary as object },
-      where: { id: evalRunId },
+      where: { endedAt: null, id: evalRunId },
     })
-    .catch(() => undefined);
+    .catch(() => ({ count: 0 }));
+  if (count > 0) {
+    recordRunFinalized(status, 'eval');
+  }
 }
 
 /**
@@ -138,11 +146,10 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
 
   // Every implementer run in the harness is traced like any other (tool calls,
   // responses, test runs) and goes through `assertBudgetAvailable` /
-  // `recordLlmUsage`. Those key on the workflow's `ActiveWorkflow` ledger row,
-  // and an eval workflow has none — so both are no-ops here: eval spend is
-  // priced onto the trace rows but is neither debited to a ledger nor capped by
-  // one. The benchmark's size (cases × arms × `maxEvalIterations`) is the only
-  // bound on what a run can spend.
+  // `recordLlmUsage`. An eval workflow has no `ActiveWorkflow` ledger row and no
+  // run, so both hold it to the runless cap (`workflow.runlessMax*Tokens`, scaled
+  // by the dataset's case count in `runEvalHarness`), summed over the whole eval
+  // execution from its trace rows.
   const tracer = new AgentTracer();
   let workspace: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;
@@ -253,42 +260,92 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
 }
 
 /**
+ * Set on a run's summary when the runless budget stopped it before every case
+ * ran: the verdict covers only the `completedCases` that did.
+ */
+export interface PartialRunSummary {
+  reason: 'budget';
+  /** The `BUDGET_EXCEEDED` message that stopped the run. */
+  error: string;
+  completedCases: number;
+  totalCases: number;
+  /** Cases with no paired outcome — the one the budget stopped, and every one after it. */
+  notRunCaseIds: string[];
+}
+
+const isBudgetExceeded = (err: unknown) =>
+  err instanceof ApplicationFailure && err.type === 'BUDGET_EXCEEDED';
+
+/**
  * Run the harness. Persists per-case rows + the run verdict; returns the
  * RegressionVerdict for the caller (CLI exit code / nightly gate).
+ *
+ * The whole execution shares one runless cap, scaled by the case count. When it
+ * runs out part-way, the cases already paired still carry a verdict: the run
+ * finishes over them with `summary.partial` set, rather than failing and
+ * discarding paid-for work. Once the cap is spent no later case could run, so
+ * the harness stops there. A budget stop before any case completed, and any
+ * other error, still fails the run.
  */
 export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
   const record = deps.record ?? recordEvalResult;
   const finalize = deps.finalize ?? defaultFinalize;
   const cases = await deps.loadCases(input.datasetId);
 
-  const pairs: PairedOutcome[] = [];
-  for (const c of cases) {
-    const [baseline, candidate] = await Promise.all([
-      deps.runCase(c, input.baselineRef),
-      deps.runCase(c, input.candidateRef),
-    ]);
-    pairs.push({ baseline, candidate, caseId: c.id, tags: c.tags });
+  return withRunlessCapScale(cases.length, async () => {
+    const pairs: PairedOutcome[] = [];
+    let partial: PartialRunSummary | undefined;
+    for (const [index, c] of cases.entries()) {
+      // Settled, not `all`: an arm that fails must not leave the other running
+      // (and spending) unobserved.
+      const [baselineArm, candidateArm] = await Promise.allSettled([
+        deps.runCase(c, input.baselineRef),
+        deps.runCase(c, input.candidateRef),
+      ]);
+      if (baselineArm.status === 'rejected' || candidateArm.status === 'rejected') {
+        const reasons = [baselineArm, candidateArm].flatMap((a) =>
+          a.status === 'rejected' ? [a.reason] : []
+        );
+        // An infrastructure error outranks a budget stop: it is not a budget fact.
+        const failure = reasons.find((r) => !isBudgetExceeded(r)) ?? reasons[0];
+        if (!isBudgetExceeded(failure) || pairs.length === 0) {
+          throw failure;
+        }
+        partial = {
+          completedCases: pairs.length,
+          error: failure instanceof Error ? failure.message : String(failure),
+          notRunCaseIds: cases.slice(index).map((r) => r.id),
+          reason: 'budget',
+          totalCases: cases.length,
+        };
+        break;
+      }
+      const baseline = baselineArm.value;
+      const candidate = candidateArm.value;
+      pairs.push({ baseline, candidate, caseId: c.id, tags: c.tags });
 
-    // Record the candidate's floor outcome as the gate signal for this run.
-    await record({
-      caseId: c.id,
-      evalRunId: input.evalRunId,
-      metadata: { tags: c.tags },
-      passed: candidate === 1,
-      scorer: 'gate:runTests',
-      scoreType: 'BOOLEAN',
-      source: 'GATE',
-      value: candidate,
+      // Record the candidate's floor outcome as the gate signal for this run.
+      await record({
+        caseId: c.id,
+        evalRunId: input.evalRunId,
+        metadata: { tags: c.tags },
+        passed: candidate === 1,
+        scorer: 'gate:runTests',
+        scoreType: 'BOOLEAN',
+        source: 'GATE',
+        value: candidate,
+      });
+    }
+
+    const verdict = regressionVerdict(pairs);
+    await finalize(input.evalRunId, verdict.regression ? 'REGRESSION' : 'SUCCESS', {
+      byTag: verdict.byTag,
+      overall: verdict.overall,
+      summary: verdict.summary,
+      ...(partial ? { partial } : {}),
     });
-  }
-
-  const verdict = regressionVerdict(pairs);
-  await finalize(input.evalRunId, verdict.regression ? 'REGRESSION' : 'SUCCESS', {
-    byTag: verdict.byTag,
-    overall: verdict.overall,
-    summary: verdict.summary,
+    return verdict;
   });
-  return verdict;
 }
 
 export const _defaults = { defaultFinalize, defaultLoadCases };
@@ -300,10 +357,13 @@ export const _defaults = { defaultFinalize, defaultLoadCases };
  */
 export async function runEvalHarnessActivity(input: HarnessInput): Promise<void> {
   try {
-    await runEvalHarness(input, {
-      loadCases: defaultLoadCases,
-      runCase: runCaseDefault,
-    });
+    // No run row: the spend is the dataset's owner's.
+    await withSpendOwner(ownerOfDataset(input.datasetId), () =>
+      runEvalHarness(input, {
+        loadCases: defaultLoadCases,
+        runCase: runCaseDefault,
+      })
+    );
   } catch (err) {
     // Mark the run FAILED (not stuck RUNNING / not a false SUCCESS) and re-throw
     // so Temporal records the failure.

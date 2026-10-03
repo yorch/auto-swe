@@ -38,10 +38,13 @@ describe('worker metrics', () => {
   it('builds no instrument at import, so a provider registered later still receives data', async () => {
     // The module was imported above, before beforeEach registered a provider —
     // the order ESM gives the worker. Instruments are built on first use.
-    recordRunFinalized('SUCCESS');
+    recordRunFinalized('SUCCESS', 'worker');
 
     const points = (await collected()).get('workflow.runs.finalized')?.dataPoints ?? [];
-    expect(points.find((d) => d.attributes.status === 'SUCCESS')?.value).toBe(1);
+    expect(
+      points.find((d) => d.attributes.status === 'SUCCESS' && d.attributes.source === 'worker')
+        ?.value
+    ).toBe(1);
   });
 
   it('exports once at boot so the seeded zeros precede the first real event', async () => {
@@ -61,15 +64,21 @@ describe('worker metrics', () => {
     const m = await collected();
     expect(
       (m.get('workflow.runs.finalized')?.dataPoints ?? []).map((d) => [
+        d.attributes.source,
         d.attributes.status,
         d.value,
       ])
     ).toEqual([
-      ['SUCCESS', 0],
-      ['FAILED', 0],
-      ['TIMED_OUT', 0],
-      ['SKIPPED', 0],
-      ['CANCELLED', 0],
+      ['channel', 'SUCCESS', 0],
+      ['channel', 'FAILED', 0],
+      ['eval', 'SUCCESS', 0],
+      ['eval', 'REGRESSION', 0],
+      ['eval', 'FAILED', 0],
+      ['worker', 'SUCCESS', 0],
+      ['worker', 'FAILED', 0],
+      ['worker', 'TIMED_OUT', 0],
+      ['worker', 'SKIPPED', 0],
+      ['worker', 'CANCELLED', 0],
     ]);
     expect(
       (m.get('workflow.budget_exceeded')?.dataPoints ?? []).map((d) => d.attributes.tier)

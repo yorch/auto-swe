@@ -59,8 +59,16 @@ vi.mock('@auto-swe/shared/db', async () => {
 // context instead of trusting a caller-supplied string.
 vi.mock('./activityContext.js', () => ({
   currentActivityType: () => 'commitToMemory',
+  currentTemporalRunId: () => 'temporal-run-1',
   currentWorkflowId: () => 'wf-temporal-1',
 }));
+
+// The runless cap has its own tests; here only its wiring is checked.
+const runless = vi.hoisted(() => ({
+  assertRunlessBudgetAvailable: vi.fn(async () => {}),
+  recordRunlessUsage: vi.fn(async () => {}),
+}));
+vi.mock('./runlessBudget.js', () => runless);
 
 // The unregistered-agent check only judges activities the boot gate walked, so
 // it needs the gate to have run. `gatedStepNames()` returns null in a bare
@@ -364,6 +372,113 @@ describe('recordLlmUsage', () => {
     );
     expect(row.tokensInputUsed).toBe(100);
     expect(row.tokensOutputUsed).toBe(50);
+  });
+
+  describe('without a ledger row', () => {
+    beforeEach(() => {
+      (prisma.activeWorkflow.update as unknown as Mock).mockRejectedValue(
+        Object.assign(new Error('none'), { code: 'P2025' })
+      );
+    });
+
+    it('debits the call to the runless cap with its attribution', async () => {
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { inputTokens: 10, outputTokens: 5 },
+        'llm.author'
+      );
+      expect(runless.recordRunlessUsage).toHaveBeenCalledWith(
+        'wf-temporal-1',
+        'temporal-run-1',
+        priced,
+        'llm.author'
+      );
+    });
+
+    it('propagates the runless BUDGET_EXCEEDED', async () => {
+      runless.recordRunlessUsage.mockRejectedValueOnce(
+        ApplicationFailure.nonRetryable('over', 'BUDGET_EXCEEDED')
+      );
+      await expect(
+        recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 10, outputTokens: 5 })
+      ).rejects.toMatchObject({ type: 'BUDGET_EXCEEDED' });
+    });
+
+    it('gates the next call on the runless cap', async () => {
+      (prisma.activeWorkflow.findFirst as unknown as Mock).mockResolvedValue(null);
+      await assertBudgetAvailable('agent.workflowAuthor');
+      expect(runless.assertRunlessBudgetAvailable).toHaveBeenCalledWith(
+        'wf-temporal-1',
+        'temporal-run-1',
+        'agent.workflowAuthor'
+      );
+    });
+  });
+
+  describe('prompt-cache pricing', () => {
+    // opus-4-8 is $5 / $25 per MTok; Anthropic reads cost 0.1x input, writes 1.25x.
+    const opus = 'anthropic/claude-opus-4-8';
+
+    it('prices cache reads and writes (Mastra usage shape) at the cache rates', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        {
+          cacheCreationInputTokens: 200_000,
+          cachedInputTokens: 600_000,
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+        },
+        'llm.usage',
+        opus
+      );
+      // 200k uncached × $5 + 600k × $0.5 + 200k × $6.25 = $1 + $0.3 + $1.25
+      expect(priced.costUsd).toBeCloseTo(2.55, 6);
+      // The budget still meters every input token.
+      expect(priced.inputTokens).toBe(1_000_000);
+    });
+
+    it('reads the AI SDK usage shape too', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        {
+          inputTokenDetails: { cacheReadTokens: 1_000_000, cacheWriteTokens: undefined },
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+        },
+        'llm.usage',
+        opus
+      );
+      expect(priced.costUsd).toBeCloseTo(0.5, 6);
+    });
+
+    it('prices cached input at the full input rate when no discount is published', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { cachedInputTokens: 1_000_000, inputTokens: 1_000_000, outputTokens: 0 },
+        'llm.usage',
+        'google/gemini-2.5-pro'
+      );
+      expect(priced.costUsd).toBeCloseTo(1.25, 6);
+    });
+
+    it('never prices below plain input when cache counts exceed the input total', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { cacheCreationInputTokens: 5_000_000, inputTokens: 1_000_000, outputTokens: 0 },
+        'llm.usage',
+        opus
+      );
+      expect(priced.costUsd).toBeCloseTo(6.25, 6);
+    });
   });
 
   describe('with a bound model spec', () => {

@@ -1,7 +1,9 @@
 import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { mapLimited } from '../lib/mapLimited.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth } from '../plugins/auth.js';
 
@@ -62,6 +64,12 @@ function classifyEvent(trace: {
   return 'CODE_SECURITY';
 }
 
+/**
+ * The gateway's pg pool holds 10 connections; the per-type counts run this many
+ * at a time so the summary never holds most of it against auth traffic.
+ */
+const COUNT_CONCURRENCY = 3;
+
 const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend({
   runId: z.string().uuid().optional(),
   type: z
@@ -98,24 +106,32 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
         ...(runId ? { runId } : {}),
       };
 
-      const [rows, total] = await Promise.all([
-        fastify.prisma.agentTrace.findMany({
-          include: {
-            run: {
-              select: {
-                startedAt: true,
-                workflowId: true,
-                workRequest: { select: { externalTicketId: true, id: true } },
+      // ADMIN-only feed across every tenant.
+      const [rows, total] = await runUnscoped(
+        'admin security feed spans every tenant',
+        ['AgentTrace'],
+        () =>
+          Promise.all([
+            fastify.prisma.agentTrace.findMany({
+              include: {
+                run: {
+                  select: {
+                    startedAt: true,
+                    workflowId: true,
+                    workRequest: { select: { externalTicketId: true, id: true } },
+                  },
+                },
               },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-          skip: offset,
-          take: limit,
-          where,
-        }),
-        fastify.prisma.agentTrace.count({ where }),
-      ]);
+              // `id` breaks ties so offset pages neither repeat nor skip rows
+              // written in one batch with the same `createdAt`.
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              skip: offset,
+              take: limit,
+              where,
+            }),
+            fastify.prisma.agentTrace.count({ where }),
+          ])
+      );
 
       const events = rows.map((t) => ({
         createdAt: t.createdAt,
@@ -137,6 +153,28 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
       }));
 
       return { data: events, meta: { limit, offset, total } };
+    }
+  );
+
+  // Per-type totals across every event, not just the page on screen. Each type
+  // is its own predicate, so this is one count per type; it is a separate route
+  // so paging through the list does not re-run them.
+  app.get(
+    '/security-events/summary',
+    { onRequest: requireAuth({ requiredRole: 'ADMIN' }) },
+    async () => {
+      const types = Object.keys(TYPE_PREDICATES) as SecurityEventType[];
+      // ADMIN-only totals across every tenant, like the feed above.
+      const totals = await mapLimited(types, COUNT_CONCURRENCY, (type) =>
+        runUnscoped('admin security summary spans every tenant', ['AgentTrace'], () =>
+          fastify.prisma.agentTrace.count({ where: TYPE_PREDICATES[type] })
+        )
+      );
+      const counts = Object.fromEntries(types.map((t, i) => [t, totals[i]])) as Record<
+        SecurityEventType,
+        number
+      >;
+      return { data: counts };
     }
   );
 };

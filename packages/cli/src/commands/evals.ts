@@ -18,6 +18,7 @@ const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regressio
   evals run <dataset-slug> --candidate=<ref> --against=<ref>
                                       Start the nightly regression gate; exits 0 on SUCCESS,
                                       1 on a regression, 2 when the run fails without a verdict
+                                      or the budget stopped it before every case ran
 `;
 
 export async function runEvalsCommand(args: string[], env: CliEnv): Promise<number> {
@@ -111,9 +112,15 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
       `/api/v1/platform/evals/runs/${started.id}`
     );
     if (run.status !== 'RUNNING') {
-      const summary = (run.summary ?? {}) as { summary?: string };
+      const summary = (run.summary ?? {}) as EvalRunSummary;
       process.stdout.write(`${summary.summary ?? run.status}\n`);
-      return evalRunExitCode(run.status);
+      if (summary.partial) {
+        const { completedCases, error, totalCases } = summary.partial;
+        process.stdout.write(
+          `Partial verdict: ${completedCases} of ${totalCases} cases ran — ${error ?? 'stopped early'}\n`
+        );
+      }
+      return evalRunExitCode(run.status, summary.partial != null);
     }
     if (Date.now() > deadline) {
       process.stderr.write('Timed out waiting for the eval run\n');
@@ -123,14 +130,23 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
   }
 }
 
+/** The part of `EvalRun.summary` the gate reads. */
+interface EvalRunSummary {
+  summary?: string;
+  /** Set when the runless budget stopped the run before every case ran. */
+  partial?: { completedCases: number; totalCases: number; error?: string };
+}
+
 /**
- * Only SUCCESS passes the gate. REGRESSION is the documented 1; any other
+ * Only a complete SUCCESS passes the gate. REGRESSION is the documented 1 —
+ * also when partial, since the cases that ran already regressed. Any other
  * terminal status (FAILED — the harness crashed or was cancelled) means no
- * verdict was reached, which a CI gate must not read as a pass, so it is 2.
+ * verdict was reached, and a partial SUCCESS covers only the cases the budget
+ * reached; a CI gate must read neither as a pass, so both are 2.
  */
-export function evalRunExitCode(status: string): number {
+export function evalRunExitCode(status: string, partial = false): number {
   if (status === 'SUCCESS') {
-    return 0;
+    return partial ? 2 : 0;
   }
   if (status === 'REGRESSION') {
     return 1;

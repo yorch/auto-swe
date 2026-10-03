@@ -75,6 +75,8 @@ export function projectRunSummary(r: RunWithWorkRequest, viewerId?: string) {
 export function projectEvalResult(r: {
   id: string;
   runId: string | null;
+  evalRunId: string | null;
+  caseId: string | null;
   nodeId: string | null;
   agentKey: string | null;
   source: EvalResultDto['source'];
@@ -88,7 +90,9 @@ export function projectEvalResult(r: {
 }): EvalResultDto {
   return {
     agentKey: r.agentKey,
+    caseId: r.caseId,
     createdAt: r.createdAt.toISOString(),
+    evalRunId: r.evalRunId,
     id: r.id,
     metadata: r.metadata,
     nodeId: r.nodeId,

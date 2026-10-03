@@ -26,6 +26,7 @@ const { ledger } = vi.hoisted(() => ({
     recorded: [] as number[],
     specs: [] as (string | undefined)[],
     stopAfterBudgetChecks: Number.POSITIVE_INFINITY,
+    usages: [] as Record<string, unknown>[],
   },
 }));
 // A priced model, so the USD-cap guard is a no-op here.
@@ -46,6 +47,7 @@ vi.mock('../lib/costTracking.js', () => ({
       boundSpec?: string
     ) => {
       ledger.recorded.push(usage.inputTokens ?? 0);
+      ledger.usages.push(usage);
       ledger.specs.push(boundSpec);
       return {
         costUsd: 0.01,
@@ -73,6 +75,8 @@ interface ModelOpts {
   failOnCall?: number;
   /** Return a final text answer on this call instead of another tool call. */
   finishOnCall?: number;
+  /** Of each call's 10 input tokens, how many were read from the prompt cache. */
+  cacheRead?: number;
 }
 
 function toolLoopModel(opts: ModelOpts = {}) {
@@ -95,7 +99,9 @@ function toolLoopModel(opts: ModelOpts = {}) {
           ? { raw: 'stop', unified: 'stop' }
           : { raw: 'tool-calls', unified: 'tool-calls' },
         usage: {
-          inputTokens: { noCache: 10, total: 10 },
+          inputTokens: opts.cacheRead
+            ? { cacheRead: opts.cacheRead, noCache: 10 - opts.cacheRead, total: 10 }
+            : { noCache: 10, total: 10 },
           outputTokens: { text: 5, total: 5 },
         },
         warnings: [],
@@ -119,6 +125,7 @@ function specFor(model: unknown): AgentSpec {
 beforeEach(() => {
   ledger.budgetCalls = 0;
   ledger.recorded = [];
+  ledger.usages = [];
   ledger.specs = [];
   ledger.stopAfterBudgetChecks = Number.POSITIVE_INFINITY;
   cancel.controller = new AbortController();
@@ -142,6 +149,16 @@ describe('runAgent per-step accounting', () => {
       perStepAccounting: true,
     });
     expect(ledger.specs).toEqual(['anthropic/claude-opus-5-5', 'anthropic/claude-opus-5-5']);
+  });
+
+  it("passes each step's prompt-cache counts through to the ledger", async () => {
+    const { model } = toolLoopModel({ cacheRead: 8, finishOnCall: 2 });
+    await runAgent(specFor(model), 'go', { perStepAccounting: true });
+    expect(ledger.usages).toHaveLength(2);
+    for (const usage of ledger.usages) {
+      // Dropped, the 8 cached tokens were priced at the full input rate.
+      expect(usage).toMatchObject({ cachedInputTokens: 8, inputTokens: 10 });
+    }
   });
 
   it('reports max_steps when the loop used every step', async () => {

@@ -1,7 +1,13 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { epicRoutes, parseRepoIdsFromPayload } from './epics.js';
+
+// Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../test/billingMock.js')),
+}));
 
 // ── Fixtures ──
 

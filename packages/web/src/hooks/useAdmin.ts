@@ -2,8 +2,12 @@
 
 import type {
   AdminTokenSummary,
+  EvalDatasetDetail,
   EvalDatasetSummary,
   EvalResultDto,
+  EvalRunDto,
+  EvalSignalSourceValue,
+  EvalTrendsDto,
 } from '@auto-swe/shared/types/api';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -139,20 +143,42 @@ export interface AuditLogRow {
   id: string;
   entityType: string;
   entityId: string;
-  action: 'CREATE' | 'DELETE' | 'UPDATE';
+  action: AuditAction;
   actorId: string | null;
+  /** Null for a system write, or an actor whose user row no longer exists. */
+  actor: { email: string; name: string | null } | null;
   beforeJson: unknown;
   afterJson: unknown;
   createdAt: string;
 }
 
-export function useAuditLog(limit = 200) {
+export type AuditAction = 'CREATE' | 'DELETE' | 'UPDATE';
+
+export interface AuditLogFilters {
+  action?: AuditAction;
+  actorId?: string;
+  entityType?: string;
+  /** Inclusive UTC days, `YYYY-MM-DD`. */
+  since?: string;
+  until?: string;
+}
+
+export interface AuditLogPage {
+  data: AuditLogRow[];
+  meta: { entityTypes: string[]; limit: number; offset: number; total: number };
+}
+
+export function useAuditLog(filters: AuditLogFilters & { limit: number; offset: number }) {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      qs.set(key, String(value));
+    }
+  }
   return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: AuditLogRow[] }>(`/api/v1/platform/audit-log?limit=${limit}`)
-        .then((r) => r.data),
-    queryKey: ['audit-log', limit],
+    placeholderData: keepPreviousData,
+    queryFn: () => api.get<AuditLogPage>(`/api/v1/platform/audit-log?${qs}`),
+    queryKey: ['audit-log', filters],
     refetchInterval: 30_000,
   });
 }
@@ -183,28 +209,40 @@ export interface SecurityEvent {
   workRequestId: string | null;
 }
 
-export function useSecurityEvents(params?: {
-  limit?: number;
-  runId?: string;
+export function useSecurityEvents(params: {
+  limit: number;
+  offset: number;
   type?: SecurityEventType;
 }) {
-  const qs = new URLSearchParams();
-  if (params?.limit) {
-    qs.set('limit', String(params.limit));
-  }
-  if (params?.runId) {
-    qs.set('runId', params.runId);
-  }
-  if (params?.type) {
+  const qs = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
+  if (params.type) {
     qs.set('type', params.type);
   }
   return useQuery({
+    placeholderData: keepPreviousData,
     queryFn: () =>
-      api
-        .get<{ data: SecurityEvent[] }>(`/api/v1/platform/security-events?${qs}`)
-        .then((r) => r.data),
+      api.get<{ data: SecurityEvent[]; meta: { limit: number; offset: number; total: number } }>(
+        `/api/v1/platform/security-events?${qs}`
+      ),
     queryKey: ['security-events', params],
     refetchInterval: 30_000,
+  });
+}
+
+/** Per-type totals across every security event, independent of the page shown. */
+export function useSecurityEventSummary() {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: Record<SecurityEventType, number> }>(
+          '/api/v1/platform/security-events/summary'
+        )
+        .then((r) => r.data),
+    queryKey: ['security-events', 'summary'],
+    // Seven counts over all of agent_traces: refresh rarely, and on focus
+    // only once stale (the default), not every minute per open tab.
+    refetchInterval: 5 * 60_000,
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -219,10 +257,23 @@ export interface UsageBucket {
   outputTokens: number;
 }
 
+/** Which slice of usage a report covers; empty is platform-wide (ADMIN only). */
+export interface UsageScope {
+  teamId?: string;
+  orgId?: string;
+}
+
 export interface PlatformUsage {
   byActivity: (UsageBucket & { nodeId: string })[];
   byAgent: (UsageBucket & { agentKey: string })[];
   byModel: (UsageBucket & { model: string | null })[];
+  /** Null ids are spend no tenant is derivable for. */
+  byOrg: (UsageBucket & { orgId: string | null; orgName: string | null })[];
+  byTeam: (UsageBucket & {
+    orgId: string | null;
+    teamId: string | null;
+    teamName: string | null;
+  })[];
   daily: {
     calls: number;
     costUsd: number;
@@ -230,6 +281,7 @@ export interface PlatformUsage {
     inputTokens: number;
     outputTokens: number;
   }[];
+  scope: UsageScope;
   since: string;
   /** Exclusive end of the window: the end of the current UTC day. */
   until: string;
@@ -249,15 +301,21 @@ export interface PlatformUsage {
   windowDays: number;
 }
 
-export function usePlatformUsage(windowDays: number) {
+export function usePlatformUsage(windowDays: number, scope: UsageScope = {}, enabled = true) {
+  const qs = new URLSearchParams({ window: String(windowDays) });
+  if (scope.teamId) {
+    qs.set('teamId', scope.teamId);
+  }
+  if (scope.orgId) {
+    qs.set('orgId', scope.orgId);
+  }
   return useQuery({
+    enabled,
     // Keep the previous window on screen while the next one loads.
     placeholderData: keepPreviousData,
     queryFn: () =>
-      api
-        .get<{ data: PlatformUsage }>(`/api/v1/platform/usage?window=${windowDays}`)
-        .then((r) => r.data),
-    queryKey: ['platform-usage', windowDays],
+      api.get<{ data: PlatformUsage }>(`/api/v1/platform/usage?${qs}`).then((r) => r.data),
+    queryKey: ['platform-usage', windowDays, scope.teamId ?? null, scope.orgId ?? null],
     // Not polled: each report costs a full-window scan plus one query per day,
     // and spend does not move fast enough to need it. Refetched on focus.
     staleTime: 60_000,
@@ -346,20 +404,76 @@ export function useDeleteHumanErrorBaseline() {
   });
 }
 
-export function useEvalResults(params: { source?: string; limit?: number } = {}) {
+export interface EvalResultFilters {
+  evalRunId?: string;
+  scorer?: string;
+  source?: EvalSignalSourceValue;
+}
+
+export function useEvalResults(filters: EvalResultFilters & { limit: number; offset: number }) {
   const qs = new URLSearchParams();
-  if (params.source) {
-    qs.set('source', params.source);
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      qs.set(key, String(value));
+    }
   }
-  qs.set('limit', String(params.limit ?? 200));
   return useQuery({
+    placeholderData: keepPreviousData,
     queryFn: () =>
-      api
-        .get<{ data: EvalResultDto[]; meta: { total: number } }>(
-          `/api/v1/platform/evals/results?${qs.toString()}`
-        )
-        .then((r) => ({ data: r.data, meta: r.meta })),
-    queryKey: ['eval-results', params],
+      api.get<{ data: EvalResultDto[]; meta: { limit: number; offset: number; total: number } }>(
+        `/api/v1/platform/evals/results?${qs}`
+      ),
+    queryKey: ['eval-results', filters],
     refetchInterval: 30_000,
+  });
+}
+
+export function useEvalTrends(windowDays: number, source?: EvalSignalSourceValue) {
+  const qs = new URLSearchParams({ window: String(windowDays) });
+  if (source) {
+    qs.set('source', source);
+  }
+  return useQuery({
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      api.get<{ data: EvalTrendsDto }>(`/api/v1/platform/evals/trends?${qs}`).then((r) => r.data),
+    queryKey: ['eval-trends', windowDays, source],
+    // Up to one grouped query per day of the window: refresh rarely, and on
+    // focus only once stale (the default), not every minute per open tab.
+    refetchInterval: 5 * 60_000,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useEvalDataset(id: string | null) {
+  return useQuery({
+    enabled: !!id,
+    queryFn: () =>
+      api.get<{ data: EvalDatasetDetail }>(`/api/v1/platform/evals/${id}`).then((r) => r.data),
+    queryKey: ['eval-dataset', id],
+  });
+}
+
+export function useEvalRuns(datasetId: string | null, limit: number, offset: number) {
+  return useQuery({
+    enabled: !!datasetId,
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      api.get<{ data: EvalRunDto[]; meta: { limit: number; offset: number; total: number } }>(
+        `/api/v1/platform/evals/runs?datasetId=${datasetId}&limit=${limit}&offset=${offset}`
+      ),
+    queryKey: ['eval-runs', datasetId, limit, offset],
+    refetchInterval: 30_000,
+  });
+}
+
+/** A running harness run is polled until it reaches a verdict. */
+export function useEvalRun(id: string | null) {
+  return useQuery({
+    enabled: !!id,
+    queryFn: () =>
+      api.get<{ data: EvalRunDto }>(`/api/v1/platform/evals/runs/${id}`).then((r) => r.data),
+    queryKey: ['eval-run', id],
+    refetchInterval: (q) => (q.state.data?.status === 'RUNNING' ? 10_000 : false),
   });
 }

@@ -70,8 +70,8 @@ const assistantToolUses = (n: number) => ({
   message: { content: Array.from({ length: n }, () => ({ type: 'tool_use' })) },
   type: 'assistant',
 });
-const usage = (inputTokens: number, outputTokens: number, cache = 0) => ({
-  cacheCreationInputTokens: 0,
+const usage = (inputTokens: number, outputTokens: number, cache = 0, cacheWrite = 0) => ({
+  cacheCreationInputTokens: cacheWrite,
   cacheReadInputTokens: cache,
   inputTokens,
   outputTokens,
@@ -415,14 +415,14 @@ describe('the outcome of a turn', () => {
     expect(h.heartbeat).toHaveBeenCalled();
   });
 
-  it('reports usage per model, counting cache traffic as input, largest spender first', async () => {
+  it('reports usage per model, counting cache traffic as input and apart, largest spender first', async () => {
     const { runtime } = setup();
     h.script.push([
       [
         init('s'),
         success('ok', {
           'claude-haiku-4-5-20251001': usage(10, 5),
-          'claude-opus-5-5': usage(100, 40, 900),
+          'claude-opus-5-5': usage(100, 40, 900, 200),
         }),
       ],
     ]);
@@ -430,10 +430,23 @@ describe('the outcome of a turn', () => {
     const outcome = await runtime.runTurn({ system: 'S', user: 'U' });
 
     expect(outcome.usageByModel).toEqual([
-      { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 1000, outputTokens: 40 } },
+      {
+        modelSpec: 'anthropic/claude-opus-5-5',
+        usage: {
+          cacheCreationInputTokens: 200,
+          cachedInputTokens: 900,
+          inputTokens: 1200,
+          outputTokens: 40,
+        },
+      },
       {
         modelSpec: 'anthropic/claude-haiku-4-5-20251001',
-        usage: { inputTokens: 10, outputTokens: 5 },
+        usage: {
+          cacheCreationInputTokens: 0,
+          cachedInputTokens: 0,
+          inputTokens: 10,
+          outputTokens: 5,
+        },
       },
     ]);
   });
@@ -441,19 +454,35 @@ describe('the outcome of a turn', () => {
   it('records only what a later turn added, because the harness reports running totals', async () => {
     const { runtime } = setup();
     h.script.push(
-      [[init('s'), success('a', { m: usage(100, 20) })]],
+      [[init('s'), success('a', { m: usage(100, 20, 30) })]],
       // A resumed session starts from its saved totals: the second result includes the first.
-      [[init('s'), success('b', { m: usage(160, 50) })]]
+      [[init('s'), success('b', { m: usage(160, 50, 80) })]]
     );
 
     const first = await runtime.runTurn({ system: 'S', user: '1' });
     const second = await runtime.runTurn({ system: 'S', user: '2' });
 
     expect(first.usageByModel).toEqual([
-      { modelSpec: 'anthropic/m', usage: { inputTokens: 100, outputTokens: 20 } },
+      {
+        modelSpec: 'anthropic/m',
+        usage: {
+          cacheCreationInputTokens: 0,
+          cachedInputTokens: 30,
+          inputTokens: 130,
+          outputTokens: 20,
+        },
+      },
     ]);
     expect(second.usageByModel).toEqual([
-      { modelSpec: 'anthropic/m', usage: { inputTokens: 60, outputTokens: 30 } },
+      {
+        modelSpec: 'anthropic/m',
+        usage: {
+          cacheCreationInputTokens: 0,
+          cachedInputTokens: 50,
+          inputTokens: 110,
+          outputTokens: 30,
+        },
+      },
     ]);
   });
 
@@ -466,7 +495,15 @@ describe('the outcome of a turn', () => {
     await runtime.runTurn({ system: 'S', user: '1' });
     const second = await runtime.runTurn({ system: 'S', user: '2' });
     expect(second.usageByModel).toEqual([
-      { modelSpec: 'anthropic/m', usage: { inputTokens: 40, outputTokens: 10 } },
+      {
+        modelSpec: 'anthropic/m',
+        usage: {
+          cacheCreationInputTokens: 0,
+          cachedInputTokens: 0,
+          inputTokens: 40,
+          outputTokens: 10,
+        },
+      },
     ]);
   });
 

@@ -10,8 +10,10 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
 
   const mockPrisma = {
     configAuditLog: {
+      count: vi.fn().mockResolvedValue(0),
       create: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
+      groupBy: vi.fn().mockResolvedValue([]),
     },
     personalAccessToken: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -21,6 +23,9 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     session: {
       delete: vi.fn(),
       findUnique: vi.fn(),
+    },
+    user: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     workflowShellAudit: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -288,19 +293,38 @@ describe('adminRoutes', () => {
       ctx = await buildApp('ADMIN');
     });
     beforeEach(() => {
-      ctx.mockPrisma.configAuditLog.findMany.mockReset();
+      ctx.mockPrisma.configAuditLog.findMany.mockReset().mockResolvedValue([]);
+      ctx.mockPrisma.configAuditLog.count.mockReset().mockResolvedValue(0);
+      ctx.mockPrisma.user.findMany.mockReset().mockResolvedValue([]);
     });
     afterAll(() => ctx.app.close());
 
-    it('returns the most recent 200 audit rows for ADMIN', async () => {
+    it('returns the first page with a total, entity types, and actor emails', async () => {
       ctx.mockPrisma.configAuditLog.findMany.mockResolvedValueOnce([
         {
           action: 'CREATE',
-          actorId: 'admin-1',
+          actorId: '11111111-1111-4111-8111-111111111111',
           createdAt: new Date(),
+          entityId: 'e1',
           entityType: 'User',
           id: 'a1',
         },
+        {
+          action: 'UPDATE',
+          actorId: null,
+          createdAt: new Date(),
+          entityId: 'e2',
+          entityType: 'Agent',
+          id: 'a2',
+        },
+      ]);
+      ctx.mockPrisma.configAuditLog.count.mockResolvedValueOnce(120);
+      ctx.mockPrisma.configAuditLog.groupBy.mockResolvedValueOnce([
+        { entityType: 'Agent' },
+        { entityType: 'User' },
+      ]);
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
+        { email: 'alice@example.com', id: '11111111-1111-4111-8111-111111111111', name: 'Alice' },
       ]);
       const res = await ctx.app.inject({
         headers: AUTH,
@@ -309,10 +333,64 @@ describe('adminRoutes', () => {
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body.data).toHaveLength(1);
-      expect(ctx.mockPrisma.configAuditLog.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ orderBy: { createdAt: 'desc' }, take: 200 })
+      expect(body.data).toHaveLength(2);
+      expect(body.data[0].actor).toEqual({ email: 'alice@example.com', name: 'Alice' });
+      expect(body.data[1].actor).toBeNull();
+      expect(body.meta).toEqual({
+        entityTypes: ['Agent', 'User'],
+        limit: 50,
+        offset: 0,
+        total: 120,
+      });
+      expect(ctx.mockPrisma.configAuditLog.findMany).toHaveBeenCalledWith({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: 0,
+        take: 50,
+        where: {},
+      });
+      expect(ctx.mockPrisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ['11111111-1111-4111-8111-111111111111'] } },
+        })
       );
+    });
+
+    it('pushes every filter and the page window into the query', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log?limit=25&offset=50&action=DELETE&entityType=Session&actorId=11111111-1111-4111-8111-111111111111&since=2026-09-01&until=2026-09-30',
+      });
+      expect(res.statusCode).toBe(200);
+      const where = {
+        action: 'DELETE',
+        actorId: '11111111-1111-4111-8111-111111111111',
+        createdAt: {
+          gte: new Date('2026-09-01T00:00:00.000Z'),
+          lt: new Date('2026-10-01T00:00:00.000Z'),
+        },
+        entityType: 'Session',
+      };
+      expect(ctx.mockPrisma.configAuditLog.findMany).toHaveBeenCalledWith({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: 50,
+        take: 25,
+        where,
+      });
+      expect(ctx.mockPrisma.configAuditLog.count).toHaveBeenCalledWith({ where });
+      // No actors on the page, so no user lookup.
+      expect(ctx.mockPrisma.user.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a malformed date and an over-cap limit', async () => {
+      for (const qs of ['since=yesterday', 'limit=500', 'action=PATCH']) {
+        const res = await ctx.app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: `/api/v1/platform/audit-log?${qs}`,
+        });
+        expect(res.statusCode).toBe(400);
+      }
     });
 
     it('returns 403 for a non-ADMIN caller', async () => {

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const cancel = vi.hoisted(() => ({ ctl: new AbortController() }));
-vi.mock('@temporalio/activity', () => ({
+vi.mock('@temporalio/activity', async (importOriginal) => ({
+  ApplicationFailure: (await importOriginal<typeof import('@temporalio/activity')>())
+    .ApplicationFailure,
   Context: { current: () => ({ cancellationSignal: cancel.ctl.signal }) },
   heartbeat: vi.fn(),
 }));
@@ -34,9 +36,16 @@ vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/evalCapture.js', () => ({ recordEvalResult: vi.fn() }));
+const judge = vi.hoisted(() => ({ runAgent: vi.fn() }));
+vi.mock('./runAgent.js', () => ({ runAgent: judge.runAgent }));
+vi.mock('../lib/config/agentSpec.js', () => ({
+  resolveAgentSpec: vi.fn(async () => ({ modelSpec: 'anthropic/claude-haiku-4-5-20251001' })),
+}));
+vi.mock('../lib/config/contextLookup.js', () => ({ currentRequestContext: async () => ({}) }));
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { EvalScorer } from '@auto-swe/shared/workflow';
+import { ApplicationFailure } from '@temporalio/activity';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import type { ScoreInput } from '../lib/scorerCombination.js';
@@ -116,6 +125,80 @@ describe('runEvalNode (judge threshold from DB config)', () => {
     mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.4 } as never);
     const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
     expect(r.decision.blocked).toBe(false);
+  });
+});
+
+describe('runEvalNode (judge attribution)', () => {
+  const judgeScorer = { kind: 'judge', rubricRef: 'quality' } as EvalScorer;
+
+  it("records the judge call's cost and model on its EvalResult row", async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    judge.runAgent.mockResolvedValueOnce({ costUsd: 0.0123, object: { score: 0.9 } });
+    vi.mocked(recordEvalResult).mockClear();
+
+    await runEvalNode({ scorers: [judgeScorer], targetValue: 'diff' });
+
+    expect(recordEvalResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        costUsd: 0.0123,
+        judgeModel: 'anthropic/claude-haiku-4-5-20251001',
+        source: 'JUDGE',
+        value: 0.9,
+      })
+    );
+  });
+
+  it('keeps the cost of a judge call that was paid for and then failed', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    judge.runAgent.mockRejectedValueOnce(
+      ApplicationFailure.nonRetryable('over', 'BUDGET_EXCEEDED', {
+        attribution: {
+          costUsd: 0.5,
+          inputTokens: 1,
+          modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+          outputTokens: 1,
+        },
+      })
+    );
+    vi.mocked(recordEvalResult).mockClear();
+
+    await runEvalNode({ scorers: [judgeScorer], targetValue: 'diff' });
+
+    expect(recordEvalResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        costUsd: 0.5,
+        judgeModel: 'anthropic/claude-haiku-4-5-20251001',
+        source: 'JUDGE',
+        value: 0.5,
+      })
+    );
+  });
+
+  it('names no judge model when the budget gate refused the call before it was made', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    // The pre-call refusal carries no attribution: nothing was paid for.
+    judge.runAgent.mockRejectedValueOnce(
+      ApplicationFailure.nonRetryable('Budget already exhausted', 'BUDGET_EXCEEDED')
+    );
+    vi.mocked(recordEvalResult).mockClear();
+
+    await runEvalNode({ scorers: [judgeScorer], targetValue: 'diff' });
+
+    expect(recordEvalResult).toHaveBeenCalledWith(
+      expect.objectContaining({ costUsd: undefined, judgeModel: undefined, source: 'JUDGE' })
+    );
+  });
+
+  it('records no cost when no model was called', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    vi.mocked(recordEvalResult).mockClear();
+    await runEvalNode({ scorers: [judgeScorer], targetValue: 'diff' });
+    expect(recordEvalResult).toHaveBeenCalledWith(
+      expect.objectContaining({ costUsd: undefined, judgeModel: undefined, source: 'JUDGE' })
+    );
   });
 });
 

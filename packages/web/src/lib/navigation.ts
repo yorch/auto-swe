@@ -107,7 +107,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/govern/approvals', icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       { href: '/govern/lessons', icon: 'memory', label: 'Lessons', minRole: 'ADMIN' },
       { href: '/govern/analytics', icon: 'analytics', label: 'Analytics', minRole: 'ENGINEER' },
-      { href: '/govern/usage', icon: 'analytics', label: 'LLM usage', minRole: 'ADMIN' },
+      // A LEAD sees the teams they lead; the platform-wide view is ADMIN-only.
+      { href: '/govern/usage', icon: 'analytics', label: 'LLM usage', minRole: 'LEAD' },
       // The baselines API and layout both require LEAD.
       { href: '/govern/baselines', icon: 'analytics', label: 'Error baselines', minRole: 'LEAD' },
       { href: '/govern/sessions', icon: 'clock', label: 'Sessions', minRole: 'ADMIN' },

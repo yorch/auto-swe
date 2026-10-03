@@ -32,6 +32,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/securityTraceTags.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/temporalTracing',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/temporalTracing.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/crypto',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/crypto.ts'),
       },

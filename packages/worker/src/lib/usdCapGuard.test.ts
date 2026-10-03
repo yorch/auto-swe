@@ -3,9 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     activeWorkflow: { findFirst: vi.fn() },
+    organization: { findUnique: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
+    workflowRun: { findUnique: vi.fn() },
   },
 }));
+
+const currentSpendOwnerMock = vi.fn();
+vi.mock('./spendOwner.js', () => ({ currentSpendOwner: () => currentSpendOwnerMock() }));
 
 const currentWorkflowIdMock = vi.fn();
 vi.mock('./activityContext.js', () => ({
@@ -32,6 +37,8 @@ import {
 
 const findLedgerRow = vi.mocked(prisma.activeWorkflow.findFirst);
 const findChannel = vi.mocked(prisma.slackChannel.findUnique);
+const findRun = vi.mocked(prisma.workflowRun.findUnique);
+const findOrg = vi.mocked(prisma.organization.findUnique);
 
 const UNPRICED = 'openrouter/no-price-here';
 
@@ -50,6 +57,10 @@ beforeEach(() => {
   });
   findLedgerRow.mockResolvedValue(null as never);
   findChannel.mockResolvedValue(null as never);
+  // A run with no ledger row (a channel task) unless a test says otherwise.
+  findRun.mockResolvedValue({ id: 'run-1' } as never);
+  findOrg.mockResolvedValue(null as never);
+  currentSpendOwnerMock.mockResolvedValue({});
 });
 
 async function refusal(promise: Promise<void>): Promise<ApplicationFailure> {
@@ -135,6 +146,33 @@ describe('assertModelPricedForUsdCap', () => {
     await expect(
       assertModelPricedForUsdCap(UNPRICED, { channelId: 'chan-1' })
     ).resolves.toBeUndefined();
+  });
+
+  it('refuses a runless call whose spend owner is an organization with a USD cap', async () => {
+    // Runless spend counts toward the org cap through the owner on its trace rows.
+    findRun.mockResolvedValue(null as never);
+    currentSpendOwnerMock.mockResolvedValue({ orgId: 'org-1', teamId: 'team-1' });
+    findOrg.mockResolvedValue({ monthlyBudgetUsdCents: 100_000 } as never);
+    const err = await refusal(assertModelPricedForUsdCap(UNPRICED));
+    expect(err.type).toBe(MODEL_UNPRICED);
+    expect(err.message).toContain('organization');
+    expect(findOrg).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'org-1' } }));
+  });
+
+  it('proceeds for a runless call whose owner has no org, or an uncapped one', async () => {
+    findRun.mockResolvedValue(null as never);
+    await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
+    expect(findOrg).not.toHaveBeenCalled();
+    currentSpendOwnerMock.mockResolvedValue({ orgId: 'org-1' });
+    findOrg.mockResolvedValue({ monthlyBudgetUsdCents: null } as never);
+    await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
+  });
+
+  it('does not consult the spend owner for a run with no ledger row', async () => {
+    currentSpendOwnerMock.mockResolvedValue({ orgId: 'org-1' });
+    findOrg.mockResolvedValue({ monthlyBudgetUsdCents: 100_000 } as never);
+    await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
+    expect(currentSpendOwnerMock).not.toHaveBeenCalled();
   });
 
   it('proceeds outside an activity, where there is no run to be capped', async () => {

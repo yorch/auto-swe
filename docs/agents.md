@@ -346,8 +346,8 @@ a file in the container, because it travels on a command line capped at 128 KiB 
 
 **Usage.** The harness reports usage per model as running totals, and a resumed session starts from
 its saved totals, so a turn records the change since the last. Each model is priced at its own spec
-(a harness may delegate small tasks to a cheaper model), and cache reads and writes count as input
-tokens.
+(a harness may delegate small tasks to a cheaper model). Cache reads and writes count as input
+tokens toward the budget and are priced at the model's cache rates.
 
 **Sessions and cleanup.** Turns after the first resume the same session, so a TDD loop keeps its
 context and prompt cache. Every process the harness starts carries the exec tag
@@ -574,13 +574,17 @@ await persistActivityTrace(tracer, 'implementer');
 
 **`persistActivityTrace(tracer, role)`** in `packages/worker/src/lib/activityContext.ts` auto-resolves the workflow ID, `runId`, and `attempt` from Temporal context and calls `tracer.persist({ runId, workflowId }, nodeId, role, attempt, nodeTag)` (the tag is §8.4's). It attaches the OTel span active at that moment unless the caller already attached a more specific one with `tracer.setSpanContext()` — `runAgent` does, because it persists after its LLM span has ended. **Never omit this call** in new LLM-calling activities — the run viewer depends on it.
 
+An attempt can persist more than one tracer — its own and `runAgent`'s — and each numbers its records from 0, so `persistActivityTrace` reserves a block of `seq` values per attempt and offsets each batch into it. `seq` is therefore unique within an attempt, and batches order by when they were persisted.
+
+**`runAgent`** records a `tool_call` row for every tool call Mastra made inside its loop, read from the steps of the `generate` result and paired with each call's outcome, then the call's `llm_response` row. A tool that threw is recorded with its error message: Mastra keeps only successful results in a step's `toolResults`, so the error is read from the tool message the loop fed back to the model. A call with no outcome anywhere is recorded as failed, never as a success with no output. A caller whose tools record themselves passes its own tracer as `RunAgentOptions.tracer` and names those tools in `RunAgentOptions.selfRecordingTools` — `runAgentNode` (MCP tools) and `runAgentTask` (workspace and MCP tools) do. `runAgent` then records into that tracer, skips only the named tools when it reads the steps, and leaves persisting to the caller, so every row shares one sequence and persists once. The self-recorded rows land as their calls happen; the rows read from the steps for any other tool are appended after the loop returns, just before the `llm_response`. A tool is named by identity, not key, so a self-recording tool displaced on a key collision does not take the winning tool's rows with it.
+
 **`inputJson` convention for `addLlmResponse`:** always pass `{ systemPrompt, userMessage }` so the `/runs/[id]` viewer can show exactly what was sent to the model. Declare prompt variables as `let` before the `try` block (not `const` inside it) so the error `catch` path can reference them too — otherwise failed LLM calls produce traces with no request context.
 
 ### 8.2 Trace Record Shape
 
 ```typescript
 interface TraceRecord {
-  seq: number;                                      // insertion order within the activity
+  seq: number;                                      // insertion order within the activity attempt
   type: 'tool_call' | 'llm_response' | 'activity_event';
   toolName?: string;                                // tool ID, agent role, or event name
   inputJson?: unknown;                              // redacted, then truncated to 32 000 chars per string value
@@ -591,9 +595,9 @@ interface TraceRecord {
 ```
 
 String values are stored up to 32 000 characters per field. The run page polls, so
-`GET /api/v1/workflow-runs/:id` trims each field to 4 000 characters (head and tail) and marks the
-trace `trimmed`; the page then offers **Load full payloads**, which refetches with
-`?fullTraces=true`. The `writeFile` tool records only the file `path` in `inputJson` (not the full
+`GET /api/v1/workflow-runs/:id` and its live tail `GET /api/v1/workflow-runs/:id/traces` trim each
+field to 4 000 characters (head and tail) and mark the trace `trimmed`; the page then offers
+**Load full payloads**, which refetches once with `?fullTraces=true` and stops polling. The `writeFile` tool records only the file `path` in `inputJson` (not the full
 content) to keep trace sizes manageable.
 
 ### 8.3 AgentTrace Table
@@ -615,6 +619,7 @@ content) to keep trace sizes manageable.
 | `durationMs` | Wall-clock duration of the call |
 | `model` / `inputTokens` / `outputTokens` / `costUsd` | Per-call attribution on `llm_response` rows |
 | `otelTraceId` / `otelSpanId` | Correlation with the matching Tempo span |
+| `teamId` / `orgId` | Whose spend the row is — see §8.5. Null when no owner is derivable |
 
 ### 8.4 Node attribution
 
@@ -638,6 +643,28 @@ Every dispatch kind goes through the two dispatch methods — `step`, `agent`, `
 Rejected: threading the id through each activity's inputs (dozens of positional signatures and
 every in-flight payload), and reading the run's `RUNNING` step row (a fan-out has several at once,
 so it cannot say which belongs to a given activity).
+
+### 8.5 Spend attribution
+
+Every row records the team and organization whose spend it is, written at persist time by
+`persistActivityTrace` and the embedding usage row from `currentSpendOwner()`
+(`lib/spendOwner.ts`). A run's owner is derived the way run visibility decides its team: the run's
+own repository (an epic child), its ledger row's repository, its work request's connection, its
+Slack channel, then its template. A workflow with no run names its owner itself with
+`withSpendOwner`: authoring and explaining charge the requesting team, lesson consolidation and
+dependency inference the repository's team, and the eval harness the dataset's team (or its
+organization, for an ORGANIZATION-scoped dataset). Resolution never fails an activity; a lookup that
+fails attributes the row to nobody.
+
+With these columns `AgentTrace` is a tenant-scoped model for the `tenantGuard`: a mass query on it
+carries a `teamId`/`orgId` predicate or declares itself with `runUnscoped`.
+
+**Limitations.**
+
+- **Some rows have no owner.** A GLOBAL eval dataset, an epic's planning call (its work request
+  spans repositories), repository-access sync, a memory re-embed, and a run whose template,
+  channel and repositories are all unowned write null `teamId`/`orgId`.
+- **Rows that predate the columns are unattributed.** Nothing backfills them.
 
 The run viewer (`web/src/lib/traceLinkage.ts`) filters on these fields: a node selects all its
 branches, a fan-out selects everything inside it, a step row selects exactly its execution.
@@ -718,6 +745,10 @@ Writes cut a new immutable `version`.
   it lists the trace under every node that runs that activity and labels it ambiguous when two or
   more nodes do (and always when a fan-out branch is selected, since a fallback match cannot name a
   branch). A fallback match with a single candidate node is shown unlabelled.
+- **`runAgent`'s own tool-call rows are reconstructed after the fact.** They are read from the
+  steps of a `generate` that returned, so their `durationMs` is 0 and a `generate` that threw or
+  was aborted records none of its tool calls — only the failed `llm_response`. Tools that record
+  themselves (MCP, workspace) are timed and recorded either way.
 - **The Claude Code harness holds a model credential inside the workspace container.** The agent
   runs as root on a network with unrestricted egress, so anything it runs can read the key and send
   it elsewhere; a repository's settings cannot move where the harness itself sends it, but the
@@ -734,7 +765,7 @@ Writes cut a new immutable `version`.
   `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
   evade them.
 - **Harness usage is metered conservatively and priced by the model it names.** Cache reads and
-  writes count as input tokens, which overstates cost and never understates it. The budget is
+  writes count in full against the token budget, though they are priced at the cache rates. The budget is
   checked before a turn and accrued after it, so one turn can overshoot by up to its step budget; the
   SDK's own cost cap is not used because it is a client-side estimate. A model the harness picks that
   has no catalog price records $0 with a warning; the organization-USD-cap guard checks only the

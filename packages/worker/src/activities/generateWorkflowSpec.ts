@@ -31,6 +31,7 @@ import { heartbeat } from '@temporalio/activity';
 import { ZodError } from 'zod';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
+import { ownerOfTeam, withSpendOwner } from '../lib/spendOwner.js';
 import { runAgent } from './runAgent.js';
 
 export interface GenerateWorkflowSpecInput {
@@ -145,6 +146,13 @@ async function buildCatalog(teamId: string | null, allowShell: boolean): Promise
 }
 
 export async function generateWorkflowSpec(
+  input: GenerateWorkflowSpecInput
+): Promise<GenerateWorkflowSpecResult> {
+  // No run row: the spend is the requesting team's.
+  return withSpendOwner(ownerOfTeam(input.teamId), () => generateWorkflowSpecImpl(input));
+}
+
+async function generateWorkflowSpecImpl(
   input: GenerateWorkflowSpecInput
 ): Promise<GenerateWorkflowSpecResult> {
   heartbeat('generate workflow: building catalog');

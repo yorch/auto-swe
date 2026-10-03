@@ -3,6 +3,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { currentWorkflowId } from './activityContext.js';
 import { getModelPrice } from './costTracking.js';
 import { getModelSpec } from './models.js';
+import { currentSpendOwner } from './spendOwner.js';
 
 /** The `ApplicationFailure` type of a refused call; the run viewer keys on it. */
 export const MODEL_UNPRICED = 'MODEL_UNPRICED';
@@ -49,10 +50,11 @@ async function findUsdCap(scope: {
     }
   }
 
-  // The org cap sees only runs whose ledger row reaches an organization through
-  // its repository — the same path `finalizeWorkflowRun` accrues
-  // `OrgMonthlyUsage` along. A channel task has no such row, and its spend never
-  // reaches the org ledger, so the org cap is not at stake for it.
+  // The org cap counts a run through its ledger row's repository — the same
+  // path `finalizeWorkflowRun` accrues `OrgMonthlyUsage` along — and a runless
+  // workflow through the owner its trace rows are stamped with
+  // (`orgMonthSpend`'s runless spend). A run with no ledger row (a channel
+  // task) reaches neither, so the org cap is not at stake for it.
   let workflowId: string;
   try {
     workflowId = currentWorkflowId();
@@ -67,7 +69,27 @@ async function findUsdCap(scope: {
     },
     where: { temporalWorkflowId: workflowId },
   });
-  return row?.repository?.team?.organization?.monthlyBudgetUsdCents != null ? 'organization' : null;
+  if (row) {
+    return row.repository?.team?.organization?.monthlyBudgetUsdCents != null
+      ? 'organization'
+      : null;
+  }
+  const run = await prisma.workflowRun.findUnique({
+    select: { id: true },
+    where: { workflowId },
+  });
+  if (run) {
+    return null;
+  }
+  const { orgId } = await currentSpendOwner();
+  if (!orgId) {
+    return null; // No owner: the spend is stamped with no org, outside every cap.
+  }
+  const org = await prisma.organization.findUnique({
+    select: { monthlyBudgetUsdCents: true },
+    where: { id: orgId },
+  });
+  return org?.monthlyBudgetUsdCents != null ? 'organization' : null;
 }
 
 /**

@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  AgentTraceRecord,
   AutonomyDecisionDto,
   EvalResultDto,
   RetryWorkRequestResponse,
@@ -33,23 +34,112 @@ export function useWorkflow(id: string) {
 }
 
 /**
+ * How far behind its base the live-tail cursor sits. A trace's `createdAt` is
+ * the writing worker's clock, at millisecond precision, when it built the
+ * insert — not when the row committed. A slow insert (a large batch, a wait
+ * for a pool connection) or a worker whose clock lags can therefore commit a
+ * row older than one already read. The overlap catches the common case
+ * cheaply; the trace count (see `useWorkflowRun`) catches the rest.
+ */
+export const TRACE_TAIL_OVERLAP_MS = 10_000;
+
+/**
+ * The `since` cursor for the next live-tail poll, or null to read every trace.
+ * Its base is the server time of the previous tail read when there is one,
+ * otherwise the newest trace held. Basing it on the newest trace alone would
+ * re-download the last batch on every poll for as long as a run stays idle;
+ * from the last read, an idle run's poll returns nothing once the overlap has
+ * passed.
+ */
+export function traceTailCursor(
+  traces: readonly AgentTraceRecord[],
+  lastReadAt?: string
+): string | null {
+  let base = lastReadAt ? Date.parse(lastReadAt) : Number.NEGATIVE_INFINITY;
+  if (!Number.isFinite(base)) {
+    for (const t of traces) {
+      base = Math.max(base, Date.parse(t.createdAt));
+    }
+  }
+  return Number.isFinite(base) ? new Date(base - TRACE_TAIL_OVERLAP_MS).toISOString() : null;
+}
+
+/** A run as the run page caches it: plus when its traces were last tailed. */
+export type LiveWorkflowRunDetail = WorkflowRunDetail & {
+  /** Server time of the last live-tail read, the next cursor's base. */
+  tracesReadAt?: string;
+};
+
+/**
+ * Append newly read traces, dropping ones already held, in the server's order
+ * (`createdAt`, then `seq`). The sort is stable, so ties keep their order.
+ */
+export function mergeTraces(
+  held: readonly AgentTraceRecord[],
+  incoming: readonly AgentTraceRecord[]
+): AgentTraceRecord[] {
+  const seen = new Set(held.map((t) => t.id));
+  const fresh = incoming.filter((t) => !seen.has(t.id));
+  if (fresh.length === 0) {
+    return held as AgentTraceRecord[];
+  }
+  return [...held, ...fresh].sort(
+    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.seq - b.seq
+  );
+}
+
+/**
  * `fullTraces` skips the server's 4 000-char trim of trace payloads. It is
  * opt-in, and fetched once rather than polled: full prompts run to tens of KB
  * each, and re-downloading all of them every few seconds is the cost the trim
  * exists to avoid.
+ *
+ * The trimmed view loads every trace once, then each poll reads the run
+ * without traces (status, steps, totals) and only the traces created since the
+ * newest one held, appending them to the cached run. No cursor can promise that
+ * every row behind it has been read (see `TRACE_TAIL_OVERLAP_MS`), so the tail
+ * also reports how many traces the run has: when the merged set does not match
+ * that count, the poll re-reads every (trimmed) trace instead. It does the same
+ * once when the run turns terminal, so the finished run is never left short.
  */
 export function useWorkflowRun(id: string, includeTraces = true, fullTraces = false) {
+  const qc = useQueryClient();
   const query = fullTraces ? '?fullTraces=true' : includeTraces ? '?includeTraces=true' : '';
-  return useQuery<WorkflowRunDetail>({
+  const queryKey = ['workflow-run', id, includeTraces, fullTraces];
+  return useQuery<LiveWorkflowRunDetail>({
     enabled: !!id,
     // Switching to full payloads must not blank the page while it refetches —
     // but only for the same run, or the previous run would flash on navigation.
     placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === id ? prev : undefined),
-    queryFn: () =>
-      api
-        .get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}${query}`)
-        .then((r) => r.data),
-    queryKey: ['workflow-run', id, includeTraces, fullTraces],
+    queryFn: async () => {
+      const held = qc.getQueryData<LiveWorkflowRunDetail>(queryKey);
+      const readAll = () =>
+        api
+          .get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}${query}`)
+          .then((r) => r.data);
+      if (fullTraces || !includeTraces || !held) {
+        return readAll();
+      }
+      const heldTraces = held.traces ?? [];
+      const since = traceTailCursor(heldTraces, held.tracesReadAt);
+      const [run, tail] = await Promise.all([
+        api.get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}`),
+        api.get<{ data: AgentTraceRecord[]; serverTime: string; total: number }>(
+          `/api/v1/workflow-runs/${id}/traces${since ? `?since=${encodeURIComponent(since)}` : ''}`
+        ),
+      ]);
+      const traces = mergeTraces(heldTraces, tail.data);
+      const justFinished =
+        isTerminalWorkflowRunStatus(run.data.status) && !isTerminalWorkflowRunStatus(held.status);
+      // The tail's server time precedes the full read too, so either way it is
+      // a safe base for the next cursor.
+      const tracesReadAt = tail.serverTime;
+      if (traces.length !== tail.total || justFinished) {
+        return { ...(await readAll()), tracesReadAt };
+      }
+      return { ...run.data, traces, tracesReadAt };
+    },
+    queryKey,
     refetchInterval: (q) => {
       if (fullTraces) {
         return false;

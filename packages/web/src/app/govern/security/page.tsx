@@ -1,14 +1,14 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
 import { SecurityEventBadge, SecurityEventList } from '@/components/security/SecurityEventList';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import type { SecurityEventType } from '@/hooks/useAdmin';
-import { useSecurityEvents } from '@/hooks/useAdmin';
+import { useSecurityEventSummary, useSecurityEvents } from '@/hooks/useAdmin';
 
 const TYPE_OPTIONS: Array<{ label: string; value: SecurityEventType | '' }> = [
   { label: 'All types', value: '' },
@@ -21,12 +21,13 @@ const TYPE_OPTIONS: Array<{ label: string; value: SecurityEventType | '' }> = [
   { label: 'Channel Suspicious Input', value: 'CHANNEL_SUSPICIOUS' },
 ];
 
-function SummaryBar({ events }: { events: Array<{ eventType: SecurityEventType }> }) {
-  const counts: Partial<Record<SecurityEventType, number>> = {};
-  for (const e of events) {
-    counts[e.eventType] = (counts[e.eventType] ?? 0) + 1;
-  }
-  const entries = Object.entries(counts) as Array<[SecurityEventType, number]>;
+const LIMIT = 50;
+
+/** Totals per type across every recorded event — not just the page shown. */
+function SummaryBar({ counts }: { counts: Partial<Record<SecurityEventType, number>> }) {
+  const entries = (Object.entries(counts) as Array<[SecurityEventType, number]>).filter(
+    ([, count]) => count > 0
+  );
   if (entries.length === 0) {
     return null;
   }
@@ -44,15 +45,16 @@ function SummaryBar({ events }: { events: Array<{ eventType: SecurityEventType }
 
 export default function GovernSecurityPage() {
   const [typeFilter, setTypeFilter] = useState<SecurityEventType | ''>('');
+  const [offset, setOffset] = useState(0);
   const {
-    data: events,
+    data: page,
     isLoading,
     isError,
     error: loadError,
-  } = useSecurityEvents({
-    limit: 100,
-    type: typeFilter || undefined,
-  });
+  } = useSecurityEvents({ limit: LIMIT, offset, type: typeFilter || undefined });
+  const { data: counts } = useSecurityEventSummary();
+  const events = page?.data ?? [];
+  const total = page?.meta.total ?? 0;
 
   return (
     <div className="space-y-8">
@@ -61,16 +63,28 @@ export default function GovernSecurityPage() {
           <div className="w-52 shrink-0">
             <Select
               aria-label="Filter by event type"
-              onChange={(v) => setTypeFilter(v as SecurityEventType | '')}
+              onChange={(v) => {
+                setTypeFilter(v as SecurityEventType | '');
+                setOffset(0);
+              }}
               options={TYPE_OPTIONS}
               value={typeFilter}
             />
           </div>
         }
         chapter="§ Govern"
-        subtitle="Recent scanner findings across all runs — shell command blocks, file blocks, content security violations, static code analysis findings, and suspicious LLM output. Click any event to expand details. Events refresh every 30 s."
+        subtitle="Scanner findings across all runs, newest first — shell command blocks, file blocks, content security violations, static code analysis findings, and suspicious LLM output. Click any event to expand details. Events refresh every 30 s."
         title="Security events"
       />
+
+      {counts && Object.values(counts).some((n) => n > 0) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>All recorded events by type</CardTitle>
+          </CardHeader>
+          <SummaryBar counts={counts} />
+        </Card>
+      )}
 
       <QueryBoundary
         error={loadError}
@@ -78,48 +92,36 @@ export default function GovernSecurityPage() {
         isLoading={isLoading}
         label="security events"
       >
-        {
-          <>
-            {events && events.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Summary</CardTitle>
-                </CardHeader>
-                <SummaryBar events={events} />
-              </Card>
-            )}
-
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  {typeFilter
-                    ? `${TYPE_OPTIONS.find((o) => o.value === typeFilter)?.label} events`
-                    : 'All events'}
-                  {events && events.length > 0 && (
-                    <span className="ml-2 text-sm font-normal text-paper-400">
-                      · {events.length}
-                    </span>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <SecurityEventList
-                emptyMessage="No security events found. Events appear here when the agent triggers a scanner."
-                events={events ?? []}
-                showRunLink
-              />
-              {events && events.length > 0 && (
-                <div className="pt-3 mt-3 border-t border-ink-600">
-                  <p className="text-xs text-paper-500">
-                    Showing the {events.length} most recent events.{' '}
-                    <Link className="text-ember-400 hover:underline" href="/runs">
-                      View all runs →
-                    </Link>
-                  </p>
-                </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              {typeFilter
+                ? `${TYPE_OPTIONS.find((o) => o.value === typeFilter)?.label} events`
+                : 'All events'}
+              {total > 0 && (
+                <span className="ml-2 text-sm font-normal text-paper-400">· {total}</span>
               )}
-            </Card>
-          </>
-        }
+            </CardTitle>
+          </CardHeader>
+          <SecurityEventList
+            emptyMessage="No security events found. Events appear here when the agent triggers a scanner."
+            events={events}
+            showRunLink
+          />
+          {total > 0 && (
+            <div className="pt-3 mt-3 border-t border-ink-600">
+              <Pagination
+                hasNext={offset + events.length < total}
+                hasPrev={offset > 0}
+                onNext={() => setOffset((o) => o + LIMIT)}
+                onPrev={() => setOffset((o) => Math.max(0, o - LIMIT))}
+                rangeEnd={Math.min(offset + LIMIT, total)}
+                rangeStart={offset + 1}
+                total={total}
+              />
+            </div>
+          )}
+        </Card>
       </QueryBoundary>
     </div>
   );

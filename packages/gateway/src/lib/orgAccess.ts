@@ -11,7 +11,7 @@
  * row for the org.
  */
 import type { PrismaClient } from '@auto-swe/shared';
-import { currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { currentYearMonth, orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import type { FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 
@@ -51,12 +51,16 @@ export async function isOrgMember(
 /**
  * Has `orgId` spent its monthly cap? `false` when no cap is configured.
  *
- * **Best-effort under concurrency.** The check reads the committed spend and
- * nothing more: spend is recorded by the worker long after the launch returns,
- * so no lock taken here could serialise a launch against the spend it causes.
- * Two launches that arrive together both see the same pre-launch total, and a
- * burst can overshoot the cap by the cost of the runs already in flight. The cap
- * stops new work once spend is recorded; it is not a hard ceiling.
+ * Spend is {@link orgMonthSpend}: finalized runs, plus what runs still in
+ * flight have accrued so far, plus runless workflows attributed to the org — so
+ * a burst of long runs is stopped by the spend it has already made, not only
+ * once those runs finalize.
+ *
+ * **Still best-effort under concurrency.** Spend is recorded by the worker
+ * after the launch returns, so no lock taken here could serialise a launch
+ * against the spend it causes. Two launches that arrive together both see the
+ * same total, and each run can still spend after the cap is reached. The cap
+ * stops new work; it is not a hard ceiling.
  */
 export async function isOrgOverBudget(
   prisma: PrismaClient,
@@ -66,13 +70,8 @@ export async function isOrgOverBudget(
   if (budgetCap == null) {
     return false;
   }
-  const usage = await prisma.orgMonthlyUsage.findUnique({
-    where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
-  });
-  // costUsdAccrued is stored with micro-dollar precision (1e-6). Convert to
-  // cents with a small epsilon so values like 9.9999999e-05 round correctly.
-  const spentCents = Math.round(Number(usage?.costUsdAccrued ?? 0) * 100 + 1e-9);
-  return spentCents >= budgetCap;
+  const { totalUsd } = await orgMonthSpend(prisma, orgId);
+  return usdToCents(totalUsd) >= budgetCap;
 }
 
 /**

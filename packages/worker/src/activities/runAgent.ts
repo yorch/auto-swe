@@ -52,6 +52,22 @@ export interface RunAgentOptions {
    * with `BUDGET_EXCEEDED`, and an abort loses at most the one step in flight.
    */
   perStepAccounting?: boolean;
+  /**
+   * Record into the caller's tracer instead of a private one, and leave
+   * persisting it to the caller. For a caller whose tools record their own
+   * calls on that tracer (MCP and workspace tools do): the loop's rows and the
+   * tool rows then share one `seq` sequence and persist once. Name those tools
+   * in `selfRecordingTools` so their calls are not recorded a second time.
+   */
+  tracer?: AgentTracer;
+  /**
+   * Keys (as bound in `spec.tools`) of the tools that record their own calls on
+   * the tracer while the loop runs. Their calls are not re-read from the
+   * result's steps; every other tool call still gets a row from the steps,
+   * appended after the loop returns. Empty by default, so an unlisted tool is
+   * never left without a row — the worst case is a duplicate.
+   */
+  selfRecordingTools?: ReadonlySet<string>;
 }
 
 export interface RunAgentResult<T = unknown> {
@@ -89,7 +105,9 @@ export interface RunAgentResult<T = unknown> {
  * Generic Mastra agent loop driven by an {@link AgentSpec}. Builds the agent,
  * runs a single `generate` (Mastra drives the internal tool-calling loop when
  * the spec carries tools), records token usage via `recordLlmUsage`, captures
- * one `llm_response` trace, and persists it via `persistActivityTrace`.
+ * a `tool_call` row per tool call the loop made and one `llm_response` row, and
+ * persists them via `persistActivityTrace` (or leaves that to a caller that
+ * passed its own `tracer`).
  *
  * This is an in-process helper, not a Temporal activity boundary — an
  * `AgentSpec` holds live, non-serializable handles (`model`, `tools`). Callers
@@ -108,7 +126,7 @@ export async function runAgent<T = unknown>(
   options: RunAgentOptions = {}
 ): Promise<RunAgentResult<T>> {
   const spanName = options.spanName ?? 'llm.run_agent';
-  const tracer = new AgentTracer();
+  const tracer = options.tracer ?? new AgentTracer();
   try {
     return await otelTracer.startActiveSpan(spanName, async (span) => {
       const start = Date.now();
@@ -223,6 +241,8 @@ export async function runAgent<T = unknown>(
             ? 'max_steps'
             : undefined;
 
+        recordStepToolCalls(tracer, genResult?.steps, options.selfRecordingTools);
+
         const object = (genResult?.object ?? undefined) as T | undefined;
         const text = genResult?.text || accounting?.lastText() || undefined;
 
@@ -267,6 +287,100 @@ export async function runAgent<T = unknown>(
       }
     });
   } finally {
-    await persistActivityTrace(tracer, spec.agentKey);
+    if (!options.tracer) {
+      await persistActivityTrace(tracer, spec.agentKey);
+    }
   }
+}
+
+/** The slice of a Mastra step that carries its tool calls and their outcomes. */
+interface StepToolCalls {
+  toolCalls?: Array<{ payload: { toolCallId: string; toolName: string; args?: unknown } }>;
+  toolResults?: Array<{ payload: { toolCallId: string; result: unknown; isError?: boolean } }>;
+  content?: ReadonlyArray<{ type: string; toolCallId?: string; error?: unknown }>;
+  response?: { messages?: ReadonlyArray<{ role: string; content: unknown }> };
+}
+
+const NO_RESULT_ERROR = 'tool call produced no result (it threw or did not complete)';
+
+/**
+ * One `tool_call` row per tool call Mastra made inside the loop, paired with
+ * its outcome by call id. The steps carry no timing, so `durationMs` is 0, and
+ * only a `generate` that returned has steps to read. Calls to a tool named in
+ * `skip` are left out, since that tool records its own row.
+ *
+ * A tool that THROWS never reaches `toolResults`: Mastra emits it as a separate
+ * `tool-error` chunk and buffers only `tool-result` chunks there. Its message
+ * survives in the tool message the loop fed back to the model (an `error-text`
+ * or `error-json` output), so that is read too. A call with no result and no
+ * error anywhere is still recorded as failed, never as a success with no output.
+ */
+function recordStepToolCalls(
+  tracer: AgentTracer,
+  steps: StepToolCalls[] | undefined,
+  skip: ReadonlySet<string> = new Set()
+): void {
+  const errors = stepToolErrors(steps ?? []);
+  for (const step of steps ?? []) {
+    const results = new Map(
+      (step.toolResults ?? []).map((r) => [r.payload.toolCallId, r.payload] as const)
+    );
+    for (const { payload: call } of step.toolCalls ?? []) {
+      if (skip.has(call.toolName)) {
+        continue;
+      }
+      const result = results.get(call.toolCallId);
+      const succeeded = result !== undefined && !result.isError;
+      tracer.addToolCall({
+        durationMs: 0,
+        error: succeeded
+          ? undefined
+          : (errors.get(call.toolCallId) ?? (result ? errorText(result.result) : NO_RESULT_ERROR)),
+        inputJson: call.args ?? {},
+        outputJson: succeeded ? result.result : undefined,
+        toolName: call.toolName,
+      });
+    }
+  }
+}
+
+/**
+ * Error text per failed tool call id, from `tool-error` content parts and the
+ * error outputs of `tool` messages. A step's `response.messages` is cumulative,
+ * so one call can appear in several steps; it maps to the same text each time.
+ */
+function stepToolErrors(steps: StepToolCalls[]): Map<string, string> {
+  const errors = new Map<string, string>();
+  for (const step of steps) {
+    for (const part of step.content ?? []) {
+      if (part.type === 'tool-error' && part.toolCallId) {
+        errors.set(part.toolCallId, errorText(part.error));
+      }
+    }
+    for (const message of step.response?.messages ?? []) {
+      if (message.role !== 'tool' || !Array.isArray(message.content)) {
+        continue;
+      }
+      for (const part of message.content as ToolMessagePart[]) {
+        const kind = part.output?.type;
+        if (part.toolCallId && (kind === 'error-text' || kind === 'error-json')) {
+          errors.set(part.toolCallId, errorText(part.output?.value));
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+/** The slice of an AI SDK `tool` message part that carries a failed call's error. */
+interface ToolMessagePart {
+  toolCallId?: string;
+  output?: { type?: string; value?: unknown };
+}
+
+function errorText(result: unknown): string {
+  if (result instanceof Error) {
+    return result.message;
+  }
+  return typeof result === 'string' ? result : JSON.stringify(result);
 }

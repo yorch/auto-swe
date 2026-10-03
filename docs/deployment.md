@@ -417,7 +417,8 @@ open https://app.example.com
 | -------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | Workflow visibility        | Temporal UI (`:8233`), or `/workflows`, `/runs`, `/workflows/:id` in the dashboard.                              |
 | Cost tracking              | `/govern/usage` (every LLM and embedding call, runs or not), `WorkflowRun.costUsdAccrued`, `/govern/analytics`, the `llm_cost_usd_total` metric. Unknown models log `llm.cost_pricing_known=false`. |
-| Metrics & traces           | Grafana (`:3001` with the bundled `otel-lgtm`) → **auto-swe — LLM & workflow overview**, provisioned from `infra/grafana/`. With your own collector, import `infra/grafana/dashboards/auto-swe-overview.json`; it expects Prometheus and Tempo datasources with UIDs `prometheus` and `tempo`. |
+| Metrics & traces           | Grafana (`:3001` with the bundled `otel-lgtm`) → **auto-swe — LLM & workflow overview**, provisioned from `infra/grafana/`. With your own collector, import `infra/grafana/dashboards/auto-swe-overview.json`; it expects Prometheus and Tempo datasources with UIDs `prometheus` and `tempo`. A run's activities are in the trace of the request that started it; search Tempo by `span.temporal.workflow_id`. Gateway and worker both export metrics. |
+| Logs                       | stdout/stderr on both services. The worker also exports its Temporal and activity log lines over OTLP to Loki, each carrying its activity's trace id. A custom `CMD` must keep `--import ./packages/<service>/dist/instrument.js`, or HTTP spans go missing (see [`architecture.md` §8](./architecture.md#8-observability--cost)). |
 | Per-team A/B experiments   | `/templates/:id` → set `experimentVersion` + `experimentSplit`.                                                  |
 | Rotating LLM models        | Change model spec at `/studio/models` (takes effect on next activity call). A model with no price is recorded at $0 — price it on its `model_catalog_entries` row (see [model configuration](./model-configuration.md#model-catalog)). |
 | Rotating GitHub PAT        | `/studio/integrations → GitHub` → enter new token → Save. No restart required. |
@@ -457,7 +458,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] Postgres connection uses TLS (`?sslmode=require`).
 - [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).
 - [ ] Temporal namespace retention is set deliberately (default in self-hosted = 30d; tune for your humanMergeSignal wait).
-- [ ] `OTEL_EXPORTER_OTLP_ENDPOINT` is set and the collector is reachable — otherwise traces silently drop.
+- [ ] `OTEL_EXPORTER_OTLP_ENDPOINT` is set and the collector is reachable — otherwise traces, metrics and worker logs silently drop.
 - [ ] GitHub PAT and webhook secret are set via `/studio/integrations` (or env var fallback). Secrets are random per-environment.
 - [ ] `CONFIG_ENCRYPTION_KEY` (base64 32-byte random) is set and backed up — it encrypts all DB-stored secrets (GitHub token, Slack tokens, S3 key, OAuth secrets). Loss = all stored credentials are unreadable.
 

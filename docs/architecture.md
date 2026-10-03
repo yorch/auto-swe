@@ -180,7 +180,17 @@ do not resolve `var()`, so those read hex literals from `lib/palette.ts`; `palet
 component reaches past the theme into a default Tailwind colour scale.
 
 **Data fetching.** All server state lives in TanStack Query (staleTime 30 s, retry 1). Running
-workflows poll on an adaptive 3 s interval; terminal-state queries use 30 s.
+workflows poll on an adaptive 3 s interval; terminal-state queries use 30 s. The run page loads its
+traces once, then each poll reads the run without traces and only the traces created since the
+newest one it holds (`GET /api/v1/workflow-runs/:id/traces?since=`), appending them. A trace's
+`createdAt` is the writing worker's clock, at millisecond precision, when it built the insert — not
+when the row committed — so a slow insert or a lagging worker clock can commit a row older than one
+already read. The cursor trails the gateway's time at the previous tail read (the newest trace, on
+the first poll) by 10 s and the page merges by trace id, which covers the common case and lets an
+idle run's poll come back empty. For the rest, the tail also returns `total`, the run's trace count read in
+the same snapshot as the rows: when the merged set does not match it, that poll re-reads every
+trimmed trace instead. The page also re-reads them all once when the run turns terminal. Nothing
+streams: updates arrive on the poll, not as they are written.
 
 ---
 
@@ -585,16 +595,33 @@ erDiagram
 | Scanners | `ScannerPattern` | DB-backed regex patterns across five scanner types |
 
 **Billing idempotency.** `finalizeWorkflowRun` performs the run-denormalize update and the
-`OrgMonthlyUsage` increment-upsert in one transaction, guarded by a pre-read of `endedAt`, so a
-Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost and tokens
-accrue for every terminal status. `Organization.monthlyBudgetUsdCents` caps monthly spend —
-every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's accrued cost meets the cap.
+`OrgMonthlyUsage` increment-upsert in one transaction, and only the write that sets `endedAt`
+bills, so a Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost
+and tokens accrue for every terminal status. A dashboard cancel that Temporal accepts sets a
+`RunnableWorkflow` run `CANCELLED` and leaves `endedAt` null: the workflow's cancellation path then
+finalizes it in a non-cancellable scope, keeping `CANCELLED` whatever outcome it reports, and bills
+everything the run spent — what it spent while stopping included. A channel turn (the global
+Channel Assistant template) finalizes in a cancellable scope, so the cancel would reject its
+finalization; the cancel ends it directly, which costs the org cap nothing because channel turns
+bill their channel, not an org. A cancel that finds no execution left to stop (it never started,
+or closed without finalizing) sets `endedAt` itself, since nothing else will, and bills nothing. `Organization.monthlyBudgetUsdCents` caps monthly spend —
+every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap.
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
 repository access, then membership of every org the launch spends against, then each org's cap.
-The cap reads committed spend and is best-effort under concurrency: spend is recorded when a run
-finishes, so launches that arrive together all see the same total and a burst can overshoot the
-cap by the cost of the runs already in flight.
+The spend the cap reads is `orgMonthSpend` (`@auto-swe/shared/lib/billing`): `OrgMonthlyUsage`, plus
+what each unfinalized run billed to the org has accrued so far (its own ledger row, or its trace
+rows when it has none), plus this month's trace rows of runless workflows attributed to the org.
+An in-flight run counts whenever it started, because finalization bills it to the month it ends in,
+and "in flight" means `endedAt` is null — a cancelled run counts there until it finalizes.
+All three are read in one REPEATABLE READ snapshot, so a run finalizing at that moment is counted
+on exactly one side. When the connection pool cannot start that transaction in time (Prisma
+`P2028`), the same reads run without the snapshot rather than failing the launch: a run finalizing
+during them then counts twice or not at all, which is off by one run rather than every in-flight
+run. The scheduled-fire check reads the same figure, and the org budget endpoint
+returns it as `currentMonthSpend` beside the finalized `currentMonthUsage`. The cap is still
+best-effort under concurrency: launches that arrive together see the same total, and a running
+run keeps spending after the cap is reached — it stops new work, not work already started.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
 `/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
 so the worker writer and the gateway reader cannot disagree about which month a run lands in.
@@ -652,6 +679,33 @@ interceptor (`lib/activitySpans.ts`), so an attempt's `llm.*` spans share one tr
 `temporal.workflow_id` attribute finds a run's traces in Tempo. The same trace ID is what
 `AgentTrace.otelTraceId` records, which is how the run viewer links an LLM call to Tempo.
 
+**Trace propagation.** A run's activities join the trace of whoever started the run, in three hops
+that never load OpenTelemetry into the workflow isolate:
+
+| Hop | Where | What it does |
+|---|---|---|
+| Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start and signal-with-start |
+| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new |
+| Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the starter's span |
+
+So a gateway request — its Fastify and HTTP server spans — and every activity of the run it
+started, child workflows included, are one trace in Tempo. A workflow started without a span around
+it (a Temporal schedule) gives each activity a trace of its own. Headers are not part of the command
+stream Temporal compares on replay: `runnable.traceContext.replay.test.ts` replays every committed
+fixture with both workflow interceptors registered. `@temporalio/interceptors-opentelemetry` is not
+used: it pins the 1.x OpenTelemetry SDK beside this repo's 2.x one, and runs OpenTelemetry inside
+the isolate.
+
+**Instrumentation.** The gateway and worker start the OpenTelemetry SDK from a preload,
+`src/instrument.ts`, passed to `node --import` — the Dockerfile `CMD`, `yarn start` and `yarn dev`
+all pass it. Both services are ESM, and an ESM entry point evaluates every static import before its
+own first statement, so an SDK started from `index.ts` would find `http` already bound and patch
+nothing. The preload also registers the `import-in-the-middle` loader hook for exactly the modules
+the instrumentations patch (`http` and `https`, plus `fastify` on the gateway), because the
+instrumentations' own `require` hook never sees an ESM import. Outbound `fetch` — model providers,
+Octokit, the tracker and knowledge-base connectors — is traced by the undici instrumentation, which
+subscribes to Node's diagnostics channels and needs no patching.
+
 | Span attribute | Value |
 |-----------|-------|
 | `llm.cost_usd` | USD cost computed from the model catalog, falling back to `BUILTIN_MODELS` |
@@ -659,13 +713,25 @@ interceptor (`lib/activitySpans.ts`), so an attempt's `llm.*` spans share one tr
 | `llm.cost_pricing_known` | `false` when the model has no price entry — usage is still recorded at zero cost, except that a call under an organization or channel monthly USD budget is refused before it is made (`MODEL_UNPRICED`) |
 | `workflow.budget_remaining_input` / `_output` | Remaining token budget for the run |
 
-The worker also exports metrics (`lib/metrics.ts`), labelled only by low-cardinality keys — model,
-agent, activity, status, tier — never a run or ticket:
+**Logs.** The worker's Temporal Runtime logger (`lib/otelLogger.ts`) writes every line to stderr as
+before and also emits it as an OpenTelemetry log record, exported over OTLP to Loki. That covers
+the SDK's own logging and everything activities log through `@temporalio/activity`'s `log`
+(`lib/activityLog.ts`). An activity logs inside its own async context, so its records carry the
+`activity.<type>` span's trace and span id, and Temporal's metadata — workflow id, activity type,
+attempt — becomes their attributes. An `Error` in that metadata, at any depth and including its
+`cause`, is exported with its name, message and stack rather than as `{}`, and the first top-level
+one also sets the OpenTelemetry `exception.type`, `exception.message` and `exception.stacktrace`
+attributes. Temporal's `taskToken` is not exported: it is an opaque per-attempt token nobody
+searches by.
+
+The worker exports metrics (`lib/metrics.ts`), and the gateway exports its share of the run counter
+(`gateway/src/lib/metrics.ts`), labelled only by low-cardinality keys — model, agent, activity,
+status, source, tier — never a run or ticket:
 
 | Metric (Prometheus name) | Labels | Recorded by |
 |---|---|---|
 | `llm_calls_total`, `llm_tokens_total`, `llm_cost_usd_total` | `model`, `agent` (+ `direction` on tokens) | `recordLlmUsage`, embedding usage |
-| `workflow_runs_finalized_total` | `status` | `finalizeWorkflowRun`, once per run it finalizes |
+| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel). The worker, channel and eval-verdict writes are conditional on `endedAt` still being null and the dashboard cancel on `status` still being `RUNNING`, so a retried activity or a cancel racing the workflow's own finalisation counts once. A run the dashboard cancelled is counted by the cancel; the worker or channel write that later sets its `endedAt` keeps it `CANCELLED` and does not count it again. The gateway's eval start-failure write is unconditional: no workflow exists to finalise that row, so nothing else writes it |
 | `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, on each call that ends over the tier |
 | `activity_duration_seconds` (histogram) | `activity`, `outcome` (`success` / `failure` / `cancelled`) | the activity interceptor |
 
@@ -686,18 +752,35 @@ UI shows real overage, then throws a non-retryable `BUDGET_EXCEEDED` failure onc
 These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/govern/workflow-defaults`,
 falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 
+**Runless workflows.** Workflow authoring and explaining, scheduled evals, lesson consolidation and
+repo-dependency inference keep neither a ledger row nor a run, so no tier applies. Each execution is
+capped instead by `workflow.runlessMaxInputTokens` / `workflow.runlessMaxOutputTokens` (default
+20,000,000 / 5,000,000, overridable per team or organization, resolved against the execution's
+spend owner). Its spend is the sum of its own `llm_response` trace rows — keyed by workflow id and
+Temporal run id, since some of these ids are reused across executions — plus the calls this worker
+has recorded that its activities have not yet persisted. `assertBudgetAvailable` refuses a call
+once the cap is reached, and `recordLlmUsage` fails the call that passes it with a non-retryable
+`BUDGET_EXCEEDED`. An eval dataset run multiplies the cap by its case count, and finishes with a
+partial verdict rather than failing when the cap runs out after some cases completed (see
+[evals.md](./evals.md)). Epic planning is not runless: it is debited to the epic's own ledger row.
+
 **Agent traces.** Each LLM-calling activity records tool calls, LLM requests/responses, and named
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
 mandatory `finally` — is in [AGENTS.md §6](../AGENTS.md#agent-observability-agenttracer).
 
-**Platform usage.** Every LLM call and every successful embedding call writes one `llm_response`
-row carrying its model, tokens, and cost — including calls from workflows that keep no `WorkflowRun`
-— so those rows are the one complete record of spend. `GET /api/v1/platform/usage?window=7|30|90` (ADMIN) aggregates them
-into totals, a per-UTC-day series, breakdowns by model, agent, and activity (calls, tokens, average
-latency of the calls that succeeded, error rate, cost), the spend from workflows without a run,
-and the ten runs that spent most inside the window. The
-dashboard renders it at `/govern/usage`. It is ADMIN-only because rows without a run carry no team to
-scope them by.
+**Usage.** Every LLM call and every successful embedding call writes one `llm_response` row
+carrying its model, tokens, cost, and the team and organization whose spend it is
+([agents.md §8.5](./agents.md#85-spend-attribution)) — including calls from workflows that keep no
+`WorkflowRun` — so those rows are the one complete record of spend.
+`GET /api/v1/platform/usage?window=7|30|90[&teamId=…|&orgId=…]` aggregates them into totals, a
+per-UTC-day series, breakdowns by team, organization, model, agent, and activity (calls, tokens,
+average latency of the calls that succeeded, error rate, cost), the spend from workflows without a
+run, and the ten runs that spent most inside the window. With no filter the report is
+platform-wide and ADMIN-only, since it includes spend no team owns; a team LEAD (by team
+membership) may read their team and an ORG_ADMIN their organization, and every query of a scoped
+report carries the `teamId`/`orgId` predicate the tenant guard checks. The dashboard renders it at
+`/govern/usage` with a scope picker: the whole platform for an ADMIN, otherwise the teams the
+caller leads and the organizations they administer.
 
 ### Workspace hardening
 
@@ -860,28 +943,51 @@ Current constraints of the system as built. Deliberate product boundaries are in
   quarantined per process for 10 min: the blocking scanners then block on it outright until an
   admin fixes the row, the advisory ones run without it. See
   [agents.md §11](./agents.md#11-limitations).
-- **Workflows without a run have no budget.** Workflow authoring, scheduled evals, lesson
-  consolidation, repo-access sync, and epic planning keep no `ActiveWorkflow` ledger, so no tier
-  limit applies to them and their spend never reaches `OrgMonthlyUsage`. It is recorded on their
-  trace rows and shown at `/govern/usage`, but nothing stops it.
-- **Metrics undercount at their edges.** `workflow_runs_finalized_total` counts only runs the worker
-  finalizes: a run cancelled from the dashboard is closed by the gateway, and channel and eval runs
-  by other paths. `llm_calls_total` counts agent calls, not model round trips inside a tool loop.
-  Prometheus `increase()` reads a new series' first sample as its baseline; status and tier series
-  are seeded with a zero at boot, but a model's or agent's first call after a worker restart does
-  not appear in increase-based panels.
-- **Traces start at the activity, not the workflow.** There is no workflow interceptor, so an
-  activity span has no parent and the spans of one run are separate traces tied together only by
-  their `temporal.workflow_id` attribute. Propagating context from the workflow means running an
-  interceptor inside the V8 isolate, and the official Temporal package for it pins the 1.x
-  OpenTelemetry SDK beside this repo's 2.x one. The gateway emits HTTP spans but none link to the
-  workflows a request starts. Logs go to stdout, not OTLP.
-- **The usage report is platform-wide only.** It has no per-team, per-org, or per-repository
-  breakdown: a trace reaches its team only through run → request → connection, which Prisma cannot
-  group by. Its daily series is one aggregate per UTC day, so a 90-day window costs 90 small queries.
+- **The runless cap is bounded, not exact.** It sums persisted trace rows plus this worker's
+  unpersisted calls, so calls in flight on another worker are invisible until their activity
+  persists, an activity's own calls are invisible for the moment its trace write is committing, and
+  the rows of a failed trace write count only on the worker that made them. A budget read that
+  fails lets the call through rather than failing a call already paid for.
+- **Metrics undercount at their edges.** `llm_calls_total` counts agent calls, not model round
+  trips inside a tool loop. Prometheus `increase()` reads a new series' first sample as its
+  baseline; status, source and tier series are seeded with a zero at boot, but a model's or agent's
+  first call after a worker restart does not appear in increase-based panels. A process that ends a
+  run and dies before its next periodic export loses that increment.
+- **HTTP instrumentation depends on the preload.** A service started without
+  `--import ./dist/instrument.js` (a hand-written `node dist/index.js`) still initialises the SDK
+  and exports spans and metrics, but `http` and `fastify` go unpatched. With telemetry enabled, Node
+  prints a `DEP0205` warning at boot: `import-in-the-middle` registers through `module.register()`,
+  which Node 26 deprecates in favour of `module.registerHooks()`.
+- **A run's trace has no workflow span.** Activities hang directly off the span that started the
+  run; nothing represents the workflow itself or the time between activities, since producing one
+  would mean running OpenTelemetry inside the isolate. Signals and updates sent to a running
+  workflow (approvals, steering) carry no trace context, and runs started by a Temporal schedule
+  have no starting span, so each of their activities is its own trace.
+- **Only the worker's Temporal logger reaches Loki.** Plain `console` output — the `[bash:audit]`
+  and `[mcp:audit]` lines among it — and all of the gateway's logging stay on stdout. Workflow-code
+  logs arrive through the SDK's sink after the activation that produced them, so they carry no
+  trace context.
+- **Usage is attributed at write time, not by repository.** The team and org breakdowns read the
+  owner each trace row was written with, so rows older than those columns, spend with no
+  derivable owner, and rows written while the run lookup failed land under "no team". The last are
+  left ownerless on purpose: a row with an org and no run counts toward the org cap as runless
+  spend, which would bill a run already counted from its ledger a second time. There is no per-repository breakdown. The page is open to
+  platform ADMINs and LEADs; an ORG_ADMIN or team LEAD with a lower platform role can call the
+  endpoint but not open the page. The daily series is one aggregate per UTC day, so a 90-day window
+  costs 90 small queries.
   A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call
   succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
   so it counts as a failure.
+- **The org cap counts unfinalized runs until they finalize.** A run that never finalizes (a
+  workflow terminated outside the worker, or a cancelled one whose worker never runs its
+  cancellation path) keeps its accrued cost in every month's in-flight figure. That includes a run
+  cancelled in the moment between its first activity creating the row and Temporal recording that
+  activity's completion: the workflow exits before the step that finalizes on cancellation, so the
+  row stays `CANCELLED` with no `endedAt`. A dashboard cancel
+  that finds the run's execution already gone ends the run without billing it, so that run's spend
+  leaves the cap.
+  Spend with no org on it — a runless workflow with no derivable owner, an epic's own planning ledger
+  row, which no run finalizes — is outside the cap.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a
@@ -912,3 +1018,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   not duplicate external writes. Notion, Zendesk, Slack, and issue-tracker outcomes are concrete;
   `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
   activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
+- **The run page polls; nothing is pushed.** A running run's page learns of a new trace, step, or
+  status up to 3 s after it is written. Only traces are fetched incrementally: each poll still
+  re-reads the run's steps and spec snapshot whole, and the 10 s overlap re-reads a trace on each
+  poll for up to 10 s after the read that first returned it. A trace that commits behind the cursor is not lost, but it costs a full
+  re-read of every trimmed trace on the poll that notices it; a worker whose clock lags the others
+  by more than 10 s triggers one on every poll it writes during.

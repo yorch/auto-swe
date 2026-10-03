@@ -156,4 +156,5 @@ USER node
 # Runs `prisma migrate deploy` (idempotent), then the command below.
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
-CMD ["node", "packages/gateway/dist/index.js"]
+# The OpenTelemetry preload must load before the app's imports; see src/instrument.ts.
+CMD ["node", "--import", "./packages/gateway/dist/instrument.js", "packages/gateway/dist/index.js"]

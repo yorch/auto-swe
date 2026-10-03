@@ -16,11 +16,15 @@ function newMockPrisma() {
       aggregate: vi.fn().mockResolvedValue(EMPTY_AGG),
       groupBy: vi.fn().mockResolvedValue([]),
     },
+    organization: { findMany: vi.fn().mockResolvedValue([]) },
+    organizationMembership: { findUnique: vi.fn().mockResolvedValue(null) },
+    team: { findMany: vi.fn().mockResolvedValue([]) },
+    teamMembership: { findUnique: vi.fn().mockResolvedValue(null) },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
 
-async function buildApp(role: 'ADMIN' | 'LEAD' = 'ADMIN') {
+async function buildApp(role: 'ADMIN' | 'LEAD' | 'ENGINEER' = 'ADMIN') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -35,6 +39,9 @@ async function buildApp(role: 'ADMIN' | 'LEAD' = 'ADMIN') {
 }
 
 const AUTH = { authorization: 'Bearer fake' };
+const TEAM_A = '00000000-0000-4000-8000-00000000000a';
+const TEAM_B = '00000000-0000-4000-8000-00000000000b';
+const ORG_A = '00000000-0000-4000-8000-0000000000a1';
 
 /** One (model, agent, activity) group as Prisma returns it. */
 function group(
@@ -59,10 +66,137 @@ type GroupByArgs = { by: string[]; where: Record<string, unknown> };
 beforeEach(() => vi.clearAllMocks());
 
 describe('usageRoutes GET /usage', () => {
-  it('rejects non-admins: runless traces carry no team to scope by', async () => {
+  it('keeps the platform-wide report ADMIN-only', async () => {
     const { app } = await buildApp('LEAD');
     const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/usage' });
     expect(res.statusCode).toBe(403);
+  });
+
+  it("lets a team LEAD read their team's report, and scopes every trace query to it", async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/usage?window=7&teamId=${TEAM_A}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.scope).toEqual({ teamId: TEAM_A });
+    expect(prisma.teamMembership.findUnique).toHaveBeenCalledWith({
+      where: { userId_teamId: { teamId: TEAM_A, userId: 'admin-1' } },
+    });
+    const wheres = [
+      ...prisma.agentTrace.groupBy.mock.calls.map(([a]) => a.where),
+      ...prisma.agentTrace.aggregate.mock.calls.map(([a]) => a.where),
+    ];
+    expect(wheres.length).toBeGreaterThan(0);
+    for (const where of wheres) {
+      expect(where.teamId).toBe(TEAM_A);
+    }
+  });
+
+  it('refuses a team member below LEAD, and a non-member', async () => {
+    const { app, prisma } = await buildApp('LEAD');
+    prisma.teamMembership.findUnique.mockResolvedValueOnce({ role: 'ENGINEER' });
+    const url = `/api/v1/platform/usage?teamId=${TEAM_A}`;
+    expect((await app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(403);
+    expect((await app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(403);
+    expect(prisma.agentTrace.groupBy).not.toHaveBeenCalled();
+  });
+
+  it('lets an ORG_ADMIN read their organization, not an ORG_MEMBER', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    const url = `/api/v1/platform/usage?orgId=${ORG_A}`;
+    prisma.organizationMembership.findUnique.mockResolvedValueOnce({ role: 'ORG_MEMBER' });
+    expect((await app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(403);
+
+    prisma.organizationMembership.findUnique.mockResolvedValueOnce({ role: 'ORG_ADMIN' });
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.statusCode).toBe(200);
+    for (const [args] of prisma.agentTrace.groupBy.mock.calls) {
+      expect(args.where.orgId).toBe(ORG_A);
+    }
+  });
+
+  it('rejects a team and an org filter together', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/usage?teamId=${TEAM_A}&orgId=${ORG_A}`,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('breaks spend down by team and by organization, naming each', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agentTrace.groupBy.mockImplementation(async (args: GroupByArgs) => {
+      if (args.by[0] !== 'teamId') {
+        return [];
+      }
+      if ('error' in args.where) {
+        return [
+          {
+            _count: { _all: 1, durationMs: 1 },
+            _sum: { durationMs: 2_500 },
+            orgId: ORG_A,
+            teamId: TEAM_A,
+          },
+        ];
+      }
+      const row = (
+        teamId: string | null,
+        orgId: string | null,
+        calls: number,
+        costUsd: number
+      ) => ({
+        _count: { _all: calls, durationMs: calls },
+        _sum: { costUsd, durationMs: calls * 1_000, inputTokens: calls, outputTokens: calls },
+        orgId,
+        teamId,
+      });
+      // Two no-team groups, the last carrying an org: the no-team row must not take it.
+      return [
+        row(TEAM_A, ORG_A, 3, 3),
+        row(TEAM_B, ORG_A, 1, 1),
+        row(null, null, 1, 0.25),
+        row(null, ORG_A, 1, 0.25),
+      ];
+    });
+    prisma.team.findMany.mockResolvedValue([
+      { id: TEAM_A, name: 'Payments' },
+      { id: TEAM_B, name: 'Platform' },
+    ]);
+    prisma.organization.findMany.mockResolvedValue([{ id: ORG_A, name: 'Acme' }]);
+
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/usage' });
+    const { byOrg, byTeam } = res.json().data;
+
+    expect(byTeam).toEqual([
+      expect.objectContaining({
+        calls: 3,
+        costUsd: 3,
+        errors: 1,
+        orgId: ORG_A,
+        teamId: TEAM_A,
+        teamName: 'Payments',
+      }),
+      expect.objectContaining({ calls: 1, costUsd: 1, teamId: TEAM_B, teamName: 'Platform' }),
+      expect.objectContaining({
+        calls: 2,
+        costUsd: 0.5,
+        orgId: null,
+        teamId: null,
+        teamName: null,
+      }),
+    ]);
+    // The failed 2.5 s call is left out of latency: (3 000 - 2 500) / 2 successes.
+    expect(byTeam[0].avgDurationMs).toBe(250);
+    expect(byOrg).toEqual([
+      expect.objectContaining({ calls: 5, costUsd: 4.25, orgId: ORG_A, orgName: 'Acme' }),
+      expect.objectContaining({ calls: 1, orgId: null, orgName: null }),
+    ]);
   });
 
   it('rejects a window outside 7/30/90', async () => {

@@ -3,12 +3,17 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { workflowRunRoutes } from './workflowRuns.js';
 
+const { recordRunFinalized } = vi.hoisted(() => ({ recordRunFinalized: vi.fn() }));
+vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
+
 function newMockPrisma() {
   return {
+    $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     activeWorkflow: {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     agentTrace: {
+      count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
     },
     configAuditLog: {
@@ -351,6 +356,113 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
   });
 });
 
+describe('workflowRunRoutes GET /:id/traces (live tail)', () => {
+  const runId = '6f9619ff-8b86-4a08-8b86-3e6f9619ffd1';
+  const traceRow = (id: string, text: string) => ({
+    agentKey: 'implementer',
+    attempt: 1,
+    costUsd: null,
+    createdAt: new Date('2026-09-01T10:00:00.123Z'),
+    durationMs: 1,
+    error: null,
+    id,
+    inputJson: { text },
+    inputTokens: null,
+    model: null,
+    nodeId: 'executeImplementation',
+    otelSpanId: null,
+    otelTraceId: null,
+    outputJson: null,
+    outputTokens: null,
+    recordingId: 'impl',
+    seq: 0,
+    specNodeId: 'impl',
+    stepAttempt: 1,
+    toolName: 'bash',
+    type: 'tool_call',
+  });
+
+  it('returns only traces at or after the cursor, trimmed, behind the visibility filter', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    prisma.agentTrace.findMany.mockResolvedValue([traceRow('t-new', 'x'.repeat(5_000))]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/traces?since=2026-09-01T10:00:00.123Z`,
+    });
+    expect(res.statusCode).toBe(200);
+
+    // The run lookup carries the same visibility predicate as the detail route.
+    const runWhere = prisma.workflowRun.findFirst.mock.calls[0][0].where;
+    expect(runWhere.id).toBe(runId);
+    expect(runWhere.OR).toBeDefined();
+    expect(JSON.stringify(runWhere.OR)).toContain('"requestedById":"u-1"');
+
+    expect(prisma.agentTrace.findMany).toHaveBeenCalledWith({
+      orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+      where: { createdAt: { gte: new Date('2026-09-01T10:00:00.123Z') }, runId },
+    });
+    const [trace] = res.json().data;
+    expect(trace.id).toBe('t-new');
+    expect(trace.trimmed).toBe(true);
+    expect(trace.specNodeId).toBe('impl');
+  });
+
+  it('counts every trace of the run in the same snapshot as the page', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    prisma.agentTrace.findMany.mockResolvedValue([traceRow('t-new', 'x')]);
+    prisma.agentTrace.count.mockResolvedValue(7);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/traces?since=2026-09-01T10:00:00.123Z`,
+    });
+    expect(res.json().total).toBe(7);
+    expect(Number.isNaN(Date.parse(res.json().serverTime))).toBe(false);
+    // The count ignores the cursor: it is the run's whole trace, so a caller
+    // can compare it with what it holds.
+    expect(prisma.agentTrace.count).toHaveBeenCalledWith({ where: { runId } });
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Array), {
+      isolationLevel: 'RepeatableRead',
+    });
+  });
+
+  it('returns every trace when no cursor is given', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/traces`,
+    });
+    expect(prisma.agentTrace.findMany.mock.calls[0][0].where).toEqual({ runId });
+  });
+
+  it('404s without reading traces when the run is not visible to the caller', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.workflowRun.findFirst.mockResolvedValue(null);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/traces`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a cursor that is not an ISO timestamp', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/traces?since=yesterday`,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe('workflowRunRoutes POST /:id/cancel', () => {
   const runId = '6f9619ff-8b86-4a08-8b86-3e6f9619ffd1';
 
@@ -385,6 +497,7 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     });
     prisma.workflowRun.updateMany.mockResolvedValue({ count: 0 });
     prisma.workflowRun.findUnique.mockResolvedValue({ status: 'CANCELLED' });
+    recordRunFinalized.mockClear();
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -392,6 +505,8 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ data: { id: runId, status: 'CANCELLED' } });
+    // The workflow's own finalisation ended the run, and counted it.
+    expect(recordRunFinalized).not.toHaveBeenCalled();
   });
 
   it('returns 502 and leaves the run RUNNING when Temporal refuses the cancel', async () => {
@@ -430,7 +545,11 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
       url: `/api/v1/workflow-runs/${runId}/cancel`,
     });
     expect(res.statusCode).toBe(200);
-    expect(prisma.workflowRun.updateMany).toHaveBeenCalled();
+    // No execution is left to finalize the run, so this write ends it.
+    const update = prisma.workflowRun.updateMany.mock.calls[0][0];
+    expect(update.where).toEqual({ id: runId, status: 'RUNNING' });
+    expect(update.data.status).toBe('CANCELLED');
+    expect(update.data.endedAt).toBeInstanceOf(Date);
   });
 
   it('cancels the Temporal workflow when the guarded update transitions exactly one row', async () => {
@@ -441,6 +560,7 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
       workflowId: 'wf-1',
     });
     prisma.workflowRun.updateMany.mockResolvedValue({ count: 1 });
+    recordRunFinalized.mockClear();
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -448,6 +568,13 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(temporal.cancelWorkflow).toHaveBeenCalledWith('wf-1');
+    // The workflow finalizes the run, so the row keeps endedAt null: it stays
+    // in flight for the org cap until finalizeWorkflowRun bills its spend.
+    expect(prisma.workflowRun.updateMany).toHaveBeenCalledWith({
+      data: { status: 'CANCELLED' },
+      where: { id: runId, status: 'RUNNING' },
+    });
+    expect(recordRunFinalized).toHaveBeenCalledExactlyOnceWith('CANCELLED', 'gateway');
     expect(prisma.configAuditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -459,6 +586,46 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
         }),
       })
     );
+  });
+
+  it('ends a cancelled channel turn itself: its workflow finalizes in a cancellable scope', async () => {
+    const { app, prisma, temporal } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: runId,
+      status: 'RUNNING',
+      template: { name: 'Channel Assistant', teamId: null },
+      workflowId: 'channel-turn-1',
+    });
+    prisma.workflowRun.updateMany.mockResolvedValue({ count: 1 });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${runId}/cancel`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(temporal.cancelWorkflow).toHaveBeenCalledWith('channel-turn-1');
+    // The cancel rejects the channel workflow's finalizeChannelRun call, so
+    // leaving endedAt null would leave the run open forever.
+    const update = prisma.workflowRun.updateMany.mock.calls[0][0];
+    expect(update.data.status).toBe('CANCELLED');
+    expect(update.data.endedAt).toBeInstanceOf(Date);
+  });
+
+  it('leaves endedAt to the workflow for a team template named like the channel one', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: runId,
+      status: 'RUNNING',
+      template: { name: 'Channel Assistant', teamId: 'team-1' },
+      workflowId: 'wf-2',
+    });
+    prisma.workflowRun.updateMany.mockResolvedValue({ count: 1 });
+    await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${runId}/cancel`,
+    });
+    expect(prisma.workflowRun.updateMany.mock.calls[0][0].data).toEqual({ status: 'CANCELLED' });
   });
 });
 

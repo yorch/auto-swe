@@ -1,8 +1,10 @@
 import { prisma } from '@auto-swe/shared/db';
 import { trace } from '@opentelemetry/api';
-import { activityInfo } from '@temporalio/activity';
+import { activityInfo, Context } from '@temporalio/activity';
 import { currentNodeTag } from './activityNodeTag.js';
 import type { AgentTracer } from './agentTracer.js';
+import { takePersistingUsage } from './runlessBudget.js';
+import { currentSpendOwner } from './spendOwner.js';
 
 /**
  * Returns the Temporal activity type (function name) for the currently
@@ -53,6 +55,15 @@ export function currentTemporalRunId(): string | null {
   }
 }
 
+/** The current workflow's `WorkflowRun.id`, undefined when it has none. Throws when the read fails. */
+async function findWorkflowRunId(): Promise<string | undefined> {
+  const run = await prisma.workflowRun.findUnique({
+    select: { id: true },
+    where: { workflowId: currentWorkflowId() },
+  });
+  return run?.id;
+}
+
 /**
  * Look up the `WorkflowRun.id` row for the currently executing Temporal
  * workflow so artifacts produced by an activity link back to the run. Returns
@@ -61,15 +72,26 @@ export function currentTemporalRunId(): string | null {
  */
 export async function currentWorkflowRunId(): Promise<string | undefined> {
   try {
-    const wid = currentWorkflowId();
-    const run = await prisma.workflowRun.findUnique({
-      select: { id: true },
-      where: { workflowId: wid },
-    });
-    return run?.id;
+    return await findWorkflowRunId();
   } catch {
     return undefined;
   }
+}
+
+/** Next free `seq` per activity attempt, keyed by the attempt's own Context. */
+const nextSeq = new WeakMap<Context, number>();
+
+/**
+ * Reserve `count` consecutive `seq` values in the current attempt. An activity
+ * can persist more than one tracer (its own, plus `runAgent`'s), and each
+ * tracer numbers its records from 0; without an offset their rows collide and
+ * the run viewer's order between them is arbitrary.
+ */
+function reserveSeq(count: number): number {
+  const ctx = Context.current();
+  const base = nextSeq.get(ctx) ?? 0;
+  nextSeq.set(ctx, base + count);
+  return base;
 }
 
 /**
@@ -84,11 +106,33 @@ export async function persistActivityTrace(tracer: AgentTracer, agentKey: string
   if (!tracer.hasSpanContext() && spanContext?.traceId && spanContext?.spanId) {
     tracer.setSpanContext(spanContext.traceId, spanContext.spanId);
   }
-  await tracer.persist(
-    { runId: await currentWorkflowRunId(), workflowId: currentWorkflowId() },
+  const [run, owner] = await Promise.all([
+    findWorkflowRunId().then(
+      (id) => ({ id }),
+      () => null
+    ),
+    currentSpendOwner(),
+  ]);
+  const workflowId = currentWorkflowId();
+  const temporalRunId = currentTemporalRunId();
+  // A failed run lookup cannot tell a runless workflow from one with a run, so
+  // its rows carry no owner. `orgMonthSpend` counts an owner-stamped row with no
+  // run as runless spend, and a run's spend is already counted from its ledger:
+  // stamping the owner here would bill that run to its org twice.
+  const tags = run ? { ...owner, runId: run.id } : { runId: undefined };
+  // The rows about to be written carry this activity's runless spend: take it
+  // out of the in-process sum first, and put it back if the write fails.
+  const { input, output } = tracer.llmTokenTotals();
+  const restore = takePersistingUsage(workflowId, temporalRunId, input, output);
+  const written = await tracer.persist(
+    { ...tags, temporalRunId, workflowId },
     currentActivityType(),
     agentKey,
     currentAttempt(),
-    currentNodeTag()
+    currentNodeTag(),
+    reserveSeq(tracer.size)
   );
+  if (!written) {
+    restore();
+  }
 }

@@ -4,6 +4,7 @@ import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
@@ -13,6 +14,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { assertMcpWriteAllowed, mcpWriteAuditHook, mcpWriteBegin } from '../lib/mcpWriteGuard.js';
+import { recordRunFinalized } from '../lib/metrics.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import {
@@ -36,6 +38,17 @@ const RunDetailQuery = z.object({
   includeTraces: booleanQueryParam(false),
 });
 
+const RunTracesQuery = z.object({
+  /**
+   * Return only traces created at or after this instant. Inclusive so a row in
+   * the cursor's own millisecond is not skipped; callers merge by trace id, so
+   * the overlap is harmless. `createdAt` is the writing worker's clock when it
+   * built the insert, not the commit time, so no cursor can promise every row
+   * behind it has been read — `total` is what lets a caller notice a gap.
+   */
+  since: z.iso.datetime({ offset: true }).optional(),
+});
+
 const ErrorResponseSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
@@ -46,6 +59,17 @@ const RunListResponseSchema = z.object({
 });
 
 const RunDetailResponseSchema = z.object({ data: z.unknown() });
+const RunTracesResponseSchema = z.object({
+  data: z.array(z.unknown()),
+  /**
+   * The gateway's clock just before the read. A caller's next cursor can start
+   * from here rather than from its newest trace, so an idle run's poll does
+   * not re-read the last batch every time.
+   */
+  serverTime: z.iso.datetime(),
+  /** Every trace the run has, counted in the same snapshot as `data`. */
+  total: z.number().int(),
+});
 
 const CancelRunResponseSchema = z.object({
   data: z.object({ id: z.string().uuid(), status: z.string() }),
@@ -109,6 +133,32 @@ function trimTracePayloads(
     trimmed,
   };
 }
+/** The run page's view of one trace row; payloads trimmed unless `full`. */
+function projectTrace(t: Prisma.AgentTraceGetPayload<object>, full: boolean) {
+  return {
+    ...trimTracePayloads(t, full),
+    agentKey: t.agentKey,
+    attempt: t.attempt,
+    costUsd: t.costUsd,
+    createdAt: t.createdAt,
+    durationMs: t.durationMs,
+    error: t.error,
+    id: t.id,
+    inputTokens: t.inputTokens,
+    model: t.model,
+    nodeId: t.nodeId,
+    otelSpanId: t.otelSpanId,
+    otelTraceId: t.otelTraceId,
+    outputTokens: t.outputTokens,
+    recordingId: t.recordingId,
+    seq: t.seq,
+    specNodeId: t.specNodeId,
+    stepAttempt: t.stepAttempt,
+    toolName: t.toolName,
+    type: t.type,
+  };
+}
+
 /**
  * Names of the GLOBAL templates whose runs are conversational/assistant chatter,
  * not engineering work: the per-mention "Channel Assistant" turn/ambient-digest
@@ -227,6 +277,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         return mcpWrite.refused;
       }
       const run = await fastify.prisma.workflowRun.findFirst({
+        include: { template: { select: { name: true, teamId: true } } },
         where: {
           id: request.params.id,
           ...buildWorkflowRunControlFilter(user, request.repoAccessGate),
@@ -249,9 +300,20 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // (never started, or already closed) has nothing left to cancel, so that
       // failure counts as success; any other failure leaves the row RUNNING
       // and reports 502 so the caller can retry.
+      // Whether the workflow will finalize the run: true once Temporal has
+      // accepted the cancel of a RunnableWorkflow run, whose cancellation path
+      // finalizes it as CANCELLED in a non-cancellable scope; false when no
+      // execution is left to do that. Channel turns (the global Channel
+      // Assistant template) finalize in a cancellable scope, so a cancel
+      // rejects their finalization outright — and they bill no org, so ending
+      // them here loses nothing from the cap.
+      const isChannelTurn =
+        run.template?.teamId === null && run.template?.name === CHANNEL_ASSISTANT_TEMPLATE_NAME;
+      let workflowFinalizes = false;
       if (run.workflowId) {
         try {
           await fastify.temporal.cancelWorkflow(run.workflowId);
+          workflowFinalizes = !isChannelTurn;
         } catch (err) {
           if (!isTerminalSignalError(err)) {
             request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel failed');
@@ -267,11 +329,26 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // Guard the update with a status=RUNNING predicate so a race against a
       // concurrent terminal-state write (e.g. the workflow finishing, or its
       // own cancellation finalisation landing first) can't clobber it.
+      //
+      // When the workflow will finalize the run, leave `endedAt` to it: the
+      // run stays in flight for the org cap until `finalizeWorkflowRun` bills
+      // its spend — including what it spends while it stops — to the org's
+      // month, keeping this CANCELLED. Ending it here would drop that spend
+      // from both sides of the cap. With no execution left, nothing else will
+      // end the run, so this write does.
       const { count } = await fastify.prisma.workflowRun.updateMany({
-        data: { endedAt: new Date(), status: 'CANCELLED' },
+        data: workflowFinalizes
+          ? { status: 'CANCELLED' }
+          : { endedAt: new Date(), status: 'CANCELLED' },
         where: { id: run.id, status: 'RUNNING' },
       });
-      if (count === 0) {
+      if (count > 0) {
+        // This write cancelled the run, so it counts it; the workflow's
+        // finalisation keeps the status and does not count it again. When
+        // that finalisation lands first, it counts the run instead and this
+        // guard skips it, so each run counts once.
+        recordRunFinalized('CANCELLED', 'gateway');
+      } else {
         // The workflow's own cancellation handler can finalise the run as
         // CANCELLED before this write — that is this cancel succeeding.
         const current = await fastify.prisma.workflowRun.findUnique({
@@ -338,6 +415,64 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // ── Traces created since a cursor (the run page's live tail) ──
+  // A running run's page polls this plus the trace-free detail instead of
+  // re-downloading every trace each tick. Payloads are always trimmed, like the
+  // polled detail view; `?fullTraces=true` on the detail route is the one-shot
+  // way to get them whole. `total` is counted in the same snapshot as the
+  // page, so a caller holding fewer traces than `total` after merging knows a
+  // row landed behind its cursor and must re-read them all.
+  app.get(
+    '/:id/traces',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: {
+        params: RunIdParam,
+        querystring: RunTracesQuery,
+        response: { 200: RunTracesResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
+      });
+      if (!run) {
+        return reply.status(404).send({
+          error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
+        });
+      }
+      const { since } = request.query;
+      const serverTime = new Date().toISOString();
+      // One REPEATABLE READ snapshot, so a row committed between the two
+      // statements cannot be counted without being returned (or vice versa).
+      // The guard checks at execution, so the whole transaction runs exempted.
+      const [traces, total] = await runUnscoped(
+        'scoped by a run the caller was authorized to read',
+        ['AgentTrace'],
+        () =>
+          fastify.prisma.$transaction(
+            [
+              fastify.prisma.agentTrace.findMany({
+                orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+                where: {
+                  runId: run.id,
+                  ...(since ? { createdAt: { gte: new Date(since) } } : {}),
+                },
+              }),
+              fastify.prisma.agentTrace.count({ where: { runId: run.id } }),
+            ],
+            { isolationLevel: 'RepeatableRead' }
+          )
+      );
+      return { data: traces.map((t) => projectTrace(t, false)), serverTime, total };
+    }
+  );
+
   // ── Get run detail (with steps + spec snapshot) ──
   app.get(
     '/:id',
@@ -373,10 +508,15 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const traces = includeTraces
-        ? await fastify.prisma.agentTrace.findMany({
-            orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
-            where: { runId: run.id },
-          })
+        ? await runUnscoped(
+            'scoped by a run the caller was authorized to read',
+            ['AgentTrace'],
+            () =>
+              fastify.prisma.agentTrace.findMany({
+                orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+                where: { runId: run.id },
+              })
+          )
         : [];
       return {
         data: {
@@ -408,28 +548,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateVersion: run.templateVersion,
           tokensInputTotal: Number(run.tokensInputTotal),
           tokensOutputTotal: Number(run.tokensOutputTotal),
-          traces: traces.map((t) => ({
-            ...trimTracePayloads(t, fullTraces),
-            agentKey: t.agentKey,
-            attempt: t.attempt,
-            costUsd: t.costUsd,
-            createdAt: t.createdAt,
-            durationMs: t.durationMs,
-            error: t.error,
-            id: t.id,
-            inputTokens: t.inputTokens,
-            model: t.model,
-            nodeId: t.nodeId,
-            otelSpanId: t.otelSpanId,
-            otelTraceId: t.otelTraceId,
-            outputTokens: t.outputTokens,
-            recordingId: t.recordingId,
-            seq: t.seq,
-            specNodeId: t.specNodeId,
-            stepAttempt: t.stepAttempt,
-            toolName: t.toolName,
-            type: t.type,
-          })),
+          traces: traces.map((t) => projectTrace(t, fullTraces)),
           workflowId: run.workflowId,
           workRequest: run.workRequest,
         },
