@@ -94,6 +94,14 @@ describe('trace live tail', () => {
     );
   });
 
+  it('bases the cursor on the last read, not the newest trace, once there is one', () => {
+    const cursor = traceTailCursor(
+      [trace('a', '2026-09-01T10:00:30.000Z')],
+      '2026-09-01T10:05:00.000Z'
+    );
+    expect(cursor).toBe('2026-09-01T10:04:50.000Z');
+  });
+
   it('appends only unseen traces, in createdAt then seq order', () => {
     const held = [
       trace('a', '2026-09-01T10:00:00.000Z', 0),
@@ -161,7 +169,11 @@ describe('trace live tail', () => {
     const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/traces')) {
-        return json({ data: server.tail(), total: server.traces.length });
+        return json({
+          data: server.tail(),
+          serverTime: '2026-09-01T10:00:40.000Z',
+          total: server.traces.length,
+        });
       }
       const traces = url.includes('includeTraces=true') ? server.traces : [];
       return json({ data: { id: 'run-1', status: server.status, steps: [], traces } });
@@ -207,8 +219,8 @@ describe('trace live tail', () => {
     await act(() => result.current.refetch());
     await act(() => result.current.refetch());
 
+    await waitFor(() => expect(result.current.data?.traces.map((t) => t.id)).toEqual(['t1', 't2']));
     expect(fullReads()).toBe(1);
-    expect(result.current.data?.traces.map((t) => t.id)).toEqual(['t1', 't2']);
   });
 
   it('re-reads every trace once when the run turns terminal', async () => {
@@ -227,6 +239,49 @@ describe('trace live tail', () => {
     // Already terminal when held: later polls go back to the tail.
     await act(() => result.current.refetch());
     expect(fullReads()).toBe(2);
+  });
+
+  it('stops re-downloading the last batch while the run is idle', async () => {
+    const t1 = trace('t1', '2026-09-01T10:00:00.000Z');
+    const reads = [
+      '2026-09-01T10:00:03.000Z',
+      '2026-09-01T10:00:20.000Z',
+      '2026-09-01T10:00:40.000Z',
+    ];
+    const sinces: string[] = [];
+    const tailed: number[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://gw');
+        if (url.pathname.endsWith('/traces')) {
+          const since = url.searchParams.get('since') as string;
+          sinces.push(since);
+          // The server honours the cursor, like the real route.
+          const data = [t1].filter((t) => Date.parse(t.createdAt) >= Date.parse(since));
+          tailed.push(data.length);
+          return json({ data, serverTime: reads[sinces.length - 1], total: 1 });
+        }
+        return json({ data: { id: 'run-1', status: 'RUNNING', steps: [], traces: [t1] } });
+      })
+    );
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useWorkflowRun('run-1'), { wrapper });
+    await waitFor(() => expect(result.current.data?.traces).toHaveLength(1));
+
+    for (let i = 0; i < 3; i++) {
+      await act(() => result.current.refetch());
+    }
+
+    // First from the newest trace, then from each previous read.
+    expect(sinces).toEqual([
+      '2026-09-01T09:59:50.000Z',
+      '2026-09-01T09:59:53.000Z',
+      '2026-09-01T10:00:10.000Z',
+    ]);
+    // Once the last read is past the overlap, the poll carries no traces.
+    expect(tailed).toEqual([1, 1, 0]);
+    expect(result.current.data?.traces.map((t) => t.id)).toEqual(['t1']);
   });
 
   it('never tails the full-payload view', async () => {

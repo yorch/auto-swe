@@ -60,6 +60,12 @@ const RunListResponseSchema = z.object({
 const RunDetailResponseSchema = z.object({ data: z.unknown() });
 const RunTracesResponseSchema = z.object({
   data: z.array(z.unknown()),
+  /**
+   * The gateway's clock just before the read. A caller's next cursor can start
+   * from here rather than from its newest trace, so an idle run's poll does
+   * not re-read the last batch every time.
+   */
+  serverTime: z.iso.datetime(),
   /** Every trace the run has, counted in the same snapshot as `data`. */
   total: z.number().int(),
 });
@@ -418,6 +424,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const { since } = request.query;
+      const serverTime = new Date().toISOString();
       // One REPEATABLE READ snapshot, so a row committed between the two
       // statements cannot be counted without being returned (or vice versa).
       const [traces, total] = await fastify.prisma.$transaction(
@@ -430,7 +437,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         ],
         { isolationLevel: 'RepeatableRead' }
       );
-      return { data: traces.map((t) => projectTrace(t, false)), total };
+      return { data: traces.map((t) => projectTrace(t, false)), serverTime, total };
     }
   );
 

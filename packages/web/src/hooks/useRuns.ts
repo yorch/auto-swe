@@ -34,23 +34,41 @@ export function useWorkflow(id: string) {
 }
 
 /**
- * How far behind the newest trace the live-tail cursor sits. A trace's
- * `createdAt` is the writing worker's clock, at millisecond precision, when it
- * built the insert — not when the row committed. A slow insert (a large batch,
- * a wait for a pool connection) or a worker whose clock lags can therefore
- * commit a row older than one already read. The overlap catches the common
- * case cheaply; the trace count (see `useWorkflowRun`) catches the rest.
+ * How far behind its base the live-tail cursor sits. A trace's `createdAt` is
+ * the writing worker's clock, at millisecond precision, when it built the
+ * insert — not when the row committed. A slow insert (a large batch, a wait
+ * for a pool connection) or a worker whose clock lags can therefore commit a
+ * row older than one already read. The overlap catches the common case
+ * cheaply; the trace count (see `useWorkflowRun`) catches the rest.
  */
 export const TRACE_TAIL_OVERLAP_MS = 10_000;
 
-/** The `since` cursor for the next live-tail poll, or null to read every trace. */
-export function traceTailCursor(traces: readonly AgentTraceRecord[]): string | null {
-  let newest = Number.NEGATIVE_INFINITY;
-  for (const t of traces) {
-    newest = Math.max(newest, Date.parse(t.createdAt));
+/**
+ * The `since` cursor for the next live-tail poll, or null to read every trace.
+ * Its base is the server time of the previous tail read when there is one,
+ * otherwise the newest trace held. Basing it on the newest trace alone would
+ * re-download the last batch on every poll for as long as a run stays idle;
+ * from the last read, an idle run's poll returns nothing once the overlap has
+ * passed.
+ */
+export function traceTailCursor(
+  traces: readonly AgentTraceRecord[],
+  lastReadAt?: string
+): string | null {
+  let base = lastReadAt ? Date.parse(lastReadAt) : Number.NEGATIVE_INFINITY;
+  if (!Number.isFinite(base)) {
+    for (const t of traces) {
+      base = Math.max(base, Date.parse(t.createdAt));
+    }
   }
-  return Number.isFinite(newest) ? new Date(newest - TRACE_TAIL_OVERLAP_MS).toISOString() : null;
+  return Number.isFinite(base) ? new Date(base - TRACE_TAIL_OVERLAP_MS).toISOString() : null;
 }
+
+/** A run as the run page caches it: plus when its traces were last tailed. */
+export type LiveWorkflowRunDetail = WorkflowRunDetail & {
+  /** Server time of the last live-tail read, the next cursor's base. */
+  tracesReadAt?: string;
+};
 
 /**
  * Append newly read traces, dropping ones already held, in the server's order
@@ -88,13 +106,13 @@ export function useWorkflowRun(id: string, includeTraces = true, fullTraces = fa
   const qc = useQueryClient();
   const query = fullTraces ? '?fullTraces=true' : includeTraces ? '?includeTraces=true' : '';
   const queryKey = ['workflow-run', id, includeTraces, fullTraces];
-  return useQuery<WorkflowRunDetail>({
+  return useQuery<LiveWorkflowRunDetail>({
     enabled: !!id,
     // Switching to full payloads must not blank the page while it refetches —
     // but only for the same run, or the previous run would flash on navigation.
     placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === id ? prev : undefined),
     queryFn: async () => {
-      const held = qc.getQueryData<WorkflowRunDetail>(queryKey);
+      const held = qc.getQueryData<LiveWorkflowRunDetail>(queryKey);
       const readAll = () =>
         api
           .get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}${query}`)
@@ -103,20 +121,23 @@ export function useWorkflowRun(id: string, includeTraces = true, fullTraces = fa
         return readAll();
       }
       const heldTraces = held.traces ?? [];
-      const since = traceTailCursor(heldTraces);
+      const since = traceTailCursor(heldTraces, held.tracesReadAt);
       const [run, tail] = await Promise.all([
         api.get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}`),
-        api.get<{ data: AgentTraceRecord[]; total: number }>(
+        api.get<{ data: AgentTraceRecord[]; serverTime: string; total: number }>(
           `/api/v1/workflow-runs/${id}/traces${since ? `?since=${encodeURIComponent(since)}` : ''}`
         ),
       ]);
       const traces = mergeTraces(heldTraces, tail.data);
       const justFinished =
         isTerminalWorkflowRunStatus(run.data.status) && !isTerminalWorkflowRunStatus(held.status);
+      // The tail's server time precedes the full read too, so either way it is
+      // a safe base for the next cursor.
+      const tracesReadAt = tail.serverTime;
       if (traces.length !== tail.total || justFinished) {
-        return readAll();
+        return { ...(await readAll()), tracesReadAt };
       }
-      return { ...run.data, traces };
+      return { ...run.data, traces, tracesReadAt };
     },
     queryKey,
     refetchInterval: (q) => {

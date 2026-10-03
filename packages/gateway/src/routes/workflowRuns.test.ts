@@ -420,6 +420,7 @@ describe('workflowRunRoutes GET /:id/traces (live tail)', () => {
       url: `/api/v1/workflow-runs/${runId}/traces?since=2026-09-01T10:00:00.123Z`,
     });
     expect(res.json().total).toBe(7);
+    expect(Number.isNaN(Date.parse(res.json().serverTime))).toBe(false);
     // The count ignores the cursor: it is the run's whole trace, so a caller
     // can compare it with what it holds.
     expect(prisma.agentTrace.count).toHaveBeenCalledWith({ where: { runId } });
