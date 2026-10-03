@@ -70,6 +70,7 @@ describe('listProviderModels step', () => {
   it('returns only a markdown list of ids per provider, with no key anywhere in the output', async () => {
     const out = await listProviderModels({ request });
     expect(Object.keys(out)).toEqual(['guidance']);
+    expect(out.guidance).toContain('Catalog file: `packages/shared/src/lib/builtinModels.ts`.');
     expect(out.guidance).toContain('### anthropic\n\n- anthropic-a\n- anthropic-z');
     expect(out.guidance).toContain('### openai\n\n- openai-a\n- openai-z');
     expect(JSON.stringify(out)).not.toContain(SECRET);

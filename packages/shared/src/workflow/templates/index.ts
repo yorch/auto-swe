@@ -14,6 +14,7 @@ import { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
 import { HOTFIX_SPEC } from './hotfix.js';
 import { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 import { MIGRATION_SPEC } from './migration.js';
+import { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 import { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
 import { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 import { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
@@ -75,6 +76,11 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: DEPENDENCY_UPDATE_SPEC.description,
     name: DEPENDENCY_UPDATE_SPEC.name,
     spec: DEPENDENCY_UPDATE_SPEC,
+  },
+  {
+    description: MODEL_CATALOG_REFRESH_SPEC.description,
+    name: MODEL_CATALOG_REFRESH_SPEC.name,
+    spec: MODEL_CATALOG_REFRESH_SPEC,
   },
   {
     description: CODE_AND_CI_SPEC.description,
@@ -300,6 +306,7 @@ export { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
 export { HOTFIX_SPEC } from './hotfix.js';
 export { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 export { MIGRATION_SPEC } from './migration.js';
+export { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 export { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
 export { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 export { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';

@@ -129,11 +129,12 @@ export async function listProviderModels(
     })
   );
 
+  const header = `## Live model ids\n\nCatalog file: \`${catalogPath}\`.`;
   const guidance =
     sections.length === 0
-      ? '## Live model ids\n\nNo provider credential is configured for the providers in the catalog, so no ' +
+      ? `${header}\n\nNo provider credential is configured for the providers in the catalog, so no ` +
         'live model ids are available. Leave the catalog rows as they are.'
-      : `## Live model ids\n\nModel ids each provider lists right now, fetched by the platform. ` +
+      : `${header}\n\nModel ids each provider lists right now, fetched by the platform. ` +
         `Use them to find models missing from the catalog and catalog models no longer listed.\n\n` +
         sections.join('\n\n');
   return { guidance };

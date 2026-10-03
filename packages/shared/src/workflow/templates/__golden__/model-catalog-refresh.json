@@ -1,0 +1,199 @@
+{
+  "description": "Keep the built-in model catalog current: list each provider's live model ids through the platform, read the official pricing pages, update BUILTIN_MODELS with a cited source for every changed price, and open a DRAFT pull request for a person to review. Uncertain figures are left unchanged and called out. A run with nothing to change opens no pull request. Point it at your auto-swe fork and schedule it.",
+  "entry": "setCriteria",
+  "name": "model-catalog-refresh",
+  "nodes": {
+    "checkApproval": {
+      "expr": "nodes.review.output.approved == true",
+      "onFalse": "incReviewRetries",
+      "onTrue": "openPR",
+      "type": "cond"
+    },
+    "checkChanges": {
+      "expr": "nodes.implement.output.filesChanged.length == 0",
+      "onFalse": "initCounters",
+      "onTrue": "doneNoChange",
+      "type": "cond"
+    },
+    "checkReviewLimit": {
+      "expr": "context.reviewRetries >= 3",
+      "onFalse": "reviewFix",
+      "onTrue": "terminateReviewFailed",
+      "type": "cond"
+    },
+    "done": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "doneNoChange": {
+      "result": {
+        "changed": {
+          "literal": false
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "implement": {
+      "config": {
+        "systemPrompt": "You maintain the built-in model price table of a repository: the `BUILTIN_MODELS` array in the catalog file named under \"Live model ids\" in your guidance. Bring it in line with what the providers list and publish, and never invent a figure. A person reviews your draft pull request, and every price you change is checked against the source you cite.\n\nPROCEDURE\n1. Read the catalog file. Its header cites the official pricing page of each provider; every row has a `priceSourceUrl`.\n2. Model ids. Use only the ids in your guidance; you have no API keys and must not look for any. A provider whose section says the listing failed keeps its ids exactly as they are. A listed id that has no row is a candidate for a new row (kind CHAT, or EMBEDDING for an embedding model). An ACTIVE row whose id a complete listing no longer includes becomes status 'RETIRED'; never delete a row, and never retire on a listing the guidance calls incomplete.\n3. Prices, only for providers already present in the file. There is no curl in this workspace: fetch each provider's pricing page from the header with node, and strip the HTML, for example\n   node -e \"fetch(process.argv[1]).then(r=>r.text()).then(t=>console.log(t.replace(/<[^>]*>/g,' ')))\" <url> | tr -s '[:space:]' ' ' > /tmp/page.txt\n   then search the text (grep -o with context) for each model name. Prices are USD per million tokens at base (non-cached, non-batch) rates.\n4. A figure is verified only if it appears literally in the text you fetched in this run, beside that model. If it does not: leave that row unchanged (or, for a new model, add no row), and put a comment `// UNVERIFIED: <what you could not confirm> (<page url>)` on that row so the reviewer sees it in the diff. Remove an UNVERIFIED comment once a run verifies the figure. Uncertain is never \"close enough\": do not round, convert, infer from a sibling model, or recall a price from memory.\n5. For every row you add or whose price you change, set `priceSourceUrl` to the provider's pricing page from the header (an https URL on that host) and keep the keys in the file's sorted order.\n6. Run `yarn vitest run packages/shared/src/lib/builtinModels.test.ts` and make it pass. If nothing needs to change, change nothing: an empty diff is a correct result.\n\nCONSTRAINTS\n- Only edit the catalog file, and only the rows in question.\n- Do not touch a provider that is not already in the file, and do not change any price you did not verify.\n- Do not add dependencies or modify unrelated files."
+      },
+      "inputs": {
+        "guidance": {
+          "from": "nodes.listModels.output.guidance"
+        }
+      },
+      "next": "checkChanges",
+      "step": "executeImplementation",
+      "type": "step"
+    },
+    "incReviewRetries": {
+      "next": "storeRejection",
+      "type": "set",
+      "values": {
+        "context.reviewRetries": {
+          "expr": "context.reviewRetries + 1"
+        }
+      }
+    },
+    "initCounters": {
+      "next": "runTests",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.implement.output"
+        },
+        "context.reviewRetries": {
+          "literal": 0
+        }
+      }
+    },
+    "listModels": {
+      "next": "setImplementing",
+      "step": "listProviderModels",
+      "type": "step"
+    },
+    "openPR": {
+      "config": {
+        "draft": true
+      },
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "savePrInfo",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "review": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "successCriteria": {
+          "from": "context.successCriteria"
+        }
+      },
+      "next": "checkApproval",
+      "step": "runReviewNetwork",
+      "type": "step"
+    },
+    "reviewFix": {
+      "inputs": {
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "rejectionSummary": {
+          "from": "context.lastRejectionSummary"
+        }
+      },
+      "next": "updateCodeAfterReviewFix",
+      "step": "executeReviewFixImplementation",
+      "type": "step"
+    },
+    "runTests": {
+      "config": {
+        "command": "yarn install --immutable && yarn vitest run packages/shared/src/lib/builtinModels.test.ts"
+      },
+      "next": "setReviewing",
+      "onFail": "warn",
+      "step": "runTests",
+      "type": "step"
+    },
+    "savePrInfo": {
+      "next": "done",
+      "type": "set",
+      "values": {
+        "context.prNumber": {
+          "from": "nodes.openPR.output.prNumber"
+        },
+        "context.prUrl": {
+          "from": "nodes.openPR.output.prUrl"
+        }
+      }
+    },
+    "setCriteria": {
+      "next": "listModels",
+      "type": "set",
+      "values": {
+        "context.successCriteria": {
+          "literal": [
+            "Every changed price cites an official URL; no invented figures.",
+            "A price that is not literally on the fetched official pricing page leaves its row unchanged, marked UNVERIFIED in a comment on that row.",
+            "Only providers already present in BUILTIN_MODELS are touched, and no price changes outside a row whose source page was fetched in this run.",
+            "Every row keeps an https priceSourceUrl on its provider pricing host, and no row is deleted."
+          ]
+        }
+      }
+    },
+    "setImplementing": {
+      "config": {
+        "status": "IMPLEMENTING"
+      },
+      "next": "implement",
+      "step": "updateDomainState",
+      "type": "step"
+    },
+    "setReviewing": {
+      "config": {
+        "status": "IN_REVIEW"
+      },
+      "next": "review",
+      "step": "updateDomainState",
+      "type": "step"
+    },
+    "storeRejection": {
+      "next": "checkReviewLimit",
+      "type": "set",
+      "values": {
+        "context.lastRejectionSummary": {
+          "default": "",
+          "from": "nodes.review.output.rejectionSummary"
+        }
+      }
+    },
+    "terminateReviewFailed": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "updateCodeAfterReviewFix": {
+      "next": "setReviewing",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.reviewFix.output"
+        }
+      }
+    }
+  },
+  "schemaVersion": 1
+}
