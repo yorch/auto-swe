@@ -39,7 +39,9 @@ describe('GovernAuditPage', () => {
     mockLog(2);
     render(withQuery(<GovernAuditPage />));
 
-    const actor = await screen.findByRole('button', { name: 'alice@example.com' });
+    // Wait on plain text: role queries are slow enough in jsdom to time out under load.
+    await screen.findByText('alice@example.com');
+    const actor = screen.getByRole('button', { name: 'alice@example.com' });
     expect(actor.getAttribute('title')).toContain(ACTOR);
     expect(screen.getByText('system')).toBeTruthy();
   });
@@ -58,7 +60,8 @@ describe('GovernAuditPage', () => {
     const spy = mockLog(2);
     render(withQuery(<GovernAuditPage />));
 
-    fireEvent.click(await screen.findByRole('button', { name: 'alice@example.com' }));
+    await screen.findByText('alice@example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'alice@example.com' }));
     await waitFor(() =>
       expect(urls(spy).some((u) => u.includes(`actorId=${ACTOR}`) && u.includes('offset=0'))).toBe(
         true

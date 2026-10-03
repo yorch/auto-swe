@@ -109,7 +109,8 @@ describe('GovernEvalsPage', () => {
     const spy = mock();
     render(withQuery(<GovernEvalsPage />));
 
-    fireEvent.click(await screen.findByRole('button', { name: 'merge' }));
+    await screen.findByTestId('trend-chart');
+    fireEvent.click(screen.getByRole('button', { name: 'merge' }));
 
     expect(chartData).toHaveBeenLastCalledWith([
       day('2026-09-01', 0, null),
@@ -136,7 +137,8 @@ describe('GovernEvalsPage', () => {
     const spy = mock();
     render(withQuery(<GovernEvalsPage />));
 
-    const runLink = await screen.findByRole('link', { name: 'run aaaaaaaa' });
+    await screen.findByText('run aaaaaaaa');
+    const runLink = screen.getByRole('link', { name: 'run aaaaaaaa' });
     expect(runLink.getAttribute('href')).toBe('/runs/aaaaaaaa-1111-4111-8111-111111111111');
     expect(screen.getByRole('link', { name: 'eval run bbbbbbbb' }).getAttribute('href')).toBe(
       '/govern/evals/runs/bbbbbbbb-2222-4222-8222-222222222222'
