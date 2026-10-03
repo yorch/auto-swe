@@ -195,6 +195,67 @@ a retryable `MODEL_PRICE_UNAVAILABLE`. Without such a cap the call proceeds at $
 `MODEL_PRICE_<PROVIDER>_<MODEL>` environment overrides are not read. The worker names any that are
 set at startup.
 
+### Keeping the built-in catalog current
+
+The `model-catalog-refresh` template is a built-in workflow, installed on every deployment, that
+updates the **source** of the catalog: the `BUILTIN_MODELS` table in `builtinModels.ts`. It runs only
+when someone launches it or puts it on a schedule, against a repository that holds that file —
+normally your fork of auto-swe. Its output is a **draft pull request**; a merged one reaches
+deployments on the next gateway restart through `syncModelCatalog`, and only on built-in rows an
+admin has not customized.
+
+The run, in order:
+
+1. **Check the file.** The `listProviderModels` step reads `catalogPath` (default
+   `packages/shared/src/lib/builtinModels.ts`, a config field on the step) from the repository
+   through the SCM file API. Before any workspace exists it fails, non-retryably, if the file is
+   missing or has no `export const BUILTIN_MODELS`, so a repository that is not a fork of auto-swe
+   costs nothing.
+2. **List live model ids.** The same step lists models through the GLOBAL provider credentials, for
+   the providers the file already prices, using the discovery code above. Decryption and the provider
+   calls happen in the worker process. The step's output is one markdown list of ids per provider and
+   nothing else; a provider that cannot be listed appears as a fixed sentence, never with the
+   provider's error text. No key reaches the agent's workspace, the step output, the logs or the
+   Temporal history.
+3. **Update the table.** The implementer, running with the template's own system prompt and that list
+   as guidance, fetches each provider's official pricing page from its workspace (`node -e
+   "fetch(…)"`; the default image has no `curl`), and edits `BUILTIN_MODELS`: new rows, corrected
+   prices, `status` changes. Prices are read only for providers already in the file. A figure that is
+   not literally on the fetched page leaves its row unchanged, marked `UNVERIFIED` in a comment on
+   that row.
+4. **Check.** If the diff is empty the run ends `SUCCESS` with no pull request. Otherwise the
+   `runTests` gate runs `builtinModels.test.ts`, the review network judges the change against the
+   success criterion *every changed price cites an official URL; no invented figures*, and the run
+   opens a **draft** pull request and ends. There is no CI loop and no approval inside the run.
+
+**Every price carries its source.** Each `BUILTIN_MODELS` row has a required `priceSourceUrl`, the
+provider's official pricing page, and `builtinModels.test.ts` fails on a row without an `https` URL on
+its provider's pricing host. The allowed hosts are read from the provider pages cited in the file's
+header, one per provider, so a row for a provider the header does not cite also fails. This binds the
+agent's edit to the same rule as a person's, in CI, and it is a page per provider, not a per-model
+anchor.
+
+**A repository that cannot hold drafts fails the step.** The pull request step takes a `draft`
+option, which this template sets. When the host refuses a draft, the step fails with
+`DRAFT_PR_UNSUPPORTED` and opens nothing; it never falls back to a pull request that is ready for
+review. Other templates do not set it and are unchanged.
+
+**Pointing it at a fork and scheduling it.** Register your fork as a repository, then create a
+schedule against it with `templateId` set to this template, for example:
+
+```bash
+curl -X POST "$GATEWAY/api/v1/scheduled-work-requests" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Model catalog refresh","repoId":"<fork-connection-uuid>",
+       "templateId":"<model-catalog-refresh template uuid>",
+       "cronExpression":"0 6 * * 1","externalTicketPrefix":"CATALOG",
+       "description":"Refresh the built-in model catalog from the providers."}'
+```
+
+or launch it once from the dashboard with the same repository. A schedule acts as its author, so
+that user needs write access to the fork. Set the fork's test command on its connection to something
+quick: the implementer runs it after each turn.
+
 ### Bootstrap (fresh deployment)
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
@@ -454,6 +515,18 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   a priced model can be flagged while it still works, and a model a provider stops serving but keeps
   listing is not flagged. The flag is cleared when the provider lists the model again or an admin
   retires it.
+- **The catalog refresh reads human-oriented pages.** Pricing pages are written for people, not
+  programs, so the agent's extraction can be wrong: a figure can be attached to the wrong model, a
+  row for a model a page lists only in a table it cannot parse can be missed, and a page that
+  renders its prices with JavaScript yields none. The `UNVERIFIED` rule, the cited `priceSourceUrl`
+  and the review network narrow that, and `builtinModels.test.ts` proves a citation exists, not that
+  the figure beside it is right. The draft pull request and its cited sources are the control: a
+  person checks each changed price against the page before merging.
+- **The refresh reaches only providers the file already has and listed ids.** It adds no provider, and
+  it sees only models listed through a GLOBAL credential, with the same name filter and page cap as
+  discovery. A provider whose listing fails keeps its ids as they are. `UNVERIFIED` is a comment on
+  the row, because the pull request body is generated from fixed text and carries none of the
+  agent's own notes. An empty diff still leaves its work branch pushed, with no pull request.
 - **The schedule is read at gateway startup.** Changing `MODEL_DISCOVERY_ENABLED` or
   `MODEL_DISCOVERY_CRON` needs a gateway restart to take effect.
 - **The model pickers suggest; they do not restrict.** A spec the catalog lacks can be typed and
