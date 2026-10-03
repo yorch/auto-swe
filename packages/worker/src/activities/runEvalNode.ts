@@ -282,7 +282,11 @@ async function runJudge(
       return { value: 0.5 };
     }
     const paid = failedCallAttribution(err, modelSpec);
-    return { costUsd: paid.costUsd, judgeModel: paid.model, value: 0.5 };
+    // Only a call that was paid for names a model: a refusal before the call
+    // (the pre-call budget gate) or a transport failure scored nothing.
+    return paid.costUsd === undefined
+      ? { value: 0.5 }
+      : { costUsd: paid.costUsd, judgeModel: paid.model, value: 0.5 };
   }
 }
 

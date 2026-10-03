@@ -167,7 +167,28 @@ describe('runEvalNode (judge attribution)', () => {
     await runEvalNode({ scorers: [judgeScorer], targetValue: 'diff' });
 
     expect(recordEvalResult).toHaveBeenCalledWith(
-      expect.objectContaining({ costUsd: 0.5, source: 'JUDGE', value: 0.5 })
+      expect.objectContaining({
+        costUsd: 0.5,
+        judgeModel: 'anthropic/claude-haiku-4-5-20251001',
+        source: 'JUDGE',
+        value: 0.5,
+      })
+    );
+  });
+
+  it('names no judge model when the budget gate refused the call before it was made', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    // The pre-call refusal carries no attribution: nothing was paid for.
+    judge.runAgent.mockRejectedValueOnce(
+      ApplicationFailure.nonRetryable('Budget already exhausted', 'BUDGET_EXCEEDED')
+    );
+    vi.mocked(recordEvalResult).mockClear();
+
+    await runEvalNode({ scorers: [judgeScorer], targetValue: 'diff' });
+
+    expect(recordEvalResult).toHaveBeenCalledWith(
+      expect.objectContaining({ costUsd: undefined, judgeModel: undefined, source: 'JUDGE' })
     );
   });
 
