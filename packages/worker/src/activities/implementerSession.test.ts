@@ -219,7 +219,7 @@ describe('runImplementerFixSession allowedPaths', () => {
       if (cmd.includes('rev-parse --verify')) {
         return `${BASE}\n`;
       }
-      return cmd.includes('diff --name-only') ? names : base?.(cmd, options);
+      return cmd.includes('diff-tree') ? names : base?.(cmd, options);
     }) as never);
     return base;
   };
@@ -243,8 +243,10 @@ describe('runImplementerFixSession allowedPaths', () => {
     const base = stage('a.ts\0');
     try {
       await runImplementerFixSession(input({ allowedPaths: ['a.ts'] }));
-      expect(cmds().some((c) => c.includes('push origin'))).toBe(true);
-      expect(cmds().some((c) => c.includes(`${BASE} HEAD`))).toBe(true);
+      expect(cmds().some((c) => c.includes(`push origin ${BASE}:refs/heads/'auto/T-1'`))).toBe(
+        true
+      );
+      expect(cmds().some((c) => c.includes(`${BASE} ${BASE}`))).toBe(true);
     } finally {
       execMock.mockImplementation(base as never);
     }
@@ -267,7 +269,11 @@ describe('runImplementerFixSession allowedPaths', () => {
       expect(startHead).toBeGreaterThan(reset);
       // The whole change is reported against the original run's base, as two trees.
       expect(
-        all.some((c) => c.includes(`diff --no-ext-diff --no-textconv ${'c'.repeat(40)} HEAD`))
+        all.some((c) =>
+          c.includes(
+            `diff --no-ext-diff --no-textconv --ignore-submodules=none ${'c'.repeat(40)} ${BASE}`
+          )
+        )
       ).toBe(true);
       expect(result.baseSha).toBe('c'.repeat(40));
     } finally {

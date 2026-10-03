@@ -9,7 +9,10 @@
  *
  * The repository is writable by the agent, so the check cannot trust anything in it:
  *  - it measures what is actually pushed, not the index (which a hook can change
- *    between the check and the commit): the TREE at HEAD against the tree of
+ *    between the check and the commit) and not `HEAD` (the agent can leave `HEAD` on
+ *    a scratch branch while the branch that gets pushed carries other commits): after
+ *    the commit it pins the committed sha once, checks that commit's TREE against the
+ *    tree of
  *    `sessionBase`, a commit sha the worker read before the agent ran and holds in
  *    its own memory. Two trees, not a range: a range is anchored at a merge base, and
  *    the agent chooses HEAD's history, so rebuilding HEAD on an older ancestor would
@@ -17,6 +20,9 @@
  *  - `sessionBase` is the HEAD the session started at — the default branch's tip for
  *    a fresh branch, the work branch's tip for a fix session or a retry — so each
  *    session answers only for its own changes, and an older branch base never matters;
+ *  - that same sha is what gets pushed (`<sha>:refs/heads/<branch>`) and what the
+ *    reported diff, `filesChanged` and `headSha` are read from, so the checked commit,
+ *    the pushed commit and the reported commit are one;
  *  - the commit runs with hooks off, and every git call here runs with the same
  *    hardening `gitAuthed` uses (`gitWithAuthHeader`: no hooks, no system or global
  *    config) plus `GIT_NO_REPLACE_OBJECTS`, so `git replace` cannot hide a file;
@@ -105,18 +111,18 @@ export async function startPathGuard(
 }
 
 /**
- * Commit what is staged (a no-op when nothing is) and, for a guarded step, check the
- * committed tree before returning, so the caller's push never carries a path outside
- * `allowedPaths`. Without a guard it runs the original command unchanged.
+ * Commit what is staged (a no-op when nothing is). Unguarded: the original command, and
+ * undefined is returned. Guarded: after the commit, pin the committed sha once, check its
+ * tree before returning, and return it — the caller pushes exactly that commit.
  */
 export async function commitStaged(
   workspace: Exec,
   message: string,
   guard: PathGuard | undefined
-): Promise<void> {
+): Promise<string | undefined> {
   if (!guard) {
     await workspace.exec(`git diff --cached --quiet || git commit -m ${shellQuote(message)}`);
-    return;
+    return undefined;
   }
   // Hooks off (the hardening sets `core.hooksPath=/dev/null`; `--no-verify` as well), so a
   // `pre-commit` hook cannot add a file after the staged tree was looked at.
@@ -124,22 +130,44 @@ export async function commitStaged(
     `${guardedGit('diff --cached --quiet')} || ` +
       guardedGit(`${IDENTITY} -c commit.gpgsign=false commit --no-verify -m ${shellQuote(message)}`)
   );
-  await assertCommittedTreeWithinAllowedPaths(workspace, guard);
+  const sha = await readSha(workspace, 'HEAD');
+  if (!sha) {
+    throw ApplicationFailure.nonRetryable(
+      'Could not read the commit that would be pushed, so it cannot be checked. Nothing was pushed.',
+      'DIFF_CHECK_FAILED'
+    );
+  }
+  await assertCommittedTreeWithinAllowedPaths(workspace, guard, sha);
+  return sha;
 }
 
 /**
- * Fail non-retryably if the tree at HEAD differs from the session's starting tree at a
- * path outside `allowedPaths`. A direct tree comparison, so what HEAD's history looks
- * like is irrelevant. Renames count both ends.
+ * What follows `push origin`. Guarded: exactly the checked commit, to the work branch's
+ * ref, so a branch the agent moved or switched cannot ride along. Unguarded: the
+ * original `<branch>`.
+ */
+export function pushRefspec(branch: string, pushSha: string | undefined): string {
+  return pushSha ? `${pushSha}:refs/heads/${shellQuote(branch)}` : shellQuote(branch);
+}
+
+/**
+ * Fail non-retryably if the tree of commit `sha` differs from the session's starting tree
+ * at a path outside `allowedPaths`. A direct tree comparison, so what the history looks
+ * like is irrelevant. Plumbing (`diff-tree`) with submodules never ignored, because the
+ * repository's own config is still read: `diff.ignoreSubmodules=all` would otherwise hide
+ * a gitlink. Renames count both ends.
  */
 export async function assertCommittedTreeWithinAllowedPaths(
   workspace: Exec,
-  guard: PathGuard
+  guard: PathGuard,
+  sha: string
 ): Promise<void> {
   let out: string;
   try {
     out = await workspace.exec(
-      guardedGit(`diff --name-only --no-renames --no-ext-diff -z ${guard.sessionBase} HEAD`)
+      guardedGit(
+        `diff-tree -r --name-only --no-renames --ignore-submodules=none -z ${guard.sessionBase} ${sha}`
+      )
     );
   } catch {
     throw ApplicationFailure.nonRetryable(
@@ -162,18 +190,23 @@ export async function assertCommittedTreeWithinAllowedPaths(
 /**
  * The diff the step reports (`CodeResult.diff`, and from it `filesChanged`, which the
  * template's `checkScope` reads). Unguarded: the original `git diff origin/<default>`.
- * Guarded: measured from a recorded sha with the same hardening, no external diff driver
+ * Guarded: the pushed commit, measured from a recorded sha with the same hardening, no external diff driver
  * and no text conversion, so neither a rewritten ref nor a config key changes what is
  * reported or what the security scan sees.
  */
 export async function diffForResult(
   workspace: Exec,
   defaultBranch: string,
-  guard: PathGuard | undefined
+  guard: PathGuard | undefined,
+  pushSha?: string
 ): Promise<string> {
-  if (!guard) {
+  if (!guard || !pushSha) {
     return workspace.exec(`git diff origin/${shellQuote(defaultBranch)}`);
   }
-  const range = guard.report.twoTree ? `${guard.report.sha} HEAD` : `${guard.report.sha}...HEAD`;
-  return workspace.exec(guardedGit(`diff --no-ext-diff --no-textconv ${range}`));
+  const range = guard.report.twoTree
+    ? `${guard.report.sha} ${pushSha}`
+    : `${guard.report.sha}...${pushSha}`;
+  return workspace.exec(
+    guardedGit(`diff --no-ext-diff --no-textconv --ignore-submodules=none ${range}`)
+  );
 }

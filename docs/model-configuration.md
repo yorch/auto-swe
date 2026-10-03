@@ -243,23 +243,31 @@ The run, in order:
    only the catalog file. Before the agent runs, the worker reads the commit the session starts
    from and keeps it in its own memory: the default branch's tip for a fresh branch, the work
    branch's tip for a review fix or a retry, so each session answers only for its own changes. After
-   the commit and before the push it compares the tree at `HEAD` directly with that commit's tree
-   (`git diff --name-only --no-renames -z <start> HEAD`, two trees and no range), and the step fails,
-   non-retryably, on any path outside the list. A direct tree comparison does not depend on the
-   branch's history, which the agent controls, so rebuilding `HEAD` on an older commit cannot hide a
-   path restored to its older content. The check runs with the hardening `gitAuthed` uses (no hooks,
-   no system or global git config) and with replace objects off, and the commit itself runs with
-   hooks disabled, so neither a repository hook nor `git replace` nor a rewritten
-   `origin/<default>` ref changes what is measured; no ref is read after the agent starts. The diff
-   the step reports, and the `filesChanged` the `checkScope` condition reads, are measured the same
-   way from a recorded sha: the original run's base when the previous result carries it, otherwise
-   the default branch's tip as recorded at the start. That report is informational; it is the
-   per-session check that confines the change. The guard has to sit ahead of the push because a push
-   can itself start work on the host (a workflow file runs on `push`). Its remaining trust limit is
-   the agent replacing the `git` binary, which needs root in the container, the limit the workspace
-   hardening already documents. A `checkScope` condition before the pull request asserts the same
-   thing about the cumulative change, and a miss fails the run. `allowedPaths` is an optional config
-   field on both steps; unset, nothing changes and the original commands run.
+   the commit the worker pins the committed sha once, and the check measures that commit, the one
+   that is pushed: it compares that commit's tree directly with the starting commit's tree
+   (`git diff-tree -r --name-only --no-renames --ignore-submodules=none -z <start> <sha>`, two trees
+   and no range), and the step fails, non-retryably, on any path outside the list. The push then
+   sends exactly `<sha>:refs/heads/<branch>`, so a branch the agent moved or a `HEAD` it left on a
+   scratch branch cannot carry other commits, and the reported diff, `filesChanged` and `headSha`
+   are read from the same sha. A direct tree comparison does not depend on the branch's history,
+   which the agent controls, so rebuilding the history on an older commit cannot hide a path
+   restored to its older content. The git calls ignore the system and global git config, run
+   with the hardening `gitAuthed` uses (no hooks) and with replace objects off, and override the
+   repository's own diff settings, since its `.git/config` is still read (submodules are never
+   ignored, so a gitlink is listed). The commit itself runs with hooks disabled, so neither a
+   repository hook nor `git replace` nor a rewritten `origin/<default>` ref changes what is
+   measured; no ref is read after the agent starts. The diff the step reports, and the
+   `filesChanged` the `checkScope` condition reads, are measured from a recorded sha: the original
+   run's base when the previous result carries it, otherwise the default branch's tip as recorded at
+   the start. That report is informational; it is the per-session check that confines the change. A
+   retry after the default branch has moved can report the paths that moved in reverse and end
+   `FAILED` at `checkScope`: a spurious failure that fails closed. The guard has to sit ahead of the
+   push because a push can itself start work on the host (a workflow file runs on `push`). Its
+   remaining trust limit is the agent replacing the `git` binary or forging objects on disk, which
+   needs root in the container, the limit the workspace hardening already documents. A `checkScope`
+   condition before the pull request asserts the same thing about the cumulative change, and a miss
+   fails the run. `allowedPaths` is an optional config field on both steps; unset, nothing changes
+   and the original commands run.
 6. **Check and open.** If the diff is empty the run ends `SUCCESS` with no pull request. Otherwise
    the `runTests` gate runs `builtinModels.test.ts`, the review network judges the change against the
    success criterion *every changed price cites an official URL; no invented figures*, the review

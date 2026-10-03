@@ -13,6 +13,7 @@ import {
   assertCommittedTreeWithinAllowedPaths,
   commitStaged,
   diffForResult,
+  pushRefspec,
   startPathGuard,
 } from './allowedPaths.js';
 
@@ -43,12 +44,12 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { force: true, recursive: true }));
 
-async function runGuarded(agent: () => void): Promise<void> {
+async function runGuarded(agent: () => void): Promise<string | undefined> {
   const guard = await startPathGuard(workspace, 'main', ALLOWED);
   expect(guard).toBeDefined();
   agent();
   sh('git add -A');
-  await commitStaged(workspace, 'auto: implement', guard);
+  return commitStaged(workspace, 'auto: implement', guard);
 }
 const pushedFiles = () => sh('git diff --name-only origin/main HEAD').trim();
 
@@ -151,7 +152,7 @@ describe('the committed-range guard', () => {
     const guard = await startPathGuard(workspace, 'main', ALLOWED);
     write('catalog.ts', 'export const BUILTIN_MODELS = [2];\n');
     sh('git add -A');
-    await expect(commitStaged(workspace, 'auto: fix', guard)).resolves.toBeUndefined();
+    await expect(commitStaged(workspace, 'auto: fix', guard)).resolves.toMatch(/^[0-9a-f]{40}$/);
   });
 
   it('catches an out-of-scope file the agent committed itself, from any commit in the range', async () => {
@@ -162,7 +163,7 @@ describe('the committed-range guard', () => {
         sh('git rm -q package.json && git commit -q -m two');
         write('catalog.ts', 'export const BUILTIN_MODELS = [6];\n');
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toMatch(/^[0-9a-f]{40}$/);
     // Added then removed: the range's net change is the catalog alone.
     expect(pushedFiles()).toBe('catalog.ts');
   });
@@ -180,10 +181,89 @@ describe('the committed-range guard', () => {
     );
     write('catalog.ts', 'export const BUILTIN_MODELS = [7];\n');
     sh('git add -A');
-    await commitStaged(workspace, 'auto: implement', guard);
+    const sha = await commitStaged(workspace, 'auto: implement', guard);
     await expect(
-      assertCommittedTreeWithinAllowedPaths(workspace, guard as NonNullable<typeof guard>)
+      assertCommittedTreeWithinAllowedPaths(
+        workspace,
+        guard as NonNullable<typeof guard>,
+        sha as string
+      )
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('the pushed commit is the checked commit', () => {
+  it('bypass D: leaving HEAD on a scratch branch cannot get the work branch pushed unchecked', async () => {
+    const base = sh('git rev-parse HEAD').trim();
+    const sha = await runGuarded(() => {
+      // The agent commits an out-of-scope file on the work branch, then moves HEAD elsewhere.
+      write('ci.yml', 'name: pwned\n');
+      sh('git add -A && git commit -q -m sneaky');
+      sh(`git checkout -q -b scratch ${base}`);
+      write('catalog.ts', 'export const BUILTIN_MODELS = [1];\n');
+    });
+    // The platform's commit landed on `scratch`, and only the catalog differs from the base.
+    expect(sha).toBe(sh('git rev-parse scratch').trim());
+    // Pushing the branch by name (what the step used to do) sends the unchecked commit.
+    // Hand the bare remote the base first so the diff below is against the same history.
+    const remote = mkdtempSync(path.join(tmpdir(), 'allowed-paths-remote-'));
+    try {
+      execSync('git init -q --bare', { cwd: remote });
+      sh(`git push -q ${remote} ${base}:refs/heads/main`);
+      sh(`git push -q ${remote} auto/x:refs/heads/old`);
+      const old = execSync(`git diff --name-only main refs/heads/old`, {
+        cwd: remote,
+        encoding: 'utf8',
+      });
+      expect(old).toContain('ci.yml');
+      // Pushing exactly the checked sha carries only the catalog.
+      sh(`git push -q ${remote} ${pushRefspec('auto/x', sha)}`);
+      const pushed = execSync(`git diff --name-only main refs/heads/auto/x`, {
+        cwd: remote,
+        encoding: 'utf8',
+      });
+      expect(pushed.trim()).toBe('catalog.ts');
+    } finally {
+      rmSync(remote, { force: true, recursive: true });
+    }
+  });
+
+  it('builds `<sha>:refs/heads/<branch>` when guarded and the original `<branch>` when not', () => {
+    const sha = 'a'.repeat(40);
+    expect(pushRefspec("auto/it's", sha)).toBe(`${sha}:refs/heads/'auto/it'\\''s'`);
+    expect(pushRefspec('auto/x', undefined)).toBe("'auto/x'");
+  });
+
+  it('reports the pushed commit, not HEAD', async () => {
+    const base = sh('git rev-parse HEAD').trim();
+    const guard = await startPathGuard(workspace, 'main', ALLOWED);
+    write('ci.yml', 'name: pwned\n');
+    sh('git add -A && git commit -q -m sneaky');
+    sh(`git checkout -q -b scratch ${base}`);
+    write('catalog.ts', 'export const BUILTIN_MODELS = [2];\n');
+    sh('git add -A');
+    const sha = (await commitStaged(workspace, 'auto: implement', guard)) as string;
+    sh('git checkout -q auto/x');
+    // HEAD is now the sneaky branch; the report still reads the checked commit.
+    const diff = await diffForResult(workspace, 'main', guard, sha);
+    expect(diff).toContain('catalog.ts');
+    expect(diff).not.toContain('ci.yml');
+  });
+
+  it('finds a gitlink even when the repository config says to ignore submodules', async () => {
+    await expect(
+      runGuarded(() => {
+        write('catalog.ts', 'export const BUILTIN_MODELS = [3];\n');
+        sh('git config diff.ignoreSubmodules all');
+        // A nested repository is staged by `git add -A` as a gitlink.
+        sh(
+          'git init -q vendor/sub && git -C vendor/sub -c user.name=t -c user.email=t@t commit -q --allow-empty -m s'
+        );
+      })
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('vendor/sub'),
+      type: 'DIFF_OUTSIDE_ALLOWED_PATHS',
+    });
   });
 });
 
@@ -195,10 +275,10 @@ describe('what the step reports (cumulative)', () => {
     const guard = await startPathGuard(workspace, 'main', ALLOWED, original);
     write('catalog.ts', 'export const BUILTIN_MODELS = [2];\n');
     sh('git add -A');
-    await commitStaged(workspace, 'auto: fix', guard);
+    const sha = await commitStaged(workspace, 'auto: fix', guard);
     // Even with origin/main dragged forward by the agent, the report covers both sessions.
     sh('git update-ref refs/remotes/origin/main HEAD');
-    const diff = await diffForResult(workspace, 'main', guard);
+    const diff = await diffForResult(workspace, 'main', guard, sha);
     expect(diff).toContain('[2]');
     expect(diff).toContain('diff --git a/catalog.ts b/catalog.ts');
   });
@@ -211,9 +291,9 @@ describe('what the step reports (cumulative)', () => {
     sh('git update-ref refs/remotes/origin/main HEAD');
     write('catalog.ts', 'export const BUILTIN_MODELS = [2];\n');
     sh('git add -A');
-    await commitStaged(workspace, 'auto: fix', guard);
+    const sha = await commitStaged(workspace, 'auto: fix', guard);
     // The branch carried a commit ahead of the default tip: reported as a merge-base range.
-    expect(await diffForResult(workspace, 'main', guard)).toContain('catalog.ts');
+    expect(await diffForResult(workspace, 'main', guard, sha)).toContain('catalog.ts');
   });
 });
 
@@ -223,7 +303,7 @@ describe('what the step reports', () => {
     write('catalog.ts', 'export const BUILTIN_MODELS = [8];\n');
     write('ci.yml', 'name: pwned\n');
     sh('git add -A && git commit -q -m sneaky && git update-ref refs/remotes/origin/main HEAD');
-    const diff = await diffForResult(workspace, 'main', guard);
+    const diff = await diffForResult(workspace, 'main', guard, sh('git rev-parse HEAD').trim());
     expect(diff).toContain('diff --git a/ci.yml b/ci.yml');
     // The unguarded command is the original one and would have been fooled.
     expect(await diffForResult(workspace, 'main', undefined)).toBe('');

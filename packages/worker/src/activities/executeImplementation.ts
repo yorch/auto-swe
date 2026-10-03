@@ -37,7 +37,7 @@ import {
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
-import { commitStaged, diffForResult, startPathGuard } from './allowedPaths.js';
+import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
 import {
   detectTestCommand,
   parseDiffToFileChanges,
@@ -385,16 +385,17 @@ export async function executeImplementation(
     // the pushed branch the agent may have had nothing left to change, and an
     // empty `git commit` exits non-zero. A guarded step also checks the committed
     // range here, before the push.
-    await commitStaged(workspace, commitSummary, pathGuard);
+    const pushSha = await commitStaged(workspace, commitSummary, pathGuard);
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
-    await workspace.gitAuthed(`push origin ${shellQuote(branch)}`);
+    await workspace.gitAuthed(`push origin ${pushRefspec(branch, pushSha)}`);
 
     // Collect results
     // `defaultBranch` is an operator-editable column — quote it like every other
     // interpolated ref so it cannot smuggle shell syntax into the container.
-    const diff = await diffForResult(workspace, repo.defaultBranch, pathGuard);
-    const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
+    const diff = await diffForResult(workspace, repo.defaultBranch, pathGuard, pushSha);
+    // A guarded step reports the commit it pushed, not whatever HEAD has become.
+    const headSha = pushSha ?? (await workspace.exec('git rev-parse HEAD')).trim();
 
     tracer.addActivityEvent({
       name: 'git.commit_push',
