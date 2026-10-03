@@ -118,12 +118,22 @@ applies them to the `auto-swe-model-discovery` Temporal Schedule once, at startu
 a gateway restart, and it refuses to start on a value it cannot use. Disabled, the schedule stays but
 is paused, and **Check providers now** still works.
 
-A provider whose listing fails — a bad key, a timeout, an unreadable answer — is logged, and its
-error and last-success time are recorded for the tab; its existing suggestions are left exactly as
-they were, and it produces no retirement candidates. The same holds for a listing cut short by the
-page cap or one that came back empty, because absence from a partial list proves nothing. A *new*
-suggestion disappears once the model is priced or the provider stops listing it; a dismissal
-survives later runs.
+A provider whose listing fails — a bad key, a timeout, a 200 that is not a model list — is logged,
+and its error and last-success time are recorded for the tab; its existing suggestions are left
+exactly as they were, and it produces no retirement candidates. The recorded error is always one of a
+fixed set of strings (`HTTP <status>`, `timed out`, `request failed (<error name>)`, `blocked
+address`, `apiBase required`, `unrecognised response`): Node puts header values and URL userinfo in
+its error messages, so no message text from the request or the provider reaches the status row, the
+API, the logs or the activity result in workflow history. The same holds for a listing cut short by
+the page cap, one that signals more pages it gives no cursor for, or one that came back empty,
+because absence from a partial list proves nothing. A *new* suggestion disappears once the model is
+priced or the provider stops listing it. A dismissed row is never deleted for being absent, so a
+dismissal survives the model leaving a listing and coming back; the API hides a row that no longer
+applies, and a row that changes type (new to possibly retired) starts undismissed.
+
+Saving a credential refuses a key containing whitespace or control characters and an `apiBase`
+containing a username or password, each with a `400` (`INVALID_CREDENTIAL`). A dismissal, an
+undismissal and an on-demand run are each written to the config audit log (`ModelSuggestion`).
 
 **The workflow editor's cost estimate** prices each step from the same source. A step's
 `costHint` names a role; `GET /model-catalog/role-pricing` — readable by any signed-in user, since
@@ -146,7 +156,7 @@ as a `ModelCatalogEntry`.
 | `POST /model-catalog/:id/reset` | Restores a built-in row to the values code ships and clears customized |
 | `DELETE /model-catalog/:id` | Removes a custom row. A built-in row is a `409` — startup would re-create it; set it RETIRED |
 | `GET /model-catalog/unpriced` | Specs in use that nothing prices, each with where it is used and the spec it most likely meant |
-| `GET /model-catalog/suggestions` | ADMIN. The stored suggestions (`type` `NEW` or `RETIREMENT_CANDIDATE`) and, per provider, when it was last checked and its last error. Dismissed ones only with `?includeDismissed=true`; a `NEW` one the catalog now prices is omitted |
+| `GET /model-catalog/suggestions` | ADMIN. The stored suggestions (`type` `NEW` or `RETIREMENT_CANDIDATE`) and, per provider, when it was last checked and its last error. Dismissed ones only with `?includeDismissed=true`, with `hiddenDismissed` counting those hidden. A `NEW` one the catalog now prices, and a `RETIREMENT_CANDIDATE` whose model is now retired or gone from the catalog, are omitted |
 | `POST /model-catalog/suggestions/:id/dismiss`, `…/undismiss` | ADMIN. Hides or restores one suggestion. Dismissal is kept across runs |
 | `POST /model-catalog/discover` | ADMIN. Runs a discovery pass now and returns, per provider, the unpriced models it lists, the priced ones it no longer lists, or why it could not be listed. Writes no catalog row, but refreshes the stored suggestions exactly as the scheduled run does |
 
@@ -416,6 +426,12 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   by a name filter that can miss one or drop one it should not, and outside Google — which says which
   methods a model serves — whether a model is chat or embedding is read from its id. Up to five
   pages per provider are followed.
+- **A local `apiBase` is always refused.** Credentials have no `allowPrivateNetwork` flag, so an
+  Ollama or other private-address endpoint is reported as `blocked address`, in discovery and in the
+  credential **Test** alike. The guard reads the URL text and does not resolve DNS, and the scheduled
+  run makes these calls from the worker.
+- **Retirement flags reflect what one key can see.** A key restricted to some models (an OpenAI
+  project key, say) flags every other priced model of that provider as possibly retired.
 - **A retirement flag is a hint.** A provider may serve an alias or a pinned id it does not list, so
   a priced model can be flagged while it still works, and a model a provider stops serving but keeps
   listing is not flagged. The flag is cleared when the provider lists the model again or an admin
