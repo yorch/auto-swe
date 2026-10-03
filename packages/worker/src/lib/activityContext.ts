@@ -3,6 +3,7 @@ import { trace } from '@opentelemetry/api';
 import { activityInfo } from '@temporalio/activity';
 import { currentNodeTag } from './activityNodeTag.js';
 import type { AgentTracer } from './agentTracer.js';
+import { notePersistedUsage } from './runlessBudget.js';
 import { currentSpendOwner } from './spendOwner.js';
 
 /**
@@ -86,11 +87,16 @@ export async function persistActivityTrace(tracer: AgentTracer, agentKey: string
     tracer.setSpanContext(spanContext.traceId, spanContext.spanId);
   }
   const [runId, owner] = await Promise.all([currentWorkflowRunId(), currentSpendOwner()]);
+  const workflowId = currentWorkflowId();
+  const temporalRunId = currentTemporalRunId();
   await tracer.persist(
-    { ...owner, runId, workflowId: currentWorkflowId() },
+    { ...owner, runId, temporalRunId, workflowId },
     currentActivityType(),
     agentKey,
     currentAttempt(),
     currentNodeTag()
   );
+  // The persisted rows now carry this activity's runless spend; stop counting it twice.
+  const { input, output } = tracer.llmTokenTotals();
+  notePersistedUsage(workflowId, temporalRunId, input, output);
 }

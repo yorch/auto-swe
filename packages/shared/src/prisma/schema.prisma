@@ -1553,6 +1553,11 @@ model AgentTrace {
   /// null only on rows that predate the column, which all have a `run` to read
   /// it from instead.
   workflowId   String?      @map("workflow_id")
+  /// Temporal's run id for the execution that wrote the row. A workflow id can be
+  /// started again once its execution closes (`repo-dep-infer-<repo>`), so this
+  /// is what scopes a runless workflow's spend to one execution. Null on rows
+  /// that predate the column.
+  temporalRunId String?     @map("temporal_run_id")
   /// Temporal activity type that produced this trace (e.g. "executeImplementation").
   /// This is NOT a workflow-spec node id; `specNodeId` / `recordingId` are.
   nodeId       String      @map("node_id")
@@ -1608,7 +1613,7 @@ model AgentTrace {
 
   @@index([runId, nodeId])
   @@index([createdAt])
-  @@index([workflowId])
+  @@index([workflowId, temporalRunId])
   @@index([teamId, createdAt])
   @@index([orgId, createdAt])
   @@map("agent_traces")

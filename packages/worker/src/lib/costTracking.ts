@@ -10,12 +10,13 @@ import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { type Span, trace } from '@opentelemetry/api';
 import { ApplicationFailure, log } from '@temporalio/activity';
-import { currentActivityType, currentWorkflowId } from './activityContext.js';
+import { currentActivityType, currentTemporalRunId, currentWorkflowId } from './activityContext.js';
 import { logWarn } from './activityLog.js';
 import { gatedStepNames } from './config/deploymentAgents.js';
 import { STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
 import { recordBudgetExceeded, recordLlmCallMetrics } from './metrics.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
+import { assertRunlessBudgetAvailable, recordRunlessUsage } from './runlessBudget.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -311,6 +312,8 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
     where: { temporalWorkflowId },
   });
   if (!workflow) {
+    // No ledger: a workflow with no run is held to the runless cap instead.
+    await assertRunlessBudgetAvailable(temporalWorkflowId, currentTemporalRunId(), label);
     return;
   }
 
@@ -523,7 +526,21 @@ export async function recordLlmUsage(
             throw err;
           }
           span.setAttribute('llm.workflow_found', false);
-          return { costUsd: callCost, inputTokens, modelSpec, outputTokens, pricingKnown: known };
+          const attribution = {
+            costUsd: callCost,
+            inputTokens,
+            modelSpec,
+            outputTokens,
+            pricingKnown: known,
+          };
+          // No ledger: a workflow with no run is held to the runless cap instead.
+          await recordRunlessUsage(
+            temporalWorkflowId,
+            currentTemporalRunId(),
+            attribution,
+            spanName
+          );
+          return attribution;
         }
 
         const newInput = Number(updated.tokensInputUsed);

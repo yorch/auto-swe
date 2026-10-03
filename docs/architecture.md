@@ -686,6 +686,16 @@ UI shows real overage, then throws a non-retryable `BUDGET_EXCEEDED` failure onc
 These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/govern/workflow-defaults`,
 falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 
+**Runless workflows.** Workflow authoring and explaining, scheduled evals, lesson consolidation and
+repo-dependency inference keep neither a ledger row nor a run, so no tier applies. Each execution is
+capped instead by `workflow.runlessMaxInputTokens` / `workflow.runlessMaxOutputTokens` (default
+20,000,000 / 5,000,000, overridable per team or organization, resolved against the execution's
+spend owner). Its spend is the sum of its own `llm_response` trace rows — keyed by workflow id and
+Temporal run id, since some of these ids are reused across executions — plus the calls this worker
+has recorded that its activities have not yet persisted. `assertBudgetAvailable` refuses a call
+once the cap is reached, and `recordLlmUsage` fails the call that passes it with a non-retryable
+`BUDGET_EXCEEDED`. Epic planning is not runless: it is debited to the epic's own ledger row.
+
 **Agent traces.** Each LLM-calling activity records tool calls, LLM requests/responses, and named
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
 mandatory `finally` — is in [AGENTS.md §6](../AGENTS.md#agent-observability-agenttracer).
@@ -860,10 +870,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   quarantined per process for 10 min: the blocking scanners then block on it outright until an
   admin fixes the row, the advisory ones run without it. See
   [agents.md §11](./agents.md#11-limitations).
-- **Workflows without a run have no budget.** Workflow authoring, scheduled evals, lesson
-  consolidation, repo-access sync, and epic planning keep no `ActiveWorkflow` ledger, so no tier
-  limit applies to them and their spend never reaches `OrgMonthlyUsage`. It is recorded on their
-  trace rows and shown at `/govern/usage`, but nothing stops it.
+- **The runless cap is bounded, not exact.** It sums persisted trace rows plus this worker's
+  unpersisted calls, so calls in flight on another worker are invisible until their activity
+  persists, and a failed trace write drops its rows from the sum. A budget read that fails lets the
+  call through rather than failing a call already paid for.
 - **Metrics undercount at their edges.** `workflow_runs_finalized_total` counts only runs the worker
   finalizes: a run cancelled from the dashboard is closed by the gateway, and channel and eval runs
   by other paths. `llm_calls_total` counts agent calls, not model round trips inside a tool loop.

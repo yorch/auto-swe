@@ -332,6 +332,39 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.max(100_000),
     unit: 'transitions',
   }),
+
+  // ── Runless workflows ──────────────────────────────────────────────────────
+  // Workflow authoring and explaining, scheduled evals, lesson consolidation and
+  // dependency inference keep no run, so no budget tier applies to them. These
+  // cap one execution's spend instead, summed from its trace rows. Not
+  // run-pinned: there is no run to pin to. They resolve against the team or
+  // organization the execution's spend is attributed to.
+  'workflow.runlessMaxInputTokens': defineSetting({
+    defaultValue: 20_000_000,
+    description:
+      'Most input tokens one execution of a workflow that keeps no run may spend — workflow authoring and explaining, scheduled evals, lesson consolidation, dependency inference. The execution fails with BUDGET_EXCEEDED once it passes the cap. An eval over a large dataset is the likeliest to reach it.',
+    group: 'workflow',
+    label: 'Runless workflow: max input tokens',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt,
+    unit: 'tokens',
+  }),
+  'workflow.runlessMaxOutputTokens': defineSetting({
+    defaultValue: 5_000_000,
+    description:
+      'Most output tokens one execution of a workflow that keeps no run may spend. See the input-token cap.',
+    group: 'workflow',
+    label: 'Runless workflow: max output tokens',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt,
+    unit: 'tokens',
+  }),
   'workspace.agentMaxSteps': defineSetting({
     defaultValue: 50,
     description:

@@ -728,6 +728,7 @@ CREATE TABLE "agent_traces" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "run_id" UUID,
     "workflow_id" TEXT,
+    "temporal_run_id" TEXT,
     "node_id" TEXT NOT NULL,
     "spec_node_id" TEXT,
     "recording_id" TEXT,
@@ -1672,7 +1673,7 @@ CREATE INDEX "agent_traces_run_id_node_id_idx" ON "agent_traces"("run_id", "node
 CREATE INDEX "agent_traces_created_at_idx" ON "agent_traces"("created_at");
 
 -- CreateIndex
-CREATE INDEX "agent_traces_workflow_id_idx" ON "agent_traces"("workflow_id");
+CREATE INDEX "agent_traces_workflow_id_temporal_run_id_idx" ON "agent_traces"("workflow_id", "temporal_run_id");
 
 -- CreateIndex
 CREATE INDEX "agent_traces_team_id_created_at_idx" ON "agent_traces"("team_id", "created_at");

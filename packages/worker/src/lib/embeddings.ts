@@ -3,7 +3,12 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { embed } from 'ai';
-import { currentActivityType, currentAttempt, currentWorkflowId } from './activityContext.js';
+import {
+  currentActivityType,
+  currentAttempt,
+  currentTemporalRunId,
+  currentWorkflowId,
+} from './activityContext.js';
 import { currentNodeTag, nodeTagColumns } from './activityNodeTag.js';
 import { resolveEmbeddingConfig } from './config/resolver.js';
 import { calculateCostUsd } from './costTracking.js';
@@ -178,6 +183,7 @@ async function recordEmbeddingUsage(
         // An embedding is its own one-record batch.
         seq: 0,
         teamId: owner.teamId ?? null,
+        temporalRunId: currentTemporalRunId(),
         toolName: 'embedding',
         type: 'llm_response',
         workflowId,

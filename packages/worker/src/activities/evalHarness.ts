@@ -139,11 +139,9 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
 
   // Every implementer run in the harness is traced like any other (tool calls,
   // responses, test runs) and goes through `assertBudgetAvailable` /
-  // `recordLlmUsage`. Those key on the workflow's `ActiveWorkflow` ledger row,
-  // and an eval workflow has none — so both are no-ops here: eval spend is
-  // priced onto the trace rows but is neither debited to a ledger nor capped by
-  // one. The benchmark's size (cases × arms × `maxEvalIterations`) is the only
-  // bound on what a run can spend.
+  // `recordLlmUsage`. An eval workflow has no `ActiveWorkflow` ledger row and no
+  // run, so both hold it to the runless cap (`workflow.runlessMax*Tokens`),
+  // summed over the whole eval execution from its trace rows.
   const tracer = new AgentTracer();
   let workspace: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;

@@ -175,6 +175,19 @@ export class AgentTracer {
     });
   }
 
+  /** Summed tokens of the LLM calls recorded so far. */
+  llmTokenTotals(): { input: number; output: number } {
+    let input = 0;
+    let output = 0;
+    for (const r of this.records) {
+      if (r.type === 'llm_response') {
+        input += r.inputTokens ?? 0;
+        output += r.outputTokens ?? 0;
+      }
+    }
+    return { input, output };
+  }
+
   /** Record a non-LLM activity event (git operations, test runs, PR creation, etc.). */
   addActivityEvent(opts: {
     name: string;
@@ -201,7 +214,13 @@ export class AgentTracer {
    * the rows are (see `currentSpendOwner`); absent, the rows belong to nobody.
    */
   async persist(
-    ids: { runId: string | undefined; workflowId: string; teamId?: string; orgId?: string },
+    ids: {
+      runId: string | undefined;
+      workflowId: string;
+      temporalRunId?: string | null;
+      teamId?: string;
+      orgId?: string;
+    },
     nodeId: string,
     agentKey: string,
     attempt = 1,
@@ -233,6 +252,7 @@ export class AgentTracer {
           runId: ids.runId ?? null,
           seq: r.seq,
           teamId: ids.teamId ?? null,
+          temporalRunId: ids.temporalRunId ?? null,
           toolName: r.toolName ?? null,
           type: r.type,
           workflowId: ids.workflowId,

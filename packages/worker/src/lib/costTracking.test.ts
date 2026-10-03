@@ -59,8 +59,16 @@ vi.mock('@auto-swe/shared/db', async () => {
 // context instead of trusting a caller-supplied string.
 vi.mock('./activityContext.js', () => ({
   currentActivityType: () => 'commitToMemory',
+  currentTemporalRunId: () => 'temporal-run-1',
   currentWorkflowId: () => 'wf-temporal-1',
 }));
+
+// The runless cap has its own tests; here only its wiring is checked.
+const runless = vi.hoisted(() => ({
+  assertRunlessBudgetAvailable: vi.fn(async () => {}),
+  recordRunlessUsage: vi.fn(async () => {}),
+}));
+vi.mock('./runlessBudget.js', () => runless);
 
 // The unregistered-agent check only judges activities the boot gate walked, so
 // it needs the gate to have run. `gatedStepNames()` returns null in a bare
@@ -364,6 +372,48 @@ describe('recordLlmUsage', () => {
     );
     expect(row.tokensInputUsed).toBe(100);
     expect(row.tokensOutputUsed).toBe(50);
+  });
+
+  describe('without a ledger row', () => {
+    beforeEach(() => {
+      (prisma.activeWorkflow.update as unknown as Mock).mockRejectedValue(
+        Object.assign(new Error('none'), { code: 'P2025' })
+      );
+    });
+
+    it('debits the call to the runless cap with its attribution', async () => {
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { inputTokens: 10, outputTokens: 5 },
+        'llm.author'
+      );
+      expect(runless.recordRunlessUsage).toHaveBeenCalledWith(
+        'wf-temporal-1',
+        'temporal-run-1',
+        priced,
+        'llm.author'
+      );
+    });
+
+    it('propagates the runless BUDGET_EXCEEDED', async () => {
+      runless.recordRunlessUsage.mockRejectedValueOnce(
+        ApplicationFailure.nonRetryable('over', 'BUDGET_EXCEEDED')
+      );
+      await expect(
+        recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 10, outputTokens: 5 })
+      ).rejects.toMatchObject({ type: 'BUDGET_EXCEEDED' });
+    });
+
+    it('gates the next call on the runless cap', async () => {
+      (prisma.activeWorkflow.findFirst as unknown as Mock).mockResolvedValue(null);
+      await assertBudgetAvailable('agent.workflowAuthor');
+      expect(runless.assertRunlessBudgetAvailable).toHaveBeenCalledWith(
+        'wf-temporal-1',
+        'temporal-run-1',
+        'agent.workflowAuthor'
+      );
+    });
   });
 
   describe('prompt-cache pricing', () => {

@@ -55,6 +55,7 @@ function requireActivity<T>(value: T): T {
 vi.mock('./activityContext.js', () => ({
   currentActivityType: () => requireActivity('commitToMemory'),
   currentAttempt: () => requireActivity(2),
+  currentTemporalRunId: () => requireActivity('temporal-run-1'),
   currentWorkflowId: () => requireActivity('wf-1'),
 }));
 
