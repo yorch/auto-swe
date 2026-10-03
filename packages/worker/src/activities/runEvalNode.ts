@@ -31,6 +31,7 @@ import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveAutonomyPolicy } from '../lib/resolveAutonomyPolicy.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import {
@@ -71,12 +72,15 @@ export interface RunEvalNodeResult {
   decision: { blocked: boolean; reason: string };
 }
 
+/** A score plus, for a judge, the call that produced it. */
+type EvaluatedScore = ScoreInput & { costUsd?: number; judgeModel?: string };
+
 /** Evaluate one scorer against the target → a normalized ScoreInput. */
 async function evaluateScorer(
   scorer: EvalScorer,
   targetValue: unknown,
   runId: string | undefined
-): Promise<ScoreInput> {
+): Promise<EvaluatedScore> {
   switch (scorer.kind) {
     case 'assert': {
       const passed = evalAssert(scorer.expr, targetValue);
@@ -95,8 +99,8 @@ async function evaluateScorer(
       return { kind: 'trajectory', scorer: 'trajectory:toolCorrectness', value: m.toolCorrectness };
     }
     case 'judge': {
-      const value = await runJudge(scorer.rubricRef, targetValue);
-      return { kind: 'judge', scorer: `judge:${scorer.rubricRef}`, value };
+      const judged = await runJudge(scorer.rubricRef, targetValue);
+      return { kind: 'judge', scorer: `judge:${scorer.rubricRef}`, ...judged };
     }
     case 'policy': {
       if (!runId) {
@@ -230,15 +234,24 @@ const JudgeOutput = z.object({
  * judge is advisory by default). Makes a real model call; the model resolution
  * is verified by `assertConfigReady` at worker boot, but the call itself is only
  * exercised end-to-end against a provider.
+ *
+ * Also returns what the call cost and the model it was priced at — the same
+ * attribution `recordLlmUsage` debited — so the EvalResult row carries it. A
+ * call that failed after it was paid for (a budget stop) still reports its cost;
+ * one that never reached a model reports none.
  */
-async function runJudge(rubricRef: string, targetValue: unknown): Promise<number> {
+async function runJudge(
+  rubricRef: string,
+  targetValue: unknown
+): Promise<{ value: number; costUsd?: number; judgeModel?: string }> {
+  let modelSpec: string | undefined;
   try {
     const rubric = await prisma.evalRubric.findFirst({
       orderBy: { version: 'desc' },
       where: { slug: rubricRef },
     });
     if (!rubric) {
-      return 0.5;
+      return { value: 0.5 };
     }
     const prompt = buildJudgePrompt({
       candidate: typeof targetValue === 'string' ? targetValue : JSON.stringify(targetValue),
@@ -254,13 +267,22 @@ async function runJudge(rubricRef: string, targetValue: unknown): Promise<number
       },
       ctx
     );
+    modelSpec = spec.modelSpec;
     const result = await runAgent<z.infer<typeof JudgeOutput>>(spec, prompt.user, {
       spanName: 'llm.eval_judge',
     });
     const score = result.object?.score;
-    return typeof score === 'number' ? Math.max(0, Math.min(1, score)) : 0.5;
-  } catch {
-    return 0.5;
+    return {
+      costUsd: result.costUsd,
+      judgeModel: modelSpec,
+      value: typeof score === 'number' ? Math.max(0, Math.min(1, score)) : 0.5,
+    };
+  } catch (err) {
+    if (modelSpec === undefined) {
+      return { value: 0.5 };
+    }
+    const paid = failedCallAttribution(err, modelSpec);
+    return { costUsd: paid.costUsd, judgeModel: paid.model, value: 0.5 };
   }
 }
 
@@ -317,6 +339,8 @@ async function runEvalNodeImpl(input: RunEvalNodeInput): Promise<RunEvalNodeResu
   await Promise.all(
     scoreInputs.map((s) =>
       recordEvalResult({
+        costUsd: s.costUsd,
+        judgeModel: s.judgeModel,
         passed: s.passed,
         runId,
         scorer: s.scorer,

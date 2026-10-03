@@ -42,6 +42,10 @@ export interface EvalResultInput {
   value: number;
   passed?: boolean;
   rationale?: string;
+  /** The `<provider>/<model>` spec a JUDGE row's LLM call was priced at. */
+  judgeModel?: string;
+  /** USD cost of the LLM call that produced the score, when one did. */
+  costUsd?: number;
   metadata?: Record<string, unknown>;
 }
 

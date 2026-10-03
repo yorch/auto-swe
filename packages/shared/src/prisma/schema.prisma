@@ -1398,8 +1398,8 @@ model WorkflowOutcomeReference {
 /// evals feature records the signals the system already computes — quality-gate
 /// pass/fail (GATE), review-network verdicts (REVIEW), and the human PR
 /// merge/reject (MERGE) — one row per scorer so axes stay decomposable for
-/// trend/regression queries. `caseId`/`judgeModel` are reserved for later
-/// phases (P1 datasets, P2 judge). Persisted best-effort — capture failures are
+/// trend/regression queries. `caseId` links offline harness rows to their case;
+/// `judgeModel`/`costUsd` attribute a JUDGE row's LLM call. Persisted best-effort — capture failures are
 /// swallowed so they never break the activity, workflow, or webhook that
 /// produced the signal. See docs/evals-p0.md.
 model EvalResult {
@@ -1425,8 +1425,10 @@ model EvalResult {
   value      Float
   passed     Boolean?
   rationale  String?
-  /// Reserved for the P2 judge scorer.
+  /// `<provider>/<model>` spec a JUDGE row's LLM call was priced at. Null on
+  /// rows no model scored.
   judgeModel String?          @map("judge_model")
+  /// USD cost of that call, as `recordLlmUsage` priced it. Null when no model was called.
   costUsd    Float?           @map("cost_usd")
   metadata   Json?
   createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
