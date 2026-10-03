@@ -201,4 +201,19 @@ describe('recordDiscovery', () => {
     expect(view(rows)).toEqual(['google/g-9:NEW']);
     expect(statuses.map((s) => s.provider)).toEqual(['google']);
   });
+
+  it('keeps a dismissed row when a complete listing omits the model, so the dismissal survives its return', async () => {
+    const { prisma, rows } = fakeDb();
+    await recordDiscovery(prisma, [ok('openai', ['gpt-9', 'gpt-8'])], T1);
+    const gpt9 = rows.find((r) => r.modelId === 'gpt-9');
+    if (!gpt9) {
+      throw new Error('missing row');
+    }
+    gpt9.dismissedAt = T1;
+    await recordDiscovery(prisma, [ok('openai', [])], T2);
+    // gpt-8 was not dismissed and is gone; gpt-9 stays, dismissed.
+    expect(view(rows)).toEqual(['openai/gpt-9:NEW']);
+    await recordDiscovery(prisma, [ok('openai', ['gpt-9'])], T2);
+    expect(rows[0]).toMatchObject({ dismissedAt: T1, firstSeenAt: T1 });
+  });
 });

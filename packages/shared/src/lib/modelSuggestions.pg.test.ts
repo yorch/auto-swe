@@ -97,4 +97,14 @@ describe.skipIf(!enabled)('recordDiscovery against Postgres', () => {
     });
     expect(status).toMatchObject({ error: 'HTTP 401', lastSuccessAt: T1 });
   });
+
+  it('keeps a dismissal across a complete listing that omits the model and shows it again', async () => {
+    await recordDiscovery(prisma, [listed('openai', ['gpt-9'])], T1);
+    await prisma.modelSuggestion.updateMany({ data: { dismissedAt: T1 }, where: {} });
+    await recordDiscovery(prisma, [listed('openai', [])], T2);
+    await recordDiscovery(prisma, [listed('openai', ['gpt-9'])], T2);
+    const rows = await prisma.modelSuggestion.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ dismissedAt: T1, firstSeenAt: T1 });
+  });
 });

@@ -1889,6 +1889,9 @@ enum ModelSuggestionType {
 /// reads it. Written only by the discovery run; an admin only dismisses it. A NEW
 /// row disappears once the model is priced, a RETIREMENT_CANDIDATE once the
 /// provider lists it again or the model is retired; nothing here retires a model.
+/// A dismissed row is never deleted for being absent from a listing, so a
+/// dismissal survives the model leaving and returning; the API hides a row that
+/// no longer applies.
 model ModelSuggestion {
   id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   provider    String

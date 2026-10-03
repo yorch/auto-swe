@@ -33,7 +33,9 @@ export interface DiscoveryRunSummary {
  *   model, dropped once it is priced or no longer listed. An incomplete listing
  *   drops nothing, since a model past the page cap is not gone.
  * - RETIREMENT_CANDIDATE rows follow the same rule and are flags only.
- * - A dismissal survives refreshes; a row that changes type starts undismissed.
+ * - A dismissal survives refreshes, including a model dropping off a complete listing
+ *   and coming back: dismissed rows are never deleted for being absent. A row that
+ *   changes type starts undismissed.
  * - Providers with no GLOBAL credential left lose their rows, so nothing outlives
  *   the credential that produced it.
  */
@@ -97,7 +99,11 @@ export async function recordDiscovery(
       }
       // Whatever type it now holds, a model written above stays; the rest are gone.
       const keep = new Set([...r.models, ...r.retirementCandidates].map((m) => m.modelId));
-      const stale = existing.filter((e) => !keep.has(e.modelId)).map((e) => e.id);
+      // A dismissed row is kept: deleting it would lose the dismissal the moment the
+      // model reappeared. Read-side filters hide it while it no longer applies.
+      const stale = existing
+        .filter((e) => !keep.has(e.modelId) && e.dismissedAt === null)
+        .map((e) => e.id);
       if (stale.length > 0) {
         await prisma.modelSuggestion.deleteMany({ where: { id: { in: stale } } });
       }
