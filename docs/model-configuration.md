@@ -130,12 +130,13 @@ is paused, and **Check providers now** still works.
 A provider whose listing fails — a bad key, a timeout, a 200 that is not a model list — is logged,
 and its error and last-success time are recorded for the tab; its existing suggestions are left
 exactly as they were, and it produces no retirement candidates. The recorded error is always one of a
-fixed set of strings (`HTTP <status>`, `timed out`, `request failed (<error name>)`, `blocked
-address`, `apiBase required`, `unrecognised response`): Node puts header values and URL userinfo in
+fixed set of strings (`HTTP <status>`, `timed out`, `request failed (<error name>[, <error code>])`, `blocked
+address`, `apiBase required`, `unrecognised response`, `credential could not be decrypted`): Node puts header values and URL userinfo in
 its error messages, so no message text from the request or the provider reaches the status row, the
-API, the logs or the activity result in workflow history. The same holds for a listing cut short by
-the page cap, one that signals more pages it gives no cursor for, or one that came back empty,
-because absence from a partial list proves nothing. A *new* suggestion disappears once the model is
+API, the logs or the activity result in workflow history. A listing cut short by
+the page cap, one that signals more pages it gives no cursor for, or one that came back empty is
+incomplete: it still records new suggestions, but it deletes nothing and flags no retirement
+candidates, because absence from a partial list proves nothing. A *new* suggestion disappears once the model is
 priced or the provider stops listing it. A dismissed row is never deleted for being absent, so a
 dismissal survives the model leaving a listing and coming back. While it is absent the API does not
 serve it: a dismissed row last seen before its provider's last complete listing describes a model

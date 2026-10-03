@@ -22,7 +22,7 @@ const GENERIC_REJECTION =
  * already green.
  *
  * Order: implement, agent review loop, open the pull request (ready for review:
- * the `createOrUpdatePullRequest` step has no draft option), wait for CI and fix a
+ * the `createOrUpdatePullRequest` step's `draft` option is left at its default, off), wait for CI and fix a
  * failing CI (2 fix attempts, a third failure fails the run), and only then ask the
  * two humans. The implementer's fix session pushes its own commit, so no human has
  * signed off when a CI fix lands and there is no approval for it to invalidate; the
