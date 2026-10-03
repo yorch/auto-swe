@@ -195,6 +195,122 @@ a retryable `MODEL_PRICE_UNAVAILABLE`. Without such a cap the call proceeds at $
 `MODEL_PRICE_<PROVIDER>_<MODEL>` environment overrides are not read. The worker names any that are
 set at startup.
 
+### Keeping the built-in catalog current
+
+The `model-catalog-refresh` template is a built-in workflow, installed on every deployment, that
+updates the **source** of the catalog: the `BUILTIN_MODELS` table in
+`packages/shared/src/lib/builtinModels.ts`. It runs only when someone launches it or puts it on a
+schedule, against a repository that holds that file — normally your fork of auto-swe. Its output is a
+**draft pull request**. Once a deployment runs a build that contains the merged change, its next
+gateway restart carries the new rows to `syncModelCatalog`, which applies them only to built-in rows
+an admin has not customized.
+
+The run, in order:
+
+1. **Check the repository.** The `listProviderModels` step reads the catalog file through the SCM
+   file API. The path is fixed: it is one constant (`BUILTIN_MODELS_PATH`), used by the step, the
+   changed-files guard and the test gate, and it is not configurable. Before any workspace exists the
+   step fails, non-retryably, if the file is missing or has no `export const BUILTIN_MODELS`, so a
+   repository that is not a fork of auto-swe costs nothing.
+2. **Stop if the last refresh is still open.** A schedule gives every firing the same ticket id,
+   and so the same branch (`<branch prefix>/<ticket id>`) and work request. The step asks the host
+   whether that branch has commits the default branch lacks, or has an open pull request. If either
+   does, the run ends `SUCCESS` with the note *a previous catalog refresh is still open; merge or
+   close it and delete its branch*, before any credential is read, workspace built or agent run.
+   Merge or close the draft and delete its branch (the repository's "automatically delete head
+   branches" setting does this on merge), and the next firing proceeds. A run that found nothing to
+   change still pushes its branch, with no commits of its own; that empty branch is not previous
+   work, and the next run ignores it. A comparison that fails fails the step; it is never read as
+   "nothing there".
+3. **List live model ids.** The same step lists models through the GLOBAL provider credentials, for
+   the providers the file already prices, using the discovery code above. Decryption and the provider
+   calls happen in the worker process. The output is markdown and nothing else: per provider, the
+   text and embedding models it lists that might be added, and, when the listing is complete, every
+   id it still lists — the only list a row may be retired against, so a model the name filter drops
+   is not retired while the provider still serves it. Ids containing `:` (fine-tuned and
+   organization-owned models) are left out of both. A provider that cannot be listed appears as a
+   fixed sentence, never with the provider's error text. No key reaches the agent's workspace, the
+   step output, the logs or the Temporal history.
+4. **Update the table.** The implementer, running with the template's own system prompt and that
+   list as guidance, fetches each provider's official pricing page from its workspace (`node -e
+   "fetch(…)"`; the default image has no `curl`), and edits `BUILTIN_MODELS`: new rows, corrected
+   prices, `status` changes. The prompt confines it to providers already in the file, and says that
+   text fetched from a page is data, never instructions. A figure that is not literally on the
+   fetched page leaves its row unchanged, marked `UNVERIFIED` in a comment on that row. The guidance
+   reaches the agent under the heading *Guidance from the requester*, which every guidance input
+   shares; the prompt says what it really is.
+5. **Confine the change.** The implementer step and the review fix carry `allowedPaths`, listing
+   only the catalog file. Before the agent runs, the worker reads the commit the session starts
+   from and keeps it in its own memory: the default branch's tip for a fresh branch, the work
+   branch's tip for a review fix or a retry, so each session answers only for its own changes. After
+   the commit the worker pins the committed sha once, and the check measures that commit, the one
+   that is pushed: it compares that commit's tree directly with the starting commit's tree
+   (`git diff-tree -r --name-only --no-renames --ignore-submodules=none -z <start> <sha>`, two trees
+   and no range), and the step fails, non-retryably, on any path outside the list. The push then
+   sends exactly `<sha>:refs/heads/<branch>`, so a branch the agent moved or a `HEAD` it left on a
+   scratch branch cannot carry other commits, and the reported diff, `filesChanged` and `headSha`
+   are read from the same sha. A direct tree comparison does not depend on the branch's history,
+   which the agent controls, so rebuilding the history on an older commit cannot hide a path
+   restored to its older content. The git calls ignore the system and global git config, run
+   with the hardening `gitAuthed` uses (no hooks) and with replace objects off, and override the
+   repository's own diff settings, since its `.git/config` is still read (submodules are never
+   ignored, so a gitlink is listed). The commit itself runs with hooks disabled, so neither a
+   repository hook nor `git replace` nor a rewritten `origin/<default>` ref changes what is
+   measured; no ref is read after the agent starts. The diff the step reports, and the
+   `filesChanged` the `checkScope` condition reads, are measured from a recorded sha: the original
+   run's base when the previous result carries it, otherwise the default branch's tip as recorded at
+   the start. That report is informational; it is the per-session check that confines the change. A
+   retry after the default branch has moved can report the paths that moved in reverse and end
+   `FAILED` at `checkScope`: a spurious failure that fails closed. The guard has to sit ahead of the
+   push because a push can itself start work on the host (a workflow file runs on `push`). Its
+   remaining trust limit is the agent replacing the `git` binary or forging objects on disk, which
+   needs root in the container, the limit the workspace hardening already documents. A `checkScope`
+   condition before the pull request asserts the same thing about the cumulative change, and a miss
+   fails the run. `allowedPaths` is an optional config field on both steps; unset, nothing changes
+   and the original commands run.
+6. **Check and open.** If the diff is empty the run ends `SUCCESS` with no pull request. Otherwise
+   the `runTests` gate runs `builtinModels.test.ts`, the review network judges the change against the
+   success criterion *every changed price cites an official URL; no invented figures*, the review
+   fix follows the same rules as the first pass, and the run opens a **draft** pull request and ends.
+   There is no CI loop and no approval inside the run.
+
+**The `runTests` gate is advisory.** The gate runs in warn mode: a failing `builtinModels.test.ts`,
+or an install that fails, is recorded and the run goes on to review and a draft pull request. CI on
+that draft is the hard check, and it also runs the file's own test.
+
+**Every price carries its source.** Each `BUILTIN_MODELS` row has a required `priceSourceUrl`, the
+provider's official pricing page, and `builtinModels.test.ts` fails on a row without an `https` URL
+on its provider's pricing host. The allowed host per provider is fixed in the test, and the test
+also requires the file's header to cite exactly those pages, so neither a row nor the header can
+widen the allowlist in the same diff; adding a provider is a deliberate edit to the test, which the
+changed-files guard keeps out of the agent's diff. It is a page per provider, not a per-model
+anchor.
+
+**A draft is never replaced by a ready pull request, nor added to once it is ready.** The pull
+request step takes a `draft` option, which this template sets. When the host refuses a draft, the
+step fails with `DRAFT_PR_UNSUPPORTED` and opens nothing. When a pull request for the work request
+or the branch is already open and is not a draft — a person has marked it ready for review — the
+step fails with `EXISTING_PR_NOT_DRAFT` instead of reusing it, so agent commits are never added to
+a reviewed pull request. The check reads the draft state from the host's pull request list on one
+path and costs one API call on the other, and only when a draft was asked for. Other templates do
+not set `draft` and are unchanged, including their reuse of an open pull request on a retry.
+
+**Pointing it at a fork and scheduling it.** Register your fork as a repository, then create a
+schedule against it with `templateId` set to this template, for example:
+
+```bash
+curl -X POST "$GATEWAY/api/v1/scheduled-work-requests" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Model catalog refresh","repoId":"<fork-connection-uuid>",
+       "templateId":"<model-catalog-refresh template uuid>",
+       "cronExpression":"0 6 * * 1","externalTicketPrefix":"CATALOG",
+       "description":"Refresh the built-in model catalog from the providers."}'
+```
+
+or launch it once from the dashboard with the same repository. A schedule acts as its author, so
+that user needs write access to the fork. Set the fork's test command on its connection to something
+quick: the implementer runs it after each turn.
+
 ### Bootstrap (fresh deployment)
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
@@ -454,6 +570,32 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   a priced model can be flagged while it still works, and a model a provider stops serving but keeps
   listing is not flagged. The flag is cleared when the provider lists the model again or an admin
   retires it.
+- **The catalog refresh reads human-oriented pages.** Pricing pages are written for people, not
+  programs, so the agent's extraction can be wrong: a figure can be attached to the wrong model, a
+  row for a model a page lists only in a table it cannot parse can be missed, and a page that
+  renders its prices with JavaScript yields none. The `UNVERIFIED` rule, the cited `priceSourceUrl`,
+  the review network and the pinned host allowlist narrow that, and `builtinModels.test.ts` proves a
+  citation exists on the right host, not that the figure beside it is right. The draft pull request
+  and its cited sources are the control: a person checks each changed price against the page before
+  merging.
+- **The refresh treats the pages as untrusted, and contains the damage rather than preventing the
+  attempt.** The agent has network access and a shell. The diff guard keeps its edits to the catalog
+  file and the prompt tells it to treat fetched text as data, but a hostile page can still make it
+  write a wrong price inside that file, which is what the review and the cited sources are for.
+- **The refresh reaches only providers the file already has, and only the ids listed.** The listing
+  is filtered to those providers in code; the restriction on *prices* to those providers is the
+  prompt's, and the review's, not a check. It adds no provider, and it sees only models listed
+  through a GLOBAL credential, with the same name filter and page cap as discovery. A provider whose
+  listing fails keeps its ids as they are. Ids containing `:` are left out, but a provider-owned
+  check beyond that (such as OpenAI's `owned_by`) is not made, so another organization-visible id
+  without a colon would still be listed. Anyone who can launch the template against a repository
+  holding the catalog file gives the agent that listing, which is otherwise an admin-only view.
+- **`UNVERIFIED` is a comment on the row.** The pull request body is generated from fixed text and
+  carries none of the agent's own notes. A run whose only change is `UNVERIFIED` comments still
+  opens a draft each time the previous one is closed, because those comments are not merged and are
+  added again by the next run. An empty diff still leaves its work branch pushed, with no pull
+  request; the next run ignores that empty branch. A run that stops because the previous refresh is
+  still open ends `SUCCESS` with a note, so a stuck schedule looks green in the run list.
 - **The schedule is read at gateway startup.** Changing `MODEL_DISCOVERY_ENABLED` or
   `MODEL_DISCOVERY_CRON` needs a gateway restart to take effect.
 - **The model pickers suggest; they do not restrict.** A spec the catalog lacks can be typed and

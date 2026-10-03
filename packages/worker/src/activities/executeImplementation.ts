@@ -37,6 +37,7 @@ import {
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
+import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
 import {
   detectTestCommand,
   parseDiffToFileChanges,
@@ -102,7 +103,9 @@ export async function executeImplementation(
   request: RepoWorkRequest,
   subtask?: Subtask,
   systemPromptOverride?: string,
-  crossRepoOptions?: CrossRepoStepOptions
+  crossRepoOptions?: CrossRepoStepOptions,
+  /** When set, the change may touch only these paths; anything else fails before the push. */
+  allowedPaths?: string[]
 ): Promise<CodeResult> {
   // First, before a clone or a container exists: an unpriced model under a USD
   // cap is refused here, not after the workspace has been built.
@@ -131,6 +134,10 @@ export async function executeImplementation(
   // P2/WS3: present when the implementer Agent enabled MCP — closed in finally.
   let closeMcp: (() => Promise<void>) | undefined;
 
+  // Before anything the agent can touch: the commit the guarded change is measured from.
+  // Inside the try so a failure still destroys the workspace.
+  let pathGuard: Awaited<ReturnType<typeof startPathGuard>>;
+
   // Capture the base commit SHA (defaultBranch HEAD at workspace creation time)
   // for the optional historical-replay tier — stored best-effort on WorkflowRun.
   let baseSha: string | undefined;
@@ -157,6 +164,11 @@ export async function executeImplementation(
         heartbeat('retry: remote branch not found, starting from clone HEAD');
       }
     }
+
+    // After any sync to a previous attempt's pushed branch, and before any agent turn:
+    // this session answers for its own changes from here. `baseSha` (the default branch's
+    // tip, read before the agent) is what the whole change is reported against.
+    pathGuard = await startPathGuard(workspace, repo.defaultBranch, allowedPaths, baseSha);
 
     // Detect test framework
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
@@ -371,17 +383,19 @@ export async function executeImplementation(
     await workspace.exec('git add -A');
     // Skip the commit when there is nothing staged: on a retry that resumed from
     // the pushed branch the agent may have had nothing left to change, and an
-    // empty `git commit` exits non-zero.
-    await workspace.exec(`git diff --cached --quiet || git commit -m ${shellQuote(commitSummary)}`);
+    // empty `git commit` exits non-zero. A guarded step also checks the committed
+    // range here, before the push.
+    const pushSha = await commitStaged(workspace, commitSummary, pathGuard);
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
-    await workspace.gitAuthed(`push origin ${shellQuote(branch)}`);
+    await workspace.gitAuthed(`push origin ${pushRefspec(branch, pushSha)}`);
 
     // Collect results
     // `defaultBranch` is an operator-editable column — quote it like every other
     // interpolated ref so it cannot smuggle shell syntax into the container.
-    const diff = await workspace.exec(`git diff origin/${shellQuote(repo.defaultBranch)}`);
-    const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
+    const diff = await diffForResult(workspace, repo.defaultBranch, pathGuard, pushSha);
+    // A guarded step reports the commit it pushed, not whatever HEAD has become.
+    const headSha = pushSha ?? (await workspace.exec('git rev-parse HEAD')).trim();
 
     tracer.addActivityEvent({
       name: 'git.commit_push',

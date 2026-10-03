@@ -88,6 +88,18 @@ export class DraftPullRequestUnsupportedError extends Error {
   }
 }
 
+/**
+ * A draft was requested, but the open PR the host would reuse is ready for review.
+ * Pushing agent commits onto it would put unreviewed work in front of a reviewer who
+ * was promised a draft, so the provider refuses instead.
+ */
+export class ExistingPullRequestNotDraftError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExistingPullRequestNotDraftError';
+  }
+}
+
 export interface PullRequestRef {
   prNumber: number;
   prUrl: string;
@@ -135,6 +147,21 @@ export interface ScmProvider {
    * repo without a given manifest is a normal, non-throwing outcome.
    */
   fetchFileContent(repo: RepoRef, path: string, ref?: string): Promise<string | null>;
+  /**
+   * Whether `branch` exists on the host, how many commits it has that `baseBranch`
+   * lacks (null when it does not exist), and the open PR from it if any. Lets a run
+   * that would reuse a fixed branch (a schedule) stop before it spends a workspace on
+   * work that would collide with the previous run's. A branch with no commits ahead
+   * is not work: an earlier run that changed nothing still pushes its branch. A
+   * failure to compare is thrown, never read as "no work".
+   */
+  findBranchWork(
+    repo: RepoRef,
+    branch: string,
+    baseBranch: string
+  ): Promise<{ branchExists: boolean; aheadBy: number | null; openPr: PullRequestRef | null }>;
+  /** Whether an existing PR is still a draft. One API call. */
+  isDraftPullRequest(repo: RepoRef, prNumber: number): Promise<boolean>;
   /**
    * What access `username` — a host login, not a platform user id — has to
    * `repo`.

@@ -73,6 +73,14 @@ const CROSS_REPO_CHECKOUT_FIELD = {
   type: 'boolean' as const,
 } as const;
 
+const ALLOWED_PATHS_FIELD = {
+  description:
+    'JSON array of repo-relative file paths this step may change, for example ["docs/a.md"]. A change that touches any other file fails the step before it is committed or pushed. Leave empty for no restriction.',
+  key: 'allowedPaths',
+  label: 'Allowed paths',
+  type: 'json' as const,
+} as const;
+
 const IMPLEMENTER_TOOLS_FIELD = {
   description:
     'Tools available to the implementer agent. Leave empty to enable all tools (default). Uncheck a tool to restrict the agent from using it.',
@@ -118,6 +126,7 @@ register({
     IMPLEMENTER_TOOLS_FIELD,
     CROSS_REPO_CONTEXT_FIELD,
     CROSS_REPO_CHECKOUT_FIELD,
+    ALLOWED_PATHS_FIELD,
   ],
   costHint: { role: 'implementer', tokensIn: 20000, tokensOut: 8000 },
   description: 'Run the implementer agent inside a fresh Docker workspace.',
@@ -136,7 +145,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [SYSTEM_PROMPT_FIELD, IMPLEMENTER_TOOLS_FIELD],
+  configFields: [SYSTEM_PROMPT_FIELD, IMPLEMENTER_TOOLS_FIELD, ALLOWED_PATHS_FIELD],
   costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
   description: 'Re-run the implementer with reviewer rejection feedback.',
   label: 'Apply review fix',
@@ -154,10 +163,30 @@ register({
 
 register({
   category: 'vcs',
-  configFields: [],
+  configFields: [
+    {
+      description:
+        'Open the PR as a draft. A repository that cannot hold drafts fails the step; it never gets a ready-for-review PR instead. Off by default.',
+      key: 'draft',
+      label: 'Open as draft',
+      type: 'boolean',
+    },
+  ],
   description: 'Create or update the PR for this work request.',
   label: 'Create or update PR',
   name: 'createOrUpdatePullRequest',
+});
+
+register({
+  category: 'vcs',
+  configFields: [],
+  description:
+    'List the models each provider offers through the GLOBAL provider credentials, inside the worker, ' +
+    'and return a markdown list of ids as guidance for an implementation step. Keys never leave the worker. ' +
+    'Fails fast if the repository does not hold the catalog file (packages/shared/src/lib/builtinModels.ts), ' +
+    'and reports a previous refresh still open (its branch or pull request) so the run can stop before any cost.',
+  label: 'List provider models',
+  name: 'listProviderModels',
 });
 
 register({

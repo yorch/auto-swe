@@ -128,6 +128,18 @@ export const USE_CASES = {
       'to three times.',
     title: 'Dependency update',
   },
+  'model-catalog-refresh': {
+    group: 'engineering',
+    maturity: 'composed',
+    source: 'packages/shared/src/workflow/templates/modelCatalogRefresh.ts',
+    summary:
+      "Keeps auto-swe's own built-in model catalog current. The platform lists each " +
+      "provider's live model ids, an agent reads the official pricing pages, and the run " +
+      'opens a draft pull request that cites a source for every changed price and calls ' +
+      'out any figure it could not confirm. Point it at your fork and put it on a ' +
+      'schedule; a run with nothing to change opens nothing.',
+    title: 'Model catalog refresh',
+  },
   'code-and-ci': {
     group: 'engineering',
     maturity: 'composed',

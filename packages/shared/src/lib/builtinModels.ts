@@ -20,6 +20,13 @@
  *  - Gemini 2.5 Pro / 3.1 Pro >200K-token surcharge (input doubles)
  */
 
+/**
+ * Where this table lives in the repository. The `model-catalog-refresh` template, its
+ * precondition step, its changed-files guard and its gate all name this one constant;
+ * `builtinModels.test.ts` fails if the file is moved without updating it.
+ */
+export const BUILTIN_MODELS_PATH = 'packages/shared/src/lib/builtinModels.ts';
+
 export type BuiltinModelKind = 'CHAT' | 'EMBEDDING';
 
 /** RETIRED models are still priced: pinned agent versions and history bill against them. */
@@ -34,6 +41,14 @@ export interface BuiltinModel {
   inputUsdPerMTok: number;
   /** Zero for embedding models, which bill input only. */
   outputUsdPerMTok: number;
+  /**
+   * The official pricing page these prices were read from: the provider's page
+   * cited in this file's header, not a per-model anchor (anchors rot; the page is
+   * what a reviewer opens). `builtinModels.test.ts` requires an https URL on a host
+   * it fixes per provider, and that the header cites exactly those pages, so neither a
+   * row nor the header can widen the allowlist.
+   */
+  priceSourceUrl: string;
 }
 
 export function builtinModelSpec(model: Pick<BuiltinModel, 'provider' | 'modelId'>): string {
@@ -89,6 +104,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-fable-5',
     outputUsdPerMTok: 50,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -97,6 +113,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-fable-5-1',
     outputUsdPerMTok: 50,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -106,6 +123,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-haiku-3-5-20241022',
     outputUsdPerMTok: 4,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -114,6 +132,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-haiku-4-5-20251001',
     outputUsdPerMTok: 5,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -123,6 +142,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-opus-4-1-20250805',
     outputUsdPerMTok: 75,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -131,6 +151,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-opus-4-5',
     outputUsdPerMTok: 25,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -139,6 +160,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-opus-4-6',
     outputUsdPerMTok: 25,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -147,6 +169,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-opus-4-8',
     outputUsdPerMTok: 25,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -155,6 +178,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-opus-4-20250514',
     outputUsdPerMTok: 75,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -164,6 +188,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-opus-5',
     outputUsdPerMTok: 25,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -172,6 +197,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-opus-5-5',
     outputUsdPerMTok: 20,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -181,6 +207,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-sonnet-4-5',
     outputUsdPerMTok: 15,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -189,6 +216,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-sonnet-4-6',
     outputUsdPerMTok: 15,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -197,6 +225,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-sonnet-4-20250514',
     outputUsdPerMTok: 15,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'RETIRED',
   },
@@ -206,6 +235,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-sonnet-5',
     outputUsdPerMTok: 10,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -214,6 +244,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'claude-sonnet-5-5',
     outputUsdPerMTok: 10,
+    priceSourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
     provider: 'anthropic',
     status: 'ACTIVE',
   },
@@ -223,6 +254,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-2.5-flash',
     outputUsdPerMTok: 2.5,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'ACTIVE',
   },
@@ -231,6 +263,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-2.5-flash-lite',
     outputUsdPerMTok: 0.4,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'ACTIVE',
   },
@@ -239,6 +272,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-2.5-pro',
     outputUsdPerMTok: 10,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'ACTIVE',
   },
@@ -249,6 +283,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-3-flash-preview',
     outputUsdPerMTok: 3,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'ACTIVE',
   },
@@ -257,6 +292,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-3.1-flash-lite',
     outputUsdPerMTok: 1.5,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'ACTIVE',
   },
@@ -265,6 +301,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-3.1-flash-lite-preview',
     outputUsdPerMTok: 1.5,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'RETIRED',
   },
@@ -273,6 +310,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-3.1-pro-preview',
     outputUsdPerMTok: 12,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'ACTIVE',
   },
@@ -281,6 +319,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-3.5-flash',
     outputUsdPerMTok: 9,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'ACTIVE',
   },
@@ -289,6 +328,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-3.5-flash-lite',
     outputUsdPerMTok: 2.5,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'ACTIVE',
   },
@@ -300,6 +340,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gemini-3.8-flash',
     outputUsdPerMTok: 7.5,
+    priceSourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     provider: 'google',
     status: 'ACTIVE',
   },
@@ -309,6 +350,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gpt-5',
     outputUsdPerMTok: 10,
+    priceSourceUrl: 'https://developers.openai.com/api/docs/pricing',
     provider: 'openai',
     status: 'ACTIVE',
   },
@@ -317,6 +359,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gpt-5.5',
     outputUsdPerMTok: 30,
+    priceSourceUrl: 'https://developers.openai.com/api/docs/pricing',
     provider: 'openai',
     status: 'ACTIVE',
   },
@@ -325,6 +368,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gpt-5.5-pro',
     outputUsdPerMTok: 180,
+    priceSourceUrl: 'https://developers.openai.com/api/docs/pricing',
     provider: 'openai',
     status: 'ACTIVE',
   },
@@ -334,6 +378,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gpt-6-astra',
     outputUsdPerMTok: 50,
+    priceSourceUrl: 'https://developers.openai.com/api/docs/pricing',
     provider: 'openai',
     status: 'ACTIVE',
   },
@@ -342,6 +387,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gpt-6-luna',
     outputUsdPerMTok: 0.5,
+    priceSourceUrl: 'https://developers.openai.com/api/docs/pricing',
     provider: 'openai',
     status: 'ACTIVE',
   },
@@ -350,6 +396,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'CHAT',
     modelId: 'gpt-6.1-sol',
     outputUsdPerMTok: 10,
+    priceSourceUrl: 'https://developers.openai.com/api/docs/pricing',
     provider: 'openai',
     status: 'ACTIVE',
   },
@@ -359,6 +406,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'EMBEDDING',
     modelId: 'text-embedding-3-large',
     outputUsdPerMTok: 0,
+    priceSourceUrl: 'https://developers.openai.com/api/docs/pricing',
     provider: 'openai',
     status: 'ACTIVE',
   },
@@ -367,6 +415,7 @@ export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [
     kind: 'EMBEDDING',
     modelId: 'text-embedding-3-small',
     outputUsdPerMTok: 0,
+    priceSourceUrl: 'https://developers.openai.com/api/docs/pricing',
     provider: 'openai',
     status: 'ACTIVE',
   },

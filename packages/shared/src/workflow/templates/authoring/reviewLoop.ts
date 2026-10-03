@@ -13,6 +13,12 @@ export interface ReviewLoopOptions {
   limit?: number;
   /** Id of the node that keeps the fix, for a template that already names it differently. */
   keepFixId?: string;
+  /**
+   * Config for the `reviewFix` node (a `systemPrompt`, `allowedPaths`, …). The fixer
+   * otherwise runs with the default prompt and no restriction, which loses any rule a
+   * template put on its first implementation. Omitted, the node carries no `config`.
+   */
+  fixConfig?: Record<string, unknown>;
 }
 
 /**
@@ -70,6 +76,7 @@ export function reviewLoop(opts: ReviewLoopOptions): NodeMap {
       type: 'step',
     },
     reviewFix: {
+      ...(opts.fixConfig ? { config: opts.fixConfig } : {}),
       group,
       inputs: {
         previousCodeResult: { from: 'context.currentCodeResult' },

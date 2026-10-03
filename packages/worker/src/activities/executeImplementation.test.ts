@@ -115,6 +115,7 @@ vi.mock('./workspace.js', () => ({
   createWorkspace: vi.fn(async () => workspaceMock),
   fetchBranchesSubcommand: (branches: string[]) =>
     `fetch origin ${branches.map((b) => `'+refs/heads/${b}:refs/remotes/origin/${b}'`).join(' ')}`,
+  gitWithAuthHeader: (s: string) => `HARDENED git ${s}`,
   shellQuote: (s: string) => `'${s}'`,
 }));
 
@@ -282,6 +283,87 @@ describe('executeImplementation shell hygiene', () => {
     const commands = workspaceMock.exec.mock.calls.map((c) => c[0]);
     expect(commands).toContain("git diff origin/'main; touch /pwned'");
     expect(commands).not.toContain('git diff origin/main; touch /pwned');
+  });
+});
+
+describe('executeImplementation allowedPaths', () => {
+  const BASE = 'a'.repeat(40);
+  const commands = () => workspaceMock.exec.mock.calls.map((c) => c[0]);
+  const pushed = () =>
+    workspaceMock.gitAuthed.mock.calls.some((c) => (c[0] as string).includes('push origin'));
+  /** The guarded step's git calls: the starting commit, the merge base, the committed range. */
+  const withRange = (names: string) =>
+    workspaceMock.exec.mockImplementation(async (cmd: string) => {
+      if (cmd.includes('rev-parse --verify')) {
+        return `${BASE}\n`;
+      }
+      return cmd.includes('diff-tree') ? names : '';
+    });
+
+  it('reads the starting commit before the agent runs, and checks the committed tree before the push', async () => {
+    withRange('docs/a.md\0');
+    await executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md']);
+    const cmds = commands();
+    const start = cmds.findIndex((c) => c.includes('rev-parse --verify'));
+    const commit = cmds.findIndex((c) => c.includes('commit --no-verify'));
+    const range = cmds.findIndex((c) =>
+      c.includes(
+        `diff-tree -r --name-only --no-renames --ignore-submodules=none -z ${BASE} ${BASE}`
+      )
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(generateMock.mock.invocationCallOrder[0]).toBeGreaterThan(
+      workspaceMock.exec.mock.invocationCallOrder[start] as number
+    );
+    expect(commit).toBeGreaterThan(start);
+    expect(range).toBeGreaterThan(commit);
+    expect(
+      cmds.every((c) => !c.includes('commit -m') || c.startsWith('GIT_NO_REPLACE_OBJECTS=1'))
+    ).toBe(true);
+    expect(pushed()).toBe(true);
+  });
+
+  it('fails before the push when the committed range names a file outside the list', async () => {
+    withRange('docs/a.md\0.github/workflows/x.yml\0');
+    await expect(
+      executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md'])
+    ).rejects.toThrow(/may not change \(\.github\/workflows\/x\.yml\)/);
+    expect(pushed()).toBe(false);
+  });
+
+  it('pushes exactly the checked commit, and reports it as the head', async () => {
+    withRange('docs/a.md\0');
+    const result = await executeImplementation(REQUEST, undefined, undefined, undefined, [
+      'docs/a.md',
+    ]);
+    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith(
+      `push origin ${BASE}:refs/heads/'auto/JIRA-1'`
+    );
+    expect(result.headSha).toBe(BASE);
+  });
+
+  it('reports a diff measured from the starting commit', async () => {
+    withRange('docs/a.md\0');
+    await executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md']);
+    expect(
+      commands().some((c) =>
+        c.includes(`diff --no-ext-diff --no-textconv --ignore-submodules=none ${BASE} ${BASE}`)
+      )
+    ).toBe(true);
+    expect(commands()).not.toContain("git diff origin/'main'");
+  });
+
+  it('changes nothing for a step that sets no list', async () => {
+    await executeImplementation(REQUEST);
+    expect(
+      commands().some((c) => c.includes('rev-parse --verify') || c.includes('--no-verify'))
+    ).toBe(false);
+    expect(commands()).toContain(
+      "git diff --cached --quiet || git commit -m 'auto: implement JIRA-1'"
+    );
+    expect(commands()).toContain("git diff origin/'main'");
+    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith("push origin 'auto/JIRA-1'");
+    expect(pushed()).toBe(true);
   });
 });
 

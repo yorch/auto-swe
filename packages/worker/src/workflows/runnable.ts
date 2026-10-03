@@ -166,6 +166,14 @@ const githubActivities = proxyActivities<
   startToCloseTimeout: T_2M,
 });
 
+// Lists provider models through the GLOBAL credentials. Provider calls inside are
+// bounded at 10 s a page, so the timeout is generous; the precondition failures are
+// non-retryable ApplicationFailures, which the policy does not retry.
+const catalogActivities = proxyActivities<Pick<typeof activitiesType, 'listProviderModels'>>({
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_5M,
+});
+
 const contextActivities = proxyActivities<Pick<typeof activitiesType, 'validateContext'>>({
   heartbeatTimeout: T_2M,
   retry: RETRY_STANDARD,
@@ -540,6 +548,14 @@ function resolveConnectionId(step: string, ctx: Context, inputs: Record<string, 
  * through, so `undefined` reaches the activity as "unset" and the activity's own
  * default applies.
  */
+/** `config.allowedPaths` when it is a non-empty array of strings, else undefined. */
+function allowedPathsConfig(config: Record<string, unknown>): string[] | undefined {
+  const raw = config.allowedPaths;
+  return Array.isArray(raw) && raw.length > 0 && raw.every((p) => typeof p === 'string')
+    ? (raw as string[])
+    : undefined;
+}
+
 function crossRepoOptions(config: Record<string, unknown>): {
   crossRepoCheckout?: boolean;
   crossRepoContext?: boolean;
@@ -666,17 +682,29 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       // `subtask` is already `Subtask | undefined`, so both arms of the ternary
       // this replaced passed the same thing.
       const guidance = formatGuidance(inputs.guidance);
-      return agentActivities.executeImplementation(
-        guidance
-          ? {
-              ...request,
-              description: `${request.description}\n\n## Guidance from the requester\n${guidance}`,
-            }
-          : request,
-        subtask,
-        systemPromptOverride,
-        crossRepo
-      );
+      const effectiveRequest = guidance
+        ? {
+            ...request,
+            description: `${request.description}\n\n## Guidance from the requester\n${guidance}`,
+          }
+        : request;
+      const allowedPaths = allowedPathsConfig(config);
+      // The fifth argument is passed only when set, so a step that does not set it
+      // calls the activity exactly as before.
+      return allowedPaths
+        ? agentActivities.executeImplementation(
+            effectiveRequest,
+            subtask,
+            systemPromptOverride,
+            crossRepo,
+            allowedPaths
+          )
+        : agentActivities.executeImplementation(
+            effectiveRequest,
+            subtask,
+            systemPromptOverride,
+            crossRepo
+          );
     },
   ],
   [
@@ -702,11 +730,19 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         (lookupPath(ctx, 'context.lastRejectionSummary') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
-      return agentActivities.executeReviewFixImplementation(
-        rejection,
-        prev,
-        config.systemPrompt as string | undefined
-      );
+      const allowedPaths = allowedPathsConfig(config);
+      return allowedPaths
+        ? agentActivities.executeReviewFixImplementation(
+            rejection,
+            prev,
+            config.systemPrompt as string | undefined,
+            allowedPaths
+          )
+        : agentActivities.executeReviewFixImplementation(
+            rejection,
+            prev,
+            config.systemPrompt as string | undefined
+          );
     },
   ],
   [
@@ -726,11 +762,15 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'createOrUpdatePullRequest',
-    ({ ctx, request, inputs }) => {
+    ({ ctx, request, config, inputs }) => {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
-      return githubActivities.createOrUpdatePullRequest(request, codeResult);
+      // Passed only when set, so every existing template calls the activity exactly as before.
+      return config.draft === true
+        ? githubActivities.createOrUpdatePullRequest(request, codeResult, { draft: true })
+        : githubActivities.createOrUpdatePullRequest(request, codeResult);
     },
   ],
+  ['listProviderModels', ({ request }) => catalogActivities.listProviderModels({ request })],
   [
     'fetchCILogs',
     ({ request, inputs }) =>

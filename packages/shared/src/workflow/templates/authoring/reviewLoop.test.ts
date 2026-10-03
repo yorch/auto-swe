@@ -64,4 +64,20 @@ describe('reviewLoop', () => {
     expect(a.review).not.toBe(b.review);
     expect(a).toEqual(b);
   });
+
+  it('gives reviewFix no config unless asked, so other templates are unchanged', () => {
+    expect(reviewLoop({ approved: 'n' }).reviewFix).not.toHaveProperty('config');
+  });
+
+  it('passes fixConfig to reviewFix and nowhere else', () => {
+    const nodes = reviewLoop({
+      approved: 'n',
+      fixConfig: { allowedPaths: ['a.ts'], systemPrompt: 'p' },
+    });
+    expect(nodes.reviewFix).toMatchObject({
+      config: { allowedPaths: ['a.ts'], systemPrompt: 'p' },
+      step: 'executeReviewFixImplementation',
+    });
+    expect(nodes.review).not.toHaveProperty('config');
+  });
 });

@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_MODELS, builtinModelSpec, cacheMultipliers } from './builtinModels.js';
+import {
+  BUILTIN_MODELS,
+  BUILTIN_MODELS_PATH,
+  builtinModelSpec,
+  cacheMultipliers,
+} from './builtinModels.js';
 import { parseProviderModelSpec } from './modelSpec.js';
 import { PREVIOUS_DEFAULT_MODEL_SPECS, SWE_AGENTS } from './syncBuiltins.js';
 
@@ -27,6 +32,113 @@ function seededEmbeddingSpec(): string {
   }
   return match[1];
 }
+
+/**
+ * The pricing host each provider's prices may be cited to. FIXED here, in the test, and
+ * deliberately not read from `builtinModels.ts`: the catalog refresh edits that file, so
+ * an allowlist derived from it could be widened by the same diff it is meant to check.
+ * Adding a provider is a deliberate edit to this map, which the refresh's changed-files
+ * guard keeps out of the agent's diff.
+ */
+const PRICING_HOSTS: Readonly<Record<string, string>> = {
+  anthropic: 'platform.claude.com',
+  google: 'ai.google.dev',
+  openai: 'developers.openai.com',
+};
+
+const source = readFileSync(fileURLToPath(new URL('./builtinModels.ts', import.meta.url)), 'utf8');
+
+/** Every `- Provider: https://…` line of the header, in order, duplicates kept. */
+function headerCitations(text: string): Array<[provider: string, host: string]> {
+  const header = text.slice(0, text.indexOf('*/'));
+  return [...header.matchAll(/^ \* - (\w+):\s+(https:\/\/\S+)/gm)].map(
+    (m) => [(m[1] as string).toLowerCase(), new URL(m[2] as string).hostname] as [string, string]
+  );
+}
+
+/** Why a header does not match {@link PRICING_HOSTS} exactly, or null when it does. */
+function headerProblem(text: string): string | null {
+  const got = headerCitations(text)
+    .map(([p, h]) => `${p}=${h}`)
+    .sort();
+  const want = Object.entries(PRICING_HOSTS)
+    .map(([p, h]) => `${p}=${h}`)
+    .sort();
+  return JSON.stringify(got) === JSON.stringify(want)
+    ? null
+    : `header cites [${got.join(', ')}], expected [${want.join(', ')}]`;
+}
+
+/** Why a row's citation is not acceptable, or null when it is. */
+function priceSourceProblem(m: { provider: string; priceSourceUrl?: string }): string | null {
+  let url: URL;
+  try {
+    url = new URL(m.priceSourceUrl ?? '');
+  } catch {
+    return 'priceSourceUrl is missing or not a URL';
+  }
+  if (url.protocol !== 'https:') {
+    return 'priceSourceUrl is not https';
+  }
+  const host = PRICING_HOSTS[m.provider];
+  if (!host) {
+    return `no pricing host is allowed for provider '${m.provider}'`;
+  }
+  return url.hostname === host ? null : `priceSourceUrl host ${url.hostname} is not ${host}`;
+}
+
+describe('BUILTIN_MODELS_PATH', () => {
+  it('is where this file lives, relative to the repository root', () => {
+    const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+    expect(fileURLToPath(new URL('./builtinModels.ts', import.meta.url))).toBe(
+      `${repoRoot}${BUILTIN_MODELS_PATH}`
+    );
+  });
+});
+
+describe('priceSourceUrl', () => {
+  it('matches the fixed provider -> host map in the file header, exactly', () => {
+    expect(headerProblem(source)).toBeNull();
+  });
+
+  it('fails a header with a second line for a provider, pointing at another host', () => {
+    // The reviewer's repro: a duplicate line used to override the real one in a Map.
+    const evil = source.replace(
+      ' * - Google:',
+      ' * - OpenAI:    https://evil.example/pricing\n * - Google:'
+    );
+    expect(headerProblem(evil)).toMatch(/evil\.example/);
+  });
+
+  it('fails a header whose host was swapped, and rows swapped to match it', () => {
+    const evil = source
+      .replaceAll('developers.openai.com', 'evil.example')
+      .replaceAll("'https://evil.example/api/docs/pricing'", "'https://evil.example/pricing'");
+    expect(headerProblem(evil)).not.toBeNull();
+    expect(
+      priceSourceProblem({ priceSourceUrl: 'https://evil.example/pricing', provider: 'openai' })
+    ).toMatch(/not developers\.openai\.com/);
+  });
+
+  it('is an https URL on its provider pricing host, on every row', () => {
+    for (const m of BUILTIN_MODELS) {
+      expect(priceSourceProblem(m), builtinModelSpec(m)).toBeNull();
+    }
+  });
+
+  it('rejects a missing, non-https, off-host or unlisted-provider citation', () => {
+    expect(priceSourceProblem({ provider: 'openai' })).toMatch(/missing/);
+    expect(
+      priceSourceProblem({ priceSourceUrl: 'http://developers.openai.com/x', provider: 'openai' })
+    ).toMatch(/not https/);
+    expect(
+      priceSourceProblem({ priceSourceUrl: 'https://ai.google.dev/pricing', provider: 'openai' })
+    ).toMatch(/not developers\.openai\.com/);
+    expect(priceSourceProblem({ priceSourceUrl: 'https://x.ai/pricing', provider: 'xai' })).toMatch(
+      /no pricing host/
+    );
+  });
+});
 
 describe('BUILTIN_MODELS', () => {
   it('lists each spec once, in the form parseProviderModelSpec produces', () => {

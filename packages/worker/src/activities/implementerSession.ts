@@ -19,6 +19,7 @@ import { getExecErrorStdout } from '../lib/errors.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
+import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
 import {
   detectTestCommand,
   parseDiffToFileChanges,
@@ -60,6 +61,8 @@ export interface FixSessionInput {
   /** Built-in system prompt for this mode (resolveSystemPrompt handles DB/step overrides). */
   defaultSystemPrompt: string;
   systemPromptOverride?: string;
+  /** When set, the change may touch only these paths; anything else fails before the push. */
+  allowedPaths?: string[];
   /** Conventional commit message for the fix commit. */
   commitMessage: string;
   /** OTel/cost event name, e.g. 'llm.ci_fix'. */
@@ -143,6 +146,17 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       // Branch may not exist remotely yet; proceed against the local clone.
       heartbeat(`${mode}: remote branch not found, using clone HEAD`);
     }
+
+    // After the sync to the work branch, before any agent turn: this session's change is
+    // checked against the branch tip it started from, so an older branch base never matters.
+    // The whole change is reported against the original run's base when the previous result
+    // carries it.
+    const pathGuard = await startPathGuard(
+      workspace,
+      repo.defaultBranch,
+      input.allowedPaths,
+      previousCodeResult.baseSha
+    );
 
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson, repo.gateCommands);
@@ -230,17 +244,16 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // Commit and push the fix (skip the commit if the agent made no changes
     // to avoid empty CI cycles; push is still safe — it's a no-op then).
     await workspace.exec('git add -A');
-    await workspace.exec(
-      `git diff --cached --quiet || git commit -m ${shellQuote(input.commitMessage)}`
-    );
+    const pushSha = await commitStaged(workspace, input.commitMessage, pathGuard);
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
-    await workspace.gitAuthed(`push origin ${shellQuote(previousCodeResult.branch)}`);
+    await workspace.gitAuthed(`push origin ${pushRefspec(previousCodeResult.branch, pushSha)}`);
 
     // `defaultBranch` is an operator-editable column — quote it like every other
     // interpolated ref so it cannot smuggle shell syntax into the container.
-    const diff = await workspace.exec(`git diff origin/${shellQuote(repo.defaultBranch)}`);
-    const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
+    const diff = await diffForResult(workspace, repo.defaultBranch, pathGuard, pushSha);
+    // A guarded step reports the commit it pushed, not whatever HEAD has become.
+    const headSha = pushSha ?? (await workspace.exec('git rev-parse HEAD')).trim();
 
     tracer.addActivityEvent({
       name: 'git.commit_push',
@@ -286,6 +299,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     }
 
     return {
+      // Carried forward for a guarded step only, so the next session can report the whole
+      // change against the same base; an unguarded step returns exactly what it always did.
+      ...(pathGuard && previousCodeResult.baseSha ? { baseSha: previousCodeResult.baseSha } : {}),
       branch: previousCodeResult.branch,
       codeSecurityFindings: codeSecurityFindings.length > 0 ? codeSecurityFindings : undefined,
       diff,

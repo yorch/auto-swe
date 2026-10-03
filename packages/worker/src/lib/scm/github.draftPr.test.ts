@@ -20,21 +20,36 @@ vi.mock('@auto-swe/shared/lib/connectionCredential', () => ({
 }));
 vi.mock('../runLauncher.js', () => ({ currentRunLauncherId: vi.fn(async () => null) }));
 
-const { createMock } = vi.hoisted(() => ({ createMock: vi.fn() }));
+const { createMock, listMock, getMock, getBranchMock, compareMock } = vi.hoisted(() => ({
+  compareMock: vi.fn(),
+  createMock: vi.fn(),
+  getBranchMock: vi.fn(),
+  getMock: vi.fn(),
+  listMock: vi.fn(),
+}));
 vi.mock('@octokit/rest', () => ({
   Octokit: class {
-    pulls = { create: createMock, list: vi.fn() };
+    pulls = { create: createMock, get: getMock, list: listMock };
+    repos = { compareCommits: compareMock, getBranch: getBranchMock };
   },
 }));
 
 import { GitHubScmProvider } from './github.js';
-import { DraftPullRequestUnsupportedError, type RepoRef } from './types.js';
+import {
+  DraftPullRequestUnsupportedError,
+  ExistingPullRequestNotDraftError,
+  type RepoRef,
+} from './types.js';
 
 const repo = { organizationName: 'acme', repoName: 'api' } as unknown as RepoRef;
 const base = { baseBranch: 'main', body: 'b', headBranch: 'auto/agent-1', repo, title: 't' };
 
 beforeEach(() => {
   createMock.mockReset();
+  listMock.mockReset();
+  getMock.mockReset();
+  getBranchMock.mockReset();
+  compareMock.mockReset();
 });
 
 describe('GitHubScmProvider.createOrUpdatePullRequest draft', () => {
@@ -66,5 +81,97 @@ describe('GitHubScmProvider.createOrUpdatePullRequest draft', () => {
     await expect(
       new GitHubScmProvider().createOrUpdatePullRequest({ ...base, draft: true })
     ).rejects.not.toBeInstanceOf(DraftPullRequestUnsupportedError);
+  });
+});
+
+describe('draft requests never reuse a ready-for-review PR', () => {
+  const open = (draft: boolean) => ({ data: [{ draft, html_url: 'https://x/pull/9', number: 9 }] });
+
+  it('refuses an open PR that is not a draft, and creates nothing', async () => {
+    listMock.mockResolvedValue(open(false));
+    await expect(
+      new GitHubScmProvider().createOrUpdatePullRequest({
+        ...base,
+        draft: true,
+        reuseExisting: true,
+      })
+    ).rejects.toBeInstanceOf(ExistingPullRequestNotDraftError);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('reuses an open PR that is still a draft', async () => {
+    listMock.mockResolvedValue(open(true));
+    await expect(
+      new GitHubScmProvider().createOrUpdatePullRequest({
+        ...base,
+        draft: true,
+        reuseExisting: true,
+      })
+    ).resolves.toEqual({ prNumber: 9, prUrl: 'https://x/pull/9' });
+  });
+
+  it('keeps reusing a ready PR for a caller that did not ask for a draft', async () => {
+    listMock.mockResolvedValue(open(false));
+    await expect(
+      new GitHubScmProvider().createOrUpdatePullRequest({ ...base, reuseExisting: true })
+    ).resolves.toMatchObject({ prNumber: 9 });
+  });
+});
+
+describe('GitHubScmProvider branch and draft lookups', () => {
+  it('reports a missing branch and no PR, without comparing', async () => {
+    getBranchMock.mockRejectedValue(Object.assign(new Error('nf'), { status: 404 }));
+    listMock.mockResolvedValue({ data: [] });
+    await expect(new GitHubScmProvider().findBranchWork(repo, 'auto/x', 'main')).resolves.toEqual({
+      aheadBy: null,
+      branchExists: false,
+      openPr: null,
+    });
+    expect(compareMock).not.toHaveBeenCalled();
+  });
+
+  it('reports an existing branch with its commits ahead of the base and its open PR', async () => {
+    getBranchMock.mockResolvedValue({ data: {} });
+    compareMock.mockResolvedValue({ data: { ahead_by: 2 } });
+    listMock.mockResolvedValue({ data: [{ html_url: 'https://x/pull/3', number: 3 }] });
+    await expect(new GitHubScmProvider().findBranchWork(repo, 'auto/x', 'main')).resolves.toEqual({
+      aheadBy: 2,
+      branchExists: true,
+      openPr: { prNumber: 3, prUrl: 'https://x/pull/3' },
+    });
+    expect(compareMock.mock.calls[0]?.[0]).toMatchObject({ base: 'main', head: 'auto/x' });
+  });
+
+  it('reports a branch with nothing ahead as zero commits', async () => {
+    getBranchMock.mockResolvedValue({ data: {} });
+    compareMock.mockResolvedValue({ data: { ahead_by: 0 } });
+    listMock.mockResolvedValue({ data: [] });
+    await expect(
+      new GitHubScmProvider().findBranchWork(repo, 'auto/x', 'main')
+    ).resolves.toMatchObject({ aheadBy: 0, branchExists: true, openPr: null });
+  });
+
+  it('fails the lookup when the compare fails, rather than reading it as no work', async () => {
+    getBranchMock.mockResolvedValue({ data: {} });
+    compareMock.mockRejectedValue(Object.assign(new Error('compare down'), { status: 500 }));
+    listMock.mockResolvedValue({ data: [] });
+    await expect(new GitHubScmProvider().findBranchWork(repo, 'auto/x', 'main')).rejects.toThrow(
+      'compare down'
+    );
+  });
+
+  it('does not swallow a failure that is not a 404', async () => {
+    getBranchMock.mockRejectedValue(Object.assign(new Error('boom'), { status: 500 }));
+    await expect(new GitHubScmProvider().findBranchWork(repo, 'auto/x', 'main')).rejects.toThrow(
+      'boom'
+    );
+  });
+
+  it('reads a PR draft state with one call', async () => {
+    getMock.mockResolvedValue({ data: { draft: true } });
+    await expect(new GitHubScmProvider().isDraftPullRequest(repo, 3)).resolves.toBe(true);
+    getMock.mockResolvedValue({ data: { draft: false } });
+    await expect(new GitHubScmProvider().isDraftPullRequest(repo, 3)).resolves.toBe(false);
+    expect(getMock).toHaveBeenCalledTimes(2);
   });
 });

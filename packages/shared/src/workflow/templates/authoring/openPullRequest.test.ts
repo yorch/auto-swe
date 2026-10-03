@@ -31,4 +31,16 @@ describe('openPullRequest', () => {
       values: { 'context.ciRetries': { literal: 0 } },
     });
   });
+
+  it('opens a ready pull request, with no node config, unless asked for a draft', () => {
+    expect(openPullRequest({ next: 'n' }).openPR).not.toHaveProperty('config');
+    expect(openPullRequest({ draft: false, next: 'n' }).openPR).not.toHaveProperty('config');
+  });
+
+  it('can open the pull request as a draft', () => {
+    expect(openPullRequest({ draft: true, next: 'n' }).openPR).toMatchObject({
+      config: { draft: true },
+      step: 'createOrUpdatePullRequest',
+    });
+  });
 });
