@@ -576,7 +576,7 @@ await persistActivityTrace(tracer, 'implementer');
 
 An attempt can persist more than one tracer — its own and `runAgent`'s — and each numbers its records from 0, so `persistActivityTrace` reserves a block of `seq` values per attempt and offsets each batch into it. `seq` is therefore unique within an attempt, and batches order by when they were persisted.
 
-**`runAgent`** records a `tool_call` row for every tool call Mastra made inside its loop, read from the steps of the `generate` result and paired with each call's result, then the call's `llm_response` row. A caller whose tools record themselves passes its own tracer as `RunAgentOptions.tracer` — `runAgentNode` (MCP tools) and `runAgentTask` (workspace and MCP tools) do. `runAgent` then records into that tracer, does not re-read those tool calls from the steps, and leaves persisting to the caller, so the tool rows and the response share one sequence in the order they happened.
+**`runAgent`** records a `tool_call` row for every tool call Mastra made inside its loop, read from the steps of the `generate` result and paired with each call's outcome, then the call's `llm_response` row. A tool that threw is recorded with its error message: Mastra keeps only successful results in a step's `toolResults`, so the error is read from the tool message the loop fed back to the model. A call with no outcome anywhere is recorded as failed, never as a success with no output. A caller whose tools record themselves passes its own tracer as `RunAgentOptions.tracer` — `runAgentNode` (MCP tools) and `runAgentTask` (workspace and MCP tools) do. `runAgent` then records into that tracer, does not re-read those tool calls from the steps, and leaves persisting to the caller, so the tool rows and the response share one sequence in the order they happened.
 
 **`inputJson` convention for `addLlmResponse`:** always pass `{ systemPrompt, userMessage }` so the `/runs/[id]` viewer can show exactly what was sent to the model. Declare prompt variables as `let` before the `try` block (not `const` inside it) so the error `catch` path can reference them too — otherwise failed LLM calls produce traces with no request context.
 
@@ -723,8 +723,8 @@ Writes cut a new immutable `version`.
   more nodes do (and always when a fan-out branch is selected, since a fallback match cannot name a
   branch). A fallback match with a single candidate node is shown unlabelled.
 - **`runAgent`'s own tool-call rows are reconstructed after the fact.** They are read from the
-  steps of a `generate` that returned, so their `durationMs` is 0 and a call that threw or was
-  aborted records none of its tool calls — only the failed `llm_response`. Tools that record
+  steps of a `generate` that returned, so their `durationMs` is 0 and a `generate` that threw or
+  was aborted records none of its tool calls — only the failed `llm_response`. Tools that record
   themselves (MCP, workspace) are timed and recorded either way.
 - **The Claude Code harness holds a model credential inside the workspace container.** The agent
   runs as root on a network with unrestricted egress, so anything it runs can read the key and send

@@ -287,33 +287,81 @@ export async function runAgent<T = unknown>(
   }
 }
 
-/** The slice of a Mastra step that carries its tool calls. */
+/** The slice of a Mastra step that carries its tool calls and their outcomes. */
 interface StepToolCalls {
   toolCalls?: Array<{ payload: { toolCallId: string; toolName: string; args?: unknown } }>;
   toolResults?: Array<{ payload: { toolCallId: string; result: unknown; isError?: boolean } }>;
+  content?: ReadonlyArray<{ type: string; toolCallId?: string; error?: unknown }>;
+  response?: { messages?: ReadonlyArray<{ role: string; content: unknown }> };
 }
+
+const NO_RESULT_ERROR = 'tool call produced no result (it threw or did not complete)';
 
 /**
  * One `tool_call` row per tool call Mastra made inside the loop, paired with
- * its result by call id. The steps carry no timing, so `durationMs` is 0, and
+ * its outcome by call id. The steps carry no timing, so `durationMs` is 0, and
  * only a `generate` that returned has steps to read.
+ *
+ * A tool that THROWS never reaches `toolResults`: Mastra emits it as a separate
+ * `tool-error` chunk and buffers only `tool-result` chunks there. Its message
+ * survives in the tool message the loop fed back to the model (an `error-text`
+ * or `error-json` output), so that is read too. A call with no result and no
+ * error anywhere is still recorded as failed, never as a success with no output.
  */
 function recordStepToolCalls(tracer: AgentTracer, steps: StepToolCalls[] | undefined): void {
+  const errors = stepToolErrors(steps ?? []);
   for (const step of steps ?? []) {
     const results = new Map(
       (step.toolResults ?? []).map((r) => [r.payload.toolCallId, r.payload] as const)
     );
     for (const { payload: call } of step.toolCalls ?? []) {
       const result = results.get(call.toolCallId);
+      const succeeded = result !== undefined && !result.isError;
       tracer.addToolCall({
         durationMs: 0,
-        error: result?.isError ? errorText(result.result) : undefined,
+        error: succeeded
+          ? undefined
+          : (errors.get(call.toolCallId) ?? (result ? errorText(result.result) : NO_RESULT_ERROR)),
         inputJson: call.args ?? {},
-        outputJson: result && !result.isError ? result.result : undefined,
+        outputJson: succeeded ? result.result : undefined,
         toolName: call.toolName,
       });
     }
   }
+}
+
+/**
+ * Error text per failed tool call id, from `tool-error` content parts and the
+ * error outputs of `tool` messages. A step's `response.messages` is cumulative,
+ * so one call can appear in several steps; it maps to the same text each time.
+ */
+function stepToolErrors(steps: StepToolCalls[]): Map<string, string> {
+  const errors = new Map<string, string>();
+  for (const step of steps) {
+    for (const part of step.content ?? []) {
+      if (part.type === 'tool-error' && part.toolCallId) {
+        errors.set(part.toolCallId, errorText(part.error));
+      }
+    }
+    for (const message of step.response?.messages ?? []) {
+      if (message.role !== 'tool' || !Array.isArray(message.content)) {
+        continue;
+      }
+      for (const part of message.content as ToolMessagePart[]) {
+        const kind = part.output?.type;
+        if (part.toolCallId && (kind === 'error-text' || kind === 'error-json')) {
+          errors.set(part.toolCallId, errorText(part.output?.value));
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+/** The slice of an AI SDK `tool` message part that carries a failed call's error. */
+interface ToolMessagePart {
+  toolCallId?: string;
+  output?: { type?: string; value?: unknown };
 }
 
 function errorText(result: unknown): string {

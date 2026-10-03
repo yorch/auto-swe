@@ -218,19 +218,40 @@ describe('runAgent', () => {
   });
 
   it("records each tool call of the loop as a tool_call row, before the call's llm_response", async () => {
+    // The step shape Mastra 1.73 returns: a tool that threw is absent from
+    // `toolResults` (its `tool-error` chunk is never buffered there) and from
+    // `content`; its message survives only in the cumulative tool message.
+    const toolMessage = {
+      content: [
+        { output: { type: 'json', value: { found: 1 } }, toolCallId: 'c1', type: 'tool-result' },
+        { output: { type: 'error-text', value: 'boom' }, toolCallId: 'c2', type: 'tool-result' },
+      ],
+      role: 'tool',
+    };
     generateMock.mockResolvedValue({
       steps: [
         {
+          content: [
+            { toolCallId: 'c1', type: 'tool-call' },
+            { toolCallId: 'c1', type: 'tool-result' },
+            { error: new Error('durable boom'), toolCallId: 'c3', type: 'tool-error' },
+          ],
+          response: { messages: [{ content: [], role: 'assistant' }, toolMessage] },
           toolCalls: [
             { payload: { args: { q: 'a' }, toolCallId: 'c1', toolName: 'delegateTask' } },
             { payload: { args: { q: 'b' }, toolCallId: 'c2', toolName: 'search' } },
+            { payload: { args: { q: 'c' }, toolCallId: 'c3', toolName: 'search' } },
+            { payload: { args: { q: 'd' }, toolCallId: 'c4', toolName: 'search' } },
           ],
-          toolResults: [
-            { payload: { result: { found: 1 }, toolCallId: 'c1' } },
-            { payload: { isError: true, result: 'boom', toolCallId: 'c2' } },
-          ],
+          toolResults: [{ payload: { result: { found: 1 }, toolCallId: 'c1' } }],
         },
-        { text: 'done', toolCalls: [], toolResults: [] },
+        {
+          content: [{ text: 'done', type: 'text' }],
+          response: { messages: [toolMessage] },
+          text: 'done',
+          toolCalls: [],
+          toolResults: [],
+        },
       ],
       text: 'done',
     });
@@ -251,6 +272,20 @@ describe('runAgent', () => {
         durationMs: 0,
         error: 'boom',
         inputJson: { q: 'b' },
+        outputJson: undefined,
+        toolName: 'search',
+      },
+      {
+        durationMs: 0,
+        error: 'durable boom',
+        inputJson: { q: 'c' },
+        outputJson: undefined,
+        toolName: 'search',
+      },
+      {
+        durationMs: 0,
+        error: 'tool call produced no result (it threw or did not complete)',
+        inputJson: { q: 'd' },
         outputJson: undefined,
         toolName: 'search',
       },
