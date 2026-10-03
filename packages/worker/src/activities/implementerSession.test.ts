@@ -228,7 +228,7 @@ describe('runImplementerFixSession', () => {
     // session that resolved its repo without one clones through the default
     // installation, which 404s for a repo in another GitHub organization.
     expect(findRepo).toHaveBeenCalledWith({
-      include: { installation: { select: { installationId: true } } },
+      include: { installation: { select: { host: true, installationId: true } } },
       where: { id: 'repo-1' },
     });
     expect(findWorkflow).not.toHaveBeenCalled();

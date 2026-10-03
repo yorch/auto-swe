@@ -246,9 +246,9 @@ async function compensate(
  * the string reads as "already running" here; with it, that row is recognised
  * as foreign and this ticket gets a disambiguated ID (`chooseWorkflowId`).
  *
- * `legacyBaseId` is the id the same ticket had before repository ids carried
- * their host (only a repository with a host override has one). An execution of
- * THIS repository still in flight under it blocks a second one exactly as an
+ * `legacyBaseIds` are the ids the same ticket had in earlier formats (stored
+ * casing, no host segment: `legacyWorkflowIdBases`). An execution of
+ * THIS repository still in flight under one of them blocks a second one exactly as an
  * in-flight execution under `baseId` does — otherwise the upgrade, or giving a
  * repository a host override, would let two runs push the same branch. Another
  * repository's row that merely shares the legacy string does not block.
@@ -259,9 +259,9 @@ export async function allocateWorkflowId(
   prisma: FastifyInstance['prisma'],
   baseId: string,
   owner?: { repoId: string; externalTicketId?: string },
-  legacyBaseId?: string
+  legacyBaseIds?: readonly string[]
 ): Promise<WorkflowIdAllocation> {
-  const bases = workflowIdFamilyBases(baseId, owner?.repoId, legacyBaseId);
+  const bases = workflowIdFamilyBases(baseId, owner?.repoId, legacyBaseIds);
   const rows = await prisma.activeWorkflow.findMany({
     select: {
       currentStatus: true,
@@ -285,6 +285,6 @@ export async function allocateWorkflowId(
       temporalWorkflowId: r.temporalWorkflowId,
     })),
     owner,
-    legacyBaseId
+    legacyBaseIds
   );
 }

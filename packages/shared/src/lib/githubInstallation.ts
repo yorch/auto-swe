@@ -16,7 +16,7 @@
  * into a 503. Only the credential mechanics are shared.
  */
 import { createHash, createSign } from 'node:crypto';
-import { sameHostFamily } from './githubHostScope.js';
+import { hostFamily } from './githubHostScope.js';
 import type { ResolvedGitHubConfig } from './systemConfig.js';
 
 export class GitHubTokenMissingError extends Error {
@@ -29,13 +29,13 @@ export class GitHubTokenMissingError extends Error {
 }
 
 /**
- * A platform credential was asked for on a host that is not the instance's.
- * Standing configuration, not a transient failure.
+ * A platform credential was asked for on a host other than the one it belongs
+ * to. Standing configuration, not a transient failure.
  */
 export class PlatformCredentialHostError extends Error {
   constructor(readonly apiUrl: string) {
     super(
-      `The platform's GitHub credential is valid only on the instance's own GitHub host and is not sent to ${apiUrl}. That host is reachable only with a user's own saved token.`
+      `A platform GitHub credential is valid only on the GitHub host it belongs to and is not sent to ${apiUrl}. That host is reachable with a platform credential configured for it (Studio > Integrations > GitHub > Host credentials) or a user's own saved token.`
     );
     this.name = 'PlatformCredentialHostError';
   }
@@ -173,11 +173,14 @@ export async function resolveGitHubToken(
   // The last line of the host rule (`githubHostScope.ts`), on the API-host
   // dimension: every platform credential — the PAT, an installation token, and
   // the App JWT that mints one — leaves through this function, so refusing here
-  // covers a caller that forgot to ask. No platform credential goes to another
-  // host, installation or not: the App and its installations live on the
-  // instance's host only.
-  if (target.apiUrl && !sameHostFamily(target.apiUrl, config.apiUrl)) {
-    throw new PlatformCredentialHostError(target.apiUrl);
+  // covers a caller that forgot to ask. `config` is the credential set the
+  // token is minted from (the instance's, or one host's own), so the check is
+  // against the host that set belongs to: no credential goes to another host,
+  // installation or not.
+  const credentialHost = config.credentialHost ?? hostFamily(config.apiUrl);
+  const effectiveApiUrl = target.apiUrl ?? config.apiUrl;
+  if (hostFamily(effectiveApiUrl) !== credentialHost) {
+    throw new PlatformCredentialHostError(effectiveApiUrl);
   }
   const mode = config.authMode ?? 'auto';
   const installationId = target.installationId ?? config.appInstallationId;

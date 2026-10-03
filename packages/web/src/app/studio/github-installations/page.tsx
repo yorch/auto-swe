@@ -25,6 +25,7 @@ import { errMsg } from '@/lib/errors';
 function CreateInstallationModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const [installationId, setInstallationId] = useState('');
   const [accountLogin, setAccountLogin] = useState('');
+  const [host, setHost] = useState('');
   const [error, setError] = useState<string | null>(null);
   const create = useCreateGithubInstallation();
 
@@ -34,10 +35,12 @@ function CreateInstallationModal({ onClose, open }: { onClose: () => void; open:
     try {
       await create.mutateAsync({
         accountLogin: accountLogin.trim(),
+        ...(host.trim() && { host: host.trim().toLowerCase() }),
         installationId: installationId.trim(),
       });
       setInstallationId('');
       setAccountLogin('');
+      setHost('');
       onClose();
     } catch (err) {
       setError(errMsg(err));
@@ -62,6 +65,14 @@ function CreateInstallationModal({ onClose, open }: { onClose: () => void; open:
           onChange={(e) => setAccountLogin(e.target.value)}
           placeholder="acme"
           value={accountLogin}
+        />
+        <Input
+          hint="Leave empty for the instance's own GitHub host. For another host, enter it as it appears under Per-host credentials — the same installation id can exist on two hosts. It cannot be changed later."
+          id="gh-install-new-host"
+          label="Host"
+          onChange={(e) => setHost(e.target.value)}
+          placeholder="ghe.example.com"
+          value={host}
         />
         {error && <Alert>{error}</Alert>}
         <ModalFooter
@@ -161,7 +172,8 @@ export default function StudioGithubInstallationsPage() {
           <>
             Where the GitHub App is installed. The app&apos;s own credentials are instance-wide and
             live on the GitHub integration page; this is one row per GitHub organization the
-            deployment reaches. A repository with no installation uses the one configured there.
+            deployment reaches, on the instance&apos;s own host or on another host that has its own
+            credentials. A repository with no installation uses the one configured there.
           </>
         }
         title="GitHub installations"
@@ -187,6 +199,7 @@ export default function StudioGithubInstallationsPage() {
             <Table>
               <THead>
                 <Th variant="compact">Account</Th>
+                <Th variant="compact">Host</Th>
                 <Th variant="compact">Installation ID</Th>
                 <Th variant="compact">Repositories</Th>
                 <Th variant="compact">Status</Th>
@@ -196,6 +209,9 @@ export default function StudioGithubInstallationsPage() {
                 {installations.map((i) => (
                   <TRow key={i.id}>
                     <Td className="py-2 pr-4 font-mono text-xs text-paper-100">{i.accountLogin}</Td>
+                    <Td className="py-2 pr-4 font-mono text-[11px] text-paper-300">
+                      {i.host || 'instance'}
+                    </Td>
                     <Td className="py-2 pr-4 font-mono text-[11px] text-paper-300">
                       {i.installationId}
                     </Td>

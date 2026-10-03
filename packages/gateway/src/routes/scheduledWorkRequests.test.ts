@@ -73,6 +73,9 @@ describe('/api/v1/scheduled-work-requests', () => {
   /** Nth (1-based) conditional row write finds the row deactivated meanwhile (count 0). */
   let deactivateAtUpdateMany: number | null = null;
   const updateManyWheres: Array<Record<string, unknown>> = [];
+  /** Runs just before the Nth (1-based) conditional write: another writer's change landing. */
+  let concurrentWriter: ((call: number) => void) | null = null;
+  let repoActive = true;
   /** Teams the repo is shared with, and the caller's role in each (null = not a member). */
   let sharedTeams: Array<{ teamId: string; role: string | null }> = [];
 
@@ -137,7 +140,7 @@ describe('/api/v1/scheduled-work-requests', () => {
       connection: {
         findFirst: async () => ({
           id: REPO_ID,
-          isActive: true,
+          isActive: repoActive,
           organizationName: 'org',
           repoName: 'test',
           shares: sharedTeams.map((t) => ({
@@ -186,7 +189,7 @@ describe('/api/v1/scheduled-work-requests', () => {
         // Every real row has an updatedAt; fixtures that leave it out get one.
         findUnique: async (args: { where: { id: string } }) =>
           scheduleRow && args.where.id === SCHEDULE_ID
-            ? { updatedAt: new Date(1), ...scheduleRow }
+            ? { updatedAt: new Date(1), version: 0, ...scheduleRow }
             : null,
         findUniqueOrThrow: async () => rowWithInclude({ ...scheduleRow, ...lastUpdateData }),
         update: async (args: { data: Record<string, unknown> }) => {
@@ -204,12 +207,20 @@ describe('/api/v1/scheduled-work-requests', () => {
             throw new Error('db down');
           }
           updateManyWheres.push(args.where);
+          concurrentWriter?.(updateManyWheres.length);
           if (updateManyWheres.length === deactivateAtUpdateMany) {
             scheduleRow = { ...scheduleRow, isActive: false };
             return { count: 0 };
           }
           if (rowMovedUnderneath) {
             return { count: 0 };
+          }
+          // Compare-and-set on the version, as the database does.
+          if ('version' in args.where && args.where.version !== (scheduleRow?.version ?? 0)) {
+            return { count: 0 };
+          }
+          if (scheduleRow && 'version' in args.where) {
+            scheduleRow = { ...scheduleRow, version: Number(scheduleRow.version ?? 0) + 1 };
           }
           lastUpdateData = args.data;
           scheduleUpdates.push(args.data);
@@ -287,6 +298,8 @@ describe('/api/v1/scheduled-work-requests', () => {
     failSyncAtCall = null;
     syncCallCount = 0;
     deactivateAtUpdateMany = null;
+    concurrentWriter = null;
+    repoActive = true;
     updateManyWheres.length = 0;
     lastUpdateData = {};
     sharedTeams = [];
@@ -655,10 +668,80 @@ describe('/api/v1/scheduled-work-requests', () => {
         id: SCHEDULE_ID,
         isActive: true,
         teamId: 'team-1',
-        // The read millisecond, not exact equality: Postgres stores
-        // microseconds a JS Date cannot hold.
-        updatedAt: { gte: new Date(5), lt: new Date(6) },
+        version: 0,
       });
+    });
+
+    // Another writer's change, landing between this request's read and write.
+    const writerBumps = (change: Record<string, unknown>) => (call: number) => {
+      if (call === 1) {
+        scheduleRow = { ...scheduleRow, ...change, version: Number(scheduleRow?.version ?? 0) + 1 };
+      }
+    };
+    const activeRow = () => ({ ...pausedRow(), isActive: true, teamId: 'team-1' });
+
+    it('detects a conflicting write in the same millisecond as the read', async () => {
+      // The other writer leaves updatedAt exactly as it was; only the version moved.
+      scheduleRow = { ...activeRow(), updatedAt: new Date(1) };
+      concurrentWriter = writerBumps({ name: 'renamed elsewhere', updatedAt: new Date(1) });
+      const res = await patchCron();
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('SCHEDULE_CONFLICT');
+      expect(scheduleUpdates).toHaveLength(0);
+    });
+
+    it('retries a PATCH that overlaps a fire-by-hand takeover, on the re-read row', async () => {
+      scheduleRow = activeRow();
+      concurrentWriter = writerBumps({ actsAsUserId: 'user-2' });
+      const res = await patchCron();
+      expect(res.statusCode).toBe(200);
+      // The first attempt lost; the second wrote on the version the takeover left.
+      expect(updateManyWheres.map((w) => [w.actsAsUserId, w.version])).toEqual([
+        ['user-1', 0],
+        ['user-2', 1],
+      ]);
+      // Re-timing rebinds to the editor, so Temporal was re-synced for the retry.
+      expect(syncCalls.map((c) => c.cronExpression)).toEqual(['0 4 * * 1', '0 4 * * 1']);
+      expect(auditRows.map((a) => (a.afterJson as { event: string }).event)).toEqual([
+        'acts-as-changed',
+      ]);
+    });
+
+    it('puts Temporal back on the row when a retry ends before saving', async () => {
+      scheduleRow = activeRow();
+      // A fire takes the schedule over and the repository is deactivated, so the
+      // retried decision is refused: the first attempt's sync must not linger.
+      concurrentWriter = (call) => {
+        repoActive = false;
+        writerBumps({ actsAsUserId: 'user-2' })(call);
+      };
+      const res = await patchCron();
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('REPO_INACTIVE');
+      expect(syncCalls.map((c) => [c.cronExpression, c.request.launchedById])).toEqual([
+        ['0 4 * * 1', 'user-1'],
+        ['0 3 * * 1', 'user-2'],
+      ]);
+    });
+
+    it('still answers 409 when the overlapping change was a pause', async () => {
+      scheduleRow = activeRow();
+      concurrentWriter = writerBumps({ isActive: false });
+      const res = await patchCron();
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('SCHEDULE_CONFLICT');
+      expect(updateManyWheres).toHaveLength(1);
+      // Temporal follows the row as it now stands: paused.
+      expect(syncCalls.at(-1)).toMatchObject({ paused: true });
+    });
+
+    it('gives up after a bounded number of retries', async () => {
+      scheduleRow = activeRow();
+      concurrentWriter = () => {
+        scheduleRow = { ...scheduleRow, version: Number(scheduleRow?.version ?? 0) + 1 };
+      };
+      expect((await patchCron()).statusCode).toBe(409);
+      expect(updateManyWheres).toHaveLength(3);
     });
 
     it('answers 409 and re-syncs Temporal from the row when it moved under a PATCH', async () => {
@@ -906,7 +989,7 @@ describe('/api/v1/scheduled-work-requests', () => {
       expect(syncCalls[0].request.launchedById).toBe('user-1');
       expect(syncCalls[0].templateId).toBe('tpl-1');
       expect(triggeredIds).toEqual([SCHEDULE_ID]);
-      expect(scheduleUpdates[0]).toEqual({ actsAsUserId: 'user-1' });
+      expect(scheduleUpdates[0]).toEqual({ actsAsUserId: 'user-1', version: { increment: 1 } });
       expect(auditRows.at(-1)).toMatchObject({
         afterJson: { actsAsUserId: 'user-1', event: 'acts-as-changed' },
         beforeJson: { actsAsUserId: 'author-1' },
@@ -1012,7 +1095,7 @@ describe('/api/v1/scheduled-work-requests', () => {
     });
 
     it('reverts the row only while it is as the takeover left it', async () => {
-      scheduleRow = owned({ updatedAt: new Date(5) });
+      scheduleRow = owned();
       triggerShouldFail = true;
       await fire();
       expect(updateManyWheres.at(-1)).toEqual({
@@ -1020,7 +1103,8 @@ describe('/api/v1/scheduled-work-requests', () => {
         id: SCHEDULE_ID,
         isActive: true,
         teamId: undefined,
-        updatedAt: { gte: new Date(5), lt: new Date(6) },
+        // The version the takeover left.
+        version: 1,
       });
     });
 

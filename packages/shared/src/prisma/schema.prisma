@@ -484,6 +484,47 @@ model GitHubHostWebhookSecret {
   @@map("github_host_webhook_secrets")
 }
 
+/// Platform GitHub credentials for one approved host that is NOT the instance's.
+///
+/// The `GitHubConfig` singleton holds the instance's PAT and App, valid on the
+/// instance's own host family and nowhere else (`githubHostScope.ts`). A
+/// repository on another approved host (`github.repositoryHosts`) is reached
+/// with that host's own platform credential, recorded here, exactly as an
+/// instance repository is reached with the instance's. The rule is the same:
+/// a credential is only ever sent to the host family it belongs to.
+///
+/// `host` is the lowercase `host[:port]` of the host *family* — `github.com` for
+/// both github.com and api.github.com, `<tenant>.ghe.com` for both of a data
+/// residency tenant's names. A GitHub Enterprise Server's web and API share a
+/// hostname. Credentials for the instance's own family are refused at the API.
+///
+/// Every column but the key is optional: a host may have a PAT, an App, or
+/// both. An App needs `appId` and the private key together; which installation
+/// it mints for comes from the repository's `GitHubInstallation` on this host.
+/// Webhook secrets stay on `GitHubHostWebhookSecret`: that table's rows mean "this
+/// host signs with its own secret", which a credentials-only row must not imply.
+///
+/// Not tenant-scoped: platform infrastructure, like `GitHubInstallation`.
+model GitHubHostCredential {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  host                    String   @unique
+  tokenCiphertext         Bytes?   @map("token_ciphertext")
+  tokenNonce              Bytes?   @map("token_nonce")
+  tokenAuthTag            Bytes?   @map("token_auth_tag")
+  tokenKeyVersion         Int?     @map("token_key_version")
+  tokenLastFour           String?  @map("token_last_four")
+  appId                   String?  @map("app_id")
+  appPrivateKeyCiphertext Bytes?   @map("app_private_key_ciphertext")
+  appPrivateKeyNonce      Bytes?   @map("app_private_key_nonce")
+  appPrivateKeyAuthTag    Bytes?   @map("app_private_key_auth_tag")
+  appPrivateKeyKeyVersion Int?     @map("app_private_key_key_version")
+  appPrivateKeyLastFour   String?  @map("app_private_key_last_four")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("github_host_credentials")
+}
+
 /// A GitHub App installation on one GitHub account (organization or user).
 ///
 /// The singleton `GitHubConfig` carries the App's own credentials, which are
@@ -497,16 +538,16 @@ model GitHubHostWebhookSecret {
 /// at it, not by owning the installation.
 model GitHubInstallation {
   id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The GitHub host family the installation lives on: empty for the
+  /// instance's own, otherwise the host key of a `GitHubHostCredential` (see
+  /// there). A numeric installation id is only unique per GitHub host, so the
+  /// pair is the identity. Empty rather than null so the composite unique below
+  /// is an ordinary index — a nullable column would make it a partial one
+  /// (NULLs compare distinct), DDL Prisma cannot express.
+  host           String @default("")
   /// GitHub's numeric installation id, as a string (it is an opaque identifier
-  /// and every use of it is URL interpolation).
-  ///
-  /// Unique, and deliberately not scoped by host: a deployment points at one
-  /// GitHub host, whose URLs live on the `GitHubConfig` singleton with per-repo
-  /// overrides on `Connection`. A third place to override the host would be
-  /// speculative, and making uniqueness conditional on it would need a partial
-  /// unique index — DDL Prisma cannot express, which every later `migrate diff`
-  /// would then propose dropping.
-  installationId String @unique @map("installation_id")
+  /// and every use of it is URL interpolation). Unique per `host`.
+  installationId String @map("installation_id")
   /// The organization or user login the App is installed on. Display only —
   /// GitHub is authoritative, and this is not used to route lookups.
   accountLogin   String @map("account_login")
@@ -517,6 +558,7 @@ model GitHubInstallation {
 
   connections Connection[]
 
+  @@unique([host, installationId])
   @@map("github_installations")
 }
 
@@ -1211,6 +1253,10 @@ model ScheduledWorkRequest {
   nextFireAt           DateTime?         @map("next_fire_at") @db.Timestamptz
   createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt            DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  /// Compare-and-set token for edits, fire-by-hand takeovers and deactivations:
+  /// each writes conditionally on the version it read and increments it. Not
+  /// bumped by `lastFiredAt` bookkeeping, which no decision depends on.
+  version              Int               @default(0)
 
   @@index([repoId])
   @@index([templateId])

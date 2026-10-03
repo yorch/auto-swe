@@ -1,6 +1,6 @@
 import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma, Role } from '@auto-swe/shared';
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
-import { sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
@@ -149,6 +149,43 @@ function rejectsInstallationChange(
   installationId: string | null | undefined
 ): boolean {
   return installationId !== undefined && user.role !== Role.ADMIN;
+}
+
+/**
+ * Why the installation `installationId` cannot serve a repository with these
+ * (normalised) URL overrides, or null when it can.
+ *
+ * An installation lives on one GitHub host, and its token is minted at that
+ * host's API with that host's App. A repository on another host would be sent
+ * that host's installation id — a different installation, or none — so the pair
+ * must agree: the instance's own host takes installations with an empty host,
+ * any other host takes the ones recorded for it.
+ */
+async function installationHostProblem(
+  fastify: FastifyInstance,
+  installationId: string | null | undefined,
+  urls: { githubUrl: string | null; githubApiUrl: string | null }
+): Promise<string | null> {
+  if (!installationId) {
+    return null;
+  }
+  const installation = await fastify.prisma.gitHubInstallation.findUnique({
+    select: { host: true, installationId: true },
+    where: { id: installationId },
+  });
+  if (!installation) {
+    // The foreign key reports an unknown installation.
+    return null;
+  }
+  const expected = installationHostFor(
+    { apiUrl: urls.githubApiUrl, baseUrl: urls.githubUrl },
+    await resolveGitHubConfig()
+  );
+  if (installation.host === expected) {
+    return null;
+  }
+  const where = (h: string) => (h ? h : "the instance's own host");
+  return `Installation ${installation.installationId} is on ${where(installation.host)}, but this repository is on ${where(expected)}. Choose an installation recorded for that host.`;
 }
 
 /**
@@ -446,6 +483,17 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: urls.code ?? 'REPO_HOST_NOT_ALLOWED', message: urls.message } });
       }
 
+      const installationProblem = await installationHostProblem(
+        fastify,
+        request.body.installationId,
+        { githubApiUrl: urls.githubApiUrl ?? null, githubUrl: urls.githubUrl ?? null }
+      );
+      if (installationProblem) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INSTALLATION_HOST_MISMATCH', message: installationProblem } });
+      }
+
       // Check for duplicate. Identity is (host, owner, name) — a partial,
       // expression-based unique index scoped to git_repo connections — so query
       // by fields rather than a compound unique. The host is the normalised web
@@ -529,6 +577,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           githubApiUrl: true,
           githubUrl: true,
           id: true,
+          installationId: true,
           organizationName: true,
           repoName: true,
           teamId: true,
@@ -588,12 +637,33 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         defaultBranch,
         description,
         executorImage,
+        installationId,
         isActive,
         language,
         name,
         teamId,
       } = request.body;
       const { githubApiUrl, githubUrl } = urls;
+
+      // The installation the row will hold must live on the host the row will
+      // be on. Judged when either side changes, so repointing a repository to
+      // another host cannot leave it minting tokens through the old host's
+      // installation.
+      if (installationId !== undefined || githubUrl !== undefined || githubApiUrl !== undefined) {
+        const installationProblem = await installationHostProblem(
+          fastify,
+          installationId === undefined ? repo.installationId : installationId,
+          {
+            githubApiUrl: githubApiUrl === undefined ? repo.githubApiUrl : githubApiUrl,
+            githubUrl: githubUrl === undefined ? repo.githubUrl : githubUrl,
+          }
+        );
+        if (installationProblem) {
+          return reply
+            .status(400)
+            .send({ error: { code: 'INSTALLATION_HOST_MISMATCH', message: installationProblem } });
+        }
+      }
 
       // Repointing the web base moves the repository onto another host, where
       // the same owner/name (compared case-insensitively) may already be
@@ -653,6 +723,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             executorImage,
             githubApiUrl,
             githubUrl,
+            installationId,
             isActive,
             language,
             name,

@@ -18,7 +18,13 @@
  * working. Only re-registration by someone else produces a mismatch.
  */
 import type { PrismaClient } from '../index.js';
-import { instanceIsGithubDotCom } from './githubHostScope.js';
+import {
+  type HostCredential,
+  hostCredentialConfig,
+  hostKeyOf,
+  resolveHostCredential,
+} from './githubHostCredential.js';
+import { defaultApiUrlForHost, hostFamily } from './githubHostScope.js';
 import { resolveGitHubToken } from './githubInstallation.js';
 import type { ResolvedGitHubConfig } from './systemConfig.js';
 
@@ -26,44 +32,137 @@ import type { ResolvedGitHubConfig } from './systemConfig.js';
 const LOOKUP_TIMEOUT_MS = 8_000;
 
 /**
- * The host that answers about a GitHub *account*, as opposed to a repository.
- *
- * Fixed, not taken from configuration. `accounts.account_id` is written by
- * better-auth's built-in `github` social provider, which takes only a client id
- * and secret and always talks to github.com. The instance-wide `apiUrl` is
- * admin-settable to a GitHub Enterprise `/api/v3` base, and asking that host
- * about a github.com account id compares two different id spaces — which reads
- * as a mismatch, and a mismatch clears a valid login.
- *
- * A consequence worth stating: on a GitHub Enterprise deployment no login is
- * ever stored (the OAuth token 401s against the Enterprise API), so this check
- * has nothing to verify there rather than verifying it wrongly.
+ * github.com's API, which answers about every account better-auth's built-in
+ * `github` provider stored: it takes only a client id and secret and always
+ * talks to github.com, so a bare numeric `accounts.account_id` is a github.com
+ * id whatever the instance's own `apiUrl` is. Asking the instance's API about
+ * one compares two different id spaces — which reads as a mismatch, and a
+ * mismatch clears a valid login.
  */
 export const GITHUB_ACCOUNT_API_URL = 'https://api.github.com';
 
-let warnedAccountHost = false;
+/** Where, and with what credential, to ask about one stored GitHub account. */
+export interface AccountTarget {
+  apiUrl: string;
+  /** Null: ask unauthenticated (rate-limited, so it usually reads as `unverifiable`). */
+  token: string | null;
+}
+
+/** The ids behind a stored `accounts.account_id`. */
+export function parseAccountId(accountId: string): { host: string; id: string } {
+  const at = accountId.lastIndexOf(':');
+  // A bare id comes from the built-in provider, which is github.com's.
+  return at === -1
+    ? { host: 'github.com', id: accountId }
+    : { host: accountId.slice(0, at), id: accountId.slice(at + 1) };
+}
 
 /**
- * The credential to ask github.com about an account with, or null.
+ * Resolves, per account, the host that owns its id space and the platform
+ * credential that applies there.
  *
- * The platform's credential belongs to the instance's host, and
- * `GITHUB_ACCOUNT_API_URL` is github.com: on a GitHub Enterprise instance the
- * two differ, and sending it would hand an Enterprise PAT or installation token
- * to github.com. Only when the instance's API host IS github.com's is the
- * credential attached; otherwise the lookup is unauthenticated (rate-limited,
- * so it reads as `unverifiable`), and that is logged once per process.
+ * The id space is the account's own: a bare id is github.com's, and a GitHub
+ * Enterprise sign-in stores `{host}:{id}`. The credential is the platform's for
+ * THAT host (the instance's when the host is the instance's, else the one
+ * configured for it under `GitHubHostCredential`) and never any other — sending
+ * the instance's credential to github.com, or a host's to the instance, would
+ * hand one host a credential that belongs to another. Where no credential
+ * applies, a github.com account is asked unauthenticated and any other host is
+ * not asked at all.
  */
-export async function accountApiToken(config: ResolvedGitHubConfig): Promise<string | null> {
-  if (!instanceIsGithubDotCom(config)) {
-    if (!warnedAccountHost) {
-      warnedAccountHost = true;
-      console.warn(
-        `[repoAccess] the instance's GitHub API host (${config.apiUrl}) is not github.com, so its credential is not sent there; GitHub login-ownership checks run unauthenticated and will rate-limit.`
-      );
+export interface AccountTargets {
+  /** Null: nothing may be asked about this account. */
+  forAccount(accountId: string): Promise<AccountTarget | null>;
+  /** Hosts asked without a credential so far, for the caller to report. */
+  unauthenticatedHosts(): string[];
+}
+
+export function accountTargets(
+  prisma: PrismaClient,
+  config: ResolvedGitHubConfig,
+  lookupHost: (host: string) => Promise<HostCredential | null> = resolveHostCredential
+): AccountTargets {
+  const cache = new Map<string, AccountTarget | null>();
+  const unauthenticated = new Set<string>();
+  const instanceHost = hostFamily(config.baseUrl);
+
+  /** Any active installation on `host`, for an App-only host with no PAT. */
+  const anyInstallation = async (installHost: string): Promise<string | null> =>
+    (
+      await prisma.gitHubInstallation.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: { installationId: true },
+        where: { host: installHost, isActive: true },
+      })
+    )?.installationId ?? null;
+
+  const resolve = async (
+    host: string
+  ): Promise<{ target: AccountTarget | null; final: boolean }> => {
+    let credentialConfig: ResolvedGitHubConfig | null = null;
+    let lookupFailed = false;
+    let installHost = '';
+    let apiUrl: string;
+    if (host === instanceHost) {
+      credentialConfig = config;
+      apiUrl = host === 'github.com' ? GITHUB_ACCOUNT_API_URL : config.apiUrl;
+    } else {
+      installHost = host;
+      apiUrl = host === 'github.com' ? GITHUB_ACCOUNT_API_URL : defaultApiUrlForHost(host);
+      // A row that cannot be read (undecryptable, a database error) must not
+      // abort the sweep or a launch: this host is simply not askable now.
+      try {
+        const credential = await lookupHost(host);
+        if (credential) {
+          credentialConfig = hostCredentialConfig(credential, {
+            apiUrl,
+            baseUrl: `https://${host}`,
+          });
+        }
+      } catch (err) {
+        console.warn(
+          `[repoAccess] could not load the platform credentials for ${host}; its logins are left unverified:`,
+          err instanceof Error ? err.message : err
+        );
+        lookupFailed = true;
+      }
     }
-    return null;
-  }
-  return resolveGitHubToken(config).catch(() => null);
+    let token: string | null = null;
+    if (credentialConfig) {
+      token = await resolveGitHubToken(credentialConfig).catch(() => null);
+      if (!token && credentialConfig.appId && credentialConfig.appPrivateKey) {
+        const installationId = await anyInstallation(installHost).catch(() => null);
+        if (installationId) {
+          token = await resolveGitHubToken(credentialConfig, { installationId }).catch(() => null);
+        }
+      }
+    }
+    // A failed lookup is not cached: the next account on this host retries it.
+    const final = !lookupFailed;
+    if (!token) {
+      unauthenticated.add(host);
+      // Only github.com has accounts anyone can look up without credentials,
+      // and only its ids are ever asked about unauthenticated.
+      return { final, target: host === 'github.com' ? { apiUrl, token: null } : null };
+    }
+    return { final, target: { apiUrl, token } };
+  };
+
+  return {
+    async forAccount(accountId) {
+      const host = hostKeyOf(parseAccountId(accountId).host);
+      const hit = cache.get(host);
+      if (hit) {
+        return hit;
+      }
+      const { final, target } = await resolve(host);
+      if (final) {
+        cache.set(host, target);
+      }
+      return target;
+    },
+    unauthenticatedHosts: () => [...unauthenticated],
+  };
 }
 
 export type LoginOwnershipResult =
@@ -143,12 +242,13 @@ export async function clearGithubLogin(prisma: PrismaClient, userId: string): Pr
  */
 export async function verifyGithubLoginOwnership(
   prisma: PrismaClient,
-  args: { userId: string; login: string; apiUrl: string; token: string | null }
+  args: { userId: string; login: string; targets: AccountTargets }
 ): Promise<LoginOwnershipResult> {
-  const account = await prisma.account.findFirst({
+  const accounts = await prisma.account.findMany({
     select: { accountId: true },
     where: { providerId: 'github', userId: args.userId },
   });
+  const account = accounts[0];
   if (!account?.accountId) {
     // No linked GitHub account, yet a login is recorded. The account-delete
     // hook handles the unlink and swallows its own failures, so this is the
@@ -158,21 +258,35 @@ export async function verifyGithubLoginOwnership(
     await clearGithubLogin(prisma, args.userId);
     return { clearedLogin: args.login, status: 'unlinked' };
   }
-
-  // A GitHub Enterprise account id is `{host}:{id}`: that host's id space, not github.com's.
-  // Asking github.com would read as a mismatch and clear a valid login, with a false takeover audit.
-  if (account.accountId.includes(':')) {
+  // `users.github_login` does not record which of several linked GitHub
+  // accounts it came from, and a login is only comparable with the id space of
+  // the host that issued it. Comparing against the wrong one would clear a
+  // valid login and write a false takeover, so it is left unverified.
+  if (accounts.length > 1) {
     return {
-      reason: 'GitHub Enterprise account; ownership is not verified against github.com',
+      reason: 'several GitHub accounts are linked, so the login cannot be tied to one host',
       status: 'unverifiable',
     };
   }
 
-  const currentOwner = await fetchGithubUserId(args.login, args.apiUrl, args.token);
+  // Ask the host the account's id belongs to, with that host's own credential.
+  // A GitHub Enterprise id is `{host}:{id}` — that host's id space — so asking
+  // any other host would read as a mismatch and clear a valid login, with a
+  // false takeover audit. A host with no credential to ask with is
+  // `unverifiable`, never a mismatch.
+  const target = await args.targets.forAccount(account.accountId);
+  if (!target) {
+    return {
+      reason: `no platform credential applies to ${parseAccountId(account.accountId).host}, so ownership is not verified`,
+      status: 'unverifiable',
+    };
+  }
+  const expectedId = parseAccountId(account.accountId).id;
+  const currentOwner = await fetchGithubUserId(args.login, target.apiUrl, target.token);
   if (currentOwner === null) {
     return { reason: 'GitHub did not answer for this login', status: 'unverifiable' };
   }
-  if (currentOwner === account.accountId) {
+  if (currentOwner === expectedId) {
     return { status: 'ok' };
   }
 

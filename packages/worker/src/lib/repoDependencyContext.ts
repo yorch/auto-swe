@@ -198,7 +198,7 @@ export async function checkoutUpstreamRepos(
         githubApiUrl: true,
         githubUrl: true,
         id: true,
-        installation: { select: { installationId: true } },
+        installation: { select: { host: true, installationId: true } },
         organizationName: true,
         repoName: true,
       },

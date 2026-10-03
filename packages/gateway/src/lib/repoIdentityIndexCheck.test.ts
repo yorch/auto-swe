@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
@@ -10,6 +10,19 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     baseUrl: 'https://github.com',
   }),
 }));
+
+// The real rule, with the per-host credential lookup (a database read) stubbed.
+const { hostCredential } = vi.hoisted(() => ({
+  hostCredential: vi.fn(async (_host: string): Promise<unknown> => null),
+}));
+vi.mock('@auto-swe/shared/lib/githubHostCredential', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@auto-swe/shared/lib/githubHostCredential')>();
+  return {
+    ...actual,
+    resolvePlatformCredential: (repo: never, config: never) =>
+      actual.platformCredentialFor(repo, config, (h) => hostCredential(h) as never),
+  };
+});
 
 vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
   runUnscoped: (_reason: string, _models: string[], fn: () => unknown) => fn(),
@@ -54,6 +67,10 @@ describe('warnIfGitHubDotComWebhookSecret', () => {
 });
 
 describe('warnIfReposOnUnusableHosts', () => {
+  beforeEach(() => {
+    hostCredential.mockReset().mockResolvedValue(null);
+  });
+
   const run = async (repos: object[]) => {
     const findMany = vi.fn(async () => repos);
     const warn = vi.fn();
@@ -97,7 +114,20 @@ describe('warnIfReposOnUnusableHosts', () => {
       expect.objectContaining({ repository: 'acme/c' }),
     ]);
     expect(message).toContain("set the GitHub integration's web and API URLs");
+    expect(message).toContain('Host credentials');
     expect(message).toContain('user must save their own token');
+  });
+
+  it('does not list repositories on a host that has a platform credential of its own', async () => {
+    hostCredential.mockImplementation(async (host: string) =>
+      host === 'ghe.corp' ? { appId: null, appPrivateKey: null, host, token: 'pat' } : null
+    );
+    const { warn } = await run([repo('a', 'https://ghe.corp'), repo('b', 'https://other.corp')]);
+    expect(warn.mock.calls[0][0].total).toBe(1);
+    expect(warn.mock.calls[0][0].repositories[0]).toMatchObject({
+      host: 'other.corp',
+      repository: 'acme/b',
+    });
   });
 
   it('flags a half override as misconfigured', async () => {

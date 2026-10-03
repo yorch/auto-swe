@@ -246,3 +246,78 @@ describe('the platform credential and a foreign API host', () => {
     ).resolves.toBe('pat');
   });
 });
+
+describe("a host's own credential set", () => {
+  // The set's config carries the host's API; the guard checks against it.
+  const HOST_API = 'https://ghe.corp/api/v3';
+  const hostSet = (over: Partial<ResolvedGitHubConfig> = {}) =>
+    config({
+      apiUrl: HOST_API,
+      appInstallationId: null,
+      baseUrl: 'https://ghe.corp',
+      ...over,
+    });
+
+  it("mints a host's installation at that host's API with that host's App", async () => {
+    const { calls, spy } = mintingFetch();
+    await expect(
+      resolveGitHubToken(hostSet(), { apiUrl: HOST_API, installationId: '7' })
+    ).resolves.toBe('tok-7');
+    expect(calls[0]).toBe('https://ghe.corp/api/v3/app/installations/7/access_tokens');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the host set's credential on the instance's host, and on any third host", async () => {
+    const { spy } = mintingFetch();
+    const set = hostSet({ authMode: 'pat', token: 'host-pat' });
+    for (const apiUrl of ['https://api.github.com', 'https://other.corp/api/v3']) {
+      await expect(resolveGitHubToken(set, { apiUrl })).rejects.toBeInstanceOf(
+        PlatformCredentialHostError
+      );
+      await expect(resolveGitHubToken(set, { apiUrl, installationId: '7' })).rejects.toBeInstanceOf(
+        PlatformCredentialHostError
+      );
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the same numeric installation id on two hosts apart in the token cache', async () => {
+    const { calls } = mintingFetch();
+    await resolveGitHubToken(config(), { apiUrl: 'https://api.github.com', installationId: '7' });
+    await resolveGitHubToken(hostSet(), { apiUrl: HOST_API, installationId: '7' });
+    expect(calls).toEqual([
+      'https://api.github.com/app/installations/7/access_tokens',
+      'https://ghe.corp/api/v3/app/installations/7/access_tokens',
+    ]);
+  });
+
+  it('has no singleton installation: an App-only host without an installation id is missing a token', async () => {
+    mintingFetch();
+    await expect(resolveGitHubToken(hostSet(), { apiUrl: HOST_API })).rejects.toBeInstanceOf(
+      GitHubTokenMissingError
+    );
+  });
+});
+
+describe('the credential set carries its own host', () => {
+  it('refuses a target on a different host than the set was minted for, whatever apiUrl it holds', async () => {
+    const { spy } = mintingFetch();
+    // A set for ghe.corp whose own apiUrl was (wrongly) left at the instance's.
+    const set = config({ credentialHost: 'ghe.corp' });
+    await expect(
+      resolveGitHubToken(set, { apiUrl: 'https://api.github.com', installationId: '7' })
+    ).rejects.toBeInstanceOf(PlatformCredentialHostError);
+    await expect(resolveGitHubToken(set, { installationId: '7' })).rejects.toBeInstanceOf(
+      PlatformCredentialHostError
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("allows a target on the set's own host", async () => {
+    mintingFetch();
+    const set = config({ apiUrl: 'https://ghe.corp/api/v3', credentialHost: 'ghe.corp' });
+    await expect(
+      resolveGitHubToken(set, { apiUrl: 'https://ghe.corp/api/v3', installationId: '7' })
+    ).resolves.toBe('tok-7');
+  });
+});

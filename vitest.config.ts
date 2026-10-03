@@ -48,6 +48,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubHostScope.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/githubHostCredential',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubHostCredential.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/githubInstallation',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubInstallation.ts'),
       },

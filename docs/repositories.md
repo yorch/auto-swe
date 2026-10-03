@@ -25,7 +25,7 @@ Everything that names a repository by owner and name takes the host into account
 | Onboarding (`POST /repositories`) | the duplicate check and the unique index include the host and compare owner and name case-insensitively |
 | Import from GitHub | the list comes from the instance host, so only repositories with no override count as already imported |
 | PR and CI webhooks, the access webhook | the delivery is first bound to the host its secret proved (see [Webhook secrets per host](#webhook-secrets-per-host)). Within that, when the owner/name is onboarded on more than one distinct host, the payload's `repository.html_url` picks which; otherwise the match is by name, as before. Owner and name match case-insensitively and literally (`_` and `%` in a name are not wildcards), whatever casing the payload uses |
-| Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. A run still in flight under the id without a host blocks a new one, as one under the new id does |
+| Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. Owner and name are lowercased in the id; the ticket id keeps its casing. A run still in flight under an earlier form of the id (stored casing, or without the host) blocks a new one, as one under the current id does |
 | Dependency detection | a dependency URL that names a host matches only a repository on that host |
 | Dependency checkouts | two neighbours with the same owner/name get distinct directories |
 
@@ -37,20 +37,25 @@ Everything that names a repository by owner and name takes the host into account
 the API is `<githubApiUrl>/repos/<owner>/<name>`. They exist for a repository on a different GitHub
 host than the instance's.
 
-A user's own token is bound to the origins it was verified on. A **platform credential** — the
-instance PAT, any App installation token, or an App JWT (which can mint a token for every
-installation of the App) — belongs to the instance's own GitHub host and goes nowhere else. That
-holds whatever installation the repository records: the App and all its installations live on the
-instance's host, so an installation cannot exist on another one, and an App JWT posted to a foreign
-host would be replayable against the real one. One rule (`@auto-swe/shared/lib/githubHostScope`)
-decides this for the worker, the gateway's check-run lookup and the shared permission lookup, and
-`resolveGitHubToken` enforces its API-host half as a last line, so even a caller that forgot to ask
-cannot send a platform credential, or post an App JWT, to a foreign host. A repository on another
-host is reachable only with a user's own saved token; without one it is refused with a
-non-retryable `REPO_CREDENTIAL_HOST_MISMATCH` (if the platform's own credential belongs to that
-host, set the GitHub integration's web and API URLs to it). A permission lookup reports
-`host-mismatch` rather than a transient failure, and a launch under the access gate is refused with
-the `host-mismatch` reason, which names the same remedy instead of suggesting a retry.
+A user's own token is bound to the origins it was verified on. A **platform credential** — a PAT,
+any App installation token, or an App JWT (which can mint a token for every installation of the
+App) — belongs to one GitHub host family and goes nowhere else. There are two credential sets: the
+instance's (the GitHub integration, valid on the instance's own host) and, for any other approved
+host, the credentials an admin recorded for that host (see
+[Per-host credentials](#per-host-credentials)). A repository is reached with the set of the host it
+lives on, whatever installation it records: an App and all its installations live on one host, so an
+installation cannot exist on another, and an App JWT posted to a foreign host would be replayable
+against the real one. One rule (`@auto-swe/shared/lib/githubHostScope`, resolved to a credential set
+by `@auto-swe/shared/lib/githubHostCredential`) decides this for the worker, the gateway's check-run
+lookup and the shared permission lookup, and `resolveGitHubToken` enforces its API-host half as a
+last line against the host family the set carries (`credentialHost`), so even a caller that forgot to ask cannot send
+a platform credential, or post an App JWT, to a host it does not belong to. A repository on another
+host with no credentials recorded for it is reachable only with a user's own saved token; without one
+it is refused with a non-retryable `REPO_CREDENTIAL_HOST_MISMATCH` (add credentials for the host, or,
+if the instance's own credential belongs to that host, set the GitHub integration's web and API URLs
+to it). A permission lookup reports `host-mismatch` rather than a transient failure, and a launch
+under the access gate is refused with the `host-mismatch` reason, which names the same remedies
+instead of suggesting a retry.
 
 **The web base and the API base must be on the same host.** github.com with api.github.com, and
 `<tenant>.ghe.com` with `api.<tenant>.ghe.com`, are each one host; a GitHub Enterprise Server keeps
@@ -82,10 +87,30 @@ in two places:
 A repository with no overrides is never checked, so the common case costs nothing.
 
 At startup the gateway warns, listing them (the first 20 and the total), when active repositories sit
-on a host the platform credential is not valid on: another host than the instance's, or a half
-override. Each entry names the error its runs will hit. When many repositories share one foreign
-host, the instance's own GitHub host (Studio → Integrations → GitHub web and API URLs) is usually
-what is wrong, because the platform credential is sent only to the instance's own host.
+on a host with no platform credential: another host than the instance's that has none recorded, or a
+half override. Each entry names the error its runs will hit. When many repositories share one foreign
+host, either add credentials for it (Studio → Integrations → GitHub → Per-host credentials) or, if the
+instance's credential belongs to that host, correct the instance's own web and API URLs.
+
+### Per-host credentials
+
+An admin records the platform credentials of a host other than the instance's at
+`/studio/integrations → GitHub → Per-host credentials`, or under
+`/api/v1/platform/github-host-credentials` (ADMIN-only): a PAT, a GitHub App (id and private key), or
+both. The host is the lowercase `host[:port]` of its family (`github.com`, `ghe.corp`,
+`<tenant>.ghe.com`); it must be approved (the GitHub integration's own hosts or
+`github.repositoryHosts`) and not the instance's own. A repository on that host then resolves its
+platform credential as an instance repository does: an installation token for its own installation
+where it has one and the App is configured, otherwise the PAT — minted at that host's API with that
+host's App. A saved user token still wins for runs its owner launched. A host's set carries nothing of
+the instance's. Secrets are encrypted, write-only (last four characters returned), re-encrypted by key
+rotation, and every change is audited as `GitHubHostCredential`. Credentials stay in effect only while
+the host is approved. See [user-github-credentials.md](./user-github-credentials.md) §6.
+
+An App installation belongs to one host (`GitHubInstallation.host`: empty for the instance's own). The
+same numeric id on two hosts is two installations, the pair being unique. Choosing an installation for
+a repository (an admin action) is refused unless it is recorded for the repository's host, and
+repointing a repository to another host is refused while it points at an installation of the old one.
 
 ### Webhook secrets per host
 
@@ -133,15 +158,14 @@ characters), and are re-encrypted by key rotation.
 ### CI status lookups
 
 When a check run succeeds, the gateway asks GitHub for the other check runs on the commit before
-signalling the workflow. That request goes to the instance's API base, with a token for the
-repository's own installation where it has one, else the singleton's; a repository on another host
-gets no aggregation and falls back to signalling per check run. The instance's
-credentials stay on the instance's own API host: an installation lives on the instance's host, so a
-repository on another host is sent no token whatever installation it records, and the instance PAT
-is likewise never sent to another host. A user's token is never used, since no user launched a webhook. A
-repository whose overrides fail the approved-host check, that has no credential valid on its host,
-or whose web and API bases are on different hosts, is sent none, and its run is signalled per check
-run instead.
+signalling the workflow. That request goes to the repository's own API base, with a token from the
+platform credential set of its host: for the repository's own installation where it has one, else
+the singleton's (the instance's set only; a host's set has no singleton installation, so it uses its
+PAT). A platform credential stays on its own host's API: the instance's is never sent to another
+host, and a host's is sent to no other. A user's token is never used, since no user launched a
+webhook. A repository whose overrides fail the approved-host check, whose host has no platform
+credential, or whose web and API bases are on different hosts, is sent none and gets no aggregation,
+and its run is signalled per check run instead.
 
 The same commit can be tracked on more than one repository (a mirror, or the same name on two
 hosts). Matched pull requests are grouped by repository and each group is aggregated on its own
@@ -201,10 +225,13 @@ re-activate them, which makes the re-activating person the author and moves the 
 repository's owning team (recorded in the audit log), so the next share change does not pause it
 again. A paused schedule cannot be fired by hand (`409 SCHEDULE_INACTIVE`); resume it first.
 
-Writes to a schedule row are conditional on the state the request read. An edit, a fire by hand
-and a deactivation that overlap are not merged: the loser answers `409 SCHEDULE_CONFLICT` and the
-Temporal schedule is re-synced from the row as it then stands. A fire records when it ran on
-the row, so an edit that overlaps a fire can answer `409 SCHEDULE_CONFLICT` too; retry it.
+Writes to a schedule row are compare-and-set on its `version`, which every edit, fire-by-hand
+takeover and deactivation increments. Fire bookkeeping (when it last ran) does not, so a fire never
+makes an edit lose. An edit that loses to a fire-by-hand takeover is retried (up to three attempts)
+on the re-read row, with the launch decision taken again; an edit that loses to anything else (a
+pause, another edit, a deactivation) answers `409 SCHEDULE_CONFLICT`, as does a fire-by-hand
+takeover or deactivation that loses. The Temporal schedule is then re-synced from the row as it
+stands.
 
 A team never asks to receive a share, so a shared repository never changes what that team's own
 repositories resolve to: a code task names it to reach it, and a name the team also owns resolves to
@@ -242,10 +269,25 @@ longer fit.
   github.com deliveries always use the instance secret. Outside the binding a per-host secret
   provides, a payload is matched to a repository by host only when it carries
   `repository.html_url` and the owner/name is onboarded on more than one host.
-- **App installations are not host-scoped.** A GitHub App installation id is unique across the
-  deployment, so two hosts cannot use the same numeric installation id.
-- **Workflow ids keep the stored casing.** The id embeds owner and name as stored, so the same
-  repository onboarded under two casings (possible only through the case above) gets different ids.
+- **A host has one credential set.** One PAT and one App per host; installations are per host and
+  chosen per repository. A repository's installation host is checked when an admin chooses it or
+  repoints the repository, and again whenever a token is minted: a repository whose installation is
+  recorded for another host gets no token (`REPO_INSTALLATION_HOST_MISMATCH` for runs, `host-mismatch`
+  for lookups) until it is pointed at an installation of its own host. Callers that load a repository
+  without its installation's host skip the mint-time check and rely on the write-time one.
+- **No installation webhook events are handled.** Installations are registered by an admin; the
+  platform does not create, rename or retire them from GitHub's `installation` events.
+- **Rolling upgrades can start one ticket twice.** A gateway or worker still running the code that
+  built workflow ids from the stored casing starts `eng-Acme-Api-T-1` while an upgraded one starts
+  `eng-acme-api-T-1`, and neither sees the other's run as a duplicate. Drain the old gateways and
+  workers before upgrading, so no process is allocating ids under the old form.
+- **A run's earlier id form is derived from the casing stored now.** The legacy ids that block a
+  duplicate are rebuilt from the repository's current owner and name, which no API route edits, so
+  they match the id a run was started under; a database edit that changes only the casing while a
+  run is in flight would leave that run's id unmatched.
+- **Case-only duplicate rows do not block each other's runs.** Legacy rows for the same repository
+  under two casings now share one workflow id, but they are still two repositories to the allocator,
+  so the second ticket start gets a disambiguated id instead of a conflict.
 - **An override spelling out the instance host is only cleared when the GitHub integration stores
   that host.** On a deployment configuring its host through the environment such an override is
   kept; it works, and onboarding treats it as the same repository as one with no override, but the

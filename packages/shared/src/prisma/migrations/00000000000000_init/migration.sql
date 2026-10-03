@@ -228,8 +228,30 @@ CREATE TABLE "github_host_webhook_secrets" (
 );
 
 -- CreateTable
+CREATE TABLE "github_host_credentials" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "host" TEXT NOT NULL,
+    "token_ciphertext" BYTEA,
+    "token_nonce" BYTEA,
+    "token_auth_tag" BYTEA,
+    "token_key_version" INTEGER,
+    "token_last_four" TEXT,
+    "app_id" TEXT,
+    "app_private_key_ciphertext" BYTEA,
+    "app_private_key_nonce" BYTEA,
+    "app_private_key_auth_tag" BYTEA,
+    "app_private_key_key_version" INTEGER,
+    "app_private_key_last_four" TEXT,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "github_host_credentials_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "github_installations" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "host" TEXT NOT NULL DEFAULT '',
     "installation_id" TEXT NOT NULL,
     "account_login" TEXT NOT NULL,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
@@ -560,6 +582,7 @@ CREATE TABLE "scheduled_work_requests" (
     "next_fire_at" TIMESTAMPTZ,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "version" INTEGER NOT NULL DEFAULT 0,
 
     CONSTRAINT "scheduled_work_requests_pkey" PRIMARY KEY ("id")
 );
@@ -1497,7 +1520,10 @@ CREATE UNIQUE INDEX "connection_credentials_connection_id_user_id_key" ON "conne
 CREATE UNIQUE INDEX "github_host_webhook_secrets_host_key" ON "github_host_webhook_secrets"("host");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "github_installations_installation_id_key" ON "github_installations"("installation_id");
+CREATE UNIQUE INDEX "github_host_credentials_host_key" ON "github_host_credentials"("host");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "github_installations_host_installation_id_key" ON "github_installations"("host", "installation_id");
 
 -- CreateIndex
 CREATE INDEX "repo_dependencies_from_repo_id_idx" ON "repo_dependencies"("from_repo_id");

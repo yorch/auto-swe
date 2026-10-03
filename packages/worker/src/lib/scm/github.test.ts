@@ -15,6 +15,19 @@ vi.mock('../githubAuth.js', () => ({
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
+// The real rule, with the per-host credential lookup (a database read) stubbed.
+const { hostCredential } = vi.hoisted(() => ({
+  hostCredential: vi.fn(async (_host: string): Promise<unknown> => null),
+}));
+vi.mock('@auto-swe/shared/lib/githubHostCredential', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@auto-swe/shared/lib/githubHostCredential')>();
+  return {
+    ...actual,
+    resolvePlatformCredential: (repo: never, config: never) =>
+      actual.platformCredentialFor(repo, config, (h) => hostCredential(h) as never),
+  };
+});
+
 vi.mock('@auto-swe/shared/lib/connectionCredential', () => ({
   CredentialUnreadableError: class CredentialUnreadableError extends Error {},
   repositoryHostsAllowed: vi.fn(async () => ({ ok: true })),
@@ -310,6 +323,7 @@ describe('the platform credential and the repository host', () => {
   });
 
   beforeEach(() => {
+    hostCredential.mockReset().mockResolvedValue(null);
     vi.mocked(requireGitHubToken).mockClear();
     vi.mocked(resolveUserCredential).mockReset().mockResolvedValue(null);
     vi.mocked(currentRunLauncherId).mockReset().mockResolvedValue(null);
@@ -323,7 +337,9 @@ describe('the platform credential and the repository host', () => {
     ['API', (r: object) => provider.fetchFileContent(r as never, 'package.json')],
   ])('refuses the %s credential for a non-instance host', async (_n, call) => {
     await expect(call(GHE)).rejects.toMatchObject({
-      message: expect.stringContaining("ghe.corp, which needs a user's own saved token"),
+      message: expect.stringContaining(
+        'ghe.corp, for which no platform GitHub credential is configured'
+      ),
       nonRetryable: true,
       type: 'REPO_CREDENTIAL_HOST_MISMATCH',
     });
@@ -516,6 +532,126 @@ describe('the platform credential and the repository host', () => {
           repoName: 'api',
         })
       ).rejects.toMatchObject({ type: 'REPO_CREDENTIAL_HOST_MISMATCH' });
+      expect(requireGitHubToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a repository on a host with its own platform credential', () => {
+    const HOST_PAT = {
+      appId: null,
+      appPrivateKey: null,
+      host: 'ghe.corp',
+      token: 'host-pat',
+    };
+
+    beforeEach(() => {
+      hostCredential.mockResolvedValue(HOST_PAT);
+    });
+
+    it.each([
+      ['clone', (r: object) => provider.cloneCredentials(r as never)],
+      ['API', (r: object) => provider.fetchFileContent(r as never, 'package.json')],
+    ])(
+      "resolves the %s token from the host's credential set, not the instance's",
+      async (_n, call) => {
+        vi.mocked(resolveGitHubConfig).mockResolvedValueOnce(
+          instance({ ...APP, token: 'instance-pat' }) as never
+        );
+        await call({ ...GHE, installationId: '777' }).catch(() => undefined);
+        expect(hostCredential).toHaveBeenCalledWith('ghe.corp');
+        const [config, target] = vi.mocked(requireGitHubToken).mock.calls[0] as unknown as [
+          Record<string, unknown>,
+          Record<string, unknown>,
+        ];
+        // The set carries the host's token and API, and nothing of the instance's.
+        expect(config).toMatchObject({
+          apiUrl: GHE.apiUrl,
+          appId: null,
+          appInstallationId: null,
+          appPrivateKey: null,
+          token: 'host-pat',
+        });
+        expect(JSON.stringify(config)).not.toContain('instance-pat');
+        expect(target).toEqual({ apiUrl: GHE.apiUrl, installationId: '777' });
+      }
+    );
+
+    it("still prefers the launcher's own token", async () => {
+      vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
+      vi.mocked(resolveUserCredential).mockResolvedValueOnce({
+        apiUrl: GHE.apiUrl,
+        baseUrl: GHE.baseUrl,
+        token: 'ghp_user',
+      });
+      const creds = await provider.cloneCredentials({ ...GHE, connectionId: 'conn-1' } as never);
+      expect(creds.token).toBe('ghp_user');
+      expect(requireGitHubToken).not.toHaveBeenCalled();
+    });
+
+    it("asks the host's API with the host's token for a permission lookup", async () => {
+      vi.mocked(resolveGitHubToken).mockResolvedValueOnce('host-minted');
+      const fetchSpy = vi.fn(
+        async (_url: string) =>
+          new Response(JSON.stringify({ permission: 'write' }), { status: 200 })
+      );
+      vi.stubGlobal('fetch', fetchSpy);
+      await provider.repoPermission(GHE as never, 'octocat');
+      const [config, target] = vi.mocked(resolveGitHubToken).mock.calls[0] as unknown as [
+        Record<string, unknown>,
+        Record<string, unknown>,
+      ];
+      expect(config).toMatchObject({ apiUrl: GHE.apiUrl, token: 'host-pat' });
+      expect(target).toMatchObject({ apiUrl: GHE.apiUrl });
+      expect(fetchSpy.mock.calls[0]?.[0]).toContain('https://ghe.corp/api/v3/');
+    });
+
+    it("attaches the host's token to CI logs on the host's origins only", async () => {
+      vi.mocked(resolveGitHubToken).mockResolvedValue('host-minted');
+      await provider.fetchCiLogs('https://ghe.corp/acme/api/runs/7', GHE as never);
+      expect(lastFetch().init.headers).toMatchObject({ Authorization: 'Bearer host-minted' });
+      // The instance's own origin is not the host's: no platform token goes there.
+      fetchMock.mockClear();
+      await provider.fetchCiLogs('https://github.com/acme/api/runs/7', GHE as never);
+      expect(lastFetch().init.headers).not.toHaveProperty('Authorization');
+      vi.mocked(resolveGitHubToken).mockResolvedValue('ghp_tok');
+    });
+
+    it('refuses an installation recorded for another host with a clear non-retryable error, minting nothing', async () => {
+      await expect(
+        provider.cloneCredentials({
+          ...GHE,
+          installationHost: '',
+          installationId: '777',
+        } as never)
+      ).rejects.toMatchObject({ nonRetryable: true, type: 'REPO_INSTALLATION_HOST_MISMATCH' });
+      expect(requireGitHubToken).not.toHaveBeenCalled();
+      await expect(
+        provider.repoPermission(
+          { ...GHE, installationHost: '', installationId: '777' } as never,
+          'octocat'
+        )
+      ).resolves.toEqual({ failure: 'host-mismatch', ok: false });
+    });
+
+    it('names the host when its credentials cannot be loaded, and answers a lookup as unavailable', async () => {
+      hostCredential.mockRejectedValue(new Error('cannot decrypt'));
+      await expect(provider.cloneCredentials(GHE as never)).rejects.toThrow(
+        /credentials for ghe\.corp: cannot decrypt/
+      );
+      await expect(provider.repoPermission(GHE as never, 'octocat')).resolves.toEqual({
+        failure: 'unavailable',
+        ok: false,
+      });
+    });
+
+    it('a half override stays refused whatever the host has configured', async () => {
+      await expect(
+        provider.cloneCredentials({
+          baseUrl: 'https://ghe.corp',
+          organizationName: 'acme',
+          repoName: 'api',
+        })
+      ).rejects.toMatchObject({ type: 'REPO_HOST_MISCONFIGURED' });
       expect(requireGitHubToken).not.toHaveBeenCalled();
     });
   });

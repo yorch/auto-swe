@@ -109,7 +109,7 @@ export async function executeImplementation(
   await assertRolePricedForUsdCap('implementer');
 
   const repo = await prisma.connection.findUniqueOrThrow({
-    include: { installation: { select: { installationId: true } } },
+    include: { installation: { select: { host: true, installationId: true } } },
     where: { id: requireRepoId(request, 'executeImplementation') },
   });
 

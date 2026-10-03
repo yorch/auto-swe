@@ -31,9 +31,10 @@ vi.mock('../lib/githubAuth.js', () => ({
 }));
 
 const verifyGithubLoginOwnership = vi.fn();
+const targetsStub = { forAccount: vi.fn(), unauthenticatedHosts: vi.fn(() => [] as string[]) };
+const accountTargets = vi.fn((..._a: unknown[]) => targetsStub);
 vi.mock('@auto-swe/shared/lib/githubIdentityCheck', () => ({
-  accountApiToken: async () => 'platform-token',
-  GITHUB_ACCOUNT_API_URL: 'https://api.github.com',
+  accountTargets: (...a: unknown[]) => accountTargets(...a),
   verifyGithubLoginOwnership: (...a: unknown[]) => verifyGithubLoginOwnership(...a),
 }));
 
@@ -59,6 +60,7 @@ vi.mock('@auto-swe/shared/lib/repoPermission', () => ({
   lookupPermissionViaUserCredential: (...a: unknown[]) => lookupPermissionViaUserCredential(...a),
 }));
 
+const { log } = await import('@temporalio/activity');
 const { syncRepoAccess } = await import('./syncRepoAccess.js');
 
 function repo(members: { id: string; githubLogin: string | null }[], over = {}) {
@@ -291,12 +293,12 @@ describe('syncRepoAccess', () => {
     });
   });
 
-  it('asks github.com about a user, never a repository’s or the instance’s host', async () => {
-    // The stored account id comes from better-auth's built-in `github`
-    // provider, which always talks to github.com, while both the repository's
-    // and the instance's hosts are admin-settable to GitHub Enterprise. Asking
-    // Enterprise about a github.com account id compares different id spaces,
-    // which reads as a mismatch and clears a valid login.
+  it('verifies a user against the account’s own host, never a repository’s host', async () => {
+    // The stored account id names the host whose id space it belongs to (a
+    // bare id is github.com's, a GitHub Enterprise sign-in stores `{host}:{id}`).
+    // Asking another host compares different id spaces, which reads as a
+    // mismatch and clears a valid login — so the repository's host, which is
+    // admin-settable, is never the one asked.
     findMany.mockResolvedValue([
       repo([{ githubLogin: 'octocat', id: 'user-1' }], {
         githubApiUrl: 'https://ghe.example.com/api/v3',
@@ -305,9 +307,19 @@ describe('syncRepoAccess', () => {
     repoPermission.mockResolvedValue({ ok: true, permission: 'write' });
 
     await syncRepoAccess({});
+    // The account's own host is resolved inside the check, from the stored id.
     expect(verifyGithubLoginOwnership.mock.calls[0][1]).toMatchObject({
-      apiUrl: 'https://api.github.com',
+      login: 'octocat',
+      targets: targetsStub,
     });
+  });
+
+  it('warns once, naming the hosts, when a login was checked with no platform credential', async () => {
+    findMany.mockResolvedValue([repo([{ githubLogin: 'octocat', id: 'user-1' }])]);
+    repoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+    targetsStub.unauthenticatedHosts.mockReturnValueOnce(['github.com']);
+    await syncRepoAccess({});
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('github.com'));
   });
 
   it('verifies each login once, not once per repository', async () => {

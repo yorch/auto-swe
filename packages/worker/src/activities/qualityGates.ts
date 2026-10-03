@@ -155,7 +155,7 @@ async function provisionGateWorkspace(
 }> {
   const [repo, workflowDefaults] = await Promise.all([
     prisma.connection.findUniqueOrThrow({
-      include: { installation: { select: { installationId: true } } },
+      include: { installation: { select: { host: true, installationId: true } } },
       where: { id: requireRepoId(request, 'qualityGate') },
     }),
     resolveWorkflowDefaults(),

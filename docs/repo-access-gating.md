@@ -72,11 +72,13 @@ and fall back to the login-based lookup where it is not. A
 token GitHub rejects, or that cannot see the repository, refuses a launch as
 `user-credential-rejected` rather than falling back — the run would use that token and fail.
 
-A repository on a host the platform's credential is not valid on (another host than the instance's,
-or web and API bases on different hosts) cannot be asked about with it. That lookup fails as
-`host-mismatch`, and a launch is refused with the `host-mismatch` reason, whose message names the
-remedy (set the GitHub integration's web and API URLs to that host, or save your own token) rather
-than suggesting a retry, which could never succeed. Advisory mode logs it and allows, as for every
+A repository is asked about with the platform credential of its own host: the instance's, or the
+credentials an admin recorded for another approved host (see
+[repositories.md](./repositories.md#per-host-credentials)). A repository on another host with none
+recorded, or with web and API bases on different hosts, cannot be asked about at all. That lookup
+fails as `host-mismatch`, and a launch is refused with the `host-mismatch` reason, whose message
+names the remedies (add credentials for that host, set the GitHub integration's web and API URLs to
+it, or save your own token) rather than suggesting a retry, which could never succeed. Advisory mode logs it and allows, as for every
 other refusal; the projection writes nothing on any lookup failure.
 
 The endpoint answers with a level, not a boolean, so one lookup serves two different questions:
@@ -131,9 +133,16 @@ projection would then record that person's access as this user's. The numeric ac
 change, which is what makes the check possible; a plain rename still resolves to the same id and is
 left alone.
 
-The ownership lookup always asks github.com, so the platform's credential is attached only when the
-instance's own API host is github.com. On a GitHub Enterprise instance the call is unauthenticated
-(rate-limited, so answers read as unverifiable and nothing is cleared) and is logged once.
+The ownership lookup asks the host the account's id belongs to. An id from the built-in `github`
+sign-in provider is bare and github.com's; a GitHub Enterprise sign-in stores `{host}:{id}`, that
+host's id space. Each is compared against the id that same host reports, with that host's own
+platform credential: the instance's when the host is the instance's, otherwise the credentials
+recorded for it. The instance's credential is never sent to another host, nor a host's to the
+instance. Where no credential applies, a github.com account is asked unauthenticated
+(rate-limited, so answers read as unverifiable and nothing is cleared) and any other host is not
+asked: the login is reported as unverifiable and kept. The sweep logs the hosts that had no
+credential. An App-only host or instance, with no PAT and no singleton installation, uses the first
+active installation recorded for it to mint the lookup token.
 
 The sweep's candidate set is each repository's owning-team and shared-team members, each once, not
 every user times every repository, so its cost tracks real reachability rather than deployment size.
@@ -167,8 +176,11 @@ warning reads the same variable wherever the gate is evaluated, so a deployment 
 `.env` between the gateway and the worker.
 
 Multiple GitHub organizations are reached through multiple App installations. `GitHubInstallation`
-rows name them and `connections.installation_id` points a repository at one; null means the
-singleton `GitHubConfig.appInstallationId`, so an existing single-org deployment needs no change.
+rows name them, each recorded for the GitHub host it lives on, and `connections.installation_id`
+points a repository at one on the repository's own host. On the instance's host, null means the
+singleton `GitHubConfig.appInstallationId`, so an existing single-org deployment needs no change;
+another host's credential set has no singleton, so a null there uses that host's PAT (see
+[repositories.md](./repositories.md)).
 
 An installation can be marked **retired**, which refuses new launches against the repositories
 pointing at it — with a distinct `INSTALLATION_RETIRED` code, because it is an operator-
@@ -187,7 +199,8 @@ Installations are managed at `/studio/github-installations` in the dashboard, or
 `/api/v1/platform/github-installations` — which the dashboard itself calls, and which is also
 registered under `/api/v1/admin` like the other admin routes (list, create, update, delete),
 and a repository is pointed at one through `installationId` on the repository create and update
-routes. Both are ADMIN-only: the installation decides which GitHub account answers permission
+routes. An installation's host is chosen when it is created and cannot be changed, and a repository
+can only point at an installation on its own host. Both are ADMIN-only: the installation decides which GitHub account answers permission
 questions about a repository, and every other credential-shaped knob in this codebase is
 ADMIN-scoped. Deleting an installation still in use is refused with the repositories that hold it,
 rather than surfacing a foreign-key error.
@@ -356,10 +369,13 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   clears it when it does not. A plain rename is harmless and is deliberately left alone, because
   GitHub redirects the old name to the same account id. The exposure window is one sweep interval,
   and a deployment with the sweep disabled has no detection at all.
-- **A re-registered username on a GitHub Enterprise instance is not detected.** An account created by
-  GHE sign-in has an id of the form `{host}:{id}`, which belongs to that host's id space rather than
-  github.com's, so the sweep cannot compare it and reports the login as unverifiable. Nothing is
-  cleared and no takeover is recorded for it.
+- **A re-registered username is detected only where a credential can ask.** The check is made against
+  the account's own host with that host's platform credential. An account on a host with none — a
+  GitHub Enterprise sign-in account whose host has no credentials, which is the instance's own host
+  unless the instance URL changed later — is reported as unverifiable. Nothing is cleared and no
+  takeover is recorded for it. A github.com account is still asked without a credential then, which
+  rate-limits. The lookup uses a host's standard API base (`/api/v3` on a GitHub Enterprise Server),
+  not a per-repository override.
 - **Revocation is not instant.** Webhooks make it seconds, but a missed or undelivered webhook
   leaves the previous answer in place until the next sweep, and a paused sweep extends that to
   `repoAccess.viewStaleAfterHours`. The launch path is unaffected, because it asks live.

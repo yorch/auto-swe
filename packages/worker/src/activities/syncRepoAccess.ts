@@ -14,10 +14,8 @@
  */
 import { prisma } from '@auto-swe/shared/db';
 import { resolveUserCredentialPolicy } from '@auto-swe/shared/lib/connectionCredential';
-import { instanceIsGithubDotCom } from '@auto-swe/shared/lib/githubHostScope';
 import {
-  accountApiToken,
-  GITHUB_ACCOUNT_API_URL,
+  accountTargets,
   verifyGithubLoginOwnership,
 } from '@auto-swe/shared/lib/githubIdentityCheck';
 import type { PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
@@ -122,7 +120,7 @@ export async function syncRepoAccess(
             githubApiUrl: true,
             githubUrl: true,
             id: true,
-            installation: { select: { installationId: true } },
+            installation: { select: { host: true, installationId: true } },
             organizationName: true,
             repoName: true,
             // The owning team's members and those of every team the repository
@@ -155,19 +153,7 @@ export async function syncRepoAccess(
     // A plain rename is harmless, because GitHub redirects the old name to the
     // same account id.
     const ghConfig = await resolveGitHubConfig();
-    const platformToken = await accountApiToken(ghConfig);
-    if (!platformToken && instanceIsGithubDotCom(ghConfig)) {
-      // Without a credential the ownership check degrades to an unauthenticated
-      // `GET /users/…`, capped at 60 requests an hour — so on any real
-      // deployment it rate-limits, every answer reads as `unverifiable`, and
-      // nothing is ever cleared. That is a silent no-op of a security control,
-      // which is worth a loud line: the two configurations that reach it are an
-      // App with an empty singleton installation id, and an App-only deployment
-      // with per-repository installations and no PAT.
-      log.warn(
-        'repo access sync: no usable GitHub credential; login-ownership verification will rate-limit and detect nothing. Configure a PAT or a singleton installation id.'
-      );
-    }
+    const targets = accountTargets(prisma, ghConfig);
     const verified = new Map<string, boolean>();
     for (const repo of repos) {
       for (const { user } of repoMembers(repo)) {
@@ -181,18 +167,15 @@ export async function syncRepoAccess(
         if (input.userId && user.id !== input.userId) {
           continue;
         }
+        // Asked of the host the account's id belongs to, with that host's own
+        // platform credential: a stored github.com account id comes from
+        // better-auth's built-in `github` provider, and a GitHub Enterprise
+        // sign-in stores `{host}:{id}`. Asking the wrong host compares two
+        // different id spaces, which reads as a mismatch and CLEARS a valid
+        // login. A host with no credential to ask with is `unverifiable`.
         const ownership = await verifyGithubLoginOwnership(prisma, {
-          // A fixed github.com base, not the repository's host and not the
-          // instance's. A stored github.com account id comes from better-auth's
-          // built-in `github` provider, while both of the other two are
-          // admin-settable to a GitHub Enterprise base — and asking Enterprise
-          // about a github.com account id compares different id spaces, which
-          // reads as a mismatch and CLEARS a valid login. Accounts created by
-          // GHE sign-in carry a `{host}:{id}` id and are skipped inside
-          // `verifyGithubLoginOwnership` for the same reason.
-          apiUrl: GITHUB_ACCOUNT_API_URL,
           login: user.githubLogin,
-          token: platformToken,
+          targets,
           userId: user.id,
         });
         verified.set(user.id, ownership.status === 'ok' || ownership.status === 'unverifiable');
@@ -218,6 +201,19 @@ export async function syncRepoAccess(
           });
         }
       }
+    }
+
+    const unauthenticated = targets.unauthenticatedHosts();
+    if (unauthenticated.length > 0) {
+      // Without a credential the ownership check degrades to an unauthenticated
+      // `GET /users/…`, capped at 60 requests an hour — so on any real
+      // deployment it rate-limits, every answer reads as `unverifiable`, and
+      // nothing is ever cleared. That is a silent no-op of a security control,
+      // which is worth a loud line. Configure a PAT, or an App with an
+      // installation, for the host (the instance's, or under Host credentials).
+      log.warn(
+        `repo access sync: no usable platform GitHub credential for ${unauthenticated.join(', ')}; login-ownership verification there will rate-limit or be skipped and detect nothing.`
+      );
     }
 
     // Read once for the sweep. Off, saved credentials are inert, and nobody is

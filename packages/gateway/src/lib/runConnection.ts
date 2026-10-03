@@ -62,7 +62,7 @@ export async function validateRunConnection(
   if (connectionId) {
     const connection = await prisma.connection.findUnique({
       include: {
-        installation: { select: { installationId: true, isActive: true } },
+        installation: { select: { host: true, installationId: true, isActive: true } },
         // A member of a team the repository is shared with may run against it
         // too. Filtered to the acting user; with no user (a public or webhook
         // caller) the decision never runs, so match nobody rather than load

@@ -74,14 +74,35 @@ for repositories on a host that has a secret of its own. See [repositories.md](.
 A repository's own GitHub URL and API URL are **host overrides**. They accept only a bare host (with
 `/api/v3` allowed on the API URL), never a repository URL, and the host must be the configured
 instance's or one an ADMIN listed under the `github.repositoryHosts` setting; any team lead may set
-an approved host. The platform's credentials — the PAT, the App JWT, every installation token — are
-valid on the instance's own GitHub host only and are **never** sent anywhere else: the App's id,
-private key and installations all belong to that host, so an installation cannot exist on another
-one. A repository on a different approved host is reachable only with a user's own saved token
-(bound to the origins it was verified on); if the platform's credential belongs to that host, set
-the GitHub integration's web and API URLs to it instead. The worker and the permission lookups
-re-check the host before sending any credential, so a row that fails the check cannot receive one
-however it was written.
+an approved host. A platform credential — a PAT, an App JWT, an installation token — is valid on one
+GitHub host only and is **never** sent anywhere else: an App's id, private key and installations all
+belong to the host it is registered on, so an installation cannot exist on another one. The
+credentials in the GitHub integration belong to the instance's own host. A repository on a different
+approved host is reached with credentials recorded for that host (below), or otherwise only with a
+user's own saved token (bound to the origins it was verified on). The worker and the permission
+lookups re-check the host before sending any credential, so a row that fails the check cannot receive
+one however it was written.
+
+### An App on another host
+
+Each GitHub host has its own App registrations, so a host other than the instance's has its own App
+(or PAT), recorded at `/studio/integrations → GitHub → Per-host credentials`:
+
+1. List the host in `github.repositoryHosts`.
+2. Register and install the App on that host, following the steps above on that host's settings.
+3. Add **Per-host credentials** for the host: the App ID and the private key (and/or a PAT). Use the
+   host as a family key — `ghe.corp`, `ghe.corp:8443`, `acme.ghe.com`, or `github.com` when the
+   instance is not on github.com.
+4. Record each installation at `/studio/github-installations` with the **Host** field set to that
+   host. The same numeric installation id may exist on two hosts; the pair is the identity.
+5. Point each repository on that host at its installation (an admin action). A repository cannot
+   be pointed at an installation recorded for another host.
+
+Tokens for that host are minted at that host's API with that host's App. There is no singleton
+installation id for a host, so a repository with no installation of its own uses the host's PAT, and
+a host with only an App needs an installation recorded for every repository on it. A data-residency
+tenant (`<tenant>.ghe.com`) that is not the instance can have credentials too, though not a
+per-host webhook secret.
 
 ---
 
@@ -129,7 +150,7 @@ Click **Save**. The gateway encrypts and stores all fields using AES-256-GCM (sa
 
 When the worker needs a GitHub token (for git clone or Octokit calls), it calls `requireGitHubToken()` in `packages/worker/src/lib/githubAuth.ts`, which delegates to `resolveGitHubToken()` and converts a missing-config error into a Temporal `ApplicationFailure.nonRetryable` so the workflow fails fast instead of retrying indefinitely:
 
-1. Checks a module-level in-memory cache keyed by `appId | installationId | last-20-chars-of-privateKey`. If a valid cached token exists, returns it immediately.
+1. Checks a module-level in-memory cache keyed by installation id and API host, and validated against a digest of the App id and private key. If a valid cached token exists, returns it immediately.
 2. Otherwise, builds a GitHub App JWT (RS256 via `node:crypto`, 10-minute expiry) and calls `POST /app/installations/:id/access_tokens` on the GitHub API.
 3. GitHub returns a token and its `expires_at` timestamp. The worker caches the token until 60 seconds before that expiry — so the effective TTL tracks GitHub's actual token lifetime (typically ~1 hour), not a hardcoded window.
 4. On worker restart the cache is empty and a new token is fetched on the first activity call.

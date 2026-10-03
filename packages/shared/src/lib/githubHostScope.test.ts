@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  defaultApiUrlForHost,
   hostFamily,
+  installationHostFor,
   installationTargetFor,
-  instanceIsGithubDotCom,
   isDotcomStyleHost,
   platformCredentialScope,
+  repoHostFamily,
   sameHostFamily,
 } from './githubHostScope.js';
 
@@ -38,9 +40,11 @@ describe('host families', () => {
     }
   });
 
-  it('knows whether the instance is on github.com', () => {
-    expect(instanceIsGithubDotCom(DOTCOM)).toBe(true);
-    expect(instanceIsGithubDotCom(GHE)).toBe(false);
+  it('derives the standard API base of a host family', () => {
+    expect(defaultApiUrlForHost('github.com')).toBe('https://api.github.com');
+    expect(defaultApiUrlForHost('acme.ghe.com')).toBe('https://api.acme.ghe.com');
+    expect(defaultApiUrlForHost('ghe.corp')).toBe('https://ghe.corp/api/v3');
+    expect(defaultApiUrlForHost('ghe.corp:8443')).toBe('https://ghe.corp:8443/api/v3');
   });
 });
 
@@ -106,6 +110,68 @@ describe('platformCredentialScope', () => {
   it('is "instance" on a GHE instance for a repository using no overrides', () => {
     expect(platformCredentialScope({}, GHE)).toBe('instance');
   });
+
+  describe('with credentials configured for other hosts', () => {
+    const pair = { apiUrl: GHE.apiUrl, baseUrl: GHE.baseUrl };
+
+    it('is "host" for a matching foreign pair whose host family has a credential set', () => {
+      expect(platformCredentialScope(pair, DOTCOM, ['ghe.corp'])).toBe('host');
+      expect(
+        platformCredentialScope(
+          { apiUrl: 'https://api.acme.ghe.com', baseUrl: 'https://acme.ghe.com' },
+          GHE,
+          ['acme.ghe.com']
+        )
+      ).toBe('host');
+    });
+
+    it('stays "mismatch" for a host that has none, and is never confused by another host\'s set', () => {
+      expect(platformCredentialScope(pair, DOTCOM, ['ghe.other'])).toBe('mismatch');
+      expect(platformCredentialScope(pair, DOTCOM, [])).toBe('mismatch');
+    });
+
+    it('never lets a configured host turn a half override into a usable one', () => {
+      expect(platformCredentialScope({ baseUrl: 'https://ghe.corp' }, DOTCOM, ['ghe.corp'])).toBe(
+        'misconfigured'
+      );
+      expect(
+        platformCredentialScope(
+          { apiUrl: 'https://a.corp/api/v3', baseUrl: 'https://b.corp' },
+          DOTCOM,
+          ['a.corp', 'b.corp']
+        )
+      ).toBe('misconfigured');
+    });
+
+    it('is still "instance" on the instance host, whatever else is configured', () => {
+      expect(platformCredentialScope({}, DOTCOM, ['github.com', 'ghe.corp'])).toBe('instance');
+    });
+
+    it('treats a data-residency tenant that is not the instance as a host of its own', () => {
+      // The instance is github.com; acme.ghe.com is another host with its own credentials.
+      const tenant = { apiUrl: 'https://api.acme.ghe.com', baseUrl: 'https://acme.ghe.com' };
+      expect(platformCredentialScope(tenant, DOTCOM)).toBe('mismatch');
+      expect(platformCredentialScope(tenant, DOTCOM, ['acme.ghe.com'])).toBe('host');
+    });
+  });
+});
+
+describe('repoHostFamily and installationHostFor', () => {
+  it("name the repository's host family, and the installation host it takes", () => {
+    expect(repoHostFamily({}, DOTCOM)).toBe('github.com');
+    expect(repoHostFamily({ baseUrl: 'https://ghe.corp' }, DOTCOM)).toBe('ghe.corp');
+    // The instance's host is the empty installation host, however it is spelled.
+    expect(installationHostFor({}, DOTCOM)).toBe('');
+    expect(
+      installationHostFor(
+        { apiUrl: 'https://API.github.com', baseUrl: 'https://github.com' },
+        DOTCOM
+      )
+    ).toBe('');
+    expect(installationHostFor({ apiUrl: GHE.apiUrl, baseUrl: GHE.baseUrl }, DOTCOM)).toBe(
+      'ghe.corp'
+    );
+  });
 });
 
 describe('installationTargetFor', () => {
@@ -116,9 +182,13 @@ describe('installationTargetFor', () => {
     });
   });
 
-  it("asks only the instance API, even for a repository's own installation on a foreign host", () => {
+  it('asks only the API of the credential set it is given, even for a repository on another host', () => {
     expect(installationTargetFor({ apiUrl: GHE.apiUrl, installationId: '7' }, DOTCOM)).toEqual({
       apiUrl: DOTCOM.apiUrl,
+      installationId: '7',
+    });
+    expect(installationTargetFor({ apiUrl: GHE.apiUrl, installationId: '7' }, GHE)).toEqual({
+      apiUrl: GHE.apiUrl,
       installationId: '7',
     });
   });

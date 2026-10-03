@@ -111,7 +111,7 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
   // fields on `RepoAccessSubject` mean anything at this call site.
   return prisma.connection.findFirst({
     include: {
-      installation: { select: { installationId: true, isActive: true } },
+      installation: { select: { host: true, installationId: true, isActive: true } },
       // Shared-team membership satisfies the launch decision, and a LEAD of a
       // shared team may schedule on the repository (see `canCreate`). The share's
       // `teamId` is what a schedule's own `teamId` is matched against.
@@ -331,20 +331,6 @@ interface ScheduleRowForSync {
 }
 
 /** Synthetic ticket ID for a schedule (static — schedule args can't vary per fire). */
-/**
- * A `updatedAt` predicate matching the instant a row was read at.
- *
- * Postgres stores microseconds; a JS `Date` holds milliseconds. A row whose
- * timestamp carries sub-millisecond digits (one written by SQL rather than by
- * Prisma) would never equal the value read back, and an exact-equality guard
- * would refuse every edit to it forever. Matching the read millisecond keeps
- * the guard's meaning — "nobody has written this row since I read it" — for
- * every row.
- */
-function sameMillisecond(at: Date): { gte: Date; lt: Date } {
-  return { gte: at, lt: new Date(at.getTime() + 1) };
-}
-
 function scheduleTicketId(prefix: string, scheduleRowId: string): string {
   return `${prefix}-SCHED-${scheduleRowId.slice(0, 8)}`;
 }
@@ -426,6 +412,46 @@ const CONFLICT_BODY = {
     message: 'The schedule was changed by someone else while this request ran; reload and retry',
   },
 } as const;
+
+/** How many times a PATCH re-takes its decision on a re-read row before giving up. */
+const MAX_PATCH_ATTEMPTS = 3;
+
+/** Returned by one PATCH attempt whose conditional write lost to another writer. */
+const PATCH_LOST_RACE = Symbol('patch-lost-race');
+
+/** A PATCH attempt that wrote the row. */
+class PatchSaved {
+  constructor(readonly row: { id: string; isActive: boolean }) {}
+}
+
+/**
+ * Columns a concurrent write may change without invalidating a decision taken
+ * on the row as read: who the schedule acts as (the retried decision re-derives
+ * it and re-runs the launch gate against the re-read row), its
+ * optimistic-concurrency token and timestamps, and fire bookkeeping.
+ */
+const ORTHOGONAL_COLUMNS = new Set([
+  'actsAsUserId',
+  'lastFiredAt',
+  'nextFireAt',
+  'updatedAt',
+  'version',
+]);
+
+/**
+ * Whether `after` differs from `before` only in columns that do not feed a
+ * PATCH's decision. Anything else (a pause, a rename, a new template or cron,
+ * a team move, an unshare-deactivation) was a deliberate change the caller never
+ * saw, so the caller gets a conflict instead of silently overwriting it.
+ */
+function changedOnlyOrthogonally(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): boolean {
+  const same = (x: unknown, y: unknown) =>
+    x instanceof Date && y instanceof Date ? x.getTime() === y.getTime() : x === y;
+  return Object.keys(after).every((k) => ORTHOGONAL_COLUMNS.has(k) || same(before[k], after[k]));
+}
 
 /**
  * Put the Temporal schedule back in step with the row as it stands NOW. Used
@@ -514,7 +540,7 @@ export async function deactivateSchedulesOutsideTeams(
       // Conditional on the team it was read with: a row someone has since moved
       // to a team that does have a claim is left alone.
       await fastify.prisma.scheduledWorkRequest.updateMany({
-        data: { isActive: false },
+        data: { isActive: false, version: { increment: 1 } },
         where: { id: row.id, isActive: true, teamId: row.teamId },
       });
       // Sync from the row as it stands now, so a takeover that landed meanwhile
@@ -749,228 +775,285 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const existing = await fastify.prisma.scheduledWorkRequest.findUnique({
+      const initial = await fastify.prisma.scheduledWorkRequest.findUnique({
         where: { id: request.params.id },
       });
-      if (!existing) {
+      if (!initial) {
         return reply.status(404).send({
           error: { code: 'SCHEDULE_NOT_FOUND', message: 'Scheduled work request not found' },
         });
       }
-      const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
-      if (!repo) {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
-      }
-      if (!canManage(user, repo, existing)) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
-        });
-      }
+      // One attempt: decide on `existing`, sync Temporal, write conditionally.
+      const patchOnce = async (existing: NonNullable<typeof initial>) => {
+        const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
+        if (!repo) {
+          return reply.status(404).send({
+            error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
+          });
+        }
+        if (!canManage(user, repo, existing)) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
+          });
+        }
 
-      if (!existing.workRequestId) {
-        // Standing WorkRequest was deleted out-of-band — the schedule can no
-        // longer fire safely (RunnableWorkflow would FK-fail). Recreate it.
-        return reply.status(409).send({
-          error: {
-            code: 'SCHEDULE_ORPHANED',
-            message: 'Standing work request is missing; delete and recreate this schedule',
-          },
-        });
-      }
-
-      const body = request.body;
-      const workRequestId = existing.workRequestId;
-      const nextIsActive = body.isActive ?? existing.isActive;
-
-      // `templateId: null` clears the override (→ team default); omitted keeps it.
-      const nextTemplateId = body.templateId === undefined ? existing.templateId : body.templateId;
-      const nextTemplateVersion =
-        body.templateId === undefined && body.templateVersion === undefined
-          ? existing.templateVersion
-          : (body.templateVersion ?? null);
-
-      const ticketId = scheduleTicketId(existing.externalTicketPrefix, existing.id);
-      const template = await resolveScheduleTemplate(
-        fastify.prisma,
-        repo,
-        nextTemplateId,
-        nextTemplateVersion,
-        ticketId,
-        // Only a newly chosen override is checked against the caller; the stored
-        // one was checked by whoever set it.
-        nextTemplateId !== existing.templateId ? user : null
-      );
-      if ('error' in template) {
-        return reply
-          .status(422)
-          .send({ error: { code: 'TEMPLATE_NOT_RESOLVABLE', message: template.error } });
-      }
-
-      // Whoever changes what the schedule does, how often it does it, how much it
-      // may spend, or switches it back on, becomes who it runs as. Without this
-      // a lead could rewrite — or revive, or speed up — another person's
-      // schedule and have it run with that person's own GitHub token. Pausing
-      // and renaming do not rebind: they cannot cause anything to run.
-      // What actually ran last time is the template synced to Temporal, which
-      // the standing run input records. A schedule on the team default stores no
-      // template of its own, so comparing stored columns would miss a new team
-      // default — or a new active version of it — being picked up by this edit.
-      const lastSynced = await fastify.prisma.runInput.findUnique({
-        select: { templateId: true, templateVersion: true },
-        where: { id: workRequestId },
-      });
-      const rebinds =
-        (body.description !== undefined && body.description !== existing.description) ||
-        nextTemplateId !== existing.templateId ||
-        nextTemplateVersion !== existing.templateVersion ||
-        template.templateId !== lastSynced?.templateId ||
-        template.templateVersion !== lastSynced?.templateVersion ||
-        (body.cronExpression !== undefined && body.cronExpression !== existing.cronExpression) ||
-        (body.budgetTier !== undefined && body.budgetTier !== existing.budgetTier) ||
-        (body.isActive === true && !existing.isActive);
-      const takesOver = rebinds && user.sub !== existing.actsAsUserId;
-      // Reviving a schedule whose team has lost its claim on the repository (it
-      // was unshared, moved, or deleted) would leave it stranded: the next share
-      // change re-pauses it. Only the owning team's lead or an ADMIN can manage
-      // such a schedule at all, so the repository's owning team adopts it.
-      const revives = body.isActive === true && !existing.isActive;
-      const movesTeam =
-        revives &&
-        repo.teamId !== existing.teamId &&
-        !repo.shares.some((s) => s.teamId === existing.teamId);
-
-      // Becoming who it runs as is a launch decision about the editor, taken
-      // before anything is written — the same one creating a schedule takes. It
-      // is also taken by the CURRENT acting user when the result will run: an
-      // owner who has since lost access can pause their schedule but cannot
-      // revive or speed it up, which would let a standing instruction outlive
-      // the access that justified it. Re-timing an active schedule to every
-      // minute is a way to spend more, so it counts.
-      if (rebinds && (takesOver || nextIsActive)) {
-        if (nextIsActive && !repo.isActive) {
+        if (!existing.workRequestId) {
+          // Standing WorkRequest was deleted out-of-band — the schedule can no
+          // longer fire safely (RunnableWorkflow would FK-fail). Recreate it.
           return reply.status(409).send({
-            error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
+            error: {
+              code: 'SCHEDULE_ORPHANED',
+              message: 'Standing work request is missing; delete and recreate this schedule',
+            },
           });
         }
-        if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'caller'))) {
-          return;
-        }
-      }
 
-      const next: ScheduleRowForSync = {
-        actsAsUserId: rebinds ? user.sub : existing.actsAsUserId,
-        budgetTier: body.budgetTier ?? existing.budgetTier,
-        cronExpression: body.cronExpression ?? existing.cronExpression,
-        description: body.description ?? existing.description,
-        externalTicketPrefix: existing.externalTicketPrefix,
-        id: existing.id,
-        isActive: nextIsActive,
-        name: body.name ?? existing.name,
-        repoId: existing.repoId,
-        workRequestId,
-      };
+        const body = request.body;
+        const workRequestId = existing.workRequestId;
+        const nextIsActive = body.isActive ?? existing.isActive;
 
-      // Temporal first, then the rows. The schedule is what actually fires, so
-      // a failed sync must leave the stored row describing the schedule that is
-      // really there — updating the row first and then failing the sync left the
-      // dashboard showing a schedule Temporal never received.
-      try {
-        await fastify.temporal.syncWorkRequestSchedule(
-          buildScheduleInput(next, template, workRequestId)
+        // `templateId: null` clears the override (→ team default); omitted keeps it.
+        const nextTemplateId =
+          body.templateId === undefined ? existing.templateId : body.templateId;
+        const nextTemplateVersion =
+          body.templateId === undefined && body.templateVersion === undefined
+            ? existing.templateVersion
+            : (body.templateVersion ?? null);
+
+        const ticketId = scheduleTicketId(existing.externalTicketPrefix, existing.id);
+        const template = await resolveScheduleTemplate(
+          fastify.prisma,
+          repo,
+          nextTemplateId,
+          nextTemplateVersion,
+          ticketId,
+          // Only a newly chosen override is checked against the caller; the stored
+          // one was checked by whoever set it.
+          nextTemplateId !== existing.templateId ? user : null
         );
-      } catch (err) {
-        request.log.error({ err }, 'failed to sync Temporal schedule after update');
-        return reply.status(502).send({
-          error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
-        });
-      }
+        if ('error' in template) {
+          return reply
+            .status(422)
+            .send({ error: { code: 'TEMPLATE_NOT_RESOLVABLE', message: template.error } });
+        }
 
-      // The row writes are conditional on the state this request read, so an
-      // edit, a fire-by-hand takeover or an unshare-deactivation that landed
-      // meanwhile is a conflict, never silently overwritten. The transaction is
-      // interactive so the count can be checked before the standing request and
-      // the audit row are written.
-      let row: Awaited<ReturnType<typeof fastify.prisma.scheduledWorkRequest.findUniqueOrThrow>>;
-      try {
-        row = await fastify.prisma.$transaction(async (tx) => {
-          const claimed = await tx.scheduledWorkRequest.updateMany({
-            data: {
-              ...(body.budgetTier !== undefined ? { budgetTier: body.budgetTier } : {}),
-              ...(body.cronExpression !== undefined ? { cronExpression: body.cronExpression } : {}),
-              ...(body.description !== undefined ? { description: body.description } : {}),
-              ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
-              ...(body.name !== undefined ? { name: body.name } : {}),
-              ...(rebinds ? { actsAsUserId: user.sub } : {}),
-              ...(movesTeam ? { teamId: repo.teamId } : {}),
-              templateId: nextTemplateId,
-              templateVersion: nextTemplateId ? template.templateVersion : null,
-            },
-            where: {
-              actsAsUserId: existing.actsAsUserId,
-              id: existing.id,
-              isActive: existing.isActive,
-              teamId: existing.teamId,
-              updatedAt: sameMillisecond(existing.updatedAt),
-            },
-          });
-          if (claimed.count === 0) {
-            throw new ScheduleConflictError();
-          }
-          // Keep the standing WorkRequest's description/template snapshot in
-          // step so the /runs attribution stays truthful.
-          await tx.runInput.update({
-            data: {
-              description: next.description,
-              templateId: template.templateId,
-              templateVersion: template.templateVersion,
-            },
-            where: { id: workRequestId },
-          });
-          // Taking a schedule over changes whose identity every later fire runs
-          // as, and whose access it is checked against — so the transfer is
-          // recorded, never silent.
-          if ((rebinds && existing.actsAsUserId !== user.sub) || movesTeam) {
-            await tx.configAuditLog.create({
-              data: {
-                action: 'UPDATE',
-                actorId: user.sub,
-                afterJson: {
-                  actsAsUserId: user.sub,
-                  event: 'acts-as-changed',
-                  ...(movesTeam ? { teamId: repo.teamId } : {}),
-                },
-                beforeJson: {
-                  actsAsUserId: existing.actsAsUserId,
-                  ...(movesTeam ? { teamId: existing.teamId } : {}),
-                },
-                entityId: existing.id,
-                entityType: 'ScheduledWorkRequest',
-              },
+        // Whoever changes what the schedule does, how often it does it, how much it
+        // may spend, or switches it back on, becomes who it runs as. Without this
+        // a lead could rewrite — or revive, or speed up — another person's
+        // schedule and have it run with that person's own GitHub token. Pausing
+        // and renaming do not rebind: they cannot cause anything to run.
+        // What actually ran last time is the template synced to Temporal, which
+        // the standing run input records. A schedule on the team default stores no
+        // template of its own, so comparing stored columns would miss a new team
+        // default — or a new active version of it — being picked up by this edit.
+        const lastSynced = await fastify.prisma.runInput.findUnique({
+          select: { templateId: true, templateVersion: true },
+          where: { id: workRequestId },
+        });
+        const rebinds =
+          (body.description !== undefined && body.description !== existing.description) ||
+          nextTemplateId !== existing.templateId ||
+          nextTemplateVersion !== existing.templateVersion ||
+          template.templateId !== lastSynced?.templateId ||
+          template.templateVersion !== lastSynced?.templateVersion ||
+          (body.cronExpression !== undefined && body.cronExpression !== existing.cronExpression) ||
+          (body.budgetTier !== undefined && body.budgetTier !== existing.budgetTier) ||
+          (body.isActive === true && !existing.isActive);
+        const takesOver = rebinds && user.sub !== existing.actsAsUserId;
+        // Reviving a schedule whose team has lost its claim on the repository (it
+        // was unshared, moved, or deleted) would leave it stranded: the next share
+        // change re-pauses it. Only the owning team's lead or an ADMIN can manage
+        // such a schedule at all, so the repository's owning team adopts it.
+        const revives = body.isActive === true && !existing.isActive;
+        const movesTeam =
+          revives &&
+          repo.teamId !== existing.teamId &&
+          !repo.shares.some((s) => s.teamId === existing.teamId);
+
+        // Becoming who it runs as is a launch decision about the editor, taken
+        // before anything is written — the same one creating a schedule takes. It
+        // is also taken by the CURRENT acting user when the result will run: an
+        // owner who has since lost access can pause their schedule but cannot
+        // revive or speed it up, which would let a standing instruction outlive
+        // the access that justified it. Re-timing an active schedule to every
+        // minute is a way to spend more, so it counts.
+        if (rebinds && (takesOver || nextIsActive)) {
+          if (nextIsActive && !repo.isActive) {
+            return reply.status(409).send({
+              error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
             });
           }
-          return tx.scheduledWorkRequest.findUniqueOrThrow({
-            include: scheduleInclude,
-            where: { id: existing.id },
-          });
-        });
-      } catch (err) {
-        // The rows did not move (or moved to someone else's write), so put the
-        // Temporal schedule back to match the row as it is now. Best-effort: if
-        // this fails too, it is logged, and the worker refuses fires whose
-        // Temporal launcher no longer matches the row until it is re-saved.
-        await resyncTemporalFromRow(fastify, existing.id, request.log);
-        if (err instanceof ScheduleConflictError) {
-          return reply.status(409).send(CONFLICT_BODY);
+          if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'caller'))) {
+            return;
+          }
         }
-        throw err;
-      }
 
-      const status = await fastify.temporal
-        .getWorkRequestScheduleStatus(row.id)
-        .catch(() => ({ exists: true, lastRunAt: null, nextRunAt: null, paused: !row.isActive }));
-      return reply.send({ data: serializeSchedule(row, status) });
+        const next: ScheduleRowForSync = {
+          actsAsUserId: rebinds ? user.sub : existing.actsAsUserId,
+          budgetTier: body.budgetTier ?? existing.budgetTier,
+          cronExpression: body.cronExpression ?? existing.cronExpression,
+          description: body.description ?? existing.description,
+          externalTicketPrefix: existing.externalTicketPrefix,
+          id: existing.id,
+          isActive: nextIsActive,
+          name: body.name ?? existing.name,
+          repoId: existing.repoId,
+          workRequestId,
+        };
+
+        // Temporal first, then the rows. The schedule is what actually fires, so
+        // a failed sync must leave the stored row describing the schedule that is
+        // really there — updating the row first and then failing the sync left the
+        // dashboard showing a schedule Temporal never received.
+        try {
+          await fastify.temporal.syncWorkRequestSchedule(
+            buildScheduleInput(next, template, workRequestId)
+          );
+        } catch (err) {
+          request.log.error({ err }, 'failed to sync Temporal schedule after update');
+          return reply.status(502).send({
+            error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
+          });
+        }
+
+        // The row writes are conditional on the state this request read, so an
+        // edit, a fire-by-hand takeover or an unshare-deactivation that landed
+        // meanwhile is a conflict, never silently overwritten. The transaction is
+        // interactive so the count can be checked before the standing request and
+        // the audit row are written.
+        let row: Awaited<ReturnType<typeof fastify.prisma.scheduledWorkRequest.findUniqueOrThrow>>;
+        try {
+          row = await fastify.prisma.$transaction(async (tx) => {
+            const claimed = await tx.scheduledWorkRequest.updateMany({
+              data: {
+                ...(body.budgetTier !== undefined ? { budgetTier: body.budgetTier } : {}),
+                ...(body.cronExpression !== undefined
+                  ? { cronExpression: body.cronExpression }
+                  : {}),
+                ...(body.description !== undefined ? { description: body.description } : {}),
+                ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+                ...(body.name !== undefined ? { name: body.name } : {}),
+                ...(rebinds ? { actsAsUserId: user.sub } : {}),
+                ...(movesTeam ? { teamId: repo.teamId } : {}),
+                templateId: nextTemplateId,
+                templateVersion: nextTemplateId ? template.templateVersion : null,
+                version: { increment: 1 },
+              },
+              where: {
+                actsAsUserId: existing.actsAsUserId,
+                id: existing.id,
+                isActive: existing.isActive,
+                teamId: existing.teamId,
+                version: existing.version,
+              },
+            });
+            if (claimed.count === 0) {
+              throw new ScheduleConflictError();
+            }
+            // Keep the standing WorkRequest's description/template snapshot in
+            // step so the /runs attribution stays truthful.
+            await tx.runInput.update({
+              data: {
+                description: next.description,
+                templateId: template.templateId,
+                templateVersion: template.templateVersion,
+              },
+              where: { id: workRequestId },
+            });
+            // Taking a schedule over changes whose identity every later fire runs
+            // as, and whose access it is checked against — so the transfer is
+            // recorded, never silent.
+            if ((rebinds && existing.actsAsUserId !== user.sub) || movesTeam) {
+              await tx.configAuditLog.create({
+                data: {
+                  action: 'UPDATE',
+                  actorId: user.sub,
+                  afterJson: {
+                    actsAsUserId: user.sub,
+                    event: 'acts-as-changed',
+                    ...(movesTeam ? { teamId: repo.teamId } : {}),
+                  },
+                  beforeJson: {
+                    actsAsUserId: existing.actsAsUserId,
+                    ...(movesTeam ? { teamId: existing.teamId } : {}),
+                  },
+                  entityId: existing.id,
+                  entityType: 'ScheduledWorkRequest',
+                },
+              });
+            }
+            return tx.scheduledWorkRequest.findUniqueOrThrow({
+              include: scheduleInclude,
+              where: { id: existing.id },
+            });
+          });
+        } catch (err) {
+          if (err instanceof ScheduleConflictError) {
+            // The caller decides whether to retry on the re-read row or to give up
+            // (and only then put Temporal back).
+            return PATCH_LOST_RACE;
+          }
+          await resyncTemporalFromRow(fastify, existing.id, request.log);
+          throw err;
+        }
+        return new PatchSaved(row);
+      };
+
+      // A write that lost to another writer is retried on the re-read row, a
+      // bounded number of times, when what changed does not touch what this
+      // request decided on (a fire-by-hand takeover, a fire's bookkeeping): the
+      // decision, launch gate included, is taken again on the row as it now is.
+      // Anything else (a pause, an edit, an unshare-deactivation) is a conflict.
+      let current = initial;
+      // An attempt that lost its write had already synced Temporal. If a later
+      // one ends without saving (a refusal, a conflict, a throw) before syncing
+      // anew, Temporal would keep the lost edit while the row keeps the other
+      // writer's state, so it is put back to the row on every such exit.
+      let temporalMaybeAhead = false;
+      const resyncIfAhead = async () => {
+        if (temporalMaybeAhead) {
+          await resyncTemporalFromRow(fastify, current.id, request.log);
+        }
+      };
+      for (let attempt = 1; ; attempt++) {
+        let outcome: Awaited<ReturnType<typeof patchOnce>>;
+        try {
+          outcome = await patchOnce(current);
+        } catch (err) {
+          await resyncIfAhead();
+          throw err;
+        }
+        if (outcome === PATCH_LOST_RACE) {
+          temporalMaybeAhead = true;
+          const fresh = await fastify.prisma.scheduledWorkRequest.findUnique({
+            where: { id: current.id },
+          });
+          if (
+            !fresh ||
+            fresh.version === current.version ||
+            attempt >= MAX_PATCH_ATTEMPTS ||
+            !changedOnlyOrthogonally(current, fresh)
+          ) {
+            // Temporal was synced for a row that did not take it; make it match
+            // the row as it is now. Best-effort: if this fails too, it is
+            // logged, and the worker refuses fires whose Temporal launcher no
+            // longer matches the row until it is re-saved.
+            await resyncTemporalFromRow(fastify, current.id, request.log);
+            return reply.status(409).send(CONFLICT_BODY);
+          }
+          current = fresh;
+          continue;
+        }
+        if (!(outcome instanceof PatchSaved)) {
+          await resyncIfAhead();
+          return outcome;
+        }
+        const { row } = outcome;
+        const status = await fastify.temporal
+          .getWorkRequestScheduleStatus(row.id)
+          .catch(() => ({ exists: true, lastRunAt: null, nextRunAt: null, paused: !row.isActive }));
+        return reply.send({ data: serializeSchedule(row, status) });
+      }
     }
   );
 
@@ -1030,8 +1113,8 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       // Same order as PATCH: Temporal, then the (conditional) row; whichever
       // step fails puts Temporal back in step with the row as it now stands, so
       // the two never name different launchers.
-      // The row's updatedAt as the takeover left it, for the revert's predicate.
-      let claimedAt: Date | null = null;
+      // The row's version as the takeover left it, for the revert's predicate.
+      let claimedVersion: number | null = null;
       if (takesOver) {
         const workRequestId = existing.workRequestId;
         const synced = workRequestId
@@ -1059,19 +1142,19 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
           });
         }
-        let claimed: Date | null;
+        let claimed: number | null;
         try {
           claimed = await fastify.prisma.$transaction(async (tx) => {
             // Conditional on what was read: if the row changed meanwhile (an
             // edit, a pause, an unshare-deactivation) this takeover is stale.
             const result = await tx.scheduledWorkRequest.updateMany({
-              data: { actsAsUserId: user.sub },
+              data: { actsAsUserId: user.sub, version: { increment: 1 } },
               where: {
                 actsAsUserId: existing.actsAsUserId,
                 id: existing.id,
                 isActive: existing.isActive,
                 teamId: existing.teamId,
-                updatedAt: sameMillisecond(existing.updatedAt),
+                version: existing.version,
               },
             });
             if (result.count === 0) {
@@ -1080,7 +1163,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             // Read inside the transaction: our own write holds the row lock, so
             // this is exactly the state a revert must find unchanged.
             const after = await tx.scheduledWorkRequest.findUnique({
-              select: { updatedAt: true },
+              select: { version: true },
               where: { id: existing.id },
             });
             // A takeover is recorded, never silent.
@@ -1094,14 +1177,14 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
                 entityType: 'ScheduledWorkRequest',
               },
             });
-            return after?.updatedAt ?? existing.updatedAt;
+            return after?.version ?? existing.version + 1;
           });
         } catch (err) {
           await resyncTemporalFromRow(fastify, existing.id, request.log);
           throw err;
         }
-        claimedAt = claimed;
-        if (!claimed) {
+        claimedVersion = claimed;
+        if (claimed === null) {
           // Temporal holds the firer for a row that did not take it; make it
           // match the row as it is now (which may be paused: never resurrect it).
           await resyncTemporalFromRow(fastify, existing.id, request.log);
@@ -1121,8 +1204,8 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         // Temporal cannot be brought to the row, it still holds the firer, so
         // the row keeps the firer too rather than leave the two naming
         // different people.
-        if (claimedAt) {
-          const takenAt = claimedAt;
+        if (claimedVersion !== null) {
+          const takenVersion = claimedVersion;
           const audit = (event: string, extra: Record<string, unknown>) =>
             fastify.prisma.configAuditLog
               .create({
@@ -1143,13 +1226,13 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           let reverted: boolean | null;
           try {
             const result = await fastify.prisma.scheduledWorkRequest.updateMany({
-              data: { actsAsUserId: existing.actsAsUserId },
+              data: { actsAsUserId: existing.actsAsUserId, version: { increment: 1 } },
               where: {
                 actsAsUserId: user.sub,
                 id: existing.id,
                 isActive: existing.isActive,
                 teamId: existing.teamId,
-                updatedAt: sameMillisecond(takenAt),
+                version: takenVersion,
               },
             });
             reverted = result.count > 0;
@@ -1178,7 +1261,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             // the two agree, and say so.
             await fastify.prisma.scheduledWorkRequest
               .updateMany({
-                data: { actsAsUserId: user.sub },
+                data: { actsAsUserId: user.sub, version: { increment: 1 } },
                 where: {
                   actsAsUserId: existing.actsAsUserId,
                   id: existing.id,

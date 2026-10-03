@@ -19,7 +19,7 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
   // an error message instead of the build output.
   const repo = repoId
     ? await prisma.connection.findUnique({
-        include: { installation: { select: { installationId: true } } },
+        include: { installation: { select: { host: true, installationId: true } } },
         where: { id: repoId },
       })
     : null;

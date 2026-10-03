@@ -1,5 +1,6 @@
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { decryptSecret } from './crypto.js';
+import { hostFamily } from './githubHostScope.js';
 
 // Lazy DB access — defers prisma module load until first resolver call so that
 // importing systemConfig.ts in tests doesn't trigger DATABASE_URL validation.
@@ -79,6 +80,9 @@ export interface ResolvedGitHubConfig {
   appInstallationId: string | null;
   /// Auth mode: 'pat' | 'app' | null (null = auto: use app if fully configured, else PAT).
   authMode: string | null;
+  /// The host family these credentials belong to. `resolveGitHubToken` refuses to mint
+  /// or return a credential for any other host. Unset: the family of `apiUrl`.
+  credentialHost?: string;
 }
 
 export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<ResolvedGitHubConfig> {
@@ -124,8 +128,9 @@ export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<Resolved
     process.env.GITHUB_APP_PRIVATE_KEY ??
     null;
 
+  const apiUrl = row?.apiUrl ?? process.env.GITHUB_API_URL ?? 'https://api.github.com';
   return {
-    apiUrl: row?.apiUrl ?? process.env.GITHUB_API_URL ?? 'https://api.github.com',
+    apiUrl,
     appClientId: row?.appClientId ?? process.env.GITHUB_APP_CLIENT_ID ?? null,
     appClientSecret,
     appId: row?.appId ?? process.env.GITHUB_APP_ID ?? null,
@@ -133,6 +138,7 @@ export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<Resolved
     appPrivateKey,
     authMode: row?.authMode ?? process.env.GITHUB_AUTH_MODE ?? null,
     baseUrl: row?.baseUrl ?? process.env.GITHUB_URL ?? 'https://github.com',
+    credentialHost: hostFamily(apiUrl),
     // Sign-in credentials are environment-only: better-auth reads them once at boot.
     oauthClientId: process.env.GITHUB_CLIENT_ID ?? null,
     oauthClientSecret: process.env.GITHUB_CLIENT_SECRET ?? null,

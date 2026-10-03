@@ -18,6 +18,7 @@ import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { API_BASE } from '@/lib/config';
 import { clearableField } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
+import { GitHubHostCredentialsCard } from './GitHubHostCredentialsCard';
 import { GitHubHostSecretsCard } from './GitHubHostSecretsCard';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
@@ -286,6 +287,7 @@ export function GitHubTab() {
 
         <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
       </form>
+      <GitHubHostCredentialsCard />
       <GitHubHostSecretsCard />
     </div>
   );

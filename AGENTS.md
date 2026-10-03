@@ -168,7 +168,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "74 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "75 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -284,6 +284,7 @@ change, stays in the environment ([`docs/configuration.md`](./docs/configuration
 | Admin page | Manages | Resolver |
 |---|---|---|
 | `/studio/integrations → GitHub` | PAT, webhook secret, GHE URLs, GitHub App creds; per-host GHE webhook secrets (`GitHubHostWebhookSecret`) | `resolveGitHubConfig()`; `resolveWebhookSecret()` for a delivery naming a GHE host |
+| `/studio/integrations → GitHub → Per-host credentials` | PAT and/or GitHub App (id + private key) for each approved host that is not the instance's (`GitHubHostCredential`) | `resolvePlatformCredential()` (`shared/lib/githubHostCredential.ts`) |
 | `/studio/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
 | `/studio/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveIssueTrackerConfig()` |
 | `/studio/integrations → Knowledge Base` | Confluence / Notion connector | `resolveKnowledgeBaseConfig()` |
@@ -346,6 +347,16 @@ keep that true, and both have already been gotten wrong once:
   leaving it out is the safe default — the run uses the platform credential.
 
 See [`docs/user-github-credentials.md`](./docs/user-github-credentials.md).
+
+**Platform credentials never leave their host.** The instance's PAT and App (`GitHubConfig`) are valid
+on the instance's host family only; another approved host has its own set in `GitHubHostCredential`
+(`docs/user-github-credentials.md` §6). Every place that sends a platform credential to a repository's
+host asks `resolvePlatformCredential()` and uses the `config` it returns — never `resolveGitHubConfig()`
+directly — and passes that same config to `resolveGitHubToken`, whose guard compares the token's API host
+with the set it was minted from. A host's config is built from its row alone and inherits nothing of the
+instance's (token, App, singleton installation id). A `GitHubInstallation` carries its `host` (empty for
+the instance's); the pair `(host, installationId)` is the identity, and a repository may only point at an
+installation of its own host.
 
 **Repository membership and URLs** ([`docs/repositories.md`](./docs/repositories.md)):
 

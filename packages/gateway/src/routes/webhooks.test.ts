@@ -40,6 +40,11 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 // Per-host webhook secrets. The stored "ciphertext" is the plaintext, so a
 // row's secret is readable in the test; the lookup itself is the real one.
 const hostSecrets = vi.hoisted(() => ({ rows: new Map<string, string>() }));
+/** Per-host platform PATs, by host family; read like the webhook secrets. */
+const hostCredentials = vi.hoisted(() => ({
+  failWith: null as Error | null,
+  rows: new Map<string, string>(),
+}));
 vi.mock('@auto-swe/shared/lib/crypto', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/crypto')>()),
   decryptSecret: (r: { ciphertext: Uint8Array }) => Buffer.from(r.ciphertext).toString('utf8'),
@@ -146,6 +151,24 @@ vi.mock('@auto-swe/shared/db', () => ({
         }
         return repos.map((r) => ({ team: { organization: null, orgId: 'org-1' }, ...r }));
       }),
+    },
+    gitHubHostCredential: {
+      findUnique: async ({ where }: { where: { host: string } }) => {
+        if (hostCredentials.failWith) {
+          throw hostCredentials.failWith;
+        }
+        return hostCredentials.rows.has(where.host)
+          ? {
+              appId: null,
+              appPrivateKeyCiphertext: null,
+              host: where.host,
+              tokenAuthTag: new Uint8Array(1),
+              tokenCiphertext: Buffer.from(hostCredentials.rows.get(where.host) as string),
+              tokenKeyVersion: 1,
+              tokenNonce: new Uint8Array(1),
+            }
+          : null;
+      },
     },
     runInput: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
@@ -405,6 +428,8 @@ describe('webhook routes', () => {
     evalCreateCalls.length = 0;
     workflowRunRow = null;
     hostSecrets.rows.clear();
+    hostCredentials.rows.clear();
+    hostCredentials.failWith = null;
     connectionHosts.rows = [];
     hostPolicy.allowed = true;
     hostPolicy.approved = ['ghe.corp', 'ghe.corp:8443', 'ghe-a.corp'];
@@ -1789,6 +1814,106 @@ describe('webhook routes', () => {
           headers: expect.objectContaining({ Authorization: 'Bearer singleton-token' }),
         })
       );
+    });
+
+    describe("with a platform credential configured for the repository's host", () => {
+      const GHE_REPO = {
+        githubApiUrl: 'https://ghe.corp/api/v3',
+        githubUrl: 'https://ghe.corp',
+      };
+
+      it("queries the host's API with the host's PAT, never the instance's", async () => {
+        state.github = { ...state.github, authMode: 'pat', token: 'instance-pat' };
+        hostCredentials.rows.set('ghe.corp', 'host-pat');
+        trackRepo({ ...GHE_REPO, installation: null });
+        fetchMock.mockResolvedValueOnce(done);
+
+        const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+        expect(res.statusCode).toBe(200);
+        expect(fetchMock).toHaveBeenCalledWith(
+          `https://ghe.corp/api/v3/repos/acme/payments-api/commits/${HEAD_SHA}/check-runs?per_page=100&page=1`,
+          expect.objectContaining({
+            headers: expect.objectContaining({ Authorization: 'Bearer host-pat' }),
+          })
+        );
+        expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('instance-pat');
+      });
+
+      it("mints the repository's installation with the host's credential set, at the host's API", async () => {
+        state.github = { ...state.github, ...APP_MODE, token: 'instance-pat' };
+        hostCredentials.rows.set('ghe.corp', 'host-pat');
+        trackRepo({ ...GHE_REPO, installation: { installationId: '777' } });
+        vi.mocked(resolveGitHubToken).mockResolvedValueOnce('host-inst-token');
+        fetchMock.mockResolvedValueOnce(done);
+
+        await inject('/api/v1/webhooks/ci', body, sign(body));
+
+        const [config, target] = vi.mocked(resolveGitHubToken).mock.calls[0];
+        expect(target).toEqual({ apiUrl: 'https://ghe.corp/api/v3', installationId: '777' });
+        // The host's set: its own token and no instance App or singleton installation.
+        expect(config).toMatchObject({
+          apiUrl: 'https://ghe.corp/api/v3',
+          appId: null,
+          appInstallationId: null,
+          token: 'host-pat',
+        });
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringContaining('https://ghe.corp/api/v3/repos/'),
+          expect.objectContaining({
+            headers: expect.objectContaining({ Authorization: 'Bearer host-inst-token' }),
+          })
+        );
+      });
+
+      it('sends no token when the host is no longer approved', async () => {
+        hostCredentials.rows.set('ghe.corp', 'host-pat');
+        hostPolicy.approved = ['ghe-a.corp'];
+        trackRepo({ ...GHE_REPO, installation: null });
+
+        const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+        expect(res.statusCode).toBe(200);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(signalCalls).toHaveLength(1);
+      });
+
+      it('sends nothing for an installation recorded for another host', async () => {
+        hostCredentials.rows.set('ghe.corp', 'host-pat');
+        trackRepo({ ...GHE_REPO, installation: { host: '', installationId: '777' } });
+
+        const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+        expect(res.statusCode).toBe(200);
+        expect(resolveGitHubToken).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(signalCalls).toHaveLength(1);
+      });
+
+      it('falls back to per-run signalling when the host credentials cannot be loaded', async () => {
+        hostCredentials.rows.set('ghe.corp', 'host-pat');
+        hostCredentials.failWith = new Error('cannot decrypt');
+        trackRepo({ ...GHE_REPO, installation: null });
+
+        const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+        expect(res.statusCode).toBe(200);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(signalCalls).toHaveLength(1);
+      });
+
+      it("sends the host's PAT to no other host", async () => {
+        hostCredentials.rows.set('ghe.corp', 'host-pat');
+        trackRepo({
+          githubApiUrl: 'https://ghe-a.corp/api/v3',
+          githubUrl: 'https://ghe-a.corp',
+          installation: null,
+        });
+
+        await inject('/api/v1/webhooks/ci', body, sign(body));
+
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
     });
 
     it('sends no token to another host for a repository with no installation of its own', async () => {

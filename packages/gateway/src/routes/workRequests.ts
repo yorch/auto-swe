@@ -16,7 +16,11 @@ import {
   resolveKnowledgeBaseConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
-import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
+import {
+  generateBranchName,
+  generateWorkflowId,
+  legacyWorkflowIdBases,
+} from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -393,7 +397,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const loadRepo = (id: string) =>
         fastify.prisma.connection.findUnique({
           include: {
-            installation: { select: { installationId: true, isActive: true } },
+            installation: { select: { host: true, installationId: true, isActive: true } },
             // A member of a team the repository is shared with may launch too.
             shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
             team: {
@@ -555,15 +559,20 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repo.repoName,
         repo.githubUrl
       );
-      // The id this ticket had before repository ids carried their host: an
-      // execution still running under it blocks a duplicate exactly as one under
-      // the new id does.
+      // The ids this ticket had before the current format (stored casing, no
+      // host): an execution still running under one blocks a duplicate exactly
+      // as one under the new id does.
       const allocate = () =>
         allocateWorkflowId(
           fastify.prisma,
           baseWorkflowId,
           { externalTicketId, repoId: repo.id },
-          generateWorkflowId(externalTicketId, repo.organizationName, repo.repoName)
+          legacyWorkflowIdBases(
+            externalTicketId,
+            repo.organizationName,
+            repo.repoName,
+            repo.githubUrl
+          )
         );
       const allocated = await allocate();
 
@@ -792,7 +801,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             include: {
               repository: {
                 include: {
-                  installation: { select: { installationId: true, isActive: true } },
+                  installation: { select: { host: true, installationId: true, isActive: true } },
                   shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
                   team: {
                     select: {
@@ -875,7 +884,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma,
         baseWorkflowId,
         { externalTicketId: workRequest.externalTicketId, repoId: repo.id },
-        generateWorkflowId(workRequest.externalTicketId, repo.organizationName, repo.repoName)
+        legacyWorkflowIdBases(
+          workRequest.externalTicketId,
+          repo.organizationName,
+          repo.repoName,
+          repo.githubUrl
+        )
       );
       if ('conflictWorkflowId' in allocated) {
         return reply.status(409).send({

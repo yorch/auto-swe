@@ -22,7 +22,11 @@ import {
   resolveWebUrl,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
-import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
+import {
+  generateBranchName,
+  generateWorkflowId,
+  legacyWorkflowIdBases,
+} from '@auto-swe/shared/lib/workflowId';
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
@@ -1916,7 +1920,7 @@ async function handleRunModalSubmission(
 
   const repo = await fastify.prisma.connection.findUnique({
     include: {
-      installation: { select: { installationId: true, isActive: true } },
+      installation: { select: { host: true, installationId: true, isActive: true } },
       shares: repoMembersSelect({ userId: true }, { userId: user.id }).shares,
       team: {
         select: {
@@ -2042,13 +2046,13 @@ async function handleRunModalSubmission(
   // Re-submitting a finished ticket gets an `-rN` suffix, exactly as the
   // dashboard does; a base id alone would collide with the finished run's
   // ledger row and leave the ticket unsubmittable from Slack.
-  // The host-aware id; a run still in flight under the id the ticket had before
-  // ids carried the host blocks a second one (the allocator checks both).
+  // The current id; a run still in flight under an id the ticket had in an
+  // earlier format (stored casing, no host) blocks a second one.
   const allocated = await allocateWorkflowId(
     fastify.prisma,
     generateWorkflowId(ticket, repo.organizationName, repo.repoName, repo.githubUrl),
     { externalTicketId: ticket, repoId: repo.id },
-    generateWorkflowId(ticket, repo.organizationName, repo.repoName)
+    legacyWorkflowIdBases(ticket, repo.organizationName, repo.repoName, repo.githubUrl)
   );
   if ('conflictWorkflowId' in allocated) {
     return {
