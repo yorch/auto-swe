@@ -4,10 +4,12 @@ type Row = { seq: number; toolName: string | null } & Record<string, unknown>;
 
 const h = vi.hoisted(() => ({
   current: { ctx: {} as object },
-  notePersistedUsage: vi.fn(),
+  restore: vi.fn(),
   rows: [] as Row[],
   runId: { value: 'run-1' as string | null },
   runLookupFails: { value: false },
+  takePersistingUsage: vi.fn(),
+  writeFails: { value: false },
 }));
 
 vi.mock('@temporalio/activity', () => ({
@@ -22,6 +24,9 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     agentTrace: {
       createMany: async ({ data }: { data: Row[] }) => {
+        if (h.writeFails.value) {
+          throw new Error('write failed');
+        }
         h.rows.push(...data);
         return { count: data.length };
       },
@@ -39,7 +44,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 vi.mock('./spendOwner.js', () => ({
   currentSpendOwner: async () => ({ orgId: 'org-1', teamId: 'team-1' }),
 }));
-vi.mock('./runlessBudget.js', () => ({ notePersistedUsage: h.notePersistedUsage }));
+vi.mock('./runlessBudget.js', () => ({ takePersistingUsage: h.takePersistingUsage }));
 
 import { persistActivityTrace } from './activityContext.js';
 import { AgentTracer } from './agentTracer.js';
@@ -57,7 +62,10 @@ beforeEach(() => {
   h.current.ctx = {};
   h.runId.value = 'run-1';
   h.runLookupFails.value = false;
-  h.notePersistedUsage.mockClear();
+  h.writeFails.value = false;
+  h.restore.mockReset();
+  h.takePersistingUsage.mockReset();
+  h.takePersistingUsage.mockReturnValue(h.restore);
 });
 
 describe('persistActivityTrace — seq', () => {
@@ -100,7 +108,25 @@ describe('persistActivityTrace — spend owner', () => {
       workflowId: 'wf-author-1',
     });
     expect(h.rows).toHaveLength(3);
-    expect(h.notePersistedUsage).toHaveBeenCalledWith('wf-author-1', 'temporal-run-1', 200, 50);
+    expect(h.takePersistingUsage).toHaveBeenCalledWith('wf-author-1', 'temporal-run-1', 200, 50);
+    expect(h.restore).not.toHaveBeenCalled();
+  });
+
+  it('takes the tokens out of the runless sum before the write, and puts them back if it fails', async () => {
+    h.writeFails.value = true;
+    const order: string[] = [];
+    h.takePersistingUsage.mockImplementation(() => {
+      order.push('take');
+      return h.restore;
+    });
+    const tracer = new AgentTracer();
+    tracer.addLlmResponse({ durationMs: 1, inputTokens: 120, outputTokens: 30, role: 'r' });
+
+    await persistActivityTrace(tracer, 'workflowAuthor');
+
+    expect(order).toEqual(['take']);
+    expect(h.rows).toHaveLength(0);
+    expect(h.restore).toHaveBeenCalledOnce();
   });
 
   it('stamps no owner when the run lookup fails, so a run is never billed as runless too', async () => {

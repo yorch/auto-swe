@@ -930,8 +930,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   [agents.md §11](./agents.md#11-limitations).
 - **The runless cap is bounded, not exact.** It sums persisted trace rows plus this worker's
   unpersisted calls, so calls in flight on another worker are invisible until their activity
-  persists, and a failed trace write drops its rows from the sum. A budget read that fails lets the
-  call through rather than failing a call already paid for.
+  persists, an activity's own calls are invisible for the moment its trace write is committing, and
+  the rows of a failed trace write count only on the worker that made them. A budget read that
+  fails lets the call through rather than failing a call already paid for.
 - **Metrics undercount at their edges.** `llm_calls_total` counts agent calls, not model round
   trips inside a tool loop. Prometheus `increase()` reads a new series' first sample as its
   baseline; status, source and tier series are seeded with a zero at boot, but a model's or agent's

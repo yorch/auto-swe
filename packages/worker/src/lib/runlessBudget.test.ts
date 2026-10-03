@@ -21,8 +21,8 @@ vi.mock('./activityLog.js', () => ({ logWarn: vi.fn() }));
 import {
   _resetRunlessBudgetForTests,
   assertRunlessBudgetAvailable,
-  notePersistedUsage,
   recordRunlessUsage,
+  takePersistingUsage,
   withRunlessCapScale,
 } from './runlessBudget.js';
 
@@ -59,10 +59,27 @@ describe('recordRunlessUsage', () => {
 
   it('counts persisted rows once: what an activity persisted leaves the in-process sum', async () => {
     await recordRunlessUsage('wf', 'r1', call(600, 10), 'l');
-    notePersistedUsage('wf', 'r1', 600, 10);
+    takePersistingUsage('wf', 'r1', 600, 10);
     persisted(600, 10);
     // 600 persisted + 300 new = 900, under the cap. Without the subtraction it would be 1500.
     await expect(recordRunlessUsage('wf', 'r1', call(300, 10), 'l')).resolves.toBeUndefined();
+  });
+
+  it('puts back exactly what it took when the trace write fails', async () => {
+    await recordRunlessUsage('wf', 'r1', call(600, 10), 'l');
+    // Asks for more than this process holds: only the 600 it had is taken.
+    const restore = takePersistingUsage('wf', 'r1', 900, 10);
+    await expect(recordRunlessUsage('wf', 'r1', call(300, 10), 'l')).resolves.toBeUndefined();
+    restore();
+    // The write never landed: 600 + 300 back in the in-process sum, plus 200 > 1000.
+    await expect(recordRunlessUsage('wf', 'r1', call(200, 10), 'l')).rejects.toMatchObject({
+      type: 'BUDGET_EXCEEDED',
+    });
+  });
+
+  it('restores nothing for an execution it holds nothing for', async () => {
+    takePersistingUsage('wf', 'r1', 900, 10)();
+    await expect(recordRunlessUsage('wf', 'r1', call(900, 10), 'l')).resolves.toBeUndefined();
   });
 
   it('scopes the sum to one execution of a reused workflow id', async () => {

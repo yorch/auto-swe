@@ -88,9 +88,9 @@ describe('AgentTracer.persist', () => {
     const tracer = new AgentTracer();
     tracer.addActivityEvent({ name: 'e' });
 
-    await expect(
-      tracer.persist({ runId: undefined, workflowId: 'wf-1' }, 'n', 'a')
-    ).resolves.toBeUndefined();
+    await expect(tracer.persist({ runId: undefined, workflowId: 'wf-1' }, 'n', 'a')).resolves.toBe(
+      false
+    );
   });
 
   it('reports whether a span context was attached', () => {

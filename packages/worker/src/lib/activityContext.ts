@@ -3,7 +3,7 @@ import { trace } from '@opentelemetry/api';
 import { activityInfo, Context } from '@temporalio/activity';
 import { currentNodeTag } from './activityNodeTag.js';
 import type { AgentTracer } from './agentTracer.js';
-import { notePersistedUsage } from './runlessBudget.js';
+import { takePersistingUsage } from './runlessBudget.js';
 import { currentSpendOwner } from './spendOwner.js';
 
 /**
@@ -120,7 +120,11 @@ export async function persistActivityTrace(tracer: AgentTracer, agentKey: string
   // run as runless spend, and a run's spend is already counted from its ledger:
   // stamping the owner here would bill that run to its org twice.
   const tags = run ? { ...owner, runId: run.id } : { runId: undefined };
-  await tracer.persist(
+  // The rows about to be written carry this activity's runless spend: take it
+  // out of the in-process sum first, and put it back if the write fails.
+  const { input, output } = tracer.llmTokenTotals();
+  const restore = takePersistingUsage(workflowId, temporalRunId, input, output);
+  const written = await tracer.persist(
     { ...tags, temporalRunId, workflowId },
     currentActivityType(),
     agentKey,
@@ -128,7 +132,7 @@ export async function persistActivityTrace(tracer: AgentTracer, agentKey: string
     currentNodeTag(),
     reserveSeq(tracer.size)
   );
-  // The persisted rows now carry this activity's runless spend; stop counting it twice.
-  const { input, output } = tracer.llmTokenTotals();
-  notePersistedUsage(workflowId, temporalRunId, input, output);
+  if (!written) {
+    restore();
+  }
 }

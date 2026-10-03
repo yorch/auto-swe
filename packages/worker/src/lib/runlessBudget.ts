@@ -22,7 +22,9 @@ import { EMBEDDING_AGENT_KEY } from './traceTotals.js';
  * as they are from the tier counters.
  *
  * Bounded, not exact: calls in flight on another worker are invisible until
- * their activity persists, and a failed trace write loses its rows from the sum.
+ * their activity persists, an activity's own tokens are invisible for the moment
+ * its trace write is committing, and the rows of a failed trace write count only
+ * on the worker that made the calls.
  */
 
 /** Not-yet-persisted tokens per execution (`workflowId/temporalRunId`) in this process. */
@@ -49,26 +51,39 @@ function addUnpersisted(key: string, input: number, output: number): void {
   unpersisted.set(key, { input, output });
 }
 
-/** An activity persisted rows carrying these tokens; they are now in the trace sum. */
-export function notePersistedUsage(
+/**
+ * An activity is about to persist rows carrying these tokens. They leave the
+ * in-process sum before the write rather than after it, so a budget check on
+ * the same execution that runs while the write commits never counts them twice.
+ * Returns a function that puts back exactly what was taken, for a write that
+ * failed: its rows never reach the trace sum, so the tokens must stay here.
+ */
+export function takePersistingUsage(
   workflowId: string,
   temporalRunId: string | null,
   input: number,
   output: number
-): void {
+): () => void {
+  const noop = () => {};
   if (!temporalRunId) {
-    return;
+    return noop;
   }
   const key = keyOf(workflowId, temporalRunId);
   const entry = unpersisted.get(key);
   if (!entry) {
-    return;
+    return noop;
   }
-  entry.input = Math.max(0, entry.input - input);
-  entry.output = Math.max(0, entry.output - output);
+  const taken = { input: Math.min(entry.input, input), output: Math.min(entry.output, output) };
+  entry.input -= taken.input;
+  entry.output -= taken.output;
   if (entry.input === 0 && entry.output === 0) {
     unpersisted.delete(key);
   }
+  return () => {
+    if (taken.input > 0 || taken.output > 0) {
+      addUnpersisted(key, taken.input, taken.output);
+    }
+  };
 }
 
 const capScale = new AsyncLocalStorage<number>();

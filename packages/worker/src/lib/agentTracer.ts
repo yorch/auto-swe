@@ -217,6 +217,8 @@ export class AgentTracer {
    * traces are still written, keyed by `workflowId`, so their LLM spend is
    * recorded somewhere rather than dropped. `teamId`/`orgId` name whose spend
    * the rows are (see `currentSpendOwner`); absent, the rows belong to nobody.
+   *
+   * Never throws; resolves false when the write failed.
    */
   async persist(
     ids: {
@@ -233,9 +235,9 @@ export class AgentTracer {
     nodeTag?: NodeTag,
     /** Added to every record's `seq`, so batches persisted by one attempt do not collide. */
     seqOffset = 0
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (this.records.length === 0) {
-      return;
+      return true;
     }
     const node = nodeTagColumns(nodeTag);
     try {
@@ -265,8 +267,10 @@ export class AgentTracer {
           workflowId: ids.workflowId,
         })),
       });
+      return true;
     } catch {
       // Tracing is best-effort — never block the workflow
+      return false;
     }
   }
 }
