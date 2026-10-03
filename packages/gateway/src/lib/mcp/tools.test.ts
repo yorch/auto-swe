@@ -925,5 +925,6 @@ describe('which routes an MCP token may reach', () => {
       'POST /api/v1/work-requests write',
       'POST /api/v1/workflow-runs/:id/cancel write',
     ]);
-  });
+    // Imports (and transforms) every route plugin: ~2 s alone, over the 5 s default under a loaded full-suite run.
+  }, 30_000);
 });
