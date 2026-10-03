@@ -97,7 +97,9 @@ calls are held to the runless cap (`workflow.runlessMaxInputTokens` /
 a per-case allowance. When the cap runs out part-way, the harness stops at that case and finishes
 the run with a verdict over the cases already paired; the summary carries a `partial` marker
 (completed and total case counts, the ids that did not run, the budget message), and the run page
-says the verdict is partial. A cap reached before any case completed fails the run.
+says the verdict is partial. `auto-swe evals run` prints the partial line and exits 2 for a partial
+`SUCCESS`, so a nightly gate never passes on a prefix; a partial `REGRESSION` still exits 1. A cap
+reached before any case completed fails the run.
 
 Execution is durable: `EvalRunWorkflow` runs the dataset on Temporal, so a long benchmark survives
 restarts like any other run.
@@ -186,8 +188,9 @@ verdicts into trends per template, model, and prompt version.
   model, or prompt version, though `EvalResult` carries the joins to do so.
 - **A budget-limited verdict covers a prefix of the dataset.** The cap is shared by the whole run,
   so one expensive case can spend another's allowance, and the cases that did not run are the ones
-  at the end of the dataset, not a sample. The run's status is still `SUCCESS` or `REGRESSION`; a
-  gate that must see every case has to check `summary.partial` as well.
+  at the end of the dataset, not a sample. The run's status is still `SUCCESS` or `REGRESSION`, so
+  a gate of its own that reads the status alone must check `summary.partial` as well;
+  `auto-swe evals run` already does.
 - **A judge is only as good as its rubric.** Suite health (flake rate, stale rate, judge/human
   kappa) is tracked precisely because an uncalibrated judge produces confident, wrong verdicts —
   check it before trusting a gate.
