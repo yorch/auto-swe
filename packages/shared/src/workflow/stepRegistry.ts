@@ -169,6 +169,25 @@ register({
 });
 
 register({
+  category: 'vcs',
+  configFields: [
+    {
+      description:
+        'Repo-relative path of the built-in model catalog file. The step fails before any workspace exists if the repository has no such file or it lacks BUILTIN_MODELS. Defaults to packages/shared/src/lib/builtinModels.ts.',
+      key: 'catalogPath',
+      label: 'Catalog file',
+      type: 'string',
+    },
+  ],
+  description:
+    'List the models each provider offers through the GLOBAL provider credentials, inside the worker, ' +
+    'and return a markdown list of ids as guidance for an implementation step. Keys never leave the worker. ' +
+    'Fails fast if the repository does not hold the catalog file.',
+  label: 'List provider models',
+  name: 'listProviderModels',
+});
+
+register({
   category: 'control',
   configFields: [],
   description: 'Fetch and truncate CI logs from the given URL.',

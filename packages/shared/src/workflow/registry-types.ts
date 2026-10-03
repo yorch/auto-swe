@@ -60,6 +60,8 @@ export const BUILTIN_STEPS = [
   'executeCIFixImplementation',
   'createOrUpdatePullRequest',
   'fetchCILogs',
+  // Live provider model ids for the catalog-refresh template (keys stay in the worker)
+  'listProviderModels',
   // CI wait strategy: resolve signal-vs-poll config, then poll when configured
   'resolveCiWaitConfig',
   'waitForCiByPolling',

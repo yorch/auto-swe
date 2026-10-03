@@ -166,6 +166,14 @@ const githubActivities = proxyActivities<
   startToCloseTimeout: T_2M,
 });
 
+// Lists provider models through the GLOBAL credentials. Provider calls inside are
+// bounded at 10 s a page, so the timeout is generous; the precondition failures are
+// non-retryable ApplicationFailures, which the policy does not retry.
+const catalogActivities = proxyActivities<Pick<typeof activitiesType, 'listProviderModels'>>({
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_5M,
+});
+
 const contextActivities = proxyActivities<Pick<typeof activitiesType, 'validateContext'>>({
   heartbeatTimeout: T_2M,
   retry: RETRY_STANDARD,
@@ -733,6 +741,14 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         ? githubActivities.createOrUpdatePullRequest(request, codeResult, { draft: true })
         : githubActivities.createOrUpdatePullRequest(request, codeResult);
     },
+  ],
+  [
+    'listProviderModels',
+    ({ request, config }) =>
+      catalogActivities.listProviderModels({
+        ...(typeof config.catalogPath === 'string' ? { catalogPath: config.catalogPath } : {}),
+        request,
+      }),
   ],
   [
     'fetchCILogs',

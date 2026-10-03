@@ -116,6 +116,7 @@ const fakeActivities = {
   finalizeWorkflowRun: async (runId: string, status: string) => {
     calls.finalize.push({ runId, status });
   },
+  listProviderModels: async () => ({ guidance: '## Live model ids\n\n### openai\n\n- gpt-x' }),
   publishOutcome: async (_input: unknown) => ({ decision: 'auto' }),
   readSource: async (input: unknown) => {
     calls.readSource.push(input);
