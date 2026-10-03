@@ -223,8 +223,8 @@
     "packages/gateway/src/routes/webhooks.trigger.test.ts": "ec7d31a0df27366674e3d4f1d0483a8fb827766988f3dd1da3a2dd48853d9f36",
     "packages/gateway/src/routes/webhooks.ts": "ef92c04af06ffcb70a1f54dd015746c7a46ecf9453e6374bc29b3830335b8a96",
     "packages/gateway/src/routes/workflowProjections.ts": "af8d31b06e5902ad6d85234a4c7417bf93512264ec1a7c166904875f47c5c9dd",
-    "packages/gateway/src/routes/workflowRuns.test.ts": "71e21556316204bd7c5a5b5ccd813d2a038ab08ca3988309c62096aac2271484",
-    "packages/gateway/src/routes/workflowRuns.ts": "7fe714172a07127360471da815bc68282985d47075b3bbf9275dc5f44fac726b",
+    "packages/gateway/src/routes/workflowRuns.test.ts": "1be356e27f5c6a881edecbd32f0688c69d32f5ea56e7b5af75bede3461f9bbc3",
+    "packages/gateway/src/routes/workflowRuns.ts": "51989317e7683b8510adc59e4567e340379f8f0a477b46a0a926e816635973fd",
     "packages/gateway/src/routes/workflows.ts": "c20cab0f9978f5dfff7f0bc84989c6bb0fa054477b4133579affacceb77f406c",
     "packages/gateway/src/routes/workflowTemplateRuns.test.ts": "1bd7fc281beb0355031cfa19e4b43fdc72ccc807527e28d50c4f364511f8ec30",
     "packages/gateway/src/routes/workflowTemplates.runs.test.ts": "106bd3570ac0836eb69db22708243e584a2e181a78bcf1602d984b7fc5565d31",
@@ -1880,7 +1880,7 @@
       "WorkflowShellAudit"
     ]
   },
-  "reviewedCommit": "da07d1d2ace592ccc936daeee954bc007254ce78",
+  "reviewedCommit": "f46d618eb2ef3edc5b9c84b2190b5e6ceb5c6b65",
   "sourceHashes": {
     "docker-compose.app.yml": "96d57e466289e17048648c7e852e21c0ac24085526fae63c21e8c0ffe8b22cf6",
     "packages/cli/src/index.ts": "1b35bb2f33007f9780f1cc37fc5a05e8bbdb7ca58dd248bec003d0bc54132206",
@@ -1894,7 +1894,7 @@
     "packages/gateway/src/routes/mcp.ts": "3372b170e2f963c9e8db75f507b33a25c3065eaca9b029fe4b69575ca520096e",
     "packages/gateway/src/routes/securityEvents.ts": "c80beb1dfee296b54c5e3a3ea92dc82ae869ffd62c73e38799df9f5081c576ca",
     "packages/gateway/src/routes/usage.ts": "58900ea674cf8ae1dde5b8178d1b980f3d5b139037f909630b2859feac7ad93c",
-    "packages/gateway/src/routes/workflowRuns.ts": "7fe714172a07127360471da815bc68282985d47075b3bbf9275dc5f44fac726b",
+    "packages/gateway/src/routes/workflowRuns.ts": "51989317e7683b8510adc59e4567e340379f8f0a477b46a0a926e816635973fd",
     "packages/gateway/src/routes/workRequests.ts": "bd1d180364cf28d96ef040dbc29ba4e6f2ce54b09b4818f35628bcb7fa60cefe",
     "packages/sdk/src/index.ts": "45cd8af737ff4582e87b1f456a9ba5c77aa14479532b9a684c3151ba76954553",
     "packages/shared/src/config/registry.ts": "4e15585441b4612f739150eec2f653166a6324740e4439c3d0a45da9341dfa83",
