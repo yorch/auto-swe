@@ -6,7 +6,8 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { buildImplementerForActivity } from '../agents/implementer.js';
-import { mastraRuntime, runImplementerTurn } from '../agents/implementerRuntime.js';
+import { runImplementerTurn } from '../agents/implementerRuntime.js';
+import { selectImplementerRuntime } from '../agents/implementerRuntimeSelect.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -150,13 +151,18 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // that Agent row's prompt, tools, skills and MCP binding, with the model
     // inherited from the implementer unless the persona overrides it.
     const activityCtx = await currentRequestContext();
-    const {
-      agent,
-      promptSuffix,
-      closeMcp: cm,
-      maxSteps,
-    } = await buildImplementerForActivity(workspace, tracer, activityCtx, input.agentKey);
-    closeMcp = cm;
+    const built = await buildImplementerForActivity(workspace, tracer, activityCtx, input.agentKey);
+    closeMcp = built.closeMcp;
+    const { promptSuffix, runtime } = await selectImplementerRuntime({
+      agent: built.agent,
+      agentKey: input.agentKey,
+      ctx: activityCtx,
+      maxSteps: built.maxSteps,
+      promptSuffix: built.promptSuffix,
+      skills: built.skills,
+      tracer,
+      workspace,
+    });
 
     const systemPrompt = await resolveSystemPrompt(
       input.agentKey,
@@ -174,7 +180,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     await runImplementerTurn({
       context: { mode },
       role: input.agentKey,
-      runtime: mastraRuntime(agent, maxSteps),
+      runtime,
       system: fullSystemPrompt,
       tracer,
       usageEvent: input.usageEventName,

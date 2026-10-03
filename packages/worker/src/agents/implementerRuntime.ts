@@ -11,6 +11,13 @@ export interface ImplementerTurnOutcome {
   /** Tool calls made during the turn; the trace row reports it when there is no text. */
   toolCallCount: number;
   usage?: TokenUsage;
+  /**
+   * Usage split by the model that spent it, largest first, for a runtime whose
+   * turn can span several models (a harness that delegates small tasks to a
+   * cheaper one). Each entry is priced at its own spec; `usage` is ignored when
+   * this is set.
+   */
+  usageByModel?: { modelSpec: string; usage: TokenUsage }[];
 }
 
 /**
@@ -79,15 +86,28 @@ export async function runImplementerTurn(
   const start = Date.now();
   const outcome = await turn.runtime.runTurn({ system: turn.system, user: turn.user });
 
+  const spent =
+    outcome.usageByModel ??
+    (outcome.usage ? [{ modelSpec: turn.boundModelSpec, usage: outcome.usage }] : []);
   let attribution: LlmAttribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
-  if (outcome.usage) {
-    attribution = await recordLlmUsage(
+  for (const [i, { modelSpec, usage }] of spent.entries()) {
+    const recorded = await recordLlmUsage(
       currentWorkflowId(),
       turn.role,
-      outcome.usage,
+      usage,
       turn.usageEvent,
-      turn.boundModelSpec
+      modelSpec
     );
+    attribution =
+      i === 0
+        ? recorded
+        : {
+            costUsd: attribution.costUsd + recorded.costUsd,
+            inputTokens: attribution.inputTokens + recorded.inputTokens,
+            modelSpec: attribution.modelSpec,
+            outputTokens: attribution.outputTokens + recorded.outputTokens,
+            pricingKnown: attribution.pricingKnown !== false && recorded.pricingKnown !== false,
+          };
   }
 
   // LLM output scanner — advisory, non-blocking (the helper never throws).

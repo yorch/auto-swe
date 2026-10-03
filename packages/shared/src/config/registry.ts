@@ -435,6 +435,22 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
   }),
+  // Pinned because the runtime decides who executes the tool loop and which
+  // credential enters the workspace: a run that began on one runtime must not
+  // finish a later iteration on the other, and a re-run of the same history
+  // must take the same path.
+  'workspace.implementerRuntime': defineSetting({
+    defaultValue: 'mastra',
+    description:
+      "Which loop drives the implementer, the CI/review/gate fixers and the merge-conflict resolver. `mastra` runs the platform's own tool loop. `claude-code` runs the Claude Code harness inside the workspace container, which brings its own tools, plugins and instruction files. The harness needs a model API key (or a gateway key) inside the container, where anything the agent runs can read it; see the Limitations in docs/agents.md before enabling it.",
+    group: 'workspace',
+    label: 'Implementer runtime',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: true,
+    schema: z.enum(['mastra', 'claude-code']),
+  }),
 
   // ── Agent workspace ────────────────────────────────────────────────────────
   // Tunes the implementer's tool behaviour rather than the container itself,

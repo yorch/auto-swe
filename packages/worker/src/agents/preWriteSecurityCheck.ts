@@ -235,7 +235,7 @@ export function wrapWriteToolWithSecurityCheck(originalExecute: WriteExecuteFn):
 export const SECURITY_CHECK_FAILED_PREFIX = 'SECURITY CHECK FAILED';
 export const SECURITY_WARNINGS_PREFIX = 'SECURITY WARNINGS';
 
-function formatViolationMessage(violations: PreWriteViolation[], blocked: boolean): string {
+export function formatViolationMessage(violations: PreWriteViolation[], blocked: boolean): string {
   const header = blocked
     ? `${SECURITY_CHECK_FAILED_PREFIX} — write blocked`
     : `${SECURITY_WARNINGS_PREFIX} detected (write allowed)`;

@@ -27,6 +27,13 @@ const { checkoutMock, generateMock, loadMock, prismaMock, workspaceMock } = vi.h
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: prismaMock }));
 
+// Which loop drives the implementer is a run-pinned setting; these tests are about
+// the Mastra loop, so the registry read answers without a database.
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
+  resolveSetting: vi.fn(async () => 'mastra'),
+}));
+
 vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
   scanSkillContent: vi.fn(async () => ({ safe: true, warnings: [] })),
 }));

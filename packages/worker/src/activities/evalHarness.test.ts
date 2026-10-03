@@ -52,6 +52,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 // The harness resolves the implementer's tool-output budget the same way it
 // resolves the model; without this the registry resolver reaches for Prisma.
 vi.mock('@auto-swe/shared/config', () => ({
+  resolveSetting: vi.fn(async () => 'mastra'),
   resolveSettings: vi.fn(async () => ({
     'workspace.agentMaxSteps': 64,
     'workspace.maxToolOutputChars': 20_000,
