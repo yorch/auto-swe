@@ -239,7 +239,10 @@ export function useSecurityEventSummary() {
         )
         .then((r) => r.data),
     queryKey: ['security-events', 'summary'],
-    refetchInterval: 60_000,
+    // Seven counts over all of agent_traces: refresh rarely, and on focus
+    // only once stale (the default), not every minute per open tab.
+    refetchInterval: 5 * 60_000,
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -415,7 +418,10 @@ export function useEvalTrends(windowDays: number, source?: EvalSignalSourceValue
     queryFn: () =>
       api.get<{ data: EvalTrendsDto }>(`/api/v1/platform/evals/trends?${qs}`).then((r) => r.data),
     queryKey: ['eval-trends', windowDays, source],
-    refetchInterval: 60_000,
+    // Up to one grouped query per day of the window: refresh rarely, and on
+    // focus only once stale (the default), not every minute per open tab.
+    refetchInterval: 5 * 60_000,
+    staleTime: 5 * 60_000,
   });
 }
 
