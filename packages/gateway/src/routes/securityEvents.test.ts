@@ -132,14 +132,15 @@ describe('GET /security-events/summary', () => {
     expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
   });
 
-  it('rejects non-admins', async () => {
-    const { app } = await buildApp('ENGINEER');
+  it('rejects non-admins before running any count', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
       url: '/api/v1/platform/security-events/summary',
     });
     expect(res.statusCode).toBe(403);
+    expect(prisma.agentTrace.count).not.toHaveBeenCalled();
   });
 });
 
