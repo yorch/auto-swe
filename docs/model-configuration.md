@@ -212,13 +212,16 @@ The run, in order:
    changed-files guard and the test gate, and it is not configurable. Before any workspace exists the
    step fails, non-retryably, if the file is missing or has no `export const BUILTIN_MODELS`, so a
    repository that is not a fork of auto-swe costs nothing.
-2. **Stop if the last refresh is still open.** A schedule gives every firing the same ticket id, and
-   so the same branch (`<branch prefix>/<ticket id>`) and work request. The step asks the host
-   whether that branch exists or has an open pull request. If either does, the run ends `SUCCESS`
-   with the note *a previous catalog refresh is still open; merge or close it and delete its
-   branch*, before any credential is read, workspace built or agent run. Merge or close the draft
-   and delete its branch (the repository's "automatically delete head branches" setting does this
-   on merge), and the next firing proceeds.
+2. **Stop if the last refresh is still open.** A schedule gives every firing the same ticket id,
+   and so the same branch (`<branch prefix>/<ticket id>`) and work request. The step asks the host
+   whether that branch has commits the default branch lacks, or has an open pull request. If either
+   does, the run ends `SUCCESS` with the note *a previous catalog refresh is still open; merge or
+   close it and delete its branch*, before any credential is read, workspace built or agent run.
+   Merge or close the draft and delete its branch (the repository's "automatically delete head
+   branches" setting does this on merge), and the next firing proceeds. A run that found nothing to
+   change still pushes its branch, with no commits of its own; that empty branch is not previous
+   work, and the next run ignores it. A comparison that fails fails the step; it is never read as
+   "nothing there".
 3. **List live model ids.** The same step lists models through the GLOBAL provider credentials, for
    the providers the file already prices, using the discovery code above. Decryption and the provider
    calls happen in the worker process. The output is markdown and nothing else: per provider, the
@@ -237,12 +240,21 @@ The run, in order:
    reaches the agent under the heading *Guidance from the requester*, which every guidance input
    shares; the prompt says what it really is.
 5. **Confine the change.** The implementer step and the review fix carry `allowedPaths`, listing
-   only the catalog file. A change that touches any other file fails the step, non-retryably,
-   before it is committed or pushed. This is the guard the pricing pages being untrusted input
-   needs: a push can itself start work on the host (a workflow file runs on `push`), so a check after
-   the push would be too late. A `checkScope` condition before the pull request asserts the same
-   thing about the cumulative change, and a miss fails the run. `allowedPaths` is an optional config
-   field on both steps; unset, nothing changes.
+   only the catalog file. Before the agent runs, the worker reads the commit the workspace started
+   from (`baseSha`) and keeps it in its own memory. After the commit and before the push, it checks
+   the committed range from that commit to `HEAD` (`git diff --name-only --no-renames -z
+   <baseSha>...HEAD`), and the step fails, non-retryably, on any path outside the list, or if `HEAD`
+   no longer shares history with that commit. The check runs with the hardening `gitAuthed` uses
+   (no hooks, no system or global git config) and with replace objects off, and the commit itself
+   runs with hooks disabled, so neither a repository hook nor `git replace` nor a rewritten
+   `origin/<default>` ref changes what is measured. The diff the step reports, and the
+   `filesChanged` the `checkScope` condition reads, come from the same range. The guard has to sit
+   ahead of the push because a push can itself start work on the host (a workflow file runs on
+   `push`). Its remaining trust limit is the agent replacing the `git` binary, which needs root in
+   the container, the limit the workspace hardening already documents. A `checkScope` condition
+   before the pull request asserts the same thing about the cumulative change, and a miss fails
+   the run. `allowedPaths` is an optional config field on both steps; unset, nothing changes and
+   the original commands run.
 6. **Check and open.** If the diff is empty the run ends `SUCCESS` with no pull request. Otherwise
    the `runTests` gate runs `builtinModels.test.ts`, the review network judges the change against the
    success criterion *every changed price cites an official URL; no invented figures*, the review
@@ -567,9 +579,10 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   holding the catalog file gives the agent that listing, which is otherwise an admin-only view.
 - **`UNVERIFIED` is a comment on the row.** The pull request body is generated from fixed text and
   carries none of the agent's own notes. A run whose only change is `UNVERIFIED` comments still
-  opens a draft each time, because those comments are not merged and are added again by the next
-  run. An empty diff still leaves its work branch pushed, with no pull request, and that branch
-  makes the next firing stop until it is deleted.
+  opens a draft each time the previous one is closed, because those comments are not merged and are
+  added again by the next run. An empty diff still leaves its work branch pushed, with no pull
+  request; the next run ignores that empty branch. A run that stops because the previous refresh is
+  still open ends `SUCCESS` with a note, so a stuck schedule looks green in the run list.
 - **The schedule is read at gateway startup.** Changing `MODEL_DISCOVERY_ENABLED` or
   `MODEL_DISCOVERY_CRON` needs a gateway restart to take effect.
 - **The model pickers suggest; they do not restrict.** A spec the catalog lacks can be typed and

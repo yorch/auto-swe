@@ -55,12 +55,13 @@ const cred = (provider: string) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   m.prisma.connection.findUniqueOrThrow.mockResolvedValue({
+    defaultBranch: 'main',
     id: 'repo-1',
     organizationName: 'me',
     repoName: 'auto-swe',
   });
   m.fetchFileContent.mockResolvedValue(CATALOG);
-  m.findBranchWork.mockResolvedValue({ branchExists: false, openPr: null });
+  m.findBranchWork.mockResolvedValue({ aheadBy: null, branchExists: false, openPr: null });
   m.decrypt.mockReturnValue(SECRET);
   m.prisma.providerCredential.findMany.mockResolvedValue([cred('anthropic'), cred('openai')]);
   m.list.mockImplementation(async ({ provider }: { provider: string }) => ({
@@ -203,12 +204,12 @@ describe('listProviderModels step', () => {
 
   describe('a previous refresh', () => {
     it.each([
-      ['its branch still exists', { branchExists: true, openPr: null }],
+      ['its branch still has commits', { aheadBy: 2, branchExists: true, openPr: null }],
       [
         'its pull request is still open',
-        { branchExists: false, openPr: { prNumber: 4, prUrl: 'u' } },
+        { aheadBy: null, branchExists: false, openPr: { prNumber: 4, prUrl: 'u' } },
       ],
-      ['both are there', { branchExists: true, openPr: { prNumber: 4, prUrl: 'u' } }],
+      ['both are there', { aheadBy: 1, branchExists: true, openPr: { prNumber: 4, prUrl: 'u' } }],
     ])('ends the run with a note when %s, before any credential is read', async (_n, work) => {
       m.findBranchWork.mockResolvedValue(work);
       const out = await listProviderModels({ request });
@@ -226,8 +227,32 @@ describe('listProviderModels step', () => {
       await listProviderModels({ request });
       expect(m.findBranchWork).toHaveBeenCalledWith(
         expect.anything(),
-        'auto/CATALOG-SCHED-abc12345'
+        'auto/CATALOG-SCHED-abc12345',
+        'main'
       );
+    });
+
+    it('proceeds when the branch exists with nothing ahead of the default branch and no PR', async () => {
+      // A run that changed nothing still pushes its branch; it must not stop the schedule.
+      m.findBranchWork.mockResolvedValue({ aheadBy: 0, branchExists: true, openPr: null });
+      const out = await listProviderModels({ request });
+      expect(out.previousRefreshOpen).toBe(false);
+      expect(m.list).toHaveBeenCalled();
+    });
+
+    it('still stops for an open PR even when the branch shows nothing ahead', async () => {
+      m.findBranchWork.mockResolvedValue({
+        aheadBy: 0,
+        branchExists: true,
+        openPr: { prNumber: 4, prUrl: 'u' },
+      });
+      expect((await listProviderModels({ request })).previousRefreshOpen).toBe(true);
+    });
+
+    it('fails, rather than proceeding, when the comparison itself fails', async () => {
+      m.findBranchWork.mockRejectedValue(new Error('compare down'));
+      await expect(listProviderModels({ request })).rejects.toThrow('compare down');
+      expect(m.prisma.providerCredential.findMany).not.toHaveBeenCalled();
     });
 
     it('checks the catalog file first, so a wrong repository still fails loudly', async () => {

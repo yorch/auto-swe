@@ -78,6 +78,7 @@ vi.mock('./workspace.js', () => ({
   })),
   fetchBranchesSubcommand: (branches: string[]) =>
     `fetch origin ${branches.map((b) => `'+refs/heads/${b}:refs/remotes/origin/${b}'`).join(' ')}`,
+  gitWithAuthHeader: (s: string) => `HARDENED git ${s}`,
   shellQuote: (s: string) => `'${s.replace(/'/g, "'\\''")}'`,
 }));
 
@@ -211,39 +212,53 @@ afterEach(() => {
 });
 
 describe('runImplementerFixSession allowedPaths', () => {
+  const BASE = 'b'.repeat(40);
   const stage = (names: string) => {
     const base = execMock.getMockImplementation();
-    execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) =>
-      cmd.startsWith('git diff --cached --name-only') ? names : base?.(cmd, options)) as never);
+    execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) => {
+      if (cmd.includes('rev-parse --verify')) {
+        return `${BASE}\n`;
+      }
+      return cmd.includes('diff --name-only') ? names : base?.(cmd, options);
+    }) as never);
     return base;
   };
+  const cmds = () => execMock.mock.calls.map((c) => c[0]);
 
-  it('fails non-retryably before the commit or the push when a file outside the list changed', async () => {
+  it('fails before the push when the committed range names a file outside the list', async () => {
     findRepo.mockResolvedValue(REPO as never);
     const base = stage('a.ts\0package.json\0');
     try {
       await expect(
         runImplementerFixSession(input({ allowedPaths: ['a.ts'] }))
       ).rejects.toMatchObject({ nonRetryable: true, type: 'DIFF_OUTSIDE_ALLOWED_PATHS' });
-      const cmds = execMock.mock.calls.map((c) => c[0]);
-      expect(cmds.some((c) => c.startsWith('git diff --cached --quiet'))).toBe(false);
-      expect(cmds.some((c) => c.includes('push origin'))).toBe(false);
+      expect(cmds().some((c) => c.includes('push origin'))).toBe(false);
     } finally {
       execMock.mockImplementation(base as never);
     }
   });
 
-  it('pushes a change inside the list', async () => {
+  it('pushes a change inside the list, measured from the commit it started at', async () => {
     findRepo.mockResolvedValue(REPO as never);
     const base = stage('a.ts\0');
     try {
       await runImplementerFixSession(input({ allowedPaths: ['a.ts'] }));
-      expect(execMock.mock.calls.map((c) => c[0]).some((c) => c.includes('push origin'))).toBe(
-        true
-      );
+      expect(cmds().some((c) => c.includes('push origin'))).toBe(true);
+      expect(cmds().some((c) => c.includes(`${BASE}...HEAD`))).toBe(true);
     } finally {
       execMock.mockImplementation(base as never);
     }
+  });
+
+  it('runs the original commit and diff when the step sets no list', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    await runImplementerFixSession(input());
+    expect(cmds().some((c) => c.includes('rev-parse --verify') || c.includes('--no-verify'))).toBe(
+      false
+    );
+    expect(cmds()).toContain(
+      "git diff --cached --quiet || git commit -m 'auto: fix CI for auto/T-1'"
+    );
   });
 });
 

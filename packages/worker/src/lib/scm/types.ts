@@ -146,14 +146,18 @@ export interface ScmProvider {
    */
   fetchFileContent(repo: RepoRef, path: string, ref?: string): Promise<string | null>;
   /**
-   * Whether `branch` already exists on the host, and the open PR from it if any.
-   * Lets a run that would reuse a fixed branch (a schedule) stop before it spends
-   * a workspace on work that would collide with the previous run's.
+   * Whether `branch` exists on the host, how many commits it has that `baseBranch`
+   * lacks (null when it does not exist), and the open PR from it if any. Lets a run
+   * that would reuse a fixed branch (a schedule) stop before it spends a workspace on
+   * work that would collide with the previous run's. A branch with no commits ahead
+   * is not work: an earlier run that changed nothing still pushes its branch. A
+   * failure to compare is thrown, never read as "no work".
    */
   findBranchWork(
     repo: RepoRef,
-    branch: string
-  ): Promise<{ branchExists: boolean; openPr: PullRequestRef | null }>;
+    branch: string,
+    baseBranch: string
+  ): Promise<{ branchExists: boolean; aheadBy: number | null; openPr: PullRequestRef | null }>;
   /** Whether an existing PR is still a draft. One API call. */
   isDraftPullRequest(repo: RepoRef, prNumber: number): Promise<boolean>;
   /**

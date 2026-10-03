@@ -19,7 +19,7 @@ import { getExecErrorStdout } from '../lib/errors.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
-import { assertDiffWithinAllowedPaths } from './allowedPaths.js';
+import { commitStaged, diffForResult, startPathGuard } from './allowedPaths.js';
 import {
   detectTestCommand,
   parseDiffToFileChanges,
@@ -132,6 +132,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   let closeMcp: (() => Promise<void>) | undefined;
 
   try {
+    // Before anything the agent can touch: the commit the guarded change is measured from.
+    const pathGuard = await startPathGuard(workspace, repo.defaultBranch, input.allowedPaths);
     heartbeat(`${mode} workspace provisioned`);
 
     // createWorkspace clones the default branch and creates a fresh local
@@ -233,17 +235,14 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // Commit and push the fix (skip the commit if the agent made no changes
     // to avoid empty CI cycles; push is still safe — it's a no-op then).
     await workspace.exec('git add -A');
-    await assertDiffWithinAllowedPaths(workspace, repo.defaultBranch, input.allowedPaths);
-    await workspace.exec(
-      `git diff --cached --quiet || git commit -m ${shellQuote(input.commitMessage)}`
-    );
+    await commitStaged(workspace, input.commitMessage, pathGuard);
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
     await workspace.gitAuthed(`push origin ${shellQuote(previousCodeResult.branch)}`);
 
     // `defaultBranch` is an operator-editable column — quote it like every other
     // interpolated ref so it cannot smuggle shell syntax into the container.
-    const diff = await workspace.exec(`git diff origin/${shellQuote(repo.defaultBranch)}`);
+    const diff = await diffForResult(workspace, repo.defaultBranch, pathGuard);
     const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
 
     tracer.addActivityEvent({

@@ -469,8 +469,9 @@ export class GitHubScmProvider implements ScmProvider {
 
   async findBranchWork(
     repo: RepoRef,
-    branch: string
-  ): Promise<{ branchExists: boolean; openPr: PullRequestRef | null }> {
+    branch: string,
+    baseBranch: string
+  ): Promise<{ branchExists: boolean; aheadBy: number | null; openPr: PullRequestRef | null }> {
     const octokit = await octokitFor(repo);
     let branchExists = true;
     try {
@@ -481,6 +482,18 @@ export class GitHubScmProvider implements ScmProvider {
       }
       branchExists = false;
     }
+    // Not caught: a compare that fails must fail the lookup, not read as "nothing ahead".
+    const aheadBy = branchExists
+      ? (
+          await octokit.repos.compareCommits({
+            base: baseBranch,
+            head: branch,
+            owner: repo.organizationName,
+            per_page: 1,
+            repo: repo.repoName,
+          })
+        ).data.ahead_by
+      : null;
     const open = (
       await octokit.pulls.list({
         head: `${repo.organizationName}:${branch}`,
@@ -490,6 +503,7 @@ export class GitHubScmProvider implements ScmProvider {
       })
     ).data[0];
     return {
+      aheadBy,
       branchExists,
       openPr: open ? { prNumber: open.number, prUrl: open.html_url } : null,
     };
