@@ -33,6 +33,8 @@ export const hostEntry = z
   // A URL never carries the default port once parsed, so `host:443` would
   // never match anything — refuse it rather than let it look set.
   .refine((h) => !h.endsWith(':443'), 'omit the default port :443')
+  // `ghe.corp.` is a spelling of `ghe.corp` that no URL comparison here treats as equal.
+  .refine((h) => !h.split(':')[0].endsWith('.'), 'omit the trailing dot')
   .max(253);
 const hostList = z.array(hostEntry).max(50);
 const ratio = z.number().min(0).max(1);

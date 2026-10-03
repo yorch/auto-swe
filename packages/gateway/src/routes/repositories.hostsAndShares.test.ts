@@ -37,6 +37,7 @@ const TEAM = '22222222-2222-4222-8222-222222222222';
 const OTHER_TEAM = '44444444-4444-4444-8444-444444444444';
 const REPO = '33333333-3333-4333-8333-333333333333';
 const ORG = '55555555-5555-4555-8555-555555555555';
+const INSTALLATION = '66666666-6666-4666-8666-666666666666';
 const AUTH = { authorization: 'Bearer fake-jwt' };
 
 async function buildApp() {
@@ -60,6 +61,7 @@ async function buildApp() {
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    gitHubInstallation: { findUnique: vi.fn() },
     runInput: { findUnique: vi.fn() },
     scheduledWorkRequest: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -261,6 +263,96 @@ describe('repository URL overrides', () => {
     });
   });
 
+  describe("an installation must live on the repository's host", () => {
+    const GHE = { githubApiUrl: 'https://ghe.corp/api/v3', githubUrl: 'https://ghe.corp' };
+    const installation = (host: string) =>
+      ctx.prisma.gitHubInstallation.findUnique.mockResolvedValue({
+        host,
+        installationId: '4242',
+      });
+
+    it("refuses the instance's installation for a repository on another host, and the reverse", async () => {
+      installation('');
+      const res = await onboard({ ...GHE, installationId: INSTALLATION });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('INSTALLATION_HOST_MISMATCH');
+      expect(ctx.prisma.connection.create).not.toHaveBeenCalled();
+
+      installation('ghe.corp');
+      const onInstance = await onboard({ installationId: INSTALLATION });
+      expect(onInstance.statusCode).toBe(400);
+      expect(JSON.parse(onInstance.payload).error.code).toBe('INSTALLATION_HOST_MISMATCH');
+    });
+
+    it("refuses another host's installation, even one with the same numeric id", async () => {
+      installation('ghe.other');
+      const res = await onboard({ ...GHE, installationId: INSTALLATION });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.message).toContain('ghe.other');
+    });
+
+    it("accepts the host's own installation, and the instance's for an instance repository", async () => {
+      installation('ghe.corp');
+      expect((await onboard({ ...GHE, installationId: INSTALLATION })).statusCode).toBe(201);
+      installation('');
+      expect((await onboard({ installationId: INSTALLATION })).statusCode).toBe(201);
+    });
+
+    describe('when editing', () => {
+      beforeEach(() => {
+        ctx.prisma.connection.findUnique.mockResolvedValue({
+          githubApiUrl: null,
+          githubUrl: null,
+          id: REPO,
+          installationId: INSTALLATION,
+          organizationName: 'Acme',
+          repoName: 'My_API',
+          teamId: TEAM,
+          type: 'git_repo',
+        });
+        ctx.prisma.connection.update.mockResolvedValue({ id: REPO });
+      });
+      const patch = (payload: Record<string, unknown>) =>
+        ctx.app.inject({
+          headers: AUTH,
+          method: 'PATCH',
+          payload,
+          url: `/api/v1/repositories/${REPO}`,
+        });
+
+      it("refuses repointing a repository away from its installation's host", async () => {
+        installation('');
+        const res = await patch(GHE);
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.payload).error.code).toBe('INSTALLATION_HOST_MISMATCH');
+        expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+      });
+
+      it('allows repointing together with a matching installation, and stores it', async () => {
+        installation('ghe.corp');
+        const res = await patch({ ...GHE, installationId: INSTALLATION });
+        expect(res.statusCode).toBe(200);
+        expect(ctx.prisma.connection.update.mock.calls[0][0].data).toMatchObject({
+          installationId: INSTALLATION,
+        });
+      });
+
+      it('does not look at installations when neither side changes', async () => {
+        const res = await patch({ description: 'x' });
+        expect(res.statusCode).toBe(200);
+        expect(ctx.prisma.gitHubInstallation.findUnique).not.toHaveBeenCalled();
+      });
+
+      it("lets an admin repoint a repository at the singleton's installation (null)", async () => {
+        const res = await patch({ installationId: null });
+        expect(res.statusCode).toBe(200);
+        expect(ctx.prisma.connection.update.mock.calls[0][0].data).toMatchObject({
+          installationId: null,
+        });
+      });
+    });
+  });
+
   it('refuses a repository that differs from an onboarded one only by case (409)', async () => {
     ctx.prisma.connection.findFirst.mockResolvedValue({ id: REPO });
     const res = await onboard({});
@@ -410,7 +502,7 @@ describe('repository sharing', () => {
         repoId: REPO,
       });
       expect(ctx.prisma.scheduledWorkRequest.updateMany).toHaveBeenCalledWith({
-        data: { isActive: false },
+        data: { isActive: false, version: { increment: 1 } },
         where: { id: SCHEDULE, isActive: true, teamId: OTHER_TEAM },
       });
       expect(ctx.temporal.syncWorkRequestSchedule).toHaveBeenCalledWith(
@@ -476,7 +568,7 @@ describe('repository sharing', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(ctx.prisma.scheduledWorkRequest.updateMany).toHaveBeenCalledWith({
-        data: { isActive: false },
+        data: { isActive: false, version: { increment: 1 } },
         where: { id: SCHEDULE, isActive: true, teamId: TEAM },
       });
       expect(ctx.temporal.syncWorkRequestSchedule).toHaveBeenCalledWith(

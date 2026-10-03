@@ -1,3 +1,4 @@
+import { generateWorkflowId, legacyWorkflowIdBases } from '@auto-swe/shared/lib/workflowId';
 import { describe, expect, it, vi } from 'vitest';
 import { allocateWorkflowId, launchTrackedWorkflow } from './workflowLaunch.js';
 
@@ -242,7 +243,7 @@ describe('allocateWorkflowId — the id from before repository ids carried a hos
       prismaWith([row(LEGACY, 'IMPLEMENTING', 'repo-mine')]),
       NEW,
       MINE,
-      LEGACY
+      [LEGACY]
     );
     expect(result).toEqual({ conflictWorkflowId: LEGACY });
   });
@@ -252,7 +253,7 @@ describe('allocateWorkflowId — the id from before repository ids carried a hos
       prismaWith([row(`${LEGACY}-r2`, 'IMPLEMENTING', 'repo-mine')]),
       NEW,
       MINE,
-      LEGACY
+      [LEGACY]
     );
     expect(result).toEqual({ conflictWorkflowId: `${LEGACY}-r2` });
   });
@@ -262,7 +263,7 @@ describe('allocateWorkflowId — the id from before repository ids carried a hos
       prismaWith([row(LEGACY, 'COMPLETED', 'repo-mine')]),
       NEW,
       MINE,
-      LEGACY
+      [LEGACY]
     );
     expect(result).toEqual({ isRerun: false, workflowId: NEW });
   });
@@ -273,13 +274,27 @@ describe('allocateWorkflowId — the id from before repository ids carried a hos
       prismaWith([row(LEGACY, 'IMPLEMENTING', 'repo-someone-else')]),
       NEW,
       MINE,
-      LEGACY
+      [LEGACY]
     );
     expect(result).toEqual({ isRerun: false, workflowId: NEW });
   });
 
+  it('queries the cased legacy id, and is blocked by a run in flight under it', async () => {
+    const findMany = vi.fn(async () => [row('eng-Acme-Api-T-1', 'IMPLEMENTING', 'repo-mine')]);
+    const prisma = { activeWorkflow: { findMany } } as never;
+    const result = await allocateWorkflowId(
+      prisma,
+      generateWorkflowId('T-1', 'Acme', 'Api'),
+      MINE,
+      legacyWorkflowIdBases('T-1', 'Acme', 'Api')
+    );
+    expect(result).toEqual({ conflictWorkflowId: 'eng-Acme-Api-T-1' });
+    const where = (findMany.mock.calls[0] as unknown as [{ where: { OR: unknown[] } }])[0].where;
+    expect(where.OR).toContainEqual({ temporalWorkflowId: 'eng-Acme-Api-T-1' });
+  });
+
   it('ignores a legacy id equal to the base id (no host override)', async () => {
-    const result = await allocateWorkflowId(prismaWith([]), LEGACY, MINE, LEGACY);
+    const result = await allocateWorkflowId(prismaWith([]), LEGACY, MINE, [LEGACY]);
     expect(result).toEqual({ isRerun: false, workflowId: LEGACY });
   });
 });

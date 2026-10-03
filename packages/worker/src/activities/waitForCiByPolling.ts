@@ -57,7 +57,7 @@ export async function waitForCiByPolling(
   input: WaitForCiByPollingInput
 ): Promise<{ ciPassed: boolean; logsUrl?: string }> {
   const repo = await prisma.connection.findUniqueOrThrow({
-    include: { installation: { select: { installationId: true } } },
+    include: { installation: { select: { host: true, installationId: true } } },
     where: { id: requireRepoId(input, 'waitForCiByPolling') },
   });
   const repoRef = toRepoRef(repo);

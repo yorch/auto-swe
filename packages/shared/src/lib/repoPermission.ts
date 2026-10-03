@@ -12,12 +12,9 @@ import {
   resolveUserCredential,
   resolveUserCredentialPolicy,
 } from './connectionCredential.js';
-import { installationTargetFor, platformCredentialScope } from './githubHostScope.js';
-import {
-  accountApiToken,
-  GITHUB_ACCOUNT_API_URL,
-  verifyGithubLoginOwnership,
-} from './githubIdentityCheck.js';
+import { resolvePlatformCredential } from './githubHostCredential.js';
+import { installationTargetFor } from './githubHostScope.js';
+import { accountTargets, verifyGithubLoginOwnership } from './githubIdentityCheck.js';
 import { PlatformCredentialHostError, resolveGitHubToken } from './githubInstallation.js';
 import {
   fetchOwnRepoPermission,
@@ -37,14 +34,14 @@ export interface PermissionRepo {
    */
   githubApiUrl: string | null;
   githubUrl: string | null;
-  installation: { installationId: string } | null;
+  installation: { installationId: string; host?: string } | null;
 }
 
 /** Select exactly the columns `lookupRepoPermission` reads. */
 export const PERMISSION_REPO_SELECT = {
   githubApiUrl: true,
   githubUrl: true,
-  installation: { select: { installationId: true } },
+  installation: { select: { host: true, installationId: true } },
   organizationName: true,
   repoName: true,
 } as const;
@@ -74,21 +71,30 @@ export async function lookupRepoPermission(
   }
   const ghConfig = await resolveGitHubConfig();
   // The platform credential goes only where it is valid (`githubHostScope`):
-  // the instance's own host. Anything else is "could not ask" — and no App JWT
-  // is posted anywhere.
+  // the instance's own host gets the instance's, another host gets the one
+  // configured for it, and a host with none is "could not ask" — and no App JWT
+  // is posted anywhere it does not belong.
   const scoped = {
     apiUrl: repo.githubApiUrl,
     baseUrl: repo.githubUrl,
+    installationHost: repo.installation?.host,
     installationId: repo.installation?.installationId ?? null,
   };
-  const scope = platformCredentialScope(scoped, ghConfig);
-  if (scope === 'mismatch' || scope === 'misconfigured') {
+  let credential: Awaited<ReturnType<typeof resolvePlatformCredential>>;
+  try {
+    credential = await resolvePlatformCredential(scoped, ghConfig);
+  } catch {
+    // The host's credentials could not be loaded (an undecryptable row, the
+    // database): "could not ask", never a denial.
+    return { failure: 'unavailable', ok: false };
+  }
+  if (credential.scope !== 'instance' && credential.scope !== 'host') {
     return { failure: 'host-mismatch', ok: false };
   }
-  const target = installationTargetFor(scoped, ghConfig);
+  const target = installationTargetFor(scoped, credential.config);
   let token: string;
   try {
-    token = await resolveGitHubToken(ghConfig, target);
+    token = await resolveGitHubToken(credential.config, target);
   } catch (err) {
     return {
       failure: err instanceof PlatformCredentialHostError ? 'host-mismatch' : 'credential-rejected',
@@ -201,14 +207,10 @@ export async function verifiedGithubLoginFor(
     return null;
   }
   const ghConfig = await resolveGitHubConfig();
-  const token = await accountApiToken(ghConfig);
   const ownership = await verifyGithubLoginOwnership(prisma, {
-    // A fixed github.com base: the stored account id comes from better-auth's
-    // built-in `github` provider, which always talks to github.com, while the
-    // instance `apiUrl` is admin-settable to a GitHub Enterprise base.
-    apiUrl: GITHUB_ACCOUNT_API_URL,
     login,
-    token,
+    // The account's own host, asked with that host's platform credential.
+    targets: accountTargets(prisma, ghConfig),
     userId,
   });
   return ownership.status === 'reassigned' ? null : login;

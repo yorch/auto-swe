@@ -180,6 +180,65 @@ describe('webhookRepositoryWhere', () => {
   });
 });
 
+describe('webhook host scope is bounded by the delivery', () => {
+  const findMany = vi.fn();
+  const secretRows = vi.fn();
+  const prisma = {
+    connection: { findMany },
+    gitHubHostWebhookSecret: { findMany: secretRows },
+  } as never;
+
+  beforeEach(() => {
+    findMany.mockReset();
+    secretRows.mockReset();
+    secretRows.mockResolvedValue([{ host: 'ghe.corp' }]);
+  });
+
+  it('loads only repositories named like the payload, with a LIKE-escaped name', async () => {
+    findMany.mockResolvedValue([{ githubUrl: 'https://ghe.corp', id: 'on-ghe' }]);
+    const where = await webhookRepositoryWhere(prisma, 'My_Org', 'a%b', undefined, 'ghe.corp');
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const candidates = findMany.mock.calls[0]?.[0].where;
+    expect(candidates).toEqual({
+      AND: [
+        { type: 'git_repo' },
+        {
+          organizationName: { equals: 'My\\_Org', mode: 'insensitive' },
+          repoName: { equals: 'a\\%b', mode: 'insensitive' },
+        },
+      ],
+    });
+    expect(where.id).toEqual({ in: ['on-ghe'] });
+  });
+
+  it('bounds an instance-secret delivery the same way and still excludes own-secret hosts', async () => {
+    findMany.mockResolvedValue([
+      { githubUrl: null, id: 'on-github' },
+      { githubUrl: 'https://ghe.corp', id: 'on-ghe' },
+    ]);
+    const where = await webhookRepositoryWhere(prisma, 'acme', 'api', undefined, null);
+    expect(findMany.mock.calls[0]?.[0].where.AND[1]).toMatchObject({
+      organizationName: { equals: 'acme' },
+    });
+    expect(where.id).toEqual({ notIn: ['on-ghe'] });
+  });
+
+  it('bounds a user-wide event to the candidates it names', async () => {
+    findMany.mockResolvedValue([{ githubUrl: 'https://ghe.corp', id: 'a' }]);
+    const named = { teamId: 'team-1' };
+    await expect(webhookHostScope(prisma, 'ghe.corp', named)).resolves.toEqual({
+      id: { in: ['a'] },
+    });
+    expect(findMany.mock.calls[0]?.[0].where).toEqual({ AND: [{ type: 'git_repo' }, named] });
+  });
+
+  it('reads no repositories at all when no host has its own secret', async () => {
+    secretRows.mockResolvedValue([]);
+    await webhookRepositoryWhere(prisma, 'acme', 'api', undefined, null);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
 describe('deliveryHostMatches', () => {
   it('accepts anything when the instance secret verified, and an absent html_url', () => {
     expect(deliveryHostMatches(null, 'https://ghe.corp/acme/api')).toBe(true);

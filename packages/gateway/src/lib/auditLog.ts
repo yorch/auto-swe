@@ -12,6 +12,7 @@ export type AuditEntityType =
   | 'EvalDataset'
   | 'EvalRubric'
   | 'GitHubConfig'
+  | 'GitHubHostCredential'
   | 'GitHubHostWebhookSecret'
   | 'GoogleOAuthConfig'
   | 'McpGrant'

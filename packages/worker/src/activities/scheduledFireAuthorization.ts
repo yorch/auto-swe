@@ -178,7 +178,7 @@ export async function scheduledFireRefusal(
       githubApiUrl: true,
       githubUrl: true,
       id: true,
-      installation: { select: { installationId: true, isActive: true } },
+      installation: { select: { host: true, installationId: true, isActive: true } },
       isActive: true,
       organizationName: true,
       repoName: true,

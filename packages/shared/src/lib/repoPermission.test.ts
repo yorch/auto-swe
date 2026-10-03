@@ -5,7 +5,9 @@ import type { PrismaClient } from '../index.js';
 const resolveUserCredentialPolicy = vi.fn();
 const resolveUserCredential = vi.fn();
 const repositoryHostsAllowed = vi.fn();
+const approvedRepositoryHosts = vi.fn();
 vi.mock('./connectionCredential.js', () => ({
+  approvedRepositoryHosts: () => approvedRepositoryHosts(),
   repositoryHostsAllowed: (...a: unknown[]) => repositoryHostsAllowed(...a),
   resolveUserCredential: (...a: unknown[]) => resolveUserCredential(...a),
   resolveUserCredentialPolicy: () => resolveUserCredentialPolicy(),
@@ -17,6 +19,31 @@ vi.mock('./githubPermission.js', () => ({
   fetchOwnRepoPermission: (...a: unknown[]) => fetchOwnRepoPermission(...a),
   fetchRepoPermission: (...a: unknown[]) => fetchRepoPermission(...a),
 }));
+
+// The per-host credential table, with a stand-in for decryption (the row's
+// ciphertext is the plaintext), so the real resolver runs end to end.
+const hostCredentialFindUnique = vi.fn();
+vi.mock('../db.js', () => ({
+  prisma: {
+    gitHubHostCredential: { findUnique: (...a: unknown[]) => hostCredentialFindUnique(...a) },
+  },
+}));
+vi.mock('./crypto.js', () => ({
+  decryptSecret: (e: { ciphertext: Buffer }) => e.ciphertext.toString(),
+}));
+/** A stored PAT-only host credential row. */
+const patRow = (host: string, pat: string) => ({
+  appId: null,
+  appPrivateKeyAuthTag: null,
+  appPrivateKeyCiphertext: null,
+  appPrivateKeyKeyVersion: null,
+  appPrivateKeyNonce: null,
+  host,
+  tokenAuthTag: Buffer.from('t'),
+  tokenCiphertext: Buffer.from(pat),
+  tokenKeyVersion: 1,
+  tokenNonce: Buffer.from('n'),
+});
 
 const resolveGitHubConfig = vi.fn();
 vi.mock('./systemConfig.js', () => ({
@@ -41,6 +68,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   clearInstallationTokenCache();
   repositoryHostsAllowed.mockResolvedValue({ ok: true });
+  approvedRepositoryHosts.mockResolvedValue(['github.com', 'api.github.com', 'ghe.corp']);
+  hostCredentialFindUnique.mockResolvedValue(null);
   fetchRepoPermission.mockResolvedValue({ ok: true, permission: 'read' });
   resolveUserCredentialPolicy.mockResolvedValue({ enabled: true, hosts: ['ghe.corp'] });
   resolveUserCredential.mockResolvedValue({
@@ -164,6 +193,71 @@ describe('lookupRepoPermission and the platform credential', () => {
     expect(fetchRepoPermission).not.toHaveBeenCalled();
   });
 
+  describe("with a platform credential configured for the repository's host", () => {
+    it("asks that host's API with that host's PAT, never the instance's", async () => {
+      hostCredentialFindUnique.mockResolvedValue(patRow('ghe.corp', 'host-pat'));
+      await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual({
+        ok: true,
+        permission: 'read',
+      });
+      expect(hostCredentialFindUnique).toHaveBeenCalledWith({ where: { host: 'ghe.corp' } });
+      expect(fetchRepoPermission).toHaveBeenCalledWith(
+        expect.objectContaining({ apiUrl: 'https://ghe.corp/api/v3', token: 'host-pat' })
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not use the instance's installation or App for a host's repository", async () => {
+      // The host has a PAT only; the instance App (installed at 900001) must not be minted for it.
+      hostCredentialFindUnique.mockResolvedValue(patRow('ghe.corp', 'host-pat'));
+      await lookupRepoPermission(
+        repo({ ...GHE, installation: { installationId: '7' } }),
+        'octocat'
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(fetchRepoPermission).toHaveBeenCalledWith(
+        expect.objectContaining({ token: 'host-pat' })
+      );
+    });
+
+    it('is a host mismatch once the host is no longer approved', async () => {
+      hostCredentialFindUnique.mockResolvedValue(patRow('ghe.corp', 'host-pat'));
+      approvedRepositoryHosts.mockResolvedValue(['github.com']);
+      await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(HOST_MISMATCH);
+      expect(fetchRepoPermission).not.toHaveBeenCalled();
+    });
+
+    it("is still a host mismatch for a half override, whatever the host's credentials", async () => {
+      hostCredentialFindUnique.mockResolvedValue(patRow('ghe.corp', 'host-pat'));
+      await expect(
+        lookupRepoPermission(repo({ githubUrl: GHE.githubUrl }), 'octocat')
+      ).resolves.toEqual(HOST_MISMATCH);
+      expect(fetchRepoPermission).not.toHaveBeenCalled();
+    });
+  });
+
+  it('answers "unavailable", not a denial, when the host credentials cannot be loaded', async () => {
+    hostCredentialFindUnique.mockRejectedValue(new Error('cannot decrypt'));
+    await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual({
+      failure: 'unavailable',
+      ok: false,
+    });
+    expect(fetchRepoPermission).not.toHaveBeenCalled();
+  });
+
+  it('refuses an installation recorded for another host, at mint time', async () => {
+    // On the instance's host with an installation of ghe.corp's, and the reverse.
+    await expect(
+      lookupRepoPermission(repo({ installation: { host: 'ghe.corp', installationId: '7' } }), 'o')
+    ).resolves.toEqual(HOST_MISMATCH);
+    hostCredentialFindUnique.mockResolvedValue(patRow('ghe.corp', 'host-pat'));
+    await expect(
+      lookupRepoPermission(repo({ ...GHE, installation: { host: '', installationId: '7' } }), 'o')
+    ).resolves.toEqual(HOST_MISMATCH);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchRepoPermission).not.toHaveBeenCalled();
+  });
+
   it('refuses a half override, whichever side, even with an installation', async () => {
     for (const half of [{ githubApiUrl: GHE.githubApiUrl }, { githubUrl: GHE.githubUrl }]) {
       await expect(
@@ -203,7 +297,7 @@ describe('lookupRepoPermission and the platform credential', () => {
 
 describe('verifiedGithubLoginFor and the platform credential', () => {
   const prismaStub = {
-    account: { findFirst: vi.fn(async () => ({ accountId: '4242' })) },
+    account: { findMany: vi.fn(async () => [{ accountId: '4242' }]) },
     user: { findUnique: vi.fn(async () => ({ githubLogin: 'octocat' })), update: vi.fn() },
   } as never;
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -228,6 +322,39 @@ describe('verifiedGithubLoginFor and the platform credential', () => {
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('https://api.github.com/users/octocat');
     expect(JSON.stringify(init.headers)).toContain('dotcom-pat');
+  });
+
+  it("verifies a github.com login with github.com's own host credential on a GitHub Enterprise instance", async () => {
+    resolveGitHubConfig.mockResolvedValue({
+      apiUrl: 'https://ghe.corp/api/v3',
+      authMode: 'pat',
+      baseUrl: 'https://ghe.corp',
+      token: 'ghe-pat',
+    });
+    approvedRepositoryHosts.mockResolvedValue(['ghe.corp', 'github.com']);
+    hostCredentialFindUnique.mockResolvedValue(patRow('github.com', 'dotcom-host-pat'));
+    await expect(verifiedGithubLoginFor(prismaStub, 'u1')).resolves.toBe('octocat');
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('https://api.github.com/users/octocat');
+    expect(JSON.stringify(init.headers)).toContain('dotcom-host-pat');
+    expect(JSON.stringify(init.headers)).not.toContain('ghe-pat');
+  });
+
+  it("verifies a GitHub Enterprise sign-in account at the instance's own host with its credential", async () => {
+    resolveGitHubConfig.mockResolvedValue({
+      apiUrl: 'https://ghe.corp/api/v3',
+      authMode: 'pat',
+      baseUrl: 'https://ghe.corp',
+      token: 'ghe-pat',
+    });
+    const stub = {
+      account: { findMany: vi.fn(async () => [{ accountId: 'ghe.corp:4242' }]) },
+      user: { findUnique: vi.fn(async () => ({ githubLogin: 'octocat' })), update: vi.fn() },
+    } as never;
+    await expect(verifiedGithubLoginFor(stub, 'u1')).resolves.toBe('octocat');
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://ghe.corp/api/v3/users/octocat');
+    expect(JSON.stringify(init.headers)).toContain('ghe-pat');
   });
 
   it('calls github.com unauthenticated on a GitHub Enterprise instance, and still answers', async () => {

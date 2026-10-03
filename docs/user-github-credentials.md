@@ -6,8 +6,8 @@ repository, and runs they launch against that repository clone, push and open pu
 that token.
 
 This is what lets a team work against GitHub or GitHub Enterprise repositories when no admin has
-configured a platform credential for them, and it attributes the pull requests a user's runs open
-to that user.
+configured a platform credential for their host, and it attributes the pull requests a user's runs
+open to that user.
 
 The feature is off by default, and an admin decides both whether it is on and which hosts a token
 may be sent to.
@@ -20,7 +20,9 @@ A run resolves its credential in this order:
 
 1. The token **the user who launched this execution** saved for the repository, when it is
    usable (see §3).
-2. The platform credential — the repository's GitHub App installation, or the PAT.
+2. The platform credential **of the repository's host** — its GitHub App installation, or the PAT.
+   A repository on the instance's own host uses the instance's credential; one on another approved
+   host uses the credential an admin configured for that host (§6).
 3. Neither: the run fails with a non-retryable configuration error.
 
 **A saved token is used only for executions its owner launched.** Never for anyone else's run, and
@@ -40,7 +42,7 @@ never for a run nobody launched. This is the property the rest of this document 
 | Slack — a channel-assistant code task | the linked platform user who asked for it |
 | Webhooks, the issue-tracker auto-trigger | nobody |
 
-A run launched by nobody uses only the platform credential.
+A run launched by nobody uses only the platform credential of the repository's host.
 
 **A schedule runs as its author.** `ScheduledWorkRequest.actsAsUserId` is set to whoever creates
 the schedule, and moves to whoever later changes what it does (its description or template), how
@@ -59,7 +61,7 @@ fire anyway. If the trigger fails, the row is reverted to the author first, only
 the takeover left it, and the Temporal schedule is then re-synced from the row as it stands (the
 revert is recorded in the audit log); if Temporal cannot be brought back, it already holds the
 firer, so the row keeps the firer too and that is recorded. The row writes are conditional on the
-state read, so a fire that overlaps an edit or a deactivation is a `409 SCHEDULE_CONFLICT`. The author firing their own schedule changes nothing, and is judged as
+version read, so a fire that overlaps an edit or a deactivation is a `409 SCHEDULE_CONFLICT`. The author firing their own schedule changes nothing, and is judged as
 themselves too. The schedules page asks for confirmation before a fire that would change the
 author.
 
@@ -129,8 +131,8 @@ The last condition binds a token to where its owner confirmed it. A team lead ca
 repository's `githubUrl` or `githubApiUrl`; when that happens, saved tokens stop being used rather
 than following the repository to a new host, and their owners save them again.
 
-When any condition fails, the run falls back to the platform credential. It never falls back to
-another user's token.
+When any condition fails, the run falls back to the platform credential of the repository's host. It
+never falls back to another user's token.
 
 A token that passes every check but **cannot be decrypted** — written under a key version the
 process no longer holds — is different: the run fails at once with a non-retryable
@@ -189,19 +191,63 @@ verification answer in `repo_access` like any other lookup.
 
 ---
 
+## 6. Platform credentials for other hosts
+
+A platform credential belongs to one GitHub host family and is sent there and nowhere else: the
+instance's PAT and App to the instance's own host, and never to another host. A host
+family is a hosted GitHub's web and API names taken together (`github.com` with `api.github.com`,
+`<tenant>.ghe.com` with `api.<tenant>.ghe.com`); a GitHub Enterprise Server's web and API share one
+hostname.
+
+For any other approved host (`github.repositoryHosts`, see [repositories.md](./repositories.md)) an
+admin can record that host's own credentials at `/studio/integrations` → GitHub → **Per-host
+credentials**: a PAT, a GitHub App (id and private key), or both. A repository on that host then
+resolves its platform credential exactly as an instance repository does — an installation token for
+the repository's own installation when it has one and the App is configured, otherwise the PAT —
+minted at that host's API with that host's App. A saved user token still wins for runs its owner
+launched.
+
+| Repository | Platform credential used |
+|---|---|
+| On the instance's host (no overrides, or overrides naming it) | The instance's PAT or App |
+| On another host with credentials configured for it | That host's PAT or App |
+| On another host with none, or whose approval has lapsed | None: runs fail with `REPO_CREDENTIAL_HOST_MISMATCH`; only a user's saved token reaches it |
+| Web and API overrides on different hosts | None, not even a user's token: `REPO_HOST_MISCONFIGURED` |
+
+A host's credential set contains nothing of the instance's: a host with only an App does not borrow
+the instance's PAT, and the instance's singleton installation id is never used there. The App
+installation a repository uses on a host is an installation recorded for that host (see
+[github-app-setup.md](./github-app-setup.md)); an installation recorded for another host is refused
+when it is chosen.
+
+Rules the API enforces, ADMIN-only: the host must be approved and must not be the instance's own
+(those credentials are the GitHub integration's); an App needs its id and private key together; a
+row cannot be left with no credential (delete it instead). Secrets are encrypted like every other
+credential, covered by `yarn keys:rotate`, and only last-fours are ever returned; every change is
+written to the audit log as `GitHubHostCredential`, without secrets.
+
+Credentials are allowed for a data-residency tenant (`<tenant>.ghe.com`) that is not the instance.
+A webhook secret is not: those hosts send no `X-GitHub-Enterprise-Host` header and always sign with
+the instance secret, so the per-host webhook secret table refuses them.
+
+---
+
 ## Limitations
 
 - **Webhook and issue-tracker runs never use a saved token.** They carry no platform user to act
-  for. Against a repository with no platform credential, those runs fail with a configuration
-  error.
+  for. Against a repository on a host with no platform credential (§6), those runs fail with a
+  configuration error.
 - **A schedule runs as its author for as long as it exists.** Its author leaving the team or being
   deactivated makes every fire refuse with `acting-user-missing`; it does not fall back to the
   platform credential. The schedule keeps that author recorded until an admin or team lead edits
   or re-activates it, which takes it over. Schedules created before
   authors were recorded run as nobody until then.
-- **Overlapping changes to a schedule resolve by retry.** The loser of an edit, a fire by hand and
-  a deactivation that overlap gets `409 SCHEDULE_CONFLICT` and repeats it (a fire by hand of a paused
-  schedule is `409 SCHEDULE_INACTIVE` instead: resume it first); Temporal is re-synced
+- **Overlapping changes to a schedule resolve by retry, except one case.** Writes are
+  compare-and-set on the row's `version`. An edit that loses to a fire-by-hand takeover is retried
+  internally (three attempts, the decision and the launch check taken again on the re-read row);
+  an edit that loses to anything else, and a fire by hand or a deactivation that loses to any
+  overlapping write, gets `409 SCHEDULE_CONFLICT` and repeats it (a fire by hand of a paused
+  schedule is `409 SCHEDULE_INACTIVE` instead: resume it first). Temporal is re-synced
   from the row on a best-effort basis, and the out-of-sync refusal above is what stops a fire if
   that re-sync also fails.
 - **A Slack launch is only as trustworthy as the account link.** Whoever controls the linked Slack
@@ -225,6 +271,12 @@ verification answer in `repo_access` like any other lookup.
 - **Runs in flight keep their identity.** Removing a token, or turning the feature off, takes
   effect on the next GitHub call; a call already made is not undone, and a pull request already
   opened stays attributed to the token's owner.
-- **CI logs on another host are fetched with the platform credential.** A user token is sent only
-  to the repository's own web and API origins; a log URL anywhere else gets the platform token
-  where that origin is trusted, or no token at all.
+- **CI logs are fetched with the credential of the repository's host.** A user token is sent only
+  to the repository's own web and API origins, and the platform credential only to the origins of
+  its host's own credential set; a log URL anywhere else gets no token at all.
+- **One credential set per host.** A host has one PAT and one App; two Apps on the same host, or a
+  different PAT per organization, are not expressible. An App's installations are per host, and
+  which one a repository uses is chosen per repository.
+- **Credentials follow the approval.** A host removed from `github.repositoryHosts` keeps its row
+  but is inert until it is approved again, and the host's repositories then fail like any other
+  host with none.

@@ -84,13 +84,13 @@ export interface FixSessionInput {
 async function resolveSessionRepo(previousCodeResult: CodeResult): Promise<Connection> {
   if (previousCodeResult.repoId) {
     return prisma.connection.findUniqueOrThrow({
-      include: { installation: { select: { installationId: true } } },
+      include: { installation: { select: { host: true, installationId: true } } },
       where: { id: previousCodeResult.repoId },
     });
   }
   const workflow = await prisma.activeWorkflow.findFirst({
     include: {
-      repository: { include: { installation: { select: { installationId: true } } } },
+      repository: { include: { installation: { select: { host: true, installationId: true } } } },
     },
     orderBy: { updatedAt: 'desc' },
     where: { assignedBranch: previousCodeResult.branch },

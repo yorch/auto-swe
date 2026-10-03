@@ -115,10 +115,16 @@ export async function claimsHostWithOwnSecret(
  *   a webhook secret of its own: those hosts are verified with it alone. The
  *   exception is github.com, which sends no host header and so can only ever
  *   use the instance secret: a row for it (legacy data) excludes nothing.
+ *
+ * `candidates` bounds which repositories are loaded to resolve hosts. The
+ * returned predicate is meant to be ANDed with the same `candidates` predicate,
+ * so a repository outside it is never matched either way, and the cost follows
+ * the delivery (the repositories it names) rather than the number onboarded.
  */
 export async function webhookHostScope(
   prisma: PrismaClient,
-  verifiedHost: string | null
+  verifiedHost: string | null,
+  candidates: Prisma.ConnectionWhereInput = {}
 ): Promise<Prisma.ConnectionWhereInput> {
   let ownSecretHosts: Set<string> | null = null;
   if (verifiedHost === null) {
@@ -134,7 +140,7 @@ export async function webhookHostScope(
     () =>
       prisma.connection.findMany({
         select: { githubUrl: true, id: true },
-        where: { type: 'git_repo' },
+        where: { AND: [{ type: 'git_repo' }, candidates] },
       })
   );
   const hostOf = (c: { githubUrl: string | null }) =>
@@ -190,13 +196,15 @@ export async function webhookRepositoryWhere(
   htmlUrl: string | undefined,
   verifiedHost: string | null
 ): Promise<Prisma.ConnectionWhereInput> {
-  const hostScope = await webhookHostScope(prisma, verifiedHost);
   // GitHub owner and repository names are case-insensitive, and a payload's
   // casing need not match what was stored at onboarding.
-  const byName: Prisma.ConnectionWhereInput = {
+  const nameWhere: Prisma.ConnectionWhereInput = {
     organizationName: insensitiveName(org),
     repoName: insensitiveName(repoName),
-    ...hostScope,
+  };
+  const byName: Prisma.ConnectionWhereInput = {
+    ...nameWhere,
+    ...(await webhookHostScope(prisma, verifiedHost, nameWhere)),
   };
   // The verified host already decides it; `html_url` is attacker-supplied.
   if (verifiedHost !== null || !htmlUrl) {

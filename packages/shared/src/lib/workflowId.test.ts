@@ -4,6 +4,7 @@ import {
   disambiguatedWorkflowIdBase,
   generateBranchName,
   generateWorkflowId,
+  legacyWorkflowIdBases,
   workflowIdFamilyBases,
 } from './workflowId.js';
 
@@ -151,16 +152,18 @@ describe('chooseWorkflowId — the id from before repository ids carried a host'
   });
 
   it('is blocked by this repository’s execution still running under it', () => {
-    expect(chooseWorkflowId(NEW, [row(LEGACY, 'IMPLEMENTING', 'repo-mine')], ME, LEGACY)).toEqual({
-      conflictWorkflowId: LEGACY,
-    });
+    expect(chooseWorkflowId(NEW, [row(LEGACY, 'IMPLEMENTING', 'repo-mine')], ME, [LEGACY])).toEqual(
+      {
+        conflictWorkflowId: LEGACY,
+      }
+    );
     expect(
-      chooseWorkflowId(NEW, [row(`${LEGACY}-r2`, 'IMPLEMENTING', 'repo-mine')], ME, LEGACY)
+      chooseWorkflowId(NEW, [row(`${LEGACY}-r2`, 'IMPLEMENTING', 'repo-mine')], ME, [LEGACY])
     ).toEqual({ conflictWorkflowId: `${LEGACY}-r2` });
   });
 
   it('is not blocked once that execution has finished', () => {
-    expect(chooseWorkflowId(NEW, [row(LEGACY, 'COMPLETED', 'repo-mine')], ME, LEGACY)).toEqual({
+    expect(chooseWorkflowId(NEW, [row(LEGACY, 'COMPLETED', 'repo-mine')], ME, [LEGACY])).toEqual({
       isRerun: false,
       workflowId: NEW,
     });
@@ -168,21 +171,93 @@ describe('chooseWorkflowId — the id from before repository ids carried a host'
 
   it('is not blocked by ANOTHER repository whose legacy id is the same string', () => {
     expect(
-      chooseWorkflowId(NEW, [row(LEGACY, 'IMPLEMENTING', 'repo-someone-else')], ME, LEGACY)
+      chooseWorkflowId(NEW, [row(LEGACY, 'IMPLEMENTING', 'repo-someone-else')], ME, [LEGACY])
     ).toEqual({ isRerun: false, workflowId: NEW });
   });
 
   it('never lets legacy rows influence which id is chosen', () => {
     // A finished legacy run is not "ours in the base family": the new id is used as is.
-    const result = chooseWorkflowId(NEW, [row(LEGACY, 'FAILED', 'repo-mine')], ME, LEGACY);
+    const result = chooseWorkflowId(NEW, [row(LEGACY, 'FAILED', 'repo-mine')], ME, [LEGACY]);
     expect(result).toEqual({ isRerun: false, workflowId: NEW });
   });
 
   it('adds the legacy base to the query families only when it differs', () => {
-    expect(workflowIdFamilyBases(NEW, 'repo-mine', LEGACY)).toContain(LEGACY);
-    expect(workflowIdFamilyBases(LEGACY, 'repo-mine', LEGACY)).not.toContain(undefined);
+    expect(workflowIdFamilyBases(NEW, 'repo-mine', [LEGACY])).toContain(LEGACY);
+    expect(workflowIdFamilyBases(LEGACY, 'repo-mine', [LEGACY])).not.toContain(undefined);
     expect(
-      workflowIdFamilyBases(LEGACY, 'repo-mine', LEGACY).filter((b) => b === LEGACY)
+      workflowIdFamilyBases(LEGACY, 'repo-mine', [LEGACY]).filter((b) => b === LEGACY)
     ).toHaveLength(1);
+  });
+});
+
+describe('workflow ids are lowercase in owner and name', () => {
+  it('lowercases owner and repository name but keeps the ticket id as given', () => {
+    expect(generateWorkflowId('JIRA-7', 'Acme', 'Payments-API')).toBe(
+      'eng-acme-payments-api-JIRA-7'
+    );
+    expect(generateWorkflowId('JIRA-7', 'Acme', 'Payments-API', 'https://GHE.corp')).toBe(
+      'eng-ghe.corp-acme-payments-api-JIRA-7'
+    );
+  });
+
+  it('gives case-only duplicate repositories the same id', () => {
+    expect(generateWorkflowId('T-1', 'ACME', 'Api')).toBe(generateWorkflowId('T-1', 'acme', 'api'));
+  });
+
+  describe('legacy cased ids', () => {
+    const NEW = 'eng-acme-api-T-1';
+    const CASED = 'eng-Acme-Api-T-1';
+    const ME = { externalTicketId: 'T-1', repoId: 'repo-mine' };
+    const row = (id: string, status: string, repoId: string | null) => ({
+      currentStatus: status,
+      externalTicketId: 'T-1',
+      repoId,
+      temporalWorkflowId: id,
+    });
+
+    it('lists the stored-casing ids, with and without the host, and never the current one', () => {
+      expect(legacyWorkflowIdBases('T-1', 'Acme', 'Api')).toEqual([CASED]);
+      expect(legacyWorkflowIdBases('T-1', 'acme', 'api')).toEqual([]);
+      expect(legacyWorkflowIdBases('T-1', 'Acme', 'Api', 'https://ghe.corp')).toEqual([
+        'eng-ghe.corp-Acme-Api-T-1',
+        CASED,
+      ]);
+      expect(legacyWorkflowIdBases('T-1', 'acme', 'api', 'https://ghe.corp')).toEqual([NEW]);
+    });
+
+    it('is blocked by this repository’s run still in flight under the cased id', () => {
+      const legacy = legacyWorkflowIdBases('T-1', 'Acme', 'Api');
+      expect(chooseWorkflowId(NEW, [row(CASED, 'IMPLEMENTING', 'repo-mine')], ME, legacy)).toEqual({
+        conflictWorkflowId: CASED,
+      });
+      expect(
+        chooseWorkflowId(NEW, [row(`${CASED}-r1`, 'IMPLEMENTING', 'repo-mine')], ME, legacy)
+      ).toEqual({ conflictWorkflowId: `${CASED}-r1` });
+      // Its disambiguated family counts too.
+      const disambiguated = `${CASED}-xrepomine`;
+      expect(
+        chooseWorkflowId(NEW, [row(disambiguated, 'IMPLEMENTING', 'repo-mine')], ME, legacy)
+      ).toEqual({ conflictWorkflowId: disambiguated });
+    });
+
+    it('is not blocked once the cased run finished, or by another repository’s', () => {
+      const legacy = legacyWorkflowIdBases('T-1', 'Acme', 'Api');
+      expect(chooseWorkflowId(NEW, [row(CASED, 'COMPLETED', 'repo-mine')], ME, legacy)).toEqual({
+        isRerun: false,
+        workflowId: NEW,
+      });
+      expect(chooseWorkflowId(NEW, [row(CASED, 'IMPLEMENTING', 'repo-other')], ME, legacy)).toEqual(
+        { isRerun: false, workflowId: NEW }
+      );
+    });
+
+    it('queries the legacy families alongside the current ones', () => {
+      expect(workflowIdFamilyBases(NEW, 'repo-mine', [CASED])).toEqual([
+        NEW,
+        disambiguatedWorkflowIdBase(NEW, 'repo-mine'),
+        CASED,
+        disambiguatedWorkflowIdBase(CASED, 'repo-mine'),
+      ]);
+    });
   });
 });

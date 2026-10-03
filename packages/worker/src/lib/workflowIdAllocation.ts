@@ -2,6 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import {
   chooseWorkflowId,
   generateWorkflowId,
+  legacyWorkflowIdBases,
   type WorkflowIdAllocation,
   workflowIdFamilyBases,
 } from '@auto-swe/shared/lib/workflowId';
@@ -27,19 +28,22 @@ export async function allocateTicketWorkflowId(repo: {
   /** The repository's web base override; null/absent on the instance's own host. */
   githubUrl?: string | null;
 }): Promise<WorkflowIdAllocation> {
-  // A repository on another host carries it in the id; a run still in flight under
-  // the id the ticket had before that blocks a second one (`chooseWorkflowId`).
+  // A run still in flight under an id the ticket had in an earlier format (stored
+  // casing, no host segment) blocks a second one (`chooseWorkflowId`).
   const baseId = generateWorkflowId(
     repo.externalTicketId,
     repo.organizationName,
     repo.repoName,
     repo.githubUrl
   );
-  const legacyBaseId = repo.githubUrl
-    ? generateWorkflowId(repo.externalTicketId, repo.organizationName, repo.repoName)
-    : undefined;
+  const legacyBaseIds = legacyWorkflowIdBases(
+    repo.externalTicketId,
+    repo.organizationName,
+    repo.repoName,
+    repo.githubUrl
+  );
   const owner = { externalTicketId: repo.externalTicketId, repoId: repo.id };
-  const bases = workflowIdFamilyBases(baseId, owner.repoId, legacyBaseId);
+  const bases = workflowIdFamilyBases(baseId, owner.repoId, legacyBaseIds);
   const rows = await prisma.activeWorkflow.findMany({
     select: {
       currentStatus: true,
@@ -63,6 +67,6 @@ export async function allocateTicketWorkflowId(repo: {
       temporalWorkflowId: r.temporalWorkflowId,
     })),
     owner,
-    legacyBaseId
+    legacyBaseIds
   );
 }

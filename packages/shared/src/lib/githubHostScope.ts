@@ -1,21 +1,27 @@
 /**
  * Where a PLATFORM credential may go.
  *
- * The platform's credentials — the instance PAT, the singleton App's
- * installation token, and an App JWT (which can mint a token for every
- * installation of the App) — are valid on the instance's own GitHub host and
- * nowhere else. They are NEVER sent to another host: the App's id, private key
- * and every installation of it belong to the instance's host, so an installation
- * cannot exist elsewhere, and posting an App JWT to another host would hand it a
- * credential replayable against the real one. A repository on another host is
- * reachable only with a user's own saved token, which is a separate thing, bound
- * to its verified origins.
+ * The platform's credentials — a PAT, an App's installation tokens, and an App
+ * JWT (which can mint a token for every installation of the App) — each belong
+ * to one GitHub host family and are valid there and nowhere else. They are
+ * NEVER sent to another host: an App's id, private key and installations
+ * belong to its host, so an installation cannot exist elsewhere, and posting
+ * an App JWT to another host would hand it a credential replayable against the
+ * real one.
+ *
+ * Two credential sets exist: the instance's (the `GitHubConfig` singleton,
+ * valid on the instance's own host family) and, for any other approved host, the
+ * one an admin configured for that host (`GitHubHostCredential`). A repository
+ * is reached with the set of the host it lives on; a host with no set is
+ * reachable only with a user's own saved token, which is a separate thing,
+ * bound to its verified origins.
  *
  * Every place that sends a platform credential to a repository's host asks this
- * module, so the rule has one definition: the worker's `runToken` /
- * `fetchCiLogs` / `repoPermission`, the gateway's check-run lookup, and the
- * shared permission lookup. `resolveGitHubToken` enforces the API-host half of
- * it as a last line.
+ * module (through `resolvePlatformCredential`, which adds the lookup of the
+ * host's set): the worker's `runToken` / `fetchCiLogs` / `repoPermission`, the
+ * gateway's check-run lookup, and the shared permission lookup.
+ * `resolveGitHubToken` enforces the API-host half of it as a last line, against
+ * the set the token is minted from.
  */
 
 /**
@@ -75,6 +81,8 @@ export interface HostScopedRepo {
   baseUrl?: string | null;
   /** The repository's own GitHub App installation, if any. */
   installationId?: string | null;
+  /** The `GitHubInstallation.host` of that installation, when known. */
+  installationHost?: string | null;
 }
 
 export interface HostScopedConfig {
@@ -86,9 +94,14 @@ export interface HostScopedConfig {
 }
 
 export type PlatformCredentialScope =
-  /** Both hosts are the instance's own: its credential applies. */
+  /** Both hosts are the instance's own: its credential set applies. */
   | 'instance'
-  /** Another host: no platform credential applies. */
+  /**
+   * Both hosts are one other host that has a credential set of its own: that
+   * set applies, and the instance's never does.
+   */
+  | 'host'
+  /** Another host with no credential set: no platform credential applies. */
   | 'mismatch'
   /**
    * The repository's web host and API host are different hosts (a half
@@ -96,10 +109,24 @@ export type PlatformCredentialScope =
    */
   | 'misconfigured';
 
-/** Where the platform credential may go for `repo`. See the module comment. */
+/**
+ * The host family a repository lives on, judged by its web base (the API base
+ * agrees with it unless the repository is `misconfigured`).
+ */
+export function repoHostFamily(repo: HostScopedRepo, config: HostScopedConfig): string {
+  return hostFamily(repo.baseUrl ?? config.baseUrl);
+}
+
+/**
+ * Where the platform credential may go for `repo`. See the module comment.
+ *
+ * `configuredHosts` are the host families that have a credential set of their
+ * own; omitted, none do and every other host is a `mismatch`.
+ */
 export function platformCredentialScope(
   repo: HostScopedRepo,
-  config: HostScopedConfig
+  config: HostScopedConfig,
+  configuredHosts: Iterable<string> = []
 ): PlatformCredentialScope {
   const onInstance =
     (!repo.apiUrl || sameHostFamily(repo.apiUrl, config.apiUrl)) &&
@@ -109,14 +136,42 @@ export function platformCredentialScope(
   }
   const web = repo.baseUrl ?? config.baseUrl;
   const api = repo.apiUrl ?? config.apiUrl;
-  return sameHostFamily(web, api) ? 'mismatch' : 'misconfigured';
+  if (!sameHostFamily(web, api)) {
+    return 'misconfigured';
+  }
+  return new Set(configuredHosts).has(hostFamily(web)) ? 'host' : 'mismatch';
+}
+
+/**
+ * The `GitHubInstallation.host` a repository's installation must carry: empty
+ * for the instance's own host, otherwise the repository's host family.
+ */
+export function installationHostFor(repo: HostScopedRepo, config: HostScopedConfig): string {
+  return platformCredentialScope(repo, config, [repoHostFamily(repo, config)]) === 'instance'
+    ? ''
+    : repoHostFamily(repo, config);
+}
+
+/**
+ * Whether the repository's installation is recorded for a different host than
+ * the repository lives on. Unknown (no installation, or its host not loaded)
+ * is not a mismatch.
+ */
+export function installationHostMismatch(repo: HostScopedRepo, config: HostScopedConfig): boolean {
+  return (
+    Boolean(repo.installationId) &&
+    repo.installationHost != null &&
+    repo.installationHost !== installationHostFor(repo, config)
+  );
 }
 
 /**
  * Which installation, and at which API host, `repo`'s platform credential comes
- * from. Always the instance's API host — installations live only there. A
- * repository with no installation of its own takes the singleton's. Callers
- * must have checked {@link platformCredentialScope} is 'instance'; the
+ * from: the API host of the credential set the caller resolved (`config` is that
+ * set's config), and the repository's installation — which must live on that
+ * same host (`GitHubInstallation.host`). A repository with no installation of
+ * its own takes the instance singleton's, which a host's set does not have.
+ * Callers must have resolved a set for the repository's scope; the
  * `resolveGitHubToken` guard refuses any other host regardless.
  */
 export function installationTargetFor(
@@ -126,10 +181,14 @@ export function installationTargetFor(
   return { apiUrl: config.apiUrl, installationId: repo.installationId ?? null };
 }
 
-/**
- * Whether the instance's API host is github.com's — the only place a platform
- * credential may be sent when asking about a github.com account.
- */
-export function instanceIsGithubDotCom(config: { apiUrl: string }): boolean {
-  return hostFamily(config.apiUrl) === 'github.com';
+/** The API base of a host family when no repository override states one. */
+export function defaultApiUrlForHost(host: string): string {
+  const hostname = host.toLowerCase().split(':')[0];
+  if (hostname === 'github.com') {
+    return 'https://api.github.com';
+  }
+  if (GHE_CLOUD_WEB.test(hostname)) {
+    return `https://api.${host}`;
+  }
+  return `https://${host}/api/v3`;
 }

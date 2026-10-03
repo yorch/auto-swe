@@ -195,7 +195,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
   await assertModelPricedForUsdCap(resolved.model.spec);
 
   const repo = await prisma.connection.findUniqueOrThrow({
-    include: { installation: { select: { installationId: true } } },
+    include: { installation: { select: { host: true, installationId: true } } },
     where: { id: repoId },
   });
   const workflowDefaults = await resolveWorkflowDefaults();

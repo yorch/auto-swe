@@ -6,11 +6,20 @@
  * across several GitHub organizations means several installations, and this is
  * how an operator records them.
  *
+ * An installation belongs to one GitHub host (`host`: empty for the instance's
+ * own, otherwise an approved host with credentials under `github-host-credentials`);
+ * the same numeric id on two hosts is two installations.
+ *
  * ADMIN-only, like the other credential-adjacent admin surfaces. An
  * installation id is not a secret, but pointing a repository at the wrong one
  * silently changes which GitHub account answers permission questions about it.
  */
 import { Prisma } from '@auto-swe/shared';
+import { hostEntry } from '@auto-swe/shared/config';
+import { approvedRepositoryHosts } from '@auto-swe/shared/lib/connectionCredential';
+import { hostKeyOf } from '@auto-swe/shared/lib/githubHostCredential';
+import { hostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -27,6 +36,12 @@ const InstallationIdSchema = z
 
 const CreateSchema = z.object({
   accountLogin: z.string().min(1).max(200),
+  /**
+   * The GitHub host the installation lives on. Omitted (or the instance's own
+   * host) means the instance's. A numeric installation id is only unique per
+   * host, so the host is part of the identity and cannot be changed later.
+   */
+  host: hostEntry.optional(),
   installationId: InstallationIdSchema,
   isActive: z.boolean().optional().default(true),
 });
@@ -56,15 +71,34 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
     '/github-installations',
     { onRequest: adminOnly, schema: { body: CreateSchema } },
     async (request, reply) => {
+      // Stored as the host family, with the instance's own host as ''.
+      let host = '';
+      if (request.body.host) {
+        const key = hostKeyOf(request.body.host);
+        const ghConfig = await resolveGitHubConfig();
+        if (key !== hostFamily(ghConfig.baseUrl)) {
+          if (!(await approvedRepositoryHosts()).map(hostKeyOf).includes(key)) {
+            return reply.status(400).send({
+              error: {
+                code: 'HOST_NOT_APPROVED',
+                message: `${key} is neither a configured GitHub host nor listed in github.repositoryHosts`,
+              },
+            });
+          }
+          host = key;
+        }
+      }
       try {
-        const created = await fastify.prisma.gitHubInstallation.create({ data: request.body });
+        const created = await fastify.prisma.gitHubInstallation.create({
+          data: { ...request.body, host },
+        });
         return reply.status(201).send({ data: created });
       } catch (err) {
         if (isUniqueConstraintError(err)) {
           return reply.status(409).send({
             error: {
               code: 'INSTALLATION_EXISTS',
-              message: `Installation ${request.body.installationId} is already registered`,
+              message: `Installation ${request.body.installationId} is already registered${host ? ` on ${host}` : ''}`,
             },
           });
         }

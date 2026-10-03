@@ -173,7 +173,7 @@ async function evaluateScorer(
           return gateFailed;
         }
         const repo = await prisma.connection.findUniqueOrThrow({
-          include: { installation: { select: { installationId: true } } },
+          include: { installation: { select: { host: true, installationId: true } } },
           where: { id: connectionId },
         });
         const defaults = await resolveWorkflowDefaults();

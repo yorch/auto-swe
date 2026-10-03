@@ -19,12 +19,16 @@ export interface GithubInstallationRow {
   /** The organization or user the App is installed on. Display only. */
   accountLogin: string;
   isActive: boolean;
+  /** The host the installation lives on: empty for the instance's own. */
+  host: string;
   createdAt?: string;
   _count?: { connections: number };
 }
 
 export interface CreateGithubInstallationBody {
   installationId: string;
+  /** Omitted: the instance's own host. */
+  host?: string;
   accountLogin: string;
   isActive?: boolean;
 }

@@ -4,6 +4,15 @@ import { isTerminalActiveWorkflowStatus } from '../types/api.js';
  * Generate the base Temporal workflow ID for a ticket in one repository:
  * `eng-<org>-<repo>-<ticket>`.
  *
+ * Owner and repository name are lowercased: they are case-insensitive
+ * identities, so a repository's id does not depend on the casing it was stored
+ * with. Two legacy rows for one repository under different casings produce the
+ * same string, but the allocator still sees two repositories, so the second one
+ * gets a disambiguated id ({@link chooseWorkflowId}). The ticket id keeps its
+ * casing: it is an external key the tracker owns (and the branch name is built
+ * from it), and lowercasing it would rename the id of every run already in
+ * flight. {@link legacyWorkflowIdBases} lists the cased ids earlier runs may hold.
+ *
  * The ID must be unique across all workflows to avoid collisions.
  * Including organizationName prevents collisions between repos with
  * the same name in different organizations.
@@ -27,10 +36,46 @@ export function generateWorkflowId(
   repoName: string,
   githubUrl?: string | null
 ): string {
+  return buildWorkflowId(
+    externalTicketId,
+    organizationName.toLowerCase(),
+    repoName.toLowerCase(),
+    githubUrl
+  );
+}
+
+function buildWorkflowId(
+  externalTicketId: string,
+  organizationName: string,
+  repoName: string,
+  githubUrl?: string | null
+): string {
   const host = githubUrl ? hostSegment(githubUrl) : null;
   return host
     ? `eng-${host}-${organizationName}-${repoName}-${externalTicketId}`
     : `eng-${organizationName}-${repoName}-${externalTicketId}`;
+}
+
+/**
+ * The ids the same ticket may still be running under from before the current
+ * format: owner and name as stored (before they were lowercased), with and
+ * without the host segment (before repository ids carried their host). An
+ * execution of the same repository still in flight under any of them blocks a
+ * duplicate start, so the allocator checks them as well as the current id. The
+ * current id itself is never among them, and the result has no duplicates.
+ */
+export function legacyWorkflowIdBases(
+  externalTicketId: string,
+  organizationName: string,
+  repoName: string,
+  githubUrl?: string | null
+): string[] {
+  const current = generateWorkflowId(externalTicketId, organizationName, repoName, githubUrl);
+  const candidates = [
+    buildWorkflowId(externalTicketId, organizationName, repoName, githubUrl),
+    buildWorkflowId(externalTicketId, organizationName, repoName),
+  ];
+  return [...new Set(candidates)].filter((id) => id !== current);
 }
 
 function hostSegment(url: string): string | null {
@@ -86,15 +131,20 @@ function familyRe(base: string): RegExp {
 /**
  * Prefixes whose rows {@link chooseWorkflowId} needs to see, for building the
  * `startsWith` / equality query. Pass `repoId` when known, and `legacyBaseId`
- * when the repository has a host override (see {@link chooseWorkflowId}).
+ * for ids from an earlier format (see {@link legacyWorkflowIdBases}).
  */
 export function workflowIdFamilyBases(
   baseId: string,
   repoId?: string | null,
-  legacyBaseId?: string | null
+  legacyBaseIds: readonly string[] = []
 ): string[] {
   const bases = repoId ? [baseId, disambiguatedWorkflowIdBase(baseId, repoId)] : [baseId];
-  return legacyBaseId && legacyBaseId !== baseId ? [...bases, legacyBaseId] : bases;
+  const legacy = legacyBaseIds.filter((l) => l !== baseId);
+  return [
+    ...bases,
+    ...legacy,
+    ...(repoId ? legacy.map((l) => disambiguatedWorkflowIdBase(l, repoId)) : []),
+  ];
 }
 
 /**
@@ -108,12 +158,13 @@ export function workflowIdFamilyBases(
  * - Otherwise the first unused ID in the chosen family: the base, then `-r1`,
  *   `-r2`, … — `isRerun` when we have run this ticket before.
  *
- * `legacyBaseId` is the id the same ticket had before repository ids carried
- * their host (only a repository with a host override has one). An execution of
- * OUR repository still in flight under it blocks a second one exactly as one
- * under `baseId` does — otherwise the upgrade, or giving a repository a host
- * override, would let two runs push the same branch. Its rows never influence
- * which ID is chosen: they are only ever a reason to refuse.
+ * `legacyBaseIds` are the ids the same ticket may hold from before the current
+ * format (see {@link legacyWorkflowIdBases}: stored casing, no host segment). An
+ * execution of OUR repository still in flight under one of them, or under its
+ * disambiguated family, blocks a second one exactly as one under `baseId`
+ * does — otherwise the upgrade, or giving a repository a host override, would
+ * let two runs push the same branch. Its rows never influence which ID is
+ * chosen: they are only ever a reason to refuse.
  *
  * Without `owner` every row counts as ours, which is the old behaviour.
  */
@@ -121,7 +172,7 @@ export function chooseWorkflowId(
   baseId: string,
   rows: readonly WorkflowIdCandidate[],
   owner?: { repoId: string; externalTicketId?: string },
-  legacyBaseId?: string | null
+  legacyBaseIds: readonly string[] = []
 ): WorkflowIdAllocation {
   const bases = workflowIdFamilyBases(baseId, owner?.repoId);
   const inFamily = rows.filter((r) => bases.some((b) => familyRe(b).test(r.temporalWorkflowId)));
@@ -131,17 +182,17 @@ export function chooseWorkflowId(
       (owner.externalTicketId == null ||
         r.externalTicketId == null ||
         r.externalTicketId === owner.externalTicketId));
-  if (legacyBaseId && legacyBaseId !== baseId) {
-    const legacyFamily = familyRe(legacyBaseId);
-    const legacyActive = rows.find(
-      (r) =>
-        legacyFamily.test(r.temporalWorkflowId) &&
-        isOurs(r) &&
-        !isTerminalActiveWorkflowStatus(r.currentStatus)
-    );
-    if (legacyActive) {
-      return { conflictWorkflowId: legacyActive.temporalWorkflowId };
-    }
+  const legacyFamilies = workflowIdFamilyBases(baseId, owner?.repoId, legacyBaseIds)
+    .slice(bases.length)
+    .map(familyRe);
+  const legacyActive = rows.find(
+    (r) =>
+      legacyFamilies.some((f) => f.test(r.temporalWorkflowId)) &&
+      isOurs(r) &&
+      !isTerminalActiveWorkflowStatus(r.currentStatus)
+  );
+  if (legacyActive) {
+    return { conflictWorkflowId: legacyActive.temporalWorkflowId };
   }
   const ours = inFamily.filter(isOurs);
   const active = ours.find((r) => !isTerminalActiveWorkflowStatus(r.currentStatus));

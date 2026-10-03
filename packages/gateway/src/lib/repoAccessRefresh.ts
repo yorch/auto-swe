@@ -7,7 +7,7 @@
  * enforcement "un-asked-about" is indistinguishable from denied — so a routine
  * membership change would lock a team out for up to a sweep interval.
  */
-import type { PrismaClient } from '@auto-swe/shared';
+import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { resolveUserCredentialPolicy } from '@auto-swe/shared/lib/connectionCredential';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import {
@@ -82,21 +82,19 @@ export async function refreshInvalidatedAccess(
   // onboarded on more than one host — those are different repositories. Either
   // way the lookup is bound to the host the delivery's secret proved: a user
   // event names no repository, but it still may not reach another host's.
-  const repoWhere =
-    invalidation.kind === 'user'
-      ? {
-          AND: [
-            repoMemberWhere({ user: { githubLogin: invalidation.login } }),
-            await webhookHostScope(prisma, verifiedHost),
-          ],
-        }
-      : await webhookRepositoryWhere(
-          prisma,
-          invalidation.org,
-          invalidation.repo,
-          invalidation.htmlUrl,
-          verifiedHost
-        );
+  let repoWhere: Prisma.ConnectionWhereInput;
+  if (invalidation.kind === 'user') {
+    const reachable = repoMemberWhere({ user: { githubLogin: invalidation.login } });
+    repoWhere = { AND: [reachable, await webhookHostScope(prisma, verifiedHost, reachable)] };
+  } else {
+    repoWhere = await webhookRepositoryWhere(
+      prisma,
+      invalidation.org,
+      invalidation.repo,
+      invalidation.htmlUrl,
+      verifiedHost
+    );
+  }
   const repos = await runUnscoped(
     'a webhook names a GitHub repository, not a team',
     ['Connection'],

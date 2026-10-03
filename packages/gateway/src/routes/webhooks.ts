@@ -1,9 +1,7 @@
 import crypto from 'node:crypto';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
-import {
-  installationTargetFor,
-  platformCredentialScope,
-} from '@auto-swe/shared/lib/githubHostScope';
+import { resolvePlatformCredential } from '@auto-swe/shared/lib/githubHostCredential';
+import { installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import {
@@ -223,25 +221,27 @@ async function verifyWebhookOrReject(
 /**
  * Where, and with which credential, to ask GitHub about a tracked repository.
  *
- * The instance's API, with a token minted for the repository's installation
- * (else the singleton's): the platform credential is only valid on the
- * instance's host, so a repository on another host gets no target. Applies the same
- * shared rule as the worker (`platformCredentialScope`) — no platform credential
- * (PAT, App JWT, installation token) goes to another host, whatever
- * installation the repository records; and a repository whose web and API hosts
- * differ gets none either. Never a user's token: a webhook has no launcher.
+ * The API of the host the repository lives on, with a token from that host's
+ * platform credential set — the instance's for an instance repository, the
+ * host's own for a repository on another approved host — minted for the
+ * repository's installation (else the set's singleton one). Applies the same
+ * shared rule as the worker (`resolvePlatformCredential`): no platform
+ * credential (PAT, App JWT, installation token) goes to a host it does not
+ * belong to, whatever installation the repository records; and a repository
+ * whose web and API hosts differ gets none either. Never a user's token: a
+ * webhook has no launcher.
  *
  * Null (aggregation unavailable, so the caller signals per run) when the
  * repository's URL overrides are not on an approved host — no credential is
- * minted for them — when the repository is on another host than the
- * instance's, or when no credential can be resolved.
+ * minted for them — when its host has no platform credential, or when no
+ * credential can be resolved.
  */
 async function checkRunTarget(
   repo:
     | {
         githubApiUrl: string | null;
         githubUrl: string | null;
-        installation: { installationId: string } | null;
+        installation: { installationId: string; host?: string } | null;
       }
     | null
     | undefined,
@@ -259,25 +259,26 @@ async function checkRunTarget(
       return null;
     }
   }
-  // The shared rule (`githubHostScope`), the same one the worker applies: the
-  // platform credential never leaves the instance's own host, and a
-  // repository's web and API hosts must agree.
+  // The shared rule (`githubHostScope`), the same one the worker applies: a
+  // platform credential never leaves the host it belongs to, and a repository's
+  // web and API hosts must agree.
   const scoped = {
     apiUrl: repo?.githubApiUrl,
     baseUrl: repo?.githubUrl,
+    installationHost: repo?.installation?.host,
     installationId: repo?.installation?.installationId ?? null,
   };
-  const scope = platformCredentialScope(scoped, ghConfig);
-  if (scope === 'mismatch' || scope === 'misconfigured') {
-    log.warn(
-      { apiUrl, githubUrl: repo?.githubUrl, scope },
-      "no credential of the instance's is valid on this repository's host"
-    );
-    return null;
-  }
   try {
-    const target = installationTargetFor(scoped, ghConfig);
-    const token = await resolveGitHubToken(ghConfig, target);
+    const credential = await resolvePlatformCredential(scoped, ghConfig);
+    if (credential.scope !== 'instance' && credential.scope !== 'host') {
+      log.warn(
+        { apiUrl, githubUrl: repo?.githubUrl, scope: credential.scope },
+        "no platform credential is valid on this repository's host"
+      );
+      return null;
+    }
+    const target = installationTargetFor(scoped, credential.config);
+    const token = await resolveGitHubToken(credential.config, target);
     return { apiUrl: target.apiUrl, token };
   } catch (err) {
     log.warn({ err }, 'no GitHub credential for the check-run lookup');
@@ -685,7 +686,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               githubApiUrl: true,
               githubUrl: true,
               id: true,
-              installation: { select: { installationId: true } },
+              installation: { select: { host: true, installationId: true } },
             },
           },
           workflow: {

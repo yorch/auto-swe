@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 74 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 75 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Generated `init` baseline, a hand-written constraints/indexes migration, and appended migrations for later changes |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -580,7 +580,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 74 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 75 models.
 
 ```mermaid
 erDiagram
@@ -640,6 +640,7 @@ erDiagram
 | Model config | `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | Encrypted keys, embedding singleton, config audit trail |
 | System config | `GitHubConfig`, `SlackConfig`, `WorkflowDefaults`, `IssueTrackerConfig`, `KnowledgeBaseConfig`, `FigmaConfig` | Singletons (`id='default'`) with encrypted secrets and env-var fallback. Sign-in credentials (Google, Okta, GitHub OAuth), artifact storage, and workspace sizing are environment-only — see [configuration.md](./configuration.md) |
 | Per-host webhook secrets | `GitHubHostWebhookSecret` | One GitHub Enterprise host's encrypted webhook secret, keyed by lowercase `host[:port]` and used only for deliveries naming that host in `X-GitHub-Enterprise-Host`. Platform infrastructure, not tenant-scoped. See [repositories.md](./repositories.md) |
+| Per-host platform credentials | `GitHubHostCredential` | One non-instance GitHub host's encrypted PAT and/or GitHub App (id and private key), keyed by the lowercase `host[:port]` of its host family. A repository on that host is reached with this set and never the instance's. Platform infrastructure, not tenant-scoped. See [repositories.md](./repositories.md) |
 | Billing | `OrgMonthlyUsage`, `ChannelMonthlyUsage`, `ChannelBudgetHold` | Monthly cost/run/token aggregates keyed by `(scope, yearMonth)`; a hold row is one turn's outstanding claim on a channel's remaining budget |
 | Channel assistant | `SlackWorkspace`, `SlackChannel`, `ChannelThreadSession`, `ChannelOpenItem` | See [channel-assistant.md](./channel-assistant.md) |
 | Evals | `EvalDataset`, `EvalCase`, `EvalRun`, `EvalRubric` | See [evals.md](./evals.md) |
