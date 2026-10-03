@@ -101,9 +101,12 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
   try {
     const baseMessage = input.userMessage ?? inputsToMessage(input.inputs);
     const userMessage = prependSteering(baseMessage, input.steering);
+    // One tracer for the MCP tool rows and the loop's rows, so they share one
+    // `seq` sequence and persist once.
     const result = await runAgent(spec, userMessage, {
       ctx: resolveCtx,
       spanName: input.spanName ?? 'llm.agent_node',
+      tracer,
     });
     return { object: result.object, text: result.text };
   } finally {

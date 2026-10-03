@@ -217,6 +217,74 @@ describe('runAgent', () => {
     });
   });
 
+  it("records each tool call of the loop as a tool_call row, before the call's llm_response", async () => {
+    generateMock.mockResolvedValue({
+      steps: [
+        {
+          toolCalls: [
+            { payload: { args: { q: 'a' }, toolCallId: 'c1', toolName: 'delegateTask' } },
+            { payload: { args: { q: 'b' }, toolCallId: 'c2', toolName: 'search' } },
+          ],
+          toolResults: [
+            { payload: { result: { found: 1 }, toolCallId: 'c1' } },
+            { payload: { isError: true, result: 'boom', toolCallId: 'c2' } },
+          ],
+        },
+        { text: 'done', toolCalls: [], toolResults: [] },
+      ],
+      text: 'done',
+    });
+    const addToolCall = vi.spyOn(AgentTracer.prototype, 'addToolCall');
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+
+    await runAgent(makeSpec(), 'M');
+
+    expect(addToolCall.mock.calls.map(([c]) => c)).toEqual([
+      {
+        durationMs: 0,
+        error: undefined,
+        inputJson: { q: 'a' },
+        outputJson: { found: 1 },
+        toolName: 'delegateTask',
+      },
+      {
+        durationMs: 0,
+        error: 'boom',
+        inputJson: { q: 'b' },
+        outputJson: undefined,
+        toolName: 'search',
+      },
+    ]);
+    expect(addToolCall.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      addLlmResponse.mock.invocationCallOrder[0] as number
+    );
+    addToolCall.mockRestore();
+    addLlmResponse.mockRestore();
+  });
+
+  it("records into a caller's tracer, leaves persisting to it, and does not re-record its tools", async () => {
+    generateMock.mockResolvedValue({
+      steps: [
+        {
+          toolCalls: [{ payload: { args: {}, toolCallId: 'c1', toolName: 'mcp_search' } }],
+          toolResults: [{ payload: { result: {}, toolCallId: 'c1' } }],
+        },
+      ],
+      text: 'done',
+    });
+    const tracer = new AgentTracer();
+    // What the MCP wrapper records while the loop runs.
+    tracer.addToolCall({ durationMs: 5, inputJson: {}, toolName: 'mcp:search' });
+    const addToolCall = vi.spyOn(tracer, 'addToolCall');
+
+    await runAgent(makeSpec(), 'M', { tracer });
+
+    expect(mockedPersist).not.toHaveBeenCalled();
+    expect(addToolCall).not.toHaveBeenCalled();
+    // The MCP row and the loop's response, numbered in one sequence.
+    expect(tracer.size).toBe(2);
+  });
+
   it('does not read the step budget for a tool-free agent', async () => {
     generateMock.mockResolvedValue({ text: 'x' });
     await runAgent(makeSpec(), 'M');
