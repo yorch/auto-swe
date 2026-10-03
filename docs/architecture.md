@@ -598,13 +598,19 @@ erDiagram
 `OrgMonthlyUsage` increment-upsert in one transaction, guarded by a pre-read of `endedAt`, so a
 Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost and tokens
 accrue for every terminal status. `Organization.monthlyBudgetUsdCents` caps monthly spend —
-every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's accrued cost meets the cap.
+every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap.
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
 repository access, then membership of every org the launch spends against, then each org's cap.
-The cap reads committed spend and is best-effort under concurrency: spend is recorded when a run
-finishes, so launches that arrive together all see the same total and a burst can overshoot the
-cap by the cost of the runs already in flight.
+The spend the cap reads is `orgMonthSpend` (`@auto-swe/shared/lib/billing`): `OrgMonthlyUsage`, plus
+what each unfinalized run billed to the org has accrued so far (its own ledger row, or its trace
+rows when it has none), plus this month's trace rows of runless workflows attributed to the org.
+An in-flight run counts whenever it started, because finalization bills it to the month it ends in.
+All three are read in one REPEATABLE READ snapshot, so a run finalizing at that moment is counted
+on exactly one side. The scheduled-fire check reads the same figure, and the org budget endpoint
+returns it as `currentMonthSpend` beside the finalized `currentMonthUsage`. The cap is still
+best-effort under concurrency: launches that arrive together see the same total, and a running
+run keeps spending after the cap is reached — it stops new work, not work already started.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
 `/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
 so the worker writer and the gateway reader cannot disagree about which month a run lands in.
@@ -731,18 +737,33 @@ UI shows real overage, then throws a non-retryable `BUDGET_EXCEEDED` failure onc
 These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/govern/workflow-defaults`,
 falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 
+**Runless workflows.** Workflow authoring and explaining, scheduled evals, lesson consolidation and
+repo-dependency inference keep neither a ledger row nor a run, so no tier applies. Each execution is
+capped instead by `workflow.runlessMaxInputTokens` / `workflow.runlessMaxOutputTokens` (default
+20,000,000 / 5,000,000, overridable per team or organization, resolved against the execution's
+spend owner). Its spend is the sum of its own `llm_response` trace rows — keyed by workflow id and
+Temporal run id, since some of these ids are reused across executions — plus the calls this worker
+has recorded that its activities have not yet persisted. `assertBudgetAvailable` refuses a call
+once the cap is reached, and `recordLlmUsage` fails the call that passes it with a non-retryable
+`BUDGET_EXCEEDED`. Epic planning is not runless: it is debited to the epic's own ledger row.
+
 **Agent traces.** Each LLM-calling activity records tool calls, LLM requests/responses, and named
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
 mandatory `finally` — is in [AGENTS.md §6](../AGENTS.md#agent-observability-agenttracer).
 
-**Platform usage.** Every LLM call and every successful embedding call writes one `llm_response`
-row carrying its model, tokens, and cost — including calls from workflows that keep no `WorkflowRun`
-— so those rows are the one complete record of spend. `GET /api/v1/platform/usage?window=7|30|90` (ADMIN) aggregates them
-into totals, a per-UTC-day series, breakdowns by model, agent, and activity (calls, tokens, average
-latency of the calls that succeeded, error rate, cost), the spend from workflows without a run,
-and the ten runs that spent most inside the window. The
-dashboard renders it at `/govern/usage`. It is ADMIN-only because rows without a run carry no team to
-scope them by.
+**Usage.** Every LLM call and every successful embedding call writes one `llm_response` row
+carrying its model, tokens, cost, and the team and organization whose spend it is
+([agents.md §8.5](./agents.md#85-spend-attribution)) — including calls from workflows that keep no
+`WorkflowRun` — so those rows are the one complete record of spend.
+`GET /api/v1/platform/usage?window=7|30|90[&teamId=…|&orgId=…]` aggregates them into totals, a
+per-UTC-day series, breakdowns by team, organization, model, agent, and activity (calls, tokens,
+average latency of the calls that succeeded, error rate, cost), the spend from workflows without a
+run, and the ten runs that spent most inside the window. With no filter the report is
+platform-wide and ADMIN-only, since it includes spend no team owns; a team LEAD (by team
+membership) may read their team and an ORG_ADMIN their organization, and every query of a scoped
+report carries the `teamId`/`orgId` predicate the tenant guard checks. The dashboard renders it at
+`/govern/usage` with a scope picker: the whole platform for an ADMIN, otherwise the teams the
+caller leads and the organizations they administer.
 
 ### Workspace hardening
 
@@ -905,10 +926,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   quarantined per process for 10 min: the blocking scanners then block on it outright until an
   admin fixes the row, the advisory ones run without it. See
   [agents.md §11](./agents.md#11-limitations).
-- **Workflows without a run have no budget.** Workflow authoring, scheduled evals, lesson
-  consolidation, repo-access sync, and epic planning keep no `ActiveWorkflow` ledger, so no tier
-  limit applies to them and their spend never reaches `OrgMonthlyUsage`. It is recorded on their
-  trace rows and shown at `/govern/usage`, but nothing stops it.
+- **The runless cap is bounded, not exact.** It sums persisted trace rows plus this worker's
+  unpersisted calls, so calls in flight on another worker are invisible until their activity
+  persists, and a failed trace write drops its rows from the sum. A budget read that fails lets the
+  call through rather than failing a call already paid for.
 - **Metrics undercount at their edges.** `llm_calls_total` counts agent calls, not model round
   trips inside a tool loop. Prometheus `increase()` reads a new series' first sample as its
   baseline; status, source and tier series are seeded with a zero at boot, but a model's or agent's
@@ -928,12 +949,19 @@ Current constraints of the system as built. Deliberate product boundaries are in
   and `[mcp:audit]` lines among it — and all of the gateway's logging stay on stdout. Workflow-code
   logs arrive through the SDK's sink after the activation that produced them, so they carry no
   trace context.
-- **The usage report is platform-wide only.** It has no per-team, per-org, or per-repository
-  breakdown: a trace reaches its team only through run → request → connection, which Prisma cannot
-  group by. Its daily series is one aggregate per UTC day, so a 90-day window costs 90 small queries.
+- **Usage is attributed at write time, not by repository.** The team and org breakdowns read the
+  owner each trace row was written with, so rows older than those columns, and spend with no
+  derivable owner, land under "no team". There is no per-repository breakdown. The page is open to
+  platform ADMINs and LEADs; an ORG_ADMIN or team LEAD with a lower platform role can call the
+  endpoint but not open the page. The daily series is one aggregate per UTC day, so a 90-day window
+  costs 90 small queries.
   A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call
   succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
   so it counts as a failure.
+- **The org cap counts unfinalized runs until they finalize.** A run that never finalizes (a
+  workflow terminated outside the worker) keeps its accrued cost in every month's in-flight figure.
+  Spend with no org on it — a runless workflow with no derivable owner, an epic's own planning ledger
+  row, which no run finalizes — is outside the cap.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a

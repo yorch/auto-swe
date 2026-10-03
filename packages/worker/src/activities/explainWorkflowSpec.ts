@@ -13,6 +13,7 @@ import {
 import { heartbeat } from '@temporalio/activity';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
+import { ownerOfTeam, withSpendOwner } from '../lib/spendOwner.js';
 import { runAgent } from './runAgent.js';
 
 export interface ExplainWorkflowSpecInput {
@@ -27,6 +28,13 @@ export interface ExplainWorkflowSpecResult {
 }
 
 export async function explainWorkflowSpec(
+  input: ExplainWorkflowSpecInput
+): Promise<ExplainWorkflowSpecResult> {
+  // No run row: the spend is the requesting team's.
+  return withSpendOwner(ownerOfTeam(input.teamId), () => explainWorkflowSpecImpl(input));
+}
+
+async function explainWorkflowSpecImpl(
   input: ExplainWorkflowSpecInput
 ): Promise<ExplainWorkflowSpecResult> {
   heartbeat('explain workflow');

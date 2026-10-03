@@ -1346,7 +1346,7 @@
       "title": "Experiments and canaries"
     },
     {
-      "body": "Track tokens and catalog-priced USD across runs, organizations and Slack channels.",
+      "body": "Track tokens and catalog-priced USD across runs, teams, organizations and Slack channels.",
       "category": "Operations",
       "detail": "Limits exist at several scopes and execution boundaries. Agent Run records each completed model step; other multi-step calls commonly debit on generate completion. Unknown pricing may report zero USD while token usage is retained.",
       "id": "budget",
@@ -1476,9 +1476,9 @@
     {
       "body": "Agent Run has per-step debits; ordinary multi-step generate loops often debit at completion.",
       "category": "Cost control",
-      "detail": "A model call can overshoot a checked budget before returning. The offline harness has no ActiveWorkflow ledger, and the fixture count/iteration bounds—not a normal run tier—bound spend there.",
+      "detail": "A model call can overshoot a checked budget before returning. The offline harness and other workflows with no run have no ActiveWorkflow ledger; a per-execution token cap summed from their trace rows bounds them instead, and it cannot see calls still in flight on another worker.",
       "id": "budgetGranularity",
-      "refs": ["trace", "tdd", "eval"],
+      "refs": ["trace", "tdd", "eval", "runlessBudget"],
       "status": "Code-derived caveat",
       "title": "Budget precision differs by execution path"
     },
@@ -1920,6 +1920,14 @@
       "lines": 90,
       "path": "packages/worker/src/lib/memoryStore.ts",
       "title": "Semantic memory retrieval"
+    },
+    {
+      "anchor": "export async function recordRunlessUsage(",
+      "before": 0,
+      "id": "runlessBudget",
+      "lines": 40,
+      "path": "packages/worker/src/lib/runlessBudget.ts",
+      "title": "Runless workflow token cap"
     },
     {
       "anchor": "const accounting = options.perStepAccounting",

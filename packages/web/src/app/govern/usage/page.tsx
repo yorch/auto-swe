@@ -1,20 +1,55 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { DailyCostChart } from '@/components/charts/DailyCostChart';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Select, type SelectOption } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { type UsageBucket, usePlatformUsage } from '@/hooks/useAdmin';
+import { type UsageBucket, type UsageScope, usePlatformUsage, useUserOrgs } from '@/hooks/useAdmin';
+import { useHasRole } from '@/hooks/useHasRole';
+import { useLedTeamIds, useTeams } from '@/hooks/useTeams';
 import { formatCost, formatCount, formatDuration, formatPercent, formatTokens } from '@/lib/utils';
 
 const WINDOW_OPTIONS = [7, 30, 90].map((days) => ({ label: `${days}d`, value: String(days) }));
+
+/** `''` is platform-wide; `team:<id>` and `org:<id>` name a tenant. */
+function scopeOf(value: string): UsageScope {
+  const [kind, id] = value.split(':');
+  return kind === 'team' ? { teamId: id } : kind === 'org' ? { orgId: id } : {};
+}
+
+/**
+ * The scopes the caller may read, mirroring what the gateway enforces: an
+ * ADMIN everything, anyone else the teams they lead and the organizations they
+ * administer. `null` until the caller's teams are known.
+ */
+function useScopeOptions(): SelectOption[] | null {
+  const isAdmin = useHasRole('ADMIN');
+  const teams = useTeams();
+  const ledTeamIds = useLedTeamIds();
+  const orgs = useUserOrgs();
+  return useMemo(() => {
+    if (!teams.data || (!isAdmin && ledTeamIds === null)) {
+      return null;
+    }
+    return [
+      ...(isAdmin ? [{ label: 'Whole platform', value: '' }] : []),
+      ...teams.data
+        .filter((t) => isAdmin || ledTeamIds?.has(t.id))
+        .map((t) => ({ label: `Team: ${t.name}`, value: `team:${t.id}` })),
+      ...(orgs.data ?? [])
+        .filter((o) => isAdmin || o.role === 'ORG_ADMIN')
+        .map((o) => ({ label: `Organization: ${o.name}`, value: `org:${o.id}` })),
+    ];
+  }, [isAdmin, teams.data, ledTeamIds, orgs.data]);
+}
 
 function errorRate(b: UsageBucket): number | null {
   return b.calls > 0 ? b.errors / b.calls : null;
@@ -91,23 +126,47 @@ function BreakdownTable({
 
 export default function UsagePage() {
   const [windowDays, setWindowDays] = useState<number>(30);
-  const { data, error, isError, isLoading } = usePlatformUsage(windowDays);
+  const scopeOptions = useScopeOptions();
+  const [chosenScope, setChosenScope] = useState<string | null>(null);
+  // Until the caller picks one, the first scope they may read: the whole
+  // platform for an ADMIN, their first team for a LEAD.
+  const scopeValue = chosenScope ?? scopeOptions?.[0]?.value ?? null;
+  const { data, error, isError, isLoading } = usePlatformUsage(
+    windowDays,
+    scopeOf(scopeValue ?? ''),
+    scopeValue !== null
+  );
 
   return (
     <div className="space-y-8">
       <PageHeader
         actions={
-          <SegmentedControl
-            ariaLabel="Time window"
-            onChange={(v) => setWindowDays(Number(v))}
-            options={WINDOW_OPTIONS}
-            value={String(windowDays)}
-          />
+          <div className="flex items-center gap-3">
+            {scopeOptions && scopeOptions.length > 0 && (
+              <Select
+                appearance="pill"
+                aria-label="Scope"
+                onChange={setChosenScope}
+                options={scopeOptions}
+                value={scopeValue ?? ''}
+              />
+            )}
+            <SegmentedControl
+              ariaLabel="Time window"
+              onChange={(v) => setWindowDays(Number(v))}
+              options={WINDOW_OPTIONS}
+              value={String(windowDays)}
+            />
+          </div>
         }
         chapter="§ Govern"
-        subtitle="Every LLM and embedding call across the platform, including workflows that keep no run record. Days are UTC."
+        subtitle="Every LLM and embedding call, including workflows that keep no run record, attributed to the team and organization whose spend it is. Days are UTC."
         title="LLM usage"
       />
+
+      {scopeOptions?.length === 0 && (
+        <EmptyState title="You lead no team, so there is no usage you can see." />
+      )}
 
       {/* A failed request has no data and is not loading: show the error, not a spinner. */}
       <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="LLM usage">
@@ -131,6 +190,22 @@ export default function UsagePage() {
               <DailyCostChart data={data.daily} />
             </Card>
 
+            <BreakdownTable
+              labelHeader="Team"
+              rows={data.byTeam.map((r) => ({
+                ...r,
+                label: r.teamId ? (r.teamName ?? r.teamId) : '(no team)',
+              }))}
+              title="By team"
+            />
+            <BreakdownTable
+              labelHeader="Organization"
+              rows={data.byOrg.map((r) => ({
+                ...r,
+                label: r.orgId ? (r.orgName ?? r.orgId) : '(no organization)',
+              }))}
+              title="By organization"
+            />
             <BreakdownTable
               labelHeader="Model"
               rows={data.byModel.map((r) => ({ ...r, label: r.model ?? '(unresolved)' }))}

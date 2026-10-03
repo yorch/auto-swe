@@ -5,8 +5,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlatformUsage } from '@/hooks/useAdmin';
 
 const usePlatformUsage = vi.fn();
+const auth = vi.hoisted(() => ({
+  isAdmin: true,
+  ledTeamIds: new Set<string>() as Set<string> | null,
+}));
 vi.mock('@/hooks/useAdmin', () => ({
-  usePlatformUsage: (days: number) => usePlatformUsage(days),
+  usePlatformUsage: (...args: unknown[]) => usePlatformUsage(...args),
+  useUserOrgs: () => ({ data: [{ id: 'org-1', name: 'Acme', role: 'ORG_ADMIN' }] }),
+}));
+vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => auth.isAdmin }));
+vi.mock('@/hooks/useTeams', () => ({
+  useLedTeamIds: () => auth.ledTeamIds,
+  useTeams: () => ({
+    data: [
+      { id: 'team-a', name: 'Payments' },
+      { id: 'team-b', name: 'Platform' },
+    ],
+  }),
 }));
 // Recharts needs a laid-out container; the chart has nothing page-specific to check.
 vi.mock('@/components/charts/DailyCostChart', () => ({
@@ -28,7 +43,13 @@ const usage: PlatformUsage = {
   byActivity: [{ ...bucket, nodeId: 'executeImplementation' }],
   byAgent: [{ ...bucket, agentKey: 'embedding' }],
   byModel: [{ ...bucket, model: null }],
+  byOrg: [{ ...bucket, orgId: 'org-1', orgName: 'Acme' }],
+  byTeam: [
+    { ...bucket, orgId: 'org-1', teamId: 'team-a', teamName: 'Payments' },
+    { ...bucket, orgId: null, teamId: null, teamName: null },
+  ],
   daily: [],
+  scope: {},
   since: '2026-09-01T00:00:00.000Z',
   topRuns: [
     {
@@ -49,6 +70,8 @@ const usage: PlatformUsage = {
 };
 
 beforeEach(() => {
+  auth.isAdmin = true;
+  auth.ledTeamIds = new Set();
   usePlatformUsage.mockReset().mockReturnValue({ data: usage, isLoading: false });
 });
 
@@ -63,13 +86,41 @@ describe('UsagePage', () => {
     expect(screen.getByRole('link', { name: 'JIRA-7' }).getAttribute('href')).toBe('/runs/run-7');
   });
 
+  it('breaks spend down by team and organization, naming spend no team owns', () => {
+    render(<UsagePage />);
+
+    expect(screen.getByText('By team')).toBeTruthy();
+    expect(screen.getByText('(no team)')).toBeTruthy();
+    expect(screen.getByText('By organization')).toBeTruthy();
+    expect(screen.getAllByText('Acme').length).toBeGreaterThan(0);
+  });
+
+  it('shows an ADMIN the whole platform by default', () => {
+    render(<UsagePage />);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, {}, true);
+  });
+
+  it("shows a LEAD their first team's report, never the whole platform", () => {
+    auth.isAdmin = false;
+    auth.ledTeamIds = new Set(['team-b']);
+    render(<UsagePage />);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, { teamId: 'team-b' }, true);
+  });
+
+  it('asks for nothing until a LEAD’s teams are known', () => {
+    auth.isAdmin = false;
+    auth.ledTeamIds = null;
+    render(<UsagePage />);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, {}, false);
+  });
+
   it('refetches for the chosen window', () => {
     render(<UsagePage />);
-    expect(usePlatformUsage).toHaveBeenLastCalledWith(30);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, {}, true);
 
     fireEvent.click(screen.getByRole('button', { name: '7d' }));
 
-    expect(usePlatformUsage).toHaveBeenLastCalledWith(7);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(7, {}, true);
   });
 
   it('shows the error when the report fails to load, not a spinner', () => {

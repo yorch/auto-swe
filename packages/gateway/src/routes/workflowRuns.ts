@@ -4,6 +4,7 @@ import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
@@ -427,15 +428,24 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const serverTime = new Date().toISOString();
       // One REPEATABLE READ snapshot, so a row committed between the two
       // statements cannot be counted without being returned (or vice versa).
-      const [traces, total] = await fastify.prisma.$transaction(
-        [
-          fastify.prisma.agentTrace.findMany({
-            orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
-            where: { runId: run.id, ...(since ? { createdAt: { gte: new Date(since) } } : {}) },
-          }),
-          fastify.prisma.agentTrace.count({ where: { runId: run.id } }),
-        ],
-        { isolationLevel: 'RepeatableRead' }
+      // The guard checks at execution, so the whole transaction runs exempted.
+      const [traces, total] = await runUnscoped(
+        'scoped by a run the caller was authorized to read',
+        ['AgentTrace'],
+        () =>
+          fastify.prisma.$transaction(
+            [
+              fastify.prisma.agentTrace.findMany({
+                orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+                where: {
+                  runId: run.id,
+                  ...(since ? { createdAt: { gte: new Date(since) } } : {}),
+                },
+              }),
+              fastify.prisma.agentTrace.count({ where: { runId: run.id } }),
+            ],
+            { isolationLevel: 'RepeatableRead' }
+          )
       );
       return { data: traces.map((t) => projectTrace(t, false)), serverTime, total };
     }
@@ -476,10 +486,15 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const traces = includeTraces
-        ? await fastify.prisma.agentTrace.findMany({
-            orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
-            where: { runId: run.id },
-          })
+        ? await runUnscoped(
+            'scoped by a run the caller was authorized to read',
+            ['AgentTrace'],
+            () =>
+              fastify.prisma.agentTrace.findMany({
+                orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+                where: { runId: run.id },
+              })
+          )
         : [];
       return {
         data: {

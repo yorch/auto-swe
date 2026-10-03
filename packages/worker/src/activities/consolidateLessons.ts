@@ -14,6 +14,7 @@ import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
+import { ownerOfConnection, withSpendOwner } from '../lib/spendOwner.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult };
@@ -50,6 +51,13 @@ interface RawLesson {
 const CLUSTER_CONCURRENCY = 3;
 
 export async function consolidateLessons(
+  input: ConsolidateLessonsInput
+): Promise<ConsolidateLessonsResult> {
+  // No run row: the spend is the repository's team's.
+  return withSpendOwner(ownerOfConnection(input.repoId), () => consolidateLessonsImpl(input));
+}
+
+async function consolidateLessonsImpl(
   input: ConsolidateLessonsInput
 ): Promise<ConsolidateLessonsResult> {
   const { repoId } = input;

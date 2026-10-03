@@ -346,8 +346,8 @@ a file in the container, because it travels on a command line capped at 128 KiB 
 
 **Usage.** The harness reports usage per model as running totals, and a resumed session starts from
 its saved totals, so a turn records the change since the last. Each model is priced at its own spec
-(a harness may delegate small tasks to a cheaper model), and cache reads and writes count as input
-tokens.
+(a harness may delegate small tasks to a cheaper model). Cache reads and writes count as input
+tokens toward the budget and are priced at the model's cache rates.
 
 **Sessions and cleanup.** Turns after the first resume the same session, so a TDD loop keeps its
 context and prompt cache. Every process the harness starts carries the exec tag
@@ -619,6 +619,7 @@ content) to keep trace sizes manageable.
 | `durationMs` | Wall-clock duration of the call |
 | `model` / `inputTokens` / `outputTokens` / `costUsd` | Per-call attribution on `llm_response` rows |
 | `otelTraceId` / `otelSpanId` | Correlation with the matching Tempo span |
+| `teamId` / `orgId` | Whose spend the row is — see §8.5. Null when no owner is derivable |
 
 ### 8.4 Node attribution
 
@@ -642,6 +643,28 @@ Every dispatch kind goes through the two dispatch methods — `step`, `agent`, `
 Rejected: threading the id through each activity's inputs (dozens of positional signatures and
 every in-flight payload), and reading the run's `RUNNING` step row (a fan-out has several at once,
 so it cannot say which belongs to a given activity).
+
+### 8.5 Spend attribution
+
+Every row records the team and organization whose spend it is, written at persist time by
+`persistActivityTrace` and the embedding usage row from `currentSpendOwner()`
+(`lib/spendOwner.ts`). A run's owner is derived the way run visibility decides its team: the run's
+own repository (an epic child), its ledger row's repository, its work request's connection, its
+Slack channel, then its template. A workflow with no run names its owner itself with
+`withSpendOwner`: authoring and explaining charge the requesting team, lesson consolidation and
+dependency inference the repository's team, and the eval harness the dataset's team (or its
+organization, for an ORGANIZATION-scoped dataset). Resolution never fails an activity; a lookup that
+fails attributes the row to nobody.
+
+With these columns `AgentTrace` is a tenant-scoped model for the `tenantGuard`: a mass query on it
+carries a `teamId`/`orgId` predicate or declares itself with `runUnscoped`.
+
+**Limitations.**
+
+- **Some rows have no owner.** A GLOBAL eval dataset, an epic's planning call (its work request
+  spans repositories), repository-access sync, a memory re-embed, and a run whose template,
+  channel and repositories are all unowned write null `teamId`/`orgId`.
+- **Rows that predate the columns are unattributed.** Nothing backfills them.
 
 The run viewer (`web/src/lib/traceLinkage.ts`) filters on these fields: a node selects all its
 branches, a fan-out selects everything inside it, a step row selects exactly its execution.
@@ -742,7 +765,7 @@ Writes cut a new immutable `version`.
   `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
   evade them.
 - **Harness usage is metered conservatively and priced by the model it names.** Cache reads and
-  writes count as input tokens, which overstates cost and never understates it. The budget is
+  writes count in full against the token budget, though they are priced at the cache rates. The budget is
   checked before a turn and accrued after it, so one turn can overshoot by up to its step budget; the
   SDK's own cost cap is not used because it is a client-side estimate. A model the harness picks that
   has no catalog price records $0 with a warning; the organization-USD-cap guard checks only the

@@ -63,7 +63,10 @@ aggregate at `nodes.<id>.output.score` for downstream `cond` branching. `onFail`
 
 Floor scorers run first and short-circuit the judge when they fail, so a broken diff never costs a
 judge call. When a `judge` scorer is present the activity is an LLM activity and is wrapped in
-`AgentTracer` + `persistActivityTrace` like every other one.
+`AgentTracer` + `persistActivityTrace` like every other one. The judge's `EvalResult` row records the
+model the call was priced at (`judgeModel`) and its cost (`costUsd`) — the same attribution
+`recordLlmUsage` debited to the run, including a call that was paid for and then failed. A judge
+that never reached a model (no rubric, an unresolvable agent) records neither.
 
 **The `gate` scorer fails safe.** `runGateStandalone` resolves the SCM clone URL from the run's
 connection, checks out the candidate's already-pushed branch (not a fresh branch off the default) on
@@ -119,7 +122,7 @@ thresholds in the Tier-2 defaults (`evalHealthMaxFlakeRate`, `evalHealthMaxStale
 
 | Model | Holds |
 |---|---|
-| `EvalResult` | One row per scorer — normalized `value`, `passed`, `rationale`, judge model, cost. Indexed for per-scorer trend queries |
+| `EvalResult` | One row per scorer — normalized `value`, `passed`, `rationale`, and for a judge row the model and cost of its call. Indexed for per-scorer and per-day trend queries |
 | `EvalDataset` | A versioned, scope-cascaded benchmark |
 | `EvalCase` | One case — `input`, optional `reference`, `sourceRunId` provenance, tags |
 | `EvalRun` | One execution of a dataset — status, candidate/baseline refs, aggregate statistics |

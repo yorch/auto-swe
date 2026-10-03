@@ -20,6 +20,25 @@ vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
   resolveRepoAccessGateOrLastKnown: async () => gate.value,
 }));
 
+// Org spend is `orgMonthSpend` (tested in shared/src/lib/billing.test.ts); here
+// it reports the mock's `orgMonthlyUsage` row plus whatever is in flight.
+const spend = vi.hoisted(() => ({ inFlightUsd: 0 }));
+vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  orgMonthSpend: async (
+    db: { orgMonthlyUsage: { findUnique: () => Promise<{ costUsdAccrued: number } | null> } },
+    _orgId: string
+  ) => {
+    const finalizedUsd = Number((await db.orgMonthlyUsage.findUnique())?.costUsdAccrued ?? 0);
+    return {
+      finalizedUsd,
+      inFlightUsd: spend.inFlightUsd,
+      runlessUsd: 0,
+      totalUsd: finalizedUsd + spend.inFlightUsd,
+    };
+  },
+}));
+
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     configAuditLog: { create: vi.fn(), findFirst: vi.fn() },
@@ -259,6 +278,19 @@ describe('scheduledFireRefusal', () => {
     });
     db.orgMonthlyUsage.findUnique.mockResolvedValueOnce({ costUsdAccrued: 4.99 });
     expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
+  });
+
+  it('counts the spend of runs still in flight toward the cap', async () => {
+    db.connection.findUnique.mockResolvedValue(repo({ cap: 500 }));
+    db.orgMonthlyUsage.findUnique.mockResolvedValueOnce({ costUsdAccrued: 3 });
+    spend.inFlightUsd = 2;
+    try {
+      expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+        reason: 'org-budget-exceeded',
+      });
+    } finally {
+      spend.inFlightUsd = 0;
+    }
   });
 
   it('fails closed when the access policy has never been readable', async () => {

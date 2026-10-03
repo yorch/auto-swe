@@ -23,7 +23,7 @@
 import type { PrismaClient, Role } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
-import { currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import {
   decideRepoAccess,
   REPO_ACCESS_REFUSAL_MESSAGE,
@@ -257,13 +257,9 @@ export async function scheduledFireRefusal(
 
   const cap = repo.team.organization?.monthlyBudgetUsdCents ?? null;
   if (cap != null) {
-    const usage = await db.orgMonthlyUsage.findUnique({
-      where: { orgId_yearMonth: { orgId: repo.team.orgId, yearMonth: currentYearMonth() } },
-    });
-    // Same rounding as the gateway's `isOrgOverBudget`: micro-dollar precision
-    // to cents with a small epsilon.
-    const spentCents = Math.round(Number(usage?.costUsdAccrued ?? 0) * 100 + 1e-9);
-    if (spentCents >= cap) {
+    // The same spend the gateway's `isOrgOverBudget` reads, in-flight runs included.
+    const { totalUsd } = await orgMonthSpend(db, repo.team.orgId);
+    if (usdToCents(totalUsd) >= cap) {
       return refuse(
         'org-budget-exceeded',
         `the organization has exceeded its monthly budget cap of ${cap} USD cents`

@@ -1,4 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+
+const spend = vi.hoisted(() => ({ orgMonthSpend: vi.fn() }));
+vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  orgMonthSpend: spend.orgMonthSpend,
+}));
+
 import {
   assertOrgAccess,
   assertOrgBudget,
@@ -51,34 +58,39 @@ describe('assertOrgAccess', () => {
 });
 
 describe('isOrgOverBudget / assertOrgBudget', () => {
-  function budgetPrisma(spentUsd: number) {
-    return {
-      $transaction: vi.fn(),
-      orgMonthlyUsage: { findUnique: vi.fn().mockResolvedValue({ costUsdAccrued: spentUsd }) },
-    };
+  const prisma = {} as never;
+  function spent(finalizedUsd: number, inFlightUsd = 0, runlessUsd = 0) {
+    spend.orgMonthSpend.mockResolvedValue({
+      finalizedUsd,
+      inFlightUsd,
+      runlessUsd,
+      totalUsd: finalizedUsd + inFlightUsd + runlessUsd,
+    });
   }
 
-  it('is never over budget without a cap, and does not read usage', async () => {
-    const prisma = budgetPrisma(1_000_000);
-    expect(await isOrgOverBudget(prisma as never, ORG_ID, null)).toBe(false);
-    expect(prisma.orgMonthlyUsage.findUnique).not.toHaveBeenCalled();
+  it('is never over budget without a cap, and does not read spend', async () => {
+    spend.orgMonthSpend.mockClear();
+    expect(await isOrgOverBudget(prisma, ORG_ID, null)).toBe(false);
+    expect(spend.orgMonthSpend).not.toHaveBeenCalled();
   });
 
-  it('is over budget once accrued spend reaches the cap in cents', async () => {
-    expect(await isOrgOverBudget(budgetPrisma(9.99) as never, ORG_ID, 1000)).toBe(false);
-    expect(await isOrgOverBudget(budgetPrisma(10) as never, ORG_ID, 1000)).toBe(true);
+  it('is over budget once spend reaches the cap in cents', async () => {
+    spent(9.99);
+    expect(await isOrgOverBudget(prisma, ORG_ID, 1000)).toBe(false);
+    spent(10);
+    expect(await isOrgOverBudget(prisma, ORG_ID, 1000)).toBe(true);
   });
 
-  it('reads committed spend without a transaction or lock (best-effort cap)', async () => {
-    const prisma = budgetPrisma(0);
-    const reply = makeReply();
-    expect(await assertOrgBudget(prisma as never, ORG_ID, 1000, reply)).toBe(true);
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+  it('counts the spend of runs still in flight and of runless workflows, not only finalized runs', async () => {
+    spent(4, 5, 1);
+    expect(await isOrgOverBudget(prisma, ORG_ID, 1000)).toBe(true);
+    expect(spend.orgMonthSpend).toHaveBeenCalledWith(prisma, ORG_ID);
   });
 
   it('sends 402 ORG_BUDGET_EXCEEDED when over the cap', async () => {
+    spent(20);
     const reply = makeReply();
-    expect(await assertOrgBudget(budgetPrisma(20) as never, ORG_ID, 1000, reply)).toBe(false);
+    expect(await assertOrgBudget(prisma, ORG_ID, 1000, reply)).toBe(false);
     expect(reply.status).toHaveBeenCalledWith(402);
   });
 });

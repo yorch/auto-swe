@@ -257,10 +257,23 @@ export interface UsageBucket {
   outputTokens: number;
 }
 
+/** Which slice of usage a report covers; empty is platform-wide (ADMIN only). */
+export interface UsageScope {
+  teamId?: string;
+  orgId?: string;
+}
+
 export interface PlatformUsage {
   byActivity: (UsageBucket & { nodeId: string })[];
   byAgent: (UsageBucket & { agentKey: string })[];
   byModel: (UsageBucket & { model: string | null })[];
+  /** Null ids are spend no tenant is derivable for. */
+  byOrg: (UsageBucket & { orgId: string | null; orgName: string | null })[];
+  byTeam: (UsageBucket & {
+    orgId: string | null;
+    teamId: string | null;
+    teamName: string | null;
+  })[];
   daily: {
     calls: number;
     costUsd: number;
@@ -268,6 +281,7 @@ export interface PlatformUsage {
     inputTokens: number;
     outputTokens: number;
   }[];
+  scope: UsageScope;
   since: string;
   /** Exclusive end of the window: the end of the current UTC day. */
   until: string;
@@ -287,15 +301,21 @@ export interface PlatformUsage {
   windowDays: number;
 }
 
-export function usePlatformUsage(windowDays: number) {
+export function usePlatformUsage(windowDays: number, scope: UsageScope = {}, enabled = true) {
+  const qs = new URLSearchParams({ window: String(windowDays) });
+  if (scope.teamId) {
+    qs.set('teamId', scope.teamId);
+  }
+  if (scope.orgId) {
+    qs.set('orgId', scope.orgId);
+  }
   return useQuery({
+    enabled,
     // Keep the previous window on screen while the next one loads.
     placeholderData: keepPreviousData,
     queryFn: () =>
-      api
-        .get<{ data: PlatformUsage }>(`/api/v1/platform/usage?window=${windowDays}`)
-        .then((r) => r.data),
-    queryKey: ['platform-usage', windowDays],
+      api.get<{ data: PlatformUsage }>(`/api/v1/platform/usage?${qs}`).then((r) => r.data),
+    queryKey: ['platform-usage', windowDays, scope.teamId ?? null, scope.orgId ?? null],
     // Not polled: each report costs a full-window scan plus one query per day,
     // and spend does not move fast enough to need it. Refetched on focus.
     staleTime: 60_000,

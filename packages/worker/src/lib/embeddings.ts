@@ -3,11 +3,17 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { embed } from 'ai';
-import { currentActivityType, currentAttempt, currentWorkflowId } from './activityContext.js';
+import {
+  currentActivityType,
+  currentAttempt,
+  currentTemporalRunId,
+  currentWorkflowId,
+} from './activityContext.js';
 import { currentNodeTag, nodeTagColumns } from './activityNodeTag.js';
 import { resolveEmbeddingConfig } from './config/resolver.js';
 import { calculateCostUsd } from './costTracking.js';
 import { recordLlmCallMetrics } from './metrics.js';
+import { currentSpendOwner } from './spendOwner.js';
 import { EMBEDDING_AGENT_KEY } from './traceTotals.js';
 
 /**
@@ -156,10 +162,10 @@ async function recordEmbeddingUsage(
     return;
   }
   try {
-    const run = await prisma.workflowRun.findUnique({
-      select: { id: true },
-      where: { workflowId },
-    });
+    const [run, owner] = await Promise.all([
+      prisma.workflowRun.findUnique({ select: { id: true }, where: { workflowId } }),
+      currentSpendOwner(),
+    ]);
     await prisma.agentTrace.create({
       data: {
         ...nodeTagColumns(currentNodeTag()),
@@ -171,10 +177,13 @@ async function recordEmbeddingUsage(
         inputTokens: tokens,
         model: spec,
         nodeId,
+        orgId: owner.orgId ?? null,
         outputTokens: tokens === null ? null : 0,
         runId: run?.id ?? null,
         // An embedding is its own one-record batch.
         seq: 0,
+        teamId: owner.teamId ?? null,
+        temporalRunId: currentTemporalRunId(),
         toolName: 'embedding',
         type: 'llm_response',
         workflowId,

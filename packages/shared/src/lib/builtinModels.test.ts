@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
+import { BUILTIN_MODELS, builtinModelSpec, cacheMultipliers } from './builtinModels.js';
 import { parseProviderModelSpec } from './modelSpec.js';
 import { PREVIOUS_DEFAULT_MODEL_SPECS, SWE_AGENTS } from './syncBuiltins.js';
 
@@ -68,5 +68,22 @@ describe('BUILTIN_MODELS', () => {
   it('prices the seeded embedding default as an embedding model', () => {
     const spec = seededEmbeddingSpec();
     expect(bySpec.get(spec), spec).toMatchObject({ kind: 'EMBEDDING' });
+  });
+});
+
+describe('cacheMultipliers', () => {
+  it('applies the Anthropic rule to every Claude model, catalog-only ones included', () => {
+    expect(cacheMultipliers('anthropic/claude-opus-4-8')).toEqual({ read: 0.1, write: 1.25 });
+    expect(cacheMultipliers('anthropic/claude-not-in-code')).toEqual({ read: 0.1, write: 1.25 });
+  });
+
+  it('uses a per-model rate where the vendor prices caching per model', () => {
+    expect(cacheMultipliers('openai/gpt-5')).toEqual({ read: 0.1, write: 1 });
+  });
+
+  it('prices cached input as ordinary input when no discount is known', () => {
+    expect(cacheMultipliers('openai/gpt-5.5-pro')).toEqual({ read: 1, write: 1 });
+    expect(cacheMultipliers('google/gemini-2.5-pro')).toEqual({ read: 1, write: 1 });
+    expect(cacheMultipliers('nonsense')).toEqual({ read: 1, write: 1 });
   });
 });

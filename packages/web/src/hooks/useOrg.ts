@@ -24,6 +24,13 @@ export interface OrgBudgetRow {
   orgName: string;
   monthlyBudgetUsdCents: number | null;
   budgetAlertThresholdPercent: number | null;
+  /** What the cap is compared against: finalized runs plus spend not yet billed. */
+  currentMonthSpend: {
+    finalizedUsd: number;
+    inFlightUsd: number;
+    runlessUsd: number;
+    totalUsd: number;
+  };
   currentMonthUsage: {
     yearMonth: string;
     costUsdAccrued: number;

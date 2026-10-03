@@ -1,4 +1,5 @@
 import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -105,24 +106,30 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
         ...(runId ? { runId } : {}),
       };
 
-      const [rows, total] = await Promise.all([
-        fastify.prisma.agentTrace.findMany({
-          include: {
-            run: {
-              select: {
-                startedAt: true,
-                workflowId: true,
-                workRequest: { select: { externalTicketId: true, id: true } },
+      // ADMIN-only feed across every tenant.
+      const [rows, total] = await runUnscoped(
+        'admin security feed spans every tenant',
+        ['AgentTrace'],
+        () =>
+          Promise.all([
+            fastify.prisma.agentTrace.findMany({
+              include: {
+                run: {
+                  select: {
+                    startedAt: true,
+                    workflowId: true,
+                    workRequest: { select: { externalTicketId: true, id: true } },
+                  },
+                },
               },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-          skip: offset,
-          take: limit,
-          where,
-        }),
-        fastify.prisma.agentTrace.count({ where }),
-      ]);
+              orderBy: { createdAt: 'desc' },
+              skip: offset,
+              take: limit,
+              where,
+            }),
+            fastify.prisma.agentTrace.count({ where }),
+          ])
+      );
 
       const events = rows.map((t) => ({
         createdAt: t.createdAt,
@@ -155,8 +162,11 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: requireAuth({ requiredRole: 'ADMIN' }) },
     async () => {
       const types = Object.keys(TYPE_PREDICATES) as SecurityEventType[];
+      // ADMIN-only totals across every tenant, like the feed above.
       const totals = await mapLimited(types, COUNT_CONCURRENCY, (type) =>
-        fastify.prisma.agentTrace.count({ where: TYPE_PREDICATES[type] })
+        runUnscoped('admin security summary spans every tenant', ['AgentTrace'], () =>
+          fastify.prisma.agentTrace.count({ where: TYPE_PREDICATES[type] })
+        )
       );
       const counts = Object.fromEntries(types.map((t, i) => [t, totals[i]])) as Record<
         SecurityEventType,

@@ -702,8 +702,11 @@ async function finalizeChannelTaskRun(
   try {
     const costUsd =
       ctx.traceCostUsd ??
-      (await prisma.agentTrace.aggregate({ _sum: { costUsd: true }, where: { runId } }))._sum
-        .costUsd ??
+      (
+        await runUnscoped('scoped by the run being finalized', ['AgentTrace'], () =>
+          prisma.agentTrace.aggregate({ _sum: { costUsd: true }, where: { runId } })
+        )
+      )._sum.costUsd ??
       0;
     await accrueChannelUsage(channelId, costUsd);
   } catch (err) {

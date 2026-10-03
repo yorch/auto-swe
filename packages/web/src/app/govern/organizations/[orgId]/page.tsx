@@ -406,7 +406,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
             {(() => {
               const cap = budget?.monthlyBudgetUsdCents ?? null;
               const threshold = budget?.budgetAlertThresholdPercent ?? null;
-              const spent = budget?.currentMonthUsage?.costUsdAccrued ?? 0;
+              const spent = budget?.currentMonthSpend.totalUsd ?? 0;
               const alert =
                 cap != null && cap > 0 && threshold != null && (spent * 10000) / cap >= threshold;
               return alert ? (
@@ -428,19 +428,25 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               />
               <Stat
                 hint={
-                  budget?.currentMonthUsage && (
+                  budget && (
                     <>
-                      {budget.currentMonthUsage.runsCompleted} runs ·{' '}
-                      {formatTokens(
-                        Number(budget.currentMonthUsage.tokensInput) +
-                          Number(budget.currentMonthUsage.tokensOutput)
-                      )}{' '}
-                      tokens
+                      {budget.currentMonthUsage && (
+                        <>
+                          {budget.currentMonthUsage.runsCompleted} runs ·{' '}
+                          {formatTokens(
+                            Number(budget.currentMonthUsage.tokensInput) +
+                              Number(budget.currentMonthUsage.tokensOutput)
+                          )}{' '}
+                          tokens ·{' '}
+                        </>
+                      )}
+                      {formatCents(budget.currentMonthSpend.inFlightUsd * 100)} in flight ·{' '}
+                      {formatCents(budget.currentMonthSpend.runlessUsd * 100)} without a run
                     </>
                   )
                 }
                 label={`Spent this month (${budget?.currentMonthUsage?.yearMonth ?? '—'})`}
-                value={formatCents((budget?.currentMonthUsage?.costUsdAccrued ?? 0) * 100)}
+                value={formatCents((budget?.currentMonthSpend.totalUsd ?? 0) * 100)}
               />
               <Stat
                 label="Alert threshold"

@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { WORKFLOW_RUN_FAILURE_STATUSES } from '@auto-swe/shared/types/api';
 
 /**
@@ -99,14 +100,19 @@ export async function updateSkill(
 export async function getSkillEffectivenessReport(prisma: PrismaClient, windowDays: number) {
   const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
 
-  const events = await prisma.agentTrace.findMany({
-    select: { outputJson: true, runId: true },
-    where: {
-      createdAt: { gte: since },
-      toolName: 'skills.loaded',
-      type: 'activity_event',
-    },
-  });
+  const events = await runUnscoped(
+    'admin skill-effectiveness report spans every tenant',
+    ['AgentTrace'],
+    () =>
+      prisma.agentTrace.findMany({
+        select: { outputJson: true, runId: true },
+        where: {
+          createdAt: { gte: since },
+          toolName: 'skills.loaded',
+          type: 'activity_event',
+        },
+      })
+  );
 
   // Union of skills per run (retries emit the event once per attempt).
   const skillsByRun = new Map<string, Set<string>>();

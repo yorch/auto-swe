@@ -167,11 +167,13 @@ export async function findUnpricedSpecs(
       })
     ),
     prisma.embeddingConfig.findUnique({ select: { modelSpec: true }, where: { id: 'default' } }),
-    prisma.agentTrace.findMany({
-      distinct: ['model'],
-      select: { model: true },
-      where: { createdAt: { gte: since }, model: { not: null }, type: 'llm_response' },
-    }),
+    runUnscoped('admin reports unpriced models called by any tenant', ['AgentTrace'], () =>
+      prisma.agentTrace.findMany({
+        distinct: ['model'],
+        select: { model: true },
+        where: { createdAt: { gte: since }, model: { not: null }, type: 'llm_response' },
+      })
+    ),
     pricedSpecs(prisma),
   ]);
 

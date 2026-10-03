@@ -124,6 +124,14 @@ function harnessFailure(result: SDKResultMessage, stderrTail: string): Error {
   return new Error(`Claude Code ended with ${result.subtype}: ${detail || 'no detail'}`);
 }
 
+/** A model's running usage totals as the harness reports them. */
+interface Totals {
+  cacheRead: number;
+  cacheWrite: number;
+  input: number;
+  output: number;
+}
+
 /**
  * The Claude Code harness as an implementer runtime.
  *
@@ -149,27 +157,40 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
   let sessionId: string | undefined;
   // The harness reports usage as running totals per model, and a resumed session
   // starts from its saved totals. What a turn spent is the change since the last.
-  const reported = new Map<string, { input: number; output: number }>();
+  const reported = new Map<string, Totals>();
 
   function usageSince(result: SDKResultMessage): ImplementerTurnOutcome['usageByModel'] {
     const spent: NonNullable<ImplementerTurnOutcome['usageByModel']> = [];
     for (const [model, u] of Object.entries(result.modelUsage ?? {})) {
-      // Cache reads and writes are input the run was billed for. The budget meters
-      // tokens, so they count in full; that overstates cost, never understates it.
-      const total = {
+      // Cache reads and writes are input the run was billed for, so they count
+      // in the input total the budget meters; they are also reported apart so
+      // pricing can apply the cache rates instead of the full input price.
+      const total: Totals = {
+        cacheRead: u.cacheReadInputTokens,
+        cacheWrite: u.cacheCreationInputTokens,
         input: u.inputTokens + u.cacheReadInputTokens + u.cacheCreationInputTokens,
         output: u.outputTokens,
       };
-      const before = reported.get(model) ?? { input: 0, output: 0 };
+      const before = reported.get(model) ?? { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 };
       reported.set(model, total);
       // A total that went backwards means the harness reset it: count it whole.
-      const reset = total.input < before.input || total.output < before.output;
-      const input = reset ? total.input : total.input - before.input;
-      const output = reset ? total.output : total.output - before.output;
+      const reset =
+        total.input < before.input ||
+        total.output < before.output ||
+        total.cacheRead < before.cacheRead ||
+        total.cacheWrite < before.cacheWrite;
+      const delta = (k: keyof Totals) => (reset ? total[k] : total[k] - before[k]);
+      const input = delta('input');
+      const output = delta('output');
       if (input > 0 || output > 0) {
         spent.push({
           modelSpec: `anthropic/${model}`,
-          usage: { inputTokens: input, outputTokens: output },
+          usage: {
+            cacheCreationInputTokens: delta('cacheWrite'),
+            cachedInputTokens: delta('cacheRead'),
+            inputTokens: input,
+            outputTokens: output,
+          },
         });
       }
     }

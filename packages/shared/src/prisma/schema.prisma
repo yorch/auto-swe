@@ -583,6 +583,7 @@ model Organization {
   slackWorkspaces     SlackWorkspace[]
   slackChannels       SlackChannel[]
   memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
+  agentTraces         AgentTrace[]             @relation("OrgAgentTraces")
   humanErrorBaselines HumanErrorBaseline[]
 
   configSettings      ConfigSetting[]
@@ -637,6 +638,7 @@ model Team {
   configSettings      ConfigSetting[]
   configPermissions   ConfigPermission[]
   memoryItems         MemoryItem[]             @relation("TeamMemoryItems")
+  agentTraces         AgentTrace[]             @relation("TeamAgentTraces")
   autonomyPolicies    AutonomyPolicy[]
   skills            Skill[]
 
@@ -1396,8 +1398,8 @@ model WorkflowOutcomeReference {
 /// evals feature records the signals the system already computes — quality-gate
 /// pass/fail (GATE), review-network verdicts (REVIEW), and the human PR
 /// merge/reject (MERGE) — one row per scorer so axes stay decomposable for
-/// trend/regression queries. `caseId`/`judgeModel` are reserved for later
-/// phases (P1 datasets, P2 judge). Persisted best-effort — capture failures are
+/// trend/regression queries. `caseId` links offline harness rows to their case;
+/// `judgeModel`/`costUsd` attribute a JUDGE row's LLM call. Persisted best-effort — capture failures are
 /// swallowed so they never break the activity, workflow, or webhook that
 /// produced the signal. See docs/evals-p0.md.
 model EvalResult {
@@ -1423,8 +1425,10 @@ model EvalResult {
   value      Float
   passed     Boolean?
   rationale  String?
-  /// Reserved for the P2 judge scorer.
+  /// `<provider>/<model>` spec a JUDGE row's LLM call was priced at. Null on
+  /// rows no model scored.
   judgeModel String?          @map("judge_model")
+  /// USD cost of that call, as `recordLlmUsage` priced it. Null when no model was called.
   costUsd    Float?           @map("cost_usd")
   metadata   Json?
   createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
@@ -1434,6 +1438,7 @@ model EvalResult {
   @@index([evalRunId])
   @@index([scorer, createdAt])
   @@index([source, createdAt])
+  @@index([createdAt])
   @@map("eval_results")
 }
 
@@ -1551,6 +1556,11 @@ model AgentTrace {
   /// null only on rows that predate the column, which all have a `run` to read
   /// it from instead.
   workflowId   String?      @map("workflow_id")
+  /// Temporal's run id for the execution that wrote the row. A workflow id can be
+  /// started again once its execution closes (`repo-dep-infer-<repo>`), so this
+  /// is what scopes a runless workflow's spend to one execution. Null on rows
+  /// that predate the column.
+  temporalRunId String?     @map("temporal_run_id")
   /// Temporal activity type that produced this trace (e.g. "executeImplementation").
   /// This is NOT a workflow-spec node id; `specNodeId` / `recordingId` are.
   nodeId       String      @map("node_id")
@@ -1591,10 +1601,25 @@ model AgentTrace {
   otelTraceId  String?     @map("otel_trace_id")
   /// W3C span-id of the OTel span active when this activity was persisted.
   otelSpanId   String?     @map("otel_span_id")
+  /// The team whose spend this row is, denormalized at write time (worker
+  /// `currentSpendOwner`) so usage can be broken down by tenant without the
+  /// run → request → connection join, which a workflow with no run cannot make.
+  /// Null when no team is derivable (a GLOBAL eval dataset, an epic's planning)
+  /// and on rows that predate the column.
+  teamId       String?       @map("team_id") @db.Uuid
+  team         Team?         @relation("TeamAgentTraces", fields: [teamId], references: [id], onDelete: SetNull)
+  /// The organization of `team`, or the owner itself when only an organization
+  /// is known (an ORGANIZATION-scoped eval dataset).
+  orgId        String?       @map("org_id") @db.Uuid
+  org          Organization? @relation("OrgAgentTraces", fields: [orgId], references: [id], onDelete: SetNull)
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([runId, nodeId])
+  @@index([runId, createdAt])
   @@index([createdAt])
+  @@index([workflowId, temporalRunId])
+  @@index([teamId, createdAt])
+  @@index([orgId, createdAt])
   @@map("agent_traces")
 }
 
@@ -2241,6 +2266,7 @@ model ConfigAuditLog {
 
   @@index([entityType, entityId])
   @@index([actorId])
+  @@index([createdAt])
   @@map("config_audit_log")
 }
 

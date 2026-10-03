@@ -1,7 +1,13 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { workflowTemplateRoutes } from './workflowTemplates.js';
+
+// Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../test/billingMock.js')),
+}));
 
 describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
   const TEMPLATE_ID = 'a1b2c3d4-1234-4567-89ab-cdef01234567';

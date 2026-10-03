@@ -728,6 +728,7 @@ CREATE TABLE "agent_traces" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "run_id" UUID,
     "workflow_id" TEXT,
+    "temporal_run_id" TEXT,
     "node_id" TEXT NOT NULL,
     "spec_node_id" TEXT,
     "recording_id" TEXT,
@@ -747,6 +748,8 @@ CREATE TABLE "agent_traces" (
     "cost_usd" DOUBLE PRECISION,
     "otel_trace_id" TEXT,
     "otel_span_id" TEXT,
+    "team_id" UUID,
+    "org_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "agent_traces_pkey" PRIMARY KEY ("id")
@@ -1649,6 +1652,9 @@ CREATE INDEX "eval_results_scorer_created_at_idx" ON "eval_results"("scorer", "c
 CREATE INDEX "eval_results_source_created_at_idx" ON "eval_results"("source", "created_at");
 
 -- CreateIndex
+CREATE INDEX "eval_results_created_at_idx" ON "eval_results"("created_at");
+
+-- CreateIndex
 CREATE INDEX "eval_datasets_scope_team_id_idx" ON "eval_datasets"("scope", "team_id");
 
 -- CreateIndex
@@ -1667,7 +1673,19 @@ CREATE INDEX "eval_rubrics_scope_slug_idx" ON "eval_rubrics"("scope", "slug");
 CREATE INDEX "agent_traces_run_id_node_id_idx" ON "agent_traces"("run_id", "node_id");
 
 -- CreateIndex
+CREATE INDEX "agent_traces_run_id_created_at_idx" ON "agent_traces"("run_id", "created_at");
+
+-- CreateIndex
 CREATE INDEX "agent_traces_created_at_idx" ON "agent_traces"("created_at");
+
+-- CreateIndex
+CREATE INDEX "agent_traces_workflow_id_temporal_run_id_idx" ON "agent_traces"("workflow_id", "temporal_run_id");
+
+-- CreateIndex
+CREATE INDEX "agent_traces_team_id_created_at_idx" ON "agent_traces"("team_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "agent_traces_org_id_created_at_idx" ON "agent_traces"("org_id", "created_at");
 
 -- CreateIndex
 CREATE INDEX "workflow_steps_run_id_idx" ON "workflow_steps"("run_id");
@@ -1770,6 +1788,9 @@ CREATE INDEX "config_audit_log_entity_type_entity_id_idx" ON "config_audit_log"(
 
 -- CreateIndex
 CREATE INDEX "config_audit_log_actor_id_idx" ON "config_audit_log"("actor_id");
+
+-- CreateIndex
+CREATE INDEX "config_audit_log_created_at_idx" ON "config_audit_log"("created_at");
 
 -- CreateIndex
 CREATE INDEX "skills_scope_team_id_idx" ON "skills"("scope", "team_id");
@@ -2067,6 +2088,12 @@ ALTER TABLE "eval_runs" ADD CONSTRAINT "eval_runs_dataset_id_fkey" FOREIGN KEY (
 
 -- AddForeignKey
 ALTER TABLE "agent_traces" ADD CONSTRAINT "agent_traces_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agent_traces" ADD CONSTRAINT "agent_traces_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agent_traces" ADD CONSTRAINT "agent_traces_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "workflow_steps" ADD CONSTRAINT "workflow_steps_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
