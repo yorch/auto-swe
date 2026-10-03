@@ -283,7 +283,14 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
       const teamOrg = new Map<string | null, string | null>();
       const byOrg = new Map<string | null, Acc>();
       for (const g of tenantGroups) {
-        teamOrg.set(g.teamId, g.orgId);
+        // A team's org, or null when there is no single one: always for the
+        // no-team row, which pools ownerless spend from every org, and for a
+        // team whose rows were written under different orgs.
+        const prev = teamOrg.get(g.teamId);
+        teamOrg.set(
+          g.teamId,
+          g.teamId !== null && (prev === undefined || prev === g.orgId) ? g.orgId : null
+        );
         addGroup(
           [into(byTeam, g.teamId), into(byOrg, g.orgId)],
           g,

@@ -156,7 +156,13 @@ describe('usageRoutes GET /usage', () => {
         orgId,
         teamId,
       });
-      return [row(TEAM_A, ORG_A, 3, 3), row(TEAM_B, ORG_A, 1, 1), row(null, null, 2, 0.5)];
+      // Two no-team groups, the last carrying an org: the no-team row must not take it.
+      return [
+        row(TEAM_A, ORG_A, 3, 3),
+        row(TEAM_B, ORG_A, 1, 1),
+        row(null, null, 1, 0.25),
+        row(null, ORG_A, 1, 0.25),
+      ];
     });
     prisma.team.findMany.mockResolvedValue([
       { id: TEAM_A, name: 'Payments' },
@@ -177,13 +183,19 @@ describe('usageRoutes GET /usage', () => {
         teamName: 'Payments',
       }),
       expect.objectContaining({ calls: 1, costUsd: 1, teamId: TEAM_B, teamName: 'Platform' }),
-      expect.objectContaining({ calls: 2, costUsd: 0.5, teamId: null, teamName: null }),
+      expect.objectContaining({
+        calls: 2,
+        costUsd: 0.5,
+        orgId: null,
+        teamId: null,
+        teamName: null,
+      }),
     ]);
     // The failed 2.5 s call is left out of latency: (3 000 - 2 500) / 2 successes.
     expect(byTeam[0].avgDurationMs).toBe(250);
     expect(byOrg).toEqual([
-      expect.objectContaining({ calls: 4, costUsd: 4, orgId: ORG_A, orgName: 'Acme' }),
-      expect.objectContaining({ calls: 2, orgId: null, orgName: null }),
+      expect.objectContaining({ calls: 5, costUsd: 4.25, orgId: ORG_A, orgName: 'Acme' }),
+      expect.objectContaining({ calls: 1, orgId: null, orgName: null }),
     ]);
   });
 
