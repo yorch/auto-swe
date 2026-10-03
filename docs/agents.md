@@ -574,13 +574,17 @@ await persistActivityTrace(tracer, 'implementer');
 
 **`persistActivityTrace(tracer, role)`** in `packages/worker/src/lib/activityContext.ts` auto-resolves the workflow ID, `runId`, and `attempt` from Temporal context and calls `tracer.persist({ runId, workflowId }, nodeId, role, attempt, nodeTag)` (the tag is §8.4's). It attaches the OTel span active at that moment unless the caller already attached a more specific one with `tracer.setSpanContext()` — `runAgent` does, because it persists after its LLM span has ended. **Never omit this call** in new LLM-calling activities — the run viewer depends on it.
 
+An attempt can persist more than one tracer — its own and `runAgent`'s — and each numbers its records from 0, so `persistActivityTrace` reserves a block of `seq` values per attempt and offsets each batch into it. `seq` is therefore unique within an attempt, and batches order by when they were persisted.
+
+**`runAgent`** records a `tool_call` row for every tool call Mastra made inside its loop, read from the steps of the `generate` result and paired with each call's result, then the call's `llm_response` row. A caller whose tools record themselves passes its own tracer as `RunAgentOptions.tracer` — `runAgentNode` (MCP tools) and `runAgentTask` (workspace and MCP tools) do. `runAgent` then records into that tracer, does not re-read those tool calls from the steps, and leaves persisting to the caller, so the tool rows and the response share one sequence in the order they happened.
+
 **`inputJson` convention for `addLlmResponse`:** always pass `{ systemPrompt, userMessage }` so the `/runs/[id]` viewer can show exactly what was sent to the model. Declare prompt variables as `let` before the `try` block (not `const` inside it) so the error `catch` path can reference them too — otherwise failed LLM calls produce traces with no request context.
 
 ### 8.2 Trace Record Shape
 
 ```typescript
 interface TraceRecord {
-  seq: number;                                      // insertion order within the activity
+  seq: number;                                      // insertion order within the activity attempt
   type: 'tool_call' | 'llm_response' | 'activity_event';
   toolName?: string;                                // tool ID, agent role, or event name
   inputJson?: unknown;                              // redacted, then truncated to 32 000 chars per string value
@@ -718,6 +722,10 @@ Writes cut a new immutable `version`.
   it lists the trace under every node that runs that activity and labels it ambiguous when two or
   more nodes do (and always when a fan-out branch is selected, since a fallback match cannot name a
   branch). A fallback match with a single candidate node is shown unlabelled.
+- **`runAgent`'s own tool-call rows are reconstructed after the fact.** They are read from the
+  steps of a `generate` that returned, so their `durationMs` is 0 and a call that threw or was
+  aborted records none of its tool calls — only the failed `llm_response`. Tools that record
+  themselves (MCP, workspace) are timed and recorded either way.
 - **The Claude Code harness holds a model credential inside the workspace container.** The agent
   runs as root on a network with unrestricted egress, so anything it runs can read the key and send
   it elsewhere; a repository's settings cannot move where the harness itself sends it, but the

@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { trace } from '@opentelemetry/api';
-import { activityInfo } from '@temporalio/activity';
+import { activityInfo, Context } from '@temporalio/activity';
 import { currentNodeTag } from './activityNodeTag.js';
 import type { AgentTracer } from './agentTracer.js';
 
@@ -72,6 +72,22 @@ export async function currentWorkflowRunId(): Promise<string | undefined> {
   }
 }
 
+/** Next free `seq` per activity attempt, keyed by the attempt's own Context. */
+const nextSeq = new WeakMap<Context, number>();
+
+/**
+ * Reserve `count` consecutive `seq` values in the current attempt. An activity
+ * can persist more than one tracer (its own, plus `runAgent`'s), and each
+ * tracer numbers its records from 0; without an offset their rows collide and
+ * the run viewer's order between them is arbitrary.
+ */
+function reserveSeq(count: number): number {
+  const ctx = Context.current();
+  const base = nextSeq.get(ctx) ?? 0;
+  nextSeq.set(ctx, base + count);
+  return base;
+}
+
 /**
  * Persist all in-memory traces for the currently executing activity.
  * Captures the active OTel span context (if any, and unless the caller already
@@ -89,6 +105,7 @@ export async function persistActivityTrace(tracer: AgentTracer, agentKey: string
     currentActivityType(),
     agentKey,
     currentAttempt(),
-    currentNodeTag()
+    currentNodeTag(),
+    reserveSeq(tracer.size)
   );
 }

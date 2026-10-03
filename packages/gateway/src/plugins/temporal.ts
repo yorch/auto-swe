@@ -1,5 +1,6 @@
 import { isWorkflowStatusFinished } from '@auto-swe/shared/lib/agentRunAdmission';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
+import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
 import type {
   ChannelAssistantTurnInput,
   ConsolidateLessonsInput,
@@ -260,7 +261,12 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
   const connection = await Connection.connect({
     address: resolveTemporalAddress(),
   });
-  const client = new Client({ connection });
+  // Stamps the request's trace context on every workflow it starts, so the
+  // run's activities join the request's trace (see shared/lib/temporalTracing).
+  const client = new Client({
+    connection,
+    interceptors: { workflow: [traceContextClientInterceptor()] },
+  });
   const schedules = new ScheduleClient({ connection });
 
   function makeScheduleAction(input: ScheduledConsolidationInput) {

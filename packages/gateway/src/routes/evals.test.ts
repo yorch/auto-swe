@@ -6,6 +6,9 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
   scanSkillContent: vi.fn(async () => ({ warnings: ['heads up'] })),
 }));
 
+const { recordRunFinalized } = vi.hoisted(() => ({ recordRunFinalized: vi.fn() }));
+vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
+
 import { evalRoutes } from './evals.js';
 
 function newMockPrisma() {
@@ -30,11 +33,15 @@ function newMockPrisma() {
       create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
+      update: vi.fn(),
     },
   };
 }
 
-async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
+async function buildApp(
+  role: 'ADMIN' | 'ENGINEER' = 'ADMIN',
+  startEvalRunWorkflow: () => Promise<void> = async () => {}
+) {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -43,7 +50,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
-  app.decorate('temporal', { startEvalRunWorkflow: async () => {} } as unknown as never);
+  app.decorate('temporal', { startEvalRunWorkflow } as unknown as never);
   await app.register(evalRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return { app, prisma };
@@ -177,6 +184,29 @@ describe('evalRoutes', () => {
     });
     expect(res.statusCode).toBe(202);
     expect(JSON.parse(res.payload).data.id).toBe('run-9');
+  });
+
+  it('marks a run whose workflow failed to start FAILED, and counts it as finalized', async () => {
+    const { app, prisma } = await buildApp('ADMIN', async () => {
+      throw new Error('temporal unreachable');
+    });
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'd1' });
+    prisma.evalRun.create.mockResolvedValue({ id: 'run-10' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: {
+        baselineRef: 'b',
+        candidateRef: 'c',
+        datasetId: '11111111-1111-4111-8111-111111111111',
+      },
+      url: '/api/v1/platform/evals/runs',
+    });
+    expect(res.statusCode).toBe(502);
+    expect(prisma.evalRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'run-10' } })
+    );
+    expect(recordRunFinalized).toHaveBeenCalledExactlyOnceWith('FAILED', 'eval');
   });
 
   it('404s starting a run for a missing dataset', async () => {

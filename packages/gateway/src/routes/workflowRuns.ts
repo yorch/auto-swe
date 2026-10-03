@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { assertMcpWriteAllowed, mcpWriteAuditHook, mcpWriteBegin } from '../lib/mcpWriteGuard.js';
+import { recordRunFinalized } from '../lib/metrics.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import {
@@ -308,7 +309,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         data: { endedAt: new Date(), status: 'CANCELLED' },
         where: { id: run.id, status: 'RUNNING' },
       });
-      if (count === 0) {
+      if (count > 0) {
+        // This write ended the run. When the workflow's own finalisation lands
+        // first, it counts the run instead (finalizeWorkflowRun's endedAt guard
+        // then skips it the other way round), so each run counts once.
+        recordRunFinalized('CANCELLED', 'gateway');
+      } else {
         // The workflow's own cancellation handler can finalise the run as
         // CANCELLED before this write — that is this cancel succeeding.
         const current = await fastify.prisma.workflowRun.findUnique({

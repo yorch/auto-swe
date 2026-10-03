@@ -3,15 +3,26 @@ import {
   resolveOtelMetricExportInterval,
 } from '@auto-swe/shared/lib/systemConfig';
 import { initTelemetry as initSharedTelemetry } from '@auto-swe/shared/lib/telemetry';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-grpc';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
+import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 
 export function initTelemetry(serviceName: string): { shutdown: () => Promise<void> } {
   const endpoint = resolveOtelExporterEndpoint();
   return initSharedTelemetry({
-    instrumentations: [new HttpInstrumentation()],
+    esmModules: ['http', 'https'],
+    // Undici is global `fetch`, which the AI SDK providers and Octokit call
+    // through; `http` never sees it. It hooks diagnostics channels, so it needs
+    // no module patching.
+    instrumentations: [new HttpInstrumentation(), new UndiciInstrumentation()],
+    // Fed by the Temporal Runtime logger (lib/otelLogger.ts).
+    logRecordProcessors: endpoint
+      ? [new BatchLogRecordProcessor({ exporter: new OTLPLogExporter({ url: endpoint }) })]
+      : undefined,
     metricReader: endpoint
       ? new PeriodicExportingMetricReader({
           exporter: new OTLPMetricExporter({ url: endpoint }),

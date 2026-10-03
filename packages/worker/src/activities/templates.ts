@@ -590,7 +590,7 @@ export async function finalizeWorkflowRun(
     return;
   }
   // Counted only by the attempt that finalized, so a retried activity cannot double it.
-  recordRunFinalized(status);
+  recordRunFinalized(status, 'worker');
 
   // The side effects below (Slack notifications + channel task finalization +
   // tracker sync) are non-idempotent. Only fire them when we actually finalized

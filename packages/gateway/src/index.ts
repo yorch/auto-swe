@@ -1,9 +1,3 @@
-import { getCorsOrigins, getPort } from './lib/env.js';
-import { initTelemetry } from './lib/telemetry.js';
-
-// Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
-const otel = initTelemetry('auto-swe-gateway');
-
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import {
@@ -21,14 +15,17 @@ import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { otel } from './instrument.js';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from './lib/betterAuthHandler.js';
+import { getCorsOrigins, getPort } from './lib/env.js';
 import { registerFormBodyParser } from './lib/formBody.js';
 import { mcpBridgePlugin } from './lib/mcp/bridge.js';
 import { mcpConsentAudit } from './lib/mcpConsentAudit.js';
 import { mcpOAuthGate } from './lib/mcpOAuthGate.js';
 import { mcpConsentAuditOptions, mcpOAuthGateOptions } from './lib/mcpOAuthGateOptions.js';
 import { mcpRouteOptions } from './lib/mcpRouteOptions.js';
+import { initMetrics } from './lib/metrics.js';
 import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
@@ -93,6 +90,8 @@ async function start() {
   // The sweep schedules below are environment-only and applied once, here. A
   // value the resolver would silently replace with a default is a failed boot.
   assertScheduledSweepsEnv();
+  // After the instrument.ts preload, so the instruments bind to the real provider.
+  initMetrics();
 
   // Must run before betterAuth.handler is called — reads OAuth creds from DB.
   await initAuth();

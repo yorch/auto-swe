@@ -121,6 +121,11 @@ export class AgentTracer {
     this.otelSpanId = spanId;
   }
 
+  /** Number of records collected so far. */
+  get size(): number {
+    return this.records.length;
+  }
+
   /** True once a span context has been attached; a more specific span set earlier wins. */
   hasSpanContext(): boolean {
     return this.otelTraceId !== undefined;
@@ -205,7 +210,9 @@ export class AgentTracer {
     agentKey: string,
     attempt = 1,
     /** The spec node the activity was dispatched for; absent outside the interpreter. */
-    nodeTag?: NodeTag
+    nodeTag?: NodeTag,
+    /** Added to every record's `seq`, so batches persisted by one attempt do not collide. */
+    seqOffset = 0
   ): Promise<void> {
     if (this.records.length === 0) {
       return;
@@ -229,7 +236,7 @@ export class AgentTracer {
           outputJson: r.outputJson as object | undefined,
           outputTokens: r.outputTokens ?? null,
           runId: ids.runId ?? null,
-          seq: r.seq,
+          seq: r.seq + seqOffset,
           toolName: r.toolName ?? null,
           type: r.type,
           workflowId: ids.workflowId,

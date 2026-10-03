@@ -32,6 +32,7 @@ import type { ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
+import { recordRunFinalized } from '../lib/metrics.js';
 import { type LanguageModel, resolveModel } from '../lib/models.js';
 import { createWorkspace, type Workspace } from './workspace.js';
 
@@ -100,12 +101,16 @@ async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
 }
 
 async function defaultFinalize(evalRunId: string, status: string, summary: unknown): Promise<void> {
-  await prisma.evalRun
-    .update({
+  // `endedAt: null`: a run is finalized once, so the verdict is counted once.
+  const { count } = await prisma.evalRun
+    .updateMany({
       data: { endedAt: new Date(), status, summary: summary as object },
-      where: { id: evalRunId },
+      where: { endedAt: null, id: evalRunId },
     })
-    .catch(() => undefined);
+    .catch(() => ({ count: 0 }));
+  if (count > 0) {
+    recordRunFinalized(status, 'eval');
+  }
 }
 
 /**

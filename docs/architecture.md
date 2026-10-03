@@ -657,6 +657,33 @@ interceptor (`lib/activitySpans.ts`), so an attempt's `llm.*` spans share one tr
 `temporal.workflow_id` attribute finds a run's traces in Tempo. The same trace ID is what
 `AgentTrace.otelTraceId` records, which is how the run viewer links an LLM call to Tempo.
 
+**Trace propagation.** A run's activities join the trace of whoever started the run, in three hops
+that never load OpenTelemetry into the workflow isolate:
+
+| Hop | Where | What it does |
+|---|---|---|
+| Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start and signal-with-start |
+| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new |
+| Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the starter's span |
+
+So a gateway request — its Fastify and HTTP server spans — and every activity of the run it
+started, child workflows included, are one trace in Tempo. A workflow started without a span around
+it (a Temporal schedule) gives each activity a trace of its own. Headers are not part of the command
+stream Temporal compares on replay: `runnable.traceContext.replay.test.ts` replays every committed
+fixture with both workflow interceptors registered. `@temporalio/interceptors-opentelemetry` is not
+used: it pins the 1.x OpenTelemetry SDK beside this repo's 2.x one, and runs OpenTelemetry inside
+the isolate.
+
+**Instrumentation.** The gateway and worker start the OpenTelemetry SDK from a preload,
+`src/instrument.ts`, passed to `node --import` — the Dockerfile `CMD`, `yarn start` and `yarn dev`
+all pass it. Both services are ESM, and an ESM entry point evaluates every static import before its
+own first statement, so an SDK started from `index.ts` would find `http` already bound and patch
+nothing. The preload also registers the `import-in-the-middle` loader hook for exactly the modules
+the instrumentations patch (`http` and `https`, plus `fastify` on the gateway), because the
+instrumentations' own `require` hook never sees an ESM import. Outbound `fetch` — model providers,
+Octokit, the tracker and knowledge-base connectors — is traced by the undici instrumentation, which
+subscribes to Node's diagnostics channels and needs no patching.
+
 | Span attribute | Value |
 |-----------|-------|
 | `llm.cost_usd` | USD cost computed from the model catalog, falling back to `BUILTIN_MODELS` |
@@ -664,13 +691,21 @@ interceptor (`lib/activitySpans.ts`), so an attempt's `llm.*` spans share one tr
 | `llm.cost_pricing_known` | `false` when the model has no price entry — usage is still recorded at zero cost, except that a call under an organization or channel monthly USD budget is refused before it is made (`MODEL_UNPRICED`) |
 | `workflow.budget_remaining_input` / `_output` | Remaining token budget for the run |
 
-The worker also exports metrics (`lib/metrics.ts`), labelled only by low-cardinality keys — model,
-agent, activity, status, tier — never a run or ticket:
+**Logs.** The worker's Temporal Runtime logger (`lib/otelLogger.ts`) writes every line to stderr as
+before and also emits it as an OpenTelemetry log record, exported over OTLP to Loki. That covers
+the SDK's own logging and everything activities log through `@temporalio/activity`'s `log`
+(`lib/activityLog.ts`). An activity logs inside its own async context, so its records carry the
+`activity.<type>` span's trace and span id, and Temporal's metadata — workflow id, activity type,
+attempt — becomes their attributes.
+
+The worker exports metrics (`lib/metrics.ts`), and the gateway exports its share of the run counter
+(`gateway/src/lib/metrics.ts`), labelled only by low-cardinality keys — model, agent, activity,
+status, source, tier — never a run or ticket:
 
 | Metric (Prometheus name) | Labels | Recorded by |
 |---|---|---|
 | `llm_calls_total`, `llm_tokens_total`, `llm_cost_usd_total` | `model`, `agent` (+ `direction` on tokens) | `recordLlmUsage`, embedding usage |
-| `workflow_runs_finalized_total` | `status` | `finalizeWorkflowRun`, once per run it finalizes |
+| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel). Each path guards its write on the run not having ended yet, so a retried activity or a cancel racing the workflow's own finalisation counts once |
 | `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, on each call that ends over the tier |
 | `activity_duration_seconds` (histogram) | `activity`, `outcome` (`success` / `failure` / `cancelled`) | the activity interceptor |
 
@@ -869,18 +904,25 @@ Current constraints of the system as built. Deliberate product boundaries are in
   consolidation, repo-access sync, and epic planning keep no `ActiveWorkflow` ledger, so no tier
   limit applies to them and their spend never reaches `OrgMonthlyUsage`. It is recorded on their
   trace rows and shown at `/govern/usage`, but nothing stops it.
-- **Metrics undercount at their edges.** `workflow_runs_finalized_total` counts only runs the worker
-  finalizes: a run cancelled from the dashboard is closed by the gateway, and channel and eval runs
-  by other paths. `llm_calls_total` counts agent calls, not model round trips inside a tool loop.
-  Prometheus `increase()` reads a new series' first sample as its baseline; status and tier series
-  are seeded with a zero at boot, but a model's or agent's first call after a worker restart does
-  not appear in increase-based panels.
-- **Traces start at the activity, not the workflow.** There is no workflow interceptor, so an
-  activity span has no parent and the spans of one run are separate traces tied together only by
-  their `temporal.workflow_id` attribute. Propagating context from the workflow means running an
-  interceptor inside the V8 isolate, and the official Temporal package for it pins the 1.x
-  OpenTelemetry SDK beside this repo's 2.x one. The gateway emits HTTP spans but none link to the
-  workflows a request starts. Logs go to stdout, not OTLP.
+- **Metrics undercount at their edges.** `llm_calls_total` counts agent calls, not model round
+  trips inside a tool loop. Prometheus `increase()` reads a new series' first sample as its
+  baseline; status, source and tier series are seeded with a zero at boot, but a model's or agent's
+  first call after a worker restart does not appear in increase-based panels. A process that ends a
+  run and dies before its next periodic export loses that increment.
+- **HTTP instrumentation depends on the preload.** A service started without
+  `--import ./dist/instrument.js` (a hand-written `node dist/index.js`) still initialises the SDK
+  and exports spans and metrics, but `http` and `fastify` go unpatched. With telemetry enabled, Node
+  prints a `DEP0205` warning at boot: `import-in-the-middle` registers through `module.register()`,
+  which Node 26 deprecates in favour of `module.registerHooks()`.
+- **A run's trace has no workflow span.** Activities hang directly off the span that started the
+  run; nothing represents the workflow itself or the time between activities, since producing one
+  would mean running OpenTelemetry inside the isolate. Signals and updates sent to a running
+  workflow (approvals, steering) carry no trace context, and runs started by a Temporal schedule
+  have no starting span, so each of their activities is its own trace.
+- **Only the worker's Temporal logger reaches Loki.** Plain `console` output — the `[bash:audit]`
+  and `[mcp:audit]` lines among it — and all of the gateway's logging stay on stdout. Workflow-code
+  logs arrive through the SDK's sink after the activation that produced them, so they carry no
+  trace context.
 - **The usage report is platform-wide only.** It has no per-team, per-org, or per-repository
   breakdown: a trace reaches its team only through run → request → connection, which Prisma cannot
   group by. Its daily series is one aggregate per UTC day, so a 90-day window costs 90 small queries.

@@ -26,6 +26,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { mapLimited } from '../lib/mapLimited.js';
+import { recordRunFinalized } from '../lib/metrics.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { projectEvalResult } from './workflowProjections.js';
@@ -440,6 +441,8 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
           },
           where: { id: run.id },
         });
+        // No workflow exists to finalize this run, so it is counted here.
+        recordRunFinalized('FAILED', 'eval');
         return reply.status(502).send({
           error: { code: 'EVAL_START_FAILED', message: 'Could not start the eval run workflow' },
         });

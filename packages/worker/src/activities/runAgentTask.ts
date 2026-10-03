@@ -252,6 +252,8 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       maxSteps: effective.maxSteps,
       perStepAccounting: true,
       spanName: 'llm.agent_run',
+      // The workspace and MCP tools record on this tracer; see RunAgentOptions.tracer.
+      tracer,
     });
     const text = redactString(result.text ?? '').slice(0, AGENT_RUN_MAX_TEXT_CHARS);
     const base: Omit<

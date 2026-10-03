@@ -314,13 +314,13 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (status) (increase(workflow_runs_finalized_total[$__rate_interval]))",
-          "legendFormat": "{{status}}",
+          "expr": "sum by (source, status) (increase(workflow_runs_finalized_total[$__rate_interval]))",
+          "legendFormat": "{{source}} {{status}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Runs finished by status",
+      "title": "Runs finished by source and status",
       "type": "timeseries"
     },
     {
@@ -422,7 +422,7 @@
         "type": "tempo",
         "uid": "tempo"
       },
-      "description": "Each activity attempt is one trace; its llm.* spans are children. Search by span.temporal.workflow_id to find one run's traces.",
+      "description": "A run's activities share the trace of whoever started it, such as the gateway request; each attempt's llm.* spans are children of its activity span. Runs started by a schedule have one trace per activity. Search by span.temporal.workflow_id to find one run.",
       "fieldConfig": {
         "defaults": {},
         "overrides": []

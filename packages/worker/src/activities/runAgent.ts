@@ -52,6 +52,14 @@ export interface RunAgentOptions {
    * with `BUDGET_EXCEEDED`, and an abort loses at most the one step in flight.
    */
   perStepAccounting?: boolean;
+  /**
+   * Record into the caller's tracer instead of a private one, and leave
+   * persisting it to the caller. For a caller whose tools record their own
+   * calls on that tracer (MCP and workspace tools do): the loop's rows and the
+   * tool rows then share one `seq` sequence, in the order they happened, and
+   * the tool calls are not recorded a second time from the result's steps.
+   */
+  tracer?: AgentTracer;
 }
 
 export interface RunAgentResult<T = unknown> {
@@ -89,7 +97,9 @@ export interface RunAgentResult<T = unknown> {
  * Generic Mastra agent loop driven by an {@link AgentSpec}. Builds the agent,
  * runs a single `generate` (Mastra drives the internal tool-calling loop when
  * the spec carries tools), records token usage via `recordLlmUsage`, captures
- * one `llm_response` trace, and persists it via `persistActivityTrace`.
+ * a `tool_call` row per tool call the loop made and one `llm_response` row, and
+ * persists them via `persistActivityTrace` (or leaves that to a caller that
+ * passed its own `tracer`).
  *
  * This is an in-process helper, not a Temporal activity boundary — an
  * `AgentSpec` holds live, non-serializable handles (`model`, `tools`). Callers
@@ -108,7 +118,7 @@ export async function runAgent<T = unknown>(
   options: RunAgentOptions = {}
 ): Promise<RunAgentResult<T>> {
   const spanName = options.spanName ?? 'llm.run_agent';
-  const tracer = new AgentTracer();
+  const tracer = options.tracer ?? new AgentTracer();
   try {
     return await otelTracer.startActiveSpan(spanName, async (span) => {
       const start = Date.now();
@@ -223,6 +233,10 @@ export async function runAgent<T = unknown>(
             ? 'max_steps'
             : undefined;
 
+        if (!options.tracer) {
+          recordStepToolCalls(tracer, genResult?.steps);
+        }
+
         const object = (genResult?.object ?? undefined) as T | undefined;
         const text = genResult?.text || accounting?.lastText() || undefined;
 
@@ -267,6 +281,44 @@ export async function runAgent<T = unknown>(
       }
     });
   } finally {
-    await persistActivityTrace(tracer, spec.agentKey);
+    if (!options.tracer) {
+      await persistActivityTrace(tracer, spec.agentKey);
+    }
   }
+}
+
+/** The slice of a Mastra step that carries its tool calls. */
+interface StepToolCalls {
+  toolCalls?: Array<{ payload: { toolCallId: string; toolName: string; args?: unknown } }>;
+  toolResults?: Array<{ payload: { toolCallId: string; result: unknown; isError?: boolean } }>;
+}
+
+/**
+ * One `tool_call` row per tool call Mastra made inside the loop, paired with
+ * its result by call id. The steps carry no timing, so `durationMs` is 0, and
+ * only a `generate` that returned has steps to read.
+ */
+function recordStepToolCalls(tracer: AgentTracer, steps: StepToolCalls[] | undefined): void {
+  for (const step of steps ?? []) {
+    const results = new Map(
+      (step.toolResults ?? []).map((r) => [r.payload.toolCallId, r.payload] as const)
+    );
+    for (const { payload: call } of step.toolCalls ?? []) {
+      const result = results.get(call.toolCallId);
+      tracer.addToolCall({
+        durationMs: 0,
+        error: result?.isError ? errorText(result.result) : undefined,
+        inputJson: call.args ?? {},
+        outputJson: result && !result.isError ? result.result : undefined,
+        toolName: call.toolName,
+      });
+    }
+  }
+}
+
+function errorText(result: unknown): string {
+  if (result instanceof Error) {
+    return result.message;
+  }
+  return typeof result === 'string' ? result : JSON.stringify(result);
 }
