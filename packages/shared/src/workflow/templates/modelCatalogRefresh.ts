@@ -1,4 +1,4 @@
-import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import { type Node, SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   initCounters,
   mergeNodes,
@@ -9,6 +9,8 @@ import {
   statusStamp,
   terminate,
 } from './authoring/index.js';
+
+type StepNode = Extract<Node, { type: 'step' }>;
 
 /**
  * The criteria the reviewers hold the change to. Exported so the template's test
@@ -100,7 +102,7 @@ export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
       },
       initCounters: initCounters('runTests', { ci: false, group: 'implement' }),
       runTests: {
-        ...qualityGate('runTests', 'setReviewing', { group: 'verify' }),
+        ...(qualityGate('runTests', 'setReviewing', { group: 'verify' }) as StepNode),
         config: { command: MODEL_CATALOG_REFRESH_TEST_COMMAND },
       },
     },
