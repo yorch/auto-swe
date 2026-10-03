@@ -101,6 +101,15 @@ export const HERO_ROUTES = [
         },
         label: 'Second sign-off',
       },
+      {
+        detail: 'Asked only if a sign-off is rejected',
+        gate: {
+          action: 'Say what should change',
+          held: 'Held at the question a rejection asks. The reviewer says what should change.',
+          timeout: '1h',
+        },
+        label: 'If rejected',
+      },
     ],
     tab: 'Four-eyes change',
     template: 'four-eyes',
