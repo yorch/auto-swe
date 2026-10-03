@@ -1,3 +1,4 @@
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -97,6 +98,9 @@ async function mapLimited<T, R>(items: T[], limit: number, fn: (t: T) => Promise
   return out;
 }
 
+/** Why the report's trace queries may span every tenant: the route is ADMIN-only. */
+const PLATFORM_WIDE = 'ADMIN usage report spans every tenant';
+
 export const usageRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const prisma = fastify.prisma;
@@ -119,32 +123,37 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
       // One grouping by (model, agent, activity) serves the totals and all
       // three breakdowns: the key space is small, and it saves a full-window
       // scan per breakdown.
-      const [groups, failedGroups, unattributed, topRunGroups] = await Promise.all([
-        prisma.agentTrace.groupBy({
-          _count: { _all: true, durationMs: true },
-          _sum: { costUsd: true, durationMs: true, inputTokens: true, outputTokens: true },
-          by: ['model', 'agentKey', 'nodeId'],
-          where: llm,
-        }),
-        prisma.agentTrace.groupBy({
-          _count: { _all: true, durationMs: true },
-          _sum: { durationMs: true },
-          by: ['model', 'agentKey', 'nodeId'],
-          where: { ...llm, error: { not: null } },
-        }),
-        prisma.agentTrace.aggregate({
-          _count: { _all: true },
-          _sum: { costUsd: true },
-          where: { ...llm, runId: null },
-        }),
-        prisma.agentTrace.groupBy({
-          _sum: { costUsd: true, inputTokens: true, outputTokens: true },
-          by: ['runId'],
-          orderBy: { _sum: { costUsd: 'desc' } },
-          take: TOP_RUNS,
-          where: { ...llm, costUsd: { gt: 0 }, runId: { not: null } },
-        }),
-      ]);
+      const [groups, failedGroups, unattributed, topRunGroups] = await runUnscoped(
+        PLATFORM_WIDE,
+        ['AgentTrace'],
+        () =>
+          Promise.all([
+            prisma.agentTrace.groupBy({
+              _count: { _all: true, durationMs: true },
+              _sum: { costUsd: true, durationMs: true, inputTokens: true, outputTokens: true },
+              by: ['model', 'agentKey', 'nodeId'],
+              where: llm,
+            }),
+            prisma.agentTrace.groupBy({
+              _count: { _all: true, durationMs: true },
+              _sum: { durationMs: true },
+              by: ['model', 'agentKey', 'nodeId'],
+              where: { ...llm, error: { not: null } },
+            }),
+            prisma.agentTrace.aggregate({
+              _count: { _all: true },
+              _sum: { costUsd: true },
+              where: { ...llm, runId: null },
+            }),
+            prisma.agentTrace.groupBy({
+              _sum: { costUsd: true, inputTokens: true, outputTokens: true },
+              by: ['runId'],
+              orderBy: { _sum: { costUsd: 'desc' } },
+              take: TOP_RUNS,
+              where: { ...llm, costUsd: { gt: 0 }, runId: { not: null } },
+            }),
+          ])
+      );
 
       // JSON keys keep a null model distinct from any real string.
       const keyOf = (g: { model: string | null; agentKey: string; nodeId: string }) =>
@@ -187,14 +196,16 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
 
       const days = Array.from({ length: windowDays }, (_, i) => since.getTime() + i * DAY_MS);
       const daily = await mapLimited(days, DAILY_CONCURRENCY, async (start) => {
-        const row = await prisma.agentTrace.aggregate({
-          _count: { _all: true },
-          _sum: { costUsd: true, inputTokens: true, outputTokens: true },
-          where: {
-            createdAt: { gte: new Date(start), lt: new Date(start + DAY_MS) },
-            type: 'llm_response',
-          },
-        });
+        const row = await runUnscoped(PLATFORM_WIDE, ['AgentTrace'], () =>
+          prisma.agentTrace.aggregate({
+            _count: { _all: true },
+            _sum: { costUsd: true, inputTokens: true, outputTokens: true },
+            where: {
+              createdAt: { gte: new Date(start), lt: new Date(start + DAY_MS) },
+              type: 'llm_response',
+            },
+          })
+        );
         return {
           calls: row._count._all,
           costUsd: row._sum.costUsd ?? 0,

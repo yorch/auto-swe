@@ -67,6 +67,7 @@ import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { _resetKeyCacheForTests, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { ConfigMissingError } from './config/resolver.js';
 import { _resetEmbeddingClientForTests, generateEmbedding } from './embeddings.js';
+import { withSpendOwner } from './spendOwner.js';
 
 const originalEnv = { ...process.env };
 
@@ -238,6 +239,19 @@ describe('embedding usage recording', () => {
 
     expect(traceCreateMock).toHaveBeenCalledWith({
       data: expect.objectContaining({ runId: null, workflowId: 'wf-1' }),
+    });
+  });
+
+  it('attributes the row to the spend owner the activity declared', async () => {
+    activity.inActivity = true;
+    embedMock.mockResolvedValue({ embedding: new Array(1536).fill(0), usage: { tokens: 10 } });
+
+    await withSpendOwner(Promise.resolve({ orgId: 'org-1', teamId: 'team-1' }), () =>
+      generateEmbedding('x')
+    );
+
+    expect(traceCreateMock).toHaveBeenCalledWith({
+      data: expect.objectContaining({ orgId: 'org-1', teamId: 'team-1' }),
     });
   });
 

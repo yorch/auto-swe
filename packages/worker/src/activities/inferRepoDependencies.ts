@@ -9,6 +9,7 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import { findEdgeWriteTarget } from '../lib/repoDependencyEdgeWrite.js';
+import { ownerOfConnection, withSpendOwner } from '../lib/spendOwner.js';
 import { runAgent } from './runAgent.js';
 
 /**
@@ -155,6 +156,13 @@ async function upsertInferredEdge(
  * non-LLM sibling. Only the advisory rationale scan is best-effort.
  */
 export async function inferRepoDependencies(
+  input: InferRepoDependenciesInput
+): Promise<InferRepoDependenciesResult> {
+  // No run row: the spend is the subject repository's team's.
+  return withSpendOwner(ownerOfConnection(input.repoId), () => inferRepoDependenciesImpl(input));
+}
+
+async function inferRepoDependenciesImpl(
   input: InferRepoDependenciesInput
 ): Promise<InferRepoDependenciesResult> {
   const empty: InferRepoDependenciesResult = { autoPromoted: 0, proposed: 0 };

@@ -33,6 +33,7 @@ import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
 import { type LanguageModel, resolveModel } from '../lib/models.js';
+import { ownerOfDataset, withSpendOwner } from '../lib/spendOwner.js';
 import { createWorkspace, type Workspace } from './workspace.js';
 
 /**
@@ -300,10 +301,13 @@ export const _defaults = { defaultFinalize, defaultLoadCases };
  */
 export async function runEvalHarnessActivity(input: HarnessInput): Promise<void> {
   try {
-    await runEvalHarness(input, {
-      loadCases: defaultLoadCases,
-      runCase: runCaseDefault,
-    });
+    // No run row: the spend is the dataset's owner's.
+    await withSpendOwner(ownerOfDataset(input.datasetId), () =>
+      runEvalHarness(input, {
+        loadCases: defaultLoadCases,
+        runCase: runCaseDefault,
+      })
+    );
   } catch (err) {
     // Mark the run FAILED (not stuck RUNNING / not a false SUCCESS) and re-throw
     // so Temporal records the failure.

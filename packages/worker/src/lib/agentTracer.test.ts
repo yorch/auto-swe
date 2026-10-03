@@ -24,6 +24,19 @@ describe('AgentTracer.persist', () => {
     });
   });
 
+  it('writes the spend owner it is given, and NULL when it is given none', async () => {
+    const tracer = new AgentTracer();
+    tracer.addLlmResponse({ costUsd: 0.01, durationMs: 5, role: 'r' });
+    await tracer.persist(
+      { orgId: 'o1', runId: 'run-1', teamId: 't1', workflowId: 'wf-1' },
+      'n',
+      'r'
+    );
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'r');
+    expect(createManyMock.mock.calls[0]?.[0].data[0]).toMatchObject({ orgId: 'o1', teamId: 't1' });
+    expect(createManyMock.mock.calls[1]?.[0].data[0]).toMatchObject({ orgId: null, teamId: null });
+  });
+
   it('records the spec node, recording id and step attempt it was given', async () => {
     const tracer = new AgentTracer();
     tracer.addActivityEvent({ name: 'e' });

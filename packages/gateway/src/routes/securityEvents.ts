@@ -1,4 +1,5 @@
 import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -98,24 +99,30 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
         ...(runId ? { runId } : {}),
       };
 
-      const [rows, total] = await Promise.all([
-        fastify.prisma.agentTrace.findMany({
-          include: {
-            run: {
-              select: {
-                startedAt: true,
-                workflowId: true,
-                workRequest: { select: { externalTicketId: true, id: true } },
+      // ADMIN-only feed across every tenant.
+      const [rows, total] = await runUnscoped(
+        'admin security feed spans every tenant',
+        ['AgentTrace'],
+        () =>
+          Promise.all([
+            fastify.prisma.agentTrace.findMany({
+              include: {
+                run: {
+                  select: {
+                    startedAt: true,
+                    workflowId: true,
+                    workRequest: { select: { externalTicketId: true, id: true } },
+                  },
+                },
               },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-          skip: offset,
-          take: limit,
-          where,
-        }),
-        fastify.prisma.agentTrace.count({ where }),
-      ]);
+              orderBy: { createdAt: 'desc' },
+              skip: offset,
+              take: limit,
+              where,
+            }),
+            fastify.prisma.agentTrace.count({ where }),
+          ])
+      );
 
       const events = rows.map((t) => ({
         createdAt: t.createdAt,

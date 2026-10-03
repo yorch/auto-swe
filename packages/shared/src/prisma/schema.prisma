@@ -583,6 +583,7 @@ model Organization {
   slackWorkspaces     SlackWorkspace[]
   slackChannels       SlackChannel[]
   memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
+  agentTraces         AgentTrace[]             @relation("OrgAgentTraces")
   humanErrorBaselines HumanErrorBaseline[]
 
   configSettings      ConfigSetting[]
@@ -637,6 +638,7 @@ model Team {
   configSettings      ConfigSetting[]
   configPermissions   ConfigPermission[]
   memoryItems         MemoryItem[]             @relation("TeamMemoryItems")
+  agentTraces         AgentTrace[]             @relation("TeamAgentTraces")
   autonomyPolicies    AutonomyPolicy[]
   skills            Skill[]
 
@@ -1591,10 +1593,24 @@ model AgentTrace {
   otelTraceId  String?     @map("otel_trace_id")
   /// W3C span-id of the OTel span active when this activity was persisted.
   otelSpanId   String?     @map("otel_span_id")
+  /// The team whose spend this row is, denormalized at write time (worker
+  /// `currentSpendOwner`) so usage can be broken down by tenant without the
+  /// run → request → connection join, which a workflow with no run cannot make.
+  /// Null when no team is derivable (a GLOBAL eval dataset, an epic's planning)
+  /// and on rows that predate the column.
+  teamId       String?       @map("team_id") @db.Uuid
+  team         Team?         @relation("TeamAgentTraces", fields: [teamId], references: [id], onDelete: SetNull)
+  /// The organization of `team`, or the owner itself when only an organization
+  /// is known (an ORGANIZATION-scoped eval dataset).
+  orgId        String?       @map("org_id") @db.Uuid
+  org          Organization? @relation("OrgAgentTraces", fields: [orgId], references: [id], onDelete: SetNull)
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([runId, nodeId])
   @@index([createdAt])
+  @@index([workflowId])
+  @@index([teamId, createdAt])
+  @@index([orgId, createdAt])
   @@map("agent_traces")
 }
 

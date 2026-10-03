@@ -197,10 +197,11 @@ export class AgentTracer {
   /**
    * `runId` is undefined for workflows that keep no WorkflowRun row. Their
    * traces are still written, keyed by `workflowId`, so their LLM spend is
-   * recorded somewhere rather than dropped.
+   * recorded somewhere rather than dropped. `teamId`/`orgId` name whose spend
+   * the rows are (see `currentSpendOwner`); absent, the rows belong to nobody.
    */
   async persist(
-    ids: { runId: string | undefined; workflowId: string },
+    ids: { runId: string | undefined; workflowId: string; teamId?: string; orgId?: string },
     nodeId: string,
     agentKey: string,
     attempt = 1,
@@ -224,12 +225,14 @@ export class AgentTracer {
           inputTokens: r.inputTokens ?? null,
           model: r.model ?? null,
           nodeId,
+          orgId: ids.orgId ?? null,
           otelSpanId: this.otelSpanId ?? null,
           otelTraceId: this.otelTraceId ?? null,
           outputJson: r.outputJson as object | undefined,
           outputTokens: r.outputTokens ?? null,
           runId: ids.runId ?? null,
           seq: r.seq,
+          teamId: ids.teamId ?? null,
           toolName: r.toolName ?? null,
           type: r.type,
           workflowId: ids.workflowId,

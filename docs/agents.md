@@ -615,6 +615,7 @@ content) to keep trace sizes manageable.
 | `durationMs` | Wall-clock duration of the call |
 | `model` / `inputTokens` / `outputTokens` / `costUsd` | Per-call attribution on `llm_response` rows |
 | `otelTraceId` / `otelSpanId` | Correlation with the matching Tempo span |
+| `teamId` / `orgId` | Whose spend the row is — see §8.5. Null when no owner is derivable |
 
 ### 8.4 Node attribution
 
@@ -638,6 +639,28 @@ Every dispatch kind goes through the two dispatch methods — `step`, `agent`, `
 Rejected: threading the id through each activity's inputs (dozens of positional signatures and
 every in-flight payload), and reading the run's `RUNNING` step row (a fan-out has several at once,
 so it cannot say which belongs to a given activity).
+
+### 8.5 Spend attribution
+
+Every row records the team and organization whose spend it is, written at persist time by
+`persistActivityTrace` and the embedding usage row from `currentSpendOwner()`
+(`lib/spendOwner.ts`). A run's owner is derived the way run visibility decides its team: the run's
+own repository (an epic child), its ledger row's repository, its work request's connection, its
+Slack channel, then its template. A workflow with no run names its owner itself with
+`withSpendOwner`: authoring and explaining charge the requesting team, lesson consolidation and
+dependency inference the repository's team, and the eval harness the dataset's team (or its
+organization, for an ORGANIZATION-scoped dataset). Resolution never fails an activity; a lookup that
+fails attributes the row to nobody.
+
+With these columns `AgentTrace` is a tenant-scoped model for the `tenantGuard`: a mass query on it
+carries a `teamId`/`orgId` predicate or declares itself with `runUnscoped`.
+
+**Limitations.**
+
+- **Some rows have no owner.** A GLOBAL eval dataset, an epic's planning call (its work request
+  spans repositories), repository-access sync, a memory re-embed, and a run whose template,
+  channel and repositories are all unowned write null `teamId`/`orgId`.
+- **Rows that predate the columns are unattributed.** Nothing backfills them.
 
 The run viewer (`web/src/lib/traceLinkage.ts`) filters on these fields: a node selects all its
 branches, a fan-out selects everything inside it, a step row selects exactly its execution.

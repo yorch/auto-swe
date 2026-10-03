@@ -3,6 +3,7 @@ import { trace } from '@opentelemetry/api';
 import { activityInfo } from '@temporalio/activity';
 import { currentNodeTag } from './activityNodeTag.js';
 import type { AgentTracer } from './agentTracer.js';
+import { currentSpendOwner } from './spendOwner.js';
 
 /**
  * Returns the Temporal activity type (function name) for the currently
@@ -84,8 +85,9 @@ export async function persistActivityTrace(tracer: AgentTracer, agentKey: string
   if (!tracer.hasSpanContext() && spanContext?.traceId && spanContext?.spanId) {
     tracer.setSpanContext(spanContext.traceId, spanContext.spanId);
   }
+  const [runId, owner] = await Promise.all([currentWorkflowRunId(), currentSpendOwner()]);
   await tracer.persist(
-    { runId: await currentWorkflowRunId(), workflowId: currentWorkflowId() },
+    { ...owner, runId, workflowId: currentWorkflowId() },
     currentActivityType(),
     agentKey,
     currentAttempt(),

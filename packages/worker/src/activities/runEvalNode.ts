@@ -21,6 +21,7 @@ import {
   toRegexSpecs,
 } from '@auto-swe/shared/lib/regexExec';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { type Context, type EvalScorer, evalBoolean } from '@auto-swe/shared/workflow';
 import { z } from 'zod';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
@@ -83,10 +84,12 @@ async function evaluateScorer(
     }
     case 'trajectory': {
       const traces = runId
-        ? ((await prisma.agentTrace.findMany({
-            select: { error: true, toolName: true, type: true },
-            where: { runId },
-          })) as TraceLike[])
+        ? ((await runUnscoped('scoped by the current run', ['AgentTrace'], () =>
+            prisma.agentTrace.findMany({
+              select: { error: true, toolName: true, type: true },
+              where: { runId },
+            })
+          )) as TraceLike[])
         : [];
       const m = scoreTrajectory(traces);
       return { kind: 'trajectory', scorer: 'trajectory:toolCorrectness', value: m.toolCorrectness };

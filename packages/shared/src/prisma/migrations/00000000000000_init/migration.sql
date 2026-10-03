@@ -747,6 +747,8 @@ CREATE TABLE "agent_traces" (
     "cost_usd" DOUBLE PRECISION,
     "otel_trace_id" TEXT,
     "otel_span_id" TEXT,
+    "team_id" UUID,
+    "org_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "agent_traces_pkey" PRIMARY KEY ("id")
@@ -1670,6 +1672,15 @@ CREATE INDEX "agent_traces_run_id_node_id_idx" ON "agent_traces"("run_id", "node
 CREATE INDEX "agent_traces_created_at_idx" ON "agent_traces"("created_at");
 
 -- CreateIndex
+CREATE INDEX "agent_traces_workflow_id_idx" ON "agent_traces"("workflow_id");
+
+-- CreateIndex
+CREATE INDEX "agent_traces_team_id_created_at_idx" ON "agent_traces"("team_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "agent_traces_org_id_created_at_idx" ON "agent_traces"("org_id", "created_at");
+
+-- CreateIndex
 CREATE INDEX "workflow_steps_run_id_idx" ON "workflow_steps"("run_id");
 
 -- CreateIndex
@@ -2067,6 +2078,12 @@ ALTER TABLE "eval_runs" ADD CONSTRAINT "eval_runs_dataset_id_fkey" FOREIGN KEY (
 
 -- AddForeignKey
 ALTER TABLE "agent_traces" ADD CONSTRAINT "agent_traces_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agent_traces" ADD CONSTRAINT "agent_traces_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agent_traces" ADD CONSTRAINT "agent_traces_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "workflow_steps" ADD CONSTRAINT "workflow_steps_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
