@@ -992,6 +992,70 @@ describe('workflow-templates routes', () => {
     }
   });
 
+  it('activates a draft by promoting the version that is already active', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const saved = { ...tpl };
+    tpl.status = 'DRAFT';
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'POST',
+        payload: { version: tpl.activeVersion },
+        url: `/api/v1/workflow-templates/${tpl.id}/promote`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.status).toBe('ACTIVE');
+    } finally {
+      Object.assign(tpl, saved);
+    }
+  });
+
+  it('restores an archived template to active', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const saved = { ...tpl };
+    tpl.status = 'ARCHIVED';
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { status: 'ACTIVE' },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.status).toBe('ACTIVE');
+    } finally {
+      Object.assign(tpl, saved);
+    }
+  });
+
+  it('refuses to activate a template that has no active version', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const saved = { ...tpl };
+    tpl.status = 'ARCHIVED';
+    tpl.activeVersion = null;
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { status: 'ACTIVE' },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error?.code).toBe('NO_ACTIVE_VERSION');
+    } finally {
+      Object.assign(tpl, saved);
+    }
+  });
+
   it('forbids reviewing a generated version you generated yourself', async () => {
     const tpl = state.templates[0];
     if (!tpl) {

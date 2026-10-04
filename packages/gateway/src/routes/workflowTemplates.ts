@@ -1182,6 +1182,31 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           );
         }
       }
+      // Setting a template ACTIVE (restoring an archived one, say) serves real runs from
+      // its active version, so it carries the same preconditions `/promote` enforces.
+      if (request.body.status === 'ACTIVE' && existing.status !== 'ACTIVE') {
+        if (existing.activeVersion === null) {
+          return sendError(
+            reply,
+            409,
+            'NO_ACTIVE_VERSION',
+            'This template has no active version — promote a version first'
+          );
+        }
+        const activeRow = await fastify.prisma.workflowTemplateVersion.findUnique({
+          where: {
+            templateId_version: { templateId: existing.id, version: existing.activeVersion },
+          },
+        });
+        if (activeRow?.generatedBy && !activeRow.reviewedAt) {
+          return sendError(
+            reply,
+            409,
+            'REVIEW_REQUIRED',
+            'This AI-generated version must be reviewed and approved before the template can be activated.'
+          );
+        }
+      }
       // Enabling traffic split without a destination version is meaningless and
       // would silently no-op in the resolver — reject it up front.
       const nextExpVersion = expVersion !== undefined ? expVersion : existing.experimentVersion;
