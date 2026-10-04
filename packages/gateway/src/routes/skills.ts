@@ -109,17 +109,25 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.skill.findMany({
           include: {
             _count: { select: { agentSkillRefs: true } },
-            // The commit the current text was cut from, for the "external" badge.
-            revisions: { orderBy: { revision: 'desc' }, select: { sourceSha: true }, take: 1 },
             source: { select: { host: true, owner: true, repo: true } },
           },
           orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],
         })
       );
+      // The commit each imported skill's current text was cut from, for the "external"
+      // badge: exactly one revision per imported skill, not every revision of every skill.
+      const imported = skills.filter((s) => s.sourceId !== null);
+      const shas = imported.length
+        ? await fastify.prisma.skillRevision.findMany({
+            select: { skillId: true, sourceSha: true },
+            where: { OR: imported.map((s) => ({ revision: s.currentRevision, skillId: s.id })) },
+          })
+        : [];
+      const shaOf = new Map(shas.map((r) => [r.skillId, r.sourceSha]));
       return {
-        data: skills.map(({ _count, revisions, source, ...s }) => ({
+        data: skills.map(({ _count, source, ...s }) => ({
           ...s,
-          externalSource: source ? { ...source, sha: revisions[0]?.sourceSha ?? null } : null,
+          externalSource: source ? { ...source, sha: shaOf.get(s.id) ?? null } : null,
           usedByCount: _count.agentSkillRefs,
         })),
       };

@@ -956,6 +956,34 @@ describe('review bounds and binding', () => {
   });
 });
 
+describe('accept and a concurrent install', () => {
+  it('an accept whose installed set changed after it was planned is SOURCE_CHANGED, writing nothing', async () => {
+    fetchSkillSource.mockResolvedValue(
+      fetched([upstream('alpha', { promptText: 'alpha v2 text' }), upstream('beta')])
+    );
+    const f = await buildApp();
+    // An install lands between the accept's plan and its transaction.
+    f.prisma.$executeRaw.mockImplementationOnce(async () => {
+      f.state.skills.push(installedSkill('gamma'));
+      return 0;
+    });
+    const res = await f.call('POST', '/accept', { sha: NEW });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_UPDATE_SOURCE_CHANGED');
+    expect(f.writes).not.toContain('skill.update');
+    expect(f.state.source.pinnedSha).toBe(OLD);
+  });
+
+  it('takes the per-source lock first', async () => {
+    fetchSkillSource.mockResolvedValue(fetched([upstream('alpha'), upstream('beta')]));
+    const f = await buildApp();
+    await f.call('POST', '/accept', { sha: NEW });
+    expect(JSON.stringify(f.prisma.$executeRaw.mock.calls[0])).toContain(
+      `skill-source:${SOURCE_ID}`
+    );
+  });
+});
+
 describe('POST /:id/install', () => {
   const withGamma = (over: Record<string, unknown> = {}) =>
     fetchSkillSource.mockResolvedValue(
@@ -1063,6 +1091,29 @@ describe('POST /:id/install', () => {
     const f = await buildApp();
     f.prisma.$executeRaw.mockImplementationOnce(async () => {
       f.state.source.pinnedSha = NEW;
+      return 0;
+    });
+    const res = await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_IMPORT_SOURCE_CHANGED');
+    expect(f.writes).not.toContain('skill.create');
+  });
+
+  it('takes the per-source lock before the name lock', async () => {
+    withGamma();
+    const f = await buildApp();
+    await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] });
+    expect(f.prisma.$executeRaw.mock.calls.length).toBe(2);
+    const keys = f.prisma.$executeRaw.mock.calls.map((c) => JSON.stringify(c));
+    expect(keys[0]).toContain(`skill-source:${SOURCE_ID}`);
+    expect(keys[1]).toContain('skill-name-allocation');
+  });
+
+  it('a scriptMode changed while installing is SOURCE_CHANGED, writing nothing', async () => {
+    withGamma();
+    const f = await buildApp();
+    f.prisma.$executeRaw.mockImplementationOnce(async () => {
+      f.state.source.scriptMode = 'REJECT';
       return 0;
     });
     const res = await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] });

@@ -650,6 +650,49 @@ describe.skipIf(!enabled)('skill sources against Postgres', () => {
       ]);
     });
 
+    it('an install that commits while an accept is scanning makes the accept SOURCE_CHANGED, not a pin over a stale skill', async () => {
+      const { names, row } = await installed(['xrace']);
+      const extra = `xraceb-${tag}`;
+      skillNames.push(extra);
+      fetchSkillSource.mockImplementation(async (_loc: unknown, opts: { atSha?: string }) => ({
+        sha: opts.atSha as string,
+        skills:
+          opts.atSha === SHA
+            ? [
+                { ...upstream(names[0] as string, `text of ${names[0]}`), referenceFiles: [] },
+                { ...upstream(extra, 'old text'), referenceFiles: [] },
+              ]
+            : [
+                { ...upstream(names[0] as string, `v2 of ${names[0]}`), referenceFiles: [] },
+                { ...upstream(extra, 'new text'), referenceFiles: [] },
+              ],
+      }));
+      // The install runs inside the accept's scan: after its plan, before its transaction.
+      let during: Promise<unknown> | null = null;
+      scanSkillContent.mockImplementationOnce(async () => {
+        during = app.inject({
+          headers: { authorization: 'Bearer t' },
+          method: 'POST',
+          payload: { sha: SHA, skills: [extra] } as never,
+          url: `/api/v1/platform/skill-sources/${row.id}/install`,
+        });
+        expect(((await during) as { statusCode: number }).statusCode).toBe(201);
+        return { incomplete: false, safe: true, warnings: [] };
+      });
+      const res = await accept(row.id, { sha: NEW_SHA });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('SKILL_UPDATE_SOURCE_CHANGED');
+      expect(await prisma.skillSource.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({
+        pinnedSha: SHA,
+        status: 'UPDATE_AVAILABLE',
+      });
+      // Nothing of the refused accept was written.
+      const skill = await prisma.skill.findFirstOrThrow({
+        where: { name: names[0], sourceId: row.id },
+      });
+      expect(skill.currentRevision).toBe(1);
+    });
+
     describe('installing more skills into an existing source', () => {
       const countNamed = (name: string) =>
         runUnscoped('test counts one skill by name', ['Skill'], () =>

@@ -13,7 +13,7 @@ import {
   safeDisplayPath,
 } from '@auto-swe/shared/lib/skillSource';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { type SkillSourceRow, scanAll } from './skillSourceService.js';
+import { lockSkillSource, type SkillSourceRow, scanAll } from './skillSourceService.js';
 import { type TextDiff, unifiedDiff } from './textDiff.js';
 
 /**
@@ -110,7 +110,10 @@ interface UpdatePlan {
   added: SourceSkill[];
 }
 
-async function loadInstalled(prisma: PrismaClient, sourceId: string): Promise<InstalledRow[]> {
+async function loadInstalled(
+  prisma: Pick<PrismaClient, 'skill'>,
+  sourceId: string
+): Promise<InstalledRow[]> {
   return runUnscoped('skill source update reads the skills of one source', ['Skill'], () =>
     prisma.skill.findMany({
       orderBy: { name: 'asc' },
@@ -245,6 +248,7 @@ export async function diffSkillSource(
 
   return {
     added: plan.added.map((s) => ({
+      blockedByScan: block && scanOf(s).length > 0,
       description: s.description,
       errors: s.errors,
       folder: safeDisplayPath(s.folder),
@@ -503,6 +507,18 @@ export async function acceptSkillUpdate(
 
   return prisma.$transaction(
     async (tx) => {
+      await lockSkillSource(tx, source.id);
+      // An install that committed since the plan was made would leave a skill the plan
+      // never saw behind a pin this accept moves.
+      const now = await loadInstalled(tx, source.id);
+      const key = (rows: InstalledRow[]) =>
+        rows
+          .map((r) => `${r.id}\0${r.sourcePath}`)
+          .sort()
+          .join('\n');
+      if (key(now) !== key(installed)) {
+        throw new SkillUpdateRefusal('SOURCE_CHANGED');
+      }
       const accepted: AcceptedSkill[] = [];
       for (const c of chosen) {
         const next = nextRevision(

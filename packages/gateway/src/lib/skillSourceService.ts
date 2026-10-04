@@ -359,6 +359,16 @@ export async function installSkillSource(
 }
 
 /**
+ * Serialises an install and an accept on one source. Both read the installed set and
+ * the pin before they write, so without it an install that commits while an accept is
+ * scanning leaves a skill behind a pin that then reads up to date. Taken first, before
+ * the name lock where a transaction needs both, so the two locks cannot deadlock.
+ */
+// CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
+export const lockSkillSource = (tx: Prisma.TransactionClient, sourceId: string) =>
+  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`skill-source:${sourceId}`}, 0))`;
+
+/**
  * Install more skills from a source that already exists: the folders its pinned
  * commit holds that nothing installed uses (never chosen at import).
  *
@@ -403,9 +413,16 @@ export async function installIntoSource(
 
   return prisma.$transaction(
     async (tx) => {
+      await lockSkillSource(tx, source.id);
       await lockSkillNames(tx);
       const current = await tx.skillSource.findUnique({ where: { id: source.id } });
-      if (!current || current.status === 'DISABLED' || current.pinnedSha !== input.sha) {
+      if (
+        !current ||
+        current.status === 'DISABLED' ||
+        current.pinnedSha !== input.sha ||
+        // The folders were read in the mode the row had before the transaction.
+        current.scriptMode !== source.scriptMode
+      ) {
         throw new SkillImportRefusal('SOURCE_CHANGED', undefined);
       }
       const taken = await runUnscoped(
