@@ -50,8 +50,11 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
    contradicts changes nothing, and a host with no App credentials, or a lookup that fails, changes
    nothing. Only installations an admin has recorded are touched: an uninstall or suspension retires
    the installation, a report of "active" reactivates one a webhook retired, and an account rename
-   (`installation_target`, when GitHub sends it) updates the account login read from GitHub. Renames
-   are otherwise picked up on the next admin edit. It never creates an installation, and never
+   (`installation_target`, when GitHub sends it) updates the account login read from GitHub. Otherwise
+   an admin updates the login by hand. Lookups on a
+   GitHub Enterprise Server host go to `https://<host>/api/v3`; a host served over plain http or on a
+   non-default API path gets no webhook-driven installation changes (the lookup fails and nothing
+   changes). It never creates an installation, and never
    reverses a retirement an admin made. Each change is written to the audit log. The events are
    accepted at `/api/v1/webhooks/git` and at `/api/v1/webhooks/access`, and are verified and bound
    to a host like every other delivery; a delivery signed with the instance secret that names another

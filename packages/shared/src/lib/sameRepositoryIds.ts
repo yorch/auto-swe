@@ -46,9 +46,8 @@ export async function sameRepositoryIds(prisma: PrismaClient, repoId: string): P
     prisma.connection.findMany({
       select: { githubUrl: true, id: true, organizationName: true, repoName: true },
       where: {
-        // An archived row's stuck run must not block the live one; the
-        // caller's own row counts whatever its state.
-        OR: [{ isActive: true }, { id: repoId }],
+        // Inactive rows stay in: deactivating a connection does not cancel its
+        // runs, and one still in flight pushes the same branch.
         organizationName: { equals: likeLiteral(ownerName), mode: 'insensitive' },
         repoName: { equals: likeLiteral(repoName), mode: 'insensitive' },
         type: 'git_repo',

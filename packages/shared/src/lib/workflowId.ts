@@ -177,9 +177,8 @@ function conflictOf(
 ): { conflictWorkflowId: string; conflictOtherRow?: true } {
   return {
     conflictWorkflowId: row.temporalWorkflowId,
-    ...(owner && row.repoId != null && row.repoId !== owner.repoId
-      ? { conflictOtherRow: true as const }
-      : {}),
+    // A row with no repository id cannot be shown to be the caller's.
+    ...(owner && row.repoId !== owner.repoId ? { conflictOtherRow: true as const } : {}),
   };
 }
 

@@ -102,7 +102,11 @@ describe('chooseWorkflowId', () => {
 
   it('treats rows with no recorded repository as ours (conservative)', () => {
     const rows = [{ currentStatus: 'IMPLEMENTING', repoId: null, temporalWorkflowId: base }];
-    expect(chooseWorkflowId(base, rows, { repoId: REPO_A })).toEqual({ conflictWorkflowId: base });
+    // Still a conflict, but its id is not shown: the row cannot be shown to be the caller's.
+    expect(chooseWorkflowId(base, rows, { repoId: REPO_A })).toEqual({
+      conflictOtherRow: true,
+      conflictWorkflowId: base,
+    });
   });
 
   it('without an owner behaves as before: every row is ours', () => {
@@ -284,6 +288,14 @@ describe('chooseWorkflowId — rows of one repository under several ids', () => 
       conflictWorkflowId: base,
     });
     expect(chooseWorkflowId(base, [row(base, 'IMPLEMENTING', REPO_A)], owner)).toEqual({
+      conflictWorkflowId: base,
+    });
+  });
+
+  it('flags a conflict with a legacy row that has no repository id', () => {
+    const legacy = { ...row(base, 'IMPLEMENTING', REPO_A), repoId: null };
+    expect(chooseWorkflowId(base, [legacy], owner)).toEqual({
+      conflictOtherRow: true,
       conflictWorkflowId: base,
     });
   });

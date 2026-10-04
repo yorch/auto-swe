@@ -16,6 +16,7 @@
 import crypto from 'node:crypto';
 import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { clearGithubLoginIfUnchanged } from '@auto-swe/shared/lib/githubIdentityCheck';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
   resolveBetterAuthConfig,
@@ -32,7 +33,7 @@ import { jwt, magicLink } from 'better-auth/plugins';
 import { type GenericOAuthConfig, genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import { authEmailAvailable, deliverAuthEmail } from './authEmail.js';
 import { type GithubSignIn, resolveGithubSignIn } from './githubEnterpriseAuth.js';
-import { clearGithubLogin, syncGithubLoginForAccount } from './githubIdentity.js';
+import { syncGithubLoginForAccount } from './githubIdentity.js';
 import {
   MCP_ACCESS_TOKEN_TTL_SECONDS,
   MCP_JWKS_GRACE_SECONDS,
@@ -383,13 +384,22 @@ function buildAuth() {
               // login was read from forgets it. A login with no recorded source
               // keeps the old rule: any unlink clears it.
               const owner = await prisma.user.findUnique({
-                select: { githubLoginAccountId: true },
+                select: { githubLogin: true, githubLoginAccountId: true },
                 where: { id: account.userId },
               });
-              if (owner?.githubLoginAccountId && owner.githubLoginAccountId !== account.accountId) {
+              if (!owner?.githubLogin) {
                 return;
               }
-              await clearGithubLogin(prisma, account.userId);
+              if (owner.githubLoginAccountId && owner.githubLoginAccountId !== account.accountId) {
+                return;
+              }
+              // Only if a sign-in has not rewritten the login since it was read.
+              await clearGithubLoginIfUnchanged(
+                prisma,
+                account.userId,
+                owner.githubLogin,
+                owner.githubLoginAccountId
+              );
             } catch (err) {
               console.error(
                 `[better-auth] failed to clear the GitHub login for user ${account.userId} on unlink; it may still authorise repository access:`,

@@ -288,7 +288,8 @@ longer fit.
   GitHub for the installation's state with its host's App credentials, and apply only what GitHub
   reports (retire when deleted or suspended, reactivate a webhook-retired one when active); an
   `installation_target` rename reads the login from GitHub. A host with no App credentials, or a
-  failed lookup, changes nothing. Each change is audited with no actor. An event for an
+  failed lookup, changes nothing; lookups on a GitHub Enterprise Server host go to
+  `https://<host>/api/v3`, so a host on plain http or a non-default API path is never updated. Each change is audited with no actor. An event for an
   installation nobody registered, or on a host the delivery's secret does not prove, changes nothing,
   so GitHub can never add one. A retirement an admin made is never undone by GitHub, and any admin
   edit of the active flag clears the webhook's claim. An installation on github.com or a `*.ghe.com`
@@ -302,6 +303,10 @@ longer fit.
   duplicate are rebuilt from the repository's current owner and name, which no API route edits, so
   they match the id a run was started under; a database edit that changes only the casing while a
   run is in flight would leave that run's id unmatched.
+- **A run on an archived duplicate row still blocks the ticket.** Rows for one repository count as
+  one when workflow ids are allocated, whether or not they are active, and deactivating a connection
+  does not cancel its runs. A non-terminal run on an archived duplicate therefore blocks a second
+  start of that ticket on the live row until it finishes or is cancelled.
 - **Changing the instance's host does not rewrite stored overrides.** An override spelling out the
   instance's host is cleared when it is written, against the host the integration resolves (the
   saved one, else the environment's), so two onboarding requests racing each other collide on the

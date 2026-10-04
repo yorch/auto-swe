@@ -241,7 +241,7 @@ export async function clearGithubLogin(prisma: PrismaClient, userId: string): Pr
  * lookup is in flight; clearing unconditionally would wipe a login that was just
  * written, and the access rows with it. Returns whether it cleared.
  */
-async function clearGithubLoginIfUnchanged(
+export async function clearGithubLoginIfUnchanged(
   prisma: PrismaClient,
   userId: string,
   login: string,
