@@ -317,6 +317,20 @@ export const SETTING_DEFINITIONS = {
     schema: z.boolean(),
   }),
 
+  'skills.import.privateNetworkHosts': defineSetting({
+    defaultValue: [],
+    description:
+      "Hosts a skill source may live on even though the host is, or resolves to, a private-network address (comma-separated host or host:port). A host is allowed only if it is ALSO an approved repository host (the GitHub integration's hosts or github.repositoryHosts); listing it here alone does nothing. Cloud metadata addresses (169.254.0.0/16, fd00:ec2::254, 100.100.100.200) and loopback stay refused whatever is listed. The text-level address check does not resolve DNS, so a listed name is trusted to mean the server you intend.",
+    group: 'skills',
+    label: 'Private-network skill source hosts',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: hostList,
+    sensitive: true,
+  }),
+
   // ── Workflow interpreter ───────────────────────────────────────────────────
   // These bound how a single run may expand. They are run-pinned: the
   // interpreter runs inside the Temporal V8 isolate and cannot read the

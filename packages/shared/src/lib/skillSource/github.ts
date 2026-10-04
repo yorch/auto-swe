@@ -1,8 +1,9 @@
+import { resolveSetting } from '../../config/index.js';
 import { approvedRepositoryHosts } from '../connectionCredential.js';
 import { resolvePlatformCredential } from '../githubHostCredential.js';
 import { defaultApiUrlForHost, hostFamily } from '../githubHostScope.js';
 import { resolveGitHubToken } from '../githubInstallation.js';
-import { isSafeProbeUrl } from '../ssrfGuard.js';
+import { checkProbeUrl } from '../ssrfGuard.js';
 import { resolveGitHubConfig } from '../systemConfig.js';
 import { networkError, SkillSourceError } from './errors.js';
 
@@ -10,6 +11,8 @@ import { networkError, SkillSourceError } from './errors.js';
 export interface SkillSourceDeps {
   fetch: typeof fetch;
   approvedHosts: () => Promise<string[]>;
+  /** `skills.import.privateNetworkHosts`: hosts an admin allows on a private address. */
+  privateNetworkHosts: () => Promise<string[]>;
   githubConfig: typeof resolveGitHubConfig;
   platformCredential: typeof resolvePlatformCredential;
   githubToken: typeof resolveGitHubToken;
@@ -21,6 +24,7 @@ export const defaultDeps: SkillSourceDeps = {
   githubConfig: resolveGitHubConfig,
   githubToken: resolveGitHubToken,
   platformCredential: resolvePlatformCredential,
+  privateNetworkHosts: () => resolveSetting('skills.import.privateNetworkHosts'),
 };
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -47,11 +51,24 @@ export interface SourceAccess {
   apiBase: string;
   /** The platform token for this host, or null for anonymous reads. */
   token: string | null;
+  /**
+   * The hosts (`host[:port]`) that may be, or resolve to, a private address:
+   * the source's own, and only when it is both approved and opted in. Empty
+   * otherwise. Everything else faces the full SSRF guard.
+   */
+  privateHosts: ReadonlySet<string>;
   deps: SkillSourceDeps;
 }
 
-function assertSafeUrl(raw: string): URL {
-  const safety = isSafeProbeUrl(raw);
+/** The SSRF check for one URL: https only, no userinfo, private addresses only for an opted-in host. */
+function assertSafeUrl(raw: string, privateHosts: ReadonlySet<string>): URL {
+  let host = '';
+  try {
+    host = new URL(raw).host.toLowerCase();
+  } catch {
+    throw new SkillSourceError('HOST_BLOCKED');
+  }
+  const safety = checkProbeUrl(raw, { allowPrivate: privateHosts.has(host) });
   if (!safety.ok || safety.url.protocol !== 'https:') {
     throw new SkillSourceError('HOST_BLOCKED');
   }
@@ -77,7 +94,8 @@ export async function resolveAccess(
   if (!HOST_RE.test(host)) {
     throw new SkillSourceError('INVALID_SOURCE');
   }
-  if (!hostPermitted(host, await deps.approvedHosts())) {
+  const approved = (await deps.approvedHosts()).map((h) => h.toLowerCase());
+  if (!hostPermitted(host, approved)) {
     throw new SkillSourceError('HOST_NOT_APPROVED');
   }
   const config = await deps.githubConfig();
@@ -86,8 +104,16 @@ export async function resolveAccess(
       ? config.apiUrl
       : defaultApiUrlForHost(host)
   ).replace(/\/+$/, '');
-  assertSafeUrl(`https://${host}`);
-  assertSafeUrl(apiBase);
+  // Private addresses need BOTH the repository-host approval (checked above, and
+  // not satisfied by github.com's standing exemption) and the explicit opt-in.
+  const optedIn = (await deps.privateNetworkHosts()).map((h) => h.toLowerCase());
+  const privateHosts = new Set(
+    approved.includes(host) && optedIn.includes(host)
+      ? [host, new URL(apiBase).host.toLowerCase()]
+      : []
+  );
+  assertSafeUrl(`https://${host}`, privateHosts);
+  assertSafeUrl(apiBase, privateHosts);
 
   let token: string | null = null;
   const credential = await deps.platformCredential(
@@ -102,7 +128,7 @@ export async function resolveAccess(
       token = null;
     }
   }
-  return { apiBase, deps, host, token };
+  return { apiBase, deps, host, privateHosts, token };
 }
 
 async function readCapped(res: Response, maxBytes: number): Promise<string> {
@@ -139,7 +165,7 @@ export async function apiGet(access: SourceAccess, path: string): Promise<unknow
   const origin = new URL(access.apiBase).origin;
   let current = `${access.apiBase}${path}`;
   for (let hop = 0; ; hop++) {
-    const url = assertSafeUrl(current);
+    const url = assertSafeUrl(current, access.privateHosts);
     if (
       hop > 0 &&
       url.origin !== origin &&

@@ -106,6 +106,7 @@ function deps(
       repo.baseUrl === 'https://ghe.example.com'
         ? { config: {}, scope: 'instance' }
         : { host: 'x', scope: 'mismatch' }) as unknown as SkillSourceDeps['platformCredential'],
+    privateNetworkHosts: async () => [],
     ...over,
   };
 }
@@ -255,6 +256,104 @@ describe('host policy', () => {
     for (const c of hub.calls) {
       expect(c.headers.Authorization).toBeUndefined();
     }
+  });
+});
+
+describe('private-network hosts (per-host opt-in)', () => {
+  const files = [{ content: skillMd('a'), path: 'a/SKILL.md' }];
+  const run = (
+    host: string,
+    over: { approved?: string[]; optedIn?: string[]; routes?: Record<string, Reply> } = {}
+  ) => {
+    const hub = fakeHub({ files, routes: over.routes });
+    const d = deps(hub, {
+      apiUrl: 'https://api.github.com',
+      approvedHosts: async () => over.approved ?? [host],
+      baseUrl: 'https://github.com',
+      privateNetworkHosts: async () => over.optedIn ?? [],
+    });
+    return { hub, p: fetchSkillSource(loc({ host }), { scriptMode: 'TEXT_ONLY' }, d) };
+  };
+
+  it('refuses an approved private host by default, before any request', async () => {
+    const { hub, p } = run('10.0.0.5');
+    await expect(p).rejects.toMatchObject({ code: 'HOST_BLOCKED' });
+    expect(hub.fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('reads a private host that is both approved and opted in', async () => {
+    const { hub, p } = run('10.0.0.5', { optedIn: ['10.0.0.5'] });
+    expect((await p).skills).toHaveLength(1);
+    expect(hub.calls[0]?.url.startsWith('https://10.0.0.5/api/v3/')).toBe(true);
+  });
+
+  it('also covers a .internal/.local name and a host:port', async () => {
+    for (const host of ['ghe.corp.internal', 'ghe.corp.local', '192.168.1.9:8443']) {
+      const { p } = run(host, { optedIn: [host] });
+      expect((await p).skills).toHaveLength(1);
+    }
+  });
+
+  it('opt-in alone is not enough: the host must also be approved', async () => {
+    const { hub, p } = run('10.0.0.5', { approved: [], optedIn: ['10.0.0.5'] });
+    await expect(p).rejects.toMatchObject({ code: 'HOST_NOT_APPROVED' });
+    expect(hub.fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('the opt-in names exact hosts: another private host stays refused', async () => {
+    const { hub, p } = run('10.0.0.6', {
+      approved: ['10.0.0.5', '10.0.0.6'],
+      optedIn: ['10.0.0.5'],
+    });
+    await expect(p).rejects.toMatchObject({ code: 'HOST_BLOCKED' });
+    expect(hub.fetchFn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '169.254.169.254',
+    '127.0.0.1',
+    'localhost',
+    'metadata.google.internal',
+    '100.100.100.200',
+    '0.0.0.0',
+  ])('never reaches %s, even approved and opted in', async (host) => {
+    const { hub, p } = run(host, { optedIn: [host] });
+    await expect(p).rejects.toMatchObject({ code: 'HOST_BLOCKED' });
+    expect(hub.fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('github.com is not made private-capable by being listed', async () => {
+    const hub = fakeHub({ files });
+    const d = deps(hub, {
+      approvedHosts: async () => [],
+      privateNetworkHosts: async () => ['github.com'],
+    });
+    await fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, d);
+    expect(hub.calls[0]?.url.startsWith('https://api.github.com/')).toBe(true);
+  });
+
+  it('re-checks redirect hops: metadata and an unlisted private host are refused', async () => {
+    for (const target of ['https://169.254.169.254/latest', 'https://10.0.0.9/x']) {
+      const { hub, p } = run('10.0.0.5', {
+        optedIn: ['10.0.0.5'],
+        routes: { '/commits/main': { headers: { location: target }, status: 302 } },
+      });
+      await expect(p).rejects.toMatchObject({ code: 'HOST_BLOCKED' });
+      expect(hub.calls.every((c) => !c.url.includes(target.slice(8, 16)))).toBe(true);
+    }
+  });
+
+  it('follows a redirect that stays on the opted-in host', async () => {
+    const { p } = run('10.0.0.5', {
+      optedIn: ['10.0.0.5'],
+      routes: {
+        '/repos/acme/skills/commits/main': {
+          headers: { location: 'https://10.0.0.5/api/v3/repositories/1/commits/main' },
+          status: 301,
+        },
+      },
+    });
+    expect((await p).skills).toHaveLength(1);
   });
 });
 
