@@ -3,7 +3,7 @@
 import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
-import { estimateSpecCost, parseWorkflowSpec } from '@auto-swe/shared/workflow';
+import { estimateSpecCost, parseWorkflowSpec, validateSpec } from '@auto-swe/shared/workflow';
 import { use, useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { InputSchemaBuilder } from '@/components/workflow/InputSchemaBuilder';
 import { KeyValueRow } from '@/components/workflow/KeyValueRow';
+import { PromoteVersionModal } from '@/components/workflow/PromoteVersionModal';
 import { RefineChatPanel } from '@/components/workflow/RefineChatPanel';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { SchemaFormPreview } from '@/components/workflow/SchemaFormPreview';
@@ -41,7 +42,6 @@ import { useLedTeamIds } from '@/hooks/useTeams';
 import {
   useCreateWorkflowVersion,
   useExplainWorkflowTemplate,
-  usePromoteWorkflowVersion,
   useRegenerateWebhook,
   useReviewWorkflowVersion,
   useRevokeWebhook,
@@ -68,8 +68,8 @@ type ViewMode = 'view' | 'edit' | 'json';
 function formatSpecError(err: unknown): string {
   if (err instanceof Error && 'issues' in err) {
     const issues = (err as { issues?: Array<{ message?: string }> }).issues ?? [];
-    const first = issues[0]?.message ?? err.message;
-    return issues.length > 1 ? `${first} (+${issues.length - 1} more issues)` : first;
+    const all = issues.map((i) => i.message).filter((m): m is string => !!m);
+    return all.length > 0 ? all.join('\n') : err.message;
   }
   return errMsg(err, 'invalid spec');
 }
@@ -368,31 +368,22 @@ function ExperimentCard({
 }
 
 function ExplainModal({
+  activeVersion,
   open,
   onClose,
   templateId,
 }: {
+  activeVersion: number | null;
   open: boolean;
   onClose: () => void;
   templateId: string;
 }) {
-  const explain = useExplainWorkflowTemplate(templateId);
-  const { mutate, reset, isPending, data, error } = explain;
-
-  // Kick off the explanation when the modal opens; reset when it closes so the
-  // next open re-fetches (the active version may have changed).
-  useEffect(() => {
-    if (open) {
-      mutate();
-    } else {
-      reset();
-    }
-  }, [open, mutate, reset]);
+  const { data, error, isFetching } = useExplainWorkflowTemplate(templateId, activeVersion, open);
 
   return (
     <Modal eyebrow="§ Workflow" onClose={onClose} open={open} title="What this workflow does">
       <div className="space-y-4">
-        {isPending && <LoadingState />}
+        {isFetching && !data && <LoadingState message="Explaining…" />}
         {error && <Alert>{errMsg(error, 'Could not explain')}</Alert>}
         {data?.explanation && (
           <div className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-paper-200">
@@ -551,7 +542,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const { data: stepRegistry } = useStepRegistry();
   const { data: analytics } = useWorkflowTemplateAnalytics(id ?? '', 30);
   const createVersion = useCreateWorkflowVersion(id ?? '');
-  const promoteVersion = usePromoteWorkflowVersion(id ?? '');
   const reviewVersion = useReviewWorkflowVersion(id ?? '');
   // Every write here (new version, promote, review, refine, metadata, webhook)
   // is a LEAD route on the gateway that also requires LEAD membership on the
@@ -572,6 +562,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [runOpen, setRunOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
   const [refineOpen, setRefineOpen] = useState(false);
+  const [promoteOpen, setPromoteOpen] = useState(false);
+  // A version the user clicked in the rail while there were unsaved edits.
+  const [pendingVersion, setPendingVersion] = useState<number | null>(null);
 
   useEffect(() => {
     if (versionDetail) {
@@ -586,12 +579,35 @@ export default function TemplateDetailPage({ params }: PageProps) {
     }
   }, [versionDetail]);
 
+  const isDirty =
+    mode === 'edit' ||
+    (mode === 'json' &&
+      versionDetail !== undefined &&
+      editorJson !== JSON.stringify(versionDetail.spec, null, 2));
+
+  // Leaving the page (reload, close, outside link) with unsaved edits loses them.
+  useEffect(() => {
+    if (!isDirty) {
+      return;
+    }
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isDirty]);
+
   const jsonParsed = useMemo(
     () => (mode === 'json' && editorJson ? tryParseSpec(editorJson) : null),
     [mode, editorJson]
   );
   const visualSpec: WorkflowSpec | null =
     mode === 'json' ? (jsonParsed?.ok ? jsonParsed.spec : null) : editorSpec;
+
+  const lintErrorCount = useMemo(
+    () => (visualSpec && isDirty ? validateSpec(visualSpec).errors.length : 0),
+    [visualSpec, isDirty]
+  );
 
   const stepRegistryByName = useMemo(
     () => (stepRegistry ? new Map(stepRegistry.map((s) => [s.name, s as StepMetadata])) : null),
@@ -668,18 +684,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
     setMode('view');
   };
 
-  const handlePromote = async () => {
-    if (effectiveVersion === null) {
-      return;
-    }
-    try {
-      await promoteVersion.mutateAsync(effectiveVersion);
-      setSaveError(null);
-    } catch (err) {
-      setSaveError(errMsg(err, 'promote failed'));
-    }
-  };
-
   const handleReview = async () => {
     if (effectiveVersion === null) {
       return;
@@ -687,6 +691,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
     try {
       await reviewVersion.mutateAsync(effectiveVersion);
       setSaveError(null);
+      // A draft's only version has nothing else to promote, so approving it
+      // leads straight to activating it.
+      if (template.status === 'DRAFT' && effectiveVersion === template.activeVersion) {
+        setPromoteOpen(true);
+      }
     } catch (err) {
       setSaveError(errMsg(err, 'review failed'));
     }
@@ -706,7 +715,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const selectedNeedsReview =
     canManage &&
     effectiveVersion !== null &&
-    effectiveVersion !== template.activeVersion &&
+    (effectiveVersion !== template.activeVersion || template.status === 'DRAFT') &&
     versionDetail?.generatedBy != null &&
     versionDetail?.reviewedAt == null;
 
@@ -725,12 +734,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
       setEditorSpec(parsed.spec);
     }
   };
-
-  const isDirty =
-    mode === 'edit' ||
-    (mode === 'json' &&
-      versionDetail !== undefined &&
-      editorJson !== JSON.stringify(versionDetail.spec, null, 2));
 
   const editorActions = (
     <>
@@ -753,7 +756,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
       )}
       {isDirty && (
         <Button
-          disabled={createVersion.isPending || (mode === 'json' && jsonParsed?.ok === false)}
+          disabled={
+            createVersion.isPending ||
+            lintErrorCount > 0 ||
+            (mode === 'json' && jsonParsed?.ok === false)
+          }
           onClick={handleSave}
           size="sm"
           variant="primary"
@@ -761,10 +768,15 @@ export default function TemplateDetailPage({ params }: PageProps) {
           {createVersion.isPending ? 'Saving…' : 'Save new version'}
         </Button>
       )}
+      {isDirty && lintErrorCount > 0 && (
+        <span className="font-mono text-[11px] text-brick-400" id="save-blocked-reason">
+          Fix {lintErrorCount} error{lintErrorCount === 1 ? '' : 's'} to save
+        </span>
+      )}
       {!isDirty &&
         canManage &&
         effectiveVersion !== null &&
-        effectiveVersion !== template.activeVersion &&
+        (effectiveVersion !== template.activeVersion || template.status === 'DRAFT') &&
         (selectedNeedsReview ? (
           <Button
             disabled={reviewVersion.isPending}
@@ -772,16 +784,15 @@ export default function TemplateDetailPage({ params }: PageProps) {
             size="sm"
             variant="primary"
           >
-            {reviewVersion.isPending ? 'Reviewing…' : 'Review & approve'}
+            {reviewVersion.isPending
+              ? 'Reviewing…'
+              : effectiveVersion === template.activeVersion
+                ? 'Review & activate'
+                : 'Review & approve'}
           </Button>
         ) : (
-          <Button
-            disabled={promoteVersion.isPending}
-            onClick={handlePromote}
-            size="sm"
-            variant="primary"
-          >
-            {promoteVersion.isPending ? 'Promoting…' : 'Promote to active'}
+          <Button onClick={() => setPromoteOpen(true)} size="sm" variant="primary">
+            {effectiveVersion === template.activeVersion ? 'Activate' : 'Promote to active'}
           </Button>
         ))}
     </>
@@ -791,7 +802,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
     <div className="space-y-8">
       <RunTemplateModal onClose={() => setRunOpen(false)} open={runOpen} template={template} />
 
-      <ExplainModal onClose={() => setExplainOpen(false)} open={explainOpen} templateId={id} />
+      <ExplainModal
+        activeVersion={template.activeVersion}
+        onClose={() => setExplainOpen(false)}
+        open={explainOpen}
+        templateId={id}
+      />
 
       <RefineChatPanel onClose={() => setRefineOpen(false)} open={refineOpen} templateId={id} />
 
@@ -853,7 +869,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       <TemplateSubNav active="editor" templateId={id} />
 
-      {saveError && <Alert>{saveError}</Alert>}
+      {saveError && mode !== 'edit' && <Alert className="whitespace-pre-line">{saveError}</Alert>}
 
       {/* Edit mode: full-bleed canvas */}
       {mode === 'edit' && editorSpec && stepRegistry && (
@@ -866,6 +882,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
             onSelect={setSelectedNodeId}
             parseError={null}
             selectedNodeId={selectedNodeId}
+            serverError={saveError}
             spec={editorSpec}
             stepRegistry={stepRegistry as StepMetadata[]}
           />
@@ -909,7 +926,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   spellCheck={false}
                   value={editorJson}
                 />
-                {jsonParsed?.ok === false && <Alert>JSON parse error — {jsonParsed.error}</Alert>}
+                {jsonParsed?.ok === false && (
+                  <Alert className="whitespace-pre-line">
+                    JSON parse error — {jsonParsed.error}
+                  </Alert>
+                )}
               </div>
             )}
           </div>
@@ -958,7 +979,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
                             ? 'bg-ink-700 text-paper-100'
                             : 'text-paper-400 hover:bg-ink-700/40 hover:text-paper-100'
                         }`}
-                        onClick={() => setSelectedVersion(v.version)}
+                        onClick={() =>
+                          isDirty ? setPendingVersion(v.version) : setSelectedVersion(v.version)
+                        }
                         type="button"
                       >
                         <div className="flex items-baseline justify-between">
@@ -1100,9 +1123,34 @@ export default function TemplateDetailPage({ params }: PageProps) {
         templateId={id}
       />
 
+      {effectiveVersion !== null && (
+        <PromoteVersionModal
+          activeVersion={template.activeVersion}
+          onClose={() => setPromoteOpen(false)}
+          open={promoteOpen}
+          templateId={id}
+          version={effectiveVersion}
+        />
+      )}
+
       <ConfirmModal
-        confirmLabel="Save"
-        message={`This version contains ${Object.values(pendingShellSpec?.nodes ?? {}).filter((n) => n.type === 'shell').length} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`}
+        confirmLabel="Discard changes"
+        dangerous
+        message="You have unsaved edits to this version. Switching versions discards them."
+        onClose={() => setPendingVersion(null)}
+        onConfirm={() => {
+          if (pendingVersion !== null) {
+            setMode('view');
+            setSelectedVersion(pendingVersion);
+          }
+        }}
+        open={pendingVersion !== null}
+        title="Discard unsaved changes?"
+      />
+
+      <ConfirmModal
+        confirmLabel="Save with shell steps"
+        message={`This version contains ${Object.values(pendingShellSpec?.nodes ?? {}).filter((n) => n.type === 'shell').length} shell step(s). Shell steps run commands in an isolated container, so only team leads and admins can author or approve a version that contains them.`}
         onClose={() => setPendingShellSpec(null)}
         onConfirm={() => {
           if (pendingShellSpec) {
