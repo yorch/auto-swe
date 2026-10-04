@@ -157,6 +157,40 @@ export async function previewSkillSource(
   };
 }
 
+/**
+ * One skill's complete incoming text at the commit the ref resolves to, for the
+ * admin to read before choosing it. Writes nothing; spends the same fetch budget as
+ * a preview. The text is returned as stored and shown through the dashboard's
+ * visible-text rule, not altered here.
+ */
+export async function readPreviewSkill(
+  input: SourceLocation & { scriptMode: ScriptMode },
+  name: string,
+  deps?: SkillSourceDeps
+) {
+  const fetched = await fetchSkillSource(
+    normaliseLocation(input),
+    { scriptMode: input.scriptMode },
+    deps
+  );
+  const skill = fetched.skills.find((s) => s.name === name);
+  if (!skill) {
+    throw new SkillImportRefusal('UNKNOWN_SKILLS', [name]);
+  }
+  return {
+    description: skill.description,
+    errors: skill.errors,
+    folder: safeDisplayPath(skill.folder),
+    name: skill.name,
+    promptText: skill.promptText,
+    referenceFiles: skill.referenceFiles.map((f) => ({
+      length: f.content.length,
+      path: safeDisplayPath(f.path),
+    })),
+    sha: fetched.sha,
+  };
+}
+
 /** The install cannot proceed as asked; `code` selects the HTTP status in the route. */
 export class SkillImportRefusal extends Error {
   constructor(

@@ -14,6 +14,7 @@ import {
   installIntoSource,
   installSkillSource,
   previewSkillSource,
+  readPreviewSkill,
   SkillImportRefusal,
 } from '../lib/skillSourceService.js';
 import {
@@ -29,7 +30,7 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  * repository. ADMIN-only: imported text becomes agent prompt text, so who may
  * bring it in is a platform decision.
  *
- *   POST   /api/v1/platform/skill-sources/preview   Read a source; writes nothing
+ *   POST   /api/v1/platform/skill-sources/preview   Read a source; writes nothing (with `skill`: one skill's complete text)
  *   POST   /api/v1/platform/skill-sources           Install the chosen skills (one transaction)
  *   GET    /api/v1/platform/skill-sources           List sources
  *   GET    /api/v1/platform/skill-sources/:id       One source, with its skills
@@ -65,7 +66,10 @@ const scopeIsConsistent = (b: z.infer<typeof SourceFields>) =>
 const SCOPE_MESSAGE =
   'scope GLOBAL takes no teamId/orgId; TEAM needs teamId; ORGANIZATION needs orgId';
 
-const PreviewBody = SourceFields.refine(scopeIsConsistent, SCOPE_MESSAGE);
+const PreviewBody = SourceFields.extend({
+  /** With a name: return that one skill's complete incoming text instead of the preview. */
+  skill: z.string().min(1).max(200).optional(),
+}).refine(scopeIsConsistent, SCOPE_MESSAGE);
 
 const CreateBody = SourceFields.extend({
   /** The commit the preview showed; the ref must still resolve to it. */
@@ -195,8 +199,11 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
     '/skill-sources/preview',
     { onRequest: adminOnly, schema: { body: PreviewBody } },
     async (request, reply) => {
-      const body = request.body;
+      const { skill, ...body } = request.body;
       try {
+        if (skill !== undefined) {
+          return { data: await readPreviewSkill(body, skill) };
+        }
         const result = await previewSkillSource(fastify.prisma, {
           ...body,
           orgId: body.orgId ?? null,
@@ -204,6 +211,15 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
         });
         return { data: { location: result.location, sha: result.sha, skills: result.skills } };
       } catch (err) {
+        if (err instanceof SkillImportRefusal) {
+          return reply.status(IMPORT_STATUS[err.code]).send({
+            error: {
+              code: `SKILL_IMPORT_${err.code}`,
+              details: err.details,
+              message: IMPORT_MESSAGES[err.code],
+            },
+          });
+        }
         return sourceError(err, reply);
       }
     }
