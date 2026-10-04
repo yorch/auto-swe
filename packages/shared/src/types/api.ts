@@ -95,6 +95,16 @@ export interface TeamSummary {
 export interface TeamDetail extends TeamSummary {
   memberships: TeamMember[];
   repositories: RepoRef[];
+  /**
+   * Repositories other teams have shared with this one: read-only on this
+   * team's page. Active rows only, and only those the caller may see.
+   */
+  sharedRepositories: SharedRepoRef[];
+}
+
+/** A repository shared with a team, and the team that owns it. */
+export interface SharedRepoRef extends RepoRef {
+  team: { id: string; name: string; slug: string };
 }
 
 // ── Repositories ──

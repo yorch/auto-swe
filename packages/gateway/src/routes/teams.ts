@@ -8,7 +8,7 @@ import { sendConflict } from '../lib/conflict.js';
 import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import { memberTeams } from '../lib/tenantScope.js';
+import { memberTeams, permissionRequirement } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { teamScopedConfigRoutes } from './modelConfig.js';
 
@@ -241,7 +241,38 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      return { data: team };
+      // Repositories other teams have shared with this one: read-only here,
+      // and listed under the same visibility the Connections page applies —
+      // active rows only, and under an enforcing repo-access gate only those
+      // the caller's own GitHub permission reaches. A platform ADMIN is not
+      // gated, as everywhere else.
+      const shares = await fastify.prisma.connectionTeamShare.findMany({
+        select: {
+          connection: {
+            select: {
+              id: true,
+              isActive: true,
+              organizationName: true,
+              repoName: true,
+              team: { select: { id: true, name: true, slug: true } },
+            },
+          },
+        },
+        where: {
+          connection: {
+            isActive: true,
+            ...(user.role === 'ADMIN' ? {} : permissionRequirement(user, request.repoAccessGate)),
+          },
+          teamId: team.id,
+        },
+      });
+      const sharedRepositories = shares
+        .map((s) => s.connection)
+        .sort((a, b) =>
+          `${a.organizationName}/${a.repoName}`.localeCompare(`${b.organizationName}/${b.repoName}`)
+        );
+
+      return { data: { ...team, sharedRepositories } };
     }
   );
 

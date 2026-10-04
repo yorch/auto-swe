@@ -201,6 +201,11 @@ the same organization (`ConnectionTeamShare`).
 
 Runs keep the owning team's budget, default template and settings, whoever launches them.
 
+A team's own page (`GET /api/v1/teams/:id`) lists the repositories it owns and, separately, the ones
+shared with it, each marked "shared by" its owning team and read-only. The shared list shows only
+active repositories, and under an enforcing repo-access gate only those the viewer's GitHub
+permission reaches, as the Connections page does.
+
 **Schedules.** A `ScheduledWorkRequest` belongs to a team (`teamId`): the repository's owning team or
 a team it is shared with. A lead of either may create one; the body's optional `teamId` must be the
 owning team or a shared team the caller leads. Omitted, it is the owning team if the caller leads
@@ -301,5 +306,3 @@ longer fit.
 - **Some runs can only be controlled by a platform admin.** A run on a global template, against no
   repository, that nobody launched (a webhook start, or one from before launchers were recorded) is
   visible to everyone but can be cancelled, or its human steps answered, only by an admin.
-- **The team page lists owned repositories only.** Repositories shared with a team appear in its
-  members' Connections page and listings, not on the team's own page.
