@@ -107,6 +107,23 @@ const SCOPES: readonly AgentScope[] = [
   'WORKFLOW_TEMPLATE',
 ];
 
+const SCOPE_NOUN: Record<AgentScope, string> = {
+  CHANNEL: 'Slack channel',
+  GLOBAL: 'deployment',
+  ORGANIZATION: 'organization',
+  TEAM: 'team',
+  WORKFLOW_TEMPLATE: 'workflow template',
+};
+const FALLBACK_CHAIN: Record<AgentScope, string> = {
+  CHANNEL: 'team, organization, then global',
+  GLOBAL: '',
+  ORGANIZATION: 'global',
+  TEAM: 'organization, then global',
+  WORKFLOW_TEMPLATE: 'channel, team, organization, then global',
+};
+const scopeNoun = (scope: AgentScope) => SCOPE_NOUN[scope];
+const fallbackChain = (scope: AgentScope) => FALLBACK_CHAIN[scope];
+
 /** The target a scoped row is pinned to, named where the page can resolve it. */
 function scopeTarget(
   a: AgentRow,
@@ -534,16 +551,35 @@ export default function AgentLibraryPage() {
 
       <ConfirmModal
         confirmLabel="Deactivate"
+        confirmText={deleting?.scope === 'GLOBAL' ? deleting.key : undefined}
         dangerous
         message={
-          deleting
-            ? `Deactivate all versions of '${deleting.key}'? Resolution falls back to the role defaults.`
-            : ''
+          deleting ? (
+            deleting.scope === 'GLOBAL' ? (
+              <div className="space-y-2">
+                <p>
+                  Deactivate all versions of <strong>{deleting.key}</strong>? Nothing sits behind
+                  the global version, so runs that need <code>{deleting.key}</code> will fail.
+                </p>
+                <p>
+                  If this agent is required, the worker will also refuse to start until it is active
+                  again.
+                </p>
+              </div>
+            ) : (
+              `Deactivate all versions of '${deleting.key}' for this ${scopeNoun(deleting.scope)}? Runs there fall back to the next broader version of this agent (${fallbackChain(deleting.scope)}).`
+            )
+          ) : (
+            ''
+          )
         }
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
           if (deleting) {
-            await deleteAgent.mutateAsync(deleting.id);
+            await deleteAgent.mutateAsync({
+              force: deleting.scope === 'GLOBAL',
+              id: deleting.id,
+            });
             setDeleting(null);
           }
         }}

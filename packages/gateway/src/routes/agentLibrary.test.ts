@@ -457,6 +457,56 @@ describe('agentLibraryRoutes — admin', () => {
     expect(JSON.parse(res.payload).data.deactivated).toBe(3);
     await app.close();
   });
+
+  it('refuses to deactivate a GLOBAL built-in agent without force, and allows it with force', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    const id = '33333333-3333-4333-8333-333333333333';
+    mockPrisma.agent.findUnique.mockResolvedValue({
+      id,
+      isBuiltIn: true,
+      key: 'implementer',
+      scope: 'GLOBAL',
+      teamId: null,
+      workflowTemplateId: null,
+    });
+    mockPrisma.agent.updateMany.mockResolvedValue({ count: 1 });
+    const refused = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/platform/agent-library/${id}`,
+    });
+    expect(refused.statusCode).toBe(409);
+    expect(JSON.parse(refused.payload).error.code).toBe('BUILTIN_AGENT_REQUIRES_FORCE');
+    expect(mockPrisma.agent.updateMany).not.toHaveBeenCalled();
+    const forced = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/platform/agent-library/${id}?force=true`,
+    });
+    expect(forced.statusCode).toBe(200);
+    expect(mockPrisma.agent.updateMany).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('does not require force for a scoped override of a built-in key', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue({
+      id: '33333333-3333-4333-8333-333333333333',
+      isBuiltIn: true,
+      key: 'implementer',
+      scope: 'TEAM',
+      teamId: '44444444-4444-4444-8444-444444444444',
+      workflowTemplateId: null,
+    });
+    mockPrisma.agent.updateMany.mockResolvedValue({ count: 1 });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: '/api/v1/platform/agent-library/33333333-3333-4333-8333-333333333333',
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
 });
 
 describe('teamAgentLibraryRoutes — team owner', () => {
