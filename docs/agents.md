@@ -847,6 +847,8 @@ Writes cut a new immutable `version`.
   Deleting a skill deletes its revisions with it, along with the agents' references to it.
 - **Verification attests to text, not to a source.** `isVerified` says an admin approved the current
   revision; it carries no signature and nothing re-checks it against provenance.
+- **The dashboard imports skills into GLOBAL scope only.** Importing into a team or organization is
+  available through the API and the CLI.
 - **External skill sources run no scripts.** Nothing from a source is executed, and only `.md`/`.txt`
   files are kept, as reference text no agent reads: a skill whose value is in its scripts or assets is
   imported as its instructions alone (`TEXT_ONLY`) or refused (`REJECT`).
