@@ -71,3 +71,12 @@ describe('dateRange helpers', () => {
     });
   });
 });
+
+describe('DateRangeControl all time', () => {
+  it('reports null for "All"', () => {
+    const onChange = vi.fn();
+    render(<DateRangeControl allowAll onChange={onChange} value={{ days: 7, kind: 'preset' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(onChange).toHaveBeenCalledWith(null);
+  });
+});

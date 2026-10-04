@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -38,10 +39,29 @@ const AuditLogQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).exten
   action: z.enum(['CREATE', 'DELETE', 'UPDATE']).optional(),
   actorId: z.string().uuid().optional(),
   entityType: z.string().min(1).max(100).optional(),
+  /** Free text over the actor's email or name, the entity type and the entity id. */
+  search: z.string().trim().min(1).max(100).optional(),
   /** Inclusive UTC calendar days, `YYYY-MM-DD` — what a date input produces. */
   since: z.iso.date().optional(),
   until: z.iso.date().optional(),
 });
+/** The export takes the same filters as the list, without a page window. */
+const AuditLogExportQuery = AuditLogQuery.omit({ limit: true, offset: true });
+/** An export is a file for a person, not a backup: it stops here and says so in a header. */
+const AUDIT_EXPORT_MAX_ROWS = 50_000;
+const AUDIT_EXPORT_BATCH = 500;
+
+/** A CSV cell. A leading `= + - @` would run as a formula in a spreadsheet, so it is defused. */
+export function csvCell(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  let text = typeof value === 'string' ? value : JSON.stringify(value);
+  if (/^[=+\-@\t\r]/.test(text)) {
+    text = `'${text}`;
+  }
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
 const AuditJsonSchema = z.json();
 const AuditLogResponseSchema = z.object({
   data: z.array(
@@ -262,6 +282,105 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── Audit log ─────────────────────────────────────────────────────────────
 
+  /** One filter for the list and the export, so a file always matches what was on screen. */
+  async function auditWhere(q: z.infer<typeof AuditLogExportQuery>) {
+    const { action, actorId, entityType, search, since, until } = q;
+    const createdAt = {
+      ...(since ? { gte: new Date(`${since}T00:00:00.000Z`) } : {}),
+      // `until` names a whole day, so the bound is the start of the next one.
+      ...(until ? { lt: new Date(Date.parse(`${until}T00:00:00.000Z`) + DAY_MS) } : {}),
+    };
+    let searchClause = {};
+    if (search) {
+      // The log has no relation to User, so an actor match is a lookup of their ids.
+      const people = await fastify.prisma.user.findMany({
+        select: { id: true },
+        take: 200,
+        where: {
+          OR: [
+            { email: { contains: search, mode: 'insensitive' } },
+            { name: { contains: search, mode: 'insensitive' } },
+          ],
+        },
+      });
+      searchClause = {
+        OR: [
+          { entityId: { contains: search, mode: 'insensitive' } },
+          { entityType: { contains: search, mode: 'insensitive' } },
+          ...(people.length ? [{ actorId: { in: people.map((u) => u.id) } }] : []),
+        ],
+      };
+    }
+    return {
+      ...(action ? { action } : {}),
+      ...(actorId ? { actorId } : {}),
+      ...(entityType ? { entityType } : {}),
+      ...(since || until ? { createdAt } : {}),
+      ...searchClause,
+    };
+  }
+
+  // The current filter as a CSV file. Rows are the stored ones, which never hold
+  // secret values or credential hashes, so nothing is redacted here that the list
+  // would not also show.
+  app.get(
+    '/audit-log/export',
+    {
+      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { querystring: AuditLogExportQuery },
+    },
+    async (request, reply) => {
+      const where = await auditWhere(request.query);
+      async function* lines() {
+        yield 'time,action,actor,entity_type,entity_id,before,after\n';
+        let cursor: string | undefined;
+        let written = 0;
+        while (written < AUDIT_EXPORT_MAX_ROWS) {
+          const rows = await fastify.prisma.configAuditLog.findMany({
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: AUDIT_EXPORT_BATCH,
+            where,
+          });
+          if (rows.length === 0) {
+            return;
+          }
+          const actorIds = [...new Set(rows.flatMap((r) => (r.actorId ? [r.actorId] : [])))];
+          const actors = actorIds.length
+            ? await fastify.prisma.user.findMany({
+                select: { email: true, id: true },
+                where: { id: { in: actorIds } },
+              })
+            : [];
+          const emailById = new Map(actors.map((a) => [a.id, a.email]));
+          for (const r of rows) {
+            yield `${[
+              r.createdAt.toISOString(),
+              r.action,
+              r.actorId ? (emailById.get(r.actorId) ?? r.actorId) : 'system',
+              r.entityType,
+              r.entityId,
+              r.beforeJson,
+              r.afterJson,
+            ]
+              .map(csvCell)
+              .join(',')}\n`;
+          }
+          written += rows.length;
+          cursor = rows[rows.length - 1]?.id;
+          if (rows.length < AUDIT_EXPORT_BATCH) {
+            return;
+          }
+        }
+      }
+      return reply
+        .header('Content-Type', 'text/csv; charset=utf-8')
+        .header('Content-Disposition', 'attachment; filename="audit-log.csv"')
+        .header('X-Export-Row-Limit', String(AUDIT_EXPORT_MAX_ROWS))
+        .send(Readable.from(lines()));
+    }
+  );
+
   app.get(
     '/audit-log',
     {
@@ -269,18 +388,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { querystring: AuditLogQuery, response: { 200: AuditLogResponseSchema } },
     },
     async (request) => {
-      const { action, actorId, entityType, limit, offset, since, until } = request.query;
-      const createdAt = {
-        ...(since ? { gte: new Date(`${since}T00:00:00.000Z`) } : {}),
-        // `until` names a whole day, so the bound is the start of the next one.
-        ...(until ? { lt: new Date(Date.parse(`${until}T00:00:00.000Z`) + DAY_MS) } : {}),
-      };
-      const where = {
-        ...(action ? { action } : {}),
-        ...(actorId ? { actorId } : {}),
-        ...(entityType ? { entityType } : {}),
-        ...(since || until ? { createdAt } : {}),
-      };
+      const { limit, offset } = request.query;
+      const where = await auditWhere(request.query);
       const [rows, total, entityTypeGroups] = await Promise.all([
         fastify.prisma.configAuditLog.findMany({
           // `id` breaks ties: rows written together share `createdAt`, and an

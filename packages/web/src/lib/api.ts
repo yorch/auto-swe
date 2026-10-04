@@ -155,6 +155,10 @@ export class ApiClient {
     if (res.status === 204 || res.headers.get('content-length') === '0') {
       return undefined as T;
     }
+    // A file route (the audit CSV) answers text, which `json()` would reject.
+    if ((res.headers.get('content-type') ?? '').startsWith('text/')) {
+      return res.text() as Promise<T>;
+    }
     return res.json() as Promise<T>;
   }
 

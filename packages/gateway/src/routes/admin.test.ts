@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { adminRoutes } from './admin.js';
+import { adminRoutes, csvCell } from './admin.js';
 
 async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   const app = Fastify();
@@ -450,6 +450,25 @@ describe('adminRoutes', () => {
       expect(ctx.mockPrisma.user.findMany).not.toHaveBeenCalled();
     });
 
+    it('matches free text against the actor, the entity type and the entity id', async () => {
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([{ id: 'u-1' }]);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log?search=alice',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.configAuditLog.count).toHaveBeenCalledWith({
+        where: {
+          OR: [
+            { entityId: { contains: 'alice', mode: 'insensitive' } },
+            { entityType: { contains: 'alice', mode: 'insensitive' } },
+            { actorId: { in: ['u-1'] } },
+          ],
+        },
+      });
+    });
+
     it('rejects a malformed date and an over-cap limit', async () => {
       for (const qs of ['since=yesterday', 'limit=500', 'action=PATCH']) {
         const res = await ctx.app.inject({
@@ -470,6 +489,76 @@ describe('adminRoutes', () => {
       });
       expect(res.statusCode).toBe(403);
       await app.close();
+    });
+  });
+
+  describe('GET /audit-log/export', () => {
+    let ctx: Awaited<ReturnType<typeof buildApp>>;
+    beforeAll(async () => {
+      ctx = await buildApp('ADMIN');
+    });
+    beforeEach(() => {
+      ctx.mockPrisma.configAuditLog.findMany.mockReset().mockResolvedValue([]);
+      ctx.mockPrisma.user.findMany.mockReset().mockResolvedValue([]);
+    });
+    afterAll(() => ctx.app.close());
+
+    it('streams the filtered rows as CSV, defusing spreadsheet formulas', async () => {
+      ctx.mockPrisma.configAuditLog.findMany.mockResolvedValueOnce([
+        {
+          action: 'UPDATE',
+          actorId: '11111111-1111-4111-8111-111111111111',
+          afterJson: { name: '=HYPERLINK("x")', role: 'ADMIN' },
+          beforeJson: { role: 'ENGINEER' },
+          createdAt: new Date('2026-09-02T10:00:00.000Z'),
+          entityId: 'e1',
+          entityType: 'User',
+          id: 'a1',
+        },
+      ]);
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
+        { email: 'alice@example.com', id: '11111111-1111-4111-8111-111111111111' },
+      ]);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log/export?action=UPDATE&since=2026-09-01',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(res.headers['content-disposition']).toContain('audit-log.csv');
+      const lines = res.payload.trim().split('\n');
+      expect(lines[0]).toBe('time,action,actor,entity_type,entity_id,before,after');
+      expect(lines[1]).toContain('2026-09-02T10:00:00.000Z,UPDATE,alice@example.com,User,e1');
+      // The JSON cell is quoted; a formula inside it is data, not a leading `=`.
+      expect(lines[1]).toContain('"{""role"":""ENGINEER""}"');
+      expect(ctx.mockPrisma.configAuditLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            action: 'UPDATE',
+            createdAt: { gte: new Date('2026-09-01T00:00:00.000Z') },
+          },
+        })
+      );
+    });
+
+    it('is ADMIN-only', async () => {
+      const { app } = await buildApp('ENGINEER');
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log/export',
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+  });
+
+  describe('csvCell', () => {
+    it('quotes separators and neutralises a leading formula character', () => {
+      expect(csvCell('a,b')).toBe('"a,b"');
+      expect(csvCell('=SUM(A1)')).toBe("'=SUM(A1)");
+      expect(csvCell(null)).toBe('');
     });
   });
 });

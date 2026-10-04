@@ -172,6 +172,8 @@ export interface AuditLogFilters {
   action?: AuditAction;
   actorId?: string;
   entityType?: string;
+  /** Free text over the actor, entity type and entity id. */
+  search?: string;
   /** Inclusive UTC days, `YYYY-MM-DD`. */
   since?: string;
   until?: string;
@@ -195,6 +197,17 @@ export function useAuditLog(filters: AuditLogFilters & { limit: number; offset: 
     queryKey: ['audit-log', filters],
     refetchInterval: 30_000,
   });
+}
+
+/** The audit log as CSV text, under the same filters as the list. */
+export function exportAuditLog(filters: AuditLogFilters): Promise<string> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      qs.set(key, String(value));
+    }
+  }
+  return api.get<string>(`/api/v1/platform/audit-log/export?${qs}`);
 }
 
 export type SecurityEventType =

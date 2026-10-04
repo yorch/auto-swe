@@ -11,27 +11,31 @@ import { SegmentedControl } from './SegmentedControl';
  * where the dates are read, rather than only in a tooltip.
  */
 export function DateRangeControl({
+  allowAll = false,
   allowCustom = true,
   className,
   onChange,
   presets = [7, 30, 90],
   value,
 }: {
+  /** Offers "All time"; the value is then `null` for no date filter. */
+  allowAll?: boolean;
   allowCustom?: boolean;
   className?: string;
-  onChange: (range: DateRange) => void;
+  onChange: (range: DateRange | null) => void;
   presets?: readonly number[];
-  value: DateRange;
+  value: DateRange | null;
 }) {
   const options = [
+    ...(allowAll ? [{ label: 'All', title: 'All time', value: 'all' }] : []),
     ...presets.map((d) => ({ label: `${d}d`, title: `Last ${d} days`, value: String(d) })),
     ...(allowCustom ? [{ label: 'Custom', title: 'Pick a date range', value: 'custom' }] : []),
   ];
-  const [customOpen, setCustomOpen] = useState(value.kind === 'custom');
-  const [from, setFrom] = useState(value.kind === 'custom' ? value.from : '');
-  const [to, setTo] = useState(value.kind === 'custom' ? value.to : '');
+  const [customOpen, setCustomOpen] = useState(value?.kind === 'custom');
+  const [from, setFrom] = useState(value?.kind === 'custom' ? value.from : '');
+  const [to, setTo] = useState(value?.kind === 'custom' ? value.to : '');
   useEffect(() => {
-    if (value.kind === 'custom') {
+    if (value?.kind === 'custom') {
       setCustomOpen(true);
       setFrom(value.from);
       setTo(value.to);
@@ -40,7 +44,8 @@ export function DateRangeControl({
 
   const today = utcDay(new Date());
   const invalid = !isIsoDay(from) || !isIsoDay(to) || from > to || to > today;
-  const selected = customOpen || value.kind === 'custom' ? 'custom' : String(value.days);
+  const selected =
+    customOpen || value?.kind === 'custom' ? 'custom' : value ? String(value.days) : 'all';
   const inputClass =
     'h-8 rounded-[9px] border border-ink-400 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400';
 
@@ -54,7 +59,7 @@ export function DateRangeControl({
             return;
           }
           setCustomOpen(false);
-          onChange({ days: Number(v), kind: 'preset' });
+          onChange(v === 'all' ? null : { days: Number(v), kind: 'preset' });
         }}
         options={options}
         value={selected}

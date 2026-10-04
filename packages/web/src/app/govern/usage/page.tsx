@@ -258,7 +258,7 @@ function UsageWorkspace() {
             )}
             <DateRangeControl
               allowCustom={false}
-              onChange={(r) => update(dateRangePatch(r))}
+              onChange={(r) => r && update(dateRangePatch(r))}
               value={range}
             />
           </div>
