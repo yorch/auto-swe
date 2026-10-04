@@ -109,6 +109,15 @@ export type RoleCheck =
  * outage is not dressed up as "you are not allowed here".
  */
 export async function requireRole(allowed: Role[]): Promise<RoleCheck> {
+  const result = await requireActiveSession();
+  if (result.status === 'ok' && !allowed.some((r) => roleMeets(result.user.role, r))) {
+    redirect('/');
+  }
+  return result;
+}
+
+/** The redirects every gate shares: signed in, active, and the gateway answered. */
+async function requireActiveSession(): Promise<RoleCheck> {
   const result = await checkSession();
 
   if (result.status === 'no-token' || result.status === 'unauthorized') {
@@ -120,7 +129,45 @@ export async function requireRole(allowed: Role[]): Promise<RoleCheck> {
   if (result.status === 'unavailable') {
     return result;
   }
-  if (!(result.user.isActive && allowed.some((r) => roleMeets(result.user.role, r)))) {
+  if (!result.user.isActive) {
+    redirect('/');
+  }
+  return result;
+}
+
+/**
+ * Gate a server-rendered subtree on holding at least one LLM-usage scope — the
+ * platform, a team the caller leads, or an organization they administer. The
+ * platform role alone does not decide it: a team LEAD by membership may hold a
+ * lower one. Same redirect and `unavailable` behaviour as {@link requireRole};
+ * the gateway still checks the scope of every report it serves.
+ */
+export async function requireUsageScope(): Promise<RoleCheck> {
+  const result = await requireActiveSession();
+  if (result.status !== 'ok') {
+    return result;
+  }
+  const token = (await cookies()).get(COOKIE_ACCESS_TOKEN)?.value;
+  let res: Response;
+  try {
+    res = await fetch(`${apiInternalUrl()}/api/v1/platform/usage/scopes`, {
+      cache: 'no-store',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    return { detail: 'The gateway is unreachable.', status: 'unavailable' };
+  }
+  if (!res.ok) {
+    return { detail: `The gateway answered HTTP ${res.status}.`, status: 'unavailable' };
+  }
+  const json = (await res.json().catch(() => null)) as {
+    data?: { platform?: boolean; teams?: unknown[]; orgs?: unknown[] };
+  } | null;
+  const scopes = json?.data;
+  if (!scopes) {
+    return { detail: 'The gateway returned an unexpected response.', status: 'unavailable' };
+  }
+  if (!(scopes.platform || scopes.teams?.length || scopes.orgs?.length)) {
     redirect('/');
   }
   return result;

@@ -301,6 +301,22 @@ export interface PlatformUsage {
   windowDays: number;
 }
 
+/** The usage reports the caller may read (`GET /platform/usage/scopes`). */
+export interface UsageScopes {
+  platform: boolean;
+  teams: { id: string; name: string }[];
+  orgs: { id: string; name: string }[];
+}
+
+export function useUsageScopes() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: UsageScopes }>('/api/v1/platform/usage/scopes').then((r) => r.data),
+    queryKey: ['usage-scopes'],
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function usePlatformUsage(windowDays: number, scope: UsageScope = {}, enabled = true) {
   const qs = new URLSearchParams({ window: String(windowDays) });
   if (scope.teamId) {

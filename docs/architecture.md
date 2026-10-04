@@ -841,8 +841,11 @@ run, and the ten runs that spent most inside the window. With no filter the repo
 platform-wide and ADMIN-only, since it includes spend no team owns; a team LEAD (by team
 membership) may read their team and an ORG_ADMIN their organization, and every query of a scoped
 report carries the `teamId`/`orgId` predicate the tenant guard checks. The dashboard renders it at
-`/govern/usage` with a scope picker: the whole platform for an ADMIN, otherwise the teams the
-caller leads and the organizations they administer.
+`/govern/usage` with a scope picker. `GET /api/v1/platform/usage/scopes` returns what the caller may
+read — `platform` (ADMIN), the teams they lead, the organizations they administer — by the same rules
+as the report. The page, its layout, and the sidebar entry all gate on that list being non-empty
+rather than on the platform role, so a team LEAD or ORG_ADMIN whose platform role is ENGINEER reaches
+it; the report route still checks every request.
 
 ### Workspace hardening
 
