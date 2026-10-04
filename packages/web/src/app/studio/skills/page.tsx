@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
+import { SkillSourcesTab } from '@/components/skills/SkillSourcesTab';
+import { shortSha } from '@/components/skills/sourceDisplay';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -13,9 +15,11 @@ import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { TabBar } from '@/components/ui/TabBar';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { useHasRole } from '@/hooks/useHasRole';
 import {
   type Skill,
   useCreateSkill,
@@ -23,9 +27,12 @@ import {
   useSkillEffectiveness,
   useSkills,
   useUpdateSkill,
+  useVerifySkill,
 } from '@/hooks/useSkills';
+import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { formatCost, formatDate, formatPercent } from '@/lib/utils';
+import { visibleOrNull, visibleText } from '@/lib/visibleText';
 
 function OriginBadge({ origin }: { origin: string | null }) {
   if (!origin) {
@@ -34,6 +41,18 @@ function OriginBadge({ origin }: { origin: string | null }) {
   return (
     <Badge className="ml-1.5" tone="neutral">
       {origin}
+    </Badge>
+  );
+}
+
+/** `external: owner/repo@abc1234` for a skill imported from a repository. */
+function ExternalBadge({ source }: { source: Skill['externalSource'] }) {
+  if (!source) {
+    return null;
+  }
+  return (
+    <Badge title={`${source.host}/${source.owner}/${source.repo}`} tone="violet" variant="text">
+      {visibleText(`external: ${source.owner}/${source.repo}@${shortSha(source.sha)}`)}
     </Badge>
   );
 }
@@ -119,7 +138,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     }
   }
 
-  const title = editing ? `Edit "${skill.name}"` : skill.name;
+  const title = editing ? `Edit "${visibleText(skill.name)}"` : visibleText(skill.name);
 
   return (
     <Modal
@@ -185,15 +204,18 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             isVerified={skill.isVerified}
             origin={skill.origin}
           >
+            <ExternalBadge source={skill.externalSource} />
             <Badge tone="neutral">
               used by {skill.usedByCount} agent{skill.usedByCount !== 1 ? 's' : ''}
             </Badge>
           </EntityMetaBadges>
-          {skill.description && <p className="text-sm text-paper-300">{skill.description}</p>}
+          {skill.description && (
+            <p className="text-sm text-paper-300">{visibleOrNull(skill.description)}</p>
+          )}
           <div>
             <div className="label-mono mb-1.5">Prompt text</div>
             <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
-              {skill.promptText}
+              {visibleText(skill.promptText, { multiline: true })}
             </pre>
           </div>
           <div className="flex items-center justify-between border-t border-ink-600 pt-4">
@@ -363,13 +385,18 @@ function EffectivenessCard() {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
+type Tab = 'skills' | 'external';
+
 export default function StudioSkillsPage() {
+  const isAdmin = useHasRole('ADMIN');
+  const [tab, setTab] = useState<Tab>('skills');
   const [newOpen, setNewOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
   const deleteSkill = useDeleteSkill();
   const { data: skills, isLoading, isError, error: loadError } = useSkills();
   const update = useUpdateSkill();
+  const verify = useVerifySkill();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
 
@@ -380,6 +407,23 @@ export default function StudioSkillsPage() {
       await update.mutateAsync({ id: skill.id, isActive: !skill.isActive });
     } catch (err) {
       setToggleError(errMsg(err, `Failed to update "${skill.name}"`));
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  async function handleVerify(skill: Skill) {
+    setToggleError(null);
+    setTogglingId(skill.id);
+    try {
+      // Attests to the revision the admin is looking at; a skill that moved on is a 409.
+      await verify.mutateAsync({ id: skill.id, revision: skill.currentRevision });
+    } catch (err) {
+      setToggleError(
+        err instanceof ApiError && err.code === 'SKILL_CHANGED'
+          ? `"${visibleText(skill.name)}" changed since this list loaded. Reload and read its current text before verifying.`
+          : errMsg(err, `Failed to verify "${visibleText(skill.name)}"`)
+      );
     } finally {
       setTogglingId(null);
     }
@@ -398,87 +442,124 @@ export default function StudioSkillsPage() {
         title="Skill library"
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>All skills</CardTitle>
-        </CardHeader>
-        {toggleError && <Alert variant="error">{toggleError}</Alert>}
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="skills">
-          {!skills?.length ? (
-            <EmptyState title="No skills yet. Create one with the button above." />
-          ) : (
-            <Table>
-              <THead>
-                <Th variant="compact">Name</Th>
-                <Th variant="compact">Description</Th>
-                <Th variant="compact">Used by</Th>
-                <Th variant="compact">Active</Th>
-                <Th variant="compact" />
-              </THead>
-              <tbody>
-                {skills.map((skill) => (
-                  <TRow key={skill.id}>
-                    <Td className="py-2 pr-4">
-                      <button
-                        className="text-left hover:underline"
-                        onClick={() => setViewTarget(skill)}
-                        type="button"
-                      >
-                        <span className="font-medium text-paper-100">{skill.name}</span>
-                      </button>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                        {skill.isBuiltIn && (
-                          <Badge tone="muted" uppercase variant="text">
-                            built-in
-                          </Badge>
-                        )}
-                        {skill.origin && <OriginBadge origin={skill.origin} />}
-                        {skill.isVerified && (
-                          <Badge tone="moss" variant="text">
-                            verified
-                          </Badge>
-                        )}
-                        {!skill.isVerified && !skill.isBuiltIn && (
-                          <Badge tone="amber" variant="text">
-                            unverified
-                          </Badge>
-                        )}
-                      </div>
-                    </Td>
-                    <Td className="max-w-xs py-2 pr-4">
-                      <span className="line-clamp-1 text-paper-400">
-                        {skill.description ?? '—'}
-                      </span>
-                    </Td>
-                    <Td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</Td>
-                    <Td className="py-2 pr-4">
-                      <ToggleSwitch
-                        checked={skill.isActive}
-                        disabled={togglingId === skill.id}
-                        onChange={() => handleToggleActive(skill)}
-                      />
-                    </Td>
-                    <Td className="py-2 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
-                          View / Edit
-                        </Button>
-                        {!skill.isBuiltIn && (
-                          <Button onClick={() => setDeleteTarget(skill)} size="sm" variant="danger">
-                            Delete
-                          </Button>
-                        )}
-                      </div>
-                    </Td>
-                  </TRow>
-                ))}
-              </tbody>
-            </Table>
-          )}
-        </QueryBoundary>
-      </Card>
+      {isAdmin && (
+        <TabBar
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { id: 'skills', label: 'Skills' },
+            { id: 'external', label: 'External sources' },
+          ]}
+        />
+      )}
 
-      <EffectivenessCard />
+      {isAdmin && tab === 'external' && <SkillSourcesTab />}
+
+      {tab === 'skills' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>All skills</CardTitle>
+          </CardHeader>
+          {toggleError && <Alert variant="error">{toggleError}</Alert>}
+          <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="skills">
+            {!skills?.length ? (
+              <EmptyState title="No skills yet. Create one with the button above." />
+            ) : (
+              <Table>
+                <THead>
+                  <Th variant="compact">Name</Th>
+                  <Th variant="compact">Description</Th>
+                  <Th variant="compact">Used by</Th>
+                  <Th variant="compact">Active</Th>
+                  <Th variant="compact" />
+                </THead>
+                <tbody>
+                  {skills.map((skill) => (
+                    <TRow key={skill.id}>
+                      <Td className="py-2 pr-4">
+                        <button
+                          className="text-left hover:underline"
+                          onClick={() => setViewTarget(skill)}
+                          type="button"
+                        >
+                          <span className="font-medium text-paper-100">
+                            {visibleText(skill.name)}
+                          </span>
+                        </button>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                          {skill.isBuiltIn && (
+                            <Badge tone="muted" uppercase variant="text">
+                              built-in
+                            </Badge>
+                          )}
+                          {skill.origin && <OriginBadge origin={skill.origin} />}
+                          <ExternalBadge source={skill.externalSource} />
+                          {skill.isVerified && (
+                            <Badge tone="moss" variant="text">
+                              verified
+                            </Badge>
+                          )}
+                          {!skill.isVerified && !skill.isBuiltIn && (
+                            <Badge tone="amber" variant="text">
+                              unverified
+                            </Badge>
+                          )}
+                          {!skill.isBuiltIn && (
+                            <Badge tone="muted" variant="text">
+                              rev {skill.currentRevision}
+                            </Badge>
+                          )}
+                        </div>
+                      </Td>
+                      <Td className="max-w-xs py-2 pr-4">
+                        <span className="line-clamp-1 text-paper-400">
+                          {visibleOrNull(skill.description) ?? '—'}
+                        </span>
+                      </Td>
+                      <Td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</Td>
+                      <Td className="py-2 pr-4">
+                        <ToggleSwitch
+                          checked={skill.isActive}
+                          disabled={togglingId === skill.id}
+                          onChange={() => handleToggleActive(skill)}
+                        />
+                      </Td>
+                      <Td className="py-2 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {isAdmin && !skill.isVerified && !skill.isBuiltIn && (
+                            <Button
+                              disabled={togglingId === skill.id}
+                              onClick={() => handleVerify(skill)}
+                              size="sm"
+                              variant="ghost"
+                            >
+                              Verify
+                            </Button>
+                          )}
+                          <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
+                            View / Edit
+                          </Button>
+                          {!skill.isBuiltIn && (
+                            <Button
+                              onClick={() => setDeleteTarget(skill)}
+                              size="sm"
+                              variant="danger"
+                            >
+                              Delete
+                            </Button>
+                          )}
+                        </div>
+                      </Td>
+                    </TRow>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </QueryBoundary>
+        </Card>
+      )}
+
+      {tab === 'skills' && <EffectivenessCard />}
 
       <SkillFormModal onClose={() => setNewOpen(false)} open={newOpen} />
       <SkillDetailModal onClose={() => setViewTarget(null)} skill={viewTarget} />
